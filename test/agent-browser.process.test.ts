@@ -21,7 +21,7 @@ import {
 	ManagedSessionRestoreState,
 	withOwnedManagedSessionContext,
 } from "../extensions/agent-browser/lib/managed-session-restore.js";
-import { buildProcessStartIdentityCommand, buildProcessStartIdentityCommands, normalizeProcessStartIdentity, processStartIdentitiesMatch, resolveProcessStartIdentityFromCommands } from "../extensions/agent-browser/lib/process-identity.js";
+import { buildProcessStartIdentityCommand, buildProcessStartIdentityCommands, executeProcessStartIdentityCommand, normalizeProcessStartIdentity, processStartIdentitiesMatch, resolveProcessStartIdentityFromCommands } from "../extensions/agent-browser/lib/process-identity.js";
 import {
 	buildAgentBrowserProcessEnv,
 	buildAgentBrowserSpawnCommand,
@@ -237,29 +237,72 @@ test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
 	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
 });
 
-test("process start identity commands use absolute POSIX fallbacks and native PowerShell on Windows", async () => {
+test("process start identity commands preserve platform-specific candidate order and arguments", () => {
 	const posixCommands = buildProcessStartIdentityCommands(123, "linux");
-	assert.deepEqual(posixCommands.map((command) => command.file), ["/bin/ps", "/usr/bin/ps"]);
-	const attempts: string[] = [];
-	assert.equal(await resolveProcessStartIdentityFromCommands(posixCommands, async (command) => {
-		attempts.push(command.file);
-		return command.file === "/usr/bin/ps" ? "fallback-identity" : undefined;
-	}), "fallback-identity");
-	assert.deepEqual(attempts, ["/bin/ps", "/usr/bin/ps"]);
+	assert.deepEqual(posixCommands.map((command) => command.file), ["/bin/ps", "/usr/bin/ps", "ps"]);
+	assert.deepEqual(posixCommands.map((command) => command.args), Array(3).fill(["-p", "123", "-o", "lstart="]));
 	assert.deepEqual(
 		buildProcessStartIdentityCommands(123, "android").map((command) => command.file),
 		[join(dirname(process.execPath), "ps"), "/bin/ps", "/usr/bin/ps"],
 	);
-	const windows = buildProcessStartIdentityCommand(123, "win32");
+	const windowsCommands = buildProcessStartIdentityCommands(123, "win32");
+	assert.equal(windowsCommands.length, 1);
+	const windows = windowsCommands[0];
 	assert.match(windows?.file ?? "", /(?:^|[\\/])powershell\.exe$/i);
 	assert.equal(win32.isAbsolute(windows?.file ?? ""), true);
 	assert.ok(windows?.args.includes("-NonInteractive"));
 	assert.match(windows?.args.at(-1) ?? "", /Get-Process -Id 123/);
 	assert.match(windows?.args.at(-1) ?? "", /win32-powershell-ticks-v1:/);
 	assert.equal(buildProcessStartIdentityCommand(0, "win32"), undefined);
-	assert.equal(normalizeProcessStartIdentity("  638000000000000000\r\n"), "638000000000000000");
+	assert.equal(normalizeProcessStartIdentity("  Sun Aug  3 00:00:00 2026\r\n"), "Sun Aug 3 00:00:00 2026");
 	assert.equal(processStartIdentitiesMatch("Sun Aug 3 00:00:00 2026", "win32-powershell-ticks-v1:638000000000000000", "win32"), undefined);
 	assert.equal(processStartIdentitiesMatch("win32-powershell-ticks-v1:1", "win32-powershell-ticks-v1:2", "win32"), false);
+});
+
+test("process start identity falls back from absolute candidates to PATH and stops after success", async () => {
+	const commands = buildProcessStartIdentityCommands(123, "linux");
+	const attempts: string[] = [];
+	assert.equal(await resolveProcessStartIdentityFromCommands(commands, async (command) => {
+		attempts.push(command.file);
+		return command.file === "ps" ? "Sun Aug 3 00:00:00 2026" : undefined;
+	}), "Sun Aug 3 00:00:00 2026");
+	assert.deepEqual(attempts, ["/bin/ps", "/usr/bin/ps", "ps"]);
+
+	attempts.length = 0;
+	assert.equal(await resolveProcessStartIdentityFromCommands(commands, async (command) => {
+		attempts.push(command.file);
+		return command.file === "/bin/ps" ? "absolute-identity" : undefined;
+	}), "absolute-identity");
+	assert.deepEqual(attempts, ["/bin/ps"]);
+});
+
+test("process start identity fails closed when candidates are unavailable or PATH output is malformed", async () => {
+	const commands = buildProcessStartIdentityCommands(123, "linux");
+	assert.equal(await resolveProcessStartIdentityFromCommands(commands, async () => undefined), undefined);
+	assert.equal(normalizeProcessStartIdentity("  \r\n"), undefined);
+	assert.equal(normalizeProcessStartIdentity("first record\nsecond record"), undefined);
+	assert.equal(normalizeProcessStartIdentity("identity\0suffix"), undefined);
+
+	assert.equal(await resolveProcessStartIdentityFromCommands(commands, async (command) => {
+		if (command.file !== "ps") return undefined;
+		return await executeProcessStartIdentityCommand(command, (_file, _args, _options, callback) => {
+			callback(null, "first record\nsecond record\n");
+		});
+	}), undefined);
+});
+
+test("PATH process identity execution keeps the five-second timeout and treats timeout errors as unavailable", async () => {
+	const pathCommand = buildProcessStartIdentityCommands(123, "linux").at(-1);
+	assert.equal(pathCommand?.file, "ps");
+	let observedTimeout: number | undefined;
+	assert.equal(await executeProcessStartIdentityCommand(pathCommand!, (_file, _args, options, callback) => {
+		observedTimeout = options.timeout;
+		callback(Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }), "Sun Aug 3 00:00:00 2026\n");
+	}), undefined);
+	assert.equal(observedTimeout, 5_000);
+	assert.equal(await executeProcessStartIdentityCommand(pathCommand!, () => {
+		throw new Error("ps is unavailable");
+	}), undefined);
 });
 
 test("Windows managed restore commit excludes PowerShell command-not-found wrappers", () => {

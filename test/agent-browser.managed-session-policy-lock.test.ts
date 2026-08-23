@@ -16,6 +16,7 @@ import {
 	getLegacyManagedSessionPolicyLockPath,
 	getManagedSessionPolicyLockPath,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
+import { buildProcessStartIdentityCommands, resolveProcessStartIdentityFromCommands } from "../extensions/agent-browser/lib/process-identity.js";
 
 const sessionName = `piab-policy-lock-${process.pid}`;
 const lockBasePath = getManagedSessionPolicyLockPath(sessionName);
@@ -45,6 +46,23 @@ test.afterEach(async () => {
 	await rm(legacyLockPath, { force: true, recursive: true });
 	await rm(legacyCandidatePath, { force: true, recursive: true });
 	await rm(testOrphanPath, { force: true, recursive: true });
+});
+
+test("managed session policy lock acquires with a process identity resolved through PATH fallback", async () => {
+	const attempts: string[] = [];
+	const lock = await acquireManagedSessionPolicyLock({
+		processStartIdentityReader: async (pid) => await resolveProcessStartIdentityFromCommands(
+			buildProcessStartIdentityCommands(pid, "linux"),
+			async (command) => {
+				attempts.push(command.file);
+				return command.file === "ps" ? "Sun Aug 3 00:00:00 2026" : undefined;
+			},
+		),
+		sessionName,
+	});
+	assert.ok(lock);
+	assert.deepEqual(attempts, ["/bin/ps", "/usr/bin/ps", "ps"]);
+	await lock.release();
 });
 
 test("managed session policy lock waits asynchronously and releases only its immutable claim", async () => {

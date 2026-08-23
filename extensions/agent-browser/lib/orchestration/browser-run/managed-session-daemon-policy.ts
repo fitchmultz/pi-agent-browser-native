@@ -82,7 +82,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 		return signal?.aborted
 			? {}
 			: {
-				error: "Managed-session policy coordination is unavailable or busy. Retry after the current operation finishes, repair the private policy-lock directory, and on POSIX verify that /bin/ps or /usr/bin/ps is available.",
+				error: "Managed-session policy coordination is unavailable or busy. Retry after the current operation finishes, repair the private policy-lock directory, and on POSIX verify that /bin/ps, /usr/bin/ps, or ps through PATH is available.",
 			};
 	}
 

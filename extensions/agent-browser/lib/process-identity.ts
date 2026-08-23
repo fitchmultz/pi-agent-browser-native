@@ -10,6 +10,13 @@ export interface ProcessStartIdentityCommand {
 	file: string;
 }
 
+export type ProcessStartIdentityExecFile = (
+	file: string,
+	args: string[],
+	options: { timeout: number },
+	callback: (error: Error | null, stdout: string) => void,
+) => unknown;
+
 export function buildProcessStartIdentityCommand(
 	pid: number,
 	platform: NodeJS.Platform = process.platform,
@@ -43,20 +50,34 @@ export function buildProcessStartIdentityCommands(
 	if (!primary) return [];
 	return platform === "win32"
 		? [primary]
-		: [primary, ...(platform === "android" ? [{ ...primary, file: "/bin/ps" }, { ...primary, file: "/usr/bin/ps" }] : [{ ...primary, file: "/usr/bin/ps" }])];
+		: [
+			primary,
+			...(platform === "android"
+				? [{ ...primary, file: "/bin/ps" }, { ...primary, file: "/usr/bin/ps" }]
+				: [{ ...primary, file: "/usr/bin/ps" }, { ...primary, file: "ps" }]),
+		];
 }
 
 export function normalizeProcessStartIdentity(stdout: string): string | undefined {
-	return stdout.trim().replace(/\s+/g, " ") || undefined;
+	const trimmed = stdout.trim();
+	if (!trimmed || trimmed.includes("\0") || /[\r\n]/.test(trimmed)) return undefined;
+	return trimmed.replace(/\s+/g, " ");
 }
 
 let currentProcessStartIdentityPromise: Promise<string | undefined> | undefined;
 
-async function executeProcessStartIdentityCommand(command: ProcessStartIdentityCommand): Promise<string | undefined> {
+export async function executeProcessStartIdentityCommand(
+	command: ProcessStartIdentityCommand,
+	execute: ProcessStartIdentityExecFile = execFile,
+): Promise<string | undefined> {
 	return await new Promise((resolve) => {
-		execFile(command.file, command.args, { timeout: PROCESS_START_IDENTITY_TIMEOUT_MS }, (error, stdout) => {
-			resolve(error ? undefined : normalizeProcessStartIdentity(stdout));
-		});
+		try {
+			execute(command.file, command.args, { timeout: PROCESS_START_IDENTITY_TIMEOUT_MS }, (error, stdout) => {
+				resolve(error || typeof stdout !== "string" ? undefined : normalizeProcessStartIdentity(stdout));
+			});
+		} catch {
+			resolve(undefined);
+		}
 	});
 }
 
@@ -65,8 +86,10 @@ export async function resolveProcessStartIdentityFromCommands(
 	execute: (command: ProcessStartIdentityCommand) => Promise<string | undefined> = executeProcessStartIdentityCommand,
 ): Promise<string | undefined> {
 	for (const command of commands) {
-		const identity = await execute(command);
-		if (identity) return identity;
+		try {
+			const identity = await execute(command);
+			if (identity) return identity;
+		} catch {}
 	}
 	return undefined;
 }

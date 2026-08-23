@@ -42,6 +42,8 @@ export interface ManagedSessionPolicyLock {
 	release: () => Promise<void>;
 }
 
+type ProcessStartIdentityReader = (pid: number) => Promise<string | undefined>;
+
 function getCoordinationDirectory(platform: NodeJS.Platform = process.platform): string {
 	if (platform !== "win32") {
 		const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
@@ -200,7 +202,10 @@ async function readClaims(basePath: string): Promise<PolicyLockClaim[] | undefin
 	return claims;
 }
 
-async function ownerAlive(owner: PolicyLockOwner | LegacyPolicyLockOwner): Promise<boolean | undefined> {
+async function ownerAlive(
+	owner: PolicyLockOwner | LegacyPolicyLockOwner,
+	readStartIdentity: ProcessStartIdentityReader,
+): Promise<boolean | undefined> {
 	try {
 		process.kill(owner.pid, 0);
 	} catch (error) {
@@ -208,7 +213,7 @@ async function ownerAlive(owner: PolicyLockOwner | LegacyPolicyLockOwner): Promi
 		if (code === "ESRCH") return false;
 		if (code !== "EPERM") return undefined;
 	}
-	const current = await readProcessStartIdentity(owner.pid);
+	const current = await readStartIdentity(owner.pid);
 	return current === undefined ? undefined : processStartIdentitiesMatch(owner.startIdentity, current);
 }
 
@@ -248,7 +253,7 @@ async function removeLegacyBridgeOwnedBy(path: string, token: string): Promise<b
 	return true;
 }
 
-async function cleanDeadPolicyArtifacts(directory: string): Promise<void> {
+async function cleanDeadPolicyArtifacts(directory: string, readStartIdentity: ProcessStartIdentityReader): Promise<void> {
 	let names: string[];
 	try { names = await readdir(directory); } catch { return; }
 	for (const name of names.filter((candidate) =>
@@ -259,7 +264,7 @@ async function cleanDeadPolicyArtifacts(directory: string): Promise<void> {
 		|| candidate.includes(".lock-v3.candidate-"))) {
 		const path = join(directory, name);
 		const owner = await readLegacyBridgeOwner(path);
-		if (owner && await ownerAlive(owner) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
+		if (owner && await ownerAlive(owner, readStartIdentity) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
 	}
 }
 
@@ -275,6 +280,7 @@ async function hasLegacyV2Contender(path: string): Promise<boolean | undefined> 
 async function acquireLegacyPolicyBridge(options: {
 	deadline: number;
 	owner: PolicyLockOwner;
+	readStartIdentity: ProcessStartIdentityReader;
 	signal?: AbortSignal;
 	sessionName: string;
 	namespace?: string;
@@ -303,7 +309,7 @@ async function acquireLegacyPolicyBridge(options: {
 			}
 			const observed = await readLegacyBridgeOwner(path);
 			if (!observed) return undefined;
-			if (observed.version === 3 && await ownerAlive(observed) === false) {
+			if (observed.version === 3 && await ownerAlive(observed, options.readStartIdentity) === false) {
 				if (await removeLegacyBridgeOwnedBy(path, observed.token)) continue;
 			}
 			if (Date.now() >= options.deadline) return undefined;
@@ -338,17 +344,24 @@ function waitForRetry(signal?: AbortSignal): Promise<void> {
 
 export async function acquireManagedSessionPolicyLock(options: {
 	namespace?: string;
+	processStartIdentityReader?: ProcessStartIdentityReader;
 	sessionName: string;
 	signal?: AbortSignal;
 	timeoutMs?: number;
 }): Promise<ManagedSessionPolicyLock | undefined> {
 	if (options.signal?.aborted) return undefined;
+	const readStartIdentity = options.processStartIdentityReader ?? readProcessStartIdentity;
 	const platform = process.platform;
 	const directory = getCoordinationDirectory(platform);
 	if (!await ensureCoordinationDirectory(directory, platform)) return undefined;
 	const basePath = getManagedSessionPolicyLockPath(options.sessionName, options.namespace);
 	const token = randomUUID();
-	const startIdentity = await readProcessStartIdentity(process.pid);
+	let startIdentity: string | undefined;
+	try {
+		startIdentity = await readStartIdentity(process.pid);
+	} catch {
+		return undefined;
+	}
 	if (!startIdentity) return undefined;
 	const owner = { pid: process.pid, startIdentity, token, version: 3 } satisfies PolicyLockOwner;
 	const candidatePath = `${basePath}.candidate-${token}`;
@@ -380,7 +393,7 @@ export async function acquireManagedSessionPolicyLock(options: {
 			let blocked = false;
 			for (const claim of claims) {
 				if (claim.owner.token === token || !claimPrecedes(claim, ownClaim)) continue;
-				const alive = await ownerAlive(claim.owner);
+				const alive = await ownerAlive(claim.owner, readStartIdentity);
 				if (alive === false) {
 					await removeClaimOwnedBy(claim.path, claim.owner.token);
 					continue;
@@ -389,10 +402,11 @@ export async function acquireManagedSessionPolicyLock(options: {
 				break;
 			}
 			if (!blocked) {
-				await cleanDeadPolicyArtifacts(directory);
+				await cleanDeadPolicyArtifacts(directory, readStartIdentity);
 				legacyBridge = await acquireLegacyPolicyBridge({
 					deadline,
 					owner,
+					readStartIdentity,
 					signal: options.signal,
 					sessionName: options.sessionName,
 					namespace: options.namespace,
