@@ -140,6 +140,7 @@ test("managed state policy blocks browser navigation into local agent-browser st
 			["wait", "-d", join(tempDir, ".agent-browser", "download-short.json")],
 			["diff", "screenshot", "--baseline", "safe.png", "--output", join(tempDir, ".agent-browser", "diff.png")],
 			["--action-policy", "-x/../.agent-browser/policy.json", "open", "https://example.com"],
+			["--ca-cert", "-x/../.agent-browser/proxy-ca.pem", "open", "https://example.com"],
 			["--config", "-x/../.agent-browser/config.json", "open", "https://example.com"],
 			["--download-path", "-x/../.agent-browser/downloads", "open", "https://example.com"],
 			["--screenshot-dir", "-x/../.agent-browser/screenshots", "open", "https://example.com"],
@@ -193,6 +194,7 @@ test("managed state policy blocks browser navigation into local agent-browser st
 		assert.equal(validate(tempDir, ["--args", "--disable-gpu", "open", "https://example.com"]), undefined);
 		for (const name of [
 			"AGENT_BROWSER_ACTION_POLICY",
+			"AGENT_BROWSER_CA_CERT",
 			"AGENT_BROWSER_CONFIG",
 			"AGENT_BROWSER_DOWNLOAD_PATH",
 			"AGENT_BROWSER_EXECUTABLE_PATH",

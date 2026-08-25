@@ -23,7 +23,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 
 ### Version policy
 
-- Target the current locally installed `agent-browser` version.
+- Baseline the current `agent-browser` release and accept only explicitly verified compatible versions.
 - Do **not** support a broad range of older `agent-browser` versions.
 - Do **not** add backward-compatibility shims.
 - Keep the wrapper close to current upstream behavior as `agent-browser` evolves.

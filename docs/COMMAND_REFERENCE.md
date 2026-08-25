@@ -18,15 +18,24 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.34.0` command/help surface, audited against vercel-labs/agent-browser@548b159b30eef119ccf6846c8bc807d0eaa3f6f8. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.35.0` command/help surface, audited against vercel-labs/agent-browser@585e740fcef069d74e21f0e88e8bf4ea7df34385. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.35.0 rebaseline
+
+The 0.35.0 baseline adds private proxy CA trust and one bundled workflow skill. Browser-backed calls accept `agent-browser 0.35.0` and the verified-compatible 0.34.0 runtime; the command/help baseline and new features target 0.35.0.
+
+- `--ca-cert <path>` / `AGENT_BROWSER_CA_CERT` loads a PEM bundle or DER certificate into an isolated NSS trust store for locally launched Linux Chromium. Normal hostname, validity, and unrelated-authority checks remain enabled. Equivalent certificate content reuses Chromium; changed content relaunches it. `--no-ca-cert` / `AGENT_BROWSER_CLEAR_CA_CERT` clears retained trust.
+- Use CA trust only with a fresh managed session. The wrapper treats `--ca-cert` and `--no-ca-cert` as launch-scoped for managed-session planning, disables automatic managed restore when CA trust is enabled, and rejects protected `.agent-browser` paths from the flag or environment. Upstream rejects CA trust with profiles, CDP/auto-connect, providers, Lightpanda, `--ignore-https-errors`, macOS, or Windows, and requires `certutil` (`install --with-deps` installs it on supported Linux systems).
+- `skills get protected-vercel-deployments --full` loads the bundled short-lived Trusted Sources OIDC workflow. It uses `vc project token` and the `x-vercel-trusted-oidc-idp-token` header, avoids persisting tokens, and hands dashboard-only access-control changes to an authorized human.
+- The release also restores ARM64 build artifacts; no wrapper shim is needed.
+
 ### Upstream 0.34.0 rebaseline
 
-The 0.34.0 release adds persistent session-to-tab binding for shared Chrome sessions. This package targets exactly `agent-browser 0.34.0`: before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails a mismatch with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
+The 0.34.0 release adds persistent session-to-tab binding for shared Chrome sessions. It remains supported alongside the current 0.35.0 baseline: before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails unsupported versions with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
 
 - Named sessions on `--cdp` or `--auto-connect` remember their CDP target across commands and daemon restarts. CDP target ids from `tab list --json` are accepted as tab refs and stay stable across daemon restarts, unlike `t<N>` ids.
 - `--pin-tab` (`AGENT_BROWSER_PIN_TAB`) is sticky per session and is not launch-scoped: pass it once, including on an already-live session, so a closed bound tab fails with `tab_gone` instead of adopting a neighbor. JSON includes `code=tab_gone`, `data.targetId`, and optional sanitized `data.lastUrl`; batch exposes the same recovery object under `result`. Recover with `tab new` or `tab list`. `--no-pin-tab` turns the pin off again. Optional booleans use separated tokens (`--pin-tab false`).
@@ -174,7 +183,7 @@ Tool parameters (use exactly one of `script`, `args`, `semanticAction`, `job`, `
 - `timeoutMs`: optional per-call wrapper subprocess watchdog override in milliseconds for the requested browser CLI process. Managed-session policy inspection can independently consume up to 35 seconds before that process; this preflight is intentionally not shortened by `timeoutMs` because a busy but valid daemon must remain distinguishable from an unverifiable one.
 - `sessionMode`:
   - `"auto"` reuses the extension-managed session when possible.
-  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--allowed-domains`, `--auto-connect`, `--args`, `--cdp`, `--enable`, `--executable-path`, `--webgpu`, `--init-script`, `--idle-timeout`, `--user-agent`, `--headed`, `--device`, `--namespace`, `--profile`, `--provider`, `-p`, `--restore`, `--restore-save`, `--restore-check-url`, `--restore-check-text`, `--restore-check-fn`, `--session-name`, `--state`) apply.
+  - `"fresh"` rotates that managed session to a fresh upstream launch so launch-scoped flags (`--allowed-domains`, `--auto-connect`, `--args`, `--ca-cert`, `--no-ca-cert`, `--cdp`, `--enable`, `--executable-path`, `--webgpu`, `--init-script`, `--idle-timeout`, `--user-agent`, `--headed`, `--device`, `--namespace`, `--profile`, `--provider`, `-p`, `--restore`, `--restore-save`, `--restore-check-url`, `--restore-check-text`, `--restore-check-fn`, `--session-name`, `--state`) apply.
   - If a fresh launch fails or times out, read `details.managedSessionOutcome` for `preserved` vs `abandoned` (and related fields). A model-visible `Managed session outcome: …` line is appended for failing calls that used `sessionMode: "fresh"` and when automatic close of a replaced session fails; `"auto"` failures can still populate the struct without that extra line. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing the closed name; repeated closes and branch restores keep those generated names monotonic.
 
 ### One-shot code mode
@@ -939,6 +948,8 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--proxy <server>`: proxy server URL. Environments: `AGENT_BROWSER_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`.
 - `--proxy-bypass <hosts>`: proxy bypass hosts. Environments: `AGENT_BROWSER_PROXY_BYPASS`, `NO_PROXY`.
 - `--ignore-https-errors`: ignore HTTPS certificate errors. Environment: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`.
+- `--ca-cert <path>`: trust a PEM bundle or DER certificate in an isolated NSS store for locally launched Linux Chromium. Environment: `AGENT_BROWSER_CA_CERT`. Use `sessionMode: "fresh"`; the wrapper disables automatic managed restore for the CA-enabled session and blocks protected `.agent-browser` paths. Upstream requires `certutil` and rejects profiles, CDP/auto-connect, providers, Lightpanda, `--ignore-https-errors`, macOS, and Windows.
+- `--no-ca-cert`: clear retained CA trust. Environment: `AGENT_BROWSER_CLEAR_CA_CERT`. Use `sessionMode: "fresh"` for wrapper-managed sessions.
 - `--allow-file-access`: upstream capability, but enabled argv/`AGENT_BROWSER_ALLOW_FILE_ACCESS` forms and file-access-enabling `--args` / `AGENT_BROWSER_ARGS` Chrome switches are rejected by this native wrapper. Local-browser spawns add canonical `--allow-file-access false`; routine HTTP(S) work relies on the protected empty config and cleared raw-args environment instead of sending an empty `--args` launch override. Local-file navigation is limited to wrapper-managed local browsers; caller-owned and attached browsers are blocked because their file-access launch provenance is unknown. A fixed non-empty `--args` value is added only when a wrapper user-agent compatibility session is launching or its daemon is proven inactive; active follow-ups omit it. Explicit validated safe CLI `--args` and `--user-agent` remain usable as launch-scoped input. Attached-session follow-ups omit launch-only defaults. Every spawn removes all caller occurrences before any canonical separated `--allow-file-access false` is added, so unsupported equals forms cannot preserve an earlier enabled flag and config cannot re-enable local filesystem access. Unknown top-level or batch tab/attachment/script/state-load transitions remain blocked for page inspection until `get url` or explicit safe navigation establishes the target. `tab list` and non-content `tab <id>` selection remain available while unknown, but selection stays unverified until `get url`; post-transition summaries (including after arbitrary `eval`) read the live URL before title and stop if the target is a local file page.
 - `--hide-scrollbars <bool>`: explicitly show or hide native scrollbars in headless Chromium screenshots.
 - `--headed`: ask upstream to show the browser window. Environment: `AGENT_BROWSER_HEADED`. Use it on the first launch, normally with `sessionMode: "fresh"` when changing an existing managed session; verify visibility with screenshot/tab evidence because the wrapper cannot yet prove the OS window is visible to the user.
@@ -992,8 +1003,8 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- Protected `.agent-browser` paths are rejected equally in CLI operands (including dash-prefixed values), raw Chrome args, and path-bearing environment mirrors, including `AGENT_BROWSER_STATE`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_EXECUTABLE_PATH`, `AGENT_BROWSER_EXTENSIONS`, `AGENT_BROWSER_INIT_SCRIPTS`, `AGENT_BROWSER_ACTION_POLICY`, download/screenshot directories, `AGENT_BROWSER_SKILLS_DIR`, and the wrapper socket directory.
-- If launch-scoped flags like `--profile`, `--args`, `--user-agent`, `--executable-path`, `--webgpu`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would replace or be ignored by an already-active managed session, retry with `sessionMode: "fresh"`. When the call explicitly names the current managed session, the structured recovery payload removes that `--session` so the fresh rotation can succeed.
+- Protected `.agent-browser` paths are rejected equally in CLI operands (including dash-prefixed values), raw Chrome args, and path-bearing environment mirrors, including `AGENT_BROWSER_STATE`, `AGENT_BROWSER_PROFILE`, `AGENT_BROWSER_CONFIG`, `AGENT_BROWSER_CA_CERT`, `AGENT_BROWSER_EXECUTABLE_PATH`, `AGENT_BROWSER_EXTENSIONS`, `AGENT_BROWSER_INIT_SCRIPTS`, `AGENT_BROWSER_ACTION_POLICY`, download/screenshot directories, `AGENT_BROWSER_SKILLS_DIR`, and the wrapper socket directory.
+- If launch-scoped flags like `--profile`, `--args`, `--user-agent`, `--executable-path`, `--ca-cert`, `--no-ca-cert`, `--webgpu`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would replace or be ignored by an already-active managed session, retry with `sessionMode: "fresh"`. When the call explicitly names the current managed session, the structured recovery payload removes that `--session` so the fresh rotation can succeed.
 - If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
@@ -1012,14 +1023,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.34.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.35.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `548b159b30eef119ccf6846c8bc807d0eaa3f6f8`
-- upstream package version: `0.34.0`
+- upstream HEAD: `585e740fcef069d74e21f0e88e8bf4ea7df34385`
+- upstream package version: `0.35.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1032,6 +1043,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `README.md`
 - inspected: `CHANGELOG.md`
 - inspected: `agent-browser.schema.json`
+- inspected: `cli/src/ca_bundle.rs`
 - inspected: `cli/src/commands.rs`
 - inspected: `cli/src/flags.rs`
 - inspected: `cli/src/read.rs`
@@ -1044,11 +1056,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/output.rs`
 - inspected: `docs/src/app/webgpu/page.mdx`
 - inspected: `docs/src/app/network/page.mdx`
+- inspected: `docs/src/app/proxy/page.mdx`
 - inspected: `docs/src/app/selectors/page.mdx`
 - inspected: `docs/src/app/skills/page.mdx`
 - inspected: `docs/src/app/commands/page.mdx`
 - inspected: `skill-data/derive-client/SKILL.md`
 - inspected: `skill-data/core/SKILL.md`
+- inspected: `skill-data/protected-vercel-deployments/SKILL.md`
 - inspected: `packages/@agent-browser/eve/README.md`
 - inspected: `packages/@agent-browser/eve/package.json`
 - inspected: `packages/@agent-browser/eve/test/extension.test.mjs`
@@ -1063,6 +1077,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills list: `agent-browser skills list`
 - core skill full: `agent-browser skills get core --full`
 - vercel sandbox skill full: `agent-browser skills get vercel-sandbox --full`
+- protected Vercel deployments skill full: `agent-browser skills get protected-vercel-deployments --full`
 - open help: `agent-browser open --help`
 - read help: `agent-browser read --help`
 - click help: `agent-browser click --help`
@@ -1116,12 +1131,12 @@ This generated block is review data for maintainers. The human-authored referenc
 - plugin help: `agent-browser plugin --help`
 
 #### Inventory sections
-- Built-in skills: 16 human-doc token(s), 18 upstream token(s)
+- Built-in skills: 17 human-doc token(s), 21 upstream token(s)
 - Core page, element, navigation, and extraction commands: 82 human-doc token(s), 84 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 28 human-doc token(s), 25 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 49 human-doc token(s), 60 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 33 human-doc token(s), 37 upstream token(s)
-- Global flags, config, providers, policy, and environment: 145 human-doc token(s), 113 upstream token(s)
+- Global flags, config, providers, policy, and environment: 149 human-doc token(s), 117 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1135,6 +1150,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get slack`
 - `skills get dogfood`
 - `skills get vercel-sandbox`
+- `skills get protected-vercel-deployments`
 - `skills get agentcore`
 - `skills get derive-client`
 - `@agent-browser/sandbox`
@@ -1391,6 +1407,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - `NO_PROXY`
 - `--ignore-https-errors`
 - `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`
+- `--ca-cert <path>`
+- `--no-ca-cert`
+- `AGENT_BROWSER_CA_CERT`
+- `AGENT_BROWSER_CLEAR_CA_CERT`
 - `--allow-file-access`
 - `AGENT_BROWSER_ALLOW_FILE_ACCESS`
 - `--hide-scrollbars <bool>`
@@ -1500,10 +1520,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills list: `slack`
 - skills list: `dogfood`
 - skills list: `vercel-sandbox`
+- skills list: `protected-vercel-deployments`
 - skills list: `agentcore`
 - skills list: `derive-client`
 - vercel sandbox skill full: `@agent-browser/sandbox`
 - vercel sandbox skill full: `installSystemDependencies: false`
+- protected Vercel deployments skill full: `x-vercel-trusted-oidc-idp-token`
+- protected Vercel deployments skill full: `vc project token`
 - core skill full: `agent-browser frame @e3`
 - core skill full: `agent-browser dialog accept`
 - core skill full: `agent-browser --session "$SESSION" --restore open https://app.example.com`
@@ -1772,6 +1795,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `NO_PROXY`
 - root help: `--ignore-https-errors`
 - root help: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`
+- root help: `--ca-cert <path>`
+- root help: `--no-ca-cert`
+- root help: `AGENT_BROWSER_CA_CERT`
+- root help: `AGENT_BROWSER_CLEAR_CA_CERT`
 - root help: `--allow-file-access`
 - root help: `AGENT_BROWSER_ALLOW_FILE_ACCESS`
 - root help: `--hide-scrollbars <bool>`

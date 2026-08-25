@@ -289,6 +289,7 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 		["skills", "get", "slack"],
 		["skills", "get", "dogfood"],
 		["skills", "get", "vercel-sandbox"],
+		["skills", "get", "protected-vercel-deployments"],
 		["skills", "get", "agentcore"],
 		["skills", "get", "derive-client"],
 	] as const;

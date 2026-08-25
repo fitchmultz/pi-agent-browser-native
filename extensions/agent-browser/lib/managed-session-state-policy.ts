@@ -31,9 +31,10 @@ const NESTED_BATCH_ARGUMENT_MESSAGE = "Nested batch commands are blocked by the 
 const NON_BAIL_BATCH_NAVIGATION_MESSAGE = "Batches that navigate before page-content access must use exact batch --bail so a failed navigation cannot expose the prior page.";
 const MAX_NON_BAIL_BATCH_PAGE_STATES = 64;
 const EXPLICIT_NAVIGATION_COMMANDS = new Set(["a11y", "goto", "navigate", "open", "pushstate", "visit", "vitals", "web-vitals"]);
-const FILE_PATH_GLOBAL_FLAGS = ["--action-policy", "--config", "--download-path", "--executable-path", "--extension", "--init-script", "--profile", "--screenshot-dir", "--state"] as const;
+const FILE_PATH_GLOBAL_FLAGS = ["--action-policy", "--ca-cert", "--config", "--download-path", "--executable-path", "--extension", "--init-script", "--profile", "--screenshot-dir", "--state"] as const;
 const FILE_PATH_ENV_VARIABLES = [
 	"AGENT_BROWSER_ACTION_POLICY",
+	"AGENT_BROWSER_CA_CERT",
 	"AGENT_BROWSER_CONFIG",
 	"AGENT_BROWSER_DOWNLOAD_PATH",
 	"AGENT_BROWSER_EXECUTABLE_PATH",

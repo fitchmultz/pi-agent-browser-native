@@ -5,6 +5,7 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 
 import {
+	SUPPORTED_AGENT_BROWSER_VERSIONS,
 	TARGET_AGENT_BROWSER_VERSION,
 	getAgentBrowserVersionValidationError,
 	parseAgentBrowserVersionOutput,
@@ -16,10 +17,12 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test("upstream version output requires the exact capability baseline", () => {
+test("upstream version output accepts the current and explicitly compatible baselines", () => {
 	assert.equal(parseAgentBrowserVersionOutput(`agent-browser ${TARGET_AGENT_BROWSER_VERSION}\n`), TARGET_AGENT_BROWSER_VERSION);
-	assert.equal(getAgentBrowserVersionValidationError(`agent-browser ${TARGET_AGENT_BROWSER_VERSION}\n`), undefined);
-	assert.ok((getAgentBrowserVersionValidationError("agent-browser 0.33.20\n") ?? "").includes(`does not match this extension's exact ${TARGET_AGENT_BROWSER_VERSION} capability baseline`));
+	for (const version of SUPPORTED_AGENT_BROWSER_VERSIONS) {
+		assert.equal(getAgentBrowserVersionValidationError(`agent-browser ${version}\n`), undefined);
+	}
+	assert.match(getAgentBrowserVersionValidationError("agent-browser 0.33.20\n") ?? "", /unsupported/);
 	assert.match(getAgentBrowserVersionValidationError("v0.33.2\n") ?? "", /unrecognized value/);
 });
 

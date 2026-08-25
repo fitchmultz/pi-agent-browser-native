@@ -13,6 +13,7 @@ export const GLOBAL_VALUE_FLAGS = [
 	"--restore-check-fn",
 	"--proxy",
 	"--proxy-bypass",
+	"--ca-cert",
 	"--headers",
 	"--executable-path",
 	"--extension",
@@ -93,6 +94,7 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"--ignore-https-errors",
 	"--json",
 	"--no-auto-dialog",
+	"--no-ca-cert",
 	"--no-pin-tab",
 	"--offline",
 	"--pin-tab",
@@ -180,7 +182,7 @@ export function isAgentBrowserSessionIdentityKeyInNamespace(identityKey: string,
 	return prefix ? identityKey.startsWith(prefix) : !identityKey.includes("\0");
 }
 
-/** Mirror upstream 0.34.0 global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
+/** Mirror upstream global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
 export function scanUpstreamGlobalFlagOccurrences(args: string[], targetFlag: string): UpstreamGlobalFlagOccurrence[] {
 	const occurrences: UpstreamGlobalFlagOccurrence[] = [];
 	for (let index = 0; index < args.length; index += 1) {
@@ -307,7 +309,7 @@ export function projectUpstreamGlobalFlags(args: readonly string[]): { indices: 
 	return { indices, tokens };
 }
 
-/** Mirror upstream 0.34.0 clean_args: remove global flags wherever they appear before command parsing. */
+/** Mirror upstream clean_args: remove global flags wherever they appear before command parsing. */
 export function stripUpstreamGlobalFlags(args: readonly string[]): string[] {
 	return projectUpstreamGlobalFlags(args).tokens;
 }
