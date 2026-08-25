@@ -41,8 +41,9 @@ import { isRecord } from "./lib/parsing.js";
 import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
 import {
+	SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
+	SUPPORTED_AGENT_BROWSER_VERSIONS,
 	TARGET_AGENT_BROWSER_VERSION,
-	TARGET_AGENT_BROWSER_VERSION_LABEL,
 	getAgentBrowserVersionValidationError,
 	parseAgentBrowserVersionOutput,
 } from "./lib/upstream-version.js";
@@ -1175,7 +1176,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				failureCategory: "validation-error",
 				observedVersion,
 				resultCategory: "failure",
-				versionValidation: { expected: TARGET_AGENT_BROWSER_VERSION_LABEL, observed: observedVersion },
+				supportedVersions: SUPPORTED_AGENT_BROWSER_VERSIONS,
+				versionValidation: { expected: SUPPORTED_AGENT_BROWSER_VERSION_LABEL, observed: observedVersion },
 			},
 			isError: true,
 		};

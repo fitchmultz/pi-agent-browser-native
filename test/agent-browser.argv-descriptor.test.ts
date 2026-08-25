@@ -60,4 +60,8 @@ test("parseCommandInfo skips optional boolean flag values before commands", () =
 		command: "open",
 		subcommand: "https://example.com",
 	});
+	assert.deepEqual(parseCommandInfo(["--ca-cert", "/tmp/proxy-ca.pem", "--no-ca-cert", "false", "open", "https://example.com"]), {
+		command: "open",
+		subcommand: "https://example.com",
+	});
 });

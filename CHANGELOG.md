@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.5.1 - 2026-08-25
+
+### Changed
+
+- Rebaselined the command/help inventory to `agent-browser` 0.35.0 while retaining verified runtime compatibility with 0.34.0. Browser-backed version checks and the package doctor now accept both versions; live command-reference verification continues to target the current 0.35.0 surface.
+- Added thin passthrough support and documentation for Linux Chromium private CA trust (`--ca-cert`, `--no-ca-cert`, `AGENT_BROWSER_CA_CERT`, `AGENT_BROWSER_CLEAR_CA_CERT`) and the bundled `protected-vercel-deployments` skill. CA-enabled managed sessions require a fresh launch, disable automatic managed restore, and cannot read certificate material from protected `.agent-browser` storage.
+
+### Validation
+
+- Passed the default gate against 0.35.0 (783 tests, two opt-in skips, build/typecheck/docs/live command reference), configured-source lifecycle, packaged-Pi smoke, deterministic dogfood, startup profile, Ubuntu platform build/browser smoke, interactive native-tool smoke, and the real-upstream contract against both 0.35.0 and 0.34.0 (2/2 each).
+- The full release composition remains blocked at its platform doctor because this host has macOS Remote Login disabled and no Parallels `prlctl`; the macOS SSH and native-Windows suites were not run.
+
 ## 0.5.0 - 2026-08-20
 
 ### Added

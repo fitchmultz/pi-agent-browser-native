@@ -1307,7 +1307,7 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 });
 
 test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
-	for (const args of [["--session"], ["--namespace"], ["--args", ""], ["--allowed-domains"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
+	for (const args of [["--session"], ["--namespace"], ["--args", ""], ["--allowed-domains"], ["--ca-cert"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: false,
@@ -1483,6 +1483,8 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		{ args: ["--restore-check-text", "Dashboard", "open", "https://example.com"], flag: "--restore-check-text" },
 		{ args: ["--restore-check-fn", "!!localStorage.length", "open", "https://example.com"], flag: "--restore-check-fn" },
 		{ args: ["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"], flag: "--cdp" },
+		{ args: ["--ca-cert", "/tmp/proxy-ca.pem", "open", "https://example.com"], flag: "--ca-cert" },
+		{ args: ["--no-ca-cert", "open", "https://example.com"], flag: "--no-ca-cert" },
 		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flag: "--state" },
 		{ args: ["--auto-connect", "open", "https://example.com"], flag: "--auto-connect" },
 		{ args: ["--auto-connect", "true", "open", "https://example.com"], flag: "--auto-connect" },

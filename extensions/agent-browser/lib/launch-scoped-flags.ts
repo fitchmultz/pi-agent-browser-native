@@ -24,6 +24,14 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "selects the browser/CDP endpoint used when an upstream session is launched",
 	},
 	{
+		flag: "--ca-cert",
+		reason: "selects isolated Chromium CA trust and may relaunch the browser",
+	},
+	{
+		flag: "--no-ca-cert",
+		reason: "clears retained isolated Chromium CA trust and may relaunch the browser",
+	},
+	{
 		flag: "--enable",
 		reason: "selects built-in page init scripts before the upstream browser session is launched",
 	},
@@ -129,6 +137,7 @@ export const MANAGED_RESTORE_INCOMPATIBLE_FLAGS = [
 	"--user-agent",
 	"--proxy",
 	"--proxy-bypass",
+	"--ca-cert",
 	"--ignore-https-errors",
 	"--allow-file-access",
 	"--webgpu",
@@ -158,6 +167,7 @@ export const MANAGED_RESTORE_INCOMPATIBLE_ENVS = [
 	"AGENT_BROWSER_USER_AGENT",
 	"AGENT_BROWSER_PROXY",
 	"AGENT_BROWSER_PROXY_BYPASS",
+	"AGENT_BROWSER_CA_CERT",
 	"AGENT_BROWSER_PLUGINS",
 	"AGENT_BROWSER_IOS_DEVICE",
 	"AGENT_BROWSER_IOS_UDID",

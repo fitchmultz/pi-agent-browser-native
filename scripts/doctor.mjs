@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { CAPABILITY_BASELINE_SOURCE } from "./agent-browser-capability-baseline.mjs";
-import { TARGET_AGENT_BROWSER_SOURCE, TARGET_AGENT_BROWSER_VERSION } from "./agent-browser-target.mjs";
+import { SUPPORTED_AGENT_BROWSER_VERSIONS, TARGET_AGENT_BROWSER_SOURCE, TARGET_AGENT_BROWSER_VERSION } from "./agent-browser-target.mjs";
 
 const execFile = promisify(execFileCallback);
 const PACKAGE_NAME = "pi-agent-browser-native";
@@ -70,7 +70,7 @@ Options:
 
 Checks:
   1. agent-browser is installed on PATH.
-  2. agent-browser --version matches the package target version.
+  2. agent-browser --version is supported by this package.
   3. pi --version is at least the minimum Pi runtime version for this release.
   4. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
 
@@ -341,17 +341,23 @@ async function checkAgentBrowserVersion({ runAgentBrowser }) {
 	try {
 		const rawOutput = await runAgentBrowser(["--version"]);
 		const version = normalizeAgentBrowserVersion(rawOutput);
-		if (version !== EXPECTED_VERSION) {
+		if (!SUPPORTED_AGENT_BROWSER_VERSIONS.includes(version)) {
 			return {
 				status: "fail",
-				title: `agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}.`,
+				title: `agent-browser version drift: supported ${SUPPORTED_AGENT_BROWSER_VERSIONS.join(", ")}; found ${version || "<empty>"}.`,
 				lines: [
-					`This wrapper targets the current version from ${TARGET_AGENT_BROWSER_SOURCE} and does not provide backwards-compatibility shims.`,
+					`This wrapper targets ${EXPECTED_VERSION} from ${TARGET_AGENT_BROWSER_SOURCE} and keeps only explicitly listed compatible runtimes.`,
 					`Update upstream agent-browser to ${EXPECTED_VERSION}, or if you intentionally re-baselined upstream, update ${TARGET_AGENT_BROWSER_SOURCE} plus ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, refresh docs/COMMAND_REFERENCE.md, and rerun \`npm run verify -- command-reference\` plus \`npm run verify -- real-upstream\` with test/fixtures/agent-browser-real-output-shapes.json aligned to the new target version.`,
 				],
 			};
 		}
-		return { status: "pass", title: `agent-browser version matches baseline: ${version}`, lines: [] };
+		return {
+			status: "pass",
+			title: version === EXPECTED_VERSION
+				? `agent-browser version matches baseline: ${version}`
+				: `agent-browser version is supported: ${version} (current baseline ${EXPECTED_VERSION})`,
+			lines: [],
+		};
 	} catch (error) {
 		const code = error && typeof error === "object" ? error.code : undefined;
 		return {
