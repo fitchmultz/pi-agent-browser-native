@@ -128,6 +128,7 @@ export interface SemanticActionVisibleRefResolution {
 export interface NavigationSummary {
 	title?: string;
 	url?: string;
+	urlChanged?: boolean;
 }
 
 export interface OverlayBlockerCandidate {

@@ -94,7 +94,7 @@ test("buildToolPresentation formats scalar extraction results for eval and get c
 
 test("buildToolPresentation compacts common action, wait, close, tab-close, and diagnostic reset results", async () => {
 	const cases: Array<{ commandInfo: { command: string; commandTokens?: string[]; subcommand?: string }; data: Record<string, unknown>; expected: string }> = [
-		{ commandInfo: { command: "fill" }, data: { filled: "#email", lifecycle: { reused: true } }, expected: "Filled: #email" },
+		{ commandInfo: { command: "fill" }, data: { filled: "#email", lifecycle: { reused: true } }, expected: "Filled: #email\n\nAction dispatched; application change unverified. Verify the expected URL, text, state, or external receipt before relying on it." },
 		{ commandInfo: { command: "wait" }, data: { selector: "#ready", waited: "selector", lifecycle: { reused: true } }, expected: "Wait completed: #ready" },
 		{ commandInfo: { command: "wait" }, data: { waited: "timeout", lifecycle: { reused: true } }, expected: "Fixed wait elapsed; no page condition was verified." },
 		{ commandInfo: { command: "close" }, data: { closed: true, lifecycle: { reused: false }, statePath: "/private/state" }, expected: "Browser session closed." },
@@ -107,6 +107,37 @@ test("buildToolPresentation compacts common action, wait, close, tab-close, and 
 		assert.equal((presentation.content[0] as { text: string }).text, expected);
 		assert.doesNotMatch((presentation.content[0] as { text: string }).text, /lifecycle|statePath|reused/);
 	}
+});
+
+test("buildToolPresentation makes unverified batch mutations prominent", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [
+				{ command: ["click", "@e1"], result: { clicked: "@e1" }, success: true },
+				{ command: ["wait", "1200"], result: { waited: "timeout" }, success: true },
+			],
+		},
+	});
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /^Mutation evidence: 1 action result proves dispatch only, not application state change\./);
+	assert.match(text, /fixed waits are not postconditions/);
+	assert.equal(presentation.pageChangeSummary?.observed, false);
+	assert.match(presentation.pageChangeSummary?.summary ?? "", /application change unverified/);
+});
+
+test("buildToolPresentation warns that keyboard inserttext may not update application state", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "keyboard", subcommand: "inserttext" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { inserted: true } },
+	});
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /keyboard inserttext skips key events/);
+	assert.match(text, /does not prove a framework-controlled editor accepted it/);
+	assert.match(text, /use keyboard type when real key events are required/);
 });
 
 test("artifact cleanup guidance ignores wrapper-managed spills", async () => {

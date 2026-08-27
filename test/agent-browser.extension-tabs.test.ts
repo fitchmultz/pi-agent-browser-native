@@ -320,7 +320,7 @@ if (args.includes("open")) {
 			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
 			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(click.isError, false, JSON.stringify(click));
-			assert.deepEqual(click.details?.navigationSummary, { title: "Docs", url: "https://example.com/docs" });
+			assert.deepEqual(click.details?.navigationSummary, { title: "Docs", url: "https://example.com/docs", urlChanged: true });
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations.map((entry) => entry.args.slice(-2).join(" ")), [

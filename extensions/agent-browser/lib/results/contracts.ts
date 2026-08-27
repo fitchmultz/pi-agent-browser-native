@@ -50,6 +50,7 @@ export interface AgentBrowserPageChangeSummary {
 	changeType: "artifact" | "confirmation" | "mutation" | "navigation";
 	command?: string;
 	nextActionIds?: string[];
+	observed: boolean;
 	savedFilePath?: string;
 	summary: string;
 	title?: string;

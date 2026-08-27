@@ -64,6 +64,11 @@ function shouldAddAnnotatedScreenshotGuidance(commandInfo: CommandInfo, args: st
 	return commandInfo.command === "screenshot" && (args?.includes("--annotate") ?? false);
 }
 
+function getKeyboardInsertTextWarning(commandInfo: CommandInfo): string | undefined {
+	if (commandInfo.command !== "keyboard" || commandInfo.subcommand !== "inserttext") return undefined;
+	return "Input dispatch warning: keyboard inserttext skips key events. A DOM value change does not prove a framework-controlled editor accepted it; verify application state before saving, or use keyboard type when real key events are required.";
+}
+
 export async function buildToolPresentation(options: {
 	artifactManifest?: SessionArtifactManifest;
 	artifactMaxUpdatedAtMs?: number;
@@ -161,6 +166,10 @@ export async function buildToolPresentation(options: {
 		const guidance = "Annotated screenshot note: dense pages can produce overlapping labels. If the labels are noisy, capture a scoped element screenshot, take a non-annotated screenshot, or use snapshot -i high-value refs as the machine-readable map.";
 		presentation.content[0] = { ...presentation.content[0], text: `${presentation.content[0].text}\n\n${guidance}` };
 	}
+	const keyboardInsertTextWarning = getKeyboardInsertTextWarning(commandInfoWithTokens);
+	if (keyboardInsertTextWarning && presentation.content[0]?.type === "text") {
+		presentation.content[0] = { ...presentation.content[0], text: `${presentation.content[0].text}\n\n${keyboardInsertTextWarning}` };
+	}
 
 	const imagePath = artifactRequest?.absolutePath ?? extractImagePath(commandInfo, cwd, data);
 	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
@@ -256,5 +265,8 @@ export async function buildToolPresentation(options: {
 		savedFilePath: presentationWithManifest.savedFilePath,
 		summary: presentationWithManifest.summary,
 	});
+	if (presentationWithManifest.pageChangeSummary?.observed === false && presentationCommandInfo.command !== "batch" && presentationWithManifest.content[0]?.type === "text") {
+		presentationWithManifest.content[0] = { ...presentationWithManifest.content[0], text: `${presentationWithManifest.content[0].text}\n\nAction dispatched; application change unverified. Verify the expected URL, text, state, or external receipt before relying on it.` };
+	}
 	return sanitizeModelFacingPresentation(presentationWithManifest);
 }

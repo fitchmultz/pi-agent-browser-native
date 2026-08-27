@@ -308,7 +308,8 @@ export function extractNavigationSummaryFromData(data: unknown): NavigationSumma
 	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
 	const title = extractStringResultField(result, "title");
 	const url = extractStringResultField(result, "url");
-	return title || url ? { title, url } : undefined;
+	const urlChanged = isRecord(result) && typeof result.urlChanged === "boolean" ? result.urlChanged : undefined;
+	return title || url ? { title, url, urlChanged } : undefined;
 }
 
 export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {

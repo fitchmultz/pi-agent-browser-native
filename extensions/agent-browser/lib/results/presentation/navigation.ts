@@ -1,4 +1,4 @@
-import { isNavigationObservableCommandName, isPageChangeSummaryCommand } from "../../command-taxonomy.js";
+import { isNavigationObservableCommandName, isOpenNavigationCommand, isPageChangeSummaryCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired } from "../confirmation.js";
@@ -10,6 +10,7 @@ const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
 interface NavigationSummary {
 	title?: string;
 	url?: string;
+	urlChanged?: boolean;
 }
 
 const GET_RESULT_FIELDS: Record<string, string> = {
@@ -106,10 +107,10 @@ function getTopLevelNavigationSummary(data: Record<string, unknown>): Navigation
 		: undefined;
 }
 
-function getNormalizedNavigationSummary(summary: NavigationSummary | undefined): { title?: string; url?: string } | undefined {
+function getNormalizedNavigationSummary(summary: NavigationSummary | undefined): NavigationSummary | undefined {
 	const title = typeof summary?.title === "string" && summary.title.trim().length > 0 ? summary.title.trim() : undefined;
 	const url = typeof summary?.url === "string" && summary.url.trim().length > 0 ? summary.url.trim() : undefined;
-	return title || url ? { title, url } : undefined;
+	return title || url ? { title, url, ...(typeof summary?.urlChanged === "boolean" ? { urlChanged: summary.urlChanged } : {}) } : undefined;
 }
 
 export function formatNavigationSummary(summary: NavigationSummary): string | undefined {
@@ -136,14 +137,16 @@ export function buildPageChangeSummary(options: {
 	if (!navigation && !confirmationRequired && artifactCount === 0 && !savedFilePath && !isPageChangeSummaryCommand(commandInfo.command)) {
 		return undefined;
 	}
+	const navigationObserved = navigation && (navigation.urlChanged === true || isOpenNavigationCommand(commandInfo.command) || ["back", "forward", "pushstate", "reload"].includes(commandInfo.command ?? ""));
 	const changeType: AgentBrowserPageChangeSummary["changeType"] = savedFilePath || artifactCount > 0
 		? "artifact"
-		: navigation
+		: navigationObserved
 			? "navigation"
 			: confirmationRequired
 				? "confirmation"
 				: "mutation";
-	const parts = [commandInfo.command ?? "agent-browser", changeType];
+	const observed = changeType !== "mutation";
+	const parts = [commandInfo.command ?? "agent-browser", observed ? changeType : "action dispatched"];
 	if (navigation?.title) parts.push(navigation.title);
 	if (navigation?.url) parts.push(navigation.url);
 	if (savedFilePath) parts.push(savedFilePath);
@@ -153,8 +156,9 @@ export function buildPageChangeSummary(options: {
 		changeType,
 		...(commandInfo.command ? { command: commandInfo.command } : {}),
 		...(nextActions ? { nextActionIds: nextActions.map((action) => action.id) } : {}),
+		observed,
 		...(savedFilePath ? { savedFilePath } : {}),
-		summary: parts.join(" → "),
+		summary: `${parts.join(" → ")}${observed ? "" : " → application change unverified"}`,
 		...(navigation?.title ? { title: navigation.title } : {}),
 		...(navigation?.url ? { url: navigation.url } : {}),
 	};

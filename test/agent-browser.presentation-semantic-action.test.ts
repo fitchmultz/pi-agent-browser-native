@@ -60,6 +60,7 @@ test("buildToolPresentation enriches semanticAction find click like direct click
 				navigationSummary: {
 					title: "Destination Docs",
 					url: "https://example.com/docs",
+					urlChanged: true,
 				},
 			},
 		},
@@ -89,6 +90,7 @@ test("buildToolPresentation preserves direct click presentation", async () => {
 				navigationSummary: {
 					title: "Destination Docs",
 					url: "https://example.com/docs",
+					urlChanged: true,
 				},
 			},
 		},

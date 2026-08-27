@@ -270,7 +270,8 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 				{ clickArgs: ["click", "@e8"], focusArgs: ["focus", "@e8"], ref: "@e8", role: "textbox" },
 				{ clickArgs: ["click", "@e13"], focusArgs: ["focus", "@e13"], ref: "@e13", role: "textbox" },
 			]);
-			assert.match(richInputRecovery?.inputMethodHint ?? "", /keyboard inserttext or keyboard type/);
+			assert.match(richInputRecovery?.inputMethodHint ?? "", /keyboard type when a framework-controlled editor requires real key events/);
+			assert.match(richInputRecovery?.inputMethodHint ?? "", /keyboard inserttext is paste-like/);
 			const nextActions = result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] }; reason?: string; safety?: string }> | undefined;
 			assert.deepEqual(nextActions?.map((action) => action.id), [
 				"refresh-interactive-refs",

@@ -177,6 +177,7 @@ test("buildToolPresentation enriches open results with a compact page-change sum
 	});
 
 	assert.equal(presentation.pageChangeSummary?.changeType, "navigation");
+	assert.equal(presentation.pageChangeSummary?.observed, true);
 	assert.equal(presentation.pageChangeSummary?.title, "Example Domain");
 	assert.equal(presentation.pageChangeSummary?.url, "https://example.com/");
 	assert.deepEqual(presentation.pageChangeSummary?.nextActionIds, ["inspect-opened-page"]);
@@ -195,8 +196,10 @@ test("buildToolPresentation treats upstream aliases as page-changing commands", 
 			changeType: "mutation",
 			command,
 			nextActionIds: ["inspect-after-mutation"],
-			summary: `${command} → mutation`,
+			observed: false,
+			summary: `${command} → action dispatched → application change unverified`,
 		}, command);
+		assert.match((presentation.content[0] as { text: string }).text, /Action dispatched; application change unverified/, command);
 	}
 });
 
@@ -212,6 +215,7 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 				navigationSummary: {
 					title: "Destination Docs",
 					url: "https://example.com/docs",
+					urlChanged: true,
 				},
 			},
 		},
@@ -229,6 +233,7 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 		changeType: "navigation",
 		command: "click",
 		nextActionIds: ["inspect-after-mutation"],
+		observed: true,
 		summary: "click → navigation → Destination Docs → https://example.com/docs",
 		title: "Destination Docs",
 		url: "https://example.com/docs",
@@ -454,7 +459,7 @@ test("buildToolPresentation keeps upstream lifecycle bookkeeping out of model-fa
 		envelope: { success: true, data: { lifecycle } },
 	});
 	assert.doesNotMatch(presentationText(scroll), /lifecycle/);
-	assert.equal(presentationText(scroll), "scroll completed");
+	assert.equal(presentationText(scroll), "scroll completed\n\nAction dispatched; application change unverified. Verify the expected URL, text, state, or external receipt before relying on it.");
 
 	const back = await buildToolPresentation({
 		commandInfo: { command: "back" },

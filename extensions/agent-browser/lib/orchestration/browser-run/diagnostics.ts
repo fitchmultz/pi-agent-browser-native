@@ -61,15 +61,16 @@ export async function collectNavigationSummary(options: {
 }): Promise<NavigationSummary | undefined> {
 	const url = extractStringResultField(await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }), "url");
 	if (!url || !/^[a-z][a-z0-9+.-]*:/i.test(url)) return undefined;
-	if (isFileUrl(url) || isAboutBlankUrl(url)) return { url };
+	const urlChanged = options.priorTarget?.url ? normalizeComparableUrl(options.priorTarget.url) !== normalizeComparableUrl(url) : undefined;
+	if (isFileUrl(url) || isAboutBlankUrl(url)) return { url, ...(urlChanged !== undefined ? { urlChanged } : {}) };
 	// Reuse the title already observed for this exact URL instead of spending a second probe. Titles can
 	// change without a URL change on SPAs, but this summary is only a "last observed" page label; the URL
 	// stays live-probed on every call.
 	if (options.priorTarget?.title && normalizeComparableUrl(options.priorTarget.url) === normalizeComparableUrl(url)) {
-		return { title: options.priorTarget.title, url };
+		return { title: options.priorTarget.title, url, urlChanged: false };
 	}
 	const title = extractStringResultField(await runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }), "title");
-	return { title, url };
+	return { title, url, ...(urlChanged !== undefined ? { urlChanged } : {}) };
 }
 
 function extractScrollPositionSnapshot(data: unknown): ScrollPositionSnapshot | undefined {

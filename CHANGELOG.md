@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Extended wrapper-side `snapshot -i --search` with bounded rendered-DOM evidence so visible below-fold warnings and accessible labels omitted from the accessibility snapshot remain discoverable without including hidden content.
+- Marked page-change summaries as observed or dispatch-only, promoted unverified batch mutation evidence ahead of step output, and clarified that fixed waits and URL patterns already matching the starting page are not postconditions.
+- Warned after `keyboard inserttext` that it skips real key events and can change a DOM value without updating framework state; rich-input guidance now prefers `keyboard type` when editors require key events.
+
 ## 0.5.3 - 2026-08-27
 
 ### Changed

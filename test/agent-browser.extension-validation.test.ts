@@ -841,6 +841,57 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	}
 });
 
+test("agentBrowserExtension surfaces rendered text missing from the accessibility snapshot", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-snapshot-rendered-search-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    origin: "https://app.example/settings",
+    refs: { e1: { role: "button", name: "Save" }, e2: { role: "button", name: "Add Channel" } },
+    snapshot: '- button "Save" [ref=e1]'
+  } }));
+  return;
+}
+if (args.includes("eval")) {
+  const source = fs.readFileSync(0, "utf8");
+  const result = source.includes("does not match")
+    ? { matches: [{ kind: "validation", offscreen: true, role: "alert", tagName: "div", text: "This destination does not match any configured notification channel." }], totalMatches: 1, truncated: false }
+    : { matches: [{ kind: "text", name: "Add Channel", offscreen: false, tagName: "button", text: "Add Channel" }], totalMatches: 1, truncated: false };
+  process.stdout.write(JSON.stringify({ success: true, data: { result } }));
+  return;
+}
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const warning = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i", "--search", "does not match"] });
+			assert.equal(warning.isError, false, JSON.stringify(warning));
+			assert.match(warning.content[0]?.text ?? "", /Rendered page text matches:/);
+			assert.match(warning.content[0]?.text ?? "", /does not match any configured notification channel/);
+			assert.match(warning.content[0]?.text ?? "", /validation, outside viewport, alert, div/);
+			const warningFilter = warning.details?.snapshotFilter as { matchedRefs?: number; renderedTextMatches?: Array<{ kind?: string; offscreen?: boolean }> } | undefined;
+			assert.equal(warningFilter?.matchedRefs, 0);
+			assert.deepEqual(warningFilter?.renderedTextMatches, [{ kind: "validation", offscreen: true, role: "alert", tagName: "div", text: "This destination does not match any configured notification channel." }]);
+
+			const label = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i", "--search", "Add Channel"] });
+			assert.equal(label.isError, false, JSON.stringify(label));
+			assert.match(label.content[0]?.text ?? "", /Add Channel.*button, @e2/);
+			const labelMatches = (label.details?.snapshotFilter as { renderedTextMatches?: Array<{ ref?: string }> } | undefined)?.renderedTextMatches;
+			assert.equal(labelMatches?.[0]?.ref, "e2");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension reports wrapper snapshot diffs against previous refs", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-snapshot-diff-"));
 	const logPath = join(tempDir, "invocations.log");

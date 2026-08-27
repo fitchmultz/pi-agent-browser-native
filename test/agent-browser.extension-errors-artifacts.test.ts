@@ -2311,7 +2311,9 @@ if (args.includes("open")) {
 			assert.equal(click.isError, false);
 			const text = click.content[0] as { text: string };
 			assert.match(text.text, /Possible overlay blockers:/);
+			assert.match(text.text, /Action dispatched; application change unverified/);
 			assert.match(text.text, /@e5 button "×"/);
+			assert.equal((click.details?.pageChangeSummary as { observed?: boolean } | undefined)?.observed, false);
 			assert.doesNotMatch(text.text, /Agent-browser candidate fallbacks:/);
 			const overlayBlockers = click.details?.overlayBlockers as { candidates?: Array<{ ref?: string; args?: string[] }> } | undefined;
 			assert.equal(overlayBlockers?.candidates?.[0]?.ref, "@e5");
