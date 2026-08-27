@@ -39,7 +39,7 @@ import {
 	formatNetworkRouteDiagnosticsText,
 	redactPresentationData,
 } from "./presentation/diagnostics.js";
-import { buildErrorPresentation } from "./presentation/errors.js";
+import { buildErrorPresentation, isOverlayBlockedClickError } from "./presentation/errors.js";
 import { compactLargePresentationOutput } from "./presentation/large-output.js";
 import { buildPageChangeSummary } from "./presentation/navigation.js";
 import { formatPresentationContentText, formatPresentationSummary } from "./presentation/registry.js";
@@ -106,7 +106,13 @@ export async function buildToolPresentation(options: {
 	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfoWithTokens, compiledSemanticAction);
 
 	if (errorText) {
-		return buildErrorPresentation({ args, commandInfo, errorText, sessionName });
+		return buildErrorPresentation({
+			args,
+			commandInfo,
+			errorText,
+			presentationCommand: presentationCommandInfo.command,
+			sessionName,
+		});
 	}
 
 	const data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
@@ -242,6 +248,7 @@ export async function buildToolPresentation(options: {
 		command: presentationCommandInfo.command,
 		confirmationId: confirmationRequired?.id,
 		failureCategory: presentationWithManifest.failureCategory,
+		overlayBlockedClick: isOverlayBlockedClickError(presentationCommandInfo.command, envelope?.success === false ? presentationWithManifest.summary : undefined),
 		resultCategory: presentationWithManifest.resultCategory ?? "success",
 		savedFilePath: presentationWithManifest.savedFilePath,
 		sessionName,

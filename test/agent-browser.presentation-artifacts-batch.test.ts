@@ -770,6 +770,27 @@ test("buildToolPresentation preserves partial batch results when a later step fa
 	assert.equal(presentation.pageChangeSummary?.command, "batch");
 });
 
+test("buildToolPresentation adds overlay inspection without blind click retry for covered batch steps", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			data: [
+				{ command: ["click", "@e1"], error: "Element '@e1' is covered by <div role=dialog> at its click point, so the input would land on that element instead.", success: false },
+			],
+			success: false,
+		},
+		namespace: "tenant",
+		sessionName: "work",
+	});
+
+	assert.equal(presentation.failureCategory, "upstream-error");
+	assert.deepEqual(presentation.batchFailure?.failedStep.nextActions?.map((action) => action.id), ["inspect-overlay-state"]);
+	assert.deepEqual(presentation.nextActions?.map((action) => action.id), ["inspect-overlay-state"]);
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--namespace", "tenant", "--session", "work", "snapshot", "-i"]);
+	assert.equal(presentation.nextActions?.some((action) => action.params?.args?.includes("click")), false);
+});
+
 test("buildToolPresentation adds snapshot recovery for wait text assertion failures inside batch", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "batch" },

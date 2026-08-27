@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Added session-aware `inspect-overlay-state` recovery for direct and batched clicks that upstream blocks because another element covers the target at its click point. These failures remain `upstream-error`; the wrapper refreshes refs for inspection without retrying the blocked click or guessing a dismiss control.
+
 ## 0.6.3 - 2026-09-01
 
 ### Added
