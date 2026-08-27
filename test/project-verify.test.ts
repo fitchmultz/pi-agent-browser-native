@@ -1,7 +1,7 @@
 /**
  * Purpose: Lock the maintainer npm verification facade so queue/release gates do not silently drop required checks.
- * Responsibilities: Assert `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, pre-pr, safe startup profiling, real-upstream, package Pi smoke, platform-target, and platform smoke steps wired to their focused scripts.
- * Scope: Unit coverage for scripts/project.mjs command planning only; the focused scripts own their own runtime behavior.
+ * Responsibilities: Assert lockfile URL hygiene and that `npm run verify` orchestration keeps docs drift, typecheck, unit/fake tests, command-reference, pre-pr, safe startup profiling, real-upstream, package Pi smoke, platform-target, and platform smoke steps wired to their focused scripts.
+ * Scope: Package-lock policy and unit coverage for scripts/project.mjs command planning; focused scripts own their own runtime behavior.
  * Usage: Runs under `npm test` via tsx's test runner.
  * Invariants/Assumptions: The default gate is local and deterministic except for live command-reference sampling; real-upstream and platform diagnostics stay explicit modes while release composes the required platform gate.
  */
@@ -22,6 +22,10 @@ const { docsSteps, hostToolPath, parseVerifyArgs, verifySteps } = projectModule;
 function labels(steps: Array<{ args: string[]; env?: Record<string, string> }>): string[] {
 	return steps.map((step) => step.args.join(" "));
 }
+
+test("package lock excludes WorkOS URLs", () => {
+	assert.doesNotMatch(readFileSync("package-lock.json", "utf8"), /(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s\"]*(?:workos|socket-firewall)/i);
+});
 
 test("typecheck gate covers shared JavaScript config policy implementation", () => {
 	const tsconfig = JSON.parse(readFileSync("tsconfig.json", "utf8")) as { compilerOptions?: { allowJs?: boolean; noUnusedLocals?: boolean }; include?: string[] };

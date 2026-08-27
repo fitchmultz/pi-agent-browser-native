@@ -3,7 +3,7 @@
  * Responsibilities: Execute upstream help commands, compare canonical command/option tokens against the local reference, and report actionable drift failures.
  * Scope: Documentation drift detection only; it does not validate browser runtime behavior or package contents.
  * Usage: Run with `node scripts/verify-command-reference.mjs`, `npm run verify -- command-reference`, or as part of `npm run verify`.
- * Invariants/Assumptions: This check targets the current agent-browser help surface declared in scripts/agent-browser-capability-baseline.mjs; runtime compatibility may include explicitly listed prior versions without shims.
+ * Invariants/Assumptions: This check targets the current recommended agent-browser help surface declared in scripts/agent-browser-capability-baseline.mjs; runtime compatibility accepts stable versions at or above the configured floor without shims.
  * Related: `docs/SUPPORT_MATRIX.md` records how this live help and human-token check fits into the default and command-reference verification gates.
  */
 

@@ -41,8 +41,8 @@ import { isRecord } from "./lib/parsing.js";
 import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
 import {
+	MINIMUM_AGENT_BROWSER_VERSION,
 	SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
-	SUPPORTED_AGENT_BROWSER_VERSIONS,
 	TARGET_AGENT_BROWSER_VERSION,
 	getAgentBrowserVersionValidationError,
 	parseAgentBrowserVersionOutput,
@@ -1176,7 +1176,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				failureCategory: "validation-error",
 				observedVersion,
 				resultCategory: "failure",
-				supportedVersions: SUPPORTED_AGENT_BROWSER_VERSIONS,
+				minimumSupportedVersion: MINIMUM_AGENT_BROWSER_VERSION,
 				versionValidation: { expected: SUPPORTED_AGENT_BROWSER_VERSION_LABEL, observed: observedVersion },
 			},
 			isError: true,
@@ -1577,10 +1577,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const versionCheckCommand = extractUpstreamCommandTokens(resolvedInput.toolArgs)[0];
 			const electronHostOnlyAction = resolvedInput.kind === "electron" && ["cleanup", "list", "status"].includes(resolvedInput.compiledElectron.action);
 			const browserBackedVersionCheck = needsManagedSession(parseArgvDescriptor(resolvedInput.toolArgs));
-			if (!electronHostOnlyAction && browserBackedVersionCheck && !isPlainTextInspectionArgs(resolvedInput.toolArgs) && !isCloseCommand(versionCheckCommand) && signal?.aborted !== true) {
-				const versionFailure = resolvedInput.kind === "script"
-					? await withIsolatedAgentBrowserEnvironment(() => validateUpstreamVersion(ctx.cwd, signal))
-					: await validateUpstreamVersion(ctx.cwd, signal);
+			if (resolvedInput.kind !== "script" && !electronHostOnlyAction && browserBackedVersionCheck && !isPlainTextInspectionArgs(resolvedInput.toolArgs) && !isCloseCommand(versionCheckCommand) && signal?.aborted !== true) {
+				const versionFailure = await validateUpstreamVersion(ctx.cwd, signal);
 				if (versionFailure) return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: versionFailure });
 			}
 			if (resolvedInput.kind === "script") {
@@ -1620,6 +1618,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				});
 				activeScriptExecutions.add(scriptExecution);
 				try {
+					// Keep preflight inside shutdown tracking so quit cannot race into starting the sandbox afterward.
+					const versionFailure = await withIsolatedAgentBrowserEnvironment(() => validateUpstreamVersion(ctx.cwd, scriptController.signal));
+					if (versionFailure) return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: versionFailure });
 					const pendingRun = runAgentBrowserScript({
 						beforeFirstCall() {
 							appendScriptSessionLease(pi, sessionName, "active");

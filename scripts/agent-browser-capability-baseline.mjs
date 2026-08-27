@@ -3,7 +3,7 @@
  * Responsibilities: Combine the canonical target from agent-browser-target.mjs with sampled help commands and verifier/doc token expectations.
  * Scope: Versioned capability metadata only; it does not execute agent-browser or validate documentation by itself.
  * Usage: Imported by command-reference verifier, generated docs checker, and tests when upstream agent-browser is re-baselined; runtime imports only agent-browser-target.mjs.
- * Invariants/Assumptions: This package targets the current installed upstream agent-browser only and does not keep compatibility shims for older versions.
+ * Invariants/Assumptions: This package documents the current recommended upstream release, accepts stable runtimes at or above the configured floor, and does not add version-specific compatibility shims.
  * Related: `docs/SUPPORT_MATRIX.md` maps `CAPABILITY_BASELINE.inventorySections` to human docs, runtime behavior, tests, and verification gates; refresh that matrix whenever this baseline changes.
  */
 
@@ -16,8 +16,8 @@ export const COMMAND_REFERENCE_BASELINE_BLOCK_IDS = Object.freeze(["upstream-bas
 
 const sourceEvidence = Object.freeze({
   repository: "vercel-labs/agent-browser",
-  upstreamHead: "585e740fcef069d74e21f0e88e8bf4ea7df34385",
-  upstreamPackageVersion: "0.35.0",
+  upstreamHead: "fbd046c23a2c1156891bda294aaaee715c23b3f1",
+  upstreamPackageVersion: "0.35.1",
   inspectedSources: Object.freeze([
     "agent-browser --version",
     "agent-browser --help",
@@ -31,6 +31,7 @@ const sourceEvidence = Object.freeze({
     "README.md",
     "CHANGELOG.md",
     "agent-browser.schema.json",
+    "bin/agent-browser.js",
     "cli/src/ca_bundle.rs",
     "cli/src/commands.rs",
     "cli/src/flags.rs",
@@ -41,6 +42,8 @@ const sourceEvidence = Object.freeze({
     "cli/src/native/browser.rs",
     "cli/src/native/tab_binding.rs",
     "cli/src/native/daemon.rs",
+    "cli/src/native/element.rs",
+    "cli/src/native/stream/cdp_loop.rs",
     "cli/src/output.rs",
     "docs/src/app/webgpu/page.mdx",
     "docs/src/app/network/page.mdx",
@@ -51,6 +54,7 @@ const sourceEvidence = Object.freeze({
     "skill-data/derive-client/SKILL.md",
     "skill-data/core/SKILL.md",
     "skill-data/protected-vercel-deployments/SKILL.md",
+    "test/launcher.test.mjs",
     "packages/@agent-browser/eve/README.md",
     "packages/@agent-browser/eve/package.json",
     "packages/@agent-browser/eve/test/extension.test.mjs",

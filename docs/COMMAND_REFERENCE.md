@@ -18,15 +18,24 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.35.0` command/help surface, audited against vercel-labs/agent-browser@585e740fcef069d74e21f0e88e8bf4ea7df34385. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.35.1` command/help surface, audited against vercel-labs/agent-browser@fbd046c23a2c1156891bda294aaaee715c23b3f1. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.35.1 rebaseline
+
+The recommended 0.35.1 baseline is a bug-fix release with no new commands or flags. Browser-backed calls accept stable `agent-browser` versions at or above the 0.35.0 floor; command/help verification targets 0.35.1.
+
+- Snapshot diffs reset element-ref numbering for each diff, invalidate refs across URL navigation, and preserve previous refs when a diff fails.
+- Stream URL events now follow the active main frame across full-document, History API, fragment, and active-tab changes while ignoring child frames and background tabs.
+- The Windows ARM64 launcher prefers a native executable and falls back to the published x64 binary through Windows emulation.
+- `rustls-webpki` and `quinn-proto` received upstream dependency updates.
+
 ### Upstream 0.35.0 rebaseline
 
-The 0.35.0 baseline adds private proxy CA trust and one bundled workflow skill. Browser-backed calls accept `agent-browser 0.35.0` and the verified-compatible 0.34.0 runtime; the command/help baseline and new features target 0.35.0.
+The 0.35.0 release is the current runtime floor and adds private proxy CA trust plus one bundled workflow skill.
 
 - `--ca-cert <path>` / `AGENT_BROWSER_CA_CERT` loads a PEM bundle or DER certificate into an isolated NSS trust store for locally launched Linux Chromium. Normal hostname, validity, and unrelated-authority checks remain enabled. Equivalent certificate content reuses Chromium; changed content relaunches it. `--no-ca-cert` / `AGENT_BROWSER_CLEAR_CA_CERT` clears retained trust.
 - Use CA trust only with a fresh managed session. The wrapper treats `--ca-cert` and `--no-ca-cert` as launch-scoped for managed-session planning, disables automatic managed restore when CA trust is enabled, and rejects protected `.agent-browser` paths from the flag or environment. Upstream rejects CA trust with profiles, CDP/auto-connect, providers, Lightpanda, `--ignore-https-errors`, macOS, or Windows, and requires `certutil` (`install --with-deps` installs it on supported Linux systems).
@@ -35,7 +44,7 @@ The 0.35.0 baseline adds private proxy CA trust and one bundled workflow skill. 
 
 ### Upstream 0.34.0 rebaseline
 
-The 0.34.0 release adds persistent session-to-tab binding for shared Chrome sessions. It remains supported alongside the current 0.35.0 baseline: before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails unsupported versions with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
+The 0.34.0 release added persistent session-to-tab binding for shared Chrome sessions. It is below the current 0.35.0 runtime floor: before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails below-floor or malformed versions with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
 
 - Named sessions on `--cdp` or `--auto-connect` remember their CDP target across commands and daemon restarts. CDP target ids from `tab list --json` are accepted as tab refs and stay stable across daemon restarts, unlike `t<N>` ids.
 - `--pin-tab` (`AGENT_BROWSER_PIN_TAB`) is sticky per session and is not launch-scoped: pass it once, including on an already-live session, so a closed bound tab fails with `tab_gone` instead of adopting a neighbor. JSON includes `code=tab_gone`, `data.targetId`, and optional sanitized `data.lastUrl`; batch exposes the same recovery object under `result`. Recover with `tab new` or `tab list`. `--no-pin-tab` turns the pin off again. Optional booleans use separated tokens (`--pin-tab false`).
@@ -1023,14 +1032,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.35.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.35.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `585e740fcef069d74e21f0e88e8bf4ea7df34385`
-- upstream package version: `0.35.0`
+- upstream HEAD: `fbd046c23a2c1156891bda294aaaee715c23b3f1`
+- upstream package version: `0.35.1`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1043,6 +1052,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `README.md`
 - inspected: `CHANGELOG.md`
 - inspected: `agent-browser.schema.json`
+- inspected: `bin/agent-browser.js`
 - inspected: `cli/src/ca_bundle.rs`
 - inspected: `cli/src/commands.rs`
 - inspected: `cli/src/flags.rs`
@@ -1053,6 +1063,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/browser.rs`
 - inspected: `cli/src/native/tab_binding.rs`
 - inspected: `cli/src/native/daemon.rs`
+- inspected: `cli/src/native/element.rs`
+- inspected: `cli/src/native/stream/cdp_loop.rs`
 - inspected: `cli/src/output.rs`
 - inspected: `docs/src/app/webgpu/page.mdx`
 - inspected: `docs/src/app/network/page.mdx`
@@ -1063,6 +1075,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `skill-data/derive-client/SKILL.md`
 - inspected: `skill-data/core/SKILL.md`
 - inspected: `skill-data/protected-vercel-deployments/SKILL.md`
+- inspected: `test/launcher.test.mjs`
 - inspected: `packages/@agent-browser/eve/README.md`
 - inspected: `packages/@agent-browser/eve/package.json`
 - inspected: `packages/@agent-browser/eve/test/extension.test.mjs`
