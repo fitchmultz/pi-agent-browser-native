@@ -665,13 +665,12 @@ export function createAgentBrowserWebSearchTool(
 	return {
 		name: AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
 		label: "Agent Browser Web Search",
-		description: `Search the web with Exa or Brave when configured. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
+		description: `Search the live web with Exa or Brave for current or external information. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
 		promptSnippet: "Search the live web with Exa or Brave for current or external information.",
 		promptGuidelines: [
 			WEB_SEARCH_PROMPT_GUIDELINE,
 			"agent_browser_web_search chooses Exa or Brave from configured keys; when both are available, Exa is preferred by default unless webSearch.preferredProvider says otherwise. Use provider only when the user/config calls for a specific provider.",
-			"Prefer agent_browser_web_search over opening or typing into public search engine result pages with agent_browser when a quick result list is enough; browser-automated search forms are often anti-bot/CAPTCHA-gated, and this tool is the fallback for discovery rather than a CAPTCHA bypass.",
-			"Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect the results, then only run a focused follow-up if needed. If the provider returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
+			"If agent_browser_web_search returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
 			"After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
 		],
 		parameters: AgentBrowserWebSearchParams,

@@ -83,7 +83,7 @@ test("does not register agent_browser_web_search without env or config credentia
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: undefined, [EXA_API_KEY_ENV]: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
-		assert.ok(harness.getTool("agent_browser"));
+		assert.equal(harness.getTool("agent_browser")?.promptGuidelines.includes("Use agent_browser for real browser or live web content."), true);
 	});
 });
 
@@ -210,7 +210,9 @@ test("registers agent_browser_web_search with env fallback and rate-limit guidan
 		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 		assert.ok(tool);
 		assert.ok(harness.getTool("agent_browser"));
-		assert.match(tool.promptGuidelines.join("\n"), /Do not issue parallel or repeated agent_browser_web_search calls/);
+		assert.match(tool.promptGuidelines.join("\n"), /Prefer agent_browser_web_search for current or external web facts/);
+		assert.doesNotMatch(tool.promptGuidelines.join("\n"), /one query, one follow-up max/);
+		assert.doesNotMatch(tool.promptGuidelines.join("\n"), /Do not issue parallel or repeated agent_browser_web_search calls/);
 		assert.match(tool.promptGuidelines.join("\n"), /HTTP 429/);
 	});
 });

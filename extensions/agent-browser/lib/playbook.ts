@@ -26,14 +26,14 @@ export const QUICK_START_GUIDELINES = [
 ] as const;
 
 export const WEB_SEARCH_PROMPT_GUIDELINE =
-	"Use agent_browser_web_search for quick live search/URL discovery; prefer it over public search-engine forms that can hit anti-bot/CAPTCHA-gated pages. Use agent_browser after you have a target URL; one query, one follow-up max; stop on HTTP 429.";
+	"Prefer agent_browser_web_search for current or external web facts and URL discovery over public search-engine forms that can hit anti-bot/CAPTCHA-gated pages. Use agent_browser after you have a target URL that needs interaction, screenshots, or DOM inspection.";
 
 
 export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"Use top-level script only for one-shot loops, conditional page branches, or multi-page aggregation that would otherwise require several calls: await browser({ args, stdin?, timeoutMs? }), branch on its ok field, and emit one bounded JSON value. Script gets an isolated non-profile browser session that is always closed, cannot use caller session/namespace/lifecycle/attachment controls, inherited agent-browser launch/proxy settings, or host APIs, and is not a reusable named recipe. One top-level approval can authorize up to 25 inner calls, so inspect the full source before approval. Use args/job/qa for ordinary linear flows.",
 	"Standard workflow: open the page, snapshot -i, interact using current @refs from that snapshot, and re-snapshot after navigation, scrolling, rerendering, or other major DOM changes because refs are page-scoped; the wrapper fails mutation-prone stale/recycled refs before upstream can silently target a different current-page element. On dense pages, use wrapper-side snapshot -i --search <text> or snapshot -i --filter role=<role> to render matching refs while preserving the full ref map in details.refSnapshot, add snapshot --viewport when scroll position or above/below-fold context matters, and add snapshot --diff when a quick before/after ref-map delta would prevent reading a full spill file.",
 	"For ordinary forms from one snapshot, batch multiple fill @refs before the submit/click step to avoid serial tool calls; if a fill may autosubmit, navigate, or rerender later fields, split the flow and refresh refs first.",
-	"Do not use browser automation to drive public search-engine forms such as Google for discovery; headless jobs that type a query and press Enter can be redirected to anti-bot or CAPTCHA pages. Use agent_browser_web_search when configured, ask for/search from a direct target URL, or navigate to known result URLs. Do not attempt CAPTCHA bypass.",
+	"Do not use browser automation to drive public search-engine forms such as Google for discovery; headless jobs that type a query and press Enter can be redirected to anti-bot or CAPTCHA pages. Prefer agent_browser_web_search for live discovery, then agent_browser on a target URL. Do not attempt CAPTCHA bypass.",
 	"Snapshot choice: prefer snapshot -i for routine clicks/fills (interactive @refs, main-content-first). Use snapshot --compact when you need a denser same-page tree without full spill; use full snapshot (no -i) only when you need the complete accessibility tree. Re-snapshot after navigation or major DOM changes. When snapshot -i compacts because the tree is oversized, scan visible output for Omitted high-value controls and optional details.data.highValueControlRefIds before opening the spill file: those list bounded searchboxes, textboxes, comboboxes, buttons, named action links, tabs, checkboxes, radios, options, and menuitems that did not fit the key/other ref previews.",
 	"When a visible text or accessible-name target should survive ref churn, prefer find locators such as role, text, label, placeholder, alt, title, or testid with the intended action instead of guessing a CSS selector.",
 	"For desktop or host-controlled rich inputs, if semanticAction fill misses, refresh refs and prefer a current editable @ref from details.richInputRecovery or the latest snapshot; focus or click that ref, then use keyboard inserttext or keyboard type with the intended text. Do not auto-submit with Enter or a submit button unless the user flow explicitly calls for it.",
@@ -97,7 +97,7 @@ export const RUNTIME_PROMPT_GUIDELINES = [
 	"For agent_browser, use open → snapshot -i → @refs; re-snapshot after changes. In authenticated unattended/auto-approved employee flows, ordinary requested non-destructive submissions may proceed. Honor explicit stops; require explicit authorization for purchases, production-control, destructive/irreversible, or account/security/privacy changes.",
 	"Use agent_browser sessionMode=fresh for launch flags. Use requested/configured profiles only; run profiles/doctor on failure. --allowed-domains cannot restore; macOS profile copies may omit encrypted cookies. Verify auth; use a user-approved headed login if needed. Profile content is model-visible.",
 	"agent_browser: exact user paths; verify artifactVerification/artifacts before success claims. Save promptGuard-required files before close; record stop needs ffmpeg; close keeps files; waited:timeout proves nothing.",
-	"When agent_browser details.nextActions exists, use exact payloads. Check Omitted high-value controls in dense snapshots. Dashboards: verify scroll with screenshot/snapshot.",
+	"When agent_browser details.nextActions exists, use them. Check Omitted high-value controls in dense snapshots. Dashboards: verify scroll via screenshot/snapshot.",
 	"agent_browser: read <url> for docs/text or active DOM; get title/url; get text/html/value/count <selector>; get attr <selector> <name>. Batch 3+ getters; heed visibility warnings.",
 ] as const;
 
@@ -123,7 +123,7 @@ export function buildToolPromptGuidelines(options: {
 	const browserDefaultProfileGuideline = buildBrowserDefaultProfileGuideline(options.browserDefaultProfile);
 	const browserExecutablePathGuideline = buildBrowserExecutablePathGuideline(options.browserExecutablePath);
 	return [
-		...TOOL_PROMPT_GUIDELINES_PREFIX,
+		...(options.includeWebSearch ? ["Prefer agent_browser_web_search for facts; agent_browser for pages."] : TOOL_PROMPT_GUIDELINES_PREFIX),
 		...(options.docs ? [buildInstalledDocsGuideline(options.docs)] : []),
 		...RUNTIME_PROMPT_GUIDELINES,
 		...(browserExecutablePathGuideline ? [browserExecutablePathGuideline] : []),

@@ -28,7 +28,6 @@ import {
 	RUNTIME_PROMPT_GUIDELINES,
 	buildInstalledDocsGuideline,
 	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-	TOOL_PROMPT_GUIDELINES_PREFIX,
 	TOOL_PROMPT_GUIDELINES_SUFFIX,
 	WRAPPER_TAB_RECOVERY_BEHAVIOR,
 } from "../extensions/agent-browser/lib/playbook.js";
@@ -84,8 +83,8 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		const webSearchTool = harness.getTool("agent_browser_web_search");
 		assert.ok(webSearchTool, "web search tool should register from BRAVE_API_KEY");
 		assert.equal(webSearchTool.promptGuidelines.includes(WEB_SEARCH_PROMPT_GUIDELINE), true);
+		assert.equal(harness.tool.promptGuidelines.includes("Prefer agent_browser_web_search for facts; agent_browser for pages."), true);
 		const requiredGuidelines = [
-			...TOOL_PROMPT_GUIDELINES_PREFIX,
 			docsGuideline,
 			...RUNTIME_PROMPT_GUIDELINES,
 			TOOL_PROMPT_GUIDELINES_SUFFIX[0],
