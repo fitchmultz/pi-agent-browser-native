@@ -25,6 +25,7 @@ import { buildProcessStartIdentityCommand, buildProcessStartIdentityCommands, no
 import {
 	buildAgentBrowserProcessEnv,
 	buildAgentBrowserSpawnCommand,
+	extractWindowsCmdShimExe,
 	ensureAgentBrowserSocketDir,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
@@ -226,15 +227,45 @@ process.stdout.write(JSON.stringify({ success: true, data: { allowFileAccessEnv:
 });
 
 
-test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
+test("buildAgentBrowserSpawnCommand prefers the native Windows binary and passes argv verbatim", () => {
+	const nativeArgs = ["--json", "--namespace", "", "--session", "managed", "session", "info"];
 	assert.deepEqual(
-		buildAgentBrowserSpawnCommand(["--json", "--session", "managed", "open", "https://example.com"], "win32"),
+		buildAgentBrowserSpawnCommand(nativeArgs, "win32", { resolveWindowsNativeBinary: () => "C:\\fake-dir\\agent-browser-win32-x64.exe" }),
+		{ command: "C:\\fake-dir\\agent-browser-win32-x64.exe", args: nativeArgs },
+	);
+	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
+});
+
+test("buildAgentBrowserSpawnCommand keeps the empty namespace through the native Windows binary", () => {
+	// Regression: PowerShell -> .cmd re-quoting drops the empty `--namespace ""`
+	// operand and shifts `--session`'s value into the command position, so every
+	// wrapper-owned probe and navigation on Windows failed. A direct native spawn
+	// must preserve every operand, including empty strings, in argv position.
+	const nativeArgs = ["--json", "--namespace", "", "--session", "managed", "session", "info"];
+	assert.deepEqual(
+		buildAgentBrowserSpawnCommand(nativeArgs, "win32", { resolveWindowsNativeBinary: () => "C:\\fake-dir\\agent-browser-win32-x64.exe" }).args,
+		nativeArgs,
+	);
+});
+
+test("buildAgentBrowserSpawnCommand falls back to the npm cmd shim via PowerShell when the native binary is unresolvable", () => {
+	assert.deepEqual(
+		buildAgentBrowserSpawnCommand(["--json", "--session", "managed", "open", "https://example.com"], "win32", { resolveWindowsNativeBinary: () => undefined }),
 		{
 			command: "powershell.exe",
 			args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue; if (-not $agentBrowser) { [Console]::Error.WriteLine('PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd'); exit 127 }; & $agentBrowser.Source 'open' '--json' '--session' 'managed' 'https://example.com'"],
 		},
 	);
-	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
+});
+
+test("extractWindowsCmdShimExe resolves the quoted native binary target from an npm cmd shim", { skip: process.platform !== "win32" }, () => {
+	const shimDir = "C:\\Users\\test\\npm";
+	assert.equal(
+		extractWindowsCmdShimExe('@ECHO off\n"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe" %*', shimDir, "agent-browser-win32-x64.exe"),
+		"C:\\Users\\test\\npm\\node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe",
+	);
+	assert.equal(extractWindowsCmdShimExe('@ECHO off\n"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe" %*', shimDir, "agent-browser-win32-arm64.exe"), undefined);
+	assert.equal(extractWindowsCmdShimExe("echo not a shim", shimDir, "agent-browser-win32-x64.exe"), undefined);
 });
 
 test("process start identity commands use absolute POSIX fallbacks and native PowerShell on Windows", async () => {

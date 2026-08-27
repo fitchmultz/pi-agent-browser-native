@@ -1,10 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 import { lstat, mkdir, readdir } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { parseArgvDescriptor } from "./argv-descriptor.js";
+import { resolveExecutableOnPathSync } from "./executable-path.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isKnownCommandToken } from "./command-taxonomy.js";
 import {
@@ -176,9 +178,71 @@ export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompati
 	return [...browserArgs, "--allow-file-access", "false", ...filtered];
 }
 
-export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
+/**
+ * Resolves the native agent-browser Windows binary, scoped to the PATH the
+ * spawned subprocess itself will run with (`pathEnv`) rather than the wrapper's
+ * own process PATH, so environment overrides and test harnesses that prepend a
+ * fake shim are honored.
+ */
+function resolveWindowsAgentBrowserNativeExecutable(pathEnv: string | undefined): string | undefined {
+	const binaryName = `agent-browser-${processPlatform}-${process.arch}.exe`;
+	if (!/^agent-browser-win32-(x64|arm64)\.exe$/i.test(binaryName)) return undefined;
+	const shimPath = resolveExecutableOnPathSync("agent-browser", pathEnv);
+	if (!shimPath) return undefined;
+	const shimDir = dirname(shimPath);
+	if (/\.cmd$/i.test(shimPath)) {
+		try {
+			const nativePath = extractWindowsCmdShimExe(readFileSync(shimPath, "utf8"), shimDir, binaryName);
+			if (nativePath) return nativePath;
+		} catch {
+			// Fall through to the derived npm layout below.
+		}
+	}
+	// Standard npm global layout: the shim lives in the npm bin dir and the native
+	// binary sits in its package next door.
+	const derived = join(shimDir, "node_modules", "agent-browser", "bin", binaryName);
+	try {
+		return statSync(derived).isFile() ? derived : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** Pull the quoted native `.exe` target out of an npm-generated `agent-browser.cmd` shim. */
+export function extractWindowsCmdShimExe(shimText: string, shimDir: string, expectedBinaryName: string): string | undefined {
+	for (const line of shimText.split(/\r?\n/)) {
+		const match = /"([^"]+\.exe)"/i.exec(line);
+		if (!match) continue;
+		let raw = match[1] as string;
+		if (raw.startsWith("%~dp0")) raw = join(shimDir, raw.slice("%~dp0".length));
+		else if (!isAbsolute(raw)) raw = join(shimDir, raw);
+		if (isAbsolute(raw) && basename(raw).toLowerCase() === expectedBinaryName.toLowerCase()) return raw;
+	}
+	return undefined;
+}
+
+export interface WindowsNativeSpawnOptions {
+	/** PATH the spawned subprocess will run with. Native Windows binary resolution scopes to it. */
+	path?: string;
+	/** Test seam: override native Windows binary resolution (keyed by the effective PATH). */
+	resolveWindowsNativeBinary?: (pathEnv: string | undefined) => string | undefined;
+}
+
+export function buildAgentBrowserSpawnCommand(
+	args: string[],
+	platform: NodeJS.Platform = processPlatform,
+	options: WindowsNativeSpawnOptions = {},
+): { command: string; args: string[] } {
 	if (platform !== "win32") {
 		return { command: "agent-browser", args };
+	}
+	const pathEnv = options.path ?? process.env.PATH;
+	const nativeBinary = (options.resolveWindowsNativeBinary ?? resolveWindowsAgentBrowserNativeExecutable)(pathEnv);
+	if (nativeBinary) {
+		// Direct native spawn preserves empty argv values (e.g. `--namespace ""`),
+		// which the PowerShell -> .cmd shim route drops and thereby shifts every
+		// following argument. Pass argv through untouched.
+		return { command: nativeBinary, args };
 	}
 	const invocationArgs = reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg).join(" ");
 	const commandLine = [
@@ -726,7 +790,7 @@ export async function runAgentBrowserProcess(options: {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;
 		}
-		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession));
+		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession), processPlatform, { path: childEnv.PATH });
 		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
 			env: childEnv,
