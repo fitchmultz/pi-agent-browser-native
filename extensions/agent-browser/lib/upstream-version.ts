@@ -1,15 +1,19 @@
 import {
+	MINIMUM_AGENT_BROWSER_VERSION,
+	MINIMUM_AGENT_BROWSER_VERSION_LABEL,
 	SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
-	SUPPORTED_AGENT_BROWSER_VERSIONS,
 	TARGET_AGENT_BROWSER_VERSION,
 	TARGET_AGENT_BROWSER_VERSION_LABEL,
+	isSupportedAgentBrowserVersion,
 } from "../../../scripts/agent-browser-target.mjs";
 
 export {
+	MINIMUM_AGENT_BROWSER_VERSION,
+	MINIMUM_AGENT_BROWSER_VERSION_LABEL,
 	SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
-	SUPPORTED_AGENT_BROWSER_VERSIONS,
 	TARGET_AGENT_BROWSER_VERSION,
 	TARGET_AGENT_BROWSER_VERSION_LABEL,
+	isSupportedAgentBrowserVersion,
 };
 
 export function parseAgentBrowserVersionOutput(stdout: string): string | undefined {
@@ -19,8 +23,8 @@ export function parseAgentBrowserVersionOutput(stdout: string): string | undefin
 
 export function getAgentBrowserVersionValidationError(stdout: string): string | undefined {
 	const observed = parseAgentBrowserVersionOutput(stdout);
-	if (observed && SUPPORTED_AGENT_BROWSER_VERSIONS.includes(observed)) return undefined;
+	if (observed && isSupportedAgentBrowserVersion(observed)) return undefined;
 	return observed
-		? `Installed agent-browser ${observed} is unsupported. Install ${TARGET_AGENT_BROWSER_VERSION_LABEL} (preferred) or another supported runtime (${SUPPORTED_AGENT_BROWSER_VERSIONS.join(", ")}), run pi-agent-browser-doctor, then reload Pi.`
+		? `Installed agent-browser ${observed} is unsupported; stable versions must be at least ${MINIMUM_AGENT_BROWSER_VERSION_LABEL}. Install ${TARGET_AGENT_BROWSER_VERSION_LABEL} (recommended), run pi-agent-browser-doctor, then reload Pi.`
 		: `agent-browser --version returned an unrecognized value; expected ${SUPPORTED_AGENT_BROWSER_VERSION_LABEL}. Run pi-agent-browser-doctor and install a supported upstream version.`;
 }

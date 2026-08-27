@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
-import { SUPPORTED_AGENT_BROWSER_VERSIONS, TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mjs";
+import { MINIMUM_AGENT_BROWSER_VERSION, isSupportedAgentBrowserVersion } from "../scripts/agent-browser-target.mjs";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -120,12 +120,12 @@ async function assertInstalledAgentBrowserVersion(): Promise<string> {
 		({ stdout } = await execFileAsync("agent-browser", ["--version"], { timeout: 10_000 }));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		assert.fail(`agent-browser ${SUPPORTED_AGENT_BROWSER_VERSIONS.join(" or ")} is required on PATH for real-upstream tests: ${message}`);
+		assert.fail(`agent-browser ${MINIMUM_AGENT_BROWSER_VERSION} or newer is required on PATH for real-upstream tests: ${message}`);
 	}
 	const installedVersion = stdout.trim().replace(/^agent-browser\s+/, "");
 	assert.ok(
-		SUPPORTED_AGENT_BROWSER_VERSIONS.includes(installedVersion),
-		`real-upstream tests require one of ${SUPPORTED_AGENT_BROWSER_VERSIONS.join(", ")}; found ${installedVersion}`,
+		isSupportedAgentBrowserVersion(installedVersion),
+		`real-upstream tests require agent-browser ${MINIMUM_AGENT_BROWSER_VERSION} or newer; found ${installedVersion}`,
 	);
 	return installedVersion;
 }
@@ -438,12 +438,10 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.deepEqual(skillsGetFullDetails.effectiveArgs, ["--json", "skills", "get", "core", "--full"]);
 					assert.match(skillsGetFull.content[0]?.text ?? "", /agent_browser/);
 
-					if (installedVersion === TARGET_AGENT_BROWSER_VERSION) {
-						const protectedVercelSkill = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "get", "protected-vercel-deployments", "--full"] });
-						const protectedVercelDetails = assertSuccessfulResult(protectedVercelSkill, shapes.commands.skillsGetFull, "skills get protected-vercel-deployments --full");
-						assert.equal(protectedVercelDetails.sessionName, undefined);
-						assert.match(protectedVercelSkill.content[0]?.text ?? "", /x-vercel-trusted-oidc-idp-token/);
-					}
+					const protectedVercelSkill = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "get", "protected-vercel-deployments", "--full"] });
+					const protectedVercelDetails = assertSuccessfulResult(protectedVercelSkill, shapes.commands.skillsGetFull, "skills get protected-vercel-deployments --full");
+					assert.equal(protectedVercelDetails.sessionName, undefined);
+					assert.match(protectedVercelSkill.content[0]?.text ?? "", /x-vercel-trusted-oidc-idp-token/);
 
 					const skillsPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "path", "core"] });
 					const skillsPathDetails = assertSuccessfulResult(skillsPath, shapes.commands.skillsPath, "skills path core");

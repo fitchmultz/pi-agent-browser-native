@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.5.2 - 2026-08-26
+
+### Changed
+
+- Rebaselined the command/help reference on recommended upstream `agent-browser` 0.35.1. The release fixes snapshot-diff ref lifecycle, active-main-frame stream URL updates, and Windows ARM64 launcher selection without adding commands or flags.
+- Replaced the enumerated runtime allowlist with a stable minimum-version policy: 0.35.0 remains the support floor, 0.35.1 is recommended, and newer stable versions are admitted without version-specific compatibility shims.
+- Added a verification invariant preventing WorkOS/private-registry URLs from entering `package-lock.json`; current lockfile resolutions remain public.
+
+### Fixed
+
+- Registered one-shot `script` version preflight inside active shutdown tracking so a quit during a slower launcher probe aborts promptly instead of starting the sandbox after teardown and running until timeout.
+
+### Validation
+
+- Passed the default gate on recommended 0.35.1 (784 tests passed, two opt-in skips), configured-source lifecycle, packaged-Pi smoke, real-upstream contracts on 0.35.1 and the 0.35.0 floor (2/2 each), deterministic dogfood, startup profile, Ubuntu platform build/browser smoke, and interactive native-tool script plus ordinary browser smoke.
+- The full release composition remains blocked at its platform doctor because this host has macOS Remote Login disabled and no Parallels `prlctl`; the macOS SSH and native-Windows suites were not run.
+
 ## 0.5.1 - 2026-08-25
 
 ### Changed

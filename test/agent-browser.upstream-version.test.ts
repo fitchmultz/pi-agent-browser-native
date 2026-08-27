@@ -5,7 +5,7 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 
 import {
-	SUPPORTED_AGENT_BROWSER_VERSIONS,
+	MINIMUM_AGENT_BROWSER_VERSION,
 	TARGET_AGENT_BROWSER_VERSION,
 	getAgentBrowserVersionValidationError,
 	parseAgentBrowserVersionOutput,
@@ -17,13 +17,15 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test("upstream version output accepts the current and explicitly compatible baselines", () => {
+test("upstream version output accepts stable versions at or above the supported floor", () => {
 	assert.equal(parseAgentBrowserVersionOutput(`agent-browser ${TARGET_AGENT_BROWSER_VERSION}\n`), TARGET_AGENT_BROWSER_VERSION);
-	for (const version of SUPPORTED_AGENT_BROWSER_VERSIONS) {
+	for (const version of [MINIMUM_AGENT_BROWSER_VERSION, TARGET_AGENT_BROWSER_VERSION, "0.35.2", "1.0.0"]) {
 		assert.equal(getAgentBrowserVersionValidationError(`agent-browser ${version}\n`), undefined);
 	}
-	assert.match(getAgentBrowserVersionValidationError("agent-browser 0.33.20\n") ?? "", /unsupported/);
-	assert.match(getAgentBrowserVersionValidationError("v0.33.2\n") ?? "", /unrecognized value/);
+	assert.match(getAgentBrowserVersionValidationError("agent-browser 0.34.99\n") ?? "", /at least agent-browser 0\.35\.0/);
+	assert.match(getAgentBrowserVersionValidationError("agent-browser 0.35.1-beta.1\n") ?? "", /unsupported/);
+	assert.match(getAgentBrowserVersionValidationError("agent-browser 0.035.1\n") ?? "", /unsupported/);
+	assert.match(getAgentBrowserVersionValidationError("v0.35.1\n") ?? "", /unrecognized value/);
 });
 
 test("browser-backed calls fail before launch on upstream version mismatch while inspection stays available", { concurrency: false }, async () => {
@@ -47,6 +49,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { url: "https://examp
 			assert.equal(blocked.isError, true);
 			assert.equal(blocked.details?.failureCategory, "validation-error");
 			assert.equal(blocked.details?.observedVersion, "0.33.20");
+			assert.equal(blocked.details?.minimumSupportedVersion, MINIMUM_AGENT_BROWSER_VERSION);
+			assert.equal(blocked.details?.expectedVersion, TARGET_AGENT_BROWSER_VERSION);
 			assert.ok((blocked.content[0]?.text ?? "").includes(`Install agent-browser ${TARGET_AGENT_BROWSER_VERSION}`));
 			await assert.rejects(readFile(logPath, "utf8"));
 

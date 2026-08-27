@@ -23,9 +23,9 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 
 ### Version policy
 
-- Baseline the current `agent-browser` release and accept only explicitly verified compatible versions.
-- Do **not** support a broad range of older `agent-browser` versions.
-- Do **not** add backward-compatibility shims.
+- Baseline documentation and verification on the current recommended `agent-browser` release.
+- Accept stable `agent-browser` versions at or above the configured minimum; the floor remains 0.35.0 until the owner explicitly changes it.
+- Do **not** add version-specific backward-compatibility shims.
 - Keep the wrapper close to current upstream behavior as `agent-browser` evolves.
 - Maintainer-facing mapping from the canonical baseline (`scripts/agent-browser-capability-baseline.mjs`) to docs, runtime, tests, and verification gates lives in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md); refresh that matrix when rebaselining upstream.
 

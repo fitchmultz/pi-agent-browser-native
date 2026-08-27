@@ -22,6 +22,7 @@ import {
 } from "../extensions/agent-browser/lib/input-modes/script.js";
 import { resolveAgentBrowserInput } from "../extensions/agent-browser/lib/orchestration/input-plan.js";
 import { buildScriptBrowserEnvelope, buildScriptToolResult } from "../extensions/agent-browser/lib/orchestration/script-mode.js";
+import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../scripts/agent-browser-target.mjs";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -433,16 +434,22 @@ test("script policy rejections fail the top-level result with disjoint counters"
 
 test("session_shutdown aborts and reaps an active sandbox child", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-shutdown-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(tempDir, `if (__piabFakeArgs.includes("--version")) {
+  setTimeout(() => process.stdout.write(${JSON.stringify(`${TARGET_AGENT_BROWSER_VERSION_LABEL}\n`)}), 500);
+}`);
 	try {
-		const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
-		await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-		const pendingResult = executeRegisteredTool(harness.tool, harness.ctx, { script: "while (true) {}", timeoutMs: 10_000 });
-		await delay(50);
-		await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
-		const result = await pendingResult;
-		assert.equal(result.isError, true);
-		assert.equal(result.details?.failureCategory, "aborted");
-		assert.equal((result.details?.scriptRun as { aborted?: boolean } | undefined)?.aborted, true);
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_VERSION: "1" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const pendingResult = executeRegisteredTool(harness.tool, harness.ctx, { script: "while (true) {}", timeoutMs: 10_000 });
+			await delay(50);
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+			const result = await pendingResult;
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "aborted");
+			assert.equal((result.details?.scriptRun as { aborted?: boolean } | undefined)?.aborted, true);
+		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

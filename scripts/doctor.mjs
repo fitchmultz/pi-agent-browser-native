@@ -4,7 +4,7 @@
  * Responsibilities: Check upstream agent-browser PATH/version, inspect Pi settings for duplicate package/checkout sources, and print actionable remediation.
  * Scope: Read-only package diagnostics only; upstream browser runtime health remains the responsibility of upstream `agent-browser doctor`.
  * Usage: Run via `pi-agent-browser-doctor`, `npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor`, or `npm run doctor` from this repository.
- * Invariants/Assumptions: The wrapper targets TARGET_AGENT_BROWSER_VERSION, does not bundle agent-browser, and must not edit Pi settings or run fixing commands.
+ * Invariants/Assumptions: The wrapper recommends TARGET_AGENT_BROWSER_VERSION, enforces the configured stable version floor, does not bundle agent-browser, and must not edit Pi settings or run fixing commands.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { CAPABILITY_BASELINE_SOURCE } from "./agent-browser-capability-baseline.mjs";
-import { SUPPORTED_AGENT_BROWSER_VERSIONS, TARGET_AGENT_BROWSER_SOURCE, TARGET_AGENT_BROWSER_VERSION } from "./agent-browser-target.mjs";
+import { MINIMUM_AGENT_BROWSER_VERSION, TARGET_AGENT_BROWSER_SOURCE, TARGET_AGENT_BROWSER_VERSION, isSupportedAgentBrowserVersion } from "./agent-browser-target.mjs";
 
 const execFile = promisify(execFileCallback);
 const PACKAGE_NAME = "pi-agent-browser-native";
@@ -25,7 +25,7 @@ const EXTENSION_ENTRYPOINTS = Object.freeze([
 	"extensions/agent-browser/index.ts",
 	"dist/extensions/agent-browser/index.js",
 ]);
-const EXPECTED_VERSION = TARGET_AGENT_BROWSER_VERSION;
+const RECOMMENDED_VERSION = TARGET_AGENT_BROWSER_VERSION;
 const MINIMUM_PI_VERSION = "0.84.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -341,21 +341,21 @@ async function checkAgentBrowserVersion({ runAgentBrowser }) {
 	try {
 		const rawOutput = await runAgentBrowser(["--version"]);
 		const version = normalizeAgentBrowserVersion(rawOutput);
-		if (!SUPPORTED_AGENT_BROWSER_VERSIONS.includes(version)) {
+		if (!isSupportedAgentBrowserVersion(version)) {
 			return {
 				status: "fail",
-				title: `agent-browser version drift: supported ${SUPPORTED_AGENT_BROWSER_VERSIONS.join(", ")}; found ${version || "<empty>"}.`,
+				title: `agent-browser version drift: minimum supported ${MINIMUM_AGENT_BROWSER_VERSION}; found ${version || "<empty>"}.`,
 				lines: [
-					`This wrapper targets ${EXPECTED_VERSION} from ${TARGET_AGENT_BROWSER_SOURCE} and keeps only explicitly listed compatible runtimes.`,
-					`Update upstream agent-browser to ${EXPECTED_VERSION}, or if you intentionally re-baselined upstream, update ${TARGET_AGENT_BROWSER_SOURCE} plus ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, refresh docs/COMMAND_REFERENCE.md, and rerun \`npm run verify -- command-reference\` plus \`npm run verify -- real-upstream\` with test/fixtures/agent-browser-real-output-shapes.json aligned to the new target version.`,
+					`This wrapper supports stable agent-browser versions at or above ${MINIMUM_AGENT_BROWSER_VERSION}; ${RECOMMENDED_VERSION} is the current recommendation from ${TARGET_AGENT_BROWSER_SOURCE}.`,
+					`Update upstream agent-browser to ${RECOMMENDED_VERSION}, or if you intentionally re-baselined upstream, update ${TARGET_AGENT_BROWSER_SOURCE} plus ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, refresh docs/COMMAND_REFERENCE.md, and rerun \`npm run verify -- command-reference\` plus \`npm run verify -- real-upstream\` with test/fixtures/agent-browser-real-output-shapes.json aligned to the new target version.`,
 				],
 			};
 		}
 		return {
 			status: "pass",
-			title: version === EXPECTED_VERSION
-				? `agent-browser version matches baseline: ${version}`
-				: `agent-browser version is supported: ${version} (current baseline ${EXPECTED_VERSION})`,
+			title: version === RECOMMENDED_VERSION
+				? `agent-browser version matches recommended baseline: ${version}`
+				: `agent-browser version meets supported floor: ${version} (recommended ${RECOMMENDED_VERSION})`,
 			lines: [],
 		};
 	} catch (error) {
