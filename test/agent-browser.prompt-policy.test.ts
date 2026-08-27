@@ -319,7 +319,9 @@ test("shouldAppendBrowserSystemPrompt only targets clearly browser-oriented prom
 });
 
 test("web-search prompt guidance warns about anti-bot search form automation", () => {
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /Prefer agent_browser_web_search for current or external web facts/);
 	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /public search-engine forms/);
 	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /anti-bot\/CAPTCHA-gated/);
 	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /after you have a target URL/);
+	assert.doesNotMatch(WEB_SEARCH_PROMPT_GUIDELINE, /one query, one follow-up max/);
 });

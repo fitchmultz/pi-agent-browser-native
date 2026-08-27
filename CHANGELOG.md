@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.5.3 - 2026-08-27
+
+### Changed
+
+- Prompted agents to prefer `agent_browser_web_search` for current or external web facts and URL discovery, including from the main `agent_browser` routing guidance, instead of treating search as a one-query CAPTCHA fallback. Runtime 429 serialization and the post-429 error still stop retry storms.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (784 tests passed, two opt-in skips; 130 packed files), configured-source lifecycle, packaged-Pi smoke, command-reference verification, and the startup profile (72.4 ms median, below the 250 ms budget).
+- A fresh isolated Pi smoke with Exa configured chose `agent_browser_web_search` for an unprompted current-version lookup, cited the returned GitHub release URL, and did not expose the API key. The full release composition remains blocked at its platform doctor because localhost SSH is unavailable and `prlctl` is missing; macOS SSH and native-Windows suites were not run. This release creates GitHub artifacts only; npm publishing is not authorized.
+
 ## 0.5.2 - 2026-08-26
 
 ### Changed
