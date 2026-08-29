@@ -121,11 +121,16 @@ async function collectPresentPaths(paths, cwd = process.cwd()) {
 
 function parseSinglePackResult(stdout, stderr) {
 	const parsed = JSON.parse(stdout);
-	if (!Array.isArray(parsed) || parsed.length === 0 || typeof parsed[0] !== "object" || parsed[0] === null) {
+	const results = Array.isArray(parsed)
+		? parsed
+		: parsed && typeof parsed === "object"
+			? Object.values(parsed)
+			: [];
+	if (results.length !== 1 || typeof results[0] !== "object" || results[0] === null) {
 		throw new Error(`Unexpected npm pack output.\nstdout:\n${stdout}\n\nstderr:\n${stderr}`);
 	}
 
-	return parsed[0];
+	return results[0];
 }
 
 async function getDryRunPackResult(cwd = process.cwd()) {
