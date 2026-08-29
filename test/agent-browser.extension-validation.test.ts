@@ -1306,7 +1306,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 			assert.equal(manifest?.entries?.some((entry) => entry.path === "a-current.webm" && entry.subcommand === "restart"), true);
 
 			const replayHarness = createExtensionHarness({
-				branch: [{ type: "message", message: { details: restarted.details, isError: restarted.isError, toolName: "agent_browser" } }],
+				branch: [
+					...harness.appendedEntries.map((entry) => ({ type: "custom", ...entry })),
+					{ type: "message", message: { details: restarted.details, isError: restarted.isError, toolName: "agent_browser" } },
+				],
 				cwd: tempDir,
 			});
 			await runExtensionEvent(replayHarness.handlers, "session_start", { reason: "resume" }, replayHarness.ctx);

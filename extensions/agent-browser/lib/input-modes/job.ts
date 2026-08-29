@@ -232,15 +232,6 @@ export function compileAgentBrowserJob(input: unknown): { compiled?: CompiledAge
 	return { compiled: { args: failFast ? ["batch", "--bail"] : ["batch"], failFast, stdin: JSON.stringify(steps.map((step) => step.args)), steps } };
 }
 
-export function isHttpOrHttpsUrl(url: string): boolean {
-	try {
-		const protocol = new URL(url).protocol;
-		return protocol === "http:" || protocol === "https:";
-	} catch {
-		return false;
-	}
-}
-
 function describeQaChecksRun(checks: CompiledAgentBrowserQaPreset["checks"]): string {
 	const parts = [`load:${checks.loadState}`];
 	if (checks.expectedText.length > 0) parts.push(`text×${checks.expectedText.length}`);

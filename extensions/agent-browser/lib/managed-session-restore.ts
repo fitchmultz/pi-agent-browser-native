@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { chmodSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 
 import { extractUpstreamCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
 import {
@@ -27,7 +26,6 @@ import {
 } from "./managed-session-storage.js";
 import { parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
-import { writeSecureTempFile } from "./temp.js";
 
 export { createManagedSessionRestoreKey, ensureManagedSessionRestoreStorageIsSecure, getManagedSessionRestoreScope } from "./managed-session-storage.js";
 export { pruneOwnedManagedSessionRestoreSnapshots } from "./managed-session-snapshots.js";
@@ -36,11 +34,7 @@ const AGENT_BROWSER_CONFIG_ENV = "AGENT_BROWSER_CONFIG";
 const AGENT_BROWSER_RESTORE_ENV = "AGENT_BROWSER_RESTORE";
 const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE";
 export const MANAGED_SESSION_NAME_PREFIX = "piab-";
-const MANAGED_SESSION_RESTORE_EMPTY_CONFIG_CONTENT = "{}\n";
-const MANAGED_SESSION_RESTORE_EMPTY_CONFIG_NAME = ".pi-agent-browser-managed-restore-config-v1.json";
 const MANAGED_SESSION_RESTORE_SPAWN_PINNED_ENVS = new Set([AGENT_BROWSER_CONFIG_ENV, AGENT_BROWSER_RESTORE_ENV, "AGENT_BROWSER_NAMESPACE"]);
-let managedSessionRestoreEmptyConfigPath: string | undefined;
-let managedSessionRestoreEmptyConfigPromise: Promise<string> | undefined;
 
 function isDisabledEnvFlag(value: string | undefined): boolean {
 	if (value === undefined) return false;
@@ -180,7 +174,7 @@ export function agentBrowserExplicitConfigIsPresent(
 	return hasExplicitConfigArg(args) || hasUpstreamEnvValue(parentEnv, AGENT_BROWSER_CONFIG_ENV);
 }
 
-/** Explicit config overrides disable restore; passive files are ignored because every browser-backed subprocess pins a protected empty config. */
+/** Caller-selected upstream config disables the wrapper's automatic restore injection without blocking that config. */
 export function agentBrowserConfigBlocksManagedRestore(
 	_cwd: string,
 	parentEnv: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment(),
@@ -292,80 +286,6 @@ export function getOwnedManagedSessionCompatibilityEnv(options: ManagedSessionRe
 		...(ownedContext.compatibilityUserAgent ? { AGENT_BROWSER_USER_AGENT: ownedContext.compatibilityUserAgent } : {}),
 		...(ownedContext.headedManagedAutosaveInterval !== undefined && !explicitIntervalMatches ? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: ownedContext.headedManagedAutosaveInterval } : {}),
 	};
-}
-
-export function shouldOmitOwnedManagedSessionRestoreEnv(options: ManagedSessionRestoreEnvOptions): boolean {
-	return resolveManagedSessionRestorePolicy(options).owned && closesBrowserSession(options.args);
-}
-
-export function canonicalizeOwnedManagedSessionCloseArgs(
-	options: ManagedSessionRestoreEnvOptions,
-	force = false,
-): string[] {
-	const policy = resolveManagedSessionRestorePolicy(options);
-	if (!policy.owned || !closesBrowserSession(options.args)) return options.args;
-	const sessionName = policy.ownedContext?.sessionName ?? policy.sessionName;
-	if (!sessionName) return options.args;
-	const namespace = canonicalizeAgentBrowserNamespace(policy.ownedContext?.namespace ?? policy.namespace) ?? "";
-	const command = options.args.at(-1);
-	const prefix = options.args.slice(0, -1);
-	const safePrefixes = [
-		["--session", sessionName],
-		["--json", "--session", sessionName],
-		["--namespace", namespace, "--session", sessionName],
-		["--json", "--namespace", namespace, "--session", sessionName],
-	];
-	if (!force && command && ["close", "exit", "quit"].includes(command)
-		&& safePrefixes.some((candidate) => candidate.length === prefix.length && candidate.every((token, index) => token === prefix[index]))) {
-		return options.args;
-	}
-	return ["--json", "--namespace", namespace, "--session", sessionName, "close"];
-}
-
-export function cleanupManagedSessionRestoreConfig(): void {
-	if (managedSessionRestoreEmptyConfigPath) {
-		try { unlinkSync(managedSessionRestoreEmptyConfigPath); } catch {}
-	}
-	managedSessionRestoreEmptyConfigPath = undefined;
-	managedSessionRestoreEmptyConfigPromise = undefined;
-}
-
-async function ensureManagedSessionRestoreEmptyConfig(platform: NodeJS.Platform): Promise<string | undefined> {
-	for (let attempt = 0; attempt < 2; attempt += 1) {
-		try {
-			managedSessionRestoreEmptyConfigPromise ??= writeSecureTempFile({
-				content: MANAGED_SESSION_RESTORE_EMPTY_CONFIG_CONTENT,
-				prefix: MANAGED_SESSION_RESTORE_EMPTY_CONFIG_NAME.replace(/\.json$/, ""),
-				suffix: ".json",
-			}).then((path) => {
-				if (platform !== "win32") chmodSync(path, 0o400);
-				managedSessionRestoreEmptyConfigPath = path;
-				return path;
-			});
-			const path = await managedSessionRestoreEmptyConfigPromise;
-			let entry = lstatSync(path);
-			if (entry.isSymbolicLink() || !entry.isFile()) throw new Error("Managed restore config is not a regular file.");
-			if (platform !== "win32" && (entry.mode & 0o777) !== 0o400) {
-				chmodSync(path, 0o400);
-				entry = lstatSync(path);
-			}
-			if (entry.isSymbolicLink() || !entry.isFile() || (platform !== "win32" && (entry.mode & 0o777) !== 0o400)) throw new Error("Managed restore config permissions are unsafe.");
-			if (readFileSync(path, "utf8") !== MANAGED_SESSION_RESTORE_EMPTY_CONFIG_CONTENT) throw new Error("Managed restore config content changed.");
-			return path;
-		} catch {
-			cleanupManagedSessionRestoreConfig();
-		}
-	}
-	return undefined;
-}
-
-export async function getManagedSessionRestoreConfigEnv(
-	restoreEnv: NodeJS.ProcessEnv,
-	pinForOwnedClose = false,
-): Promise<NodeJS.ProcessEnv | undefined> {
-	if (restoreEnv[AGENT_BROWSER_RESTORE_ENV] === undefined && !pinForOwnedClose) return {};
-	const path = await ensureManagedSessionRestoreEmptyConfig(process.platform);
-	return path ? { [AGENT_BROWSER_CONFIG_ENV]: path } : undefined;
 }
 
 export function getManagedSessionRestoreProtectedEnv(

@@ -34,7 +34,6 @@ export type ManagedSessionDaemonInspection =
 
 export async function inspectManagedSessionDaemon(options: {
 	cwd: string;
-	allowManagedSessionTarget?: boolean;
 	headedManagedAutosaveInterval?: string;
 	namespace?: string;
 	preserveAttachedBrowserSession?: boolean;
@@ -43,7 +42,6 @@ export async function inspectManagedSessionDaemon(options: {
 	timeoutMs?: number;
 }): Promise<ManagedSessionDaemonInspection> {
 	const processResult = await runAgentBrowserProcess({
-		allowManagedSessionTarget: options.allowManagedSessionTarget,
 		args: ["--json", "--namespace", options.namespace ?? "", "--session", options.sessionName, "session", "info"],
 		cwd: options.cwd,
 		env: getHeadedManagedAutosaveEnv(options.headedManagedAutosaveInterval),
@@ -88,7 +86,6 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 
 	try {
 		const daemon = await inspectManagedSessionDaemon({
-			allowManagedSessionTarget: true,
 			cwd: context.cwd,
 			headedManagedAutosaveInterval: context.headedManagedAutosaveInterval,
 			namespace: context.namespace,
@@ -160,7 +157,6 @@ export async function closeManagedSession(options: {
 	}
 	try {
 		const daemon = await inspectManagedSessionDaemon({
-			allowManagedSessionTarget: true,
 			cwd: options.cwd,
 			headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 			namespace: options.namespace,

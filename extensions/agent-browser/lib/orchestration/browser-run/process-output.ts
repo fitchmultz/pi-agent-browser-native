@@ -2,12 +2,11 @@ import { rm } from "node:fs/promises";
 
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand } from "../../command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
-import { getAllowedDomainsViolation, parseAllowedDomainsPolicyFromArgs } from "../../navigation-policy.js";
-import { getManagedSessionResultingPageState, getObservedBrowserPageValidationError, managedSessionCommandRequiresLivePageVerification } from "../../managed-session-state-policy.js";
+import { getResultingPageTargetState, commandRequiresLivePageVerification } from "../../page-target-validation.js";
 import { analyzeNetworkSourceLookupResults, analyzeSourceLookupResults, redactNetworkSourceLookupAnalysis } from "../../input-modes/lookups.js";
 import { analyzeQaPresetResults, analyzeQaPresetTimeout, buildQaCompactFailureText, buildQaCompactPassText, extractQaPageContext } from "../../input-modes/job.js";
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../../results/network-routes.js";
@@ -195,7 +194,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 	const { ctx, cwd, electronPostCommandStatusSettleMs, implicitSessionCloseTimeoutMs, sessionPageStateUpdate, signal, state } = input;
 	const { prepared, processResult } = input;
 	const { electronChildProcesses, electronLaunchRecords, sessionPageState, traceOwners } = state;
-	let allowedDomainsBySession = state.allowedDomainsBySession;
 	let artifactManifest = state.artifactManifest;
 	let freshSessionOrdinal = state.freshSessionOrdinal;
 	let managedSessionActive = state.managedSessionActive;
@@ -257,7 +255,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const sessionStateKey = getSessionContextKey(prepared.executionPlan.sessionName, prepared.executionPlan.namespace);
 		const closeAllApplied = nestedBatchClosesAll || (directCloseAllRequested && succeeded);
 		if (closeAllApplied) {
-			allowedDomainsBySession = withoutNamespaceEntries(allowedDomainsBySession, prepared.executionPlan.namespace);
 			networkRoutesBySession = withoutNamespaceEntries(networkRoutesBySession, prepared.executionPlan.namespace);
 			deleteNamespaceEntries(state.attachedSessionKeys, prepared.executionPlan.namespace);
 			deleteNamespaceEntries(traceOwners, prepared.executionPlan.namespace);
@@ -269,8 +266,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				state.managedSessionRestoreState.clear(owner.sessionName, owner.namespace);
 			}
 		} else if (nestedBatchClose && sessionStateKey) {
-			allowedDomainsBySession = new Map(allowedDomainsBySession);
-			allowedDomainsBySession.delete(sessionStateKey);
 			networkRoutesBySession = new Map(networkRoutesBySession);
 			networkRoutesBySession.delete(sessionStateKey);
 			sessionPageState.clearSession(sessionStateKey);
@@ -298,35 +293,26 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			}
 		}
 
-		const resultingPageState = getManagedSessionResultingPageState({
+		const resultingPageState = getResultingPageTargetState({
 			args: prepared.executionPlan.effectiveArgs,
 			currentPageUrl: prepared.priorSessionTabTarget?.url,
 			pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true,
 			stdin: prepared.runtimeToolStdin,
 			trustedFirstBatchTabSelection: prepared.pinnedBatchUnwrapMode !== undefined,
 		});
-		const presentationDataRecord = isRecord(presentationEnvelope?.data) ? presentationEnvelope.data : undefined;
-		const dataClicked = typeof presentationDataRecord?.clicked === "string" ? presentationDataRecord.clicked : undefined;
-		const cssClickWithoutHref = prepared.executionPlan.commandInfo.command === "click" && dataClicked !== undefined && !dataClicked.startsWith("@") && !dataClicked.startsWith("ref=") && typeof presentationDataRecord?.href !== "string";
-		const parsedAllowedDomainsPolicy = parseAllowedDomainsPolicyFromArgs(prepared.runtimeToolArgs);
-		const sessionAllowedDomainsPolicy = sessionStateKey
-			? parsedAllowedDomainsPolicy ?? allowedDomainsBySession.get(sessionStateKey)
-			: parsedAllowedDomainsPolicy;
-		const shouldCaptureAllowedDomainNavigationSummary = sessionAllowedDomainsPolicy !== undefined && !cssClickWithoutHref && (prepared.executionPlan.commandInfo.command === "batch" || isNavigationObservableCommandName(prepared.executionPlan.commandInfo.command));
 		if (
 			succeeded &&
 			!navigationSummary &&
 			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data) ||
 				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data) ||
-				shouldCaptureAllowedDomainNavigationSummary ||
-				managedSessionCommandRequiresLivePageVerification(prepared.executionPlan.effectiveArgs, prepared.runtimeToolStdin) ||
+				commandRequiresLivePageVerification(prepared.executionPlan.effectiveArgs, prepared.runtimeToolStdin) ||
 				(prepared.executionPlan.commandInfo.command === "tab" && prepared.executionPlan.commandInfo.subcommand === "close"))
 		) {
 			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName, signal });
 		}
 		// A failed eval/back/forward/reload/state-load/tab would otherwise drop the page to unverified and force the
-		// agent through a manual get url round trip. Probe the live URL ourselves instead: an observed http(s) page
-		// stays verified, a file URL keeps the local-file gate closed through currentSessionTabTarget, and a failed
+		// agent through a manual get url round trip. Probe the live URL ourselves instead: an observed page
+		// stays verified, and a failed
 		// probe preserves the existing unknown-target behavior.
 		if (
 			succeeded === false &&
@@ -359,12 +345,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const observedSessionTabTarget = normalizeSessionTabTarget(navigationSummary)
 			?? (trustsReportedPageTarget ? extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) : undefined)
 			?? (succeeded && trustsReportedPageTarget ? extractSessionTabTargetFromCommandData(prepared.commandTokens, presentationEnvelope?.data) : undefined);
-		const observedPageValidationError = succeeded ? getObservedBrowserPageValidationError(prepared.executionPlan.effectiveArgs, observedSessionTabTarget?.url, cwd) : undefined;
-		if (observedPageValidationError) {
-			succeeded = false;
-			presentationEnvelope = { error: observedPageValidationError, success: false };
-		}
-		const safeObservedSessionTabTarget = observedPageValidationError ? normalizeSessionTabTarget({ url: observedSessionTabTarget?.url }) : observedSessionTabTarget;
+		const safeObservedSessionTabTarget = observedSessionTabTarget;
 		let currentSessionTabTarget = safeObservedSessionTabTarget;
 		if (!currentSessionTabTarget && nestedBatchClose === undefined) {
 			currentSessionTabTarget = resultingPageState.pageTargetMayHaveChanged
@@ -398,19 +379,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				if (appliedPostCommandCorrection && !sessionTabCorrection) sessionTabCorrection = appliedPostCommandCorrection;
 			}
 		}
-		if (succeeded && sessionStateKey && parsedAllowedDomainsPolicy) {
-			allowedDomainsBySession = new Map(allowedDomainsBySession);
-			allowedDomainsBySession.set(sessionStateKey, parsedAllowedDomainsPolicy);
-		}
-		const allowedDomainsViolation = succeeded ? getAllowedDomainsViolation({
-			policy: sessionAllowedDomainsPolicy,
-			url: currentSessionTabTarget?.url ?? observedSessionTabTarget?.url ?? navigationSummary?.url,
-		}) : undefined;
-		if (allowedDomainsViolation) {
-			succeeded = false;
-			presentationEnvelope = { ...(presentationEnvelope ?? {}), error: allowedDomainsViolation.summary, success: false };
-		}
-
 		const electronRecordForCommand = findElectronLaunchRecordForSession(prepared.executionPlan.sessionName, electronLaunchRecords, prepared.executionPlan.namespace);
 		if (succeeded && electronRecordForCommand && shouldInspectElectronPostCommandHealth(prepared.executionPlan.commandInfo.command)) {
 			electronStatusAfterCommand ??= await inspectElectronLaunchStatus(electronRecordForCommand);
@@ -459,8 +427,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			const sessionClosed = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed;
 			if (sessionClosed) {
 				state.attachedSessionKeys.delete(sessionStateKey);
-				allowedDomainsBySession = new Map(allowedDomainsBySession);
-				allowedDomainsBySession.delete(sessionStateKey);
 				networkRoutesBySession = new Map(networkRoutesBySession);
 				networkRoutesBySession.delete(sessionStateKey);
 				sessionPageState.clearSession(sessionStateKey);
@@ -522,7 +488,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			: closeCommandSucceeded && prepared.executionPlan.sessionName === priorManagedSessionName && closeTargetsPriorManagedNamespace
 				? prepared.executionPlan.sessionName
 				: prepared.executionPlan.managedSessionName;
-		const policyBlockedFreshManagedSession = allowedDomainsViolation !== undefined && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName === prepared.executionPlan.sessionName;
 		const postLaunchBatchFailure = !succeeded && processSucceeded && parseSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && batchStartedManagedBrowser(presentationEnvelope?.data);
 		const postLaunchTimeoutWithPage = !succeeded && processResult.timedOut && prepared.sessionMode === "fresh" && prepared.executionPlan.commandInfo.command === "batch" && timeoutPartialProgress?.liveUrlRecovered === true;
 		const failedFreshSessionMayHaveStarted = !succeeded
@@ -543,7 +508,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		// Only a confirmed inactive daemon proves that a started fresh command did not establish browser ownership.
 		const postLaunchFreshFailure = failedFreshDaemon !== undefined && failedFreshDaemon.status !== "inactive";
-		const managedTransitionSucceeded = succeeded || nestedBatchClosed || nestedBatchRemainsActive || policyBlockedFreshManagedSession || postLaunchBatchFailure || postLaunchTimeoutWithPage || postLaunchFreshFailure;
+		const managedTransitionSucceeded = succeeded || nestedBatchClosed || nestedBatchRemainsActive || postLaunchBatchFailure || postLaunchTimeoutWithPage || postLaunchFreshFailure;
 		const managedSessionState = resolveManagedSessionState({ command: commandClosesSession ? "close" : prepared.executionPlan.commandInfo.command, managedSessionName: managedCloseSessionName, managedSessionNamespace: prepared.executionPlan.namespace, priorActive: priorManagedSessionActive, priorNamespace: priorManagedSessionNamespace, priorSessionName: priorManagedSessionName, succeeded: managedTransitionSucceeded });
 		if (!managedTransitionSucceeded && prepared.sessionMode === "fresh" && prepared.executionPlan.managedSessionName) {
 			state.managedSessionRestoreState.clear(prepared.executionPlan.managedSessionName, prepared.executionPlan.namespace);
@@ -589,9 +554,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			else if (prepared.sessionTabPinningReason === "restore") sessionPageState.clearRestorePinning(sessionStateKey);
 		}
 		if (replacedManagedSessionName) {
-			allowedDomainsBySession = new Map(allowedDomainsBySession);
 			const replacedSessionStateKey = getSessionContextKey(replacedManagedSessionName, priorManagedSessionNamespace);
-			allowedDomainsBySession.delete(replacedSessionStateKey ?? replacedManagedSessionName);
 			networkRoutesBySession = new Map(networkRoutesBySession);
 			networkRoutesBySession.delete(replacedSessionStateKey ?? replacedManagedSessionName);
 			sessionPageState.clearSession(replacedSessionStateKey ?? replacedManagedSessionName);
@@ -645,8 +608,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 					}
 					if (!closeError) {
 						state.closedManagedSessionNames.add(electronSessionStateKey);
-						allowedDomainsBySession = new Map(allowedDomainsBySession);
-						allowedDomainsBySession.delete(electronSessionStateKey);
 						networkRoutesBySession = new Map(networkRoutesBySession);
 						networkRoutesBySession.delete(electronSessionStateKey);
 						sessionPageState.clearSession(electronSessionStateKey);
@@ -684,7 +645,6 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (presentationEnvelope?.error !== undefined) presentationEnvelope = { ...presentationEnvelope, error: redactClipboardPermissionErrorValue(prepared.executionPlan.commandInfo, presentationEnvelope.error, clipboardWritePayloadCandidates) };
 		}
 		const presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactMaxUpdatedAtMs: Date.now(), artifactMinUpdatedAtMs: input.artifactRunStartedAtMs, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, namespace: prepared.executionPlan.namespace, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, sessionName: prepared.executionPlan.sessionName });
-		if (observedPageValidationError) presentation.failureCategory = "validation-error";
 		if (electronHandoff?.error && electronHandoff.failureCategory) presentation.failureCategory = electronHandoff.failureCategory;
 		networkRoutesBySession = applyBatchNetworkRouteState({ data: presentationEnvelope?.data, routesBySession: networkRoutesBySession, sessionName: sessionStateKey, succeeded });
 		if (presentation.resultCategory === "failure" && succeeded) {
@@ -796,7 +756,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const resultWithCloseAll = closeAllApplied
 			? { ...result, details: { ...(isRecord(result.details) ? result.details : {}), closeAllApplied: true } }
 			: result;
-		const statePatch: BrowserRunStatePatch = { allowedDomainsBySession, artifactManifest, freshSessionOrdinal, managedSessionActive, managedSessionCompatibilityWorkaround, managedSessionHeadedAutosaveDisabled, managedSessionHeadedAutosaveInterval, managedSessionCwd, managedSessionName, managedSessionNamespace, networkRoutesBySession };
+		const statePatch: BrowserRunStatePatch = { artifactManifest, freshSessionOrdinal, managedSessionActive, managedSessionCompatibilityWorkaround, managedSessionHeadedAutosaveDisabled, managedSessionHeadedAutosaveInterval, managedSessionCwd, managedSessionName, managedSessionNamespace, networkRoutesBySession };
 		return { result: resultWithCloseAll, statePatch };
 	} finally {
 		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);

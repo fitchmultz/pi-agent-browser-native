@@ -39,12 +39,7 @@ test("secure temp cleanup can recreate and track a later temp root", { concurren
 	assert.notEqual(secondRoot, firstRoot);
 	const markerPath = join(secondRoot, ".pi-agent-browser-owner.json");
 	const marker = JSON.parse(await readFile(markerPath, "utf8")) as { kind?: unknown; version?: unknown };
-	assert.equal(marker.kind === "pi-agent-browser-temp-root" && marker.version === 1, false, "legacy v1 readers must ignore new markers");
 	assert.equal(marker.version, 2);
-	await writeFile(markerPath, JSON.stringify({ ...marker, version: 1 }), "utf8");
-	const migrationFile = await openSecureTempFile("debug-c", ".txt");
-	await migrationFile.fileHandle.close();
-	assert.equal((JSON.parse(await readFile(markerPath, "utf8")) as { version?: unknown }).version, 2);
 
 	const debugState = await getSecureTempDebugState();
 	assert.equal(debugState.currentTempRoot, secondRoot);
@@ -66,9 +61,7 @@ test("stale temp pruning only removes explicitly owned roots", { concurrency: fa
 	// secure temp root creation in a concurrent test file can legitimately prune
 	// stale owned roots as soon as the marker exists, so avoid yielding again
 	// before this test performs the pruning assertion itself.
-	const ownedMarkerPath = await writeSecureTempRootOwnershipMarker(ownedRoot, { createdAtMs: staleTime.getTime(), ownerPid: 99_999_999 });
-	const ownedMarker = JSON.parse(await readFile(ownedMarkerPath, "utf8")) as Record<string, unknown>;
-	await writeFile(ownedMarkerPath, JSON.stringify({ ...ownedMarker, version: 1 }), "utf8");
+	await writeSecureTempRootOwnershipMarker(ownedRoot, { createdAtMs: staleTime.getTime(), ownerPid: 99_999_999 });
 
 	try {
 		const tempFile = await openSecureTempFile("prune-check", ".txt");

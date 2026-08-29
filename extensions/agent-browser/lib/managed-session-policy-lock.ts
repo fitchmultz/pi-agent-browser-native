@@ -19,13 +19,6 @@ interface PolicyLockOwner {
 	version: 3;
 }
 
-interface LegacyPolicyLockOwner {
-	pid: number;
-	startIdentity: string;
-	token: string;
-	version: 2;
-}
-
 interface PolicyLockTicket {
 	ticket: number;
 	token: string;
@@ -82,10 +75,6 @@ export function getManagedSessionPolicyLockPath(sessionName: string, namespace?:
 	return join(getCoordinationDirectory(), `.pi-agent-browser-policy-${getPolicyLockDigest(sessionName, namespace)}.lock-v3`);
 }
 
-export function getLegacyManagedSessionPolicyLockPath(sessionName: string, namespace?: string): string {
-	return join(getCoordinationDirectory(), `.pi-agent-browser-policy-${getPolicyLockDigest(sessionName, namespace)}.lock-v2`);
-}
-
 function parseOwner(content: string): PolicyLockOwner | undefined {
 	if (Buffer.byteLength(content) > POLICY_LOCK_MAX_BYTES) return undefined;
 	try {
@@ -95,21 +84,6 @@ function parseOwner(content: string): PolicyLockOwner | undefined {
 			&& typeof parsed.startIdentity === "string" && parsed.startIdentity.length > 0
 			&& typeof parsed.token === "string" && parsed.token.length > 0
 			? parsed as PolicyLockOwner
-			: undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function parseLegacyBridgeOwner(content: string): PolicyLockOwner | LegacyPolicyLockOwner | undefined {
-	if (Buffer.byteLength(content) > POLICY_LOCK_MAX_BYTES) return undefined;
-	try {
-		const parsed = JSON.parse(content) as Partial<PolicyLockOwner | LegacyPolicyLockOwner>;
-		return (parsed.version === 2 || parsed.version === 3)
-			&& Number.isSafeInteger(parsed.pid) && (parsed.pid ?? 0) > 0
-			&& typeof parsed.startIdentity === "string" && parsed.startIdentity.length > 0
-			&& typeof parsed.token === "string" && parsed.token.length > 0
-			? parsed as PolicyLockOwner | LegacyPolicyLockOwner
 			: undefined;
 	} catch {
 		return undefined;
@@ -162,23 +136,6 @@ async function readClaim(path: string): Promise<PolicyLockClaim | undefined> {
 	}
 }
 
-async function readLegacyBridgeOwner(path: string): Promise<PolicyLockOwner | LegacyPolicyLockOwner | undefined> {
-	try {
-		const directory = await lstat(path);
-		const ownerPath = join(path, LOCK_OWNER_FILE);
-		const ownerEntry = await lstat(ownerPath);
-		if (!directory.isDirectory() || directory.isSymbolicLink() || !ownerEntry.isFile() || ownerEntry.isSymbolicLink()) return undefined;
-		if (ownerEntry.size > POLICY_LOCK_MAX_BYTES) return undefined;
-		if (process.platform !== "win32") {
-			const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
-			if (uid === undefined || directory.uid !== uid || ownerEntry.uid !== uid || (directory.mode & 0o077) !== 0 || (ownerEntry.mode & 0o177) !== 0) return undefined;
-		}
-		return parseLegacyBridgeOwner(await readFile(ownerPath, "utf8"));
-	} catch {
-		return undefined;
-	}
-}
-
 async function readClaims(basePath: string): Promise<PolicyLockClaim[] | undefined> {
 	const directory = dirname(basePath);
 	const prefix = `${basename(basePath)}.claim-`;
@@ -200,7 +157,7 @@ async function readClaims(basePath: string): Promise<PolicyLockClaim[] | undefin
 	return claims;
 }
 
-async function ownerAlive(owner: PolicyLockOwner | LegacyPolicyLockOwner): Promise<boolean | undefined> {
+async function ownerAlive(owner: PolicyLockOwner): Promise<boolean | undefined> {
 	try {
 		process.kill(owner.pid, 0);
 	} catch (error) {
@@ -230,90 +187,15 @@ async function removeClaimOwnedBy(path: string, token: string): Promise<boolean>
 	return true;
 }
 
-async function removeLegacyBridgeOwnedBy(path: string, token: string): Promise<boolean> {
-	const current = await readLegacyBridgeOwner(path);
-	if (current?.version !== 3 || current.token !== token) return false;
-	const movedPath = join(dirname(path), `.pi-agent-browser-policy-bridge-remove-${token}-${randomUUID()}`);
-	try {
-		await rename(path, movedPath);
-	} catch (error) {
-		return (error as NodeJS.ErrnoException).code === "ENOENT";
-	}
-	const moved = await readLegacyBridgeOwner(movedPath);
-	if (moved?.version !== 3 || moved.token !== token) {
-		try { await rename(movedPath, path); } catch {}
-		return false;
-	}
-	await rm(movedPath, { force: true, recursive: true });
-	return true;
-}
-
 async function cleanDeadPolicyArtifacts(directory: string): Promise<void> {
 	let names: string[];
 	try { names = await readdir(directory); } catch { return; }
 	for (const name of names.filter((candidate) =>
 		candidate.startsWith(".pi-agent-browser-policy-remove-")
-		|| candidate.startsWith(".pi-agent-browser-policy-bridge-remove-")
-		|| candidate.includes(".lock-v2.bridge-candidate-")
-		|| candidate.includes(".lock-v2.candidate-")
 		|| candidate.includes(".lock-v3.candidate-"))) {
 		const path = join(directory, name);
-		const owner = await readLegacyBridgeOwner(path);
-		if (owner && await ownerAlive(owner) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
-	}
-}
-
-async function hasLegacyV2Contender(path: string): Promise<boolean | undefined> {
-	try {
-		const prefix = `${basename(path)}.candidate-`;
-		return (await readdir(dirname(path))).some((name) => name.startsWith(prefix));
-	} catch {
-		return undefined;
-	}
-}
-
-async function acquireLegacyPolicyBridge(options: {
-	deadline: number;
-	owner: PolicyLockOwner;
-	signal?: AbortSignal;
-	sessionName: string;
-	namespace?: string;
-}): Promise<ManagedSessionPolicyLock | undefined> {
-	const path = getLegacyManagedSessionPolicyLockPath(options.sessionName, options.namespace);
-	const candidatePath = `${path}.bridge-candidate-${options.owner.token}`;
-	try {
-		await mkdir(candidatePath, { mode: 0o700 });
-		await writeFile(join(candidatePath, LOCK_OWNER_FILE), JSON.stringify(options.owner), { encoding: "utf8", flag: "wx", mode: 0o600 });
-		while (!options.signal?.aborted) {
-			const legacyContender = await hasLegacyV2Contender(path);
-			if (legacyContender === undefined) return undefined;
-			if (legacyContender) {
-				if (Date.now() >= options.deadline) return undefined;
-				await waitForRetry(options.signal);
-				continue;
-			}
-			try {
-				await rename(candidatePath, path);
-				const installed = await readLegacyBridgeOwner(path);
-				return installed?.version === 3 && installed.token === options.owner.token
-					? { release: async () => { await removeLegacyBridgeOwnedBy(path, options.owner.token); } }
-					: undefined;
-			} catch (error) {
-				if (!["EACCES", "EEXIST", "ENOTEMPTY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined;
-			}
-			const observed = await readLegacyBridgeOwner(path);
-			if (!observed) return undefined;
-			if (observed.version === 3 && await ownerAlive(observed) === false) {
-				if (await removeLegacyBridgeOwnedBy(path, observed.token)) continue;
-			}
-			if (Date.now() >= options.deadline) return undefined;
-			await waitForRetry(options.signal);
-		}
-		return undefined;
-	} catch {
-		return undefined;
-	} finally {
-		await rm(candidatePath, { force: true, recursive: true }).catch(() => undefined);
+		const claim = await readClaim(path);
+		if (claim && await ownerAlive(claim.owner) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
 	}
 }
 
@@ -354,7 +236,6 @@ export async function acquireManagedSessionPolicyLock(options: {
 	const candidatePath = `${basePath}.candidate-${token}`;
 	const claimPath = `${basePath}.claim-${token}`;
 	let claimPublished = false;
-	let legacyBridge: ManagedSessionPolicyLock | undefined;
 	let lockAcquired = false;
 	try {
 		await mkdir(candidatePath, { mode: 0o700 });
@@ -390,19 +271,8 @@ export async function acquireManagedSessionPolicyLock(options: {
 			}
 			if (!blocked) {
 				await cleanDeadPolicyArtifacts(directory);
-				legacyBridge = await acquireLegacyPolicyBridge({
-					deadline,
-					owner,
-					signal: options.signal,
-					sessionName: options.sessionName,
-					namespace: options.namespace,
-				});
-				if (!legacyBridge) return undefined;
 				lockAcquired = true;
-				return { release: async () => {
-					await legacyBridge?.release();
-					await removeClaimOwnedBy(claimPath, token);
-				} };
+				return { release: async () => { await removeClaimOwnedBy(claimPath, token); } };
 			}
 			if (Date.now() >= deadline) return undefined;
 			await waitForRetry(options.signal);
@@ -412,7 +282,6 @@ export async function acquireManagedSessionPolicyLock(options: {
 		return undefined;
 	} finally {
 		await rm(candidatePath, { force: true, recursive: true }).catch(() => undefined);
-		if (!lockAcquired) await legacyBridge?.release();
 		if (claimPublished && !lockAcquired) await removeClaimOwnedBy(claimPath, token);
 	}
 }

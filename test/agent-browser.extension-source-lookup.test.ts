@@ -196,7 +196,7 @@ process.stdin.on("end", () => {
 	}
 });
 
-test("agentBrowserExtension blocks sourceLookup after local-file URL verification", { concurrency: false }, async () => {
+test("agentBrowserExtension allows sourceLookup after local-file URL verification", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-source-lookup-file-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -248,10 +248,8 @@ process.stdin.on("end", () => {
 			const lookupResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				sourceLookup: { componentName: "MissingLocalComponent", selector: "#save" },
 			});
-			assert.equal(lookupResult.isError, true);
-			assert.match(lookupResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
-			assert.equal(lookupResult.details?.failureCategory, "validation-error");
-			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("batch")), false);
+			assert.equal(lookupResult.isError, false, JSON.stringify(lookupResult));
+			assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("batch")), true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

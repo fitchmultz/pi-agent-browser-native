@@ -1,6 +1,6 @@
 /**
  * Purpose: Verify prompt-derived policy helpers for the pi-agent-browser extension.
- * Responsibilities: Assert legacy bash allowance, browser-prompt detection, stop boundaries, and requested artifact extraction.
+ * Responsibilities: Assert direct agent-browser bash allowance, browser-prompt detection, stop boundaries, and requested artifact extraction.
  * Scope: Unit-style Node test-runner coverage for pure prompt-policy helpers.
  */
 
@@ -10,7 +10,7 @@ import test from "node:test";
 import { WEB_SEARCH_PROMPT_GUIDELINE } from "../extensions/agent-browser/lib/playbook.js";
 import { buildPromptPolicy, getLatestUserPrompt, shouldAppendBrowserSystemPrompt } from "../extensions/agent-browser/lib/prompt-policy.js";
 
-test("buildPromptPolicy and getLatestUserPrompt derive legacy bash policy from prompt text without globals", () => {
+test("buildPromptPolicy and getLatestUserPrompt derive direct agent-browser bash policy from prompt text without globals", () => {
 	const prompt = getLatestUserPrompt([
 		{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Not relevant" }] } },
 		{ type: "message", message: { role: "user", content: [{ type: "text", text: "Please debug the browser integration via bash." }] } },
@@ -21,13 +21,13 @@ test("buildPromptPolicy and getLatestUserPrompt derive legacy bash policy from p
 	assert.equal(policy.allowLegacyAgentBrowserBash, true);
 });
 
-test("buildPromptPolicy does not allow legacy bash for generic docs prompts unrelated to agent-browser", () => {
+test("buildPromptPolicy does not allow direct agent-browser bash for generic docs prompts unrelated to agent-browser", () => {
 	const policy = buildPromptPolicy("Please review the repo docs and summarize the architecture.");
 
 	assert.equal(policy.allowLegacyAgentBrowserBash, false);
 });
 
-test("buildPromptPolicy allows explicit tool-specific legacy bash inspection requests", () => {
+test("buildPromptPolicy allows explicit tool-specific direct agent-browser bash inspection requests", () => {
 	const policy = buildPromptPolicy("Show me the agent-browser docs and explain agent-browser --help output.");
 
 	assert.equal(policy.allowLegacyAgentBrowserBash, true);

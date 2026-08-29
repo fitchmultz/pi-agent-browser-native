@@ -32,17 +32,15 @@ import {
 } from "../../runtime.js";
 import {
 	buildOwnedManagedSessionRestoreContext,
-	canonicalizeOwnedManagedSessionCloseArgs,
 	resolveExplicitAutosaveInterval,
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
 import {
-	getCallerOwnedSessionLivePageVerificationRequirement,
-	getManagedSessionStateAccessValidationError,
-	getManagedSessionTargetAccessValidationError,
-} from "../../managed-session-state-policy.js";
+	getExplicitSessionPageVerificationRequirement,
+	getPageTargetValidationError,
+} from "../../page-target-validation.js";
 import { acquireOwnedManagedSessionDaemonPolicy, getRunningHeadedAutosavePolicyChangeError } from "./managed-session-daemon-policy.js";
 import {
 	applyOpenResultTabCorrection,
@@ -450,22 +448,20 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	let electronLaunch: ElectronLaunchSuccess | undefined;
 	const sessionMode = compiledElectron?.action === "launch" ? "fresh" : params.sessionMode ?? "auto";
 	const freshSessionName = createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1);
-	const rawManagedStateAccessError = getManagedSessionStateAccessValidationError({
+	const rawPageTargetError = getPageTargetValidationError({
 		args: runtimeToolArgs,
-		cwd,
-		parentEnv: agentBrowserProcessEnv,
 		stdin: runtimeToolStdin,
 		trustedFirstBatchTabSelection: true,
 	});
-	if (rawManagedStateAccessError) {
+	if (rawPageTargetError) {
 		return {
 			kind: "early-result",
 			result: {
-				content: [{ type: "text", text: rawManagedStateAccessError }],
+				content: [{ type: "text", text: rawPageTargetError }],
 				details: {
 					args: redactedArgs,
-					...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: rawManagedStateAccessError, succeeded: false, validationError: rawManagedStateAccessError }),
-					validationError: rawManagedStateAccessError,
+					...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, errorText: rawPageTargetError, succeeded: false, validationError: rawPageTargetError }),
+					validationError: rawPageTargetError,
 				},
 				isError: true,
 			},
@@ -515,15 +511,13 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
 	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const plannedSessionPageState = sessionPageState.get(ownedSessionKey);
-	const managedStateAccessError = getManagedSessionStateAccessValidationError({
+	const pageTargetError = getPageTargetValidationError({
 		args: executionPlan.effectiveArgs,
 		currentPageUrl: plannedSessionPageState.tabTarget?.url,
 		pageUrlUnknown: plannedSessionPageState.tabTargetUnknown === true,
-		cwd,
-		parentEnv: agentBrowserProcessEnv,
 		stdin: runtimeToolStdin,
 	});
-	if (!executionPlan.validationError && managedStateAccessError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedStateAccessError };
+	if (!executionPlan.validationError && pageTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: pageTargetError };
 	const recordedOwnedSession = ownedSessionKey ? state.ownedManagedSessions.get(ownedSessionKey) : undefined;
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
@@ -579,8 +573,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		compatibilityUserAgent: compatibilityUserAgentApplied ? compatibilityUserAgent : undefined,
 		wrapperInjectedUserAgent: compatibilityUserAgentApplied,
 	});
-	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(executionPlan.effectiveArgs, ownedManagedSession !== undefined, agentBrowserProcessEnv);
-	if (!executionPlan.validationError && managedSessionTargetError) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: managedSessionTargetError };
 	if (!executionPlan.validationError && ownedManagedSession) {
 		const closeCommand = isCloseCommand(executionPlan.commandInfo.command);
 		const policy = await acquireOwnedManagedSessionDaemonPolicy({
@@ -612,16 +604,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			executionPlan = {
 				...executionPlan,
 				effectiveArgs: ["--user-agent", compatibilityUserAgent, ...executionPlan.effectiveArgs],
-			};
-		} else if (closeCommand && managedSessionPolicyLock) {
-			executionPlan = {
-				...executionPlan,
-				effectiveArgs: canonicalizeOwnedManagedSessionCloseArgs({
-					args: executionPlan.effectiveArgs,
-					cwd,
-					ownedManagedSession: true,
-					restoreState: state.managedSessionRestoreState,
-				}, true),
 			};
 		}
 	}
@@ -664,12 +646,10 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: request.requirement };
 				return;
 			}
-			const livePageValidationError = getManagedSessionStateAccessValidationError({
+			const livePageValidationError = getPageTargetValidationError({
 				args: request.args,
 				currentPageUrl: liveUrl,
-				cwd,
 				pageUrlUnknown: false,
-				parentEnv: agentBrowserProcessEnv,
 				stdin: request.stdin,
 			});
 			if (livePageValidationError) {
@@ -685,7 +665,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		if (!executionPlan.validationError && mayResolveSemanticVisibleRef && requiresLivePageVerification()) {
 			await verifyLivePage({
 				args: ["snapshot", "-i"],
-				requirement: getCallerOwnedSessionLivePageVerificationRequirement({ args: ["snapshot", "-i"], cwd }),
+				requirement: getExplicitSessionPageVerificationRequirement({ args: ["snapshot", "-i"] }),
 			});
 		}
 		if (!executionPlan.validationError && mayResolveSemanticVisibleRef) {
@@ -736,9 +716,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			&& requiresLivePageVerification();
 		const livePageRequirement = livePageAccessEligible
 			&& !livePageVerified
-			? getCallerOwnedSessionLivePageVerificationRequirement({
+			? getExplicitSessionPageVerificationRequirement({
 				args: executionPlan.effectiveArgs,
-				cwd,
 				stdin: runtimeToolStdin,
 			})
 			: undefined;

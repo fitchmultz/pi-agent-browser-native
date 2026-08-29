@@ -54,7 +54,6 @@ export const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.
 
 export function applyBrowserRunStatePatch(state: BrowserRunState, patch: BrowserRunStatePatch | undefined): void {
 	if (!patch) return;
-	if (patch.allowedDomainsBySession) state.allowedDomainsBySession = patch.allowedDomainsBySession;
 	if ("artifactManifest" in patch) state.artifactManifest = patch.artifactManifest;
 	if (patch.freshSessionOrdinal !== undefined) state.freshSessionOrdinal = patch.freshSessionOrdinal;
 	if (patch.managedSessionActive !== undefined) state.managedSessionActive = patch.managedSessionActive;
@@ -636,7 +635,6 @@ export function unwrapPinnedSessionBatchEnvelope(options: {
 export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
-	allowManagedSessionTarget?: boolean;
 	namespace?: string;
 	pinNamespace?: boolean;
 	sessionName?: string;
@@ -645,11 +643,10 @@ export async function runSessionCommandData(options: {
 	throwOnFailure?: boolean;
 	timeoutMs?: number;
 }): Promise<unknown | undefined> {
-	const { allowManagedSessionTarget, args, cwd, namespace, pinNamespace, sessionName, signal, stdin, throwOnFailure, timeoutMs } = options;
+	const { args, cwd, namespace, pinNamespace, sessionName, signal, stdin, throwOnFailure, timeoutMs } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
-		allowManagedSessionTarget,
 		args: ["--json", ...(namespace !== undefined || pinNamespace ? ["--namespace", namespace ?? ""] : []), "--session", sessionName, ...args],
 		cwd,
 		signal,

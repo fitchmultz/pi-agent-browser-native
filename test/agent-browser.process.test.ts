@@ -33,7 +33,7 @@ import {
 	isTrustedAndroidAppDataRoot,
 	isTrustedSocketDirAncestor,
 	isWindowsAgentBrowserCommandMissing,
-	pinAgentBrowserFileAccessDisabled,
+	prepareAgentBrowserSpawnArgs,
 	reorderWindowsLeadingGlobalArgs,
 	resolveSpawnedChildExitCode,
 	shouldCommitManagedRestoreAfterWindowsProcess,
@@ -174,23 +174,17 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 	}
 });
 
-test("pinAgentBrowserFileAccessDisabled forces the separated upstream false form without an empty launch override", () => {
-	const pinned = ["--allow-file-access", "false", "open", "about:blank"];
-	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["open", "about:blank"]), pinned);
-	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--allow-file-access", "false", "open", "about:blank"]), pinned);
-	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--allow-file-access", "true", "--allow-file-access=false", "open", "about:blank"]), pinned);
-	assert.deepEqual(pinAgentBrowserFileAccessDisabled(["--args", "--disable-gpu", "open", "about:blank"]), ["--allow-file-access", "false", "--args", "--disable-gpu", "open", "about:blank"]);
+test("prepareAgentBrowserSpawnArgs preserves caller launch controls", () => {
+	assert.deepEqual(prepareAgentBrowserSpawnArgs(["open", "about:blank"]), ["open", "about:blank"]);
+	assert.deepEqual(prepareAgentBrowserSpawnArgs(["--allow-file-access", "true", "open", "file:///tmp/page.html"]), ["--allow-file-access", "true", "open", "file:///tmp/page.html"]);
 	assert.deepEqual(
-		pinAgentBrowserFileAccessDisabled(["open", "about:blank"], "Chrome, not Headless\n"),
-		["--args", "--user-agent=Chrome not Headless", "--allow-file-access", "false", "open", "about:blank"],
+		prepareAgentBrowserSpawnArgs(["open", "about:blank"], "Chrome, not Headless\n"),
+		["--args", "--user-agent=Chrome not Headless", "open", "about:blank"],
 	);
-	assert.deepEqual(
-		pinAgentBrowserFileAccessDisabled(["--allow-file-access", "false", "get", "url"], undefined, true),
-		["get", "url"],
-	);
+	assert.deepEqual(prepareAgentBrowserSpawnArgs(["--allow-file-access", "true", "get", "url"], undefined, true), ["--allow-file-access", "true", "get", "url"]);
 });
 
-test("runAgentBrowserProcess neutralizes environment raw browser args and pins an empty upstream config", { concurrency: false }, async () => {
+test("runAgentBrowserProcess passes upstream browser configuration and file access through", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-raw-args-"));
 	const binaryPath = join(tempDir, "agent-browser");
 	const basePath = process.env.PATH ?? "";
@@ -199,26 +193,28 @@ const config = process.env.AGENT_BROWSER_CONFIG;
 process.stdout.write(JSON.stringify({ success: true, data: { allowFileAccessEnv: process.env.AGENT_BROWSER_ALLOW_FILE_ACCESS ?? null, args: process.argv.slice(2), config, configContent: config ? require("node:fs").readFileSync(config, "utf8") : null, envArgs: process.env.AGENT_BROWSER_ARGS ?? null } }));\n`, "utf8");
 	await chmod(binaryPath, 0o755);
 	try {
-		await withPatchedEnv({ AGENT_BROWSER_ARGS: "--disable-gpu", PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
-			const result = await runAgentBrowserProcess({ args: ["open", "about:blank"], cwd: tempDir });
+		const configPath = join(tempDir, "agent-browser.json");
+		await writeFile(configPath, "{\"headed\":true}\n");
+		await withPatchedEnv({ AGENT_BROWSER_ALLOW_FILE_ACCESS: "true", AGENT_BROWSER_ARGS: "--disable-gpu", AGENT_BROWSER_CONFIG: configPath, PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+			const result = await runAgentBrowserProcess({ args: ["--allow-file-access", "true", "open", "file:///tmp/page.html"], cwd: tempDir });
 			const parsed = await parseAgentBrowserEnvelope(result.stdout);
 			const data = parsed.envelope?.data as { allowFileAccessEnv?: string | null; args?: string[]; config?: string; configContent?: string | null; envArgs?: string | null };
-			assert.deepEqual(data.args?.slice(0, 2), ["--allow-file-access", "false"]);
-			assert.equal(data.configContent, "{}\n");
-			assert.match(data.config ?? "", /managed-restore-config/);
-			assert.equal(data.envArgs, null);
+			assert.deepEqual(data.args, ["--allow-file-access", "true", "open", "file:///tmp/page.html"]);
+			assert.equal(data.config, configPath);
+			assert.equal(data.configContent, "{\"headed\":true}\n");
+			assert.equal(data.envArgs, "--disable-gpu");
+			assert.equal(data.allowFileAccessEnv, "true");
 		});
 		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 			const result = await runAgentBrowserProcess({ args: ["--session", "caller-owned", "open", "file:///tmp/page.html"], cwd: tempDir });
-			assert.equal(result.agentBrowserStarted, false);
-			assert.match(result.spawnError?.message ?? "", /wrapper-managed local browser/);
+			assert.equal(result.agentBrowserStarted, true);
 		});
 		await withPatchedEnv({ AGENT_BROWSER_ALLOW_FILE_ACCESS: "true", PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
 			const result = await runAgentBrowserProcess({ args: ["--allow-file-access", "false", "get", "url"], cwd: tempDir, preserveAttachedBrowserSession: true });
 			const parsed = await parseAgentBrowserEnvelope(result.stdout);
 			const data = parsed.envelope?.data as { allowFileAccessEnv?: string | null; args?: string[] };
-			assert.equal(data.allowFileAccessEnv, null);
-			assert.deepEqual(data.args, ["get", "url"]);
+			assert.equal(data.allowFileAccessEnv, "true");
+			assert.deepEqual(data.args, ["--allow-file-access", "false", "get", "url"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -258,8 +254,8 @@ test("process start identity commands use absolute POSIX fallbacks and native Po
 	assert.match(windows?.args.at(-1) ?? "", /win32-powershell-ticks-v1:/);
 	assert.equal(buildProcessStartIdentityCommand(0, "win32"), undefined);
 	assert.equal(normalizeProcessStartIdentity("  638000000000000000\r\n"), "638000000000000000");
-	assert.equal(processStartIdentitiesMatch("Sun Aug 3 00:00:00 2026", "win32-powershell-ticks-v1:638000000000000000", "win32"), undefined);
-	assert.equal(processStartIdentitiesMatch("win32-powershell-ticks-v1:1", "win32-powershell-ticks-v1:2", "win32"), false);
+	assert.equal(processStartIdentitiesMatch("Sun Aug 3 00:00:00 2026", "win32-powershell-ticks-v1:638000000000000000"), false);
+	assert.equal(processStartIdentitiesMatch("win32-powershell-ticks-v1:1", "win32-powershell-ticks-v1:2"), false);
 });
 
 test("Windows managed restore commit excludes PowerShell command-not-found wrappers", () => {
@@ -820,8 +816,8 @@ if (args.includes("session") && args.includes("info")) {
 			const entries = await readdir(currentTempRoot as string);
 			assert.deepEqual(entries.filter((entry) => entry.startsWith("process-stdout-")), []);
 			const closeDebug = JSON.parse(await readFile(closeDebugPath, "utf8")) as { configContent: string | null; envRestore: string | null; restoreKey: string; statePath: string };
-			assert.equal(closeDebug.configContent, "{}\n");
-			assert.equal(closeDebug.envRestore, null);
+			assert.equal(closeDebug.configContent, null);
+			assert.equal(closeDebug.envRestore, "replacement-key");
 			const firstSessionName = firstOpen.details?.sessionName as string;
 			assert.equal(closeDebug.restoreKey, createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(firstSessionName)));
 			const sessions = join(tempDir, ".agent-browser", "sessions");
@@ -881,7 +877,7 @@ if (isNavigationSummaryHelper) {
 	}
 });
 
-test("runAgentBrowserProcess pins owned namespace and config after planning", { concurrency: false }, async () => {
+test("runAgentBrowserProcess pins managed restore identity while preserving caller configuration", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-namespace-env-"));
 	const basePath = process.env.PATH ?? "";
@@ -913,26 +909,24 @@ test("runAgentBrowserProcess pins owned namespace and config after planning", { 
 			assert.equal(data.home, await realpath(tempDir));
 			assert.equal(data.namespace, "");
 			assert.equal(data.restore, createManagedSessionRestoreKey(tempDir, "piab-managed"));
-			assert.equal(data.configContent, "{}\n");
-			assert.ok(data.config);
-			if (process.platform !== "win32") assert.equal((await stat(data.config)).mode & 0o777, 0o400);
-			await stat(join(dirname(data.config), ".pi-agent-browser-owner.json"));
-			assert.notEqual(data.config, join(tempDir, "agent-browser.json"));
+			assert.equal(data.configContent, null);
+			assert.equal(data.config, undefined);
 
+			const callerConfigPath = join(tempDir, "agent-browser.json");
+			await writeFile(callerConfigPath, "{\"headed\":true}\n");
 			const closeResult = await withOwnedManagedSessionContext(context, () => runAgentBrowserProcess({
-				args: ["--session", "piab-managed", "--config", join(tempDir, "agent-browser.json"), "--restore", "attacker-key", "close"],
+				args: ["--session", "piab-managed", "--config", callerConfigPath, "--restore", "attacker-key", "close"],
 				cwd: tempDir,
-				env: { AGENT_BROWSER_CONFIG: join(tempDir, "agent-browser.json"), AGENT_BROWSER_RESTORE: "attacker-key" },
+				env: { AGENT_BROWSER_CONFIG: callerConfigPath, AGENT_BROWSER_RESTORE: "attacker-key" },
 				managedSessionRestoreState: restoreState,
 				ownedManagedSession: true,
 			}));
 			const closeParsed = await parseAgentBrowserEnvelope(closeResult.stdout);
 			const closeData = closeParsed.envelope?.data as { args?: string[]; configContent?: string; restore?: string | null };
-			assert.deepEqual(closeData.args, ["--json", "--namespace", "", "--session", "piab-managed", "close"]);
-			assert.equal(closeData.configContent, "{}\n");
-			assert.equal(closeData.restore, null);
+			assert.deepEqual(closeData.args, ["--session", "piab-managed", "--config", callerConfigPath, "--restore", "attacker-key", "close"]);
+			assert.equal(closeData.configContent, "{\"headed\":true}\n");
+			assert.equal(closeData.restore, "attacker-key");
 			await cleanupSecureTempArtifacts();
-			await assert.rejects(stat(data.config), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 		});
 	} finally {
 		await cleanupSecureTempArtifacts();
@@ -1002,7 +996,7 @@ test("runAgentBrowserProcess refuses incompatible environment changes after plan
 	}
 });
 
-test("runAgentBrowserProcess blocks foreign managed-state capabilities at the spawn boundary", { concurrency: false }, async () => {
+test("runAgentBrowserProcess passes upstream state, session, file, and launch capabilities through", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-state-boundary-"));
 	const basePath = process.env.PATH ?? "";
 	const startedPath = join(tempDir, "started");
@@ -1010,77 +1004,39 @@ test("runAgentBrowserProcess blocks foreign managed-state capabilities at the sp
 	execFileSync("git", ["init", "-q", tempDir], { stdio: "ignore" });
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
-			const currentKey = createManagedSessionRestoreKey(tempDir);
-			const foreignKey = currentKey === `piab-r2-${"a".repeat(32)}` ? `piab-r2-${"b".repeat(32)}` : `piab-r2-${"a".repeat(32)}`;
+			const foreignKey = `piab-r2-${"a".repeat(32)}`;
 			const result = await runAgentBrowserProcess({
 				args: ["state", "show", `${foreignKey}-foreign.json`],
 				cwd: tempDir,
 			});
-			assert.equal(result.agentBrowserStarted, false);
-			assert.match(result.spawnError?.message ?? "", /outside the current checkout/);
+			assert.equal(result.agentBrowserStarted, true);
 			const foreignSession = await runAgentBrowserProcess({
 				args: ["--session", "piab-foreign", "snapshot", "-i"],
 				cwd: tempDir,
 			});
-			assert.equal(foreignSession.agentBrowserStarted, false);
-			assert.match(foreignSession.spawnError?.message ?? "", /reserved for a browser managed by this extension instance/);
+			assert.equal(foreignSession.agentBrowserStarted, true);
 			const foreignEnvironmentSession = await runAgentBrowserProcess({
 				args: ["session", "info"],
 				cwd: tempDir,
 				env: { AGENT_BROWSER_SESSION: "piab-foreign" },
 			});
-			assert.equal(foreignEnvironmentSession.agentBrowserStarted, false);
-			assert.match(foreignEnvironmentSession.spawnError?.message ?? "", /reserved for a browser managed by this extension instance/);
+			assert.equal(foreignEnvironmentSession.agentBrowserStarted, true);
 			for (const options of [
 				{ args: ["--allow-file-access", "true", "open", "https://example.com"] },
 				{ args: ["--download-path", "-x/../.agent-browser/downloads", "open", "https://example.com"] },
 				{ args: ["screenshot", join(tempDir, ".agent-browser", "capture.png")] },
 				{ args: ["open", "https://example.com"], env: { AGENT_BROWSER_SCREENSHOT_DIR: join(tempDir, ".agent-browser", "screenshots") } },
 				{ args: ["open", "https://example.com"], env: { AGENT_BROWSER_STATE: join(tempDir, ".agent-browser", "sessions", "auth.json") } },
-				{ args: ["snapshot", "-i"], managedStatePageUrlUnknown: true },
 			]) {
-				const blocked = await runAgentBrowserProcess({ ...options, cwd: tempDir });
-				assert.equal(blocked.agentBrowserStarted, false);
-				assert.match(blocked.spawnError?.message ?? "", /authenticated|active page became unverified/);
+				const forwarded = await runAgentBrowserProcess({ ...options, cwd: tempDir });
+				assert.equal(forwarded.agentBrowserStarted, true);
 			}
-			await assert.rejects(stat(startedPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+			const unverified = await runAgentBrowserProcess({ args: ["snapshot", "-i"], cwd: tempDir, managedStatePageUrlUnknown: true });
+			assert.equal(unverified.agentBrowserStarted, false);
+			assert.match(unverified.spawnError?.message ?? "", /active page became unverified/);
+			await stat(startedPath);
 		});
 	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
-test("runAgentBrowserProcess reports protected restore-config setup failures before spawning", { concurrency: false }, async () => {
-	await cleanupSecureTempArtifacts();
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-config-failure-"));
-	const basePath = process.env.PATH ?? "";
-	const startedPath = join(tempDir, "started");
-	await writeFakeAgentBrowserBinary(tempDir, `require("node:fs").writeFileSync(${JSON.stringify(startedPath)}, "started");`);
-	execFileSync("git", ["init", "-q", tempDir], { stdio: "ignore" });
-	try {
-		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}`, PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES: "1" }, async () => {
-			const restoreState = new ManagedSessionRestoreState();
-			const args = ["--session", "piab-managed", "open", "https://example.com"];
-			const context = buildOwnedManagedSessionRestoreContext({
-				args,
-				cwd: tempDir,
-				managedSessionName: "piab-managed",
-				restoreState,
-				sessionName: "piab-managed",
-			});
-			assert.equal(context?.restoreDecision, "enabled");
-			const result = await withOwnedManagedSessionContext(context, () => runAgentBrowserProcess({
-				args,
-				cwd: tempDir,
-				managedSessionRestoreState: restoreState,
-				ownedManagedSession: true,
-			}));
-			assert.equal(result.agentBrowserStarted, false);
-			assert.match(result.spawnError?.message ?? "", /protected empty config/);
-			await assert.rejects(stat(startedPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
-		});
-	} finally {
-		await cleanupSecureTempArtifacts();
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });

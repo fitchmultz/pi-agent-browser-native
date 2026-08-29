@@ -447,7 +447,7 @@ test("restoreManagedSessionStateFromBranch honors a nested close outcome after a
 	assert.equal(restored.closedSessionName, "piab-demo-123");
 });
 
-test("restoreManagedSessionStateFromBranch treats legacy terminal batch close rows as closed", () => {
+test("restoreManagedSessionStateFromBranch keeps unknown post-close launches active", () => {
 	const restored = restoreManagedSessionStateFromBranch(
 		[
 			createToolBranchEntry({
@@ -477,8 +477,8 @@ test("restoreManagedSessionStateFromBranch treats legacy terminal batch close ro
 		"piab-demo-123",
 	);
 
-	assert.equal(restored.active, false);
-	assert.equal(restored.closedSessionName, "piab-demo-123");
+	assert.equal(restored.active, true);
+	assert.equal(restored.closedSessionName, undefined);
 });
 
 test("restoreManagedSessionStateFromBranch preserves a terminal batch close through a non-launching diagnostic", () => {
@@ -1141,6 +1141,13 @@ test("buildExecutionPlan resolves caller-owned session namespaces from argv befo
 			sessionMode: "auto",
 		});
 		assert.equal(wrapperManaged.namespace, undefined);
+		const callerPrefixed = buildExecutionPlan(["--session", "piab-caller-owned", "snapshot", "-i"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			sessionMode: "auto",
+		});
+		assert.equal(callerPrefixed.namespace, "review-space");
 		const wrapperExplicitDefault = buildExecutionPlan(["--namespace", "", "--session", "piab-demo-123", "close"], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: true,

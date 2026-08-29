@@ -1324,7 +1324,7 @@ process.stdin.on("end", () => {
 	}
 });
 
-test("agentBrowserExtension rejects qa.attached when attached URL is not http(s)", { concurrency: false }, async () => {
+test("agentBrowserExtension allows qa.attached for non-http page URLs", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-attached-precondition-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -1343,9 +1343,9 @@ function getSessionKey() {
 function readSessionState() {
   try {
     const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    return parsed[getSessionKey()] ?? { title: "Blank Page", url: "about:blank" };
+    return parsed[getSessionKey()] ?? { title: "Attached App", url: process.env.FAKE_ATTACHED_URL || "file:///tmp/app.html" };
   } catch {
-    return { title: "Blank Page", url: "about:blank" };
+    return { title: "Attached App", url: process.env.FAKE_ATTACHED_URL || "file:///tmp/app.html" };
   }
 }
 function findCommandStartIndex(argv) {
@@ -1390,29 +1390,31 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   if (handleStandaloneCommand()) return;
-  process.stdout.write(JSON.stringify([]));
+  const steps = JSON.parse(stdin);
+  const results = steps.map((command) => command[0] === "get" && command[1] === "text"
+    ? { command, success: true, result: { result: "Welcome" } }
+    : { command, success: true, result: { ok: true } });
+  process.stdout.write(JSON.stringify(results));
 });`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, FAKE_ATTACHED_URL: "file:///tmp/app.html" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
-			const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
-			assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
-			const attachedBlankResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				qa: { attached: true, expectedText: "Welcome" },
-			});
-			assert.equal(attachedBlankResult.isError, true);
-			assert.match(attachedBlankResult.content[0]?.text ?? "", /qa\.attached requires an http\(s\) page URL/);
-			assert.equal(attachedBlankResult.details?.failureCategory, "validation-error");
-			assert.deepEqual((attachedBlankResult.details?.nextActions as Array<{ id: string }> | undefined)?.map((action) => action.id), [
-				"list-tabs-before-qa-attached",
-				"snapshot-before-qa-attached",
-			]);
+			for (const url of ["file:///tmp/app.html", "app://shell/home"]) {
+				await withPatchedEnv({ FAKE_ATTACHED_URL: url }, async () => {
+					const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+					assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
+					const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+						qa: { attached: true, expectedText: "Welcome" },
+					});
+					assert.equal(attachedResult.isError, false, JSON.stringify(attachedResult));
+				});
+			}
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.some((entry) => entry.args.at(-1) === "batch"), false);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 2);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

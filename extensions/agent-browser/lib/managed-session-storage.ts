@@ -5,9 +5,12 @@ import { dirname, isAbsolute, join, parse, resolve, win32 } from "node:path";
 
 import { canonicalizeAgentBrowserNamespace } from "./argv-grammar.js";
 
-export { isManagedSessionRestoreKey } from "./managed-session-capabilities.js";
-
+const MANAGED_SESSION_RESTORE_KEY_PATTERN = /^piab-r2-[a-f\d]{32}$/i;
 const MANAGED_SESSION_NAME_PREFIX = "piab-r2-";
+
+export function isManagedSessionRestoreKey(value: string | null | undefined): value is string {
+	return typeof value === "string" && MANAGED_SESSION_RESTORE_KEY_PATTERN.test(value);
+}
 const MANAGED_SESSION_FRESH_SUFFIX_PATTERN = /-fresh-[a-f\d]{10}$/i;
 const MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH = 32;
 const PROJECT_GENERATION_MARKER_NAME = "pi-agent-browser-project-generation-v1.json";

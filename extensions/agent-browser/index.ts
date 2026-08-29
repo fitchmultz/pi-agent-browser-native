@@ -36,7 +36,7 @@ import {
 import { extractExplicitNamespace, extractExplicitSessionName, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
 import { parseArgvDescriptor } from "./lib/argv-descriptor.js";
 import { needsManagedSession } from "./lib/command-policy.js";
-import { cleanupManagedSessionRestoreConfig, ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
+import { ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
@@ -61,7 +61,6 @@ import {
 	runAgentBrowserScript,
 	type AgentBrowserScriptRunResult,
 } from "./lib/input-modes/script.js";
-import { parseAllowedDomainsPolicyFromArgs, type AllowedDomainsPolicy } from "./lib/navigation-policy.js";
 import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
 import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
@@ -75,7 +74,7 @@ import {
 	type ElectronLaunchRecord,
 } from "./lib/orchestration/electron-host/index.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
-import { applyAgentBrowserOutputPath, getAgentBrowserOutputPathValidationError, normalizeRequestedOutputPath } from "./lib/orchestration/output-file.js";
+import { applyAgentBrowserOutputPath, normalizeRequestedOutputPath } from "./lib/orchestration/output-file.js";
 import { appendScriptSessionLease, buildScriptBrowserEnvelope, buildScriptToolResult, getScriptSessionLeasesFromBranch } from "./lib/orchestration/script-mode.js";
 import type { FileArtifactMetadata, NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
 import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isPendingRecordingCommand, isSessionArtifactManifest, mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "./lib/results/artifact-manifest.js";
@@ -441,58 +440,6 @@ function restoreAttachedSessionKeysFromBranch(branch: unknown[]): Set<string> {
 		else if (details.attachedBrowserSession === true || isAttachedBrowserInvocation(args, {})) attachedSessionKeys.add(sessionKey);
 	}
 	return attachedSessionKeys;
-}
-
-function restoreAllowedDomainsBySessionFromBranch(branch: unknown[]): Map<string, AllowedDomainsPolicy> {
-	const restoredPolicies = new Map<string, AllowedDomainsPolicy>();
-	for (const entry of branch) {
-		if (!isRecord(entry) || entry.type !== "message") continue;
-		const message = isRecord(entry.message) ? entry.message : undefined;
-		if (!message || message.toolName !== "agent_browser") continue;
-		const details = isRecord(message.details) ? message.details : undefined;
-		if (!details) continue;
-		const succeeded = getSuccessfulToolResult(details, message);
-		const batchCloseLifecycle = getSuccessfulBatchCloseLifecycle(details.batchSteps);
-		const args = getToolResultArgs(details);
-		const command = typeof details.command === "string" ? details.command : extractUpstreamCommandTokens(args)[0];
-		const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;
-		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
-		const sessionKey = getSessionContextKey(sessionName, namespace);
-		const explicitSessionName = extractExplicitSessionName(args);
-		if (detailsReportCloseAllApplied(details, succeeded)) deleteIdentityKeysInNamespace(restoredPolicies, namespace);
-		const outcome = getManagedSessionOutcome(details);
-		const outcomeSucceeded = outcome?.succeeded === true;
-		const outcomeStatus = typeof outcome?.status === "string" ? outcome.status : undefined;
-		const outcomeCurrentSessionName = typeof outcome?.currentSessionName === "string" ? outcome.currentSessionName : undefined;
-		const outcomeAttemptedSessionName = typeof outcome?.attemptedSessionName === "string" ? outcome.attemptedSessionName : undefined;
-		if (outcomeSucceeded && outcomeStatus === "closed") {
-			const closedSessionName = outcomeAttemptedSessionName ?? outcomeCurrentSessionName ?? sessionName;
-			if (closedSessionName) restoredPolicies.delete(getSessionContextKey(closedSessionName, namespace) ?? closedSessionName);
-		}
-		if (outcomeSucceeded && outcomeStatus === "replaced") {
-			const replacedSessionName = typeof outcome.replacedSessionName === "string" ? outcome.replacedSessionName : undefined;
-			const replacedSessionNamespace = typeof outcome.replacedSessionNamespace === "string" ? outcome.replacedSessionNamespace : namespace;
-			if (replacedSessionName) restoredPolicies.delete(getSessionContextKey(replacedSessionName, replacedSessionNamespace) ?? replacedSessionName);
-		}
-		if ((succeeded && isCloseCommand(command)) || batchCloseLifecycle) {
-			const closedSessionName = explicitSessionName ?? sessionName ?? outcomeAttemptedSessionName ?? outcomeCurrentSessionName;
-			if (closedSessionName) restoredPolicies.delete(getSessionContextKey(closedSessionName, namespace) ?? closedSessionName);
-		}
-		const electron = isRecord(details.electron) ? details.electron : undefined;
-		const cleanup = isRecord(electron?.cleanup) ? electron.cleanup : undefined;
-		const cleanupResults = Array.isArray(cleanup?.results) ? cleanup.results : [];
-		for (const cleanupResult of cleanupResults) {
-			for (const identity of getCleanupResultClosedManagedSessionIdentities(cleanupResult, namespace)) {
-				restoredPolicies.delete(getSessionContextKey(identity.sessionName, identity.namespace) ?? identity.sessionName);
-			}
-		}
-		const outcomeKeepsSessionCurrent = outcome?.activeAfter === true
-			&& (outcomeStatus === "created" || outcomeStatus === "replaced" || outcomeStatus === "unchanged")
-			&& outcomeCurrentSessionName === sessionName;
-		const policy = (succeeded || outcomeKeepsSessionCurrent) && sessionKey && !isCloseCommand(command) && batchCloseLifecycle?.endsClosed !== true ? parseAllowedDomainsPolicyFromArgs(args) : undefined;
-		if (policy && sessionKey) restoredPolicies.set(sessionKey, policy);
-	}
-	return restoredPolicies;
 }
 
 function trackOwnedManagedSession(
@@ -1025,7 +972,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let activeRecordingReservations = new Map<string, ActiveRecordingReservation>();
 	let recordingSessionTombstones = new Map<string, ActiveRecordingReservation>();
 	let recordingSessionTombstonesToPersist = new Map<string, ActiveRecordingReservation>();
-	let allowedDomainsBySession = new Map<string, AllowedDomainsPolicy>();
 	let attachedSessionKeys = new Set<string>();
 	let networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 	let electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
@@ -1185,8 +1131,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
 	const clearSessionScopedBrowserState = (sessionName: string, namespace?: string): void => {
 		const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
-		allowedDomainsBySession = new Map(allowedDomainsBySession);
-		allowedDomainsBySession.delete(key);
 		attachedSessionKeys.delete(key);
 		networkRoutesBySession = new Map(networkRoutesBySession);
 		networkRoutesBySession.delete(key);
@@ -1295,7 +1239,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		for (const key of recordingSessionTombstones.keys()) restoredRecordingState.active.delete(key);
 		for (const [key, reservation] of activeRecordingReservations) restoredRecordingState.active.set(key, reservation);
 		activeRecordingReservations = restoredRecordingState.active;
-		allowedDomainsBySession = restoreAllowedDomainsBySessionFromBranch(branch);
 		attachedSessionKeys = restoreAttachedSessionKeysFromBranch(branch);
 		networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 		electronLaunchRecords = restoreElectronLaunchRecordsFromBranch(branch);
@@ -1469,7 +1412,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		activeRecordingReservations = new Map<string, ActiveRecordingReservation>();
 		recordingSessionTombstones = new Map<string, ActiveRecordingReservation>();
 		recordingSessionTombstonesToPersist = new Map<string, ActiveRecordingReservation>();
-		allowedDomainsBySession = new Map<string, AllowedDomainsPolicy>();
 		attachedSessionKeys = new Set<string>();
 		networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 		electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
@@ -1477,7 +1419,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		branchOwnedElectronLaunchIds = new Set<string>();
 		electronChildProcesses = new Map<string, ChildProcess>();
 		ownedManagedSessions.clear();
-		cleanupManagedSessionRestoreConfig();
 		await cleanupSecureTempArtifacts({ preservePaths: preservedElectronProfileDirs });
 	});
 
@@ -1554,10 +1495,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			});
 			if (resolvedInput.status === "invalid") {
 				return buildValidationFailureResult(resolvedInput);
-			}
-			const outputPathValidationError = getAgentBrowserOutputPathValidationError(outputPath, ctx.cwd);
-			if (outputPathValidationError) {
-				return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: outputPathValidationError });
 			}
 			const applyUnserializedOutputPath = async (result: AgentBrowserToolResult, preserveTextContent = false): Promise<AgentBrowserToolResult> => {
 				if (!outputPath || result.isError === true || (isRecord(result.details) && result.details.resultCategory === "failure")) return result;
@@ -1794,7 +1731,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				const generationAtStart = branchStateGeneration;
 				const sessionPageStateUpdate = sessionPageState.beginUpdate();
 				const browserRunState: BrowserRunState = {
-					allowedDomainsBySession,
 					artifactManifest,
 					attachedSessionKeys,
 					closedManagedSessionNames: new Set<string>(),
@@ -1816,7 +1752,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					sessionPageState,
 					traceOwners,
 				};
-				const initialAllowedDomainsBySession = browserRunState.allowedDomainsBySession;
 				const initialArtifactManifest = browserRunState.artifactManifest;
 				const initialNetworkRoutesBySession = browserRunState.networkRoutesBySession;
 				const attachedSessionRequested = isAttachedBrowserInvocation(toolArgs)
@@ -1874,7 +1809,6 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					}
 				}
 				if (branchRestoreStillCurrent) {
-					allowedDomainsBySession = mergeBrowserRunMap(allowedDomainsBySession, initialAllowedDomainsBySession, browserRunState.allowedDomainsBySession);
 					networkRoutesBySession = mergeBrowserRunMap(networkRoutesBySession, initialNetworkRoutesBySession, browserRunState.networkRoutesBySession);
 					artifactManifest = mergeBrowserRunArtifactManifest(artifactManifest, initialArtifactManifest, browserRunState.artifactManifest);
 					const handledBatchCloseKeys = syncRecordingReservationsFromResult(result);

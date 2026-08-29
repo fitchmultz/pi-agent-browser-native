@@ -487,7 +487,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 
 			const closeArgs = (await readInvocationLog(logPath)).map((entry) => entry.args).filter((args) => args.includes("close"));
-			assert.deepEqual(closeArgs, [["--json", "--namespace", "", "--session", ownedName, "close"]]);
+			assert.deepEqual(closeArgs, [["--json", "--session", ownedName, "close"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -541,9 +541,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.notEqual(finalFreshSessionName, firstFreshSessionName);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--namespace", "", "--session", firstSessionName, "close"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", firstSessionName, "close"]);
 			assert.equal(invocations[2]?.sessionName, firstFreshSessionName);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--namespace", "", "--session", firstFreshSessionName, "close"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", firstFreshSessionName, "close"]);
 			assert.equal(invocations[4]?.sessionName, finalFreshSessionName);
 		});
 	} finally {
@@ -1350,10 +1350,9 @@ if (args.includes("session") && args.includes("info")) {
 			});
 			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
 			const oldFollowUp = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["--session", oldSessionName, "get", "url"] });
-			assert.equal(oldFollowUp.isError, true, JSON.stringify(oldFollowUp));
-			assert.match(String(oldFollowUp.details?.validationError), /reserved for a browser managed by this extension instance/);
+			assert.equal(oldFollowUp.isError, false, JSON.stringify(oldFollowUp));
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.some((entry) => entry.args.includes(oldSessionName) && entry.args.includes("get")), false, JSON.stringify(invocations));
+			assert.equal(invocations.some((entry) => entry.args.includes(oldSessionName) && entry.args.includes("get")), true, JSON.stringify(invocations));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -23,7 +23,6 @@ import {
 	scanUpstreamGlobalFlagOccurrences,
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
-import { isWrapperManagedSessionName, redactManagedSessionRestoreKeys } from "./managed-session-capabilities.js";
 import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
 import {
 	hasLaunchScopedFlagToken,
@@ -326,7 +325,7 @@ export function redactSensitiveText(text: string): string {
 	return redactEmbeddedStructuredText(
 		redactEnvSecretAssignments(
 			redactStandaloneBasicCredential(
-				redactBearerCredentials(redactLooseUrlUserinfo(redactLooseUrlMatches(redactManagedSessionRestoreKeys(text))))
+				redactBearerCredentials(redactLooseUrlUserinfo(redactLooseUrlMatches(text)))
 					.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
 					.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
 			),
@@ -1011,8 +1010,13 @@ export function buildExecutionPlan(
 	}
 
 	const explicitSessionName = extractExplicitSessionName(args);
-	if (explicitSessionName && !isWrapperManagedSessionName(explicitSessionName)) {
-		namespace = resolveAgentBrowserNamespace(args, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
+	if (explicitSessionName && !explicitNamespacePresent) {
+		const targetsCurrentManagedSession = options.managedSessionActive
+			&& getAgentBrowserSessionIdentityKey(explicitSessionName, managedSessionNamespace)
+				=== getAgentBrowserSessionIdentityKey(options.managedSessionName, managedSessionNamespace);
+		namespace = targetsCurrentManagedSession
+			? managedSessionNamespace
+			: resolveAgentBrowserNamespace(args, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
 	}
 	const shouldCreateFreshManagedSession =
 		!explicitSessionName && options.sessionMode === "fresh" && commandInfo.command !== undefined && !isCloseCommand(commandInfo.command);

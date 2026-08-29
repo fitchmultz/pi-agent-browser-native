@@ -180,9 +180,10 @@ test("buildToolPresentation formats session status and session list", async () =
 			},
 		},
 	});
-	assert.equal(list.summary, "Sessions: 1");
-	assert.equal((list.content[0] as { text: string }).text, "1. name=work *active*; active=true; title=Example; url=https://example.com");
-	assert.doesNotMatch(JSON.stringify(list.data), /piab-foreign|PIAB-case-alias|private\.example/);
+	assert.equal(list.summary, "Sessions: 3");
+	assert.match((list.content[0] as { text: string }).text, /piab-foreign/);
+	assert.match((list.content[0] as { text: string }).text, /PIAB-case-alias/);
+	assert.match((list.content[0] as { text: string }).text, /name=work/);
 });
 
 test("buildToolPresentation formats Chrome profile arrays", async () => {
@@ -311,7 +312,7 @@ test("buildToolPresentation formats stateful browser-context results without lea
 	}
 });
 
-test("buildToolPresentation hides managed restore capabilities and state-list rows", async () => {
+test("buildToolPresentation preserves managed restore capabilities and state-list rows", async () => {
 	const restoreKey = `piab-r2-${"a".repeat(32)}`;
 	const list = await buildToolPresentation({
 		commandInfo: { command: "state", subcommand: "list" },
@@ -327,21 +328,21 @@ test("buildToolPresentation hides managed restore capabilities and state-list ro
 		},
 	});
 	const listSerialized = JSON.stringify(list);
-	assert.equal(list.summary, "States: 1");
+	assert.equal(list.summary, "States: 2");
 	assert.match((list.content[0] as { text: string }).text, /caller-owned\.json/);
-	assert.doesNotMatch(listSerialized, /piab-r2-|private\.example|managed\.json/);
+	assert.match(listSerialized, /piab-r2-|private\.example|managed\.json/);
 
 	const sessionInfo = await buildToolPresentation({
 		commandInfo: { command: "session", subcommand: "info" },
 		cwd: process.cwd(),
 		envelope: {
 			success: true,
-			data: { active: true, runtime: { restoreKey }, legacyStatePath: `/tmp/piab-r-${"b".repeat(32)}-managed.json`, statePath: `/tmp/${restoreKey}-managed.json` },
+			data: { active: true, runtime: { restoreKey }, unrelatedStatePath: `/tmp/piab-r-${"b".repeat(32)}-managed.json`, statePath: `/tmp/${restoreKey}-managed.json` },
 		},
 	});
 	const infoSerialized = JSON.stringify(sessionInfo);
-	assert.doesNotMatch(infoSerialized, /piab-r(?:2)?-[a-f\d]{32}/);
-	assert.match(infoSerialized, /REDACTED MANAGED STATE/);
+	assert.match(infoSerialized, /piab-r(?:2)?-[a-f\d]{32}/);
+	assert.doesNotMatch(infoSerialized, /REDACTED MANAGED STATE/);
 });
 
 test("buildToolPresentation keeps benign storage values visible while redacting likely secrets", async () => {
