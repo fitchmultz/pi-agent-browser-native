@@ -36,7 +36,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { active: false, runt
 			PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
 			PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "50",
 			PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
-		}, () => inspectManagedSessionDaemon({ allowManagedSessionTarget: true, cwd: tempDir, sessionName: "piab-slow" }));
+		}, () => inspectManagedSessionDaemon({ cwd: tempDir, sessionName: "piab-slow" }));
 
 		assert.deepEqual(result, { status: "inactive" });
 	} finally {

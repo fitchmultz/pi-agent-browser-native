@@ -5,7 +5,6 @@ import { dirname, isAbsolute, join } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
 import { parseArgvDescriptor } from "./argv-descriptor.js";
-import { needsManagedSession } from "./command-policy.js";
 import { isKnownCommandToken } from "./command-taxonomy.js";
 import {
 	extractExplicitSessionName,
@@ -16,26 +15,20 @@ import {
 	resolveAgentBrowserNamespace,
 } from "./argv-grammar.js";
 import {
-	canonicalizeOwnedManagedSessionCloseArgs,
 	commitManagedSessionRestoreSuppression,
-	getManagedSessionRestoreConfigEnv,
 	getManagedSessionRestoreEnv,
-	getOwnedManagedSessionRestoreKey,
 	getManagedSessionRestoreProtectedEnv,
 	getOwnedManagedSessionCompatibilityEnv,
 	getOwnedManagedSessionNamespaceEnv,
 	isOwnedManagedSessionTarget,
-	shouldOmitOwnedManagedSessionRestoreEnv,
 	validateManagedSessionRestoreContextForSpawn,
 	type ManagedSessionRestoreEnvOptions,
 	type ManagedSessionRestoreState,
 } from "./managed-session-restore.js";
 import {
-	getManagedSessionStateAccessValidationError,
-	getManagedSessionTargetAccessValidationError,
-	invocationMayNavigateToLocalFile,
-} from "./managed-session-state-policy.js";
-import { getImplicitSessionIdleTimeoutMs, isPlainTextInspectionArgs } from "./runtime.js";
+	getPageTargetValidationError,
+} from "./page-target-validation.js";
+import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 
@@ -44,7 +37,6 @@ const MAX_BUFFERED_STDERR_CHARS = 32_000;
 const MAX_BUFFERED_STDOUT_TAIL_CHARS = 32_000;
 const PROCESS_STDOUT_SPILL_FILE_PREFIX = "process-stdout";
 const AGENT_BROWSER_SOCKET_DIR_ENV = "AGENT_BROWSER_SOCKET_DIR";
-const AGENT_BROWSER_ARGS_ENV = "AGENT_BROWSER_ARGS";
 const AGENT_BROWSER_DEFAULT_TIMEOUT_ENV = "AGENT_BROWSER_DEFAULT_TIMEOUT";
 const AGENT_BROWSER_IDLE_TIMEOUT_ENV = "AGENT_BROWSER_IDLE_TIMEOUT_MS";
 const PI_AGENT_BROWSER_PROCESS_TIMEOUT_ENV = "PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS";
@@ -56,7 +48,6 @@ const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
 const WINDOWS_AGENT_BROWSER_MISSING_MARKER = "PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd";
-const UNTRUSTED_LOCAL_FILE_SESSION_MESSAGE = "Local file navigation requires a wrapper-managed local browser because caller-owned or attached sessions can retain unsafe file-access launch flags. Omit the explicit session or attachment and retry with sessionMode fresh.";
 const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
 const WINDOWS_COMMANDS_WITH_ADJACENT_SUBCOMMAND = new Set([
 	"auth", "clipboard", "cookies", "dashboard", "device", "dialog", "diff", "find", "get", "is", "keyboard",
@@ -156,24 +147,9 @@ export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 	return args;
 }
 
-export function pinAgentBrowserFileAccessDisabled(args: string[], wrapperCompatibilityUserAgent?: string, preserveAttachedBrowserSession = false): string[] {
-	const filtered: string[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
-		if (token.startsWith("--allow-file-access=")) continue;
-		if (token === "--allow-file-access") {
-			if (["false", "true"].includes(args[index + 1] ?? "")) index += 1;
-			continue;
-		}
-		filtered.push(token);
-	}
-	// These are launch-only controls. Sending them on an attached-session follow-up makes upstream replace the CDP connection with a local browser.
-	if (preserveAttachedBrowserSession) return filtered;
-	// Upstream's flag overrides only the active CDP target; the Chrome arg covers new tabs. Its --args parser splits commas/newlines.
-	const browserArgs = wrapperCompatibilityUserAgent
-		? ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`]
-		: [];
-	return [...browserArgs, "--allow-file-access", "false", ...filtered];
+export function prepareAgentBrowserSpawnArgs(args: string[], wrapperCompatibilityUserAgent?: string, preserveAttachedBrowserSession = false): string[] {
+	if (preserveAttachedBrowserSession || !wrapperCompatibilityUserAgent) return args;
+	return ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`, ...args];
 }
 
 export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
@@ -471,39 +447,23 @@ export function buildAgentBrowserProcessEnv(
 
 function getManagedPreSpawnPolicyError(
 	options: ManagedSessionRestoreEnvOptions,
-	effectiveEnv?: NodeJS.ProcessEnv,
-	allowManagedSessionTarget = false,
 	currentPageUrl?: string,
 	pageUrlUnknown = false,
 	trustedFirstBatchTabSelection = false,
-	trustedPinnedEmptyConfig = false,
 ): string | undefined {
-	const policyEnv = effectiveEnv ?? { ...(options.parentEnv ?? processEnv), ...options.env };
-	const managedSessionTargetError = getManagedSessionTargetAccessValidationError(
-		options.args,
-		allowManagedSessionTarget || options.ownedManagedSession === true || isOwnedManagedSessionTarget(options.args),
-		policyEnv,
-	);
-	if (managedSessionTargetError) return managedSessionTargetError;
 	if (!validateManagedSessionRestoreContextForSpawn(options)) {
 		return "Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser.";
 	}
-	return getManagedSessionStateAccessValidationError({
+	return getPageTargetValidationError({
 		args: options.args,
 		currentPageUrl,
-		cwd: options.cwd,
-		env: effectiveEnv ?? options.env,
-		managedSessionRestoreKey: getOwnedManagedSessionRestoreKey(),
 		pageUrlUnknown,
-		parentEnv: effectiveEnv ? {} : options.parentEnv ?? processEnv,
 		stdin: options.stdin,
 		trustedFirstBatchTabSelection,
-		trustedPinnedEmptyConfig,
 	});
 }
 
 export async function runAgentBrowserProcess(options: {
-	allowManagedSessionTarget?: boolean;
 	args: string[];
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
@@ -517,31 +477,13 @@ export async function runAgentBrowserProcess(options: {
 	timeoutMs?: number;
 	trustedFirstBatchTabSelection?: boolean;
 }): Promise<ProcessRunResult> {
-	const { allowManagedSessionTarget, cwd, env, managedSessionRestoreState, managedStateCurrentPageUrl, managedStatePageUrlUnknown, signal, stdin, trustedFirstBatchTabSelection } = options;
+	const { cwd, env, managedSessionRestoreState, managedStateCurrentPageUrl, managedStatePageUrlUnknown, signal, stdin, trustedFirstBatchTabSelection } = options;
 	const preserveAttachedBrowserSession = options.preserveAttachedBrowserSession === true || attachedBrowserSessionContext.getStore() === true;
 	const ownedManagedSession = options.ownedManagedSession === true || isOwnedManagedSessionTarget(options.args);
-	const args = canonicalizeOwnedManagedSessionCloseArgs({
-		args: options.args,
-		cwd,
-		env,
-		ownedManagedSession,
-		restoreState: managedSessionRestoreState,
-		stdin,
-	});
+	const args = options.args;
 	const timeoutMs = options.timeoutMs ?? getAgentBrowserProcessTimeoutMs();
 	if (signal?.aborted) {
 		return { aborted: true, agentBrowserStarted: false, exitCode: 1, stderr: "", stdout: "", timedOut: false };
-	}
-	if (invocationMayNavigateToLocalFile(args, stdin) && (!ownedManagedSession || preserveAttachedBrowserSession)) {
-		return {
-			aborted: false,
-			agentBrowserStarted: false,
-			exitCode: 1,
-			spawnError: new Error(UNTRUSTED_LOCAL_FILE_SESSION_MESSAGE),
-			stderr: "",
-			stdout: "",
-			timedOut: false,
-		};
 	}
 	const parentEnv = getAgentBrowserProcessEnvironment();
 	const managedSessionRestoreOptions = {
@@ -553,7 +495,7 @@ export async function runAgentBrowserProcess(options: {
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
-	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, undefined, allowManagedSessionTarget, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection);
+	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection);
 	if (planningPolicyError) {
 		return {
 			aborted: false,
@@ -566,36 +508,18 @@ export async function runAgentBrowserProcess(options: {
 		};
 	}
 	const managedSessionRestoreEnv = getManagedSessionRestoreEnv(managedSessionRestoreOptions);
-	const ownedManagedSessionClose = shouldOmitOwnedManagedSessionRestoreEnv(managedSessionRestoreOptions);
-	const browserConfigPinRequired = !isPlainTextInspectionArgs(args) && needsManagedSession(parseArgvDescriptor(args));
-	const managedSessionRestoreConfigEnv = await getManagedSessionRestoreConfigEnv(managedSessionRestoreEnv, ownedManagedSessionClose || browserConfigPinRequired);
-	if (managedSessionRestoreConfigEnv === undefined) {
-		return {
-			aborted: false,
-			agentBrowserStarted: false,
-			exitCode: 1,
-			spawnError: new Error("Browser-backed agent-browser commands require a protected empty config, but secure temp storage was unavailable."),
-			stderr: "",
-			stdout: "",
-			timedOut: false,
-		};
-	}
 	const ownedManagedSessionCompatibilityEnv = getOwnedManagedSessionCompatibilityEnv(managedSessionRestoreOptions);
 	const processOverrides: NodeJS.ProcessEnv = {
 		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
 		...managedSessionRestoreEnv,
 		...env,
-		...managedSessionRestoreConfigEnv,
 		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
 		...getOwnedManagedSessionNamespaceEnv(managedSessionRestoreOptions),
 		...getWindowsExplicitDefaultNamespaceEnv(args, parentEnv.AGENT_BROWSER_NAMESPACE),
 		...ownedManagedSessionCompatibilityEnv,
-		AGENT_BROWSER_ALLOW_FILE_ACCESS: undefined,
-		[AGENT_BROWSER_ARGS_ENV]: undefined,
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
-	if (ownedManagedSessionClose) effectiveEnv = { ...effectiveEnv, AGENT_BROWSER_RESTORE: undefined };
 	const requestedSocketDir = explicitSocketDir ?? parentEnv[PI_AGENT_BROWSER_SOCKET_DIR_ENV] ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir !== undefined) {
 		const socketDirError = requestedSocketDir.length > 0
@@ -721,12 +645,12 @@ export async function runAgentBrowserProcess(options: {
 		};
 
 		const childEnv = buildAgentBrowserProcessEnv(parentEnv, effectiveEnv);
-		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, childEnv, allowManagedSessionTarget, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection, managedSessionRestoreConfigEnv.AGENT_BROWSER_CONFIG !== undefined);
+		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection);
 		if (spawnPolicyError) {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;
 		}
-		const spawnCommand = buildAgentBrowserSpawnCommand(pinAgentBrowserFileAccessDisabled(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession));
+		const spawnCommand = buildAgentBrowserSpawnCommand(prepareAgentBrowserSpawnArgs(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession));
 		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
 			env: childEnv,

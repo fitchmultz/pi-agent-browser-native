@@ -458,6 +458,10 @@ export async function buildBatchPresentation(options: {
 			? { command: details.command, result: details.data, success: true }
 			: { command: details.command, error: details.text, success: false }
 	));
+	const unverifiedMutationCount = steps.filter((step) => step.details.pageChangeSummary?.changeType === "mutation" && step.details.pageChangeSummary.observed === false).length;
+	const mutationEvidenceText = unverifiedMutationCount > 0
+		? `Mutation evidence: ${unverifiedMutationCount} action result${unverifiedMutationCount === 1 ? " proves" : "s prove"} dispatch only, not application state change. Use explicit later assertions or external receipts as postconditions; fixed waits are not postconditions.`
+		: undefined;
 	const stepText = formatBatchStepsText(steps);
 	const batchSummary = batchFailure === undefined
 		? summary
@@ -469,7 +473,7 @@ export async function buildBatchPresentation(options: {
 			`First failing step: ${batchFailure.failedStep.index + 1} — ${batchFailure.failedStep.commandText}`,
 			batchFailure.failureCount > 1 ? `${batchFailure.failureCount} steps failed. See the per-step results below.` : "See the per-step results below.",
 		].join("\n");
-	const text = failureHeader ? `${failureHeader}\n\n${stepText}` : stepText;
+	const text = [failureHeader, mutationEvidenceText, stepText].filter((line): line is string => line !== undefined).join("\n\n");
 	const artifactRetentionSummary = currentArtifactManifest ? formatSessionArtifactRetentionSummary(currentArtifactManifest) : undefined;
 	const contentText = artifactRetentionSummary && manifestHasNewNoticeWorthyEntries(options.artifactManifest, currentArtifactManifest)
 		? `${text}\n\n${artifactRetentionSummary}`
@@ -482,6 +486,7 @@ export async function buildBatchPresentation(options: {
 		? appendUniqueAgentBrowserNextActions([...(batchFailure.failedStep.nextActions ?? [])], artifactLifecycleActions)
 		: artifactLifecycleActions;
 	const changedSteps = steps.map((step) => step.details).filter((details) => details.pageChangeSummary !== undefined);
+	const observedChangeCount = changedSteps.filter((details) => details.pageChangeSummary?.observed === true).length;
 	const pageChangeSummary = artifacts.length > 0
 		? buildPageChangeSummary({
 			artifacts,
@@ -495,7 +500,10 @@ export async function buildBatchPresentation(options: {
 				changeType: "mutation" as const,
 				command: "batch",
 				nextActionIds: nextActions?.map((action) => action.id),
-				summary: `batch → mutation → ${changedSteps.length} changed step${changedSteps.length === 1 ? "" : "s"}`,
+				observed: observedChangeCount > 0,
+				summary: observedChangeCount > 0
+					? `batch → ${observedChangeCount} observed change${observedChangeCount === 1 ? "" : "s"}${unverifiedMutationCount > 0 ? `; ${unverifiedMutationCount} dispatched action${unverifiedMutationCount === 1 ? "" : "s"} unverified` : ""}`
+					: `batch → ${unverifiedMutationCount} action${unverifiedMutationCount === 1 ? "" : "s"} dispatched → application change unverified`,
 			}
 			: undefined;
 

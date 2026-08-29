@@ -449,7 +449,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const postCloseInvocations = (await readInvocationLog(logPath)).slice(terminalCloseInvocationCount);
 			const postCloseRequests = postCloseInvocations.find((entry) => entry.args.includes("network") && entry.args.includes("requests"));
 			assert.equal(postCloseRequests?.args.includes("--args"), false);
-			assert.equal(postCloseRequests?.args[postCloseRequests.args.indexOf("--allow-file-access") + 1], "false");
+			assert.equal(postCloseRequests?.args.includes("--allow-file-access"), false);
 
 			const terminalResumeInvocationCount = (await readInvocationLog(logPath)).length;
 			const terminalResumeHarness = createExtensionHarness({
@@ -464,7 +464,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(requestsAfterTerminalResume.details?.networkRouteDiagnostics, undefined);
 			const postResumeRequests = (await readInvocationLog(logPath)).slice(terminalResumeInvocationCount).find((entry) => entry.args.includes("network") && entry.args.includes("requests"));
 			assert.equal(postResumeRequests?.args.includes("--args"), false);
-			assert.equal(postResumeRequests?.args[postResumeRequests.args.indexOf("--allow-file-access") + 1], "false");
+			assert.equal(postResumeRequests?.args.includes("--allow-file-access"), false);
 
 			const invocationCount = (await readInvocationLog(logPath)).length;
 			const resumedHarness = createExtensionHarness({
@@ -485,12 +485,11 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			await writeFile(unsafeTargetPath, "unsafe", "utf8");
 			const driftInvocationCount = (await readInvocationLog(logPath)).length;
-			const blockedDriftSnapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["--session", "cloudflare-live", "snapshot", "-i"] });
-			assert.equal(blockedDriftSnapshot.isError, true);
-			assert.match((blockedDriftSnapshot.content[0]?.type === "text" ? blockedDriftSnapshot.content[0].text : "") ?? "", /local|file/i);
+			const localDriftSnapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, { args: ["--session", "cloudflare-live", "snapshot", "-i"] });
+			assert.equal(localDriftSnapshot.isError, false, JSON.stringify(localDriftSnapshot));
 			const driftInvocations = (await readInvocationLog(logPath)).slice(driftInvocationCount);
 			assert.ok(driftInvocations.some((entry) => entry.args.includes("get") && entry.args.includes("url")));
-			assert.ok(driftInvocations.every((entry) => !entry.args.includes("snapshot")));
+			assert.ok(driftInvocations.some((entry) => entry.args.includes("snapshot")));
 
 			const implicitHarness = createExtensionHarness({ cwd: tempDir, prompt: "Reject content capture before the attached page URL is verified." });
 			await runExtensionEvent(implicitHarness.handlers, "session_start", { reason: "new" }, implicitHarness.ctx);
@@ -508,9 +507,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const managedSessionName = managedUrl.details?.sessionName;
 			assert.equal(typeof managedSessionName, "string");
 			await writeFile(unsafeTargetPath, "unsafe", "utf8");
-			const blockedManagedSnapshot = await executeRegisteredTool(managedHarness.tool, managedHarness.ctx, { args: ["snapshot", "-i"] });
-			assert.equal(blockedManagedSnapshot.isError, true);
-			assert.match((blockedManagedSnapshot.content[0]?.type === "text" ? blockedManagedSnapshot.content[0].text : "") ?? "", /local|file/i);
+			const localManagedSnapshot = await executeRegisteredTool(managedHarness.tool, managedHarness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(localManagedSnapshot.isError, false, JSON.stringify(localManagedSnapshot));
 			await rm(unsafeTargetPath, { force: true });
 			await runExtensionEvent(managedHarness.handlers, "session_tree", { newLeafId: null, oldLeafId: "attached-branch" }, managedHarness.ctx);
 			await runExtensionEvent(managedHarness.handlers, "session_shutdown", { reason: "quit" }, managedHarness.ctx);
@@ -703,7 +701,6 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const expectedInvocations = commands.flatMap((args) => {
 				const normalizedArgs = stripWrapperPrefix([...args]);
 				const command = normalizedArgs[0];
-				if (["close", "exit", "quit"].includes(command ?? "")) return [["close"]];
 				const probesSummary = command === "click" || (command === "tab" && normalizedArgs[1] === "close") || command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval";
 				if (!probesSummary) return [normalizedArgs];
 				const titleProbe = !navigationSummaryTitleObserved || (command === "tab" && normalizedArgs[1] === "close");

@@ -92,7 +92,7 @@ export function buildRecoveryNextActions(recovery: AgentBrowserRecoveryContext):
 				args: sessionArgs(["get", "url"]),
 				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.connectedSessionGetUrl,
 				reason: "Verify the attached page URL before any page-content inspection.",
-				safety: "Read-only URL lookup. The wrapper keeps page inspection blocked if the active target is a local file page or the URL cannot be verified.",
+				safety: "Read-only URL lookup. The wrapper keeps page inspection blocked if the active target URL cannot be verified.",
 			}),
 			buildNextToolAction({
 				args: sessionArgs(["tab", "list"]),

@@ -9,7 +9,6 @@ import { processStartIdentitiesMatch, readProcessStartIdentity } from "./process
 const TEMP_ROOT_PREFIX = "pi-agent-browser-";
 const TEMP_ROOT_MARKER_FILE_NAME = ".pi-agent-browser-owner.json";
 const TEMP_ROOT_MARKER_KIND = "pi-agent-browser-temp-root";
-const TEMP_ROOT_LEGACY_MARKER_VERSION = 1;
 const TEMP_ROOT_MARKER_VERSION = 2;
 const STALE_TEMP_ROOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const TEMP_ROOT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES";
@@ -78,7 +77,7 @@ function isProtectedTempChildName(value: unknown): value is string {
 
 function isTempRootOwnershipRecord(value: unknown): value is TempRootOwnershipRecord {
 	if (!isRecord(value)) return false;
-	if (value.kind !== TEMP_ROOT_MARKER_KIND || ![TEMP_ROOT_LEGACY_MARKER_VERSION, TEMP_ROOT_MARKER_VERSION].includes(value.version as number)) return false;
+	if (value.kind !== TEMP_ROOT_MARKER_KIND || value.version !== TEMP_ROOT_MARKER_VERSION) return false;
 	if (!isPositiveFiniteNumber(value.createdAtMs)) return false;
 	if (value.leaseUpdatedAtMs !== undefined && !isPositiveFiniteNumber(value.leaseUpdatedAtMs)) return false;
 	if (value.ownerPid !== undefined) {

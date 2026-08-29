@@ -10,7 +10,7 @@ import {
 	type ManagedSessionRestoreState,
 	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
-import { getManagedSessionStateAccessValidationError } from "../../managed-session-state-policy.js";
+import { getPageTargetValidationError } from "../../page-target-validation.js";
 import { isRecord } from "../../parsing.js";
 import { withAttachedBrowserSessionContext } from "../../process.js";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
@@ -533,7 +533,6 @@ async function collectOwnedElectronManagedSessionTarget(options: {
 		const target = await withOwnedElectronManagedSessionPolicy(
 			{ ...options, args: ["get", "url"] },
 			async () => await collectElectronManagedSessionTarget({
-				allowManagedSessionTarget: true,
 				cwd: options.cwd,
 				namespace: options.namespace,
 				sessionName: options.sessionName,
@@ -557,7 +556,7 @@ async function runElectronProbeCommandData(options: {
 	timeoutMs?: number;
 }): Promise<{ data?: unknown; error?: string }> {
 	try {
-		return { data: await runSessionCommandData({ ...options, allowManagedSessionTarget: true, pinNamespace: true, throwOnFailure: true }) };
+		return { data: await runSessionCommandData({ ...options, pinNamespace: true, throwOnFailure: true }) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -575,8 +574,6 @@ async function collectElectronProbe(options: {
 	if (urlResult.error) throw new Error(`get url: ${urlResult.error}`);
 	const url = boundElectronProbeString(extractStringResultField(urlResult.data, "result") ?? extractStringResultField(urlResult.data, "url"), 300);
 	if (!url) throw new Error("get url returned no active page URL.");
-	const fileAccessError = getManagedSessionStateAccessValidationError({ args: ["snapshot", "-i"], currentPageUrl: url, cwd: options.cwd });
-	if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
 	const titleResult = await runElectronProbeCommandData({ ...commandContext, args: ["get", "title"] });
 	const focusedResult = await runElectronProbeCommandData({ ...commandContext, args: ["eval", "--stdin"], stdin: ELECTRON_FOCUSED_ELEMENT_EVAL });
 	const tabsResult = await runElectronProbeCommandData({ ...commandContext, args: ["tab", "list"] });
@@ -910,13 +907,12 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 			const probeNamespace = compiledElectron.launchId ? launchRecord?.namespace : managedSessionNamespace;
 			const pageStateKey = getSessionPageStateKey(probeSessionName, probeNamespace) ?? probeSessionName;
 			const currentPageState = sessionPageState.get(pageStateKey);
-			const fileAccessError = getManagedSessionStateAccessValidationError({
+			const pageTargetError = getPageTargetValidationError({
 				args: ["snapshot", "-i"],
 				currentPageUrl: currentPageState.tabTarget?.url,
-				cwd,
 				pageUrlUnknown: currentPageState.tabTargetUnknown === true,
 			});
-			if (fileAccessError) throw new ElectronManagedSessionPolicyError(fileAccessError);
+			if (pageTargetError) throw new ElectronManagedSessionPolicyError(pageTargetError);
 			const managedSessionOwner = ownedManagedSessions.get(pageStateKey);
 			const headedManagedAutosaveDisabled = managedSessionOwner?.headedManagedAutosaveDisabled === true;
 			const headedManagedAutosaveInterval = managedSessionOwner?.headedManagedAutosaveInterval;

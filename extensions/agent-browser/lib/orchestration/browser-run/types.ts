@@ -13,7 +13,6 @@ import type { SessionPageState, SessionRefSnapshot, SessionRefSnapshotInvalidati
 import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrection } from "../../runtime.js";
 import type { ManagedSessionRestoreState, OwnedManagedSessionContext } from "../../managed-session-restore.js";
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
-import type { AllowedDomainsPolicy } from "../../navigation-policy.js";
 import type { PromptPolicy } from "../../prompt-policy.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
 import type { BatchCommandStep } from "../batch-stdin.js";
@@ -65,7 +64,6 @@ export interface OwnedManagedSessionReference {
 }
 
 export interface BrowserRunState {
-	allowedDomainsBySession: Map<string, AllowedDomainsPolicy>;
 	attachedSessionKeys: Set<string>;
 	artifactManifest?: SessionArtifactManifest;
 	closedManagedSessionNames: Set<string>;
@@ -89,7 +87,6 @@ export interface BrowserRunState {
 }
 
 export interface BrowserRunStatePatch {
-	allowedDomainsBySession?: Map<string, AllowedDomainsPolicy>;
 	artifactManifest?: SessionArtifactManifest;
 	freshSessionOrdinal?: number;
 	managedSessionActive?: boolean;
@@ -128,6 +125,7 @@ export interface SemanticActionVisibleRefResolution {
 export interface NavigationSummary {
 	title?: string;
 	url?: string;
+	urlChanged?: boolean;
 }
 
 export interface OverlayBlockerCandidate {

@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-08-27
+
+### Changed
+
+- Extended wrapper-side `snapshot -i --search` with bounded rendered-DOM evidence so visible below-fold warnings and accessible labels omitted from the accessibility snapshot remain discoverable without including hidden content.
+- Marked page-change summaries as observed or dispatch-only, promoted unverified batch mutation evidence ahead of step output, and clarified that fixed waits and URL patterns already matching the starting page are not postconditions.
+- Warned after `keyboard inserttext` that it skips real key events and can change a DOM value without updating framework state; rich-input guidance now prefers `keyboard type` when editors require key events.
+- Removed wrapper authorization gates around upstream sessions, state/restore paths, config, file access, launch environment, local pages, output paths, close arguments, and `--allowed-domains` enforcement. Session/state lists and restore identifiers now remain visible, and the obsolete v2 managed-daemon lock bridge was deleted; page-target verification and automatic managed-restore lifecycle correctness remain.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (773 tests passed, two opt-in skips; 127 packed files), configured-source lifecycle, packaged-Pi smoke, deterministic browser dogfood, the real-upstream contract suite, and an isolated interactive Pi checkout smoke.
+- Full platform release composition remains blocked because localhost SSH is unavailable and Parallels `prlctl` is missing; macOS SSH and native-Windows suites were not run. This release creates GitHub artifacts only; npm publishing is not authorized.
 
 ## 0.5.3 - 2026-08-27
 

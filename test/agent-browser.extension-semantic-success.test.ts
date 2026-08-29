@@ -69,7 +69,7 @@ if (command === "find") {
 			assert.match(semanticText, /https:\/\/example.test\//);
 			assert.match(semanticClick.details?.summary as string, /click → Example Domain/);
 			assert.deepEqual(
-				(semanticClick.details?.navigationSummary as { title?: string; url?: string } | undefined),
+				(semanticClick.details?.navigationSummary as { title?: string; url?: string; urlChanged?: boolean } | undefined),
 				{ title: "Example Domain", url: "https://example.test/" },
 			);
 			assert.equal(
@@ -77,9 +77,11 @@ if (command === "find") {
 				"click",
 			);
 			assert.equal(
-				(semanticClick.details?.pageChangeSummary as { command?: string; changeType?: string } | undefined)?.changeType,
-				"navigation",
+				(semanticClick.details?.pageChangeSummary as { command?: string; changeType?: string; observed?: boolean } | undefined)?.changeType,
+				"mutation",
 			);
+			assert.equal((semanticClick.details?.pageChangeSummary as { observed?: boolean } | undefined)?.observed, false);
+			assert.match(semanticText, /Action dispatched; application change unverified/);
 			const nextActionIds = (semanticClick.details?.nextActions as Array<{ id: string }> | undefined)?.map((action) => action.id);
 			assert.ok(nextActionIds?.includes("inspect-after-mutation"));
 

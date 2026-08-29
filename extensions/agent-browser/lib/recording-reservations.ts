@@ -1,11 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
-import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
-import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.js";
+import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
 import { isRecord } from "./parsing.js";
-import { isPendingRecordingArtifact, isPendingRecordingCommand, isSessionArtifactManifest } from "./results/artifact-manifest.js";
+import { isPendingRecordingArtifact } from "./results/artifact-manifest.js";
 import type { FileArtifactMetadata } from "./results/contracts.js";
 
 export const RECORDING_RESERVATION_ENTRY_TYPE = "agent-browser-recording-reservation";
@@ -125,73 +122,16 @@ export function restoreRecordingReservationStateFromBranch(branch: unknown[]): R
 	const reservations = new Map<string, ActiveRecordingReservation>();
 	const terminal = new Map<string, ActiveRecordingReservation>();
 	for (const entry of branch) {
-		if (!isRecord(entry)) continue;
-		if (entry.type === "custom" && entry.customType === RECORDING_RESERVATION_ENTRY_TYPE) {
-			const transition = parseReservationTransition(entry.data);
-			if (!transition) continue;
-			const key = getReservationKey(transition.reservation);
-			if (transition.state === "active") {
-				reservations.set(key, transition.reservation);
-				terminal.delete(key);
-			} else {
-				reservations.delete(key);
-				terminal.set(key, transition.reservation);
-			}
-			continue;
-		}
-		if (entry.type !== "message") continue;
-		const message = isRecord(entry.message) ? entry.message : undefined;
-		const details = message?.toolName === "agent_browser" && isRecord(message.details) ? message.details : undefined;
-		if (!details) continue;
-		if (isSessionArtifactManifest(details.artifactManifest)) {
-			const artifacts: FileArtifactMetadata[] = [...details.artifactManifest.entries]
-				.sort((left, right) => left.createdAtMs - right.createdAtMs
-					|| Number(isPendingRecordingCommand(left.command, left.subcommand, left.kind)) - Number(isPendingRecordingCommand(right.command, right.subcommand, right.kind))
-					|| left.path.localeCompare(right.path))
-				.filter((manifestEntry) => manifestEntry.command === "record" && manifestEntry.kind === "video" && manifestEntry.session)
-				.map((manifestEntry) => ({
-					absolutePath: manifestEntry.absolutePath ?? manifestEntry.path,
-					command: manifestEntry.command,
-					cwd: manifestEntry.cwd,
-					kind: "video",
-					namespace: manifestEntry.namespace,
-					path: manifestEntry.path,
-					session: manifestEntry.session,
-					status: isPendingRecordingCommand(manifestEntry.command, manifestEntry.subcommand, "video") ? "pending" : "saved",
-					subcommand: manifestEntry.subcommand,
-				}));
-			for (const artifact of artifacts) {
-				const reservation = getArtifactReservation(artifact);
-				if (!reservation) continue;
-				const key = getReservationKey(reservation);
-				applyRecordingArtifactsToReservations(reservations, [artifact]);
-				if (isPendingRecordingArtifact(artifact)) terminal.delete(key);
-				else terminal.set(key, reservation);
-			}
-		}
-		const messageSucceeded = typeof message?.isError === "boolean"
-			? !message.isError
-			: typeof details.exitCode !== "number" || details.exitCode === 0;
-		const args = Array.isArray(details.args) && details.args.every((arg) => typeof arg === "string") ? details.args : [];
-		const namespace = typeof details.namespace === "string" ? details.namespace : undefined;
-		const closeAllApplied = details.closeAllApplied === true
-			|| (messageSucceeded && isCloseAllCommand(extractUpstreamCommandTokens(args)))
-			|| batchHasSuccessfulCloseAll(details.batchSteps);
-		if (closeAllApplied) {
-			for (const [key, reservation] of reservations) {
-				if (!isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)) continue;
-				terminal.set(key, reservation);
-				reservations.delete(key);
-			}
-			continue;
-		}
-		const directCloseSucceeded = messageSucceeded && isCloseCommand(typeof details.command === "string" ? details.command : undefined);
-		const batchRecordingClosed = getSuccessfulBatchCloseLifecycle(details.batchSteps)?.recordingClosedAfterBatch === true;
-		if ((directCloseSucceeded || batchRecordingClosed) && typeof details.sessionName === "string") {
-			const key = getAgentBrowserSessionIdentityKey(details.sessionName, namespace);
-			const reservation = reservations.get(key);
-			if (reservation) terminal.set(key, reservation);
+		if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== RECORDING_RESERVATION_ENTRY_TYPE) continue;
+		const transition = parseReservationTransition(entry.data);
+		if (!transition) continue;
+		const key = getReservationKey(transition.reservation);
+		if (transition.state === "active") {
+			reservations.set(key, transition.reservation);
+			terminal.delete(key);
+		} else {
 			reservations.delete(key);
+			terminal.set(key, transition.reservation);
 		}
 	}
 	return { active: reservations, terminal };

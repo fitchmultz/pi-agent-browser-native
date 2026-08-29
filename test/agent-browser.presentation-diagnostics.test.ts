@@ -94,7 +94,7 @@ test("buildToolPresentation formats scalar extraction results for eval and get c
 
 test("buildToolPresentation compacts common action, wait, close, tab-close, and diagnostic reset results", async () => {
 	const cases: Array<{ commandInfo: { command: string; commandTokens?: string[]; subcommand?: string }; data: Record<string, unknown>; expected: string }> = [
-		{ commandInfo: { command: "fill" }, data: { filled: "#email", lifecycle: { reused: true } }, expected: "Filled: #email" },
+		{ commandInfo: { command: "fill" }, data: { filled: "#email", lifecycle: { reused: true } }, expected: "Filled: #email\n\nAction dispatched; application change unverified. Verify the expected URL, text, state, or external receipt before relying on it." },
 		{ commandInfo: { command: "wait" }, data: { selector: "#ready", waited: "selector", lifecycle: { reused: true } }, expected: "Wait completed: #ready" },
 		{ commandInfo: { command: "wait" }, data: { waited: "timeout", lifecycle: { reused: true } }, expected: "Fixed wait elapsed; no page condition was verified." },
 		{ commandInfo: { command: "close" }, data: { closed: true, lifecycle: { reused: false }, statePath: "/private/state" }, expected: "Browser session closed." },
@@ -107,6 +107,37 @@ test("buildToolPresentation compacts common action, wait, close, tab-close, and 
 		assert.equal((presentation.content[0] as { text: string }).text, expected);
 		assert.doesNotMatch((presentation.content[0] as { text: string }).text, /lifecycle|statePath|reused/);
 	}
+});
+
+test("buildToolPresentation makes unverified batch mutations prominent", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+			data: [
+				{ command: ["click", "@e1"], result: { clicked: "@e1" }, success: true },
+				{ command: ["wait", "1200"], result: { waited: "timeout" }, success: true },
+			],
+		},
+	});
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /^Mutation evidence: 1 action result proves dispatch only, not application state change\./);
+	assert.match(text, /fixed waits are not postconditions/);
+	assert.equal(presentation.pageChangeSummary?.observed, false);
+	assert.match(presentation.pageChangeSummary?.summary ?? "", /application change unverified/);
+});
+
+test("buildToolPresentation warns that keyboard inserttext may not update application state", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "keyboard", subcommand: "inserttext" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { inserted: true } },
+	});
+	const text = (presentation.content[0] as { text: string }).text;
+	assert.match(text, /keyboard inserttext skips key events/);
+	assert.match(text, /does not prove a framework-controlled editor accepted it/);
+	assert.match(text, /use keyboard type when real key events are required/);
 });
 
 test("artifact cleanup guidance ignores wrapper-managed spills", async () => {
@@ -149,9 +180,10 @@ test("buildToolPresentation formats session status and session list", async () =
 			},
 		},
 	});
-	assert.equal(list.summary, "Sessions: 1");
-	assert.equal((list.content[0] as { text: string }).text, "1. name=work *active*; active=true; title=Example; url=https://example.com");
-	assert.doesNotMatch(JSON.stringify(list.data), /piab-foreign|PIAB-case-alias|private\.example/);
+	assert.equal(list.summary, "Sessions: 3");
+	assert.match((list.content[0] as { text: string }).text, /piab-foreign/);
+	assert.match((list.content[0] as { text: string }).text, /PIAB-case-alias/);
+	assert.match((list.content[0] as { text: string }).text, /name=work/);
 });
 
 test("buildToolPresentation formats Chrome profile arrays", async () => {
@@ -280,7 +312,7 @@ test("buildToolPresentation formats stateful browser-context results without lea
 	}
 });
 
-test("buildToolPresentation hides managed restore capabilities and state-list rows", async () => {
+test("buildToolPresentation preserves managed restore capabilities and state-list rows", async () => {
 	const restoreKey = `piab-r2-${"a".repeat(32)}`;
 	const list = await buildToolPresentation({
 		commandInfo: { command: "state", subcommand: "list" },
@@ -296,21 +328,21 @@ test("buildToolPresentation hides managed restore capabilities and state-list ro
 		},
 	});
 	const listSerialized = JSON.stringify(list);
-	assert.equal(list.summary, "States: 1");
+	assert.equal(list.summary, "States: 2");
 	assert.match((list.content[0] as { text: string }).text, /caller-owned\.json/);
-	assert.doesNotMatch(listSerialized, /piab-r2-|private\.example|managed\.json/);
+	assert.match(listSerialized, /piab-r2-|private\.example|managed\.json/);
 
 	const sessionInfo = await buildToolPresentation({
 		commandInfo: { command: "session", subcommand: "info" },
 		cwd: process.cwd(),
 		envelope: {
 			success: true,
-			data: { active: true, runtime: { restoreKey }, legacyStatePath: `/tmp/piab-r-${"b".repeat(32)}-managed.json`, statePath: `/tmp/${restoreKey}-managed.json` },
+			data: { active: true, runtime: { restoreKey }, unrelatedStatePath: `/tmp/piab-r-${"b".repeat(32)}-managed.json`, statePath: `/tmp/${restoreKey}-managed.json` },
 		},
 	});
 	const infoSerialized = JSON.stringify(sessionInfo);
-	assert.doesNotMatch(infoSerialized, /piab-r(?:2)?-[a-f\d]{32}/);
-	assert.match(infoSerialized, /REDACTED MANAGED STATE/);
+	assert.match(infoSerialized, /piab-r(?:2)?-[a-f\d]{32}/);
+	assert.doesNotMatch(infoSerialized, /REDACTED MANAGED STATE/);
 });
 
 test("buildToolPresentation keeps benign storage values visible while redacting likely secrets", async () => {

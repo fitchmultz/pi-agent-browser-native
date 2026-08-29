@@ -82,7 +82,7 @@ const SELECTOR_RECOVERY_ACTION_NAMES = new Set<SelectorRecoveryActionName>(["che
 const VISIBLE_REF_FALLBACK_CANDIDATE_LIMIT = 3;
 const EDITABLE_CONTROL_ROLES = new Set(["combobox", "searchbox", "textbox"]);
 const RICH_INPUT_RECOVERY_EDITABLE_ROLES = new Set(["searchbox", "textbox"]);
-const RICH_INPUT_RECOVERY_HINT = "After the editable ref is focused, use keyboard inserttext or keyboard type with the intended text in a separate call, and do not press Enter or otherwise submit unless the user flow explicitly calls for it.";
+const RICH_INPUT_RECOVERY_HINT = "After the editable ref is focused, use keyboard type when a framework-controlled editor requires real key events. keyboard inserttext is paste-like and needs separate application-state verification. Do not press Enter or otherwise submit unless the user flow explicitly calls for it.";
 
 function isSelectorRecoveryActionName(action: string): action is SelectorRecoveryActionName {
 	return SELECTOR_RECOVERY_ACTION_NAMES.has(action as SelectorRecoveryActionName);
@@ -306,7 +306,7 @@ export function buildRichInputRecoveryNextActions(options: { diagnostic: RichInp
 		const clickId = getAgentBrowserRichInputRecoveryNextActionId("click", index, candidateCount);
 		const safety = ambiguous
 			? `Several editable refs share the same exact name. Inspect the current snapshot and use only the ${candidate.ref} ${candidate.role} if it is clearly the intended input. No fill text or submit key is included.`
-			: "Does not include fill text or submit the form. After focus/click succeeds, use keyboard inserttext or keyboard type with the intended text only if this is the right input.";
+			: "Does not include fill text or submit the form. After focus/click succeeds, use keyboard type for framework-controlled editors; use keyboard inserttext only with separate application-state verification.";
 		return [
 			{
 				id: focusId,
@@ -332,7 +332,7 @@ export function formatRichInputRecoveryText(diagnostic: RichInputRecoveryDiagnos
 		"Rich input recovery:",
 		...diagnostic.candidates.map((candidate, index) => {
 			const [focusId, clickId] = diagnostic.nextActionIds.slice(index * 2, index * 2 + 2);
-			return `- ${candidate.ref} ${candidate.role} ${JSON.stringify(candidate.name)}: use ${focusId} or ${clickId}; then use keyboard inserttext/type with the intended text.`;
+			return `- ${candidate.ref} ${candidate.role} ${JSON.stringify(candidate.name)}: use ${focusId} or ${clickId}; then use keyboard type for framework-controlled editors, or paste-like keyboard inserttext only with separate application-state verification.`;
 		}),
 		`- ${diagnostic.inputMethodHint}`,
 	].join("\n");

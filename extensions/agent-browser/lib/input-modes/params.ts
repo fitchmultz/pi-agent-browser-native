@@ -139,7 +139,7 @@ export function createAgentBrowserParamsSchema(
 			steps: Type.Array(
 				Type.Object({
 					action: StringEnum(AGENT_BROWSER_JOB_STEP_ACTIONS),
-					url: Type.Optional(Type.String({ description: "Open URL or assertUrl glob." })),
+					url: Type.Optional(Type.String({ description: "Open URL, or assertUrl exact URL/glob that distinguishes the expected state from the starting page." })),
 					loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES, { description: "Readiness wait after open." })),
 					selector: Type.Optional(Type.String({ description: "Selector or @ref." })),
 					locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator when selector is omitted." })),

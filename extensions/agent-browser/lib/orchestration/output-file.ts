@@ -1,7 +1,6 @@
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 
-import { getAgentBrowserStoragePathValidationError } from "../managed-session-state-policy.js";
 import { isRecord } from "../parsing.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
 
@@ -44,10 +43,6 @@ function appendOutputFileNotice(result: AgentBrowserToolResult, message: string)
 	return [{ type: "text", text: message }, ...content];
 }
 
-export function getAgentBrowserOutputPathValidationError(outputPath: string | undefined, cwd: string): string | undefined {
-	return outputPath ? getAgentBrowserStoragePathValidationError(normalizeRequestedOutputPath(outputPath), cwd) : undefined;
-}
-
 function getArtifactPaths(result: AgentBrowserToolResult, cwd: string): string[] {
 	const details = isRecord(result.details) ? result.details : undefined;
 	if (!details || !Array.isArray(details.artifacts)) return [];
@@ -78,14 +73,6 @@ export async function applyAgentBrowserOutputPath(options: {
 	result: AgentBrowserToolResult;
 }): Promise<AgentBrowserToolResult> {
 	if (!options.outputPath) return options.result;
-	const validationError = getAgentBrowserOutputPathValidationError(options.outputPath, options.cwd);
-	if (validationError) {
-		return {
-			content: [{ type: "text", text: validationError }],
-			details: { failureCategory: "validation-error", resultCategory: "failure", validationError },
-			isError: true,
-		};
-	}
 	if (options.result.isError || (isRecord(options.result.details) && options.result.details.resultCategory === "failure")) return options.result;
 	const requestedPath = normalizeRequestedOutputPath(options.outputPath);
 	const absolutePath = isAbsolute(requestedPath) ? requestedPath : resolve(options.cwd, requestedPath);

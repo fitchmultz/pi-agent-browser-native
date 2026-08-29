@@ -35,7 +35,7 @@ function toolEntry(details: Record<string, unknown>, isError = false): unknown {
 	};
 }
 
-test("getSuccessfulBatchCloseLifecycle tolerates unidentified transcript rows", () => {
+test("getSuccessfulBatchCloseLifecycle treats unidentified transcript rows conservatively", () => {
 	assert.equal(batchHasSuccessfulCloseAll([{ command: ["quit", "--all"], success: true }]), true);
 	assert.equal(batchHasSuccessfulCloseAll([{ command: ["close", "--all"], success: false }]), false);
 	assert.equal(getSuccessfulBatchCloseLifecycle([{ success: true }]), undefined);
@@ -46,7 +46,7 @@ test("getSuccessfulBatchCloseLifecycle tolerates unidentified transcript rows", 
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], success: true },
 		{ command: ["record", "start", "ignored.webm"], success: true },
-	]), { endsClosed: true, recordingClosedAfterBatch: true, statePath: undefined });
+	]), { endsClosed: false, recordingClosedAfterBatch: false, statePath: undefined });
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], success: true },
 		{ command: ["stream", "status"], result: { lifecycle: { effectiveLaunch: { browserLaunched: false } } }, success: true },

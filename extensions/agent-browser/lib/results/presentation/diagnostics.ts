@@ -14,12 +14,6 @@ import {
 	redactModelFacingTextIfSensitive,
 	stringifyModelFacing,
 } from "./common.js";
-import {
-	filterCallerOwnedSessionListItems,
-	filterCallerOwnedStateListItems,
-	filterManagedSessionListRows,
-	filterManagedStateListRows,
-} from "./managed-list-filter.js";
 
 const DIAGNOSTIC_REQUEST_PREVIEW_LIMIT = 40;
 
@@ -150,7 +144,7 @@ function isClearDiagnosticCommand(commandInfo: CommandInfo): boolean {
 export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {
 	if (commandInfo.command === "session") {
 		const sessions = getArrayField(data, "sessions");
-		if (sessions) return `Sessions: ${filterCallerOwnedSessionListItems(sessions).length}`;
+		if (sessions) return `Sessions: ${sessions.length}`;
 		const session = getStringField(data, "session");
 		if (session) return `Session: ${session}`;
 	}
@@ -199,10 +193,7 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 
 	if (commandInfo.command === "state") {
 		const states = getArrayField(data, "states") ?? getArrayField(data, "files");
-		if (states) {
-			const visibleStates = commandInfo.subcommand === "list" ? filterCallerOwnedStateListItems(states) : states;
-			return `States: ${visibleStates.length}`;
-		}
+		if (states) return `States: ${states.length}`;
 		if (commandInfo.subcommand === "load") return undefined;
 		const stateName = getStringField(data, "name") ?? getStringField(data, "file") ?? getStringField(data, "filename") ?? getStringField(data, "path") ?? commandInfo.subcommand;
 		if (stateName) return `State ${commandInfo.subcommand ?? "result"}: ${stateName}`;
@@ -284,9 +275,8 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 function formatSessionText(data: Record<string, unknown>): string | undefined {
 	const sessions = getArrayField(data, "sessions");
 	if (sessions) {
-		const visibleSessions = filterCallerOwnedSessionListItems(sessions);
-		if (visibleSessions.length === 0) return sessions.length === 0 ? "No active sessions." : "No caller-owned active sessions.";
-		return visibleSessions
+		if (sessions.length === 0) return "No active sessions.";
+		return sessions
 			.map((item, index) => {
 				if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
 				const name = redactModelFacingText(getStringField(item, "name") ?? getStringField(item, "session") ?? getStringField(item, "id") ?? `(session ${index + 1})`);
@@ -911,9 +901,8 @@ function formatStateText(data: Record<string, unknown>, subcommand?: string): st
 	}
 	const states = getArrayField(data, "states") ?? getArrayField(data, "files");
 	if (states) {
-		const visibleStates = filterCallerOwnedStateListItems(states);
-		if (visibleStates.length === 0) return "No caller-owned saved states.";
-		return visibleStates
+		if (states.length === 0) return "No saved states.";
+		return states
 			.map((item, index) => {
 				if (!isRecord(item)) return `${index + 1}. ${redactModelFacingTextIfSensitive(stringifyModelFacing(item))}`;
 				const name = getStringField(item, "name") ?? getStringField(item, "file") ?? getStringField(item, "path") ?? `(state ${index + 1})`;
@@ -953,8 +942,8 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 export function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
 	if (commandInfo.command === "storage") return redactStorageData(data);
-	if (commandInfo.command === "session" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(filterManagedSessionListRows(data));
-	if (commandInfo.command === "state" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(filterManagedStateListRows(data));
+	if (commandInfo.command === "session" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(data);
+	if (commandInfo.command === "state" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(data);
 	if (commandInfo.command === "state" && commandInfo.subcommand === "show") return redactStatefulValues(data, new Set(["value"]));
 	return redactStructuredPresentationValue(data);
 }

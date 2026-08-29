@@ -87,16 +87,6 @@ export async function readProcessStartIdentity(
 	return await currentProcessStartIdentityPromise;
 }
 
-/** Return undefined when a native-Windows marker predates the versioned PowerShell identity format. */
-export function processStartIdentitiesMatch(
-	recorded: string,
-	current: string,
-	platform: NodeJS.Platform = process.platform,
-): boolean | undefined {
-	if (platform === "win32") {
-		const recordedIsCurrentFormat = recorded.startsWith(WINDOWS_PROCESS_START_IDENTITY_PREFIX);
-		const currentIsCurrentFormat = current.startsWith(WINDOWS_PROCESS_START_IDENTITY_PREFIX);
-		if (recordedIsCurrentFormat !== currentIsCurrentFormat) return undefined;
-	}
+export function processStartIdentitiesMatch(recorded: string, current: string): boolean {
 	return recorded === current;
 }

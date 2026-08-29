@@ -676,7 +676,7 @@ test("wrapper-injected ChatGPT user agent remains compatible with managed restor
 	assert.equal(isManagedSessionRestoreDisabled(managed), false);
 });
 
-test("passive agent-browser config files are ignored while explicit overrides block restore", () => {
+test("passive agent-browser config preserves automatic restore while explicit overrides suppress it", () => {
 	clearManagedSessionRestoreDisabled();
 	const cwd = mkdtempSync(join(tmpdir(), "piab-config-"));
 	initializeGitProject(cwd);

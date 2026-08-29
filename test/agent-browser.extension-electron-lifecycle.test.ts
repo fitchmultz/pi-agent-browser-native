@@ -227,7 +227,7 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
-test("agentBrowserExtension blocks protected Electron snapshot handoff before tab or snapshot reads", { concurrency: false }, async () => {
+test("agentBrowserExtension allows local Electron snapshot handoff", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-protected-handoff-"));
 	const applicationsDir = join(tempDir, "Applications");
 	const upstreamLogPath = join(tempDir, "agent-browser.log");
@@ -243,14 +243,16 @@ test("agentBrowserExtension blocks protected Electron snapshot handoff before ta
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } });
-			assert.equal(result.isError, true, JSON.stringify(result));
-			assert.equal(result.details?.failureCategory, "validation-error");
-			assert.match(result.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
-			assert.doesNotMatch(JSON.stringify(result), /SECRET LOCAL CONTENT/);
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.match(JSON.stringify(result), /SECRET LOCAL CONTENT/);
 			const invocations = await readInvocationLog(upstreamLogPath);
-			assert.equal(invocations.some((entry) => entry.args.includes("snapshot") || entry.args.includes("tab")), false);
+			assert.equal(invocations.some((entry) => entry.args.includes("snapshot") || entry.args.includes("tab")), true);
 			const launch = JSON.parse((await readFile(launchLogPath, "utf8")).trim()) as { pid: number; userDataDir: string };
 			launchPid = launch.pid;
+			const launchId = (result.details?.electron as { identifiers?: { launchId?: string } } | undefined)?.identifiers?.launchId;
+			assert.ok(launchId);
+			const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId } });
+			assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
 			assert.equal(await waitForTestPidExit(launch.pid), true);
 			await assert.rejects(stat(launch.userDataDir));
 		});
@@ -571,7 +573,7 @@ if (args.includes("session") && args.includes("info")) {
 	}
 });
 
-test("agentBrowserExtension blocks follow-up inspection on local file pages", { concurrency: false }, async () => {
+test("agentBrowserExtension allows follow-up inspection on local file pages", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-normal-file-text-scope-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -584,7 +586,9 @@ const data = command === "open"
   ? { title: "Normal file page", url: "file:///tmp/normal-browser-fixture.html" }
   : command === "get" && subcommand === "text"
     ? { origin: "file:///tmp/normal-browser-fixture.html", text: "normal page text" }
-    : { closed: true };
+    : command === "get" && subcommand === "url"
+      ? { result: "file:///tmp/normal-browser-fixture.html", url: "file:///tmp/normal-browser-fixture.html" }
+      : { closed: true };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
@@ -596,19 +600,17 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(openResult.isError, false);
 
 			const textResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "text", "body"] });
-			assert.equal(textResult.isError, true);
-			assert.match(textResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
+			assert.equal(textResult.isError, false, JSON.stringify(textResult));
+			assert.match(textResult.content[0]?.text ?? "", /normal page text/);
 			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe" } });
-			assert.equal(probeResult.isError, true);
-			assert.equal(probeResult.details?.failureCategory, "validation-error");
-			assert.match(probeResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
+			assert.equal(probeResult.isError, false, JSON.stringify(probeResult));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 
-test("agentBrowserExtension verifies the live Electron probe URL before content helpers", { concurrency: false }, async () => {
+test("agentBrowserExtension follows a live Electron probe onto local pages", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-local-drift-"));
 	const logPath = join(tempDir, "agent-browser.log");
 	const basePath = process.env.PATH ?? "";
@@ -635,12 +637,11 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 			await rm(logPath, { force: true });
 
 			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe" } });
-			assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
-			assert.equal(probeResult.details?.failureCategory, "validation-error");
-			assert.match(probeResult.content[0]?.text ?? "", /Browser access to local \.agent-browser storage is blocked/);
-			assert.doesNotMatch(JSON.stringify(probeResult), /SECRET LOCAL TITLE/);
+			assert.equal(probeResult.isError, false, JSON.stringify(probeResult));
+			assert.match(JSON.stringify(probeResult), /SECRET LOCAL TITLE/);
 			const invocations = await readInvocationLog(logPath) as Array<{ command?: string; subcommand?: string }>;
-			assert.deepEqual(invocations.map((entry) => [entry.command, entry.subcommand]), [["get", "url"]]);
+			assert.deepEqual(invocations.slice(0, 2).map((entry) => [entry.command, entry.subcommand]), [["get", "url"], ["get", "title"]]);
+			assert.equal(invocations.length, 5);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -1,6 +1,6 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, unsafe caller-owned local-daemon blocking, nested batch-attachment isolation, cross-harness restore persistence, and symlinked-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, caller-owned local-daemon pass-through, nested batch-attachment isolation, cross-harness restore persistence, and symlinked managed-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
  * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
@@ -137,7 +137,6 @@ async function initializeGitProject(path: string): Promise<void> {
 async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string }): Promise<void> {
 	if (!options.sessionName) return;
 	await runAgentBrowserProcess({
-		allowManagedSessionTarget: true,
 		args: ["--json", "--namespace", "", "--session", options.sessionName, "close"],
 		cwd: options.cwd,
 		env: { AGENT_BROWSER_SOCKET_DIR: getAgentBrowserSocketDir() },
@@ -282,7 +281,7 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 	}
 }
 
-async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
+async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 	if (process.platform === "win32") return;
 	const shortTempRoot = dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab"));
 	const tempDir = await mkdtemp(join(shortTempRoot, "u-"));
@@ -335,11 +334,9 @@ async function assertRealUpstreamUnsafeLocalDaemonIsBlocked(): Promise<void> {
 			PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
 		}, async () => {
 			const opened = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, "open", pathToFileURL(fixturePath).href], cwd: tempDir });
-			assert.equal(opened.agentBrowserStarted, false);
-			assert.match(opened.spawnError?.message ?? "", /wrapper-managed local browser/);
+			assert.equal(opened.exitCode, 0, opened.spawnError?.message ?? opened.stderr);
 
 			const safeOpen = await runAgentBrowserProcess({
-				allowManagedSessionTarget: true,
 				args: ["--json", "--session", safeSessionName, "open", pathToFileURL(fixturePath).href],
 				cwd: tempDir,
 				ownedManagedSession: true,
@@ -885,7 +882,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 			await fixtureServer?.close();
 			await rm(tempDir, { force: true, recursive: true });
 		}
-		await assertRealUpstreamUnsafeLocalDaemonIsBlocked();
+		await assertRealUpstreamLocalDaemonPassesThrough();
 		await assertRealUpstreamUnrecordedDaemonReuseFailsClosed();
 		await assertRealUpstreamRestoreStorageSymlinkFailsClosed();
 		await assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed();

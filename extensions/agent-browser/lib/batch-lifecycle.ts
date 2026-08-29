@@ -60,7 +60,7 @@ export function getSuccessfulBatchCloseLifecycle(
 			const result = isRecord(row.result) ? row.result : isRecord(row.data) ? row.data : undefined;
 			statePath = typeof result?.statePath === "string" ? result.statePath : undefined;
 		} else if (sawClose && command === "record") {
-			if (browserLaunched === true || (subcommand === "stop" && browserLaunched === undefined)) {
+			if (browserLaunched !== false) {
 				endsClosed = false;
 				browserActiveAfterClose = true;
 			}

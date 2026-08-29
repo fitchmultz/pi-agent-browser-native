@@ -263,8 +263,8 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	}), "tab-gone");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "eval failed: help says commands fail with a `tab_gone` error instead of adopting another tab" }), "upstream-error");
 	assert.equal(classifyAgentBrowserFailureCategory({
-		errorText: 'qa.attached requires an http(s) page URL; the current attached URL is "about:blank".',
-		validationError: 'qa.attached requires an http(s) page URL; the current attached URL is "about:blank".',
+		errorText: "qa.attached requires an attached session with a readable page URL.",
+		validationError: "qa.attached requires an attached session with a readable page URL.",
 	}), "validation-error");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), "upstream-error");
 });
@@ -798,13 +798,8 @@ test("extractQaPageContext prefers batch open title over compiled checks url", a
 	assert.equal(page.url, "https://example.test/");
 });
 
-test("isHttpOrHttpsUrl accepts http(s) only", async () => {
-	const { buildQaCompactPassText, isHttpOrHttpsUrl } = await import("../extensions/agent-browser/lib/input-modes/job.js");
-	assert.equal(isHttpOrHttpsUrl("https://example.test/"), true);
-	assert.equal(isHttpOrHttpsUrl("http://127.0.0.1/"), true);
-	assert.equal(isHttpOrHttpsUrl("about:blank"), false);
-	assert.equal(isHttpOrHttpsUrl("app://demo"), false);
-	assert.equal(isHttpOrHttpsUrl("not-a-url"), false);
+test("buildQaCompactPassText summarizes successful URL QA", async () => {
+	const { buildQaCompactPassText } = await import("../extensions/agent-browser/lib/input-modes/job.js");
 	const compact = buildQaCompactPassText({
 		batchStepCount: 9,
 		checks: {
