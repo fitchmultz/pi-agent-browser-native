@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Rejected bare `--no-sandbox` tokens with guidance to prefer a working Chromium sandbox or pass the launch switch through `--args` when required.
 - Preserved stdout chunk ordering while switching oversized subprocess output from memory to a spill file, preventing valid JSON envelopes from being reordered under fast chunk delivery.
 - Accepted both npm 11's array and npm 12's keyed-object `npm pack --json` result shapes in package verification.
 

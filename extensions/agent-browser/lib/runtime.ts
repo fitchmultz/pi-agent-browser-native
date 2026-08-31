@@ -764,6 +764,14 @@ function getUnsupportedInlineWaitDownloadError(args: string[]): string | undefin
 	return `agent-browser ${TARGET_AGENT_BROWSER_VERSION} does not support \`wait --download=<path>\`. Pass the optional path as a separate argument: \`wait --download <path>\` (or \`wait -d <path>\`).`;
 }
 
+function getBareNoSandboxValidationError(args: string[]): string | undefined {
+	const browserArgIndexes = new Set(
+		scanUpstreamGlobalFlagOccurrences(args, "--args").map(({ index }) => index + 1),
+	);
+	if (!args.some((token, index) => token === "--no-sandbox" && !browserArgIndexes.has(index))) return undefined;
+	return "`--no-sandbox` is a Chromium launch argument, not an agent-browser flag, so upstream would ignore this token. Prefer a working Chromium sandbox. If the host requires this workaround, pass it through `--args` and start a fresh session: { args: [\"--args\", \"--no-sandbox\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
+}
+
 export function validateToolArgs(args: string[]): string | undefined {
 	if (args.length === 0) {
 		return "`args` must contain at least one agent-browser command token.";
@@ -779,7 +787,7 @@ export function validateToolArgs(args: string[]): string | undefined {
 		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
-	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args) ?? getUnsupportedInlineWaitDownloadError(args);
+	return getBareNoSandboxValidationError(args) ?? getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args) ?? getUnsupportedInlineWaitDownloadError(args);
 }
 
 function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {
