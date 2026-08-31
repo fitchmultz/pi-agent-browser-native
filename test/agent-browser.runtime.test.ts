@@ -1270,6 +1270,19 @@ test("validateToolArgs rejects one-shot mcp server calls but preserves --help/-h
 	assert.match(validateToolArgs(["mcp", "help"]) ?? "", /external MCP clients/);
 });
 
+test("validateToolArgs rejects bare Chromium no-sandbox flags", () => {
+	for (const args of [
+		["--no-sandbox", "open", "https://example.com"],
+		["open", "https://example.com", "--no-sandbox"],
+	] as const) {
+		const error = validateToolArgs([...args]) ?? "";
+		assert.match(error, /Chromium launch argument/);
+		assert.match(error, /\["--args", "--no-sandbox", "open"/);
+	}
+	assert.equal(validateToolArgs(["--args", "--no-sandbox", "open", "https://example.com"]), undefined);
+	assert.equal(validateToolArgs(["--args", "--disable-gpu,--no-sandbox", "open", "https://example.com"]), undefined);
+});
+
 test("buildExecutionPlan still injects managed sessions for browser-backed state and auth commands", () => {
 	for (const args of [["state", "save", "./auth.json"], ["state", "load", "./auth.json"], ["auth", "login", "demo"]] as const) {
 		const plan = buildExecutionPlan([...args], {
@@ -1992,4 +2005,3 @@ test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
 		},
 	);
 });
-

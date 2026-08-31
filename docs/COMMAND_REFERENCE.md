@@ -952,7 +952,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 
 - `--executable-path <path>`: custom Chromium-compatible browser executable, such as Brave/Edge/Arc/Vivaldi when upstream can launch that binary. Environment: `AGENT_BROWSER_EXECUTABLE_PATH`.
 - `--extension <path>`: load browser extensions; repeatable. Environment: `AGENT_BROWSER_EXTENSIONS`.
-- `--args <args>`: browser launch args, comma or newline separated. Environment: `AGENT_BROWSER_ARGS`.
+- `--args <args>`: browser launch args, comma or newline separated. Chromium switches belong inside this value; a bare `--no-sandbox` token is rejected because upstream would ignore it. Prefer a working Chromium sandbox. If a host explicitly requires the workaround, use `{ args: ["--args", "--no-sandbox", "open", "https://example.com"], sessionMode: "fresh" }`. Environment: `AGENT_BROWSER_ARGS`.
 - `--user-agent <ua>`: custom user agent. Environment: `AGENT_BROWSER_USER_AGENT`.
 - `--proxy <server>`: proxy server URL. Environments: `AGENT_BROWSER_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`.
 - `--proxy-bypass <hosts>`: proxy bypass hosts. Environments: `AGENT_BROWSER_PROXY_BYPASS`, `NO_PROXY`.

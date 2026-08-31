@@ -339,6 +339,26 @@ test("agentBrowserExtension rejects unsupported extra press/key args before upst
 	}
 });
 
+test("agentBrowserExtension rejects bare Chromium no-sandbox flags before upstream spawn", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-no-sandbox-validation-"));
+	try {
+		const harness = createExtensionHarness({ cwd: tempDir });
+		await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["open", "https://example.test/", "--no-sandbox"],
+			sessionMode: "fresh",
+		});
+		assert.equal(result.isError, true);
+		assert.equal(result.details?.failureCategory, "validation-error");
+		assert.match(result.content[0]?.text ?? "", /Chromium launch argument/);
+		assert.match(result.content[0]?.text ?? "", /\["--args", "--no-sandbox", "open"/);
+		assert.equal(result.details?.validationError, result.content[0]?.text);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension rejects duplicate explicit artifact destinations inside one batch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-duplicate-artifact-"));
 	try {
