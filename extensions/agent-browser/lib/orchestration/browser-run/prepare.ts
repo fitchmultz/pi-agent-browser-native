@@ -355,9 +355,8 @@ async function collectSamePageRefFreshnessPreflight(options: {
 
 function getIdleTimeoutMismatch(args: string[], configuredValue: string): string | undefined {
 	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
-		if (token !== "--idle-timeout" && !token.startsWith("--idle-timeout=")) continue;
-		const requestedToken = token.includes("=") ? token.slice(token.indexOf("=") + 1) : args[++index];
+		if (args[index] !== "--idle-timeout") continue;
+		const requestedToken = args[++index];
 		if (!requestedToken || !/^\d+$/.test(requestedToken) || Number(requestedToken) === Number(configuredValue)) continue;
 		return `--idle-timeout ${requestedToken} conflicts with this Pi process's managed-session idle timeout (${configuredValue} ms). Restart Pi with PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=${requestedToken} and omit --idle-timeout; changing the launch value for one call can restart the upstream browser and discard the active tab.`;
 	}

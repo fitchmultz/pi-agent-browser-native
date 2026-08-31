@@ -2,10 +2,19 @@
 
 ## Unreleased
 
+## 0.6.1 - 2026-08-30
+
 ### Fixed
 
+- Rejected unsupported global `--flag=value` arguments before normal command execution can misplan them as valid upstream flags or screenshot operands. `--restore=<key>` remains supported because `agent-browser` 0.35.x explicitly accepts that form; all other global values use separate argv tokens. Plain help/version inspection still preserves exact caller argv, matching upstream.
 - Preserved stdout chunk ordering while switching oversized subprocess output from memory to a spill file, preventing valid JSON envelopes from being reordered under fast chunk delivery.
 - Accepted both npm 11's array and npm 12's keyed-object `npm pack --json` result shapes in package verification.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (776 tests passed, two opt-in skips; 127 packed files), configured-source lifecycle, packaged-Pi smoke on Pi 0.84.4, real-upstream contracts on 0.35.1 and the 0.35.0 floor (2/2 each), deterministic browser dogfood, startup profile (60.14 ms median), Ubuntu platform build/browser smoke, and an isolated interactive Pi checkout smoke covering rejected equals forms plus valid separated-token execution.
+- Two earlier 0.35.1 attempts were not treated as passes: the first lost its CDP connection as clamshell sleep began, and the retry was suspended by a 2,116-second maintenance sleep before its unchanged 180-second timeout fired after wake. Direct upstream and wrapper vitals checks passed on this release tree, the unchanged base, and v0.6.0; the uninterrupted caffeinated gate then passed cleanly.
+- Full platform release composition remains blocked because localhost macOS SSH is unavailable and Parallels `prlctl` is missing; macOS SSH and native-Windows suites were not run under the authorized GitHub-only exception. This release creates GitHub artifacts only; npm publishing is not authorized.
 
 ## 0.6.0 - 2026-08-28
 

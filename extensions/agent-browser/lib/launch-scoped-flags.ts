@@ -1,5 +1,5 @@
 import { findCommandStartIndex } from "./argv-descriptor.js";
-import { isBooleanFlagEnabled, optionalGlobalValueFlagConsumesNext } from "./argv-grammar.js";
+import { isBooleanFlagEnabled } from "./argv-grammar.js";
 
 export interface LaunchScopedFlagDefinition {
 	flag: string;
@@ -192,9 +192,9 @@ export function hasLaunchScopedFlagToken(args: string[], flag: string): boolean 
 	const commandStartIndex = findCommandStartIndex(args);
 	const command = commandStartIndex === undefined ? undefined : args[commandStartIndex];
 	return args.some((token, index) => {
-		if (token !== flag && !token.startsWith(`${flag}=`)) return false;
+		if (token.startsWith(`${flag}=`)) return flag === "--restore";
+		if (token !== flag) return false;
 		if (flag === "--auto-connect") return isBooleanFlagEnabled(args, flag);
-		if (flag === "--restore" && token === "--restore" && optionalGlobalValueFlagConsumesNext(flag, args[index + 1])) return true;
 		if (flag === "--state" && command === "wait" && commandStartIndex !== undefined && index > commandStartIndex) return false;
 		return true;
 	});

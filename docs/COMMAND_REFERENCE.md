@@ -934,6 +934,8 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 
 ### Authentication and session flags
 
+`agent-browser` 0.35.x requires separate argv tokens for global flag values (for example, `--args <args>` and `--user-agent <ua>`). The explicit exception is `--restore=<key>`, which is supported when an optional restore key could otherwise be confused with a command word. The wrapper rejects other global `--flag=value` forms before normal command dispatch, including when they trail the command. Plain `--help`, `-h`, `--version`, and `-V` inspection preserves exact caller argv because upstream accepts those top-level inspection shapes. Global flags for `batch` belong before `batch` in top-level `args`; row-local equals forms are rejected without the help/version or `--restore=<key>` exceptions.
+
 - `--profile <name|path>`: reuse Chrome profile login state by directory name from `profiles`, or use a persistent custom profile/profile-directory path when upstream accepts it. Environment: `AGENT_BROWSER_PROFILE`.
 - `--session <name>`: use an isolated session. Environment: `AGENT_BROWSER_SESSION`.
 - `--restore [name]`: auto-save/restore cookies, local storage, and session storage; bare `--restore` uses `--session` as the key. Environment: `AGENT_BROWSER_RESTORE`. Wrapper-owned implicit sessions set a transcript- and checkout-scoped restore key automatically unless disabled with `PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE=0` or suppressed by incompatible caller launch choices. Explicit restore/state/session/config choices pass through unchanged and remain visible in results. Automatic restore validates only its own checkout/storage identity and coordinates same-daemon reuse so wrapper restore pools cannot mix.
@@ -942,7 +944,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--namespace <name>`: isolate daemon sockets and restore-state directories. Environment: `AGENT_BROWSER_NAMESPACE`. Upstream and the wrapper canonicalize namespace identity to a lowercase sanitized component (for example, `Team Name` becomes `team-name`).
 - `--session-name <name>`: legacy alias for restore persistence key. Environment: `AGENT_BROWSER_SESSION_NAME`.
 - `--state <path>`: load saved auth state from JSON. Environment: `AGENT_BROWSER_STATE`.
-- `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`. Optional booleans use separated tokens (`--auto-connect false`); upstream 0.34.0 does not recognize `--auto-connect=false`, so that token cannot disable an earlier bare `--auto-connect`.
+- `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`. Optional booleans use separated tokens (`--auto-connect false`); the wrapper rejects `--auto-connect=false` before dispatch.
 - `--pin-tab`: pin the session to its bound tab. Environment: `AGENT_BROWSER_PIN_TAB`. Sticky per session and not launch-scoped. Commands fail with `tab_gone` instead of falling back when that tab is closed. `--no-pin-tab` disables a previously enabled pin. Optional booleans use separated tokens (`--pin-tab false`).
 - `--headers <json>`: apply HTTP headers scoped to the opened URL's origin.
 - `--init-script <path>`: register a script before first navigation; repeatable. Environment: `AGENT_BROWSER_INIT_SCRIPTS`.

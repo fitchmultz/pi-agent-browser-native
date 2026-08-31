@@ -53,10 +53,10 @@ if (args.includes("--version")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const version = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--version"],
+				args: ["--headed=false", "--version"],
 			});
 			const rootHelp = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--help"],
+				args: ["--args=demo", "--help"],
 			});
 			const commandHelp = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["snapshot", "--help"],
@@ -73,12 +73,57 @@ if (args.includes("--version")) {
 			assert.equal(rootHelp.isError, false);
 			assert.equal(rootHelp.details?.inspection, true);
 			assert.equal(rootHelp.details?.sessionName, undefined);
-			assert.match((rootHelp.content[0] as { text: string }).text, /Usage: agent-browser --help/);
+			assert.match((rootHelp.content[0] as { text: string }).text, /Usage: agent-browser --args=demo --help/);
 			assert.equal(commandHelp.isError, false);
 			assert.equal(commandHelp.details?.inspection, true);
 			assert.equal(commandHelp.details?.sessionName, undefined);
 			assert.match((commandHelp.content[0] as { text: string }).text, /Usage: agent-browser snapshot --help/);
-			assert.deepEqual(await readInvocationLog(logPath), [{ args: ["--version"] }, { args: ["--help"] }, { args: ["snapshot", "--help"] }]);
+			assert.deepEqual(await readInvocationLog(logPath), [
+				{ args: ["--headed=false", "--version"] },
+				{ args: ["--args=demo", "--help"] },
+				{ args: ["snapshot", "--help"] },
+			]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension rejects unsupported global equals assignments before upstream dispatch", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-equals-flags-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: {} }));`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			for (const args of [
+				["--args=--user-agent=TARS", "open", "https://example.com/"],
+				["screenshot", "page.png", "--user-agent=TARS"],
+			]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+				assert.equal(result.isError, true, args.join(" "));
+				assert.match(String(result.details?.validationError), /does not support `--(?:args|user-agent)=<value>`/);
+			}
+
+			for (const params of [
+				{ args: ["batch", "screenshot page.png --user-agent=TARS"] },
+				{ args: ["batch"], stdin: JSON.stringify([["screenshot", "page.png", "--user-agent=TARS", "--help"]]) },
+				{ args: ["batch", "screenshot page.png --restore=auth"] },
+			]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+				assert.equal(result.isError, true, params.args.join(" "));
+				assert.match(String(result.details?.validationError), /before `batch`/);
+			}
+			assert.deepEqual(await readInvocationLog(logPath), []);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -111,16 +156,16 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 			assert.match(String(mismatch.details?.validationError), /PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=5000/);
 			assert.deepEqual(await readInvocationLog(logPath), []);
 
-			const duplicateMismatch = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--idle-timeout", "1234", "--idle-timeout=5000", "open", "https://example.com/"],
+			const inlineAligned = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--idle-timeout=1234", "open", "https://example.com/"],
 				sessionMode: "fresh",
 			});
-			assert.equal(duplicateMismatch.isError, true);
-			assert.match(String(duplicateMismatch.details?.validationError), /PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=5000/);
+			assert.equal(inlineAligned.isError, true);
+			assert.match(String(inlineAligned.details?.validationError), /does not support `--idle-timeout=<value>`/);
 			assert.deepEqual(await readInvocationLog(logPath), []);
 
 			const aligned = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--idle-timeout=1234", "open", "https://example.com/"],
+				args: ["--idle-timeout", "1234", "open", "https://example.com/"],
 				sessionMode: "fresh",
 			});
 			assert.equal(aligned.isError, false);

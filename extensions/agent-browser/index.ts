@@ -187,7 +187,7 @@ function getArtifactPreflightValidationError(options: {
 	for (const [index, step] of steps.entries()) {
 		const commandStep = extractUpstreamCommandTokens(step);
 		if (batch) {
-			const stepValidationError = validateToolArgs(step);
+			const stepValidationError = validateToolArgs(step, { batchStep: true });
 			if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
 			if (sawBatchClose && commandStep[0] === "record" && (commandStep[1] === "start" || commandStep[1] === "restart")) {
 				return `Unsupported batch step ${index + 1}: record ${commandStep[1]} cannot follow close, quit, or exit in one upstream batch because upstream can report success without starting a recording. Split the close and recording into separate agent_browser calls.`;
