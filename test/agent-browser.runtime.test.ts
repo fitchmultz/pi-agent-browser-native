@@ -10,7 +10,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { canonicalizeAgentBrowserNamespace, extractRequestedRestoreKey, isBooleanFlagEnabled } from "../extensions/agent-browser/lib/argv-grammar.js";
+import {
+	canonicalizeAgentBrowserNamespace,
+	extractRequestedRestoreKey,
+	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
+	GLOBAL_VALUE_FLAGS,
+	isBooleanFlagEnabled,
+} from "../extensions/agent-browser/lib/argv-grammar.js";
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { LAUNCH_SCOPED_FLAGS } from "../extensions/agent-browser/lib/launch-scoped-flags.js";
 import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT_GUIDELINES_SUFFIX } from "../extensions/agent-browser/lib/playbook.js";
@@ -67,18 +73,6 @@ test("buildExecutionPlan rejects ambiguous session identity flags without reject
 	assert.equal(commandFlagSmuggle.validationError, undefined);
 	assert.equal(commandFlagSmuggle.sessionName, "caller-owned");
 	assert.equal(commandFlagSmuggle.usedImplicitSession, false);
-	const unsupportedEqualsSession = buildExecutionPlan(
-		["--session=caller-owned", "open", "https://example.com"],
-		options,
-	);
-	assert.match(unsupportedEqualsSession.validationError ?? "", /--session=\.\.\. is not supported/);
-	const unsupportedEqualsNamespace = buildExecutionPlan(
-		["--namespace=caller-owned", "open", "https://example.com"],
-		options,
-	);
-	assert.match(unsupportedEqualsNamespace.validationError ?? "", /--namespace=\.\.\. is not supported/);
-	const literalEqualsSession = buildExecutionPlan(["fill", "#field", "--session=literal"], options);
-	assert.equal(literalEqualsSession.validationError, undefined);
 	const helpWithUnsupportedEqualsSession = buildExecutionPlan(["--session=caller-owned", "--help"], options);
 	assert.equal(helpWithUnsupportedEqualsSession.validationError, undefined);
 	assert.deepEqual(helpWithUnsupportedEqualsSession.effectiveArgs, ["--session=caller-owned", "--help"]);
@@ -1313,6 +1307,38 @@ test("buildExecutionPlan limits sessionless allowlists to documented subcommands
 	}
 });
 
+test("buildExecutionPlan rejects unsupported global equals assignments except restore", () => {
+	const options = {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto" as const,
+	};
+	for (const flag of [...GLOBAL_VALUE_FLAGS, ...GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES]) {
+		const args = [`${flag}=demo`, "open", "https://example.com"];
+		const plan = buildExecutionPlan(args, options);
+		assert.equal(plan.validationError?.includes(`does not support \`${flag}=<value>\``), true, args.join(" "));
+		assert.deepEqual(plan.commandInfo, {}, args.join(" "));
+		assert.deepEqual(plan.startupScopedFlags, [], args.join(" "));
+	}
+
+	const restore = buildExecutionPlan(["open", "https://example.com", "--restore=auth"], options);
+	assert.equal(restore.validationError, undefined);
+	assert.equal(restore.effectiveArgs.includes("--restore=auth"), true);
+});
+
+test("validateToolArgs applies global equals exceptions only at top level", () => {
+	assert.equal(validateToolArgs(["--user-agent", "TARS", "batch"]), undefined);
+	assert.match(
+		validateToolArgs(["screenshot", "page.png", "--user-agent=TARS", "--help"], { batchStep: true }) ?? "",
+		/Move `--user-agent` and its value before `batch` as separate top-level args/,
+	);
+	assert.match(
+		validateToolArgs(["screenshot", "page.png", "--restore=auth"], { batchStep: true }) ?? "",
+		/`--restore=<key>` belongs before `batch` in top-level args/,
+	);
+});
+
 test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
 	for (const args of [["--session"], ["--namespace"], ["--args", ""], ["--allowed-domains"], ["--ca-cert"], ["--profile"], ["--executable-path"], ["--session-name"], ["--restore-save"], ["--restore-check-url"], ["--restore-check-text"], ["--restore-check-fn"], ["--cdp"], ["--state"], ["--init-script"], ["--enable"], ["--download-path"], ["--model"], ["--idle-timeout"], ["open", "https://example.com", "--profile"]] as const) {
 		const plan = buildExecutionPlan([...args], {
@@ -1565,14 +1591,6 @@ test("buildExecutionPlan only treats the last exact lowercase auto-connect false
 		sessionMode: "auto",
 	});
 	assert.match(lastEnabled.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
-
-	const unsupportedEqualsDoesNotDisable = buildExecutionPlan(["--auto-connect", "open", "https://example.com", "--auto-connect=false"], {
-		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
-		managedSessionActive: true,
-		managedSessionName: "piab-demo-123",
-		sessionMode: "auto",
-	});
-	assert.match(unsupportedEqualsDoesNotDisable.validationError ?? "", /launch-scoped flags.*--auto-connect/i);
 
 	const lastDisabled = buildExecutionPlan(["--auto-connect", "--auto-connect", "false", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),

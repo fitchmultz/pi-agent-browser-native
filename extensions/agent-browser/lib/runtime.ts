@@ -15,6 +15,7 @@ import {
 	extractExplicitSessionName,
 	getAgentBrowserSessionIdentityKey,
 	getBooleanFlagValue,
+	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
 	isAgentBrowserSessionIdentityKeyInNamespace,
 	isUpstreamEnvFlagEnabled,
@@ -81,7 +82,7 @@ export interface SessionRecoveryHint {
 export interface InvalidValueFlagDetails {
 	flag: string;
 	index: number;
-	reason: "missing-value" | "unexpected-flag";
+	reason: "missing-value" | "unexpected-flag" | "unsupported-assignment";
 	receivedToken?: string;
 }
 
@@ -442,18 +443,6 @@ function countExplicitGlobalFlags(args: string[], targetFlag: "--namespace" | "-
 	return scanUpstreamGlobalFlagOccurrences(args, targetFlag).length;
 }
 
-function getUnsupportedLeadingIdentityAssignment(args: string[]): "--namespace" | "--session" | undefined {
-	const commandStartIndex = findCommandStartIndex(args) ?? args.length;
-	for (let index = 0; index < commandStartIndex; index += 1) {
-		const token = args[index];
-		if (token.startsWith("--session=")) return "--session";
-		if (token.startsWith("--namespace=")) return "--namespace";
-		const flag = token.split("=", 1)[0] ?? token;
-		if (!token.includes("=") && PREVALIDATED_VALUE_FLAGS.has(flag)) index += 1;
-	}
-	return undefined;
-}
-
 export function getImplicitSessionCloseTimeoutMs(env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): number {
 	return parseTimeoutMs(env[IMPLICIT_SESSION_CLOSE_TIMEOUT_ENV], 0) ?? DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS;
 }
@@ -764,7 +753,7 @@ function getUnsupportedInlineWaitDownloadError(args: string[]): string | undefin
 	return `agent-browser ${TARGET_AGENT_BROWSER_VERSION} does not support \`wait --download=<path>\`. Pass the optional path as a separate argument: \`wait --download <path>\` (or \`wait -d <path>\`).`;
 }
 
-export function validateToolArgs(args: string[]): string | undefined {
+export function validateToolArgs(args: string[], options: { batchStep?: boolean } = {}): string | undefined {
 	if (args.length === 0) {
 		return "`args` must contain at least one agent-browser command token.";
 	}
@@ -779,28 +768,35 @@ export function validateToolArgs(args: string[]): string | undefined {
 		return "Do not pass `--session-mode` in args. Use the top-level agent_browser `sessionMode` field instead, for example { args: [\"--profile\", \"Default\", \"open\", \"https://example.com\"], sessionMode: \"fresh\" }.";
 	}
 
+	const inspection = !options.batchStep && isPlainTextInspectionArgs(args);
+	const invalidValueFlag = inspection ? undefined : getInvalidValueFlagDetails(args, !options.batchStep);
+	if (invalidValueFlag?.reason === "unsupported-assignment") return formatInvalidValueFlagError(invalidValueFlag, options.batchStep);
+
 	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args) ?? getUnsupportedInlineWaitDownloadError(args);
 }
 
-function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | undefined {
+function getInvalidValueFlagDetails(args: string[], allowRestoreAssignment = true): InvalidValueFlagDetails | undefined {
 	for (let index = 0; index < args.length; index += 1) {
 		const token = args[index];
 		if (!token.startsWith("-")) {
 			continue;
 		}
 		const normalizedToken = token.split("=", 1)[0] ?? token;
-		if (!PREVALIDATED_VALUE_FLAGS.has(normalizedToken)) {
-			continue;
+		if (
+			token.includes("=")
+			&& (
+				PREVALIDATED_VALUE_FLAGS.has(normalizedToken)
+				|| GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(normalizedToken)
+				|| (!allowRestoreAssignment && normalizedToken === "--restore")
+			)
+		) {
+			return {
+				flag: normalizedToken,
+				index,
+				reason: "unsupported-assignment",
+			};
 		}
-		if (token.includes("=")) {
-			const value = token.slice(token.indexOf("=") + 1).trim();
-			if (value.length === 0) {
-				return {
-					flag: normalizedToken,
-					index,
-					reason: "missing-value",
-				};
-			}
+		if (!PREVALIDATED_VALUE_FLAGS.has(normalizedToken)) {
 			continue;
 		}
 		const receivedToken = args[index + 1];
@@ -824,7 +820,15 @@ function getInvalidValueFlagDetails(args: string[]): InvalidValueFlagDetails | u
 	return undefined;
 }
 
-function formatInvalidValueFlagError(details: InvalidValueFlagDetails): string {
+function formatInvalidValueFlagError(details: InvalidValueFlagDetails, batchStep = false): string {
+	if (details.reason === "unsupported-assignment") {
+		if (batchStep) {
+			return details.flag === "--restore"
+				? "Global `--restore=<key>` belongs before `batch` in top-level args, not inside a batch step."
+				: `Global \`${details.flag}=<value>\` is not supported inside a batch step. Move \`${details.flag}\` and its value before \`batch\` as separate top-level args.`;
+		}
+		return `agent-browser ${TARGET_AGENT_BROWSER_VERSION} does not support \`${details.flag}=<value>\`. Pass \`${details.flag}\` and its value as separate arguments.`;
+	}
 	if (details.reason === "unexpected-flag" && details.receivedToken) {
 		return `Flag \`${details.flag}\` requires a value, but received \`${details.receivedToken}\` instead. Pass a non-flag value immediately after \`${details.flag}\`.`;
 	}
@@ -950,7 +954,6 @@ export function buildExecutionPlan(
 	},
 ): ExecutionPlan {
 	const invalidValueFlag = getInvalidValueFlagDetails(args);
-	const unsupportedIdentityAssignment = getUnsupportedLeadingIdentityAssignment(args);
 	const explicitNamespacePresent = scanUpstreamGlobalFlagOccurrences(args, "--namespace").length > 0;
 	const explicitNamespace = extractExplicitNamespace(args);
 	const managedSessionNamespace = canonicalizeAgentBrowserNamespace(options.managedSessionNamespace);
@@ -981,18 +984,6 @@ export function buildExecutionPlan(
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError: formatInvalidValueFlagError(invalidValueFlag),
-		};
-	}
-
-	if (unsupportedIdentityAssignment) {
-		return {
-			commandInfo: {},
-			effectiveArgs,
-			plainTextInspection: false,
-			startupScopedFlags: [],
-			usedImplicitSession: false,
-			validationError:
-				`${unsupportedIdentityAssignment}=... is not supported by agent-browser ${TARGET_AGENT_BROWSER_VERSION}. Pass ${unsupportedIdentityAssignment} and its value as separate arguments.`,
 		};
 	}
 
