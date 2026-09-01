@@ -12,6 +12,13 @@
 
 - Rebaselined the recommended upstream release to `agent-browser` 0.36.0 while keeping 0.35.0 as the stable runtime floor. `--no-webmcp` is an optional launch-scoped boolean for fresh managed Chrome sessions; crossed 0.35.2 dashboard `--allowed-origins` stays sessionless; Eve, dependency-resolution, and Lightpanda-only upstream changes need no wrapper layer.
 
+### Validation
+
+- Passed `npm run verify -- pre-pr` (778 tests passed, two opt-in skips; 127 packed files), configured-source lifecycle, packaged-Pi smoke, real-upstream contracts (2/2), deterministic browser dogfood (8/8), the startup profile (104.9 ms median, 114.5 ms maximum), and platform harness checks (5/5).
+- The Ubuntu platform matrix passed `platform-build` and `browser-dogfood-smoke` with 11/11 assertions each, complete artifact manifests, and successful lease cleanup.
+- An isolated Pi/tmux release smoke passed top-level `qa` on Example Domain and completed the Sauce Demo checkout flow through the overview page without placing the order. The selected sort, two cart items, totals, screenshot, recording lifecycle, diagnostics, and session cleanup were verified. The run recovered from invalid model-generated script, job, and recording calls; the wrapper returned structured errors and kept its artifact close guard active until the requested files were verified.
+- Localhost macOS SSH and Parallels `prlctl` were unavailable, so the macOS-SSH and native-Windows suites were not run and are not reported as passed under the explicit release waivers. This release creates GitHub artifacts only; npm publishing is not authorized.
+
 ## 0.6.1 - 2026-08-30
 
 ### Fixed
