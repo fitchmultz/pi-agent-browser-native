@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.2 - 2026-09-01
+
 ### Added
 
 - Added thin passthrough support for upstream 0.36.0 experimental WebMCP page tools (`list`, `invoke`, detached `result` / `cancel`, params/frame/timeout options) and the bundled `webmcp-gen` skill. Page-tool calls recheck the active target and invalidate prior page-scoped refs because page code can mutate, rerender, or navigate.
