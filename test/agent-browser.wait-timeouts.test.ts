@@ -59,11 +59,20 @@ test("getCommandAwareProcessTimeoutMs extends process timeout for wait, read, an
 			["webmcp", "invoke", "slow_tool", "--timeout", "6000"],
 			["webmcp", "result", "invocation-1", "--timeout", "7000"],
 		])), 18000);
+		assert.equal(getCommandAwareProcessTimeoutMs(["batch", "webmcp result invocation-1 --timeout 7000"], undefined), 12000);
+		assert.equal(
+			getCommandAwareProcessTimeoutMs(
+				["batch", "webmcp invoke slow_tool --timeout 6000", "webmcp result invocation-1 --timeout 7000"],
+				batch([["wait", "99999"]]),
+			),
+			18000,
+		);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["read", "--require-md", "--timeout", "8000"], undefined), true);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["read", "--session", "custom", "--require-md", "--timeout", "8000"], undefined), true);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["read", "--restore", "https://example.com", "--require-md", "--timeout", "8000"], undefined), false);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["read", "--require-md", "--timeout", "8000", "https://example.com"], undefined), false);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["batch"], batch([["read", "--llms", "index", "--timeout", "8000"]])), true);
+		assert.equal(commandTimeoutNeedsActivePageUrl(["batch", "read --llms index --timeout 8000"], undefined), true);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["batch"], batch([["goto", "https://example.com/a"], ["read", "--llms", "index", "--timeout", "8000"]])), false);
 
 		assert.equal(getCommandAwareProcessTimeoutMs(["wait", "not-a-number"], undefined), undefined);

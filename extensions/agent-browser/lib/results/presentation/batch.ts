@@ -4,6 +4,7 @@ import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { extractUpstreamCommandTokens, parseCommandInfo, redactInvocationArgs, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
+import { buildPendingWebMcpNextActions } from "../recovery-next-actions.js";
 import { formatSessionArtifactRetentionSummary, isPendingRecordingArtifact } from "../artifact-manifest.js";
 import { classifyAgentBrowserFailureCategory } from "../categories.js";
 import { detectConfirmationRequired } from "../confirmation.js";
@@ -305,7 +306,12 @@ async function buildBatchStepPresentation(options: {
 	});
 	const text = getPresentationText(presentation) || presentation.summary;
 	const stepSucceeded = presentation.resultCategory !== "failure";
-	const nextActions = applyNamespaceToNextActions(presentation.nextActions ?? buildAgentBrowserNextActions({
+	const pendingWebMcpMutation = stepSucceeded
+		&& commandInfo.command === "webmcp"
+		&& ["invoke", "result"].includes(commandInfo.subcommand ?? "")
+		&& isRecord(presentation.data)
+		&& presentation.data.status === "pending";
+	const nextActions = applyNamespaceToNextActions(pendingWebMcpMutation ? buildPendingWebMcpNextActions(sessionName) : presentation.nextActions ?? buildAgentBrowserNextActions({
 		artifacts: presentation.artifacts,
 		args: command,
 		command: command?.[0],

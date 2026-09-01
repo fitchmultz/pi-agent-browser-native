@@ -586,6 +586,7 @@ export interface FinalResultInput {
 	sourceLookup?: AgentBrowserSourceLookupAnalysis;
 	succeeded: boolean;
 	timeoutPartialProgress?: TimeoutPartialProgress;
+	unsettledWebMcpMutation?: boolean;
 	userRequestedJson: boolean;
 	visibleRefFallbackDiagnostic?: VisibleRefFallbackDiagnostic;
 	visibleRefFallbackSessionName?: string;

@@ -529,6 +529,9 @@ if (!REAL_UPSTREAM_ENABLED) {
 						const detached = await runCoreCommand(harness, ["webmcp", "invoke", "wait_for_cancel", "--detach"], shapes.commands.coreSubcommand, managedSessionName);
 						const invocationId = (detached.data as { invocationId?: string }).invocationId;
 						assert.ok(invocationId, "detached WebMCP invoke should return an invocation id");
+						assert.equal(detached.sessionTabTarget, undefined);
+						assert.equal(detached.sessionTabTargetUnknown, true);
+						assert.deepEqual((detached.nextActions as Array<{ id?: string }> | undefined)?.map((action) => action.id), ["verify-page-target-after-pending-webmcp"]);
 						const canceled = await runCoreCommand(harness, ["webmcp", "cancel", invocationId], shapes.commands.coreSubcommand, managedSessionName);
 						assert.equal((canceled.data as { status?: string }).status, "canceled");
 						const canceledResult = await runCoreCommand(harness, ["webmcp", "result", invocationId], shapes.commands.coreSubcommand, managedSessionName);

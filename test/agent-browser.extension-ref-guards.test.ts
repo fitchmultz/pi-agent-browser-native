@@ -2002,6 +2002,124 @@ if (args.includes("snapshot")) {
 	}
 });
 
+test("agentBrowserExtension keeps pending WebMCP targets unknown and trusts a later batch snapshot", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-webmcp-page-state-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("batch")) {
+  const detached = args.some((arg) => arg.includes("--detach"));
+  process.stdout.write(JSON.stringify({ success: true, data: detached ? [
+    { command: ["webmcp", "invoke", "wait_for_navigation", "--detach"], success: true, result: { invocationId: "invocation-2", status: "pending" } },
+    { command: ["get", "url"], success: true, result: { result: "https://webmcp.example/after", url: "https://webmcp.example/after" } },
+    { command: ["snapshot", "-i"], success: true, result: {
+      origin: "https://webmcp.example/after",
+      url: "https://webmcp.example/after",
+      refs: { e1: { role: "button", name: "Continue" } },
+      snapshot: '- button "Continue" [ref=e1]'
+    } }
+  ] : [
+    { command: ["webmcp", "invoke", "set_message"], success: true, result: { status: "completed" } },
+    { command: ["get", "url"], success: true, result: { result: "https://webmcp.example/after", url: "https://webmcp.example/after" } },
+    { command: ["snapshot", "-i"], success: true, result: {
+      origin: "https://webmcp.example/after",
+      title: "After WebMCP",
+      url: "https://webmcp.example/after",
+      refs: { e1: { role: "button", name: "Continue" } },
+      snapshot: '- button "Continue" [ref=e1]'
+    } }
+  ] }));
+} else if (args.includes("webmcp") && args.includes("cancel")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "webmcp_cancel_failed: Invocation could not be canceled" }));
+} else if (args.includes("webmcp") && args.includes("invoke")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { invocationId: "invocation-1", status: "pending" } }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "WebMCP", url: "https://webmcp.example/start" } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://webmcp.example/start", url: "https://webmcp.example/start" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "WebMCP", title: "WebMCP" } }));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+	);
+
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://webmcp.example/start"] });
+			assert.equal(opened.isError, false, JSON.stringify(opened));
+
+			const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["webmcp", "invoke", "wait_for_navigation", "--detach"] });
+			assert.equal(pending.isError, false, JSON.stringify(pending));
+			assert.equal((pending.details?.data as { status?: string } | undefined)?.status, "pending");
+			assert.equal(pending.details?.sessionTabTarget, undefined);
+			assert.equal(pending.details?.sessionTabTargetUnknown, true);
+			assert.equal((pending.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+			assert.deepEqual((pending.details?.nextActions as Array<{ id?: string }> | undefined)?.map((action) => action.id), ["verify-page-target-after-pending-webmcp"]);
+
+			const invocationCount = (await readInvocationLog(logPath)).length;
+			const blockedSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(blockedSnapshot.isError, true, JSON.stringify(blockedSnapshot));
+			assert.match(blockedSnapshot.content[0]?.text ?? "", /active page became unverified/);
+			assert.equal((await readInvocationLog(logPath)).length, invocationCount);
+
+			const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
+			assert.deepEqual(verifiedUrl.details?.sessionTabTarget, { title: undefined, url: "https://webmcp.example/start" });
+
+			const batchSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "--bail"],
+				stdin: JSON.stringify([["webmcp", "invoke", "set_message"], ["get", "url"], ["snapshot", "-i"]]),
+			});
+			assert.equal(batchSnapshot.isError, false, JSON.stringify(batchSnapshot));
+			assert.equal(batchSnapshot.details?.sessionTabTargetUnknown, undefined);
+			assert.deepEqual(batchSnapshot.details?.sessionTabTarget, { title: "After WebMCP", url: "https://webmcp.example/after" });
+			assert.deepEqual((batchSnapshot.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1"]);
+
+			const freshClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(freshClick.isError, false, JSON.stringify(freshClick));
+
+			const pendingBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "--bail", "webmcp invoke wait_for_navigation --detach", "get url", "snapshot -i"],
+			});
+			assert.equal(pendingBatch.isError, false, JSON.stringify(pendingBatch));
+			assert.equal(pendingBatch.details?.sessionTabTarget, undefined);
+			assert.equal(pendingBatch.details?.sessionTabTargetUnknown, true);
+			assert.equal(pendingBatch.details?.refSnapshot, undefined);
+			assert.doesNotMatch(JSON.stringify(pendingBatch.details?.batchSteps), /inspect-after-mutation/);
+
+			const failedCancel = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["webmcp", "cancel", "invocation-2"] });
+			assert.equal(failedCancel.isError, true, JSON.stringify(failedCancel));
+			assert.equal(failedCancel.details?.sessionTabTarget, undefined);
+			assert.equal(failedCancel.details?.sessionTabTargetUnknown, true);
+			assert.equal((failedCancel.details?.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+			const failedCancelInvocationCount = (await readInvocationLog(logPath)).length;
+			const blockedAfterFailedCancel = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(blockedAfterFailedCancel.isError, true, JSON.stringify(blockedAfterFailedCancel));
+			assert.equal((await readInvocationLog(logPath)).length, failedCancelInvocationCount);
+
+			const reverifiedPendingBatch = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+			assert.equal(reverifiedPendingBatch.isError, false, JSON.stringify(reverifiedPendingBatch));
+			const postVerificationInvocationCount = (await readInvocationLog(logPath)).length;
+			const invalidatedClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			assert.equal(invalidatedClick.isError, true, JSON.stringify(invalidatedClick));
+			assert.equal(invalidatedClick.details?.failureCategory, "stale-ref");
+			assert.equal((await readInvocationLog(logPath)).length, postVerificationInvocationCount);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension invalidates direct and batched refs when record start opens a fresh page", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-start-refs-"));
 	const logPath = join(tempDir, "invocations.log");

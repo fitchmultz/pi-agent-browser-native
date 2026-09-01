@@ -144,6 +144,35 @@ function isStreamEnableAlreadyEnabledNoop(options: { command: string | undefined
 	return message === "streaming is already enabled for this session" || message === "streaming is already enabled" || message === "stream already enabled";
 }
 
+function isPendingWebMcpMutation(command: string | undefined, subcommand: string | undefined, data: unknown): boolean {
+	return command === "webmcp"
+		&& ["invoke", "result"].includes(subcommand ?? "")
+		&& isRecord(data)
+		&& data.status === "pending";
+}
+
+function isWebMcpSettlementCommand(command: string | undefined, subcommand: string | undefined): boolean {
+	return command === "webmcp" && ["result", "cancel"].includes(subcommand ?? "");
+}
+
+function batchHasPendingWebMcpMutation(data: unknown): boolean {
+	if (!Array.isArray(data)) return false;
+	return data.some((row) => {
+		if (!isRecord(row) || row.success === false || !Array.isArray(row.command) || !row.command.every((token) => typeof token === "string")) return false;
+		const [command, subcommand] = extractUpstreamCommandTokens(row.command as string[]);
+		return isPendingWebMcpMutation(command, subcommand, row.result);
+	});
+}
+
+function batchHasFailedWebMcpSettlement(data: unknown): boolean {
+	if (!Array.isArray(data)) return false;
+	return data.some((row) => {
+		if (!isRecord(row) || row.success !== false || !Array.isArray(row.command) || !row.command.every((token) => typeof token === "string")) return false;
+		const [command, subcommand] = extractUpstreamCommandTokens(row.command as string[]);
+		return isWebMcpSettlementCommand(command, subcommand);
+	});
+}
+
 function batchStartedManagedBrowser(data: unknown): boolean {
 	if (!Array.isArray(data)) return false;
 	return data.some((entry) => {
@@ -343,9 +372,21 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 
 		const verifiesCurrentUrl = prepared.executionPlan.commandInfo.command === "get" && prepared.executionPlan.commandInfo.subcommand === "url";
 		const trustsReportedPageTarget = !resultingPageState.pageUrlUnknown || verifiesCurrentUrl;
-		const observedSessionTabTarget = normalizeSessionTabTarget(navigationSummary)
-			?? (trustsReportedPageTarget ? extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) : undefined)
-			?? (succeeded && trustsReportedPageTarget ? extractSessionTabTargetFromCommandData(prepared.commandTokens, presentationEnvelope?.data) : undefined);
+		const pendingWebMcpMutation = isPendingWebMcpMutation(
+			prepared.executionPlan.commandInfo.command,
+			prepared.executionPlan.commandInfo.subcommand,
+			presentationEnvelope?.data,
+		) || (prepared.executionPlan.commandInfo.command === "batch" && batchHasPendingWebMcpMutation(presentationEnvelope?.data));
+		const failedWebMcpSettlement = prepared.priorSessionTabTargetUnknown === true && (
+			(!succeeded && isWebMcpSettlementCommand(prepared.executionPlan.commandInfo.command, prepared.executionPlan.commandInfo.subcommand))
+			|| (prepared.executionPlan.commandInfo.command === "batch" && batchHasFailedWebMcpSettlement(presentationEnvelope?.data))
+		);
+		const unsettledWebMcpMutation = pendingWebMcpMutation || failedWebMcpSettlement;
+		const observedSessionTabTarget = unsettledWebMcpMutation
+			? undefined
+			: normalizeSessionTabTarget(navigationSummary)
+				?? (trustsReportedPageTarget ? extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) : undefined)
+				?? (succeeded && trustsReportedPageTarget ? extractSessionTabTargetFromCommandData(prepared.commandTokens, presentationEnvelope?.data) : undefined);
 		const safeObservedSessionTabTarget = observedSessionTabTarget;
 		let currentSessionTabTarget = safeObservedSessionTabTarget;
 		if (!currentSessionTabTarget && nestedBatchClose === undefined) {
@@ -440,8 +481,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				const plannedBatchTransitionInvalidation = !Array.isArray(presentationEnvelope?.data)
 					? batchCommandSteps.map(getCommandRefSnapshotInvalidation).find((invalidation) => invalidation !== undefined)
 					: undefined;
-				const pageTransitionInvalidation = processResult.agentBrowserStarted && (directTransitionInvalidation || plannedBatchTransitionInvalidation)
-					? directTransitionInvalidation ?? plannedBatchTransitionInvalidation
+				const pageTransitionInvalidation = unsettledWebMcpMutation
+					? buildPageTransitionRefSnapshotInvalidation("A detached WebMCP invocation is still pending or failed to settle and can mutate, rerender, or navigate the page, so prior snapshot refs remain invalid after URL verification. Run webmcp result or cancel, then take a fresh snapshot before using page-scoped refs.")
+					: processResult.agentBrowserStarted && (directTransitionInvalidation || plannedBatchTransitionInvalidation)
+						? directTransitionInvalidation ?? plannedBatchTransitionInvalidation
 					: failedTransitionReverification
 						? buildPageTransitionRefSnapshotInvalidation("A failed eval/back/forward/reload/connect/state-load/tab command may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
 						: batchRefSnapshotState?.invalidation?.reason === "page-transition"
@@ -453,7 +496,13 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				} else if (processResult.agentBrowserStarted && (resultingPageState.pageUrlUnknown || resultingPageState.pageTargetMayHaveChanged)) {
 					sessionPageState.markTabTargetUnknown({ sessionName: sessionStateKey, update: sessionPageStateUpdate });
 				}
-				const refSnapshot = prepared.executionPlan.commandInfo.command === "batch" ? batchRefSnapshotState?.snapshot : succeeded ? prepared.executionPlan.commandInfo.command === "snapshot" ? extractRefSnapshotFromData(presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot : undefined;
+				const refSnapshot = unsettledWebMcpMutation
+					? undefined
+					: prepared.executionPlan.commandInfo.command === "batch"
+						? batchRefSnapshotState?.snapshot
+						: succeeded
+							? prepared.executionPlan.commandInfo.command === "snapshot" ? extractRefSnapshotFromData(presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot
+							: undefined;
 				if (refSnapshot) {
 					const refUpdate = sessionPageState.applyRefSnapshot({ fallbackTarget: currentSessionTabTarget, sessionName: sessionStateKey, snapshot: refSnapshot, update: sessionPageStateUpdate });
 					currentRefSnapshot = refUpdate.refSnapshot;
@@ -755,7 +804,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const resultHeadedManagedAutosaveInterval = resultRetainsPreparedManagedSession && !(commandClosesSession && succeeded)
 			? prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval
 			: undefined;
-		const result = buildFinalAgentBrowserToolResult({ aboutBlankSessionMismatch, artifactCleanup, categoryDetails: finalRecoveryState.categoryDetails, clickDispatchDiagnostic, commandTokens: prepared.commandTokens, comboboxFocusDiagnostic, compiledNetworkSourceLookup: prepared.compiledNetworkSourceLookup, compiledSemanticAction: prepared.compiledSemanticAction, compatibilityWorkaround: prepared.compatibilityWorkaround, currentRefSnapshot, currentRefSnapshotInvalidation, currentSessionTabTarget, currentSessionTabTargetUnknown, electronBroadGetTextScopeDiagnostics, electronFailedConnectCleanup, electronHandoff, electronLaunch: prepared.electronLaunch, electronLaunchRecord, electronLaunchRecords, electronPostCommandHealth, electronProfileIsolationDetails: input.electronProfileIsolationDetails, electronRefFreshnessDiagnostic, electronSessionMismatch, errorText, evalResultWarning, evalStdinHint, exactSensitiveValues: prepared.exactSensitiveValues, executionPlan: prepared.executionPlan, fillVerificationDiagnostic, inspectionText, managedSessionHeadedAutosaveDisabled: resultHeadedManagedAutosaveDisabled || undefined, managedSessionHeadedAutosaveInterval: resultHeadedManagedAutosaveInterval, managedSessionOutcome, managedSessionRestoreDisabled: state.managedSessionRestoreState.isDisabled(prepared.executionPlan.sessionName, prepared.executionPlan.namespace), navigationSummary, networkSourceLookup, noActivePageSnapshotFailure: finalRecoveryState.noActivePageSnapshotFailure, openResultTabCorrection, overlayBlockerDiagnostic, parseError, parseFailureOutput, parseSucceeded, plainTextInspection, presentation, presentationEnvelope, priorSessionTabTarget: prepared.priorSessionTabTarget, processResult, qaAttachedTarget, qaPreset, recordingDependencyWarning, redactedArgs: prepared.redactedArgs, redactedCompiledElectron: prepared.redactedCompiledElectron, redactedCompiledJob: prepared.redactedCompiledJob, redactedCompiledNetworkSourceLookup: prepared.redactedCompiledNetworkSourceLookup, redactedCompiledQaPreset: prepared.redactedCompiledQaPreset, redactedCompiledSemanticAction: prepared.redactedCompiledSemanticAction, redactedCompiledSourceLookup: prepared.redactedCompiledSourceLookup, redactedContent, redactedProcessArgs: prepared.redactedProcessArgs, redactedRecoveryHint: prepared.redactedRecoveryHint, resultArtifactManifest, richInputRecoveryDiagnostic: finalRecoveryState.richInputRecoveryDiagnostic, scrollNoopDiagnostic, selectorTextVisibilityDiagnostics, sessionMode: prepared.sessionMode, sessionTabCorrection, sourceLookup, succeeded, timeoutPartialProgress, userRequestedJson: prepared.userRequestedJson, visibleRefFallbackDiagnostic: finalRecoveryState.visibleRefFallbackDiagnostic, visibleRefFallbackSessionName: finalRecoveryState.visibleRefFallbackSessionName });
+		const result = buildFinalAgentBrowserToolResult({ aboutBlankSessionMismatch, artifactCleanup, categoryDetails: finalRecoveryState.categoryDetails, clickDispatchDiagnostic, commandTokens: prepared.commandTokens, comboboxFocusDiagnostic, compiledNetworkSourceLookup: prepared.compiledNetworkSourceLookup, compiledSemanticAction: prepared.compiledSemanticAction, compatibilityWorkaround: prepared.compatibilityWorkaround, currentRefSnapshot, currentRefSnapshotInvalidation, currentSessionTabTarget, currentSessionTabTargetUnknown, electronBroadGetTextScopeDiagnostics, electronFailedConnectCleanup, electronHandoff, electronLaunch: prepared.electronLaunch, electronLaunchRecord, electronLaunchRecords, electronPostCommandHealth, electronProfileIsolationDetails: input.electronProfileIsolationDetails, electronRefFreshnessDiagnostic, electronSessionMismatch, errorText, evalResultWarning, evalStdinHint, exactSensitiveValues: prepared.exactSensitiveValues, executionPlan: prepared.executionPlan, fillVerificationDiagnostic, inspectionText, managedSessionHeadedAutosaveDisabled: resultHeadedManagedAutosaveDisabled || undefined, managedSessionHeadedAutosaveInterval: resultHeadedManagedAutosaveInterval, managedSessionOutcome, managedSessionRestoreDisabled: state.managedSessionRestoreState.isDisabled(prepared.executionPlan.sessionName, prepared.executionPlan.namespace), navigationSummary, networkSourceLookup, noActivePageSnapshotFailure: finalRecoveryState.noActivePageSnapshotFailure, openResultTabCorrection, overlayBlockerDiagnostic, parseError, parseFailureOutput, parseSucceeded, plainTextInspection, presentation, presentationEnvelope, priorSessionTabTarget: prepared.priorSessionTabTarget, processResult, qaAttachedTarget, qaPreset, recordingDependencyWarning, redactedArgs: prepared.redactedArgs, redactedCompiledElectron: prepared.redactedCompiledElectron, redactedCompiledJob: prepared.redactedCompiledJob, redactedCompiledNetworkSourceLookup: prepared.redactedCompiledNetworkSourceLookup, redactedCompiledQaPreset: prepared.redactedCompiledQaPreset, redactedCompiledSemanticAction: prepared.redactedCompiledSemanticAction, redactedCompiledSourceLookup: prepared.redactedCompiledSourceLookup, redactedContent, redactedProcessArgs: prepared.redactedProcessArgs, redactedRecoveryHint: prepared.redactedRecoveryHint, resultArtifactManifest, richInputRecoveryDiagnostic: finalRecoveryState.richInputRecoveryDiagnostic, scrollNoopDiagnostic, selectorTextVisibilityDiagnostics, sessionMode: prepared.sessionMode, sessionTabCorrection, sourceLookup, succeeded, timeoutPartialProgress, unsettledWebMcpMutation, userRequestedJson: prepared.userRequestedJson, visibleRefFallbackDiagnostic: finalRecoveryState.visibleRefFallbackDiagnostic, visibleRefFallbackSessionName: finalRecoveryState.visibleRefFallbackSessionName });
 		const resultWithCloseAll = closeAllApplied
 			? { ...result, details: { ...(isRecord(result.details) ? result.details : {}), closeAllApplied: true } }
 			: result;

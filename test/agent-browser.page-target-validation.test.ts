@@ -51,7 +51,24 @@ test("WebMCP page tools require a verified target and may change it", () => {
 		pageTargetMayHaveChanged: true,
 		pageUrlUnknown: true,
 	});
-	assert.equal(getPageTargetValidationError({ args: ["webmcp", "result", "invocation-1"], pageUrlUnknown: true, allowUnverifiedPageTransitions: true }), undefined);
+	assert.equal(getPageTargetValidationError({ args: ["webmcp", "result", "invocation-1"], pageUrlUnknown: true }), undefined);
+	assert.equal(getPageTargetValidationError({ args: ["webmcp", "cancel", "invocation-1"], pageUrlUnknown: true }), undefined);
+	const batchStdin = JSON.stringify([["webmcp", "invoke", "set_message"], ["get", "url"], ["snapshot", "-i"]]);
+	assert.equal(getPageTargetValidationError({ args: ["batch", "--bail"], currentPageUrl: "https://example.com/start", stdin: batchStdin }), undefined);
+	assert.match(getPageTargetValidationError({ args: ["batch"], currentPageUrl: "https://example.com/start", stdin: batchStdin }) ?? "", /--bail/);
+	assert.deepEqual(getResultingPageTargetState({ args: ["batch", "--bail"], currentPageUrl: "https://example.com/start", stdin: batchStdin }), {
+		currentPageUrl: undefined,
+		pageTargetMayHaveChanged: true,
+		pageUrlUnknown: false,
+	});
+	assert.match(
+		getPageTargetValidationError({
+			args: ["batch", "--bail"],
+			currentPageUrl: "https://example.com/start",
+			stdin: JSON.stringify([["webmcp", "invoke", "set_message"], ["snapshot", "-i"]]),
+		}) ?? "",
+		/get url/,
+	);
 });
 
 test("non-bail batches preserve known prior-page behavior and guard unknown targets", () => {

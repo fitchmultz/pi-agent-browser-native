@@ -1,7 +1,7 @@
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "../../../argv-grammar.js";
 import { isOpenNavigationCommand } from "../../../command-taxonomy.js";
 import { getAgentBrowserProcessTimeoutMs } from "../../../process.js";
-import { parseValidBatchStepEntries } from "../../batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps } from "../../batch-stdin.js";
 
 const POSITIONAL_VALUE_FLAGS = new Set([...VALUE_FLAGS, "--llms"]);
 
@@ -72,10 +72,10 @@ function commandTimeoutBudgetMs(commandTokens: string[], activePageUrl: string |
 function findCommandTimeoutBudgetMs(commandTokens: string[], stdin: string | undefined, activePageUrl: string | undefined): number | undefined {
 	const directTimeout = commandTimeoutBudgetMs(commandTokens, activePageUrl);
 	if (directTimeout !== undefined) return directTimeout;
-	if (commandTokens[0] !== "batch" || stdin === undefined) return undefined;
+	if (commandTokens[0] !== "batch") return undefined;
 	let batchTimeoutTotal = 0;
 	let batchPageUrl = activePageUrl;
-	for (const { step } of parseValidBatchStepEntries(stdin)) {
+	for (const step of getUpstreamEffectiveBatchSteps(commandTokens, stdin)) {
 		batchTimeoutTotal += commandTimeoutBudgetMs(step, batchPageUrl) ?? 0;
 		if (isOpenNavigationCommand(step[0])) batchPageUrl = findFirstPositionalArgument(step);
 	}
@@ -84,9 +84,9 @@ function findCommandTimeoutBudgetMs(commandTokens: string[], stdin: string | und
 
 export function commandTimeoutNeedsActivePageUrl(commandTokens: string[], stdin: string | undefined): boolean {
 	if (commandTokens[0] === "read") return findCommandTimeoutMs(commandTokens) !== undefined && readUsesActivePageUrl(commandTokens);
-	if (commandTokens[0] !== "batch" || stdin === undefined) return false;
+	if (commandTokens[0] !== "batch") return false;
 	let hasKnownPageUrl = false;
-	for (const { step } of parseValidBatchStepEntries(stdin)) {
+	for (const step of getUpstreamEffectiveBatchSteps(commandTokens, stdin)) {
 		if (isOpenNavigationCommand(step[0]) && findFirstPositionalArgument(step)) hasKnownPageUrl = true;
 		if (!hasKnownPageUrl && findCommandTimeoutMs(step) !== undefined && step[0] === "read" && readUsesActivePageUrl(step)) return true;
 	}
