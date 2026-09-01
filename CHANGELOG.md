@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.3 - 2026-09-01
+
 ### Added
 
 - Added validated `webSearch.defaultSearchType` config with per-call override precedence, plus bounded Exa domain/category filters, deep-mode query variants, and Dynamic Highlights support.
@@ -9,6 +11,14 @@
 ### Changed
 
 - Made `deep-lite` the clear agent guidance for research before implementation while preserving `auto` for users who do not configure a default. Exa result details now always report the effective requested type, searches remain serialized, and Brave keeps its existing behavior while rejecting explicitly requested new Exa-only filters.
+
+### Validation
+
+- Passed `npm run verify -- pre-pr` (783 tests passed, two opt-in skips; 127 packed files), generated docs, live command-reference checks, package verification, the startup profile (81.3 ms median, 89.5 ms maximum), and platform harness checks (5/5).
+- Final regression tests applied to the v0.6.2 implementation failed in ten expected places, then passed on this release.
+- An isolated Pi/tmux live Exa smoke omitted `searchType` and used `includeDomains`, `additionalQueries`, and Dynamic Highlights. It returned two results with `details.searchType: deep-lite` in one tool call, and the API key did not appear in the transcript.
+- Ubuntu run `run-1788292325591-uypabf` passed `platform-build` and `browser-dogfood-smoke` with 11/11 assertions each, complete artifact manifests, 3/3 cleanup assertions, and an empty final lease inventory.
+- Full platform release composition remains blocked because localhost macOS SSH and Parallels `prlctl` are unavailable; macOS-SSH and native-Windows suites were not run and are not reported as passed. This release creates GitHub artifacts only; npm publishing is not authorized.
 
 ## 0.6.2 - 2026-09-01
 
