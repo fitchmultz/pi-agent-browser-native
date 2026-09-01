@@ -299,6 +299,8 @@ test("deriveSessionTabTarget discards stale targets after unobserved history nav
 	assert.equal(shouldCaptureNavigationSummary("click", { clicked: ".shopping_cart_link" }), true);
 	assert.equal(shouldCaptureNavigationSummary("click", { clicked: "@e1" }), true);
 	assert.equal(shouldCaptureNavigationSummary("click", { clicked: "#next", url: "https://after.example/" }), false);
+	assert.equal(shouldCaptureNavigationSummary("webmcp", { status: "completed" }, "invoke"), true);
+	assert.equal(shouldCaptureNavigationSummary("webmcp", { tools: [] }, "list"), false);
 	assert.equal(extractSessionTabTargetFromBatchResults([
 		{ command: ["get", "url"], result: { url: "https://before.example/" }, success: true },
 		{ command: ["close"], result: {}, success: true },
@@ -387,6 +389,12 @@ test("extractLatestRefSnapshotStateFromBatchResults records empty snapshots and 
 		]),
 		{ snapshot: { refIds: ["e1"], refs: { e1: { isEditable: false, name: "", role: "unknown" } }, target: { title: "Old", url: "https://example.com/" } } },
 	);
+	const webMcpInvalidation = extractLatestRefSnapshotStateFromBatchResults([
+		{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },
+		{ command: ["webmcp", "invoke", "set_message"], result: { status: "completed" }, success: true },
+	]);
+	assert.equal(webMcpInvalidation?.invalidation?.reason, "page-transition");
+	assert.match(webMcpInvalidation?.invalidation?.summary ?? "", /WebMCP/);
 	assert.equal(
 		extractLatestRefSnapshotStateFromBatchResults([
 			{ command: ["snapshot", "-i"], result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" }, success: true },

@@ -246,6 +246,7 @@ async function buildBatchStepPresentation(options: {
 				failureCategory,
 				resultCategory: "failure",
 				sessionName,
+				subcommand: command?.[1],
 			}),
 		), namespace);
 		const presentation: ToolPresentation = {
@@ -312,6 +313,7 @@ async function buildBatchStepPresentation(options: {
 		resultCategory: stepSucceeded ? "success" : "failure",
 		savedFilePath: presentation.savedFilePath,
 		sessionName,
+		subcommand: command?.[1],
 		successCategory: presentation.successCategory,
 	}), namespace);
 	const pageChangeSummary = buildPageChangeSummary({

@@ -222,7 +222,7 @@ export function formatPresentationSummary(
 			if (semanticSummary) return semanticSummary;
 		}
 		const navigationSummary = getNavigationSummary(data);
-		if (navigationSummary && isNavigationObservableCommand(presentationCommandInfo.command)) {
+		if (navigationSummary && isNavigationObservableCommand(presentationCommandInfo.command, presentationCommandInfo.subcommand)) {
 			const navigationText = formatNavigationSummary(navigationSummary);
 			if (navigationText) {
 				return `${presentationCommandInfo.command ?? "navigation"} → ${navigationText.split("\n", 1)[0] ?? navigationText}`;
@@ -268,7 +268,7 @@ export function formatPresentationContentText(
 
 	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfo, compiledSemanticAction);
 	const navigationSummary = getNavigationSummary(data);
-	if (navigationSummary && isNavigationObservableCommand(presentationCommandInfo.command)) {
+	if (navigationSummary && isNavigationObservableCommand(presentationCommandInfo.command, presentationCommandInfo.subcommand)) {
 		const navigationText = formatNavigationSummary(navigationSummary);
 		if (navigationText) {
 			const actionText = formatNavigationActionResult(data);

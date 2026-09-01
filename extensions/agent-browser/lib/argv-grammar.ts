@@ -40,6 +40,7 @@ export const GLOBAL_VALUE_FLAGS = [
 ] as const;
 
 export const COMMAND_VALUE_FLAGS = [
+	"--allowed-origins",
 	"--baseline",
 	"--body",
 	"--categories",
@@ -50,6 +51,7 @@ export const COMMAND_VALUE_FLAGS = [
 	"--domain",
 	"--expires",
 	"--filter",
+	"--frame",
 	"--fn",
 	"--label",
 	"--load",
@@ -60,6 +62,7 @@ export const COMMAND_VALUE_FLAGS = [
 	"--prefix",
 	"--path",
 	"--port",
+	"--params",
 	"--resource-type",
 	"--resource-types",
 	"--sameSite",
@@ -96,6 +99,7 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"--no-auto-dialog",
 	"--no-ca-cert",
 	"--no-pin-tab",
+	"--no-webmcp",
 	"--offline",
 	"--pin-tab",
 	"--quick",

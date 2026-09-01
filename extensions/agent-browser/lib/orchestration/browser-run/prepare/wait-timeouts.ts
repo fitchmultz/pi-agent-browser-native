@@ -16,7 +16,8 @@ function parseMillisecondsToken(token: string | undefined): number | undefined {
 }
 
 function findCommandTimeoutMs(commandTokens: string[]): number | undefined {
-	if (commandTokens[0] !== "wait" && commandTokens[0] !== "read") return undefined;
+	const [command, subcommand] = commandTokens;
+	if (command !== "wait" && command !== "read" && !(command === "webmcp" && ["invoke", "result"].includes(subcommand ?? ""))) return undefined;
 	for (let index = 1; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
 		if (token === "--timeout") return parseMillisecondsToken(commandTokens[index + 1]);

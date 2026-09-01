@@ -18,15 +18,29 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.35.1` command/help surface, audited against vercel-labs/agent-browser@fbd046c23a2c1156891bda294aaaee715c23b3f1. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.36.0` command/help surface, audited against vercel-labs/agent-browser@eb05921bad874cd2a1b4fa5d1149f1ed26576cae. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.36.0 rebaseline
+
+The recommended 0.36.0 release adds experimental page-provided WebMCP tools while preserving the stable 0.35.0 runtime floor.
+
+- `webmcp list` discovers tools registered by the current page. `webmcp invoke <tool>` accepts JSON or file input, frame selection, detached execution, and a timeout; `webmcp result <id>` waits for a detached call and `webmcp cancel <id>` cancels one.
+- Locally managed Chrome enables WebMCP by default. `--no-webmcp`, `AGENT_BROWSER_NO_WEBMCP`, and upstream config `noWebmcp` disable it; attached browsers, remote providers, Lightpanda, Safari/iOS, and older Chrome builds may return `webmcp_unsupported` instead. The wrapper treats `--no-webmcp` as launch-scoped.
+- `webmcp list` is read-only. Because `invoke`, `result`, and `cancel` can run page code that mutates, rerenders, or navigates, the wrapper rechecks the live page, reports normal mutation/navigation summaries, and invalidates prior page-scoped refs until `snapshot -i` succeeds again.
+- `skills get webmcp-gen` loads the bundled workflow for creating `webmcp.init.js` and validating it against the existing UI. External MCP clients can opt into page tools with `mcp --tools core,webmcp`; the native Pi wrapper continues to use direct `args` rather than starting an MCP server.
+- Upstream also updates its separate Eve integration, dependency resolutions, and Lightpanda launch arguments. This wrapper adds no Eve layer or compatibility shim.
+
+### Upstream 0.35.2 rebaseline
+
+Upstream 0.35.2 hardens the standalone dashboard against DNS rebinding and cross-origin access. `dashboard start --allowed-origins <origins>` accepts comma-separated exact HTTPS reverse-proxy origins, with `AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS` as the environment equivalent; the wrapper keeps this local lifecycle command sessionless. The release also fixes root remote CDP WebSocket URLs that contain query strings without requiring a wrapper shim.
+
 ### Upstream 0.35.1 rebaseline
 
-The recommended 0.35.1 baseline is a bug-fix release with no new commands or flags. Browser-backed calls accept stable `agent-browser` versions at or above the 0.35.0 floor; command/help verification targets 0.35.1.
+The 0.35.1 baseline is a bug-fix release with no new commands or flags. Browser-backed calls accept stable `agent-browser` versions at or above the 0.35.0 floor.
 
 - Snapshot diffs reset element-ref numbering for each diff, invalidate refs across URL navigation, and preserve previous refs when a diff fails.
 - Stream URL events now follow the active main frame across full-document, History API, fragment, and active-tab changes while ignoring child frames and background tabs.
@@ -633,7 +647,7 @@ Session note: `skills list`, `skills get …`, and `skills path …` are **state
 | `skills list` | List available CLI-bundled skills. |
 | `skills get core` | Print the core usage guide. |
 | `skills get core --full` | Print the full version-matched core command reference and templates. |
-| `skills get <name>` | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, and `skills get derive-client` (HAR-to-API-client workflow). |
+| `skills get <name>` | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, `skills get derive-client` (HAR-to-API-client workflow), and `skills get webmcp-gen` (create and validate page tools). |
 | `skills get <name> --full` | Include a skill's supplementary references/templates when present. |
 | `skills get --all` | Print all visible bundled skills for broad audit/debug work. |
 | `skills path [name]` | Print a skill directory path. |
@@ -743,6 +757,23 @@ These calls return plain text and stay stateless: the extension does not inject 
 
 Privacy note: `cookies get` can expose real profile cookies. Do not run it against `--profile Default` or other authenticated profiles unless the user explicitly needs cookie inspection; prefer task-specific page actions and storage checks.
 
+### WebMCP page tools
+
+WebMCP support is experimental and browser-dependent. Locally managed Chrome enables it by default; use a fresh launch with `--no-webmcp` or set `AGENT_BROWSER_NO_WEBMCP=1` to disable it. Page tool metadata and results come from the page itself.
+
+| Command | Purpose |
+| --- | --- |
+| `webmcp list` | List tools registered by the current page, including each tool's frame id, origin, schema, and annotations. |
+| `webmcp invoke <tool>` | Invoke a page tool with an empty input object. |
+| `webmcp invoke <tool> --params <json|@file>` | Pass a JSON object inline or read it from a caller-selected file. |
+| `webmcp invoke <tool> --frame <frame-id>` | Select the registering frame when a tool name is ambiguous. |
+| `webmcp invoke <tool> --detach` | Start the call and return its invocation id without waiting. |
+| `webmcp invoke <tool> --timeout <ms>` | Bound a blocking invocation in milliseconds. |
+| `webmcp result <id>` | Wait for or read a detached invocation result; accepts `--timeout <ms>`. |
+| `webmcp cancel <id>` | Cancel an active detached invocation. |
+
+`webmcp invoke`, `webmcp result`, and `webmcp cancel` can run page code that changes or navigates the document. The wrapper refreshes page-target evidence and invalidates prior `@e…` refs after these commands; run `snapshot -i` before reusing refs. `webmcp list` does not invalidate refs. Attached browsers, providers, Lightpanda, Safari/iOS, and Chrome builds without the experimental CDP domain may return `webmcp_unsupported`.
+
 ### Tabs
 
 Stable tab ids look like `t1`, `t2`, and `t3`. Optional user labels such as `docs` or `app` are interchangeable with ids wherever a tab reference is accepted. Upstream help may refer to numeric tab positions, but this wrapper guidance uses stable `t<N>` ids because positional integers are not accepted by current upstream `agent-browser`.
@@ -844,6 +875,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `chat` | Start interactive chat when stdin is a TTY. |
 | `dashboard [start]` | Start the dashboard server on the default port `4848`. |
 | `dashboard start --port <n>` | Start the dashboard on a specific port. |
+| `dashboard start --allowed-origins <origins>` | Allow comma-separated exact HTTPS reverse-proxy origins. Environment: `AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS`. |
 | `dashboard stop` | Stop the dashboard server. |
 | `device list` | List available iOS simulators. Use with `-p ios` when exercising iOS provider flows. |
 | `install` | Install browser binaries. |
@@ -856,7 +888,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `plugin run <name> <type>` | Run a `command.run` or custom plugin request over the agent-browser plugin stdio protocol. |
 | `auth login <name> --credential-provider <plugin>` | Resolve credentials just-in-time from a configured credential plugin (e.g. a vault) instead of saved passwords; pair with `--item <ref>` and optional selector overrides. Credentials are not stored locally. |
 | `mcp --help` | Show MCP server help through the native tool. |
-| `mcp` | Start a local MCP stdio server for external MCP clients; bare native-tool calls are rejected before spawn. |
+| `mcp` | Start a local MCP stdio server for external MCP clients; bare native-tool calls are rejected before spawn. External clients can opt into experimental page tools with `mcp --tools core,webmcp`. |
 | `profiles` | List available Chrome profiles. |
 
 When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. `session list` and `state list` keep every upstream row and restore identifier visible. Explicit sessions, state/restore paths, broad state lifecycle commands, config, local files, and launch environment pass through unchanged. Local inspection/setup calls remain sessionless unless you explicitly pass `--session`; browser-backed or context-dependent calls keep normal managed-session behavior when no explicit session is supplied. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. If the same session has active wrapper-observed network routes, failed/pending/CORS-looking matched request rows add `details.networkRouteDiagnostics` and executable route-mock next actions before the generic request actions. `data:image` artifact rows are omitted from compact request previews but remain in raw `details.data.requests`. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Clipboard failures that mention `NotAllowedError` or permission denial are usually browser/OS capability limits, not proof that a read, paste, or page mutation happened; prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct typing (`keyboard inserttext` / `keyboard type`) when the workflow allows it, and retry true clipboard flows only from an allowed profile/session on a normal `http(s)` page. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; low-risk primitive storage values may remain visible, while command echoes still redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, `clipboard write` text, cookie/storage set values, and bearer/basic credential text in positional arguments. Use upstream HAR or full raw details only when complete data is required.
@@ -934,7 +966,7 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 
 ### Authentication and session flags
 
-`agent-browser` 0.35.x requires separate argv tokens for global flag values (for example, `--args <args>` and `--user-agent <ua>`). The explicit exception is `--restore=<key>`, which is supported when an optional restore key could otherwise be confused with a command word. The wrapper rejects other global `--flag=value` forms before normal command dispatch, including when they trail the command. Plain `--help`, `-h`, `--version`, and `-V` inspection preserves exact caller argv because upstream accepts those top-level inspection shapes. Global flags for `batch` belong before `batch` in top-level `args`; row-local equals forms are rejected without the help/version or `--restore=<key>` exceptions.
+`agent-browser` 0.35.0 and newer require separate argv tokens for global flag values (for example, `--args <args>` and `--user-agent <ua>`). The explicit exception is `--restore=<key>`, which is supported when an optional restore key could otherwise be confused with a command word. The wrapper rejects other global `--flag=value` forms before normal command dispatch, including when they trail the command. Plain `--help`, `-h`, `--version`, and `-V` inspection preserves exact caller argv because upstream accepts those top-level inspection shapes. Global flags for `batch` belong before `batch` in top-level `args`; row-local equals forms are rejected without the help/version or `--restore=<key>` exceptions.
 
 - `--profile <name|path>`: reuse Chrome profile login state by directory name from `profiles`, or use a persistent custom profile/profile-directory path when upstream accepts it. Environment: `AGENT_BROWSER_PROFILE`.
 - `--session <name>`: use an isolated session. Environment: `AGENT_BROWSER_SESSION`.
@@ -965,7 +997,8 @@ Browser default config is conservative: it adds agent guidance for signed-in/acc
 - `--hide-scrollbars <bool>`: explicitly show or hide native scrollbars in headless Chromium screenshots.
 - `--headed`: ask upstream to show the browser window. Environment: `AGENT_BROWSER_HEADED`. Use it on the first launch, normally with `sessionMode: "fresh"` when changing an existing managed session; verify visibility with screenshot/tab evidence because the wrapper cannot yet prove the OS window is visible to the user.
 - `--webgpu`: enable upstream's platform-specific WebGPU launch preset. Environment: `AGENT_BROWSER_WEBGPU`; config: `"webgpu": true`. Use it on a fresh local launch. It is incompatible while enabled with `--cdp`, `--auto-connect`, and provider launches. `AGENT_BROWSER_NO_XVFB=1` disables upstream's automatic Xvfb for displayless headed Linux sessions.
-- `--cdp <port>`: connect through Chrome DevTools Protocol. Use it, `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
+- `--no-webmcp`: disable experimental WebMCP support, which upstream 0.36.0 enables by default for locally managed Chrome. Environment: `AGENT_BROWSER_NO_WEBMCP`; config: `noWebmcp`. Use it on a fresh launch; `--no-webmcp false` explicitly enables the launch feature when config or environment disabled it.
+- `--cdp <port|url>`: connect through Chrome DevTools Protocol. Use it, `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
 - `--engine <name>`: browser engine, `chrome` by default or `lightpanda`. Environment: `AGENT_BROWSER_ENGINE`.
@@ -1007,14 +1040,14 @@ Standalone `agent-browser` looks for `agent-browser.json` in these locations, fr
 3. Environment variables, including `AGENT_BROWSER_CONFIG`.
 4. CLI flags.
 
-Use separated `--config <path>` to load a specific upstream config; upstream 0.33.2 does not recognize `--config=<path>` as the global selector. Browser-backed and sessionless native calls preserve `--config`, `AGENT_BROWSER_CONFIG`, passive project/user config, and other upstream environment exactly as supplied. The Pi-scoped package config under `.pi/config/pi-agent-browser-native/` remains separate. Boolean flags accept optional `true` or `false` values, such as `--headed false` or `--webgpu false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
+Use separated `--config <path>` to load a specific upstream config; upstream 0.33.2 does not recognize `--config=<path>` as the global selector. Browser-backed and sessionless native calls preserve `--config`, `AGENT_BROWSER_CONFIG`, passive project/user config, and other upstream environment exactly as supplied. The Pi-scoped package config under `.pi/config/pi-agent-browser-native/` remains separate. Boolean flags accept optional `true` or `false` values, such as `--headed false`, `--webgpu false`, or `--no-webmcp false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
 
 Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_STREAM_QUALITY`, `AGENT_BROWSER_STREAM_MAX_WIDTH`, `AGENT_BROWSER_STREAM_MAX_HEIGHT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, `AI_GATEWAY_API_KEY`, provider credential names, and AWS credential names when using AgentCore. The upstream child receives the parent environment plus wrapper overrides such as the managed socket directory, clamped default operation timeout, canonical owned-session namespace (including empty default), and Pi-transcript- plus Git-checkout-generation-scoped `AGENT_BROWSER_RESTORE` for wrapper-owned managed sessions (`buildAgentBrowserProcessEnv` in `extensions/agent-browser/lib/process.ts`, ownership carried by the wrapper's typed process options and call-scoped managed-session context). Model-facing output still redacts recognized secret values.
 
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- If launch-scoped flags like `--profile`, `--args`, `--user-agent`, `--executable-path`, `--ca-cert`, `--no-ca-cert`, `--webgpu`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would replace or be ignored by an already-active managed session, retry with `sessionMode: "fresh"`. When the call explicitly names the current managed session, the structured recovery payload removes that `--session` so the fresh rotation can succeed.
+- If launch-scoped flags like `--profile`, `--args`, `--user-agent`, `--executable-path`, `--ca-cert`, `--no-ca-cert`, `--webgpu`, `--no-webmcp`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would replace or be ignored by an already-active managed session, retry with `sessionMode: "fresh"`. When the call explicitly names the current managed session, the structured recovery payload removes that `--session` so the fresh rotation can succeed.
 - If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 <!-- agent-browser-playbook:start wrapper-tab-recovery -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
@@ -1024,7 +1057,7 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.
 - If upstream reports tab_gone, the pinned bound tab is gone; use details.nextActions (tab list / tab new) instead of assuming another tab is yours.
 <!-- agent-browser-playbook:end wrapper-tab-recovery -->
-- Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to the upstream documented 25-second default and use a 35-second child-process watchdog (`PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides the default 35s budget; top-level `timeoutMs` overrides it per browser CLI call). Explicit `wait <ms>` or `wait --timeout <ms>` calls can exceed that default; when top-level `timeoutMs` is omitted, the wrapper derives a subprocess watchdog from the requested wait duration plus a small grace window. Dialog commands are additionally bounded to 5 seconds (`PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS`), and click/tap/find refs or tokens plus `eval --stdin` snippets that look like alert/confirm/prompt/dialog triggers are bounded to 8 seconds (`PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS`). When any watchdog fires, `details.timeoutPartialProgress` may include a planned step list with per-step status (including `generatedFrom` labels for wrapper-inserted rows such as `open.loadState`) and a `retry-timeout-step` next action only when the first incomplete step is read-only or idempotent, or `inspect-current-page-after-timeout` when the session is still inspectable but the incomplete step may be mutating and should not be blindly retried. It also includes current page URL from best-effort session `get url`, followed by `get title` only after a URL is recovered (or a planned URL inferred from the step list when the session cannot answer), an `openedButPostOpenTimedOut` classification only when a live page URL was recovered before a later step hung, and declared artifact paths such as `screenshot`, `pdf`, `download`, or `wait --download` outputs with existence/state checks; the same evidence is appended under `Timeout partial progress` in visible text with URL/path redaction.
+- Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to the upstream documented 25-second default and use a 35-second child-process watchdog (`PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides the default 35s budget; top-level `timeoutMs` overrides it per browser CLI call). Explicit `wait <ms>`, `wait --timeout <ms>`, and WebMCP `invoke` / `result --timeout <ms>` calls can exceed that default; when top-level `timeoutMs` is omitted, the wrapper derives a subprocess watchdog from the requested command duration plus a small grace window. Dialog commands are additionally bounded to 5 seconds (`PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS`), and click/tap/find refs or tokens plus `eval --stdin` snippets that look like alert/confirm/prompt/dialog triggers are bounded to 8 seconds (`PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS`). When any watchdog fires, `details.timeoutPartialProgress` may include a planned step list with per-step status (including `generatedFrom` labels for wrapper-inserted rows such as `open.loadState`) and a `retry-timeout-step` next action only when the first incomplete step is read-only or idempotent, or `inspect-current-page-after-timeout` when the session is still inspectable but the incomplete step may be mutating and should not be blindly retried. It also includes current page URL from best-effort session `get url`, followed by `get title` only after a URL is recovered (or a planned URL inferred from the step list when the session cannot answer), an `openedButPostOpenTimedOut` classification only when a live page URL was recovered before a later step hung, and declared artifact paths such as `screenshot`, `pdf`, `download`, or `wait --download` outputs with existence/state checks; the same evidence is appended under `Timeout partial progress` in visible text with URL/path redaction.
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full raw output written to a spill file path shown directly in the tool result. Recent artifact metadata is bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES` (default 100); persisted spill files are separately bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` (default 32 MiB).
 - The wrapper keeps `--help` and `--version` stateless so they do not consume the implicit managed-session slot.
 
@@ -1033,14 +1066,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.35.1</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.36.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `fbd046c23a2c1156891bda294aaaee715c23b3f1`
-- upstream package version: `0.35.1`
+- upstream HEAD: `eb05921bad874cd2a1b4fa5d1149f1ed26576cae`
+- upstream package version: `0.36.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1050,12 +1083,14 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `agent-browser skills list`
 - inspected: `agent-browser skills get core --full`
 - inspected: `agent-browser skills get derive-client --full`
+- inspected: `agent-browser skills get webmcp-gen --full`
 - inspected: `README.md`
 - inspected: `CHANGELOG.md`
 - inspected: `agent-browser.schema.json`
 - inspected: `bin/agent-browser.js`
 - inspected: `cli/src/ca_bundle.rs`
 - inspected: `cli/src/commands.rs`
+- inspected: `cli/src/mcp.rs`
 - inspected: `cli/src/flags.rs`
 - inspected: `cli/src/read.rs`
 - inspected: `cli/src/doctor/webgpu.rs`
@@ -1066,8 +1101,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/daemon.rs`
 - inspected: `cli/src/native/element.rs`
 - inspected: `cli/src/native/stream/cdp_loop.rs`
+- inspected: `cli/src/native/stream/dashboard.rs`
+- inspected: `cli/src/native/test_fixtures/webmcp_frame_probe.html`
+- inspected: `cli/src/native/test_fixtures/webmcp_probe.html`
+- inspected: `cli/src/native/webmcp.rs`
 - inspected: `cli/src/output.rs`
 - inspected: `docs/src/app/webgpu/page.mdx`
+- inspected: `docs/src/app/webmcp/page.mdx`
 - inspected: `docs/src/app/network/page.mdx`
 - inspected: `docs/src/app/proxy/page.mdx`
 - inspected: `docs/src/app/selectors/page.mdx`
@@ -1076,6 +1116,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `skill-data/derive-client/SKILL.md`
 - inspected: `skill-data/core/SKILL.md`
 - inspected: `skill-data/protected-vercel-deployments/SKILL.md`
+- inspected: `skill-data/webmcp-gen/SKILL.md`
 - inspected: `test/launcher.test.mjs`
 - inspected: `packages/@agent-browser/eve/README.md`
 - inspected: `packages/@agent-browser/eve/package.json`
@@ -1092,6 +1133,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - core skill full: `agent-browser skills get core --full`
 - vercel sandbox skill full: `agent-browser skills get vercel-sandbox --full`
 - protected Vercel deployments skill full: `agent-browser skills get protected-vercel-deployments --full`
+- WebMCP generation skill full: `agent-browser skills get webmcp-gen --full`
 - open help: `agent-browser open --help`
 - read help: `agent-browser read --help`
 - click help: `agent-browser click --help`
@@ -1145,12 +1187,12 @@ This generated block is review data for maintainers. The human-authored referenc
 - plugin help: `agent-browser plugin --help`
 
 #### Inventory sections
-- Built-in skills: 17 human-doc token(s), 21 upstream token(s)
+- Built-in skills: 19 human-doc token(s), 24 upstream token(s)
 - Core page, element, navigation, and extraction commands: 82 human-doc token(s), 84 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 28 human-doc token(s), 25 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 49 human-doc token(s), 60 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 33 human-doc token(s), 37 upstream token(s)
-- Global flags, config, providers, policy, and environment: 149 human-doc token(s), 117 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 57 human-doc token(s), 67 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 36 human-doc token(s), 40 upstream token(s)
+- Global flags, config, providers, policy, and environment: 152 human-doc token(s), 119 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1167,6 +1209,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get protected-vercel-deployments`
 - `skills get agentcore`
 - `skills get derive-client`
+- `skills get webmcp-gen`
+- `webmcp.init.js`
 - `@agent-browser/sandbox`
 - `installSystemDependencies: false`
 - `skills path [name]`
@@ -1301,6 +1345,14 @@ This generated block is review data for maintainers. The human-authored referenc
 - `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`
 - `cookies set --curl <file>`
 - `storage <local|session>`
+- `webmcp list`
+- `webmcp invoke <tool>`
+- `webmcp invoke <tool> --params <json|@file>`
+- `webmcp invoke <tool> --frame <frame-id>`
+- `webmcp invoke <tool> --detach`
+- `webmcp invoke <tool> --timeout <ms>`
+- `webmcp result <id>`
+- `webmcp cancel <id>`
 - `diff snapshot`
 - `diff snapshot --baseline <file> --selector <sel> --compact --depth <n>`
 - `diff screenshot --baseline`
@@ -1353,6 +1405,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `chat <message>`
 - `dashboard [start]`
 - `dashboard start --port <n>`
+- `dashboard start --allowed-origins <origins>`
+- `AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS`
 - `dashboard stop`
 - `device list`
 - `install`
@@ -1365,6 +1419,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `doctor --webgpu --headed`
 - `doctor --json`
 - `mcp`
+- `mcp --tools core,webmcp`
 - `plugin add <ref>`
 - `plugin [list]`
 - `plugin show <name>`
@@ -1432,9 +1487,12 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_HEADED`
 - `--webgpu`
 - `AGENT_BROWSER_WEBGPU`
+- `--no-webmcp`
+- `AGENT_BROWSER_NO_WEBMCP`
+- `noWebmcp`
 - `AGENT_BROWSER_NO_XVFB`
 - `"webgpu": true`
-- `--cdp <port>`
+- `--cdp <port|url>`
 - `--color-scheme <scheme>`
 - `AGENT_BROWSER_COLOR_SCHEME`
 - `--download-path <path>`
@@ -1537,6 +1595,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills list: `protected-vercel-deployments`
 - skills list: `agentcore`
 - skills list: `derive-client`
+- skills list: `webmcp-gen`
+- WebMCP generation skill full: `webmcp.init.js`
+- WebMCP generation skill full: `agent-browser webmcp invoke <tool> --params @fixture.json`
 - vercel sandbox skill full: `@agent-browser/sandbox`
 - vercel sandbox skill full: `installSystemDependencies: false`
 - protected Vercel deployments skill full: `x-vercel-trusted-oidc-idp-token`
@@ -1671,6 +1732,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `cookies [get|set|clear]`
 - root help: `cookies set --curl <file>`
 - root help: `storage <local|session>`
+- root help: `webmcp list`
+- root help: `webmcp invoke <tool>`
+- root help: `--params <json|@file>`
+- root help: `--frame <frame-id>`
+- root help: `--detach`
+- root help: `webmcp result <id>`
+- root help: `webmcp cancel <id>`
 - root help: `diff snapshot`
 - root help: `diff screenshot --baseline`
 - root help: `trace start`
@@ -1730,6 +1798,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `deny <id>`
 - root help: `chat <message>`
 - root help: `dashboard start --port <n>`
+- root help: `dashboard start --allowed-origins <origins>`
+- dashboard help: `--allowed-origins <origins>`
+- dashboard help: `AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS`
 - device help: `device list`
 - root help: `install --with-deps`
 - install help: `fails if deps fail`
@@ -1820,7 +1891,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_HEADED`
 - root help: `--webgpu`
 - root help: `AGENT_BROWSER_WEBGPU`
-- root help: `--cdp <port>`
+- root help: `--no-webmcp`
+- root help: `AGENT_BROWSER_NO_WEBMCP`
+- root help: `--cdp <port|url>`
 - root help: `--color-scheme <scheme>`
 - root help: `AGENT_BROWSER_COLOR_SCHEME`
 - root help: `--download-path <path>`

@@ -8,7 +8,7 @@ function batch(steps: string[][]): string {
 	return JSON.stringify(steps);
 }
 
-test("getCommandAwareProcessTimeoutMs extends process timeout for explicit wait and read budgets", async () => {
+test("getCommandAwareProcessTimeoutMs extends process timeout for wait, read, and WebMCP budgets", async () => {
 	await withPatchedEnv({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "10000" }, async () => {
 		assert.equal(getCommandAwareProcessTimeoutMs(["open", "https://example.com"], undefined), undefined);
 		assert.equal(getCommandAwareProcessTimeoutMs(["wait", "4000"], undefined), undefined);
@@ -24,6 +24,9 @@ test("getCommandAwareProcessTimeoutMs extends process timeout for explicit wait 
 		assert.equal(getCommandAwareProcessTimeoutMs(["read", "https://example.com/a/b", "--raw", "--timeout", "7000"], undefined), 12000);
 		assert.equal(getCommandAwareProcessTimeoutMs(["read", "https://example.com/a/b", "--llms", "index", "--timeout", "7000"], undefined), 26000);
 		assert.equal(getCommandAwareProcessTimeoutMs(["read", "--require-md", "--timeout=8000"], undefined, "https://example.com/a/b"), 53000);
+		assert.equal(getCommandAwareProcessTimeoutMs(["webmcp", "invoke", "slow_tool", "--timeout", "6000"], undefined), 11000);
+		assert.equal(getCommandAwareProcessTimeoutMs(["webmcp", "result", "invocation-1", "--timeout=7000"], undefined), 12000);
+		assert.equal(getCommandAwareProcessTimeoutMs(["webmcp", "cancel", "invocation-1", "--timeout", "8000"], undefined), undefined);
 
 		assert.equal(
 			getCommandAwareProcessTimeoutMs(["batch"], batch([
@@ -52,6 +55,10 @@ test("getCommandAwareProcessTimeoutMs extends process timeout for explicit wait 
 			}
 		}
 		assert.equal(getCommandAwareProcessTimeoutMs(["batch"], batch([["get", "title"], ["snapshot", "-i"]])), undefined);
+		assert.equal(getCommandAwareProcessTimeoutMs(["batch"], batch([
+			["webmcp", "invoke", "slow_tool", "--timeout", "6000"],
+			["webmcp", "result", "invocation-1", "--timeout", "7000"],
+		])), 18000);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["read", "--require-md", "--timeout", "8000"], undefined), true);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["read", "--session", "custom", "--require-md", "--timeout", "8000"], undefined), true);
 		assert.equal(commandTimeoutNeedsActivePageUrl(["read", "--restore", "https://example.com", "--require-md", "--timeout", "8000"], undefined), false);

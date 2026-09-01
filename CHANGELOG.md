@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Added thin passthrough support for upstream 0.36.0 experimental WebMCP page tools (`list`, `invoke`, detached `result` / `cancel`, params/frame/timeout options) and the bundled `webmcp-gen` skill. Page-tool calls recheck the active target and invalidate prior page-scoped refs because page code can mutate, rerender, or navigate.
+
+### Changed
+
+- Rebaselined the recommended upstream release to `agent-browser` 0.36.0 while keeping 0.35.0 as the stable runtime floor. `--no-webmcp` is an optional launch-scoped boolean for fresh managed Chrome sessions; crossed 0.35.2 dashboard `--allowed-origins` stays sessionless; Eve, dependency-resolution, and Lightpanda-only upstream changes need no wrapper layer.
+
 ## 0.6.1 - 2026-08-30
 
 ### Fixed

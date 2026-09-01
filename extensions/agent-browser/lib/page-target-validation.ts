@@ -166,6 +166,12 @@ export function getResultingPageTargetState(options: {
 	return { ...state, pageTargetMayHaveChanged };
 }
 
+function isRecoveringPageTransitionCommand(command: string | undefined, subcommand?: string): boolean {
+	return command !== "eval"
+		&& !(command === "webmcp" && subcommand === "invoke")
+		&& isUnverifiedPageTransitionCommand(command, subcommand);
+}
+
 function getUnverifiedPageError(options: {
 	allowUnverifiedPageTransitions?: boolean;
 	args: string[];
@@ -177,7 +183,7 @@ function getUnverifiedPageError(options: {
 	const closesPage = ["close", "exit", "quit"].includes(command ?? "") || (command === "tab" && subcommand === "close");
 	const inspectsTarget = (command === "tab" && subcommand === "list") || (command === "get" && subcommand === "url");
 	const selectsTab = command === "tab" && subcommand !== undefined && !["close", "list", "new"].includes(subcommand);
-	const transitionsPage = options.allowUnverifiedPageTransitions === true && command !== "eval" && isUnverifiedPageTransitionCommand(command, subcommand);
+	const transitionsPage = options.allowUnverifiedPageTransitions === true && isRecoveringPageTransitionCommand(command, subcommand);
 	const navigatesExplicitly = getExplicitNavigationTarget(options.args) !== undefined;
 	return closesPage || inspectsTarget || selectsTab || transitionsPage || navigatesExplicitly || (options.trustedBatchTabSelection && command === "tab")
 		? undefined
@@ -256,7 +262,7 @@ export function getExplicitSessionPageVerificationRequirement(options: {
 }): string | undefined {
 	const descriptor = parseArgvDescriptor(options.args);
 	if (!needsManagedSession(descriptor)) return undefined;
-	if (descriptor.commandInfo.command !== "eval" && isUnverifiedPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand)) return undefined;
+	if (isRecoveringPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand)) return undefined;
 	const validationError = getPageTargetValidationError({
 		args: options.args,
 		pageUrlUnknown: true,

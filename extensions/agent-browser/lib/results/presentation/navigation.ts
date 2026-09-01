@@ -85,8 +85,8 @@ export function formatExtractionText(commandInfo: CommandInfo, data: Record<stri
 	return safeOrigin && safeOrigin !== safeScalarResult ? `${safeScalarResult}\n\nOrigin: ${safeOrigin}` : safeScalarResult;
 }
 
-export function isNavigationObservableCommand(command: string | undefined): boolean {
-	return isNavigationObservableCommandName(command);
+export function isNavigationObservableCommand(command: string | undefined, subcommand?: string): boolean {
+	return isNavigationObservableCommandName(command, subcommand);
 }
 
 function isNavigationSummary(value: unknown): value is NavigationSummary {
@@ -131,10 +131,10 @@ export function buildPageChangeSummary(options: {
 	const { artifacts, commandInfo, data, nextActions, savedFilePath } = options;
 	const artifactCount = artifacts?.length ?? 0;
 	const navigation = isRecord(data)
-		? getNormalizedNavigationSummary(getNavigationSummary(data) ?? (isPageChangeSummaryCommand(commandInfo.command) ? getTopLevelNavigationSummary(data) : undefined))
+		? getNormalizedNavigationSummary(getNavigationSummary(data) ?? (isPageChangeSummaryCommand(commandInfo.command, commandInfo.subcommand) ? getTopLevelNavigationSummary(data) : undefined))
 		: undefined;
 	const confirmationRequired = detectConfirmationRequired(data) !== undefined;
-	if (!navigation && !confirmationRequired && artifactCount === 0 && !savedFilePath && !isPageChangeSummaryCommand(commandInfo.command)) {
+	if (!navigation && !confirmationRequired && artifactCount === 0 && !savedFilePath && !isPageChangeSummaryCommand(commandInfo.command, commandInfo.subcommand)) {
 		return undefined;
 	}
 	const navigationObserved = navigation && (navigation.urlChanged === true || isOpenNavigationCommand(commandInfo.command) || ["back", "forward", "pushstate", "reload"].includes(commandInfo.command ?? ""));

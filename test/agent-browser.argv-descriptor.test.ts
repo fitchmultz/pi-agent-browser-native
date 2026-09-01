@@ -26,6 +26,7 @@ test("parseCommandInfo recognizes representative current command families", () =
 		{ args: ["react", "renders", "stop", "--json"], expected: { command: "react", subcommand: "renders" } },
 		{ args: ["vitals", "https://example.com", "--json"], expected: { command: "vitals", subcommand: "https://example.com" } },
 		{ args: ["stream", "enable", "--port", "7777"], expected: { command: "stream", subcommand: "enable" } },
+		{ args: ["webmcp", "invoke", "search", "--params", "{}", "--frame", "main"], expected: { command: "webmcp", subcommand: "invoke" } },
 		{ args: ["tab", "new", "--label", "Docs", "https://example.com"], expected: { command: "tab", subcommand: "new" } },
 	] as const) {
 		assert.deepEqual(parseCommandInfo([...args]), expected);
@@ -59,6 +60,10 @@ test("parseCommandInfo skips optional boolean flag values before commands", () =
 	assert.deepEqual(parseCommandInfo(["--webgpu", "false", "open", "https://example.com"]), {
 		command: "open",
 		subcommand: "https://example.com",
+	});
+	assert.deepEqual(parseCommandInfo(["--no-webmcp", "false", "webmcp", "list"]), {
+		command: "webmcp",
+		subcommand: "list",
 	});
 	assert.deepEqual(parseCommandInfo(["--ca-cert", "/tmp/proxy-ca.pem", "--no-ca-cert", "false", "open", "https://example.com"]), {
 		command: "open",

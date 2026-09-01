@@ -164,6 +164,10 @@ test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", (
 		reorderWindowsLeadingGlobalArgs(["--json", "--session", "managed", "find", "role", "combobox", "select", "chocolate", "--name", "Flavor"]),
 		["find", "role", "--json", "--session", "managed", "combobox", "select", "chocolate", "--name", "Flavor"],
 	);
+	assert.deepEqual(
+		reorderWindowsLeadingGlobalArgs(["--json", "--session", "managed", "webmcp", "invoke", "search", "--params", `{"query":"Mitch's browser"}`]),
+		["webmcp", "invoke", "--json", "--session", "managed", "search", "--params", `{"query":"Mitch's browser"}`],
+	);
 	for (const invalid of [
 		["--json", "--body", "secret", "session", "list"],
 		["--auto-connect", "FALSE", "open", "https://example.com"],
@@ -229,6 +233,10 @@ test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
 			command: "powershell.exe",
 			args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue; if (-not $agentBrowser) { [Console]::Error.WriteLine('PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd'); exit 127 }; & $agentBrowser.Source 'open' '--json' '--session' 'managed' 'https://example.com'"],
 		},
+	);
+	assert.match(
+		buildAgentBrowserSpawnCommand(["--json", "--session", "managed", "webmcp", "invoke", "search", "--params", `{"query":"Mitch's browser"}`], "win32").args.at(-1) ?? "",
+		/& \$agentBrowser\.Source 'webmcp' 'invoke' '--json' '--session' 'managed' 'search' '--params' '\{"query":"Mitch''s browser"\}'$/,
 	);
 	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
 });

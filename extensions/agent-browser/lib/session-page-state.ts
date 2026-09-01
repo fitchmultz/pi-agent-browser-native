@@ -1,7 +1,7 @@
 import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
@@ -280,6 +280,14 @@ export function buildPageTransitionRefSnapshotInvalidation(summary?: string): Se
 	};
 }
 
+export function getCommandRefSnapshotInvalidation(commandTokens: readonly string[]): SessionRefSnapshotInvalidation | undefined {
+	if (isRecordPageTransitionCommand(commandTokens)) return buildPageTransitionRefSnapshotInvalidation();
+	if (isWebMcpPageMutationCommand(commandTokens)) {
+		return buildPageTransitionRefSnapshotInvalidation("A WebMCP invoke, result, or cancel command can mutate, rerender, or navigate the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.");
+	}
+	return undefined;
+}
+
 export function isNoActivePageSnapshotFailure(command: string | undefined, text: string | undefined): boolean {
 	return command === "snapshot" && /\bno active page\b/i.test(text ?? "");
 }
@@ -295,8 +303,9 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 			latestState = undefined;
 			continue;
 		}
-		if (isRecordPageTransitionCommand(commandTokens)) {
-			latestState = { invalidation: buildPageTransitionRefSnapshotInvalidation() };
+		const transitionInvalidation = getCommandRefSnapshotInvalidation(commandTokens);
+		if (transitionInvalidation) {
+			latestState = { invalidation: transitionInvalidation };
 			continue;
 		}
 		if (name !== "snapshot") continue;

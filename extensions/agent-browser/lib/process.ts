@@ -52,7 +52,7 @@ const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
 const WINDOWS_COMMANDS_WITH_ADJACENT_SUBCOMMAND = new Set([
 	"auth", "clipboard", "cookies", "dashboard", "device", "dialog", "diff", "find", "get", "is", "keyboard",
 	"mouse", "network", "plugin", "profiler", "react", "record", "session", "set", "skills", "state", "storage",
-	"stream", "tab", "trace", "window",
+	"stream", "tab", "trace", "webmcp", "window",
 ]);
 
 export function withAttachedBrowserSessionContext<T>(preserve: boolean, run: () => Promise<T>): Promise<T> {

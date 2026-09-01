@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand } from "../../command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand, isUnverifiedPageTransitionCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -20,6 +20,7 @@ import { shouldCaptureSemanticActionNavigationSummary } from "../../results/pres
 import {
 	buildPageTransitionRefSnapshotInvalidation,
 	commandExplicitlyTargetsAboutBlank,
+	getCommandRefSnapshotInvalidation,
 	deriveSessionTabTarget,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
@@ -303,7 +304,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		if (
 			succeeded &&
 			!navigationSummary &&
-			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data) ||
+			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data, prepared.executionPlan.commandInfo.subcommand) ||
 				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data) ||
 				commandRequiresLivePageVerification(prepared.executionPlan.effectiveArgs, prepared.runtimeToolStdin) ||
 				(prepared.executionPlan.commandInfo.command === "tab" && prepared.executionPlan.commandInfo.subcommand === "close"))
@@ -433,12 +434,14 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				state.closedManagedSessionNames.add(sessionStateKey);
 			} else {
 				// A batch that times out or returns unparseable output yields no result rows, but the daemon
-				// may already have executed a recording page swap; fall back to the planned steps then. This
-				// also fires for wrapper-replaced envelopes and upstream pre-loop errors where nothing ran,
-				// which only over-invalidates (one extra snapshot), never under-invalidates.
-				const plannedBatchRecordSwap = !Array.isArray(presentationEnvelope?.data) && batchCommandSteps.some((step) => isRecordPageTransitionCommand(step));
-				const pageTransitionInvalidation = processResult.agentBrowserStarted && (isRecordPageTransitionCommand(prepared.commandTokens) || plannedBatchRecordSwap)
-					? buildPageTransitionRefSnapshotInvalidation()
+				// may already have executed a recording swap or page-provided WebMCP tool; fall back to the
+				// planned steps then. This can over-invalidate by one snapshot, but never under-invalidates.
+				const directTransitionInvalidation = getCommandRefSnapshotInvalidation(prepared.commandTokens);
+				const plannedBatchTransitionInvalidation = !Array.isArray(presentationEnvelope?.data)
+					? batchCommandSteps.map(getCommandRefSnapshotInvalidation).find((invalidation) => invalidation !== undefined)
+					: undefined;
+				const pageTransitionInvalidation = processResult.agentBrowserStarted && (directTransitionInvalidation || plannedBatchTransitionInvalidation)
+					? directTransitionInvalidation ?? plannedBatchTransitionInvalidation
 					: failedTransitionReverification
 						? buildPageTransitionRefSnapshotInvalidation("A failed eval/back/forward/reload/connect/state-load/tab command may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
 						: batchRefSnapshotState?.invalidation?.reason === "page-transition"
