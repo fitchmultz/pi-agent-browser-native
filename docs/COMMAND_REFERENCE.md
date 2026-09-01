@@ -913,6 +913,7 @@ cat > ~/.pi/config/pi-agent-browser-native/config.json <<'JSON'
   "webSearch": {
     "enabled": true,
     "preferredProvider": "exa",
+    "defaultSearchType": "deep-lite",
     "exaApiKey": "$EXA_API_KEY",
     "braveApiKey": "$BRAVE_API_KEY"
   }
@@ -937,7 +938,19 @@ npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-conf
 npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable set "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 ```
 
-The optional `agent_browser_web_search` tool is available when Exa or Brave credentials are visible from startup config or trusted session config and the runtime config has not set `webSearch.enabled` to `false`. It is a separate custom tool, not an `agent_browser` input mode, and does not launch a browser. Prefer it for current/live external web facts and URL discovery; use `agent_browser` for browser interaction, screenshots, authenticated/profile pages, and DOM inspection after you have a target URL. Prefer it over driving public search-engine forms such as Google with browser `job`/`type` flows, which can redirect headless automation to anti-bot or CAPTCHA pages; do not attempt CAPTCHA bypass. Disable scope is explicit: `web-search disable --global` sets the normal user default, `web-search disable --project` disables it for one repo, and a `PI_AGENT_BROWSER_CONFIG` override containing `{ "version": 1, "webSearch": { "enabled": false } }` wins over both for a hard per-run disable. Loaded config may use plaintext, custom env aliases, interpolation literals, malformed-or-late-bound `$` values, and command-backed web-search keys; the resolved secret reaches the provider request while model-facing tool output and status text stay redacted. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`. For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`; use `fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning` only when the task needs that latency/depth tradeoff.
+The optional `agent_browser_web_search` tool is available when Exa or Brave credentials are visible from startup config or trusted session config and the runtime config has not set `webSearch.enabled` to `false`. It is a separate custom tool, not an `agent_browser` input mode, and does not launch a browser. Prefer it for current/live external web facts and URL discovery; use `agent_browser` for browser interaction, screenshots, authenticated/profile pages, and DOM inspection after you have a target URL. Prefer it over driving public search-engine forms such as Google with browser `job`/`type` flows, which can redirect headless automation to anti-bot or CAPTCHA pages; do not attempt CAPTCHA bypass. Disable scope is explicit: `web-search disable --global` sets the normal user default, `web-search disable --project` disables it for one repo, and a `PI_AGENT_BROWSER_CONFIG` override containing `{ "version": 1, "webSearch": { "enabled": false } }` wins over both for a hard per-run disable. Loaded config may use plaintext, custom env aliases, interpolation literals, malformed-or-late-bound `$` values, and command-backed web-search keys; the resolved secret reaches the provider request while model-facing tool output and status text stay redacted. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`.
+
+For Exa, effective search type precedence is per-call `searchType` → `webSearch.defaultSearchType` → `auto`, with regular `contents.highlights: true`. Typical latencies are `instant` ~250 ms, `fast` ~450 ms, `auto` ~1 second, `deep-lite` ~4 seconds, `deep` 4–15 seconds, and `deep-reasoning` 12–40 seconds. Prefer `deep-lite` for research before implementation, `deep` for hard multi-source work, and `deep-reasoning` only for exhaustive or still-thin research. Searches are serialized; do not launch several in parallel.
+
+```json
+{
+  "query": "pi-agent-browser-native agent_browser_web_search searchType defaults",
+  "searchType": "deep-lite",
+  "count": 5
+}
+```
+
+Exa-only options include 1–20 `includeDomains` / `excludeDomains`, a six-value `category`, 1–10 deep-mode `additionalQueries`, and `highlightsDynamic`. The `company` and `people` categories cannot combine with `freshness` or `excludeDomains`; invalid combinations fail before the request. Explicit new Exa-only options also fail if Brave resolves as the provider, while the existing `searchType` field remains ignored by Brave. `highlightsDynamic: true` is a research preview and sends Exa's required beta header. Full page text and structured output schemas remain out of scope.
 
 Example config:
 
@@ -947,6 +960,7 @@ Example config:
   "webSearch": {
     "enabled": true,
     "preferredProvider": "exa",
+    "defaultSearchType": "deep-lite",
     "exaApiKey": "$EXA_API_KEY",
     "braveApiKey": "$BRAVE_API_KEY"
   },

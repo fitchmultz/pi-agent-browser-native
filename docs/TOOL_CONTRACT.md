@@ -45,6 +45,7 @@ Config shape:
   "webSearch": {
     "enabled": true,
     "preferredProvider": "exa",
+    "defaultSearchType": "deep-lite",
     "exaApiKey": "$EXA_API_KEY",
     "braveApiKey": "$BRAVE_API_KEY"
   }
@@ -57,7 +58,12 @@ Schema:
 {
   "query": "search text",
   "provider": "auto",
-  "searchType": "auto",
+  "searchType": "deep-lite",
+  "includeDomains": ["docs.exa.ai"],
+  "excludeDomains": ["archive.example"],
+  "category": "publication",
+  "additionalQueries": ["Exa search API defaults"],
+  "highlightsDynamic": false,
   "count": 5,
   "offset": 0,
   "country": "US",
@@ -69,9 +75,12 @@ Schema:
 
 Provider notes:
 - `provider` is optional; `auto` uses available keys plus `webSearch.preferredProvider`.
-- `searchType` applies to Exa only and supports `auto`, `fast`, `instant`, `deep-lite`, `deep`, and `deep-reasoning`. The default is `auto`; deep modes are slower and should be used only for harder research.
-- Exa requests use `/search` with `contents.highlights: true` for compact excerpts. The wrapper intentionally does not expose Exa structured-output schemas yet, to keep the tool small.
-- Brave-specific `searchLang` is ignored by Exa; Exa maps `country` to `userLocation`, `safesearch` moderate/strict to `moderation: true`, and `freshness` to `startPublishedDate`.
+- `searchType` applies to Exa only and supports `auto`, `fast`, `instant`, `deep-lite`, `deep`, and `deep-reasoning`. Effective precedence is the per-call field, then `webSearch.defaultSearchType`, then `auto`. Use `deep-lite` for implementation research, `deep` for hard multi-source work, and `deep-reasoning` only for the hardest or exhaustive work.
+- `includeDomains` and `excludeDomains` accept 1–20 Exa hostname, path-prefix, or wildcard-subdomain strings. `category` accepts `company`, `people`, `publication`, `news`, `personal site`, or `financial report`. `company` and `people` reject `freshness` and `excludeDomains` before a request is sent.
+- `additionalQueries` accepts 1–10 strings only when the effective type is `deep-lite`, `deep`, or `deep-reasoning`. HTTP timeouts are 15 seconds for non-deep types, 45 seconds for `deep-lite`, 60 seconds for `deep`, and 90 seconds for `deep-reasoning`.
+- Exa requests use `/search` with `contents.highlights: true` for compact excerpts. `highlightsDynamic: true` switches to `{ "dynamic": true }` and sends Exa's required beta header. The wrapper intentionally does not expose full page text or structured-output schemas.
+- Brave-specific `searchLang` is ignored by Exa. Exa maps `country` to `userLocation`, `safesearch` moderate/strict to `moderation: true`, and `freshness` to `startPublishedDate`. Brave keeps ignoring `searchType`; explicitly requested newer Exa-only filters fail before a Brave request.
+- Requests are serialized. Agents should run one focused query, inspect it, and make at most one follow-up rather than parallel searches. HTTP 429 means stop and report that the provider plan or limit needs time or a change.
 
 Result details:
 
@@ -82,7 +91,7 @@ Result details:
   "returnedQuery": "search text",
   "count": 5,
   "offset": 0,
-  "searchType": "auto",
+  "searchType": "deep-lite",
   "requestId": "request-id-when-provider-returns-one",
   "fetchedAt": "2026-06-02T00:00:00.000Z",
   "results": [
@@ -98,6 +107,8 @@ Result details:
   ]
 }
 ```
+
+For Exa, `details.searchType` is the effective requested type even when the provider response does not echo it. `requestId` is included when Exa returns one. Brave omits both fields.
 
 ## Input mode chooser
 

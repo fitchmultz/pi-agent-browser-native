@@ -26,7 +26,7 @@ export const QUICK_START_GUIDELINES = [
 ] as const;
 
 export const WEB_SEARCH_PROMPT_GUIDELINE =
-	"Prefer agent_browser_web_search for current or external web facts and URL discovery over public search-engine forms that can hit anti-bot/CAPTCHA-gated pages. Use agent_browser after you have a target URL that needs interaction, screenshots, or DOM inspection.";
+	"Prefer agent_browser_web_search for current or external web facts and URL discovery over public search-engine forms that can hit anti-bot/CAPTCHA-gated pages. For research before implementation, pass searchType: deep-lite unless webSearch.defaultSearchType already does; omit it for everyday lookups so config/auto wins. Use agent_browser after you have a target URL that needs interaction, screenshots, or DOM inspection.";
 
 
 export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [

@@ -3,9 +3,11 @@ import { WEB_SEARCH_PROMPT_GUIDELINE } from "./playbook.js";
 import { StringEnum as localStringEnum, type StringEnumBuilder } from "./string-enum-schema.js";
 import {
 	DEFAULT_WEB_SEARCH_PROVIDER,
+	EXA_SEARCH_TYPES,
 	WEB_SEARCH_PROVIDERS,
 	resolvePreferredWebSearchCredential,
 	type AgentBrowserConfigState,
+	type ExaSearchType,
 	type WebSearchProvider,
 } from "./config.js";
 
@@ -15,14 +17,22 @@ export const EXA_SEARCH_ENDPOINT = "https://api.exa.ai/search";
 export const DEFAULT_SEARCH_RESULT_COUNT = 5;
 export const MAX_SEARCH_RESULT_COUNT = 10;
 export const SEARCH_REQUEST_TIMEOUT_MS = 15_000;
-export const EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS = 45_000;
+export const EXA_DEEP_LITE_SEARCH_REQUEST_TIMEOUT_MS = 45_000;
+export const EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS = 60_000;
+export const EXA_DEEP_REASONING_SEARCH_REQUEST_TIMEOUT_MS = 90_000;
+export const EXA_DYNAMIC_HIGHLIGHTS_BETA = "dynamic-highlights-2026-08-28";
 export const WEB_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
-export const EXA_SEARCH_TYPES = ["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"] as const;
-export type ExaSearchType = typeof EXA_SEARCH_TYPES[number];
+export { EXA_SEARCH_TYPES };
+export type { ExaSearchType };
 export const WEB_SEARCH_PROVIDER_PARAM_VALUES = ["auto", ...WEB_SEARCH_PROVIDERS] as const;
 export type WebSearchProviderParam = typeof WEB_SEARCH_PROVIDER_PARAM_VALUES[number];
 
 type SearchFreshness = "pd" | "pw" | "pm" | "py";
+
+export const EXA_SEARCH_CATEGORIES = ["company", "people", "publication", "news", "personal site", "financial report"] as const;
+export type ExaSearchCategory = typeof EXA_SEARCH_CATEGORIES[number];
+const MAX_EXA_DOMAIN_FILTERS = 20;
+const MAX_EXA_ADDITIONAL_QUERIES = 10;
 
 export type BraveWebSearchResult = {
 	title?: unknown;
@@ -61,7 +71,6 @@ export type ExaWebSearchResult = {
 
 export type ExaWebSearchResponse = {
 	requestId?: unknown;
-	searchType?: unknown;
 	results?: ExaWebSearchResult[];
 	output?: unknown;
 	costDollars?: unknown;
@@ -90,9 +99,14 @@ type WebSearchToolDetails = {
 };
 
 type WebSearchExecutionParams = {
+	additionalQueries?: string[];
+	category?: ExaSearchCategory;
 	country?: string;
 	count: number;
+	excludeDomains?: string[];
 	freshness?: SearchFreshness;
+	highlightsDynamic?: boolean;
+	includeDomains?: string[];
 	offset: number;
 	query: string;
 	safesearch?: "off" | "moderate" | "strict";
@@ -130,7 +144,38 @@ export function createAgentBrowserWebSearchParamsSchema(
 		),
 		searchType: Type.Optional(
 			StringEnum(EXA_SEARCH_TYPES, {
-				description: "Optional Exa search type. Defaults to auto; ignored by Brave. Use deep/deep-reasoning only for harder research because they are slower.",
+				description: "Exa mode; omitted uses webSearch.defaultSearchType, then auto. instant (~250ms) is only for trivial lookups; fast (~450ms) favors latency; auto (~1s) is balanced. Pass searchType: deep-lite (~4s) for research before implementation unless config already defaults it; do not assume auto is deep enough. deep (4–15s) handles hard multi-source research; deep-reasoning (12–40s) is only for the hardest work. Brave ignores this field.",
+			}),
+		),
+		includeDomains: Type.Optional(
+			Type.Array(Type.String({ minLength: 1 }), {
+				minItems: 1,
+				maxItems: MAX_EXA_DOMAIN_FILTERS,
+				description: `Exa only. Limit results to 1–${MAX_EXA_DOMAIN_FILTERS} hostnames, path prefixes (exa.ai/docs), or wildcard subdomains (*.substack.com).`,
+			}),
+		),
+		excludeDomains: Type.Optional(
+			Type.Array(Type.String({ minLength: 1 }), {
+				minItems: 1,
+				maxItems: MAX_EXA_DOMAIN_FILTERS,
+				description: `Exa only. Exclude 1–${MAX_EXA_DOMAIN_FILTERS} hostnames, path prefixes, or wildcard subdomains. Not compatible with category company or people.`,
+			}),
+		),
+		category: Type.Optional(
+			StringEnum(EXA_SEARCH_CATEGORIES, {
+				description: "Exa-only result category. company and people cannot be combined with freshness or excludeDomains.",
+			}),
+		),
+		additionalQueries: Type.Optional(
+			Type.Array(Type.String({ minLength: 1 }), {
+				minItems: 1,
+				maxItems: MAX_EXA_ADDITIONAL_QUERIES,
+				description: `Exa only. Add 1–${MAX_EXA_ADDITIONAL_QUERIES} query variations when the effective searchType is deep-lite, deep, or deep-reasoning.`,
+			}),
+		),
+		highlightsDynamic: Type.Optional(
+			Type.Boolean({
+				description: "Exa-only research preview. Allocate one highlight budget across all results; the wrapper sends the required Exa-Beta header. Regular per-page highlights remain the default.",
 			}),
 		),
 		count: Type.Optional(
@@ -403,21 +448,37 @@ function getStartPublishedDate(freshness: SearchFreshness | undefined, now: () =
 }
 
 export function buildExaSearchRequestBody(params: {
+	additionalQueries?: string[];
+	category?: ExaSearchCategory;
 	query: string;
 	count: number;
 	offset: number;
 	country?: string;
-	safesearch?: "off" | "moderate" | "strict";
+	excludeDomains?: string[];
 	freshness?: SearchFreshness;
+	highlightsDynamic?: boolean;
+	includeDomains?: string[];
+	safesearch?: "off" | "moderate" | "strict";
 	searchType?: ExaSearchType;
 }, now: () => Date = () => new Date()): Record<string, unknown> {
+	const searchType = params.searchType ?? "auto";
+	if (params.additionalQueries?.length && !searchType.startsWith("deep")) {
+		throw new Error(`additionalQueries requires deep-lite, deep, or deep-reasoning; received ${searchType}.`);
+	}
+	if ((params.category === "company" || params.category === "people") && (params.freshness || params.excludeDomains?.length)) {
+		throw new Error(`category ${params.category} cannot be combined with freshness or excludeDomains.`);
+	}
 	const body: Record<string, unknown> = {
 		query: params.query,
-		type: params.searchType ?? "auto",
+		type: searchType,
 		numResults: Math.min(params.count + params.offset, 100),
-		contents: { highlights: true },
+		contents: { highlights: params.highlightsDynamic ? { dynamic: true } : true },
 	};
+	if (params.category) body.category = params.category;
 	if (params.country) body.userLocation = params.country.toUpperCase();
+	if (params.includeDomains?.length) body.includeDomains = params.includeDomains;
+	if (params.excludeDomains?.length) body.excludeDomains = params.excludeDomains;
+	if (params.additionalQueries?.length) body.additionalQueries = params.additionalQueries;
 	if (params.safesearch && params.safesearch !== "off") body.moderation = true;
 	const startPublishedDate = getStartPublishedDate(params.freshness, now);
 	if (startPublishedDate) body.startPublishedDate = startPublishedDate;
@@ -538,7 +599,17 @@ export async function fetchBraveSearchJson(url: URL, apiKey: string, signal?: Ab
 }
 
 function getExaRequestTimeoutMs(searchType: ExaSearchType | undefined): number {
-	return searchType?.startsWith("deep") ? EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS : SEARCH_REQUEST_TIMEOUT_MS;
+	if (searchType === "deep-lite") return EXA_DEEP_LITE_SEARCH_REQUEST_TIMEOUT_MS;
+	if (searchType === "deep") return EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS;
+	if (searchType === "deep-reasoning") return EXA_DEEP_REASONING_SEARCH_REQUEST_TIMEOUT_MS;
+	return SEARCH_REQUEST_TIMEOUT_MS;
+}
+
+function usesDynamicHighlights(body: Record<string, unknown>): boolean {
+	const contents = body.contents;
+	if (!contents || typeof contents !== "object" || Array.isArray(contents)) return false;
+	const highlights = (contents as Record<string, unknown>).highlights;
+	return Boolean(highlights && typeof highlights === "object" && !Array.isArray(highlights) && (highlights as Record<string, unknown>).dynamic === true);
 }
 
 export async function fetchExaSearchJson(body: Record<string, unknown>, apiKey: string, signal?: AbortSignal, timeoutMs = SEARCH_REQUEST_TIMEOUT_MS): Promise<ExaWebSearchResponse> {
@@ -551,6 +622,7 @@ export async function fetchExaSearchJson(body: Record<string, unknown>, apiKey: 
 				Accept: "application/json",
 				"Content-Type": "application/json",
 				"x-api-key": apiKey,
+				...(usesDynamicHighlights(body) ? { "Exa-Beta": EXA_DYNAMIC_HIGHLIGHTS_BETA } : {}),
 			},
 			method: "POST",
 		},
@@ -599,15 +671,7 @@ const EXA_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<ExaSearchRequest, ExaWebS
 	buildRequest(params) {
 		const searchType = params.searchType ?? "auto";
 		return {
-			body: buildExaSearchRequestBody({
-				query: params.query,
-				count: params.count,
-				offset: params.offset,
-				country: params.country,
-				safesearch: params.safesearch,
-				freshness: params.freshness,
-				searchType,
-			}),
+			body: buildExaSearchRequestBody(params),
 			timeoutMs: getExaRequestTimeoutMs(searchType),
 		};
 	},
@@ -619,7 +683,7 @@ const EXA_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<ExaSearchRequest, ExaWebS
 		return {
 			extraDetails: {
 				requestId: cleanSearchText(response.requestId, 120),
-				searchType: cleanSearchText(response.searchType, 80) ?? searchType,
+				searchType,
 			},
 			results: (response.results ?? [])
 				.map(normalizeExaSearchResult)
@@ -646,9 +710,14 @@ function buildMissingCredentialError(provider: WebSearchProviderParam): string {
 }
 
 type AgentBrowserWebSearchParamsInput = {
+	additionalQueries?: string[];
+	category?: ExaSearchCategory;
 	country?: string;
 	count?: number;
+	excludeDomains?: string[];
 	freshness?: SearchFreshness;
+	highlightsDynamic?: boolean;
+	includeDomains?: string[];
 	offset?: number;
 	provider?: WebSearchProviderParam;
 	query: string;
@@ -665,11 +734,12 @@ export function createAgentBrowserWebSearchTool(
 	return {
 		name: AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
 		label: "Agent Browser Web Search",
-		description: `Search the live web with Exa or Brave for current or external information. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
+		description: `Search the live web with Exa or Brave for current or external information. For Exa research tasks, use searchType deep-lite or deeper. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
 		promptSnippet: "Search the live web with Exa or Brave for current or external information.",
 		promptGuidelines: [
 			WEB_SEARCH_PROMPT_GUIDELINE,
 			"agent_browser_web_search chooses Exa or Brave from configured keys; when both are available, Exa is preferred by default unless webSearch.preferredProvider says otherwise. Use provider only when the user/config calls for a specific provider.",
+			"Use Exa deep only when deep-lite may miss angles, and deep-reasoning only for exhaustive or still-thin research. Do not run parallel agent_browser_web_search calls; make one high-signal query, inspect its results, then at most one follow-up.",
 			"If agent_browser_web_search returns HTTP 429, stop searching and tell the user the API plan/rate limit needs time or a plan change.",
 			"After using agent_browser_web_search, cite result URLs in the final answer when web evidence informed the answer.",
 		],
@@ -685,20 +755,37 @@ export function createAgentBrowserWebSearchTool(
 			const requestedProvider = params.provider ?? "auto";
 			const resolved = await resolvePreferredWebSearchCredential(runtimeConfigState, { provider: requestedProvider, signal });
 			if (!resolved) throw new Error(buildMissingCredentialError(requestedProvider));
+			if (resolved.provider === "brave") {
+				const exaOnlyFields = [
+					params.includeDomains ? "includeDomains" : undefined,
+					params.excludeDomains ? "excludeDomains" : undefined,
+					params.category ? "category" : undefined,
+					params.additionalQueries ? "additionalQueries" : undefined,
+					params.highlightsDynamic ? "highlightsDynamic" : undefined,
+				].filter((field): field is string => Boolean(field));
+				if (exaOnlyFields.length > 0) {
+					throw new Error(`${exaOnlyFields.join(", ")} ${exaOnlyFields.length === 1 ? "requires" : "require"} provider exa; resolved provider was brave.`);
+				}
+			}
 			const query = params.query.trim();
 			if (!query) throw new Error("query must not be blank");
 			const count = Math.min(Math.max(params.count ?? DEFAULT_SEARCH_RESULT_COUNT, 1), MAX_SEARCH_RESULT_COUNT);
 			const offset = Math.max(params.offset ?? 0, 0);
 			const adapter = getWebSearchProviderAdapter(resolved.provider);
 			const executionParams: WebSearchExecutionParams = {
+				additionalQueries: params.additionalQueries,
+				category: params.category,
 				country: params.country,
 				count,
+				excludeDomains: params.excludeDomains,
 				freshness: params.freshness,
+				highlightsDynamic: params.highlightsDynamic,
+				includeDomains: params.includeDomains,
 				offset,
 				query,
 				safesearch: params.safesearch,
 				searchLang: params.searchLang,
-				searchType: params.searchType ?? "auto",
+				searchType: params.searchType ?? runtimeConfigState.config.webSearch?.defaultSearchType ?? "auto",
 			};
 			const request = adapter.buildRequest(executionParams);
 			const data = await requestGate.run(signal, () => adapter.fetchJson(request, resolved.credential.value, signal));

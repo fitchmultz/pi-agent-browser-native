@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Added validated `webSearch.defaultSearchType` config with per-call override precedence, plus bounded Exa domain/category filters, deep-mode query variants, and Dynamic Highlights support.
+
+### Changed
+
+- Made `deep-lite` the clear agent guidance for research before implementation while preserving `auto` for users who do not configure a default. Exa result details now always report the effective requested type, searches remain serialized, and Brave keeps its existing behavior while rejecting explicitly requested new Exa-only filters.
+
 ## 0.6.2 - 2026-09-01
 
 ### Added

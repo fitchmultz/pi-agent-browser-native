@@ -274,9 +274,10 @@ test("config CLI writes project env source, project profile, and project executa
 test("config CLI status accepts project-local custom web-search env aliases", async () => {
 	const fixture = await createFixture();
 	await mkdir(dirname(fixture.projectPath), { recursive: true });
-	await writeFile(fixture.projectPath, JSON.stringify({ version: 1, webSearch: { braveApiKey: "$MY_BRAVE_ALIAS" } }, null, 2));
+	await writeFile(fixture.projectPath, JSON.stringify({ version: 1, webSearch: { braveApiKey: "$MY_BRAVE_ALIAS", defaultSearchType: "deep-lite" } }, null, 2));
 	const { stdout } = await runConfig(["show"], { cwd: fixture.cwd, env: { ...fixture.env, MY_BRAVE_ALIAS: "alias-secret" } });
 	assert.doesNotMatch(stdout, /Validation errors:/);
+	assert.match(stdout, /webSearch\.defaultSearchType: deep-lite/);
 	assert.match(stdout, /webSearch\.braveApiKey: configured via environment interpolation \(project\)/);
 	assert.doesNotMatch(stdout, /alias-secret/);
 });

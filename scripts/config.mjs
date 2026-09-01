@@ -169,6 +169,7 @@ function printStatus() {
 	console.log("Effective config:");
 	console.log(`  webSearch.enabled: ${state.webSearchEnabled ? "true" : "false"}`);
 	console.log(`  webSearch.preferredProvider: ${state.config.webSearch?.preferredProvider ?? `auto (default ${DEFAULT_WEB_SEARCH_PROVIDER})`}`);
+	console.log(`  webSearch.defaultSearchType: ${state.config.webSearch?.defaultSearchType ?? "not configured (Exa auto)"}`);
 	for (const provider of WEB_SEARCH_PROVIDERS) {
 		const field = getWebSearchProviderConfigKey(provider);
 		console.log(`  webSearch.${field}: ${getCredentialSourceSummary(state.webSearchCredentialSources[provider], provider)}`);

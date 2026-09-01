@@ -9,10 +9,11 @@ import { join, resolve } from "node:path";
 /** @typedef {"global" | "project" | "override"} ConfigLayerScope */
 /** @typedef {"literal" | "env" | "command"} CredentialSourceKind */
 /** @typedef {"exa" | "brave"} WebSearchProvider */
+/** @typedef {"auto" | "fast" | "instant" | "deep-lite" | "deep" | "deep-reasoning"} ExaSearchType */
 /** @typedef {"exaApiKey" | "braveApiKey"} WebSearchProviderConfigKey */
 /** @typedef {{ provider: WebSearchProvider; apiKeyEnv: string; configKey: WebSearchProviderConfigKey; label: string }} WebSearchProviderDescriptor */
 /** @typedef {{ name: string; policy?: BrowserDefaultProfilePolicy }} BrowserDefaultProfileConfig */
-/** @typedef {{ enabled?: boolean; preferredProvider?: WebSearchProvider; braveApiKey?: string; exaApiKey?: string }} WebSearchConfig */
+/** @typedef {{ enabled?: boolean; preferredProvider?: WebSearchProvider; defaultSearchType?: ExaSearchType; braveApiKey?: string; exaApiKey?: string }} WebSearchConfig */
 /** @typedef {{ defaultProfile?: BrowserDefaultProfileConfig; executablePath?: string }} BrowserConfig */
 /** @typedef {{ version?: 1; webSearch?: WebSearchConfig; browser?: BrowserConfig }} AgentBrowserConfig */
 /** @typedef {{ config: AgentBrowserConfig; path: string; scope: ConfigLayerScope }} ConfigLayer */
@@ -50,6 +51,8 @@ export const WEB_SEARCH_PROVIDER_DESCRIPTORS = Object.freeze({
 export const WEB_SEARCH_PROVIDERS = Object.freeze(["exa", "brave"]);
 /** @type {WebSearchProvider} */
 export const DEFAULT_WEB_SEARCH_PROVIDER = "exa";
+/** @type {readonly ExaSearchType[]} */
+export const EXA_SEARCH_TYPES = Object.freeze(["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"]);
 /** @type {Readonly<Record<WebSearchProvider, WebSearchProviderConfigKey>>} */
 export const WEB_SEARCH_PROVIDER_CONFIG_KEYS = Object.freeze({
 	exa: WEB_SEARCH_PROVIDER_DESCRIPTORS.exa.configKey,
@@ -200,6 +203,23 @@ export function validateWebSearchProvider(value, path, errors) {
  * @param {unknown} value
  * @param {string} path
  * @param {string[]} errors
+ * @returns {ExaSearchType | undefined}
+ */
+function validateExaSearchType(value, path, errors) {
+	if (value === undefined) return undefined;
+	const searchType = validateString(value, path, errors)?.trim();
+	if (searchType === undefined) return undefined;
+	if (!EXA_SEARCH_TYPES.includes(/** @type {ExaSearchType} */ (searchType))) {
+		errors.push(`${path} must be one of ${EXA_SEARCH_TYPES.join(", ")}.`);
+		return undefined;
+	}
+	return /** @type {ExaSearchType} */ (searchType);
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} path
+ * @param {string[]} errors
  * @returns {BrowserDefaultProfileConfig | undefined}
  */
 function validateBrowserDefaultProfile(value, path, errors) {
@@ -265,6 +285,8 @@ export function validateAgentBrowserConfig(value, path, errors, warnings) {
 			if (enabled !== undefined) webSearch.enabled = enabled;
 			const preferredProvider = validateWebSearchProvider(value.webSearch.preferredProvider, `${path}.webSearch.preferredProvider`, errors);
 			if (preferredProvider) webSearch.preferredProvider = preferredProvider;
+			const defaultSearchType = validateExaSearchType(value.webSearch.defaultSearchType, `${path}.webSearch.defaultSearchType`, errors);
+			if (defaultSearchType) webSearch.defaultSearchType = defaultSearchType;
 			for (const provider of WEB_SEARCH_PROVIDERS) {
 				const descriptor = getWebSearchProviderDescriptor(provider);
 				const apiKey = validateString(value.webSearch[descriptor.configKey], `${path}.webSearch.${descriptor.configKey}`, errors);
