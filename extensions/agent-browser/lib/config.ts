@@ -28,6 +28,7 @@ export {
 	CONFIG_RELATIVE_PATH,
 	DEFAULT_WEB_SEARCH_PROVIDER,
 	EXA_API_KEY_ENV,
+	EXA_SEARCH_TYPES,
 	GLOBAL_CONFIG_RELATIVE_PATH,
 	SECRET_COMMAND_TIMEOUT_MS,
 	WEB_SEARCH_PROVIDER_CONFIG_KEYS,
@@ -72,6 +73,7 @@ export type {
 	ConfigLayer,
 	CredentialSource,
 	CredentialSourceKind,
+	ExaSearchType,
 	WebSearchProvider,
 	WebSearchProviderDescriptor,
 } from "./config-policy.js";

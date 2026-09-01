@@ -207,7 +207,7 @@ npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-conf
 
 The optional `agent_browser_web_search` companion tool is available when a usable Exa or Brave credential source is configured or resolvable from startup config or trusted session config. It is not an `agent_browser` input mode and does not launch a browser; prefer it for current/live external web facts and URL discovery, then use `agent_browser` when the page itself needs interaction, screenshots, authenticated/profile content, or DOM inspection. Prefer it over automating public search-engine forms such as Google in headless browser jobs: those flows may be redirected to anti-bot or CAPTCHA pages, and this wrapper does not provide or recommend CAPTCHA bypass. If both keys are available, the default provider is Exa because its `/search` endpoint returns agent-friendly highlights and search modes; set `webSearch.preferredProvider` to `"brave"` when you prefer Brave Search.
 
-Get an Exa API key from the [Exa dashboard](https://dashboard.exa.ai/api-keys) or a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Most users can simply export `EXA_API_KEY` or `BRAVE_API_KEY` in the environment that launches `pi`; config is only needed when you want Pi-scoped secret references, a preferred provider, or to disable this built-in search tool.
+Get an Exa API key from the [Exa dashboard](https://dashboard.exa.ai/api-keys) or a Brave Search API key from the [Brave Search API dashboard](https://api-dashboard.search.brave.com/). Most users can simply export `EXA_API_KEY` or `BRAVE_API_KEY` in the environment that launches `pi`; config is only needed when you want Pi-scoped secret references, a preferred provider, a default Exa search type, or to disable this built-in search tool.
 
 Most config users should store env-var references in the Pi-scoped config:
 
@@ -219,6 +219,7 @@ cat > ~/.pi/config/pi-agent-browser-native/config.json <<'JSON'
   "webSearch": {
     "enabled": true,
     "preferredProvider": "exa",
+    "defaultSearchType": "deep-lite",
     "exaApiKey": "$EXA_API_KEY",
     "braveApiKey": "$BRAVE_API_KEY"
   }
@@ -258,7 +259,26 @@ npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-conf
 
 Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. Under Pi 0.84.0+, the globally installed or CLI-loaded extension still loads project-local `.pi/config/pi-agent-browser-native/config.json` when Pi trust allows that project layer; it skips that project layer when Pi reports the project is untrusted or when Pi is launched with `--no-approve`. `webSearch.enabled` is evaluated after the loaded layers merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Loaded config may use plaintext, custom environment aliases, interpolation literals, malformed-or-late-bound `$` values, and `!command` credential sources; the resolved secret is passed to the provider request while tool content, details, status output, and docs examples stay redacted. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`.
 
-For Exa, the tool defaults to `searchType: "auto"` with `contents.highlights: true`. Agents may pass `searchType` (`fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`) only when the task needs that latency/depth tradeoff; structured output schemas are intentionally not exposed yet.
+For Exa, the effective mode is the per-call `searchType`, then `webSearch.defaultSearchType`, then `auto`. A research-heavy coding workflow should set the config default to `deep-lite`; callers can still override it per search. Users who do not opt in keep the existing `auto` latency.
+
+| Exa `searchType` | Typical latency | Use |
+| --- | --- | --- |
+| `instant` | ~250 ms | Trivial lookups only |
+| `fast` | ~450 ms | Low-latency relevance |
+| `auto` | ~1 s | Everyday fact lookup |
+| `deep-lite` | ~4 s | Preferred research-before-implementation mode |
+| `deep` | 4–15 s | Hard multi-source research and comparisons |
+| `deep-reasoning` | 12–40 s | Exhaustive or hardest multi-hop research only |
+
+```json
+{
+  "query": "pi-agent-browser-native agent_browser_web_search searchType defaults",
+  "searchType": "deep-lite",
+  "count": 5
+}
+```
+
+Exa calls may also use up to 20 `includeDomains` or `excludeDomains`, a typed `category`, up to 10 deep-mode `additionalQueries`, and the `highlightsDynamic` research preview. `company` and `people` categories cannot combine with `freshness` or `excludeDomains`. These explicit Exa-only options fail clearly when Brave is selected; the existing `searchType` field remains ignored by Brave. Regular `contents.highlights: true` stays the default, and structured output schemas remain out of scope.
 
 The same config file can record conservative browser defaults such as a profile hint or a Chromium-compatible executable path:
 

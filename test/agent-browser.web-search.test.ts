@@ -203,17 +203,28 @@ test("agent_browser_web_search registration and execution ignore project config 
 	});
 });
 
-test("registers agent_browser_web_search with env fallback and rate-limit guidance", async () => {
+test("registers agent_browser_web_search with actionable search-type and rate-limit guidance", async () => {
 	const fixture = await createFixture();
 	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "test-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 		assert.ok(tool);
 		assert.ok(harness.getTool("agent_browser"));
-		assert.match(tool.promptGuidelines.join("\n"), /Prefer agent_browser_web_search for current or external web facts/);
-		assert.doesNotMatch(tool.promptGuidelines.join("\n"), /one query, one follow-up max/);
-		assert.doesNotMatch(tool.promptGuidelines.join("\n"), /Do not issue parallel or repeated agent_browser_web_search calls/);
-		assert.match(tool.promptGuidelines.join("\n"), /HTTP 429/);
+		const guidelines = tool.promptGuidelines.join("\n");
+		assert.match(guidelines, /Prefer agent_browser_web_search for current or external web facts/);
+		assert.match(guidelines, /searchType.*deep-lite/);
+		assert.match(guidelines, /Do not run parallel agent_browser_web_search calls/);
+		assert.match(guidelines, /HTTP 429/);
+		assert.match(tool.description, /deep-lite/);
+		const schema = tool.parameters as { properties?: Record<string, { description?: string; maxItems?: number }> };
+		assert.match(schema.properties?.searchType?.description ?? "", /deep-lite.*4s/);
+		assert.match(schema.properties?.searchType?.description ?? "", /Pass searchType/);
+		for (const field of ["includeDomains", "excludeDomains", "category", "additionalQueries", "highlightsDynamic"]) {
+			assert.ok(schema.properties?.[field], `missing ${field} from web-search schema`);
+		}
+		assert.equal(schema.properties?.includeDomains?.maxItems, 20);
+		assert.equal(schema.properties?.excludeDomains?.maxItems, 20);
+		assert.equal(schema.properties?.additionalQueries?.maxItems, 10);
 	});
 });
 
@@ -233,12 +244,30 @@ test("auto provider uses Brave when only BRAVE_API_KEY is configured", async () 
 				web: { results: [{ title: "Brave Only", url: "https://example.com/brave", description: "Brave result" }] },
 			}), { status: 200 });
 		}, async () => {
-			const result = await executeRegisteredTool(tool, harness.ctx, { query: "brave only", provider: "auto", count: 1 });
+			const result = await executeRegisteredTool(tool, harness.ctx, { query: "brave only", provider: "auto", count: 1, searchType: "deep" });
 			const text = result.content[0]?.text ?? "";
 			assert.match(text, /Brave web search results/);
 			assert.match(text, /Brave Only/);
 			assert.equal(result.details?.provider, "brave");
+			assert.equal(result.details?.searchType, undefined);
 			assert.doesNotMatch(JSON.stringify(result), /brave-secret/);
+		});
+	});
+});
+
+test("rejects explicit Exa-only filters when Brave is the resolved provider", async () => {
+	const fixture = await createFixture();
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: undefined }, async () => {
+		const harness = createExtensionHarness({ cwd: fixture.cwd });
+		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+		assert.ok(tool);
+		await withFakeFetch(() => {
+			throw new Error("fetch should not be called");
+		}, async () => {
+			await assert.rejects(
+				() => executeRegisteredTool(tool, harness.ctx, { query: "official docs", includeDomains: ["example.com"] }),
+				/includeDomains requires provider exa; resolved provider was brave/,
+			);
 		});
 	});
 });
@@ -270,9 +299,37 @@ test("registers command-sourced config without executing command until search ex
 	});
 });
 
-test("prefers Exa when both provider keys are available and normalizes highlights", async () => {
+test("uses the configured default Exa search type when the call omits it", async () => {
 	const fixture = await createFixture();
-	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: undefined, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: fixture.overrideConfigPath, [BRAVE_API_KEY_ENV]: undefined, [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
+		const harness = createExtensionHarness({ cwd: fixture.cwd });
+		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+		assert.ok(tool);
+		await writeJson(fixture.overrideConfigPath, { version: 1, webSearch: { defaultSearchType: "deep-lite" } });
+		await withFakeFetch((_input, init) => {
+			assert.equal(new Headers(init?.headers).has("Exa-Beta"), false);
+			assert.deepEqual(JSON.parse(String(init?.body)), {
+				query: "research defaults",
+				type: "deep-lite",
+				numResults: 1,
+				contents: { highlights: true },
+				additionalQueries: ["second angle"],
+			});
+			return new Response(JSON.stringify({ requestId: "req-default", results: [{ title: "Defaulted", url: "https://example.com/default", highlights: ["Research result"] }] }), { status: 200 });
+		}, async () => {
+			const result = await executeRegisteredTool(tool, harness.ctx, { query: "research defaults", count: 1, additionalQueries: ["second angle"] });
+			assert.equal(result.details?.provider, "exa");
+			assert.equal(result.details?.searchType, "deep-lite");
+			assert.equal(result.details?.requestId, "req-default");
+			assert.doesNotMatch(JSON.stringify(result), /exa-secret/);
+		});
+	});
+});
+
+test("per-call Exa search type overrides the configured default and normalizes highlights", async () => {
+	const fixture = await createFixture();
+	await writeJson(fixture.overrideConfigPath, { version: 1, webSearch: { defaultSearchType: "deep-lite" } });
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: fixture.overrideConfigPath, [BRAVE_API_KEY_ENV]: "brave-secret", [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 		assert.ok(tool);
@@ -284,17 +341,30 @@ test("prefers Exa when both provider keys are available and normalizes highlight
 			assert.equal(body.query, "pi browser docs");
 			assert.equal(body.type, "fast");
 			assert.equal(body.numResults, 2);
-			assert.deepEqual(body.contents, { highlights: true });
+			assert.deepEqual(body.contents, { highlights: { dynamic: true } });
+			assert.equal(body.category, "news");
+			assert.deepEqual(body.includeDomains, ["example.com"]);
+			assert.deepEqual(body.excludeDomains, ["noise.example"]);
+			assert.equal(new Headers(init?.headers).get("Exa-Beta"), "dynamic-highlights-2026-08-28");
 			return new Response(JSON.stringify({
 				requestId: "req-123",
-				searchType: "fast",
+				searchType: "deep-reasoning",
 				results: [
 					{ title: "Skipped", url: "https://example.com/skipped", highlights: ["skip"] },
 					{ title: "Exa Pi", url: "https://example.com/exa", author: "Example", publishedDate: "2026-01-01", highlights: ["<b>Relevant</b> Exa highlight", "Second highlight"] },
 				],
 			}), { status: 200 });
 		}, async () => {
-			const result = await executeRegisteredTool(tool, harness.ctx, { query: "pi browser docs", count: 1, offset: 1, searchType: "fast" });
+			const result = await executeRegisteredTool(tool, harness.ctx, {
+				query: "pi browser docs",
+				count: 1,
+				offset: 1,
+				searchType: "fast",
+				category: "news",
+				includeDomains: ["example.com"],
+				excludeDomains: ["noise.example"],
+				highlightsDynamic: true,
+			});
 			const text = result.content[0]?.text ?? "";
 			assert.match(text, /Exa web search results/);
 			assert.match(text, /Relevant Exa highlight/);
@@ -319,7 +389,11 @@ test("provider adapters expose provider-agnostic request and normalization contr
 	const exaRequest = exa.buildRequest({ count: 1, offset: 1, query: "adapter exa", searchType: "deep" }) as { body: Record<string, unknown>; timeoutMs: number };
 	assert.equal(exaRequest.body.query, "adapter exa");
 	assert.equal(exaRequest.body.type, "deep");
-	assert.ok(exaRequest.timeoutMs > 15_000);
+	assert.equal(exaRequest.timeoutMs, 60_000);
+	const deepLiteRequest = exa.buildRequest({ count: 1, offset: 0, query: "adapter exa", searchType: "deep-lite" }) as { timeoutMs: number };
+	const deepReasoningRequest = exa.buildRequest({ count: 1, offset: 0, query: "adapter exa", searchType: "deep-reasoning" }) as { timeoutMs: number };
+	assert.equal(deepLiteRequest.timeoutMs, 45_000);
+	assert.equal(deepReasoningRequest.timeoutMs, 90_000);
 	const exaNormalized = exa.normalizeResponse({ requestId: "req", searchType: "deep", results: [{ title: "Skip", url: "https://example.com/skip" }, { title: "Exa", url: "https://example.com/exa" }] }, { count: 1, offset: 1, query: "adapter exa", searchType: "deep" });
 	assert.equal(exaNormalized.returnedQuery, "adapter exa");
 	assert.equal(exaNormalized.extraDetails?.requestId, "req");
@@ -373,6 +447,24 @@ test("builds Exa search request body with highlights and provider-compatible opt
 		moderation: true,
 		startPublishedDate: "2026-06-01T00:00:00.000Z",
 	});
+	assert.equal(buildExaSearchRequestBody({ query: "default", count: 1, offset: 0 }).type, "auto");
+});
+
+test("rejects Exa filter combinations the upstream API does not support", () => {
+	for (const searchType of ["auto", "fast", "instant"] as const) {
+		assert.throws(
+			() => buildExaSearchRequestBody({ query: "agent browser", count: 1, offset: 0, searchType, additionalQueries: ["second angle"] }),
+			new RegExp(`additionalQueries requires deep-lite, deep, or deep-reasoning; received ${searchType}`),
+		);
+	}
+	assert.throws(
+		() => buildExaSearchRequestBody({ query: "agent browser", count: 1, offset: 0, category: "company", freshness: "pw" }),
+		/category company cannot be combined with freshness or excludeDomains/,
+	);
+	assert.throws(
+		() => buildExaSearchRequestBody({ query: "agent browser", count: 1, offset: 0, category: "people", excludeDomains: ["example.com"] }),
+		/category people cannot be combined with freshness or excludeDomains/,
+	);
 });
 
 test("normalizes Brave results and strips unsafe or noisy values", () => {

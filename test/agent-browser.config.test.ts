@@ -192,15 +192,32 @@ test("uses raw BRAVE_API_KEY only as fallback when no config credential source e
 
 test("loads Exa config, preferred provider, and disabled web search policy", async () => {
 	const fixture = await createConfigFixture();
-	await writeJson(fixture.globalPath, { version: 1, webSearch: { exaApiKey: "$EXA_API_KEY", preferredProvider: "brave" } });
+	await writeJson(fixture.globalPath, { version: 1, webSearch: { defaultSearchType: "deep-lite", exaApiKey: "$EXA_API_KEY", preferredProvider: "brave" } });
 	let state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env: { ...fixture.env, EXA_API_KEY: "exa-secret" } });
 	assert.equal(state.webSearchPreferredProvider, "brave");
+	assert.equal(state.config.webSearch?.defaultSearchType, "deep-lite");
 	assert.equal(getCredentialSourceSummary(state.webSearchCredentialSources.exa, "exa"), "configured via environment interpolation (global)");
 	assert.equal(canRegisterWebSearchTool(state, { ...fixture.env, EXA_API_KEY: "exa-secret" }), true);
 	await writeJson(fixture.projectPath, { version: 1, webSearch: { enabled: false } });
 	state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env: { ...fixture.env, EXA_API_KEY: "exa-secret" } });
 	assert.equal(state.webSearchEnabled, false);
 	assert.equal(canRegisterWebSearchTool(state, { ...fixture.env, EXA_API_KEY: "exa-secret" }), false);
+});
+
+test("merges and validates the default Exa search type", async () => {
+	const fixture = await createConfigFixture();
+	const env = { ...fixture.env, EXA_API_KEY: "exa-secret" };
+	await writeJson(fixture.globalPath, { version: 1, webSearch: { defaultSearchType: "deep-lite", exaApiKey: "$EXA_API_KEY" } });
+	await writeJson(fixture.projectPath, { version: 1, webSearch: { defaultSearchType: "deep" } });
+	let state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env });
+	assert.deepEqual(state.errors, []);
+	assert.equal(state.config.webSearch?.defaultSearchType, "deep");
+
+	await writeJson(fixture.projectPath, { version: 1, webSearch: { defaultSearchType: "turbo" } });
+	state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env });
+	assert.equal(state.config.webSearch?.defaultSearchType, "deep-lite");
+	assert.match(state.errors.join("\n"), /webSearch\.defaultSearchType must be one of auto, fast, instant, deep-lite, deep, deep-reasoning/);
+	assert.equal(canRegisterWebSearchTool(state, env), false);
 });
 
 test("allows project-local Exa key sources", async () => {
