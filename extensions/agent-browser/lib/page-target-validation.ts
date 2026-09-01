@@ -11,7 +11,7 @@ const UNVERIFIED_PAGE_MESSAGE = "The active page became unverified after a tab, 
 const BATCH_UNVERIFIED_PAGE_MESSAGE = `${UNVERIFIED_PAGE_MESSAGE} In a batch, put get url after the transition before later content steps, or split the batch at that boundary.`;
 const UNSAFE_BATCH_ARGUMENT_MESSAGE = "Batch command arguments could not be inspected. Use batch stdin JSON command arrays instead.";
 const NESTED_BATCH_ARGUMENT_MESSAGE = "Nested batch commands are not supported. Flatten the batch steps instead.";
-const NON_BAIL_BATCH_NAVIGATION_MESSAGE = "Batches that navigate before page-content access must use exact batch --bail so a failed navigation cannot act on the prior page.";
+const NON_BAIL_BATCH_NAVIGATION_MESSAGE = "Batches that change or re-verify the page target before page-content access must use exact batch --bail so a failed step cannot act on an unverified or prior page.";
 const MAX_NON_BAIL_BATCH_PAGE_STATES = 64;
 const EXPLICIT_NAVIGATION_COMMANDS = new Set(["a11y", "goto", "navigate", "open", "pushstate", "visit", "vitals", "web-vitals"]);
 const POSITIONAL_VALUE_FLAGS: ReadonlySet<string> = new Set([...VALUE_FLAGS, "--llms"]);
@@ -99,6 +99,11 @@ function commandMayChangePageTarget(args: string[], trustedBatchTabSelection: bo
 			&& !(trustedBatchTabSelection && descriptor.commandInfo.command === "tab"));
 }
 
+function commandVerifiesPageTarget(args: string[]): boolean {
+	const { command, subcommand } = parseArgvDescriptor(args).commandInfo;
+	return command === "get" && subcommand === "url";
+}
+
 function deduplicatePossibleBatchPageStates(states: PossibleBatchPageState[]): PossibleBatchPageState[] {
 	const deduplicated = new Map<string, PossibleBatchPageState>();
 	for (const state of states) {
@@ -125,6 +130,9 @@ function getResultingPageState(options: {
 	trustedBatchTabSelection: boolean;
 }): { currentPageUrl?: string; pageUrlUnknown: boolean } {
 	const descriptor = parseArgvDescriptor(options.args);
+	if (descriptor.commandInfo.command === "get" && descriptor.commandInfo.subcommand === "url") {
+		return { currentPageUrl: options.currentPageUrl, pageUrlUnknown: false };
+	}
 	const rawExplicitTarget = getExplicitNavigationTarget(options.args);
 	const explicitTarget = getResultingExplicitNavigationTarget(options.args, options.currentPageUrl);
 	if (explicitTarget !== undefined) return { currentPageUrl: explicitTarget, pageUrlUnknown: false };
@@ -166,6 +174,12 @@ export function getResultingPageTargetState(options: {
 	return { ...state, pageTargetMayHaveChanged };
 }
 
+function isRecoveringPageTransitionCommand(command: string | undefined, subcommand?: string): boolean {
+	return command !== "eval"
+		&& !(command === "webmcp" && subcommand === "invoke")
+		&& isUnverifiedPageTransitionCommand(command, subcommand);
+}
+
 function getUnverifiedPageError(options: {
 	allowUnverifiedPageTransitions?: boolean;
 	args: string[];
@@ -177,9 +191,10 @@ function getUnverifiedPageError(options: {
 	const closesPage = ["close", "exit", "quit"].includes(command ?? "") || (command === "tab" && subcommand === "close");
 	const inspectsTarget = (command === "tab" && subcommand === "list") || (command === "get" && subcommand === "url");
 	const selectsTab = command === "tab" && subcommand !== undefined && !["close", "list", "new"].includes(subcommand);
-	const transitionsPage = options.allowUnverifiedPageTransitions === true && command !== "eval" && isUnverifiedPageTransitionCommand(command, subcommand);
+	const settlesPendingWebMcp = command === "webmcp" && ["result", "cancel"].includes(subcommand ?? "");
+	const transitionsPage = options.allowUnverifiedPageTransitions === true && isRecoveringPageTransitionCommand(command, subcommand);
 	const navigatesExplicitly = getExplicitNavigationTarget(options.args) !== undefined;
-	return closesPage || inspectsTarget || selectsTab || transitionsPage || navigatesExplicitly || (options.trustedBatchTabSelection && command === "tab")
+	return closesPage || inspectsTarget || selectsTab || settlesPendingWebMcp || transitionsPage || navigatesExplicitly || (options.trustedBatchTabSelection && command === "tab")
 		? undefined
 		: UNVERIFIED_PAGE_MESSAGE;
 }
@@ -225,6 +240,7 @@ export function getPageTargetValidationError(options: {
 			if (directError) return BATCH_UNVERIFIED_PAGE_MESSAGE;
 			if (failedNavigationHazard) return NON_BAIL_BATCH_NAVIGATION_MESSAGE;
 			const mayChangePageTarget = commandMayChangePageTarget(step, trustedBatchTabSelection);
+			const verifiesPageTarget = commandVerifiesPageTarget(step);
 			const nextStates: PossibleBatchPageState[] = [];
 			for (const state of possibleStates) {
 				const successState = getResultingPageState({
@@ -234,8 +250,10 @@ export function getPageTargetValidationError(options: {
 					trustedBatchTabSelection,
 				});
 				if (nextStates.length >= MAX_NON_BAIL_BATCH_PAGE_STATES) return NON_BAIL_BATCH_NAVIGATION_MESSAGE;
-				nextStates.push({ ...successState, retainedAfterFailedNavigation: mayChangePageTarget ? false : state.retainedAfterFailedNavigation });
-				if (!bailOnFirstError && mayChangePageTarget) nextStates.push({ ...state, retainedAfterFailedNavigation: true });
+				nextStates.push({ ...successState, retainedAfterFailedNavigation: mayChangePageTarget || verifiesPageTarget ? false : state.retainedAfterFailedNavigation });
+				if (!bailOnFirstError && (mayChangePageTarget || (verifiesPageTarget && state.pageUrlUnknown))) {
+					nextStates.push({ ...state, retainedAfterFailedNavigation: true });
+				}
 			}
 			possibleStates = deduplicatePossibleBatchPageStates(nextStates);
 		}
@@ -256,7 +274,7 @@ export function getExplicitSessionPageVerificationRequirement(options: {
 }): string | undefined {
 	const descriptor = parseArgvDescriptor(options.args);
 	if (!needsManagedSession(descriptor)) return undefined;
-	if (descriptor.commandInfo.command !== "eval" && isUnverifiedPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand)) return undefined;
+	if (isRecoveringPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand)) return undefined;
 	const validationError = getPageTargetValidationError({
 		args: options.args,
 		pageUrlUnknown: true,

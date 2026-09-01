@@ -15,6 +15,7 @@ import {
 	isRecordPageTransitionCommand,
 	isRefGuardedCommand,
 	isRefInvalidatingBatchCommand,
+	isUnverifiedPageTransitionCommand,
 	normalizeCommandName,
 } from "../extensions/agent-browser/lib/command-taxonomy.js";
 
@@ -60,6 +61,15 @@ test("command taxonomy guards exactly the upstream ref-resolving selector comman
 	for (const command of ["a11y", "find", "wait"]) {
 		assert.equal(isRefGuardedCommand(command), false, command);
 	}
+});
+
+test("WebMCP mutation commands invalidate refs while list remains read-only", () => {
+	assert.equal(isPageMutationCommand("webmcp", "list"), false);
+	assert.equal(isPageMutationCommand("webmcp", "invoke"), true);
+	assert.equal(isPageChangeSummaryCommand("webmcp", "result"), true);
+	assert.equal(isUnverifiedPageTransitionCommand("webmcp", "cancel"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["webmcp", "list"]), false);
+	assert.equal(isRefInvalidatingBatchCommand(["webmcp", "invoke", "set_message"]), true);
 });
 
 test("record page transitions cover failed starts and navigating restarts", () => {

@@ -311,10 +311,10 @@ export function extractNavigationSummaryFromData(data: unknown): NavigationSumma
 	return title || url ? { title, url, urlChanged } : undefined;
 }
 
-export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown): boolean {
+export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown, subcommand?: string): boolean {
 	if (command === "eval") return true;
 	return (
-		isNavigationObservableCommandName(command) &&
+		isNavigationObservableCommandName(command, subcommand) &&
 		(!isRecord(data) || (typeof data.title !== "string" && typeof data.url !== "string"))
 	);
 }
@@ -526,7 +526,7 @@ export function buildPinnedBatchPlan(options: {
 	if (options.commandTokens.length === 0) {
 		return undefined;
 	}
-	const includeNavigationSummary = isNavigationObservableCommandName(options.command);
+	const includeNavigationSummary = isNavigationObservableCommandName(options.command, options.commandTokens[1]);
 	const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
 	const commandStep = options.commandTokens as BatchCommandStep;
 	const navigationSummarySteps: BatchCommandStep[] = includeNavigationSummary ? [["eval", NAVIGATION_SUMMARY_EVAL]] : [];

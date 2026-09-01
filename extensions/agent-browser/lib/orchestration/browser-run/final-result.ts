@@ -17,6 +17,7 @@ import {
 import {
 	buildConnectedSessionNextActions,
 	buildNoActivePageNextActions,
+	buildPendingWebMcpNextActions,
 	buildSessionAwareStaleRefNextActions,
 	buildSessionTabRecoveryNextActions,
 } from "../../results/recovery-next-actions.js";
@@ -357,6 +358,10 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	const appendUnique = (actions: AgentBrowserNextAction[] | undefined): void => {
 		appendUniqueAgentBrowserNextActions(nextActions, actions);
 	};
+	if (options.unsettledWebMcpMutation && options.currentSessionTabTargetUnknown) {
+		nextActions = nextActions.filter((action) => !isStandaloneSnapshotNextAction(action));
+		appendUnique(buildPendingWebMcpNextActions(options.executionPlan.sessionName));
+	}
 	if (options.categoryDetails.resultCategory === "success" && options.executionPlan.commandInfo.command === "connect" && !options.electronLaunchRecord) appendUnique(buildConnectedSessionNextActions(options.executionPlan.sessionName));
 	if (options.noActivePageSnapshotFailure) appendUnique(buildNoActivePageNextActions(options.executionPlan.sessionName));
 	if (options.aboutBlankSessionMismatch) {

@@ -29,6 +29,16 @@ export function buildNoActivePageNextActions(sessionName: string | undefined): A
 	}) ?? [];
 }
 
+export function buildPendingWebMcpNextActions(sessionName: string | undefined): AgentBrowserNextAction[] {
+	return [{
+		id: "verify-page-target-after-pending-webmcp",
+		params: { args: withOptionalSessionArgs(sessionName, ["get", "url"]) },
+		reason: "Verify the current page target before taking a fresh snapshot; use webmcp result or cancel to settle the detached invocation.",
+		safety: "Read-only URL inspection. It does not settle the pending page tool, which may still mutate or navigate later.",
+		tool: "agent_browser",
+	}];
+}
+
 export function buildSessionTabRecoveryNextActions(options: {
 	kind: "about-blank" | "tab-drift";
 	recoveryApplied?: boolean;

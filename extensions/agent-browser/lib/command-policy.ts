@@ -7,8 +7,7 @@ const EMPTY_BOOLEAN_FLAGS = new Set<string>();
 const JSON_BOOLEAN_FLAGS = new Set(["--json"]);
 const AUTH_SAVE_BOOLEAN_FLAGS = new Set(["--json", "--password-stdin"]);
 const AUTH_SAVE_VALUE_FLAGS = new Set(["--password", "--password-selector", "--submit-selector", "--url", "--username", "--username-selector"]);
-const DASHBOARD_SUBCOMMANDS = new Set(["start", "stop"]);
-const DASHBOARD_START_VALUE_FLAGS = new Set(["--port"]);
+const DASHBOARD_VALUE_FLAGS = new Set(["--allowed-origins", "--port"]);
 const DOCTOR_BOOLEAN_FLAGS = new Set(["--fix", "--headed", "--json", "--offline", "--quick", "--webgpu"]);
 const INSTALL_BOOLEAN_FLAGS = new Set(["--with-deps", "-d"]);
 const STATE_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "clear", "clean", "rename"]);
@@ -26,9 +25,8 @@ function isSessionlessAuthCommand(commandTokens: readonly string[]): boolean {
 
 function isSessionlessDashboardCommand(commandTokens: readonly string[]): boolean {
 	const [, subcommand, ...rest] = commandTokens;
-	if (subcommand === undefined) return true;
-	if (!DASHBOARD_SUBCOMMANDS.has(subcommand)) return false;
-	return subcommand === "start" ? hasOnlyOptionFlags(rest, JSON_BOOLEAN_FLAGS, DASHBOARD_START_VALUE_FLAGS) : rest.length === 0;
+	if (subcommand === "stop") return rest.length === 0;
+	return hasOnlyOptionFlags(subcommand === "start" ? rest : commandTokens.slice(1), JSON_BOOLEAN_FLAGS, DASHBOARD_VALUE_FLAGS);
 }
 
 function isSessionlessStateCommand(commandTokens: readonly string[]): boolean {

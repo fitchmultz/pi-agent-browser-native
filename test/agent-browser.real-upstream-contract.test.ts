@@ -427,6 +427,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(skillsListDetails.usedImplicitSession, undefined);
 					assert.deepEqual(skillsListDetails.effectiveArgs, ["--json", "skills", "list"]);
 					assert.match(skillsList.content[0]?.text ?? "", /core/);
+					if (installedVersion === CAPABILITY_BASELINE.targetVersion) assert.match(skillsList.content[0]?.text ?? "", /webmcp-gen/);
 
 					const skillsGetFull = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "get", "core", "--full"] });
 					const skillsGetFullDetails = assertSuccessfulResult(skillsGetFull, shapes.commands.skillsGetFull, "skills get core --full");
@@ -440,12 +441,38 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(protectedVercelDetails.sessionName, undefined);
 					assert.match(protectedVercelSkill.content[0]?.text ?? "", /x-vercel-trusted-oidc-idp-token/);
 
+					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
+						const webMcpSkill = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "get", "webmcp-gen", "--full"] });
+						const webMcpSkillDetails = assertSuccessfulResult(webMcpSkill, shapes.commands.skillsGetFull, "skills get webmcp-gen --full");
+						assert.equal(webMcpSkillDetails.sessionName, undefined);
+						assert.match(webMcpSkill.content[0]?.text ?? "", /webmcp\.init\.js/);
+					}
+
 					const skillsPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["skills", "path", "core"] });
 					const skillsPathDetails = assertSuccessfulResult(skillsPath, shapes.commands.skillsPath, "skills path core");
 					assert.equal(skillsPathDetails.sessionName, undefined);
 					assert.equal(skillsPathDetails.usedImplicitSession, undefined);
 					assert.deepEqual(skillsPathDetails.effectiveArgs, ["--json", "skills", "path", "core"]);
 					assert.match(skillsPath.content[0]?.text ?? "", /core/);
+
+					const webMcpUrl = `${fixtureServer?.baseUrl}/webmcp`;
+					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
+						const disabledHarness = createExtensionHarness({ cwd: tempDir, sessionId: "87654321876543218765432187654321" });
+						await runExtensionEvent(disabledHarness.handlers, "session_start", { reason: "new" }, disabledHarness.ctx);
+						try {
+							const disabledOpen = await executeRegisteredTool(disabledHarness.tool, disabledHarness.ctx, {
+								args: ["--no-webmcp", "open", webMcpUrl],
+								sessionMode: "fresh",
+							});
+							assertSuccessfulResult(disabledOpen, shapes.commands.open, "open with --no-webmcp");
+							assert.ok(disabledOpen.details?.effectiveArgs instanceof Array && disabledOpen.details.effectiveArgs.includes("--no-webmcp"));
+							const disabledList = await executeRegisteredTool(disabledHarness.tool, disabledHarness.ctx, { args: ["webmcp", "list"] });
+							const disabledListDetails = assertSuccessfulResult(disabledList, shapes.commands.coreSubcommand, "webmcp list with feature disabled");
+							assert.deepEqual((disabledListDetails.data as { tools?: unknown[] }).tools, []);
+						} finally {
+							await executeRegisteredTool(disabledHarness.tool, disabledHarness.ctx, { args: ["close"] });
+						}
+					}
 
 					const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", contractUrl], sessionMode: "fresh" });
 					const openDetails = assertSuccessfulResult(opened, shapes.commands.open, "open");
@@ -478,6 +505,39 @@ if (!REAL_UPSTREAM_ENABLED) {
 						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
 						"chocolate",
 					);
+
+					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
+						await runCoreCommand(harness, ["open", webMcpUrl], shapes.commands.open, managedSessionName, "open WebMCP fixture");
+						const webMcpList = await runCoreCommand(harness, ["webmcp", "list"], shapes.commands.coreSubcommand, managedSessionName);
+						assert.equal((webMcpList.sessionTabTarget as { url?: string } | undefined)?.url, webMcpUrl);
+						const tools = (webMcpList.data as { tools?: Array<{ frameId?: string; name?: string }> }).tools ?? [];
+						const setMessageFrame = tools.find((tool) => tool.name === "set_message")?.frameId;
+						assert.ok(setMessageFrame, "webmcp list should expose set_message and its frame id");
+
+						const webMcpInvoke = await runCoreCommand(harness, [
+							"webmcp", "invoke", "set_message", "--params", '{"message":"WebMCP changed"}', "--frame", setMessageFrame, "--timeout", "5000",
+						], shapes.commands.coreSubcommand, managedSessionName);
+						assert.equal((webMcpInvoke.data as { status?: string }).status, "completed");
+						assert.equal((webMcpInvoke.data as { navigationSummary?: { url?: string } }).navigationSummary?.url, webMcpUrl);
+						assert.equal((webMcpInvoke.refSnapshotInvalidation as { reason?: string } | undefined)?.reason, "page-transition");
+						assert.deepEqual((webMcpInvoke.nextActions as Array<{ id?: string }> | undefined)?.map((action) => action.id), ["inspect-after-mutation"]);
+						assert.equal(
+							getResultValue(await runCoreCommand(harness, ["get", "text", "#webmcp-result"], shapes.commands.coreSubcommand, managedSessionName), ["text"]),
+							"WebMCP changed",
+						);
+
+						const detached = await runCoreCommand(harness, ["webmcp", "invoke", "wait_for_cancel", "--detach"], shapes.commands.coreSubcommand, managedSessionName);
+						const invocationId = (detached.data as { invocationId?: string }).invocationId;
+						assert.ok(invocationId, "detached WebMCP invoke should return an invocation id");
+						assert.equal(detached.sessionTabTarget, undefined);
+						assert.equal(detached.sessionTabTargetUnknown, true);
+						assert.deepEqual((detached.nextActions as Array<{ id?: string }> | undefined)?.map((action) => action.id), ["verify-page-target-after-pending-webmcp"]);
+						const canceled = await runCoreCommand(harness, ["webmcp", "cancel", invocationId], shapes.commands.coreSubcommand, managedSessionName);
+						assert.equal((canceled.data as { status?: string }).status, "canceled");
+						const canceledResult = await runCoreCommand(harness, ["webmcp", "result", invocationId], shapes.commands.coreSubcommand, managedSessionName);
+						assert.equal((canceledResult.data as { status?: string }).status, "canceled");
+						await runCoreCommand(harness, ["open", contractUrl], shapes.commands.open, managedSessionName, "restore contract fixture after WebMCP");
+					}
 
 					const readResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl] });
 					const readDetails = assertSuccessfulResult(readResult, shapes.commands.read, "read URL");

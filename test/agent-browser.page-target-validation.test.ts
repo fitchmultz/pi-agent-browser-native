@@ -44,6 +44,33 @@ test("unverified page transitions still require a live URL before content access
 	assert.match(getExplicitSessionPageVerificationRequirement({ args: ["--session", "external", "snapshot", "-i"] }) ?? "", /active page became unverified/);
 });
 
+test("WebMCP page tools require a verified target and may change it", () => {
+	assert.match(getExplicitSessionPageVerificationRequirement({ args: ["--session", "external", "webmcp", "list"] }) ?? "", /active page became unverified/);
+	assert.match(getExplicitSessionPageVerificationRequirement({ args: ["--session", "external", "webmcp", "invoke", "set_message"] }) ?? "", /active page became unverified/);
+	assert.deepEqual(getResultingPageTargetState({ args: ["webmcp", "invoke", "set_message"], currentPageUrl: "https://example.com/start" }), {
+		pageTargetMayHaveChanged: true,
+		pageUrlUnknown: true,
+	});
+	assert.equal(getPageTargetValidationError({ args: ["webmcp", "result", "invocation-1"], pageUrlUnknown: true }), undefined);
+	assert.equal(getPageTargetValidationError({ args: ["webmcp", "cancel", "invocation-1"], pageUrlUnknown: true }), undefined);
+	const batchStdin = JSON.stringify([["webmcp", "invoke", "set_message"], ["get", "url"], ["snapshot", "-i"]]);
+	assert.equal(getPageTargetValidationError({ args: ["batch", "--bail"], currentPageUrl: "https://example.com/start", stdin: batchStdin }), undefined);
+	assert.match(getPageTargetValidationError({ args: ["batch"], currentPageUrl: "https://example.com/start", stdin: batchStdin }) ?? "", /--bail/);
+	assert.deepEqual(getResultingPageTargetState({ args: ["batch", "--bail"], currentPageUrl: "https://example.com/start", stdin: batchStdin }), {
+		currentPageUrl: undefined,
+		pageTargetMayHaveChanged: true,
+		pageUrlUnknown: false,
+	});
+	assert.match(
+		getPageTargetValidationError({
+			args: ["batch", "--bail"],
+			currentPageUrl: "https://example.com/start",
+			stdin: JSON.stringify([["webmcp", "invoke", "set_message"], ["snapshot", "-i"]]),
+		}) ?? "",
+		/get url/,
+	);
+});
+
 test("non-bail batches preserve known prior-page behavior and guard unknown targets", () => {
 	const stdin = JSON.stringify([["open", "https://safe.example/"], ["get", "html", "body"]]);
 	assert.equal(getPageTargetValidationError({ args: ["--session", "external", "batch"], currentPageUrl: "https://initial.example/", stdin }), undefined);

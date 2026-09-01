@@ -17,8 +17,10 @@ interface CommandCapabilityEntry extends Partial<Record<CommandCapabilityFlag, t
 }
 
 const ADDITIONAL_COMMAND_TOKENS = [
-	"a11y", "auth", "chat", "clipboard", "confirm", "connect", "dashboard", "deny", "device", "dialog", "diff", "doctor", "errors", "eval", "find", "frame", "get", "highlight", "inspect", "install", "is", "mcp", "plugin", "plugins", "profiles", "profiler", "react", "record", "removeinitscript", "session", "set", "skills", "snapshot", "state", "stream", "trace", "upgrade", "vitals", "wait", "web-vitals", "window",
+	"a11y", "auth", "chat", "clipboard", "confirm", "connect", "dashboard", "deny", "device", "dialog", "diff", "doctor", "errors", "eval", "find", "frame", "get", "highlight", "inspect", "install", "is", "mcp", "plugin", "plugins", "profiles", "profiler", "react", "record", "removeinitscript", "session", "set", "skills", "snapshot", "state", "stream", "trace", "upgrade", "vitals", "wait", "web-vitals", "webmcp", "window",
 ] as const;
+
+const WEBMCP_PAGE_MUTATION_SUBCOMMANDS = new Set(["invoke", "result", "cancel"]);
 
 const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
@@ -338,8 +340,8 @@ export function isOpenNavigationCommand(command: string | undefined): boolean {
 	return hasCommandCapability(command, "openNavigation");
 }
 
-export function isReadOnlyDiagnosticSessionTargetCommand(command: string | undefined, _subcommand?: string): boolean {
-	return hasCommandCapability(command, "readOnlyDiagnosticSessionTarget");
+export function isReadOnlyDiagnosticSessionTargetCommand(command: string | undefined, subcommand?: string): boolean {
+	return hasCommandCapability(command, "readOnlyDiagnosticSessionTarget") || (command === "webmcp" && subcommand === "list");
 }
 
 export function isSessionTabPinningExcludedCommand(command: string | undefined): boolean {
@@ -357,8 +359,12 @@ export function isRecordPageTransitionCommand(tokens: readonly string[]): boolea
 	return tokens[1] === "restart" && tokens.length >= 4;
 }
 
+export function isWebMcpPageMutationCommand(tokens: readonly string[]): boolean {
+	return isWebMcpPageMutation(tokens[0], tokens[1]);
+}
+
 export function isRefInvalidatingBatchCommand(step: readonly string[]): boolean {
-	return hasCommandCapability(step[0], "invalidatesBatchRefs") || isRecordPageTransitionCommand(step);
+	return hasCommandCapability(step[0], "invalidatesBatchRefs") || isRecordPageTransitionCommand(step) || isWebMcpPageMutationCommand(step);
 }
 
 export function isRefGuardedCommand(command: string | undefined): boolean {
@@ -369,20 +375,25 @@ export function isElectronPostCommandHealthCommand(command: string | undefined):
 	return hasCommandCapability(command, "eligibleForElectronHealthProbe");
 }
 
-export function isNavigationObservableCommandName(command: string | undefined): boolean {
-	return hasCommandCapability(command, "navigationObservable");
+function isWebMcpPageMutation(command: string | undefined, subcommand?: string): boolean {
+	return command === "webmcp" && WEBMCP_PAGE_MUTATION_SUBCOMMANDS.has(subcommand ?? "");
+}
+
+export function isNavigationObservableCommandName(command: string | undefined, subcommand?: string): boolean {
+	return hasCommandCapability(command, "navigationObservable") || isWebMcpPageMutation(command, subcommand);
 }
 
 export function isUnverifiedPageTransitionCommand(command: string | undefined, subcommand?: string): boolean {
 	return ["back", "connect", "eval", "forward", "reload"].includes(command ?? "")
 		|| (command === "state" && subcommand === "load")
-		|| (command === "tab" && subcommand !== undefined && !["list", "new"].includes(subcommand));
+		|| (command === "tab" && subcommand !== undefined && !["list", "new"].includes(subcommand))
+		|| isWebMcpPageMutation(command, subcommand);
 }
 
-export function isPageMutationCommand(command: string | undefined): boolean {
-	return hasCommandCapability(command, "triggersPostMutationSnapshot");
+export function isPageMutationCommand(command: string | undefined, subcommand?: string): boolean {
+	return hasCommandCapability(command, "triggersPostMutationSnapshot") || isWebMcpPageMutation(command, subcommand);
 }
 
-export function isPageChangeSummaryCommand(command: string | undefined): boolean {
-	return hasCommandCapability(command, "eligibleForPageChangeSummary");
+export function isPageChangeSummaryCommand(command: string | undefined, subcommand?: string): boolean {
+	return hasCommandCapability(command, "eligibleForPageChangeSummary") || isWebMcpPageMutation(command, subcommand);
 }

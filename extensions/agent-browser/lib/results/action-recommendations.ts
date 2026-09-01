@@ -79,6 +79,7 @@ export function buildAgentBrowserNextActions(options: {
 	recovery?: AgentBrowserRecoveryContext;
 	savedFilePath?: string;
 	sessionName?: string;
+	subcommand?: string;
 	successCategory?: AgentBrowserSuccessCategory;
 }): AgentBrowserNextAction[] | undefined {
 	const actions: AgentBrowserNextAction[] = [];
@@ -149,7 +150,7 @@ export function buildAgentBrowserNextActions(options: {
 				id: "inspect-opened-page",
 				reason: "Inspect the opened page before choosing interactive refs.",
 			}));
-		} else if (isPageMutationCommand(options.command)) {
+		} else if (isPageMutationCommand(options.command, options.subcommand)) {
 			actions.push(buildNextToolAction({
 				args: ["snapshot", "-i"],
 				id: "inspect-after-mutation",

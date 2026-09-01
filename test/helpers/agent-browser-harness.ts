@@ -127,6 +127,44 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 			return;
 		}
 
+		if (url.pathname === "/webmcp") {
+			sendFixtureHtml(
+				response,
+				`<!doctype html>
+<html lang="en">
+<head><title>WebMCP Contract Fixture</title></head>
+<body>
+	<main>
+		<h1>WebMCP Contract Fixture</h1>
+		<output id="webmcp-result">idle</output>
+	</main>
+	<script>
+		if (document.modelContext) {
+			document.modelContext.registerTool({
+				name: "set_message",
+				description: "Sets the visible fixture message",
+				inputSchema: { type: "object", properties: { message: { type: "string" } }, required: ["message"], additionalProperties: false },
+				annotations: { readOnlyHint: false, untrustedContentHint: false },
+				execute: async ({ message }) => {
+					document.getElementById("webmcp-result").textContent = message;
+					return { message };
+				}
+			});
+			document.modelContext.registerTool({
+				name: "wait_for_cancel",
+				description: "Waits until the invocation is canceled",
+				inputSchema: { type: "object", properties: {} },
+				annotations: { readOnlyHint: true, untrustedContentHint: false },
+				execute: async () => new Promise(() => {})
+			});
+		}
+	</script>
+</body>
+</html>`,
+			);
+			return;
+		}
+
 		if (url.pathname === "/download") {
 			sendFixtureHtml(
 				response,

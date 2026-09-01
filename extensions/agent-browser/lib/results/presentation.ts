@@ -245,6 +245,7 @@ export async function buildToolPresentation(options: {
 		resultCategory: presentationWithManifest.resultCategory ?? "success",
 		savedFilePath: presentationWithManifest.savedFilePath,
 		sessionName,
+		subcommand: presentationCommandInfo.subcommand,
 		successCategory: presentationWithManifest.successCategory,
 	});
 	const networkNextActions = commandInfoWithTokens.command === "network" && commandInfoWithTokens.subcommand === "requests" && presentationWithManifest.resultCategory === "success"
