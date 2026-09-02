@@ -560,6 +560,7 @@ export interface FinalResultInput {
 	parseFailureOutput: ParseFailureOutput;
 	parseSucceeded: boolean;
 	plainTextInspection: boolean;
+	plainTextOutput?: boolean;
 	presentation: AgentBrowserToolPresentation;
 	presentationEnvelope?: AgentBrowserEnvelope;
 	priorSessionTabTarget?: SessionTabTarget;

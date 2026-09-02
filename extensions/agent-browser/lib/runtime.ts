@@ -106,6 +106,7 @@ export interface ExecutionPlan {
 	managedSessionName?: string;
 	namespace?: string;
 	plainTextInspection: boolean;
+	plainTextOutput: boolean;
 	recoveryHint?: SessionRecoveryHint;
 	sessionName?: string;
 	startupScopedFlags: string[];
@@ -420,6 +421,10 @@ export function redactInvocationArgs(args: string[]): string[] {
 
 export function isPlainTextInspectionArgs(args: string[]): boolean {
 	return args.some((token) => INSPECTION_FLAGS.has(token));
+}
+
+export function isSuccessfulPlainTextOutput(command: string | undefined, processSucceeded: boolean): boolean {
+	return command === "upgrade" && processSucceeded;
 }
 
 function parseTimeoutMs(rawValue: string | undefined, minimumValue: number): number | undefined {
@@ -960,9 +965,13 @@ export function buildExecutionPlan(
 	const startupScopedFlags = getStartupScopedFlags(args).filter((flag) => !(flag === "--namespace" && explicitNamespacePresent && explicitNamespace === managedSessionNamespace));
 	const plainTextInspection = isPlainTextInspectionArgs(args);
 	const argvDescriptor = parseArgvDescriptor(args);
+	// A valid sessionless `upgrade` is a lifecycle command whose successful upstream output is intentionally human-readable.
+	// Keep this separate from inspection so it does not acquire inspection semantics, and do not extend it to malformed
+	// future shapes that command policy correctly routes through normal managed-session handling.
+	const plainTextOutput = argvDescriptor.commandInfo.command === "upgrade" && !needsManagedSession(argvDescriptor);
 	const commandInfo = argvDescriptor.commandInfo;
-	const commandNeedsManagedSession = !plainTextInspection && needsManagedSession(argvDescriptor);
-	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
+	const commandNeedsManagedSession = !plainTextInspection && !plainTextOutput && needsManagedSession(argvDescriptor);
+	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") || plainTextOutput ? [] : ["--json"];
 	let namespace = explicitNamespacePresent ? explicitNamespace ?? "" : undefined;
 	if (plainTextInspection) {
 		return {
@@ -970,6 +979,7 @@ export function buildExecutionPlan(
 			effectiveArgs,
 			namespace,
 			plainTextInspection,
+			plainTextOutput,
 			startupScopedFlags,
 			usedImplicitSession: false,
 		};
@@ -981,6 +991,7 @@ export function buildExecutionPlan(
 			effectiveArgs,
 			invalidValueFlag,
 			plainTextInspection: false,
+			plainTextOutput: false,
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError: formatInvalidValueFlagError(invalidValueFlag),
@@ -993,6 +1004,7 @@ export function buildExecutionPlan(
 			commandInfo: {},
 			effectiveArgs,
 			plainTextInspection: false,
+			plainTextOutput: false,
 			startupScopedFlags: [],
 			usedImplicitSession: false,
 			validationError:
@@ -1101,6 +1113,7 @@ export function buildExecutionPlan(
 		managedSessionName,
 		namespace,
 		plainTextInspection,
+		plainTextOutput,
 		recoveryHint,
 		sessionName,
 		startupScopedFlags,

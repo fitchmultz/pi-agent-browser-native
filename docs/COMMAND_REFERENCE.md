@@ -880,7 +880,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | `device list` | List available iOS simulators. Use with `-p ios` when exercising iOS provider flows. |
 | `install` | Install browser binaries. |
 | `install --with-deps` | Install browser binaries plus Linux system dependencies; exits nonzero when required libraries cannot be installed. |
-| `upgrade` | Upgrade `agent-browser` to the latest version. |
+| `upgrade` | Upgrade `agent-browser` to the latest version; successful stdout is passed through verbatim, while nonzero exits are errors with stderr surfaced. |
 | `doctor [--fix]` | Diagnose install issues and optionally auto-clean stale files. Use `doctor --offline --quick` for a fast local-only check and `doctor --json` for structured output. |
 | `plugin add <ref>` | Add a plugin from npm or GitHub (`<owner>/<repo>` or `@scope/<name>`); writes `agent-browser.json`. Flags such as `--name`, `--capability`, `--global`, and `--no-manifest` shape discovery. |
 | `plugin [list]` | List configured plugins (default subcommand); `{ "plugins": [...] }` is a successful sessionless result. |
