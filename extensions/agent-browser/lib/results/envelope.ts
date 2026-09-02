@@ -163,19 +163,21 @@ export function getAgentBrowserErrorText(options: {
 	exitCode: number;
 	parseError?: string;
 	plainTextInspection: boolean;
+	plainTextOutput?: boolean;
 	spawnError?: Error;
 	staleRefArgs?: string[];
 	stderr: string;
+	stdout?: string;
 	timedOut?: boolean;
 	timeoutMs?: number;
 	wrapperRecoveryHint?: string;
 }): string | undefined {
-	const { aborted, envelope, exitCode, parseError, plainTextInspection, spawnError, stderr, timedOut } = options;
-	if (plainTextInspection) return undefined;
+	const { aborted, envelope, exitCode, parseError, plainTextInspection, plainTextOutput, spawnError, stderr, stdout, timedOut } = options;
+	if (plainTextInspection || (plainTextOutput && exitCode === 0)) return undefined;
 	if (timedOut) return buildWatchdogTimeoutMessage(options);
 	if (aborted) return "agent-browser was aborted.";
 	if (spawnError) return spawnError.message;
-	if (parseError) return parseError;
+	if (!plainTextOutput && parseError) return parseError;
 	if (envelope?.success === false) {
 		if ((hasStructuredBatchStepFailure(envelope.data) || detectConfirmationRequired(envelope.data)) && envelope.error === undefined) {
 			return undefined;
@@ -184,11 +186,16 @@ export function getAgentBrowserErrorText(options: {
 		if (envelopeErrorText && isUpstreamIpcReadTimeoutMessage(envelopeErrorText)) {
 			return buildUpstreamIpcReadTimeoutMessage();
 		}
-		const fallback = envelopeErrorText ?? (stderr.trim() || buildFailureFallback(options));
+		const fallback = envelopeErrorText ?? (stderr.trim() || (plainTextOutput ? stdout?.trim() : undefined) || buildFailureFallback(options));
 		return maybeAppendStaleRefHint(fallback, options.staleRefArgs ?? options.effectiveArgs);
 	}
 	if (exitCode !== 0) {
-		return stderr.trim() || buildExitCodeFallback(options);
+		const exitCodeFallback = buildExitCodeFallback(options);
+		if (plainTextOutput) {
+			return [stderr.trim(), stdout?.trim(), parseError, exitCodeFallback].filter(Boolean).join("\n");
+		}
+		return stderr.trim() || (parseError ? `${parseError}\n${exitCodeFallback}` : exitCodeFallback);
 	}
+	if (parseError) return parseError;
 	return undefined;
 }

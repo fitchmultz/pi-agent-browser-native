@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4 - 2026-09-02
+
+### Fixed
+
+- Preserved successful plaintext `upgrade` pass-through, surfaced nonzero upgrade failures accurately, and added regression coverage for both outcomes.
+
 ## Unreleased
 
 ## 0.6.3 - 2026-09-01

@@ -298,3 +298,34 @@ else process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
+
+test("registered upgrade passes through successful plaintext and reports failed plaintext", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-upgrade-test-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs"); fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n"); if (process.env.UPGRADE_FAIL === "1") { process.stdout.write("upgrade failed\\n"); process.stderr.write("network unavailable\\n"); process.exit(1); } process.stdout.write("Detected installed version 0.36.0");`,
+	);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const h = createExtensionHarness({ cwd: tempDir });
+			const r = await executeRegisteredTool(h.tool, h.ctx, { args: ["upgrade"] });
+			assert.equal(r.isError, false);
+			assert.equal((r.content[0] as { text: string }).text, "Detected installed version 0.36.0");
+			assert.equal(r.details?.inspection, undefined);
+			assert.equal(r.details?.parseError, undefined);
+			assert.notEqual(r.details?.resultCategory, "failure");
+			assert.deepEqual((await readInvocationLog(logPath))[0]?.args, ["upgrade"]);
+		});
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, UPGRADE_FAIL: "1" }, async () => {
+			const h = createExtensionHarness({ cwd: tempDir });
+			const r = await executeRegisteredTool(h.tool, h.ctx, { args: ["upgrade"] });
+			assert.equal(r.isError, true);
+			assert.match((r.content[0] as { text: string }).text, /network unavailable/);
+			assert.match((r.content[0] as { text: string }).text, /upgrade failed/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});

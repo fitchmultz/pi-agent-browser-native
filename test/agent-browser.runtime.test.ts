@@ -23,6 +23,7 @@ import { QUICK_START_GUIDELINES, SHARED_BROWSER_PLAYBOOK_GUIDELINES, TOOL_PROMPT
 import { getAgentBrowserSocketDir, getAgentBrowserSocketPathValidationError } from "../extensions/agent-browser/lib/process.js";
 import {
 	buildExecutionPlan,
+	isSuccessfulPlainTextOutput,
 	canUseHeadlessCompatibilityUserAgent,
 	createFreshSessionName,
 	createImplicitSessionName,
@@ -1026,6 +1027,25 @@ test("restoreManagedSessionStateFromBranch keeps cwd isolation by ignoring sessi
 	});
 });
 
+test("successful upgrade plaintext output is accepted only on exit 0", () => {
+	assert.equal(isSuccessfulPlainTextOutput("upgrade", true), true);
+	assert.equal(isSuccessfulPlainTextOutput("upgrade", false), false);
+	assert.equal(isSuccessfulPlainTextOutput("open", true), false);
+});
+
+test("buildExecutionPlan preserves upgrade plaintext lifecycle output without inspection semantics", () => {
+	const plan = buildExecutionPlan(["upgrade"], {
+		freshSessionName: "fresh",
+		managedSessionActive: false,
+		managedSessionName: "managed",
+		sessionMode: "auto",
+	});
+	assert.deepEqual(plan.effectiveArgs, ["upgrade"]);
+	assert.equal(plan.plainTextOutput, true);
+	assert.equal(plan.plainTextInspection, false);
+	assert.equal(plan.usedImplicitSession, false);
+});
+
 test("buildExecutionPlan injects --json and the implicit session when needed", () => {
 	const plan = buildExecutionPlan(["open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -1246,7 +1266,9 @@ test("buildExecutionPlan keeps sessionless commands free of implicit managed ses
 			sessionMode: "auto",
 		});
 
-		const expectedEffectiveArgs = callerArgs.includes("--json") ? callerArgs : ["--json", ...callerArgs];
+		const expectedEffectiveArgs = callerArgs[0] === "upgrade"
+			? callerArgs
+			: callerArgs.includes("--json") ? callerArgs : ["--json", ...callerArgs];
 
 		assert.equal(plan.plainTextInspection, false);
 		assert.deepEqual(plan.effectiveArgs, expectedEffectiveArgs);
