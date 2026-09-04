@@ -1859,6 +1859,18 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"open",
 		"https://%5BREDACTED%5D:%5BREDACTED%5D@example.com/path?token=%5BREDACTED%5D&ok=1#access_token=%5BREDACTED%5D",
 	]);
+	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/?SAMLRequest=request-secret#state=oauth-secret&nonce=oidc-secret"]), [
+		"open",
+		"https://example.com/?SAMLRequest=%5BREDACTED%5D#state=%5BREDACTED%5D&nonce=%5BREDACTED%5D",
+	]);
+	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/sso?SAMLRequest=request-secret&RelayState=relay-secret&state=oauth-secret&nonce=oidc-secret&ok=1"]), [
+		"open",
+		"https://example.com/sso?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&ok=1",
+	]);
+	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/orders?state=open&nonce=7"]), [
+		"open",
+		"https://example.com/orders?state=open&nonce=7",
+	]);
 	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/path?apiKey=abc&refreshToken=def&ok=1"]), [
 		"open",
 		"https://example.com/path?apiKey=%5BREDACTED%5D&refreshToken=%5BREDACTED%5D&ok=1",
@@ -1944,6 +1956,15 @@ test("redactSensitiveText preserves help placeholders while redacting bearer cre
 		"OPENAI_API_KEY=[REDACTED] AWS_SECRET_ACCESS_KEY: [REDACTED] export STRIPE_SECRET_KEY=[REDACTED] PRIVATE_KEY=[REDACTED] X-Private-Key: [REDACTED] private-key=[REDACTED] API-KEY=[REDACTED] Secret-Key: [REDACTED] apiKey=[REDACTED] privateKey: [REDACTED] connectionString=[REDACTED] databaseUrl: [REDACTED] mongodbUri=[REDACTED] MONGODB_URI=[REDACTED] failedChecks=true",
 	);
 	assert.equal(
+		redactSensitiveText("Redirect /sso?SAMLRequest=request-secret&SAMLResponse=response-secret&RelayState=relay-secret#state=oauth-secret&nonce=oidc-secret"),
+		"Redirect /sso?SAMLRequest=[REDACTED]&SAMLResponse=[REDACTED]&RelayState=[REDACTED]#state=[REDACTED]&nonce=[REDACTED]",
+	);
+	assert.equal(redactSensitiveText("Login help. Status /orders?state=open&nonce=7"), "Login help. Status /orders?state=open&nonce=7");
+	assert.equal(
+		redactSensitiveText("Redirect /?SAMLRequest=request-secret#state=oauth-secret then /orders?state=open"),
+		"Redirect /?SAMLRequest=[REDACTED]#state=[REDACTED] then /orders?state=open",
+	);
+	assert.equal(
 		redactSensitiveText("https://o914390.ingest.sentry.io/api/envelope/?sentry_key=sentry-secret&writeKey=write-secret&ok=1"),
 		"https://o914390.ingest.sentry.io/api/envelope/?sentry_key=%5BREDACTED%5D&writeKey=%5BREDACTED%5D&ok=1",
 	);
@@ -1965,7 +1986,15 @@ test("redactSensitiveText preserves help placeholders while redacting bearer cre
 	);
 });
 
+test("redactSensitiveText scans long tokens without blocking the host", () => {
+	const input = "A".repeat(200_000);
+	const startedAt = Date.now();
+	assert.equal(redactSensitiveText(input), input);
+	assert.ok(Date.now() - startedAt < 1_000, "redacting a 200k token should finish in under one second");
+});
+
 test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
+	assert.deepEqual(redactSensitiveValue({ state: "ready", nonceCount: 3 }), { state: "ready", nonceCount: 3 });
 	assert.deepEqual(
 		redactSensitiveValue({
 			apiKey: "abc",

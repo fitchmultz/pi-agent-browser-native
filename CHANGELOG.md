@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- Added direct-read lifecycle/source details and an explicit `details.browserWindow` headed-login handoff for direct or batched first/fresh local launches whose desktop visibility remains unverified; attached browsers do not receive it.
+
+### Changed
+
+- Exa searches now request primary, version-aware, distinct sources; both search providers remove later exact normalized-URL duplicates, label provider page dates, and report duplicate counts without overfetching or claiming crawl/version proof.
+
+### Fixed
+
+- Made unknown-page timeout recovery visibly executable under the page-target guard, live-verified successful tab changes (including same-URL titles, deliberate blank tabs, and closes that reveal blank tabs), rejected upstream's false-success `scrollintoview text=...` form directly or in batches while preserving help, and kept dialog timeout recovery usable.
+- Made `outputPath` preserve full command-redacted compacted direct, per-batch-row, and whole-batch payloads from wrapper-verified live spills instead of writing compact metadata, fail without writing when any required payload is unavailable, and show direct-read CLI/browser/source lifecycle without requiring structured details.
+- Redacted SAML/OAuth URL credentials and snapshot spill files while retaining exact internal page targets and useful non-auth application state URLs.
+
 ## 0.6.3 - 2026-09-01
 
 ### Added

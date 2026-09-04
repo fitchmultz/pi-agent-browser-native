@@ -54,6 +54,7 @@ export async function collectNavigationSummary(options: {
 	cwd: string;
 	namespace?: string;
 	priorTarget?: SessionTabTarget;
+	reusePriorTitle?: boolean;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<NavigationSummary | undefined> {
@@ -64,7 +65,7 @@ export async function collectNavigationSummary(options: {
 	// Reuse the title already observed for this exact URL instead of spending a second probe. Titles can
 	// change without a URL change on SPAs, but this summary is only a "last observed" page label; the URL
 	// stays live-probed on every call.
-	if (options.priorTarget?.title && normalizeComparableUrl(options.priorTarget.url) === normalizeComparableUrl(url)) {
+	if (options.reusePriorTitle !== false && options.priorTarget?.title && normalizeComparableUrl(options.priorTarget.url) === normalizeComparableUrl(url)) {
 		return { title: options.priorTarget.title, url, urlChanged: false };
 	}
 	const title = extractStringResultField(await runSessionCommandData({ args: ["get", "title"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal }), "title");
@@ -126,6 +127,20 @@ function sameScrollPositionSnapshot(left: ScrollPositionSnapshot, right: ScrollP
 		const other = right.containers[index];
 		return other?.id === container.id && other.scrollTop === container.scrollTop && other.scrollLeft === container.scrollLeft;
 	});
+}
+
+export function buildUnsupportedScrollIntoViewRecovery(options: { commandTokens: string[]; sessionName?: string }): { error: string; nextActions: AgentBrowserNextAction[] } | undefined {
+	if (!["scrollintoview", "scrollinto"].includes(options.commandTokens[0] ?? "") || options.commandTokens.some((token) => token === "--help" || token === "-h")) return undefined;
+	const match = /^text=(.+)$/s.exec(options.commandTokens[1] ?? "");
+	if (!match) return undefined;
+	const text = redactSensitiveText(match[1]);
+	return {
+		error: "scrollintoview accepts a CSS selector, xpath=..., or a current @e… ref; text=... is not supported and can falsely report success without moving the page.",
+		nextActions: [
+			{ id: "scroll-semantic-text-target", params: { args: withOptionalSessionArgs(options.sessionName, ["find", "text", text, "hover"]) }, reason: "Use the upstream semantic text locator; hover resolves and scrolls the matched element into view.", safety: "Hover may open a tooltip or menu. Use the snapshot/ref recovery instead when hover state could affect the workflow.", tool: "agent_browser" },
+			{ id: "refresh-refs-for-scroll-target", params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) }, reason: "Capture a current element ref, then retry scrollintoview with that @e… ref.", safety: "Read-only snapshot; choose the intended current ref before retrying the scroll.", tool: "agent_browser" },
+		],
+	};
 }
 
 export function buildScrollNoopDiagnostic(before: ScrollPositionSnapshot | undefined, after: ScrollPositionSnapshot | undefined): ScrollNoopDiagnostic | undefined {
@@ -896,7 +911,7 @@ function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
 	}
 }
 
-export function formatTimeoutPartialProgressText(progress: TimeoutPartialProgress): string {
+export function formatTimeoutPartialProgressText(progress: TimeoutPartialProgress, pageTargetUnknown = false): string {
 	const lines = [`Timeout partial progress: ${progress.summary}`];
 	const currentPageTitle = progress.currentPage?.title ? redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(progress.currentPage.title)) : undefined;
 	const currentPageUrl = progress.currentPage?.url ? sanitizeCurrentPageUrlForTimeoutDiagnostic(progress.currentPage.url) : undefined;
@@ -912,7 +927,10 @@ export function formatTimeoutPartialProgressText(progress: TimeoutPartialProgres
 		if (progress.steps.length > shownSteps.length) lines.push(`- ... ${progress.steps.length - shownSteps.length} more step${progress.steps.length - shownSteps.length === 1 ? "" : "s"} omitted`);
 	}
 	if (progress.retryStep?.retry?.args) {
-		lines.push(`Retry failed step: ${JSON.stringify({ args: redactInvocationArgs(progress.retryStep.retry.args) })}`);
+		const payload = JSON.stringify({ args: redactInvocationArgs(progress.retryStep.retry.args) });
+		lines.push(pageTargetUnknown
+			? `Retry candidate for step ${progress.retryStep.index}: ${payload}. Verify the current URL before running it.`
+			: `Retry failed step: ${payload}`);
 	}
 	for (const artifact of progress.artifacts) lines.push(`Artifact from step ${artifact.stepIndex}: ${redactSensitivePathSegmentsForDiagnostic(artifact.path)} (${artifact.exists ? `exists${typeof artifact.sizeBytes === "number" ? `, ${artifact.sizeBytes} bytes` : ""}` : "missing"})`);
 	return lines.join("\n");

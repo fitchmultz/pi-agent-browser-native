@@ -153,6 +153,17 @@ export interface SessionArtifactManifest {
 	version: 1;
 }
 
+export interface AgentBrowserLifecycle {
+	effectiveLaunch: { browserLaunched: boolean };
+}
+
+export interface AgentBrowserWindow {
+	mode: "headed";
+	ownership: "wrapper-managed";
+	sessionName: string;
+	visibility: "unverified";
+}
+
 export interface BatchStepPresentationDetails {
 	artifactVerification?: ArtifactVerificationSummary;
 	artifacts?: FileArtifactMetadata[];
@@ -165,7 +176,7 @@ export interface BatchStepPresentationDetails {
 	imagePath?: string;
 	imagePaths?: string[];
 	index: number;
-	lifecycle?: { effectiveLaunch: { browserLaunched: boolean } };
+	lifecycle?: AgentBrowserLifecycle;
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	nextActions?: AgentBrowserNextAction[];
 	pageChangeSummary?: AgentBrowserPageChangeSummary;

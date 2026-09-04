@@ -955,6 +955,30 @@ test("buildToolPresentation compacts large diagnostic output and preserves spill
 	await rm(String(spillPath), { force: true });
 });
 
+test("buildToolPresentation command-redacts whole-batch spill data", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "batch" },
+		cwd: process.cwd(),
+		envelope: {
+			success: true,
+            data: [
+                { command: ["cookies"], result: { cookies: [{ domain: "example.test", name: "session", value: "raw-cookie-secret" }] }, success: true },
+                { command: ["clipboard", "write", "raw-clipboard-secret"], error: "write permission denied for raw-clipboard-secret", success: false },
+                ...Array.from({ length: 90 }, (_, index) => ({ command: ["eval", "--stdin"], result: { result: `large successful batch row ${index + 1} ${"x".repeat(120)}` }, success: true })),
+			],
+		},
+	});
+
+	assert.equal((presentation.data as { compacted?: boolean }).compacted, true);
+	assert.ok(presentation.fullOutputPath);
+	const spill = await readFile(String(presentation.fullOutputPath), "utf8");
+	assert.doesNotMatch(spill, /raw-cookie-secret/);
+	assert.doesNotMatch(spill, /raw-clipboard-secret/);
+	assert.match(spill, /\[REDACTED\]/);
+	assert.match(spill, /large successful batch row 90/);
+	await rm(String(presentation.fullOutputPath), { force: true });
+});
+
 test("buildToolPresentation keeps failed batch context inline when compacting", async () => {
 	const largeSuccessfulSteps = Array.from({ length: 90 }, (_, index) => ({
 		command: ["eval", "--stdin"],

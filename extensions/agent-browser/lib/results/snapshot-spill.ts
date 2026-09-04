@@ -1,3 +1,4 @@
+import { redactSensitiveValue } from "../runtime.js";
 import type { PersistentSessionArtifactEviction, PersistentSessionArtifactStore } from "../temp.js";
 import { writePersistentSessionArtifactFile, writeSecureTempFile } from "../temp.js";
 import {
@@ -20,7 +21,7 @@ export async function writeSnapshotSpillFile(
 	persistentArtifactStore: PersistentSessionArtifactStore | undefined,
 ): Promise<SnapshotSpillWriteResult> {
 	const options = {
-		content: JSON.stringify(data, null, 2),
+		content: JSON.stringify(redactSensitiveValue(data), null, 2),
 		prefix: SNAPSHOT_SPILL_FILE_PREFIX,
 		suffix: ".json",
 	};

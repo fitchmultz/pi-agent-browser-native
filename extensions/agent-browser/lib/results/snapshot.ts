@@ -212,7 +212,7 @@ export async function buildSnapshotPresentation(
 		...(roleCountsText ? [`Top roles: ${roleCountsText}`] : []),
 		"",
 		"Compact snapshot view.",
-		"Viewport note: compact snapshots are DOM/signal-prioritized, not guaranteed to start with the currently scrolled viewport; use the full raw snapshot, a screenshot, or listed high-value refs when viewport context matters.",
+		"Viewport note: compact snapshots are DOM/signal-prioritized, not guaranteed to start with the currently scrolled viewport; use the full redacted snapshot, a screenshot, or listed high-value refs when viewport context matters.",
 	];
 
 	if (fallbackPreview) {
@@ -223,7 +223,7 @@ export async function buildSnapshotPresentation(
 		);
 		if (fallbackPreview.omittedCount > 0) {
 			lines.push(
-				`- ... (${fallbackPreview.omittedCount} additional snapshot lines omitted; ${fullOutputPath ? `full output path: ${fullOutputPath}` : "the full raw snapshot was omitted"})`,
+				`- ... (${fallbackPreview.omittedCount} additional snapshot lines omitted; ${fullOutputPath ? `full output path: ${fullOutputPath}` : "the full redacted snapshot was omitted"})`,
 			);
 		}
 	} else {
@@ -264,8 +264,8 @@ export async function buildSnapshotPresentation(
 	lines.push(
 		"",
 		fullOutputPath
-			? `Full raw snapshot path: ${fullOutputPath}`
-			: `Full raw snapshot unavailable: ${spillErrorText ?? "temp spill file could not be created."}`,
+			? `Full redacted snapshot path: ${fullOutputPath}`
+			: `Full redacted snapshot unavailable: ${spillErrorText ?? "temp spill file could not be created."}`,
 	);
 
 	const manifestFields = applySnapshotArtifactManifest({

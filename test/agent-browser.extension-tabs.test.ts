@@ -388,6 +388,67 @@ if (args.includes("open")) {
 	}
 });
 
+test("agentBrowserExtension live-verifies successful tab selection before later page work", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tab-selection-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "tab-state");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("tab") && args.includes("t1")) fs.writeFileSync(${JSON.stringify(statePath)}, "selected");
+if (args.includes("tab") && args.includes("t2")) fs.writeFileSync(${JSON.stringify(statePath)}, "blank");
+if (args.includes("tab") && args.includes("t3")) fs.writeFileSync(${JSON.stringify(statePath)}, "fallback");
+if (args.includes("tab") && args.includes("close")) fs.writeFileSync(${JSON.stringify(statePath)}, "blank");
+const state = fs.existsSync(${JSON.stringify(statePath)}) ? fs.readFileSync(${JSON.stringify(statePath)}, "utf8") : "start";
+const page = state === "blank" ? { title: "", url: "about:blank" } : state === "selected" ? { title: "Selected", url: "https://same.example/" } : state === "fallback" ? { title: "Fallback", url: "https://same.example/" } : { title: "Start", url: "https://same.example/" };
+if (args.includes("get") && args.includes("url")) process.stdout.write(JSON.stringify({ success: true, data: { result: page.url, url: page.url } }));
+else if (args.includes("get") && args.includes("title")) process.stdout.write(JSON.stringify({ success: true, data: { result: page.title, title: page.title } }));
+else if (args.includes("tab") && args.includes("list")) process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ active: true, id: "t2", title: "", url: "about:blank" }, { active: false, id: "t3", title: "Fallback", url: "https://same.example/" }] } }));
+else if (args.includes("tab") && args.includes("close")) process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+else if (args.includes("tab") && (args.includes("t1") || args.includes("t2") || args.includes("t3"))) process.stdout.write(JSON.stringify({ success: true, data: { tabId: args.includes("t1") ? "t1" : args.includes("t2") ? "t2" : "t3", ...page } }));
+else if (args.includes("set") && args.includes("viewport")) process.stdout.write(JSON.stringify({ success: true, data: { width: 1280, height: 720 } }));
+else process.stdout.write(JSON.stringify({ success: true, data: page }));`,
+	);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://same.example/"] })).isError, false);
+			const selected = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "t1"] });
+			assert.equal(selected.isError, false, JSON.stringify(selected));
+			assert.equal(selected.details?.sessionTabTargetUnknown, undefined);
+			assert.deepEqual(selected.details?.sessionTabTarget, { title: "Selected", url: "https://same.example/" });
+			const viewport = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["set", "viewport", "1280", "720"] });
+			assert.equal(viewport.isError, false, JSON.stringify(viewport));
+			const invocations = await readInvocationLog(logPath);
+			const tabIndex = invocations.findIndex((entry) => entry.args.includes("tab") && entry.args.includes("t1"));
+			const viewportIndex = invocations.findIndex((entry) => entry.args.includes("set") && entry.args.includes("viewport"));
+			assert.ok(tabIndex >= 0 && viewportIndex > tabIndex);
+			assert.ok(invocations.slice(tabIndex + 1, viewportIndex).some((entry) => entry.args.includes("get") && entry.args.includes("url")));
+			assert.ok(invocations.slice(tabIndex + 1, viewportIndex).some((entry) => entry.args.includes("get") && entry.args.includes("title")));
+
+			const blank = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "t2"] });
+			assert.equal(blank.isError, false, JSON.stringify(blank));
+			assert.equal(blank.details?.aboutBlankSessionMismatch, undefined);
+			assert.equal((blank.details?.sessionTabTarget as { title?: string; url?: string } | undefined)?.url, "about:blank");
+			assert.equal((blank.details?.sessionTabTarget as { title?: string; url?: string } | undefined)?.title, undefined);
+			assert.equal(await readFile(statePath, "utf8"), "blank");
+
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "t1"] })).isError, false);
+			const closedToBlank = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["tab", "close"] });
+			assert.equal(closedToBlank.isError, false, JSON.stringify(closedToBlank));
+			assert.equal(closedToBlank.details?.aboutBlankSessionMismatch, undefined);
+			assert.deepEqual(closedToBlank.details?.sessionTabTarget, { title: undefined, url: "about:blank" });
+			assert.equal(await readFile(statePath, "utf8"), "blank");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension does not treat arbitrary batch eval title/url results as session navigation", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-eval-target-"));
 	const logPath = join(tempDir, "invocations.log");

@@ -39,6 +39,9 @@ test("unverified page transitions still require a live URL before content access
 	assert.equal(getPageTargetValidationError({ args: ["get", "url"], pageUrlUnknown: true }), undefined);
 	assert.equal(getPageTargetValidationError({ args: ["tab", "list"], pageUrlUnknown: true }), undefined);
 	assert.equal(getPageTargetValidationError({ args: ["tab", "t2"], pageUrlUnknown: true }), undefined);
+	assert.equal(getPageTargetValidationError({ args: ["dialog", "status"], pageUrlUnknown: true }), undefined);
+	assert.equal(getPageTargetValidationError({ args: ["dialog", "dismiss"], pageUrlUnknown: true }), undefined);
+	assert.equal(getPageTargetValidationError({ args: ["batch", "--bail"], pageUrlUnknown: true, stdin: JSON.stringify([["get", "url"], ["snapshot", "-i"]]) }), undefined);
 	assert.match(getPageTargetValidationError({ args: ["snapshot", "-i"], pageUrlUnknown: true }) ?? "", /active page became unverified/);
 	assert.equal(getExplicitSessionPageVerificationRequirement({ args: ["--session", "external", "session", "info"] }), undefined);
 	assert.match(getExplicitSessionPageVerificationRequirement({ args: ["--session", "external", "snapshot", "-i"] }) ?? "", /active page became unverified/);

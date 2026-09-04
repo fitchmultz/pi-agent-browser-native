@@ -64,7 +64,7 @@ test("buildToolPresentation reuses compact snapshot rendering inside batch outpu
 	}
 });
 
-test("buildToolPresentation compacts oversized snapshots and spills the raw snapshot to a private temp file", async () => {
+test("buildToolPresentation compacts oversized snapshots and spills a redacted snapshot to a private temp file", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 90 }, (_, index) => [
 			`e${index + 1}`,
@@ -82,7 +82,7 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 		envelope: {
 			success: true,
 			data: {
-				origin: "https://example.com/huge",
+				origin: "https://example.com/huge?SAMLRequest=saml-secret&RelayState=relay-secret",
 				refs,
 				snapshot,
 			},
@@ -94,7 +94,7 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	assert.match(text, /Compact snapshot view/);
 	assert.match(text, /Viewport note: compact snapshots are DOM\/signal-prioritized/);
 	assert.match(text, /Key refs:/);
-	assert.match(presentation.summary, /Snapshot: 90 refs on https:\/\/example.com\/huge \(compact\)/);
+	assert.match(presentation.summary, /Snapshot: 90 refs on https:\/\/example.com\/huge\?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D \(compact\)/);
 	assert.equal(typeof presentation.fullOutputPath, "string");
 	assert.equal((presentation.data as { compacted: boolean; viewportOrdering?: string }).compacted, true);
 	assert.equal((presentation.data as { compacted: boolean; viewportOrdering?: string }).viewportOrdering, "dom-signal-prioritized");
@@ -107,6 +107,8 @@ test("buildToolPresentation compacts oversized snapshots and spills the raw snap
 	const spillDirStats = await stat(dirname(spillPath));
 	assert.match(spillText, /Large snapshot row 120/);
 	assert.match(spillText, /Actionable control 1/);
+	assert.match(spillText, /SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D/);
+	assert.doesNotMatch(spillText, /saml-secret|relay-secret/);
 	assert.equal(spillStats.mode & 0o777, 0o600);
 	assert.equal(spillDirStats.mode & 0o777, 0o700);
 	await rm(spillPath, { force: true });
@@ -694,7 +696,7 @@ test("buildToolPresentation degrades gracefully when snapshot spill creation exc
 			});
 
 			assert.equal(presentation.fullOutputPath, undefined);
-			assert.match((presentation.content[0] as { text: string }).text, /Full raw snapshot unavailable:/);
+			assert.match((presentation.content[0] as { text: string }).text, /Full redacted snapshot unavailable:/);
 			assert.match((presentation.content[0] as { text: string }).text, /temp spill budget exceeded/i);
 		});
 	} finally {

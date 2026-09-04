@@ -1,7 +1,9 @@
-import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { dirname, extname, isAbsolute, resolve } from "node:path";
 
 import { isRecord } from "../parsing.js";
+import { isSessionArtifactManifest } from "../results/artifact-manifest.js";
+import type { SessionArtifactManifest } from "../results/contracts.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
 
 export interface AgentBrowserOutputFileDetails {
@@ -24,10 +26,42 @@ function getTextContent(result: AgentBrowserToolResult): string {
 		.join("\n\n") ?? "";
 }
 
-function getOutputPayload(result: AgentBrowserToolResult): { source: AgentBrowserOutputFileDetails["source"]; value: unknown } {
+function getOutputSource(result: AgentBrowserToolResult): AgentBrowserOutputFileDetails["source"] {
+	return isRecord(result.details) && result.details.data !== undefined ? "details.data" : "content.text";
+}
+
+async function readCompactedSpill(path: string | undefined, manifest: SessionArtifactManifest | undefined): Promise<unknown> {
+	if (!path || !manifest?.entries.some((entry) =>
+		entry.kind === "spill"
+			&& (entry.path === path || entry.absolutePath === path)
+			&& (entry.storageScope === "persistent-session" || entry.storageScope === "process-temp")
+			&& (entry.retentionState === "live" || entry.retentionState === "ephemeral")
+	)) throw new Error("Full compacted output is unavailable from the wrapper-managed spill; outputPath was not written.");
+	const text = await readFile(path, "utf8");
+	return extname(path) === ".json" ? JSON.parse(text) as unknown : text;
+}
+
+async function rehydrateCompactedData(data: unknown, details: Record<string, unknown>, manifest: SessionArtifactManifest | undefined): Promise<unknown> {
+	if (isRecord(data) && data.compacted === true) {
+		return readCompactedSpill(typeof details.fullOutputPath === "string" ? details.fullOutputPath : undefined, manifest);
+	}
+	if (!Array.isArray(data)) return data;
+	const batchSteps = Array.isArray(details.batchSteps) ? details.batchSteps : [];
+	return Promise.all(data.map(async (row, index) => {
+		if (!isRecord(row) || !isRecord(row.result) || row.result.compacted !== true) return row;
+		const step = isRecord(batchSteps[index]) ? batchSteps[index] : undefined;
+		const path = typeof step?.fullOutputPath === "string"
+			? step.fullOutputPath
+			: typeof row.result.fullOutputPath === "string" ? row.result.fullOutputPath : undefined;
+		return { ...row, result: await readCompactedSpill(path, manifest) };
+	}));
+}
+
+async function getOutputPayload(result: AgentBrowserToolResult): Promise<{ source: AgentBrowserOutputFileDetails["source"]; value: unknown }> {
 	const details = isRecord(result.details) ? result.details : undefined;
-	if (details && details.data !== undefined) return { source: "details.data", value: details.data };
-	return { source: "content.text", value: getTextContent(result) };
+	if (details?.data === undefined) return { source: "content.text", value: getTextContent(result) };
+	const manifest = isSessionArtifactManifest(details.artifactManifest) ? details.artifactManifest : undefined;
+	return { source: "details.data", value: await rehydrateCompactedData(details.data, details, manifest) };
 }
 
 function serializeOutputPayload(value: unknown): string {
@@ -76,11 +110,11 @@ export async function applyAgentBrowserOutputPath(options: {
 	if (options.result.isError || (isRecord(options.result.details) && options.result.details.resultCategory === "failure")) return options.result;
 	const requestedPath = normalizeRequestedOutputPath(options.outputPath);
 	const absolutePath = isAbsolute(requestedPath) ? requestedPath : resolve(options.cwd, requestedPath);
-	const payload = getOutputPayload(options.result);
+	const source = getOutputSource(options.result);
 	for (const artifactPath of getArtifactPaths(options.result, options.cwd)) {
 		if (!await pathsReferToSameFile(absolutePath, artifactPath)) continue;
 		const message = "outputPath resolves to the same file as a browser artifact destination; choose a separate outputPath or omit it. The browser artifact was preserved.";
-		const outputFile: AgentBrowserOutputFileDetails = { absolutePath, error: message, path: requestedPath, source: payload.source, status: "failed" };
+		const outputFile: AgentBrowserOutputFileDetails = { absolutePath, error: message, path: requestedPath, source, status: "failed" };
 		const details = isRecord(options.result.details) ? { ...options.result.details } : {};
 		delete details.successCategory;
 		return {
@@ -91,6 +125,7 @@ export async function applyAgentBrowserOutputPath(options: {
 		};
 	}
 	try {
+		const payload = await getOutputPayload(options.result);
 		const serialized = serializeOutputPayload(payload.value);
 		await mkdir(dirname(absolutePath), { recursive: true });
 		await writeFile(absolutePath, serialized, "utf8");
@@ -104,7 +139,7 @@ export async function applyAgentBrowserOutputPath(options: {
 		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		const outputFile: AgentBrowserOutputFileDetails = { absolutePath, error: message, path: requestedPath, source: payload.source, status: "failed" };
+		const outputFile: AgentBrowserOutputFileDetails = { absolutePath, error: message, path: requestedPath, source, status: "failed" };
 		const details = isRecord(options.result.details)
 			? (() => {
 				const rest = { ...options.result.details };

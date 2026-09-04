@@ -25,6 +25,7 @@ import {
 	collectTimeoutPartialProgress,
 	formatTimeoutPartialProgressText,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/diagnostics.js";
+import { applyAgentBrowserOutputPath } from "../extensions/agent-browser/lib/orchestration/output-file.js";
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
@@ -268,6 +269,8 @@ if (args.includes("get") && args.includes("url")) {
 				["get", "url"],
 				["html", "body"],
 				["tab", "t2"],
+				["get", "url"],
+				["get", "title"],
 			]);
 			const otherOpenIndex = invocations.findIndex((entry) => entry.args.includes("caller-other") && entry.args.includes("open"));
 			const raceContentIndex = invocations.findIndex((entry) => entry.args.includes("caller-race") && entry.args.includes("html"));
@@ -1452,7 +1455,27 @@ test("agentBrowserExtension writes eval and get output data to requested files",
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + "\\n");
 const command = args.find((arg) => !arg.startsWith("-") && arg !== "piab-test");
-if (args.includes("eval")) {
+if (args.includes("batch")) {
+  const commands = JSON.parse(fs.readFileSync(0, "utf8"));
+  process.stdout.write(JSON.stringify(commands.map((command) => ({
+    command,
+    success: true,
+    result: command[0] === "cookies"
+      ? { cookies: [{ domain: "example.com", name: "session", value: "raw-cookie-secret" }] }
+      : { content: "Large batch documentation " + "x".repeat(9000) + " BATCH-END-SENTINEL Authorization: Bearer batch-secret", source: "raw" }
+  }))));
+} else if (args.includes("read")) {
+  process.stdout.write(JSON.stringify({ success: true, data: {
+    content: "Large documentation " + "x".repeat(9000) + " END-SENTINEL Authorization: Bearer read-secret",
+    contentType: "text/markdown; charset=utf-8",
+    finalUrl: "https://example.com/docs?SAMLRequest=saml-secret&state=oauth-secret",
+    lifecycle: { effectiveLaunch: { browserLaunched: false }, launched: false, reused: false },
+    source: "raw",
+    status: 200,
+    truncated: false,
+    url: "https://example.com/docs?RelayState=relay-secret&nonce=nonce-secret"
+  } }));
+} else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Example", rows: [1, 2, 3] } } }));
 } else if (args.includes("get") && args.includes("url")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/", url: "https://example.com/" } }));
@@ -1500,6 +1523,51 @@ if (args.includes("eval")) {
 			assert.equal(getResult.isError, false);
 			assert.equal(await readFile(join(tempDir, "logs/terminal-state.final.txt"), "utf8"), JSON.stringify({ result: "visible terminal text" }, null, 2) + "\n");
 			assert.match(getResult.content[0]?.text ?? "", /Output file: logs\/terminal-state\.final\.txt/);
+
+			const largeReadResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["read", "https://example.com/docs"],
+				outputPath: "logs/full-read.json",
+			});
+			assert.equal(largeReadResult.isError, false, JSON.stringify(largeReadResult));
+			assert.equal((largeReadResult.details?.data as { compacted?: boolean } | undefined)?.compacted, true);
+			assert.equal(largeReadResult.details?.agentBrowserStarted, true);
+			assert.equal(largeReadResult.details?.readSource, "raw");
+			assert.deepEqual(largeReadResult.details?.lifecycle, { effectiveLaunch: { browserLaunched: false } });
+			assert.match(largeReadResult.content[0]?.text ?? "", /Read execution: source raw; CLI started: yes; managed browser lifecycle active: no; managed session outcome: unchanged\./);
+			assert.equal((largeReadResult.details?.managedSessionOutcome as { status?: string } | undefined)?.status, "unchanged");
+			const fullReadText = await readFile(join(tempDir, "logs/full-read.json"), "utf8");
+			const fullRead = JSON.parse(fullReadText) as Record<string, unknown>;
+			assert.match(String(fullRead.content), /END-SENTINEL Authorization: Bearer \[REDACTED\]$/);
+			assert.equal(fullRead.contentType, "text/markdown; charset=utf-8");
+			assert.equal(fullRead.source, "raw");
+			assert.equal(fullRead.status, 200);
+			assert.equal(fullRead.truncated, false);
+			assert.match(String(fullRead.finalUrl), /SAMLRequest=%5BREDACTED%5D&state=%5BREDACTED%5D/);
+			assert.match(String(fullRead.url), /RelayState=%5BREDACTED%5D&nonce=%5BREDACTED%5D/);
+			assert.doesNotMatch(fullReadText, /read-secret|saml-secret|oauth-secret|relay-secret|nonce-secret|"compacted"/);
+			const fullReadPath = largeReadResult.details?.fullOutputPath;
+			assert.equal(typeof fullReadPath, "string");
+			assert.equal((largeReadResult.details?.artifactManifest as { entries?: Array<{ kind?: string; path?: string }> } | undefined)?.entries?.some((entry) => entry.kind === "spill" && entry.path === fullReadPath), true);
+			assert.deepEqual(largeReadResult.details?.outputFile, {
+				absolutePath: join(tempDir, "logs/full-read.json"),
+				bytes: Buffer.byteLength(fullReadText),
+				path: "logs/full-read.json",
+				source: "details.data",
+				status: "saved",
+			});
+
+			const largeBatchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "--bail"],
+				stdin: JSON.stringify([["cookies"], ...Array.from({ length: 24 }, () => ["read", "https://example.com/docs"])]),
+				outputPath: "logs/full-batch.json",
+			});
+			assert.equal(largeBatchResult.isError, false, JSON.stringify(largeBatchResult));
+			assert.equal((largeBatchResult.details?.data as { compacted?: boolean } | undefined)?.compacted, true);
+			const fullBatchText = await readFile(join(tempDir, "logs/full-batch.json"), "utf8");
+			const fullBatch = JSON.parse(fullBatchText) as Array<{ result?: { content?: string; cookies?: Array<{ value?: string }> } }>;
+			assert.equal(fullBatch[0]?.result?.cookies?.[0]?.value, "[REDACTED]");
+			assert.match(String(fullBatch.at(-1)?.result?.content), /BATCH-END-SENTINEL Authorization: Bearer \[REDACTED\]$/);
+			assert.doesNotMatch(fullBatchText, /raw-cookie-secret|batch-secret|"compacted"/);
 
 			const jsonResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["stream", "status", "--json"],
@@ -1569,6 +1637,79 @@ if (args.includes("eval")) {
 			assert.equal(failedResult.details?.outputFile, undefined);
 			await assert.rejects(readFile(join(tempDir, "logs/failed-action.txt"), "utf8"));
 		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("applyAgentBrowserOutputPath refuses compact metadata without a live wrapper-managed spill", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-missing-spill-"));
+	const arbitraryPath = join(tempDir, "arbitrary.json");
+	const outputPath = join(tempDir, "result.json");
+	try {
+		await writeFile(arbitraryPath, '{"secret":"must-not-copy"}');
+		const result = await applyAgentBrowserOutputPath({
+			cwd: tempDir,
+			outputPath,
+			result: {
+				content: [{ type: "text", text: "Large output compacted" }],
+				details: {
+					artifactManifest: { entries: [], evictedCount: 0, liveCount: 0, maxEntries: 10, updatedAtMs: Date.now(), version: 1 },
+					data: { compacted: true },
+					fullOutputPath: arbitraryPath,
+					resultCategory: "success",
+				},
+				isError: false,
+			},
+		});
+		assert.equal(result.isError, true);
+		const details = result.details as { outputFile?: { error?: string }; resultCategory?: string };
+		assert.equal(details.resultCategory, "failure");
+		assert.match(String(details.outputFile?.error), /wrapper-managed spill/);
+		await assert.rejects(readFile(outputPath, "utf8"));
+		assert.equal(await readFile(arbitraryPath, "utf8"), '{"secret":"must-not-copy"}');
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("applyAgentBrowserOutputPath rehydrates compacted batch rows from live wrapper spills", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-batch-spill-"));
+	const spillPath = join(tempDir, "batch-spill.json");
+	const outputPath = join(tempDir, "batch-output.json");
+	const fullRead = { content: `Long documentation ${"x".repeat(9_000)} END-SENTINEL`, source: "raw" };
+	const now = Date.now();
+	try {
+		await writeFile(spillPath, JSON.stringify(fullRead));
+		const result = await applyAgentBrowserOutputPath({
+			cwd: tempDir,
+			outputPath,
+			result: {
+				content: [{ type: "text", text: "Batch output compacted" }],
+				details: {
+					artifactManifest: {
+						entries: [{ createdAtMs: now, kind: "spill", path: spillPath, retentionState: "live", storageScope: "process-temp" }],
+						evictedCount: 0,
+						liveCount: 1,
+						maxEntries: 10,
+						updatedAtMs: now,
+						version: 1,
+					},
+					batchSteps: [{ fullOutputPath: spillPath }, {}],
+					data: [
+						{ command: ["read", "https://example.test/docs"], result: { compacted: true, fullOutputPath: spillPath }, success: true },
+						{ command: ["get", "title"], result: { title: "Docs" }, success: true },
+					],
+					resultCategory: "success",
+				},
+				isError: false,
+			},
+		});
+		assert.equal(result.isError, false, JSON.stringify(result));
+		const saved = JSON.parse(await readFile(outputPath, "utf8")) as Array<{ result?: unknown }>;
+		assert.deepEqual(saved[0]?.result, fullRead);
+		assert.deepEqual(saved[1]?.result, { title: "Docs" });
+		assert.doesNotMatch(await readFile(outputPath, "utf8"), /"compacted"/);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -1692,6 +1833,62 @@ if (args.includes("get") && args.includes("url")) {
 			const mutatingNextActions = (mutatingTimeoutResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined) ?? [];
 			assert.equal(mutatingNextActions.some((action) => action.id === "retry-timeout-step"), false);
 			assert.deepEqual(mutatingNextActions.find((action) => action.id === "inspect-current-page-after-timeout")?.params?.args?.slice(-2), ["snapshot", "-i"]);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("timeout recovery verifies an unknown page target before snapshotting", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-timeout-target-recovery-"));
+	const failUrlPath = join(tempDir, "fail-url");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("batch")) {
+  const steps = JSON.parse(fs.readFileSync(0, "utf8"));
+  if (steps[0]?.[0] === "get" && steps[0]?.[1] === "url") {
+    fs.rmSync(${JSON.stringify(failUrlPath)}, { force: true });
+    process.stdout.write(JSON.stringify([
+      { command: ["get", "url"], success: true, result: { result: "https://example.test/recovered", url: "https://example.test/recovered" } },
+      { command: ["snapshot", "-i"], success: true, result: { origin: "https://example.test/recovered", refs: {}, snapshot: "- heading Recovered" } }
+    ]));
+  } else {
+    fs.writeFileSync(${JSON.stringify(failUrlPath)}, "1");
+    setInterval(() => {}, 60_000);
+  }
+} else if (args.includes("get") && args.includes("url")) {
+  if (fs.existsSync(${JSON.stringify(failUrlPath)})) { process.stdout.write(JSON.stringify({ success: false, error: "page unavailable" })); process.exitCode = 1; }
+  else process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.test/start", url: "https://example.test/start" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Start", title: "Start" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Start", url: "https://example.test/start" } }));
+}`,
+	);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "150" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test/start"] })).isError, false);
+			const timedOut = await executeRegisteredTool(harness.tool, harness.ctx, {
+				job: { steps: [{ action: "open", url: "https://example.test/next" }, { action: "fill", selector: "#search", text: "query" }] },
+			});
+			assert.equal(timedOut.isError, true);
+			assert.equal(timedOut.details?.sessionTabTargetUnknown, true);
+			const actions = (timedOut.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; stdin?: string } }> | undefined) ?? [];
+			assert.equal(actions.some((action) => action.params?.args?.slice(-2).join(" ") === "snapshot -i"), false);
+			const recovery = actions.find((action) => action.id === "verify-page-target-after-timeout");
+			assert.deepEqual(recovery?.params?.args?.slice(-2), ["batch", "--bail"]);
+			assert.equal(recovery?.params?.stdin, JSON.stringify([["get", "url"], ["snapshot", "-i"]]));
+			assert.match(timedOut.content[0]?.text ?? "", /Retry candidate for step \d+: .*Verify the current URL before running it\./i);
+			assert.match(timedOut.content[0]?.text ?? "", /verify-page-target-after-timeout.*batch.*--bail.*get.*url.*snapshot.*-i/);
+			assert.ok(recovery?.params);
+			const recovered = await executeRegisteredTool(harness.tool, harness.ctx, recovery.params);
+			assert.equal(recovered.isError, false, JSON.stringify(recovered));
+			assert.equal(recovered.details?.sessionTabTargetUnknown, undefined);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
