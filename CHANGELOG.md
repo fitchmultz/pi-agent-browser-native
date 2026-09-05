@@ -4,7 +4,13 @@
 
 ### Fixed
 
-- Added session-aware `inspect-overlay-state` recovery for direct and batched clicks that upstream blocks because another element covers the target at its click point. These failures remain `upstream-error`; the wrapper refreshes refs for inspection without retrying the blocked click or guessing a dismiss control.
+- Added session-aware `inspect-overlay-state` recovery for direct and batched clicks that upstream blocks because another element covers the target at its click point. These failures remain `upstream-error`; the wrapper recommends refreshing refs for inspection without retrying the blocked click or guessing a dismiss control.
+
+## 0.6.6 - 2026-09-05
+
+### Fixed
+
+- Resolve POSIX process identity with `ps` from `PATH` when the system paths are unavailable, so managed-session locks work on NixOS-style installations. Keep system-path preference and reject malformed identity output. Thanks to @GodTamIt for the report and fix in #142 / #143.
 
 ## 0.6.5 - 2026-09-04
 
