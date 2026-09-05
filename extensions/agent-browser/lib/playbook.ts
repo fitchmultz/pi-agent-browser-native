@@ -73,10 +73,6 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 
 export const TOOL_PROMPT_GUIDELINES_SUFFIX = [
 	"Prefer agent_browser over bash, osascript, AppleScript, or generic browser shell for sites, docs, clicks, fills, screenshots, eval, and batch.",
-	"Pass exact agent-browser CLI arguments in agent_browser args when you are not using script, semanticAction, job, or qa, excluding the binary name and --json (agent_browser injects --json automatically).",
-	"Use top-level agent_browser stdin only for eval --stdin, batch, auth save --password-stdin, or wrapper-generated job/qa batches instead of shell heredocs or password args; script puts any inner stdin on browser({ stdin }), and other command/stdin combinations are rejected before launch.",
-	`Let the agent_browser extension-managed session handle the common path unless you explicitly need a fresh launch for launch-scoped flags (${LAUNCH_SCOPED_FLAG_LABEL}).`,
-	"Use agent_browser sessionMode=fresh when switching from an existing implicit session to a new profile/browser executable/debug/init-script/provider launch without inventing a fixed explicit session name; later auto calls will follow that new session.",
 ] as const;
 
 export const INSPECTION_TOOL_CALL_EXAMPLES = [
