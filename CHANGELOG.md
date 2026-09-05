@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.6.5 - 2026-09-04
+
+### Fixed
+
+- Corrected README and maintainer guidance for Pi settings isolation, project trust, supported version floors, and optional web-search registration.
+- Replaced invalid download-example refs and stale version wording. Runtime code and dependencies are unchanged from v0.6.4.
+
 ## 0.6.4 - 2026-09-04
 
 ### Added

@@ -198,9 +198,10 @@ Before publishing, validate both local-checkout modes without mixing their assum
 
 1. Install `agent-browser` separately.
 2. Launch `pi --approve --no-extensions -e .` from this trusted repository root. Omit `--approve` only when testing Pi's Project Trust prompt.
-3. Confirm the checkout package loads the compiled `dist/extensions/agent-browser/index.js` entrypoint (run `npm run build` first after source edits).
-4. Run a smoke prompt that exercises `agent_browser`.
-5. Restart the `pi` process after extension edits; Pi settings and `/reload` are not the validation target in this isolated mode.
+3. `--no-extensions` disables automatic extension loading only; settings, configured package resolution, and other resource types remain active. For isolated test settings, use temporary `HOME` and `PI_CODING_AGENT_DIR` directories with `PI_OFFLINE=1`, providing only the model credentials the smoke needs.
+4. Confirm the checkout package loads the compiled `dist/extensions/agent-browser/index.js` entrypoint (run `npm run build` first after source edits).
+5. Run a smoke prompt that exercises `agent_browser`.
+6. Restart Pi after extension edits; configured-source `/reload` is a separate validation mode.
 
 For expanded-surface validation, the smoke prompt should cover native tool invocation rather than shelling out to `agent-browser`: `--version`, `--help`, `skills list`, `skills get core --full`, `open` with `sessionMode: "fresh"`, `snapshot -i`, `click`, top-level `semanticAction` (locator shorthand compiled to upstream `find` and native dropdown selection compiled to upstream `select`, optionally with `semanticAction.session` when you need the same named upstream session as a prior explicit `--session` call), `eval --stdin`, `batch` via stdin, top-level `job`, `qa`, or experimental `sourceLookup` / `networkSourceLookup` (compiled batch smoke), `screenshot <path>`, explicit `--session … open` plus `--session … close`, `network requests`, `console` / `errors`, `diff snapshot`, `stream status` plus `stream disable`, `dashboard start` plus `dashboard stop`, and `chat <message>` (credential failure is acceptable evidence of wrapper pass-through when `AI_GATEWAY_API_KEY` is intentionally unset). Clean up any opened browser session with `close`, remove temporary files, and kill the tmux session before ending validation.
 

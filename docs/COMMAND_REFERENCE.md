@@ -502,17 +502,17 @@ Do not omit the load state value; use `wait --load <state>` with `load`, `domcon
 
 For desktop-host readiness, prefer condition waits over fixed sleeps. Use this ladder: `wait --text` / `wait --url` / `wait --fn` / `wait --load <state>` / `wait --download` when a real condition exists; after raw `connect`, run `tab list` → `tab t<N>` → condition wait or `snapshot -i`; after wrapper-owned `electron.launch`, use `electron.probe` / `electron.status` for launch health or target mismatch; use `qa.attached` when expected text or selector plus diagnostics can express the check. Upstream `agent-browser 0.31.1` supports `wait --url` glob forms such as `**/dashboard` against the full active URL. Fixed waits are a last resort: use explicit `--timeout` or top-level `timeoutMs` for legitimately slow waits, and treat a successful fixed-wait payload such as `"waited":"timeout"` as elapsed time only, not proof that the desktop host finished. Verify with an observed condition, fresh snapshot, or screenshot before continuing.
 
-Use `wait --download [path]` after an earlier action has already started a browser download, such as a dashboard export button that responds asynchronously:
+Use `wait --download [path]` after an earlier action has already started a browser download, such as a dashboard export button that responds asynchronously. Use the control's current snapshot ref (for example `@e5`):
 
 ```json
-{ "args": ["click", "@export"] }
+{ "args": ["click", "@e5"] }
 { "args": ["wait", "--download", "/tmp/report.csv"] }
 ```
 
 For one-call flows, put the click and wait in `batch`; the wait step keeps the saved-file metadata in `details.batchSteps[n].savedFilePath` and `details.batchSteps[n].savedFile`:
 
 ```json
-{ "args": ["batch"], "stdin": "[[\"click\",\"@export\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
+{ "args": ["batch"], "stdin": "[[\"click\",\"@e5\"],[\"wait\",\"--download\",\"/tmp/report.csv\"]]" }
 ```
 
 A successful wait-based download renders a readable summary such as `Download completed: /tmp/report.csv` and exposes top-level `details.savedFilePath` plus `details.savedFile` for non-batch calls. With current upstream `agent-browser`, `wait --download <path>` may report the requested path before this environment can verify that the file was persisted there. Treat `details.savedFilePath` as upstream-reported metadata unless `details.artifacts[].exists` is true. Upstream tracking: [vercel-labs/agent-browser#1300](https://github.com/vercel-labs/agent-browser/issues/1300).
