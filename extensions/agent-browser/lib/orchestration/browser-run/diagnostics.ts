@@ -8,7 +8,7 @@ import { executableExistsOnPath } from "../../executable-path.js";
 import type { AgentBrowserSourceLookupAnalysis, CompiledAgentBrowserJob, CompiledAgentBrowserSemanticAction } from "../../input-modes/types.js";
 import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.js";
-import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
+import { buildInspectOverlayStateAction, buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, isAboutBlankUrl, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import { extractUpstreamCommandTokens, parseWaitCommandTokens, redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
@@ -301,7 +301,7 @@ export function formatOverlayBlockerText(diagnostic: OverlayBlockerDiagnostic): 
 }
 
 export function buildOverlayBlockerNextActions(options: { diagnostic: OverlayBlockerDiagnostic; sessionName?: string }): AgentBrowserNextAction[] {
-	return [{ id: "inspect-overlay-state", params: { args: withOptionalSessionArgs(options.sessionName, ["snapshot", "-i"]) }, reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.", safety: "Read-only inspection; use current refs from this snapshot before interacting.", tool: "agent_browser" }, ...options.diagnostic.candidates.map((candidate, index) => ({ id: `try-overlay-blocker-candidate-${index + 1}`, params: { args: withOptionalSessionArgs(options.sessionName, candidate.args) }, reason: candidate.reason, safety: "Only click this if the candidate is clearly a close/dismiss control for an overlay that blocks the intended workflow.", tool: "agent_browser" as const }))];
+	return [buildInspectOverlayStateAction(options.sessionName), ...options.diagnostic.candidates.map((candidate, index) => ({ id: `try-overlay-blocker-candidate-${index + 1}`, params: { args: withOptionalSessionArgs(options.sessionName, candidate.args) }, reason: candidate.reason, safety: "Only click this if the candidate is clearly a close/dismiss control for an overlay that blocks the intended workflow.", tool: "agent_browser" as const }))];
 }
 
 export function collectSnapshotOverlayBlockerDiagnostic(data: unknown): OverlayBlockerDiagnostic | undefined {

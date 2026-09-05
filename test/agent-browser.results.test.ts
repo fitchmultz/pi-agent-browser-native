@@ -7,6 +7,7 @@ import { buildAgentBrowserResultCategoryDetails, classifyAgentBrowserFailureCate
 import { mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
+import { isOverlayBlockedClickError } from "../extensions/agent-browser/lib/results/presentation/errors.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
 import {
 	alignPageChangeSummaryNextActionIds,
@@ -277,6 +278,14 @@ test("classifyAgentBrowserSuccessCategory locks common machine-readable success 
 	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [{ absolutePath: "/tmp/a.png", exists: false, kind: "image", path: "/tmp/a.png" }] }), "artifact-unverified");
 });
 
+test("isOverlayBlockedClickError narrowly matches upstream covered-click failures", () => {
+	const errorText = "Element '@e1' is covered by <div role=dialog> at its click point, so the input would land on that element instead.";
+	assert.equal(isOverlayBlockedClickError("click", errorText), true);
+	assert.equal(isOverlayBlockedClickError("hover", errorText), false);
+	assert.equal(isOverlayBlockedClickError("click", "Element '@e1' is covered by a sticky header."), false);
+	assert.equal(isOverlayBlockedClickError("click", "The target moved at its click point."), false);
+});
+
 test("buildAgentBrowserNextActions returns exact native-tool recommendations for common states", () => {
 	for (const command of ["open", "goto", "navigate"] as const) {
 		assert.deepEqual(buildAgentBrowserNextActions({ command, resultCategory: "success", successCategory: "completed" }), [
@@ -299,6 +308,16 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	]);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--text", "Done"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.map((action) => action.id), ["inspect-after-text-assertion-failure"]);
 	assert.equal(buildAgentBrowserNextActions({ command: "open", resultCategory: "failure", failureCategory: "upstream-error" })?.[0]?.id, "inspect-page-after-navigation-error");
+	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", failureCategory: "upstream-error", overlayBlockedClick: true, resultCategory: "failure", sessionName: "named" }), [
+		{
+			id: "inspect-overlay-state",
+			params: { args: ["--session", "named", "snapshot", "-i"] },
+			reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
+			safety: "Read-only inspection; do not blindly retry the blocked click, and use current refs from this snapshot before interacting.",
+			tool: "agent_browser",
+		},
+	]);
+	assert.equal(buildAgentBrowserNextActions({ command: "click", failureCategory: "upstream-error", resultCategory: "failure" }), undefined);
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout", sessionName: "named" })?.[0]?.params?.args, ["--session", "named", "snapshot", "-i"]);
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "open", resultCategory: "failure", failureCategory: "upstream-error", sessionName: "named" })?.[0]?.params?.args, ["--session", "named", "get", "url"]);
 	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
@@ -497,6 +516,33 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 	assert.match((presentation.content[0] as { text: string }).text, /- \[t1\] label=chat target=4A0B7C4E1F2D3A4B5C6D7E8F90A1B2C3 ChatGPT — https:\/\/chatgpt\.com\//);
 	assert.match((presentation.content[0] as { text: string }).text, /\* \[t2\] label=grok Grok — https:\/\/grok\.com\//);
 	assert.equal(presentation.summary, "Tabs: 2");
+});
+
+test("buildToolPresentation keeps covered clicks as upstream errors with inspection-only recovery", async () => {
+	const upstreamError = "Element '@e1' is covered by <div role=dialog> at its click point, so the input would land on that element instead.";
+	const extractedEnvelopeError = getAgentBrowserErrorText({
+		aborted: false,
+		envelope: { error: upstreamError, success: false },
+		exitCode: 1,
+		plainTextInspection: false,
+		stderr: "",
+	});
+	assert.equal(extractedEnvelopeError, upstreamError);
+
+	for (const input of [{ errorText: extractedEnvelopeError }, { envelope: { data: upstreamError, success: false } }] as const) {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "click", subcommand: "@e1" },
+			cwd: process.cwd(),
+			sessionName: "work",
+			...input,
+		});
+
+		assert.equal(presentation.resultCategory, "failure");
+		assert.equal(presentation.failureCategory, "upstream-error");
+		assert.deepEqual(presentation.nextActions?.map((action) => action.id), ["inspect-overlay-state"]);
+		assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "work", "snapshot", "-i"]);
+		assert.equal(presentation.nextActions?.some((action) => action.params?.args?.includes("click")), false);
+	}
 });
 
 test("buildToolPresentation classifies tab_gone envelopes and recommends tab recovery", async () => {

@@ -257,6 +257,34 @@ process.stdout.write(JSON.stringify(results));`,
 	assert.match(pipeline.sessionFile, /\.jsonl$/);
 });
 
+test("Pi pipeline persists covered-click recovery without retrying the blocked action", async () => {
+	const pipeline = await runPipelinePrompt({
+		toolArguments: { args: ["--session", "overlay-recovery", "click", "#continue"] },
+		fakeScript: `const args = process.argv.slice(2);
+if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "Element '#continue' is covered by <div role=dialog> at its click point, so the input would land on that element instead." }));
+  process.exitCode = 1;
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://overlay.example.test/", title: "Overlay fixture" } }));
+}`,
+	});
+
+	for (const result of [pipeline.inMemoryResult, pipeline.persistedResult]) {
+		assert.equal(result.isError, true);
+		const details = result.details as {
+			failureCategory?: string;
+			nextActions?: Array<{ id: string; params?: { args?: string[] }; safety?: string }>;
+		};
+		assert.equal(details.failureCategory, "upstream-error");
+		assert.deepEqual(details.nextActions?.map((action) => action.id), ["inspect-overlay-state"]);
+		assert.deepEqual(details.nextActions?.[0]?.params?.args, ["--session", "overlay-recovery", "snapshot", "-i"]);
+		const text = result.content.find((item) => item.type === "text")?.text ?? "";
+		assert.match(text, /inspect-overlay-state/);
+		assert.match(details.nextActions?.[0]?.safety ?? "", /do not blindly retry/i);
+	}
+	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("click")).length, 1);
+});
+
 test("Pi pipeline rejects unsupported public schema fields before spawning upstream", async () => {
 	const pipeline = await runPipelinePrompt({
 		toolArguments: { args: ["get", "url"], unsupportedRootField: true },

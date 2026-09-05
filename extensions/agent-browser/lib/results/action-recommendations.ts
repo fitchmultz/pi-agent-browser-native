@@ -6,7 +6,7 @@ import type {
 	AgentBrowserSuccessCategory,
 	FileArtifactMetadata,
 } from "./contracts.js";
-import { applySessionToNextActions, buildNextToolAction, type AgentBrowserNextAction } from "./next-actions.js";
+import { applySessionToNextActions, buildInspectOverlayStateAction, buildNextToolAction, type AgentBrowserNextAction } from "./next-actions.js";
 import {
 	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
 	buildRecoveryNextActions,
@@ -75,6 +75,7 @@ export function buildAgentBrowserNextActions(options: {
 		status?: "active" | "cleaned" | "dead" | "failed" | "partial" | "succeeded";
 	};
 	failureCategory?: AgentBrowserFailureCategory;
+	overlayBlockedClick?: boolean;
 	resultCategory: AgentBrowserResultCategory;
 	recovery?: AgentBrowserRecoveryContext;
 	savedFilePath?: string;
@@ -265,7 +266,9 @@ export function buildAgentBrowserNextActions(options: {
 				}
 				break;
 			case "upstream-error":
-				if (isOpenNavigationCommand(options.command)) {
+				if (options.overlayBlockedClick) {
+					actions.push(buildInspectOverlayStateAction(options.sessionName));
+				} else if (isOpenNavigationCommand(options.command)) {
 					actions.push(buildNextToolAction({
 						args: ["get", "url"],
 						id: "inspect-page-after-navigation-error",

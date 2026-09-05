@@ -72,6 +72,10 @@ function getKeyboardPressHint(commandInfo: CommandInfo, errorText: string): stri
 	return KEYBOARD_PRESS_ERROR_HINT;
 }
 
+export function isOverlayBlockedClickError(command: string | undefined, errorText: string | undefined): boolean {
+	return command === "click" && errorText !== undefined && /\bis covered by\b[\s\S]*\bat its click point\b/i.test(errorText);
+}
+
 export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
 	if (commandInfo.command !== "clipboard") return errorText;
 	return errorText
@@ -180,9 +184,10 @@ export function buildErrorPresentation(options: {
 	args?: string[];
 	commandInfo: CommandInfo;
 	errorText: string;
+	presentationCommand?: string;
 	sessionName?: string;
 }): ToolPresentation {
-	const { args, commandInfo, errorText, sessionName } = options;
+	const { args, commandInfo, errorText, presentationCommand, sessionName } = options;
 	const safeErrorText = redactModelFacingText(
 		redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
 	);
@@ -215,6 +220,7 @@ export function buildErrorPresentation(options: {
 			args,
 			command: commandInfo.command,
 			failureCategory: categoryDetails.failureCategory,
+			overlayBlockedClick: isOverlayBlockedClickError(presentationCommand ?? commandInfo.command, safeErrorText),
 			resultCategory: "failure",
 			sessionName,
 		}) ?? []),

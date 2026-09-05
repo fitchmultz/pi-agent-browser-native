@@ -76,6 +76,15 @@ export function buildNextToolAction(options: {
 	};
 }
 
+export function buildInspectOverlayStateAction(sessionName?: string): AgentBrowserNextAction {
+	return buildNextToolAction({
+		args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]),
+		id: "inspect-overlay-state",
+		reason: "Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
+		safety: "Read-only inspection; do not blindly retry the blocked click, and use current refs from this snapshot before interacting.",
+	});
+}
+
 export function appendUniqueAgentBrowserNextActions(
 	target: AgentBrowserNextAction[],
 	additions: AgentBrowserNextAction[] | undefined,
