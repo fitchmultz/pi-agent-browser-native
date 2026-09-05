@@ -116,7 +116,7 @@ The published package should load from the `pi` manifest in `package.json`.
 
 Local checkout validation has two intentional modes:
 
-- **Quick isolated mode:** use explicit CLI loading such as `pi --approve --no-extensions -e .` from the repository root when this checkout is intentionally trusted. This bypasses Pi settings and extension discovery, avoids duplicate `agent_browser` registrations when another source is installed globally, and is the right mode for checkout smoke tests; omit `--approve` only when deliberately testing Pi's Project Trust prompt.
+- **Checkout-only extension mode:** use explicit CLI loading such as `pi --approve --no-extensions -e .` from the intentionally trusted repository root. This disables automatic extension loading and avoids duplicate `agent_browser` registrations, but settings, configured package resolution, and other resource types remain active. Temporary `HOME` and `PI_CODING_AGENT_DIR` directories isolate test settings; `PI_OFFLINE=1` disables automatic startup network/update operations. Omit `--approve` only when testing Project Trust.
 - **Configured-source lifecycle mode:** configure exactly one active checkout or package source in Pi settings and launch plain `pi` for manual validation, or run the automated harness that launches with `--approve`. This is the right mode for validating `/reload` and exact-session relaunch because those lifecycle checks exercise discovered/configured resources. Focused extension harness tests validate branch-backed `session_tree` rehydration and cleanup ownership. Before shipping, maintainers also run `npm run verify -- lifecycle` (same semantics under automation, using Pi 0.84.0+ `--approve --session-id` to reopen the exact JSONL session) plus the live-site checks in [`RELEASE.md`](RELEASE.md#pre-release-checks); `npm publish` enforces `npm run verify -- release` via `prepublishOnly` unless scripts are skipped.
 
 The repo should not add a repo-local `.pi/extensions/` autoload shim as the documented checkout path.
@@ -124,7 +124,7 @@ The repo should not add a repo-local `.pi/extensions/` autoload shim as the docu
 Why:
 - avoids duplicate `agent_browser` registrations when the package is also installed globally
 - keeps the product contract centered on the package manifest instead of repo-local autoload wiring
-- keeps reload and exact-session relaunch validation tied to Pi's configured-source lifecycle instead of an isolated quick-test path, while `session_tree` state changes stay covered by focused extension harness tests
+- keeps reload and exact-session relaunch validation tied to Pi's configured-source lifecycle instead of an explicit-extension quick-test path, while `session_tree` state changes stay covered by focused extension harness tests
 - keeps the published tarball focused on the package manifest, extension code, canonical docs, and license
 
 The published package should exclude agent-only and internal planning materials such as `AGENTS.md`.

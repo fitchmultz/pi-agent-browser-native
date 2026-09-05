@@ -43,7 +43,7 @@ The result is optimized for agent work:
 - interactive `@eN` refs for follow-up clicks and form fills
 - screenshots and downloaded files surfaced as Pi artifacts
 - structured details for titles, URLs, saved files, sessions, and errors
-- spill files for oversized raw output instead of dumping pages into context
+- spill files for full redacted output instead of dumping oversized pages into context
 - compact, colorized Pi TUI rows that can be expanded without changing what the agent receives
 - recovery hints when a tab, selector, stale `@ref`, or launch mode needs a different next step
 
@@ -90,7 +90,7 @@ The result is optimized for agent work:
 
 ## Fastest way to try it
 
-Use Pi 0.84.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, pins its direct Pi validation dependencies to 0.84.0, and makes older hosts a setup failure through `pi-agent-browser-doctor`. Version 0.3.0 intentionally provides no compatibility shims for older Pi releases.
+Use Pi 0.84.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, pins its direct Pi validation dependencies to 0.84.0, and makes older hosts a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -139,13 +139,15 @@ Start Pi and ask for a browser action:
 Use the agent_browser tool to open https://example.com and then take an interactive snapshot.
 ```
 
-For a one-off trial that does not touch your configured Pi extensions:
+For a one-off trial without adding the package to your Pi settings:
 
 ```bash
 pi --no-extensions -e npm:pi-agent-browser-native
 ```
 
-Pi 0.84.0+ may ask whether to trust the current project before loading project-local instructions, settings, or resources. This extension treats its own project-local package config as developer-trusted by default; use `--no-approve` when you intentionally want Pi and this extension to ignore project-local inputs for that run.
+`--no-extensions` disables automatic extension loading, not Pi settings, configured package resolution, skills, prompts, themes, or context files.
+
+Pi 0.84.0+ may ask whether to trust projects with trust-gated settings or resources. This extension follows Pi's trust decision when loading its project-local config. `--no-approve` skips that config and Pi's trust-gated project resources; context files such as `AGENTS.md` still load unless context loading is separately disabled.
 
 For a specific published version:
 
@@ -159,7 +161,7 @@ To install directly from source instead of npm:
 pi install https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
-For a temporary source trial, keep it isolated from your normal package sources:
+For a source trial without adding the package to your Pi settings:
 
 ```bash
 pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native
@@ -180,7 +182,7 @@ npm run doctor
 The doctor checks:
 
 - upstream `agent-browser` exists on `PATH`
-- the installed upstream version matches this wrapper's command-reference baseline
+- the installed upstream is a stable version at or above the supported 0.35.0 floor; 0.36.0 remains the recommended baseline
 - `pi --version` meets the minimum Pi runtime floor for this release; older Pi versions are setup failures
 - Pi settings do not point at multiple active `pi-agent-browser-native` sources
 
@@ -544,10 +546,10 @@ This is an experiment, not a guarantee. React hints require a session opened wit
 { "networkSourceLookup": { "requestId": "req-1", "url": "/api/fail" } }
 ```
 
-For asynchronous exports, click first and then wait for the download:
+For asynchronous exports, use the export control's current snapshot ref (for example `@e5`), then wait for the download:
 
 ```json
-{ "args": ["click", "@export"] }
+{ "args": ["click", "@e5"] }
 { "args": ["wait", "--download", "/tmp/report.csv"] }
 ```
 
@@ -722,7 +724,7 @@ npm run verify -- release
 `pi-agent-browser-native` is intentionally thin:
 
 1. Pi loads the compiled `dist/extensions/agent-browser/index.js` entrypoint from the package manifest; TypeScript under `extensions/` remains the source of truth and `npm run build` regenerates `dist/` before packing.
-2. The extension registers one native tool named `agent_browser`.
+2. The extension registers `agent_browser` and, when enabled with a usable credential source, the optional `agent_browser_web_search` companion.
 3. Tool calls are translated into upstream `agent-browser` CLI invocations with controlled args, stdin, environment, timeout, and session planning.
 4. Upstream JSON/plain-text output is parsed into model-friendly content and structured details.
 5. Screenshots, downloads, recordings, traces, profiles, and spill files are normalized as Pi-visible artifacts where possible.
@@ -749,15 +751,15 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
-Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@11.14.0 install`) so optional-platform lockfile metadata does not drift. Align the global `pi` CLI with this repo’s `pi-coding-agent` devDependency range before lifecycle or interactive browser smokes. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@11.14.0 install`) so optional-platform lockfile metadata does not drift. Use Pi 0.84.0 or newer for lifecycle and interactive browser smokes; the pinned Pi devDependencies are validation fixtures, not an exact-version requirement for the host CLI. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
 
-Quick isolated checkout smoke test:
+Checkout-only extension smoke test:
 
 ```bash
 pi --approve --no-extensions -e .
 ```
 
-This bypasses Pi settings and configured extensions while explicitly trusting this checkout's project-local inputs for the run. Omit `--approve` when you want to exercise Pi's interactive Project Trust prompt instead. After editing extension code, restart that Pi process to test the new checkout.
+This selects the checkout extension and disables automatic extension loading; Pi settings and configured package resolution remain active. Use temporary `HOME` and `PI_CODING_AGENT_DIR` directories for isolated test settings, and `PI_OFFLINE=1` to disable automatic startup network/update operations. `--approve` trusts this checkout's project-local inputs; omit it when testing the Project Trust prompt. After editing extension code, restart Pi to test the new checkout.
 
 For a concrete expanded native-tool smoke matrix (version/help/skills through dashboard/chat families), see [Local development validation](docs/RELEASE.md#local-development-validation) in `docs/RELEASE.md`. For bounded release smokes that should validate this extension rather than skill routing, use the [Sauce Demo smoke prompt](docs/RELEASE.md#public-sauce-demo-checkout-smoke-prompt), which adds `--no-skills`. When changes affect dense dashboards, diagnostics, artifacts, recording, scroll, or combobox behavior, use the public [Grafana stress checklist](docs/RELEASE.md#public-grafana-stress-checklist) for repeatable release dogfood without bundling private skills or recipes.
 
