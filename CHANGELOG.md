@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Resolve POSIX process identity with `ps` from `PATH` when the system paths are unavailable, so managed-session locks work on NixOS-style installations. Keep system-path preference and reject malformed identity output. Thanks to @GodTamIt for the report and fix in #142 / #143.
+
 ## 0.6.5 - 2026-09-04
 
 ### Fixed

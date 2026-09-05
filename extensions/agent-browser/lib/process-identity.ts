@@ -43,11 +43,18 @@ export function buildProcessStartIdentityCommands(
 	if (!primary) return [];
 	return platform === "win32"
 		? [primary]
-		: [primary, ...(platform === "android" ? [{ ...primary, file: "/bin/ps" }, { ...primary, file: "/usr/bin/ps" }] : [{ ...primary, file: "/usr/bin/ps" }])];
+		: [
+			primary,
+			...(platform === "android"
+				? [{ ...primary, file: "/bin/ps" }, { ...primary, file: "/usr/bin/ps" }]
+				: [{ ...primary, file: "/usr/bin/ps" }, { ...primary, file: "ps" }]),
+		];
 }
 
 export function normalizeProcessStartIdentity(stdout: string): string | undefined {
-	return stdout.trim().replace(/\s+/g, " ") || undefined;
+	const trimmed = stdout.trim();
+	if (!trimmed || trimmed.includes("\0") || /[\r\n]/.test(trimmed)) return undefined;
+	return trimmed.replace(/\s+/g, " ");
 }
 
 let currentProcessStartIdentityPromise: Promise<string | undefined> | undefined;
