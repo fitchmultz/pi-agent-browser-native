@@ -1,11 +1,12 @@
 import type { CompiledAgentBrowserSemanticAction } from "../input-modes/types.js";
 import { isRecord } from "../parsing.js";
-import { extractUpstreamCommandTokens, type CommandInfo } from "../runtime.js";
+import { extractUpstreamCommandTokens, parseCommandInfo, redactInvocationArgs, type CommandInfo } from "../runtime.js";
 import type { PersistentSessionArtifactStore } from "../temp.js";
 import { buildAgentBrowserNextActions } from "./action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails } from "./categories.js";
 import { detectConfirmationRequired } from "./confirmation.js";
 import type {
+	AgentBrowserBatchResult,
 	AgentBrowserEnvelope,
 	AgentBrowserNextAction,
 	NetworkRouteDiagnostic,
@@ -30,8 +31,8 @@ import {
 	isManifestFileArtifact,
 	type ArtifactRequestContext,
 } from "./presentation/artifacts.js";
-import { buildBatchPresentation, isAgentBrowserBatchResultArray } from "./presentation/batch.js";
-import { getPresentationPaths } from "./presentation/content.js";
+import { buildBatchPresentation, isAgentBrowserBatchResultArray, redactBatchStepErrorData } from "./presentation/batch.js";
+import { getPresentationPaths, isStringArray } from "./presentation/content.js";
 import {
 	buildNetworkRequestsNextActions,
 	buildStreamNextActions,
@@ -67,6 +68,19 @@ function shouldAddAnnotatedScreenshotGuidance(commandInfo: CommandInfo, args: st
 function getKeyboardInsertTextWarning(commandInfo: CommandInfo): string | undefined {
 	if (commandInfo.command !== "keyboard" || commandInfo.subcommand !== "inserttext") return undefined;
 	return "Input dispatch warning: keyboard inserttext skips key events. A DOM value change does not prove a framework-controlled editor accepted it; verify application state before saving, or use keyboard type when real key events are required.";
+}
+
+function redactBatchSpillData(data: AgentBrowserBatchResult[]): AgentBrowserBatchResult[] {
+	return data.map((row) => {
+		const command = isStringArray(row.command) ? row.command : undefined;
+		const commandInfo = parseCommandInfo(command ?? []);
+		return {
+			...row,
+			command: command ? redactInvocationArgs(command) : row.command,
+			error: row.error === undefined ? undefined : redactBatchStepErrorData(command, row.error),
+			result: row.result === undefined ? undefined : redactPresentationData(commandInfo, row.result),
+		};
+	});
 }
 
 export async function buildToolPresentation(options: {
@@ -116,7 +130,9 @@ export async function buildToolPresentation(options: {
 	}
 
 	const data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
-	const presentationData = redactPresentationData(commandInfoWithTokens, data);
+	const presentationData = commandInfo.command === "batch" && isAgentBrowserBatchResultArray(data)
+		? redactBatchSpillData(data)
+		: redactPresentationData(commandInfoWithTokens, data);
 	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, namespace, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);

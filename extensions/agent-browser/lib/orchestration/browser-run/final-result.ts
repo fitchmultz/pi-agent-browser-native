@@ -5,7 +5,8 @@ import { redactNetworkSourceLookupSurface } from "../../input-modes/lookups.js";
 import { type CompiledAgentBrowserElectron, type CompiledAgentBrowserSemanticAction } from "../../input-modes/types.js";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
-import { type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results/contracts.js";
+import { type AgentBrowserEnvelope, type AgentBrowserLifecycle, type AgentBrowserNextAction, type AgentBrowserWindow } from "../../results/contracts.js";
+import { extractAgentBrowserLifecycle } from "../../results/presentation/common.js";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.js";
 import {
 	alignPageChangeSummaryNextActionIds,
@@ -300,6 +301,18 @@ function buildTimeoutPartialProgressNextActions(options: FinalResultInput): Agen
 	const retryArgs = options.timeoutPartialProgress?.retryStep?.retry?.args;
 	const stepIndex = options.timeoutPartialProgress?.retryStep?.index;
 	const freshSessionAbandoned = options.sessionMode === "fresh" && options.timeoutPartialProgress?.liveUrlRecovered !== true;
+	if (options.currentSessionTabTargetUnknown && !freshSessionAbandoned && options.executionPlan.sessionName) {
+		return [{
+			id: "verify-page-target-after-timeout",
+			params: {
+				args: withOptionalSessionArgs(options.executionPlan.sessionName, ["batch", "--bail"]),
+				stdin: JSON.stringify([["get", "url"], ["snapshot", "-i"]]),
+			},
+			reason: `Verify the current URL, then inspect the page after timeout${stepIndex === undefined ? "" : ` before resuming from incomplete step ${stepIndex}`}.`,
+			safety: "Fail-fast read-only recovery: snapshot runs only after get url succeeds, satisfying the wrapper page-target guard without trusting the planned URL.",
+			tool: "agent_browser" as const,
+		}];
+	}
 	if (retryArgs) {
 		return [{
 			id: "retry-timeout-step",
@@ -388,6 +401,7 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	if (options.comboboxFocusDiagnostic) append(buildComboboxFocusNextActions(options.executionPlan.sessionName));
 	if (options.managedSessionOutcome) appendUnique(buildManagedSessionFreshFailureNextActions(options.managedSessionOutcome));
 	if (options.categoryDetails.failureCategory === "timeout" && options.processResult.timedOut) {
+		if (options.currentSessionTabTargetUnknown) nextActions = nextActions.filter((action) => !isStandaloneSnapshotNextAction(action));
 		appendUnique(buildTimeoutPartialProgressNextActions(options));
 		appendUnique(buildDialogTimeoutNextActions({ command: options.executionPlan.commandInfo.command, sessionName: options.executionPlan.sessionName }));
 	}
@@ -396,19 +410,47 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	return nextActions.length > 0 ? nextActions : undefined;
 }
 
-function formatFailureNextActionsText(options: FinalResultInput, nextActions: AgentBrowserNextAction[] | undefined): string | undefined {
-	if (options.categoryDetails.resultCategory !== "failure" || !nextActions || nextActions.length === 0) return undefined;
+export function formatAgentBrowserNextActionsText(nextActions: AgentBrowserNextAction[] | undefined): string | undefined {
+	if (!nextActions || nextActions.length === 0) return undefined;
 	const lines = nextActions.slice(0, 6).map((action) => {
 		const params = action.params
-			? { ...action.params, ...(action.params.stdin === undefined ? {} : { stdin: "[omitted; use details.nextActions]" }) }
+			? { ...action.params, ...(action.params.stdin !== undefined && action.params.stdin.length > 500 ? { stdin: "[omitted; use details.nextActions]" } : {}) }
 			: undefined;
 		const payload = action.artifactPath ? { artifactPath: action.artifactPath } : params;
-		return `- ${action.id}${payload ? ` ${JSON.stringify(payload)}` : ""}: ${action.reason}`;
+		return `- ${action.id}${payload ? ` ${redactSensitiveText(JSON.stringify(payload))}` : ""}: ${redactSensitiveText(action.reason)}`;
 	});
-	return ["Next actions:", ...lines, "Use the exact redacted payloads in details.nextActions when available."].join("\n");
+	return ["Next actions:", ...lines, "The same redacted payloads are available in details.nextActions."].join("\n");
+}
+
+function formatFailureNextActionsText(options: FinalResultInput, nextActions: AgentBrowserNextAction[] | undefined): string | undefined {
+	return options.categoryDetails.resultCategory === "failure" ? formatAgentBrowserNextActionsText(nextActions) : undefined;
+}
+
+function getReadSource(options: FinalResultInput): string | undefined {
+	return options.executionPlan.commandInfo.command === "read" && isRecord(options.presentationEnvelope?.data) && typeof options.presentationEnvelope.data.source === "string"
+		? options.presentationEnvelope.data.source
+		: undefined;
+}
+
+function formatReadExecutionText(options: FinalResultInput, lifecycle: AgentBrowserLifecycle | undefined): string | undefined {
+	const source = getReadSource(options);
+	if (!source) return undefined;
+	return `Read execution: source ${source}; CLI started: ${options.processResult.agentBrowserStarted ? "yes" : "no"}; managed browser lifecycle active: ${lifecycle?.effectiveLaunch.browserLaunched === true ? "yes" : "no"}; managed session outcome: ${options.managedSessionOutcome?.status ?? "not managed"}.`;
+}
+
+function buildBrowserWindowStatus(options: FinalResultInput, lifecycle: AgentBrowserLifecycle | undefined): AgentBrowserWindow | undefined {
+	if (!options.headedLaunch || options.preserveAttachedBrowserSession || options.providerLaunch || !options.succeeded || lifecycle?.effectiveLaunch.browserLaunched !== true || !options.executionPlan.managedSessionName || !options.managedSessionOutcome || !["created", "replaced"].includes(options.managedSessionOutcome.status)) return undefined;
+	return { mode: "headed", ownership: "wrapper-managed", sessionName: options.executionPlan.managedSessionName, visibility: "unverified" };
+}
+
+function formatBrowserWindowText(browserWindow: AgentBrowserWindow | undefined): string | undefined {
+	if (!browserWindow) return undefined;
+	return "Headed browser handoff: wrapper-managed headed window requested; desktop visibility unverified. If login is needed, ask the user to confirm they can see the window and finish signing in there, then continue with sessionMode auto.";
 }
 
 function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: AgentBrowserNextAction[] | undefined): Record<string, unknown> {
+	const lifecycle = extractAgentBrowserLifecycle(options.presentationEnvelope?.data);
+	const browserWindow = buildBrowserWindowStatus(options, lifecycle);
 	const publicVisibleRefFallbackDiagnostic = options.visibleRefFallbackDiagnostic ? sanitizeVisibleRefFallbackDiagnostic(options.visibleRefFallbackDiagnostic) : undefined;
 	const rawPageChangeSummary = (options.scrollNoopDiagnostic || options.comboboxFocusDiagnostic) && options.presentation.pageChangeSummary ? { ...options.presentation.pageChangeSummary, nextActionIds: nextActions?.map((action) => action.id) } : options.presentation.pageChangeSummary;
 	const pageChangeSummary = alignPageChangeSummaryNextActionIds(rawPageChangeSummary, nextActions);
@@ -437,6 +479,9 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		electron: options.electronLaunchRecord ? { action: "launch" as const, cleanup: options.electronFailedConnectCleanup, handoff: options.electronHandoff, identifiers: buildElectronIdentifiers(options.electronLaunchRecord), launch: options.electronLaunchRecord, profileIsolation: options.electronProfileIsolationDetails, status: options.succeeded ? "succeeded" as const : "failed" as const, targets: options.electronLaunch?.targets, version: options.electronLaunch?.version } : undefined,
 		...options.categoryDetails,
 		agentBrowserStarted: options.processResult.agentBrowserStarted,
+		browserWindow,
+		lifecycle,
+		readSource: getReadSource(options),
 		aboutBlankSessionMismatch: options.aboutBlankSessionMismatch,
 		electronPostCommandHealth: options.electronPostCommandHealth,
 		electronRefFreshness: options.electronRefFreshnessDiagnostic,
@@ -497,6 +542,8 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 
 export function buildFinalAgentBrowserToolResult(options: FinalResultInput): AgentBrowserToolResult {
 	const nextActions = applyNamespaceToNextActions(buildResultNextActions(options), options.executionPlan.namespace);
+	const lifecycle = extractAgentBrowserLifecycle(options.presentationEnvelope?.data);
+	const browserWindow = buildBrowserWindowStatus(options, lifecycle);
 	const details = buildAgentBrowserResultDetails(options, nextActions);
 	const visibleRefFallbackText = formatVisibleRefFallbackText(options.visibleRefFallbackDiagnostic);
 	const richInputRecoveryText = formatRichInputRecoveryText(options.richInputRecoveryDiagnostic);
@@ -513,10 +560,12 @@ export function buildFinalAgentBrowserToolResult(options: FinalResultInput): Age
 	const evalStdinHintText = formatEvalStdinHintText(options.evalStdinHint);
 	const evalResultWarningText = formatEvalResultWarningText(options.evalResultWarning);
 	const artifactCleanupText = formatArtifactCleanupGuidanceText(options.artifactCleanup);
-	const timeoutPartialProgressText = options.timeoutPartialProgress ? formatTimeoutPartialProgressText(options.timeoutPartialProgress) : undefined;
+	const timeoutPartialProgressText = options.timeoutPartialProgress ? formatTimeoutPartialProgressText(options.timeoutPartialProgress, options.currentSessionTabTargetUnknown === true && !(options.sessionMode === "fresh" && options.timeoutPartialProgress.liveUrlRecovered !== true)) : undefined;
 	const managedSessionOutcomeText = formatManagedSessionOutcomeText(options.managedSessionOutcome);
+	const readExecutionText = formatReadExecutionText(options, lifecycle);
+	const browserWindowText = formatBrowserWindowText(browserWindow);
 	const failureNextActionsText = formatFailureNextActionsText(options, nextActions);
-	const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, clickDispatchText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, evalResultWarningText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText, failureNextActionsText].filter((item): item is string => item !== undefined).join("\n\n");
+	const rawAppendedDiagnosticText = [visibleRefFallbackText, richInputRecoveryText, semanticActionCandidateText, clickDispatchText, overlayBlockerText, fillVerificationText, electronRefFreshnessText, selectorTextVisibilityText, electronBroadGetTextScopeText, scrollNoopDiagnosticText, comboboxFocusDiagnosticText, recordingDependencyWarningText, evalStdinHintText, evalResultWarningText, artifactCleanupText, timeoutPartialProgressText, managedSessionOutcomeText, readExecutionText, browserWindowText, failureNextActionsText].filter((item): item is string => item !== undefined).join("\n\n");
 	const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, options.exactSensitiveValues));
 	const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!options.userRequestedJson || options.plainTextInspection);
 	let content = shouldAppendDiagnosticText && options.redactedContent[0]?.type === "text" ? [{ ...options.redactedContent[0], text: `${options.redactedContent[0].text}\n\n${appendedDiagnosticText}` }, ...options.redactedContent.slice(1)] : options.redactedContent;

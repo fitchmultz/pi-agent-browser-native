@@ -436,6 +436,8 @@ export interface ElectronRefFreshnessDiagnostic {
 
 export interface PreparedBrowserRun {
 	batchScreenshotArtifactRequests?: Array<ScreenshotArtifactRequest | undefined>;
+	headedLaunch: boolean;
+	providerLaunch: boolean;
 	commandTokens: string[];
 	compiledElectron?: CompiledAgentBrowserElectron;
 	compiledJob?: CompiledAgentBrowserJob;
@@ -546,7 +548,10 @@ export interface FinalResultInput {
 	exactSensitiveValues: string[];
 	executionPlan: AgentBrowserExecutionPlan;
 	fillVerificationDiagnostic?: FillVerificationDiagnostic;
+	headedLaunch: boolean;
 	inspectionText?: string;
+	preserveAttachedBrowserSession: boolean;
+	providerLaunch: boolean;
 	managedSessionHeadedAutosaveDisabled?: boolean;
 	managedSessionHeadedAutosaveInterval?: string;
 	managedSessionOutcome?: ManagedSessionOutcome;

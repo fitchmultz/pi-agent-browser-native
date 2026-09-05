@@ -22,6 +22,7 @@ export const EXA_DEEP_SEARCH_REQUEST_TIMEOUT_MS = 60_000;
 export const EXA_DEEP_REASONING_SEARCH_REQUEST_TIMEOUT_MS = 90_000;
 export const EXA_DYNAMIC_HIGHLIGHTS_BETA = "dynamic-highlights-2026-08-28";
 export const WEB_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
+export const EXA_SEARCH_SYSTEM_PROMPT = "Prefer primary, official sources. Respect any requested version or date. Avoid duplicate or equivalent results.";
 export { EXA_SEARCH_TYPES };
 export type { ExaSearchType };
 export const WEB_SEARCH_PROVIDER_PARAM_VALUES = ["auto", ...WEB_SEARCH_PROVIDERS] as const;
@@ -39,6 +40,7 @@ export type BraveWebSearchResult = {
 	url?: unknown;
 	description?: unknown;
 	age?: unknown;
+	page_age?: unknown;
 	language?: unknown;
 	profile?: {
 		name?: unknown;
@@ -83,6 +85,7 @@ export type NormalizedSearchResult = {
 	highlights?: string[];
 	source?: string;
 	age?: string;
+	pageDate?: string;
 	language?: string;
 };
 
@@ -94,6 +97,7 @@ type WebSearchToolDetails = {
 	offset: number;
 	fetchedAt: string;
 	results: NormalizedSearchResult[];
+	duplicatesRemoved?: number;
 	searchType?: string;
 	requestId?: string;
 };
@@ -364,12 +368,14 @@ export function normalizeBraveSearchResult(result: BraveWebSearchResult): Normal
 	const title = cleanSearchText(result.title, 180);
 	const url = normalizeSearchUrl(result.url);
 	if (!title || !url) return undefined;
+	const pageDate = cleanSearchText(result.page_age, 80);
 	return {
 		title,
 		url,
 		description: cleanSearchText(result.description, 320),
 		source: cleanSearchText(result.profile?.name, 120) ?? cleanSearchText(result.meta_url?.hostname, 120),
 		age: cleanSearchText(result.age, 80),
+		...(pageDate ? { pageDate } : {}),
 		language: cleanSearchText(result.language, 40),
 	};
 }
@@ -379,13 +385,14 @@ export function normalizeExaSearchResult(result: ExaWebSearchResult): Normalized
 	const url = normalizeSearchUrl(result.url);
 	if (!title || !url) return undefined;
 	const highlights = normalizeHighlightList(result.highlights);
+	const pageDate = cleanSearchText(result.publishedDate, 80);
 	return {
 		title,
 		url,
 		description: cleanSearchText(result.summary, 320) ?? highlights?.[0] ?? cleanSearchText(result.text, 320),
 		highlights,
 		source: cleanSearchText(result.author, 120) ?? cleanSearchText(getHostname(url), 120),
-		age: cleanSearchText(result.publishedDate, 80),
+		...(pageDate ? { pageDate } : {}),
 	};
 }
 
@@ -403,6 +410,7 @@ export function formatSearchResults(provider: WebSearchProvider, query: string, 
 		lines.push(`${index + 1}. ${result.title}`);
 		lines.push(`   URL: ${result.url}`);
 		if (result.source) lines.push(`   Source: ${result.source}`);
+		if (result.pageDate) lines.push(`   ${provider === "exa" ? "Published" : "Page date"}: ${result.pageDate}`);
 		if (result.age) lines.push(`   Age: ${result.age}`);
 		if (result.description) lines.push(`   Summary: ${result.description}`);
 		if (result.highlights && result.highlights.length > 1) {
@@ -473,6 +481,7 @@ export function buildExaSearchRequestBody(params: {
 		type: searchType,
 		numResults: Math.min(params.count + params.offset, 100),
 		contents: { highlights: params.highlightsDynamic ? { dynamic: true } : true },
+		systemPrompt: EXA_SEARCH_SYSTEM_PROMPT,
 	};
 	if (params.category) body.category = params.category;
 	if (params.country) body.userLocation = params.country.toUpperCase();
@@ -703,6 +712,15 @@ export function getWebSearchProviderAdapter(provider: WebSearchProvider): WebSea
 	return WEB_SEARCH_PROVIDER_ADAPTERS[provider];
 }
 
+export function dedupeSearchResults(results: NormalizedSearchResult[]): NormalizedSearchResult[] {
+	const seen = new Set<string>();
+	return results.filter((result) => {
+		if (seen.has(result.url)) return false;
+		seen.add(result.url);
+		return true;
+	});
+}
+
 function buildMissingCredentialError(provider: WebSearchProviderParam): string {
 	if (provider === "brave") return "agent_browser_web_search provider brave was requested but no BRAVE_API_KEY/config credential resolved.";
 	if (provider === "exa") return "agent_browser_web_search provider exa was requested but no EXA_API_KEY/config credential resolved.";
@@ -790,6 +808,8 @@ export function createAgentBrowserWebSearchTool(
 			const request = adapter.buildRequest(executionParams);
 			const data = await requestGate.run(signal, () => adapter.fetchJson(request, resolved.credential.value, signal));
 			const normalized = adapter.normalizeResponse(data, executionParams);
+			const results = dedupeSearchResults(normalized.results);
+			const duplicatesRemoved = normalized.results.length - results.length;
 			const details: WebSearchToolDetails = {
 				provider: adapter.provider,
 				query,
@@ -798,10 +818,11 @@ export function createAgentBrowserWebSearchTool(
 				offset,
 				...normalized.extraDetails,
 				fetchedAt: new Date().toISOString(),
-				results: normalized.results,
+				results,
+				duplicatesRemoved: duplicatesRemoved || undefined,
 			};
 			return {
-				content: [{ type: "text" as const, text: formatSearchResults(adapter.provider, normalized.returnedQuery, normalized.results) }],
+				content: [{ type: "text" as const, text: `${formatSearchResults(adapter.provider, normalized.returnedQuery, results)}${duplicatesRemoved ? `\n\nDuplicate URLs removed: ${duplicatesRemoved}.` : ""}` }],
 				details,
 			};
 		},

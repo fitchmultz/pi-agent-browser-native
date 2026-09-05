@@ -52,7 +52,9 @@ const DEFAULT_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS = 5_000;
 const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
 const SENSITIVE_QUERY_PARAM_PATTERN =
-	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth|authorization|bearer|client(?:_|-)?secret|code|cookie|id(?:_|-)?token|key|pass(?:word)?|refresh(?:_|-)?token|secret|sentry(?:_|-)?key|session(?:_|-)?id|sig(?:nature)?|token|write(?:_|-)?key)$/i;
+	/^(?:access(?:_|-)?token|api(?:_|-)?key|auth|authorization|bearer|client(?:_|-)?secret|code|cookie|id(?:_|-)?token|key|pass(?:word)?|refresh(?:_|-)?token|relay(?:_|-)?state|saml(?:_|-)?request|saml(?:_|-)?response|secret|sentry(?:_|-)?key|session(?:_|-)?id|sig(?:nature)?|token|write(?:_|-)?key)$/i;
+const AUTH_STATE_QUERY_PARAM_PATTERN = /^(?:nonce|state)$/i;
+const AUTH_URL_CONTEXT_PATTERN = /(?:^|[./_-])(?:auth|authorize|callback|login|oauth2?|oidc|saml|sso)(?:[./?#_-]|$)/i;
 const SENSITIVE_FIELD_NAME_PATTERN =
 	/^(?:[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret(?:[_-]?(?:key|access[_-]?key))?|token|password|passwd|credentials?|database[_-]?url|db[_-]?url|connection[_-]?string|mongo(?:db)?[_-]?uri|redis[_-]?url)|[A-Za-z0-9]*(?:apiKey|ApiKey|apikey|privateKey|PrivateKey|databaseUrl|DatabaseUrl|dbUrl|DbUrl|connectionString|ConnectionString|mongoUri|MongoUri|mongodbUri|MongodbUri|mongoDbUri|MongoDbUri|redisUrl|RedisUrl|Token|Secret|Password|Credential|Credentials)|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|sentry(?:_|-)?key|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|write(?:_|-)?key|x(?:_|-)?api(?:_|-)?key)$/i;
 const ENV_SECRET_ASSIGNMENT_PATTERN = /\b((?:export\s+)?([A-Za-z_][A-Za-z0-9_-]*)(\s*[:=]\s*))(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/g;
@@ -142,50 +144,50 @@ function redactUrlToken(token: string): string {
 		return token;
 	}
 
-	let mutated = false;
-	if (parsed.username.length > 0) {
-		parsed.username = "[REDACTED]";
-		mutated = true;
-	}
-	if (parsed.password.length > 0) {
-		parsed.password = "[REDACTED]";
-		mutated = true;
-	}
-
-	for (const [name] of parsed.searchParams) {
-		if (shouldRedactQueryParam(name)) {
-			parsed.searchParams.set(name, "[REDACTED]");
-			mutated = true;
-		}
-	}
+	if (parsed.username.length > 0) parsed.username = "[REDACTED]";
+	if (parsed.password.length > 0) parsed.password = "[REDACTED]";
 
 	const hashText = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
-	if (hashText.includes("=")) {
-		const hashParams = new URLSearchParams(hashText);
+	const hashParams = hashText.includes("=") ? new URLSearchParams(hashText) : undefined;
+	const authContext = AUTH_URL_CONTEXT_PATTERN.test(`${parsed.hostname}${parsed.pathname}`)
+		|| [...parsed.searchParams.keys(), ...(hashParams?.keys() ?? [])].some(shouldRedactQueryParam);
+	for (const [name] of parsed.searchParams) {
+		if (shouldRedactQueryParam(name) || (authContext && AUTH_STATE_QUERY_PARAM_PATTERN.test(name))) {
+			parsed.searchParams.set(name, "[REDACTED]");
+		}
+	}
+
+	if (hashParams) {
+		let hashMutated = false;
 		for (const [name] of hashParams) {
-			if (shouldRedactQueryParam(name)) {
+			if (shouldRedactQueryParam(name) || (authContext && AUTH_STATE_QUERY_PARAM_PATTERN.test(name))) {
 				hashParams.set(name, "[REDACTED]");
-				mutated = true;
+				hashMutated = true;
 			}
 		}
-		if (mutated) {
-			parsed.hash = `#${hashParams.toString()}`;
-		}
+		if (hashMutated) parsed.hash = `#${hashParams.toString()}`;
 	}
 
 	return parsed.toString();
 }
 
 function redactLooseUrlParameterText(text: string): string {
-	return text.replace(/([?#&])([^=&#\s]+)=([^&#\s]*)/g, (match, separator: string, rawName: string) => {
-		let name = rawName;
-		try {
-			name = decodeURIComponent(rawName.replace(/\+/g, " "));
-		} catch {
-			// Keep the raw name when percent decoding fails.
-		}
-		if (!shouldRedactQueryParam(name)) return match;
-		return `${separator}${rawName}=[REDACTED]`;
+	return text.replace(/(?<![^\s"'`<>\])}])[^\s"'`<>\])}]*[?#&][^\s"'`<>\])}]*/g, (token) => {
+		const queryNames = [...token.matchAll(/[?#&]([^=&#\s"'`<>\])}]+)=/g)].map((match) => {
+			try { return decodeURIComponent((match[1] ?? "").replace(/\+/g, " ")); } catch { return match[1] ?? ""; }
+		});
+		const authContext = AUTH_URL_CONTEXT_PATTERN.test(token) || queryNames.some(shouldRedactQueryParam);
+		return token.replace(/([?#&])([^=&#\s"'`<>\])}]+)=([^&#\s"'`<>\])}]*)/g, (match, separator: string, rawName: string, rawValue: string) => {
+			if (rawValue === "[REDACTED" || rawValue === "[REDACTED]" || /%5Bredacted%5D/i.test(rawValue)) return match;
+			let name = rawName;
+			try {
+				name = decodeURIComponent(rawName.replace(/\+/g, " "));
+			} catch {
+				// Keep the raw name when percent decoding fails.
+			}
+			if (!shouldRedactQueryParam(name) && !(authContext && AUTH_STATE_QUERY_PARAM_PATTERN.test(name))) return match;
+			return `${separator}${rawName}=[REDACTED]`;
+		});
 	});
 }
 
@@ -326,7 +328,7 @@ export function redactSensitiveText(text: string): string {
 	return redactEmbeddedStructuredText(
 		redactEnvSecretAssignments(
 			redactStandaloneBasicCredential(
-				redactBearerCredentials(redactLooseUrlUserinfo(redactLooseUrlMatches(text)))
+				redactBearerCredentials(redactLooseUrlParameterText(redactLooseUrlUserinfo(redactLooseUrlMatches(text))))
 					.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
 					.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
 			),

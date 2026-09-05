@@ -989,7 +989,7 @@ const command = args.find((arg) => ["close", "get", "open", "snapshot"].includes
 const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
   : command === "snapshot" ? { snapshot: "- heading \\"Headed\\" [ref=e1]" }
   : command === "close" ? { closed: true }
-  : { title: "Headed", url: "https://example.com/headed" };
+  : { title: "Headed", url: "https://example.com/headed", lifecycle: { effectiveLaunch: { browserLaunched: true } } };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
@@ -1000,10 +1000,16 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"] });
 			assert.equal(open.isError, false, JSON.stringify(open));
 			assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
+            assert.deepEqual(open.details?.browserWindow, { mode: "headed", ownership: "wrapper-managed", sessionName: open.details?.sessionName, visibility: "unverified" });
+            assert.deepEqual(open.details?.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+            assert.match(open.content[0]?.text ?? "", /Headed browser handoff:.*desktop visibility unverified/);
+            assert.ok(!(open.content[0]?.text ?? "").includes(String(open.details?.sessionName)));
 
 			const followUp = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
 			assert.equal(followUp.isError, false, JSON.stringify(followUp));
 			assert.equal(followUp.details?.managedSessionHeadedAutosaveDisabled, true);
+			assert.equal(followUp.details?.browserWindow, undefined);
+			assert.doesNotMatch(followUp.content[0]?.text ?? "", /Headed browser handoff/);
 
 			harness.setBranch([
 				createToolBranchEntry({ details: open.details ?? {}, isError: open.isError }),
@@ -1029,6 +1035,64 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.ok(managedInvocations.length >= 4);
 			assert.equal(managedInvocations.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
 			assert.equal(doctorInvocation?.autosave, null);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension exposes the headed handoff for a first-launch batch but not attachments or providers", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-batch-"));
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("batch")) {
+  const commands = JSON.parse(fs.readFileSync(0, "utf8"));
+  process.stdout.write(JSON.stringify(commands.map((command) => ({ command, success: true, result: { title: "Headed batch", url: "https://example.com/headed-batch", lifecycle: { effectiveLaunch: { browserLaunched: true } } } }))));
+} else if (args.includes("close")) process.stdout.write(JSON.stringify({ success: true, data: { closed: true, lifecycle: { effectiveLaunch: { browserLaunched: false } } } }));
+else process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/headed-batch", url: "https://example.com/headed-batch", lifecycle: { effectiveLaunch: { browserLaunched: true } } } }));`,
+	);
+	try {
+		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--headed", "batch", "--bail"],
+				stdin: JSON.stringify([["open", "https://example.com/headed-batch"]]),
+			});
+			assert.equal(batch.isError, false, JSON.stringify(batch));
+            assert.deepEqual(batch.details?.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+            assert.deepEqual(batch.details?.browserWindow, { mode: "headed", ownership: "wrapper-managed", sessionName: batch.details?.sessionName, visibility: "unverified" });
+            assert.match(batch.content[0]?.text ?? "", /Headed browser handoff:.*desktop visibility unverified/);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] })).isError, false);
+
+			const attachedHarness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(attachedHarness.handlers, "session_start", { reason: "new" }, attachedHarness.ctx);
+			const attached = await executeRegisteredTool(attachedHarness.tool, attachedHarness.ctx, { args: ["--headed", "--cdp", "9222", "open", "https://example.com/headed-batch"] });
+			assert.equal(attached.isError, false, JSON.stringify(attached));
+			assert.equal(attached.details?.attachedBrowserSession, true);
+			assert.equal(attached.details?.browserWindow, undefined);
+			assert.doesNotMatch(attached.content[0]?.text ?? "", /Headed browser handoff/);
+			assert.equal((await executeRegisteredTool(attachedHarness.tool, attachedHarness.ctx, { args: ["close"] })).isError, false);
+
+			for (const provider of [
+				{ args: ["--headed", "--provider", "browserbase", "open", "https://example.com/headed-batch"], env: undefined },
+				{ args: ["--headed", "-p", "browserbase", "open", "https://example.com/headed-batch"], env: undefined },
+				{ args: ["--headed", "open", "https://example.com/headed-batch"], env: "browserbase" },
+			]) {
+				await withPatchedEnv({ AGENT_BROWSER_PROVIDER: provider.env }, async () => {
+					const providerHarness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(providerHarness.handlers, "session_start", { reason: "new" }, providerHarness.ctx);
+					const launched = await executeRegisteredTool(providerHarness.tool, providerHarness.ctx, { args: provider.args });
+					assert.equal(launched.isError, false, JSON.stringify(launched));
+					assert.deepEqual(launched.details?.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+					assert.equal(launched.details?.browserWindow, undefined);
+					assert.doesNotMatch(launched.content[0]?.text ?? "", /Headed browser handoff/);
+					assert.equal((await executeRegisteredTool(providerHarness.tool, providerHarness.ctx, { args: ["close"] })).isError, false);
+				});
+			}
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -6,6 +6,37 @@
 
 - Added session-aware `inspect-overlay-state` recovery for direct and batched clicks that upstream blocks because another element covers the target at its click point. These failures remain `upstream-error`; the wrapper refreshes refs for inspection without retrying the blocked click or guessing a dismiss control.
 
+## 0.6.5 - 2026-09-04
+
+### Fixed
+
+- Corrected README and maintainer guidance for Pi settings isolation, project trust, supported version floors, and optional web-search registration.
+- Replaced invalid download-example refs and stale version wording. Runtime code and dependencies are unchanged from v0.6.4.
+
+## 0.6.4 - 2026-09-04
+
+### Added
+
+- Added direct-read lifecycle/source details and an explicit `details.browserWindow` headed-login handoff for direct or batched first/fresh local launches whose desktop visibility remains unverified; attachments and provider launches do not receive it.
+
+### Changed
+
+- Exa searches now request primary, version-aware, distinct sources; both search providers remove later exact normalized-URL duplicates, label provider page dates, and report duplicate counts without overfetching or claiming crawl/version proof.
+
+### Fixed
+
+- Made unknown-page timeout recovery visibly executable under the page-target guard, live-verified successful tab changes (including same-URL titles, deliberate blank tabs, and closes that reveal blank tabs), rejected upstream's false-success `scrollintoview text=...` form directly or in batches while preserving help, and kept dialog timeout recovery usable.
+- Made `outputPath` preserve full command-redacted compacted direct, per-batch-row, and whole-batch payloads from wrapper-verified live spills instead of writing compact metadata, fail without writing when any required payload is unavailable, and show direct-read CLI/browser/source lifecycle without requiring structured details.
+- Redacted SAML/OAuth URL credentials and snapshot spill files while retaining exact internal page targets and useful non-auth application state URLs.
+
+### Validation
+
+- Passed the unit/fake suite (792 tests, two opt-in skips), generated docs, build, TypeScript, live command-reference checks, configured-source lifecycle, and packaged-Pi smoke (127 packed files). Real-upstream contracts passed 2/2; the startup profile measured 60.6 ms median and 70.7 ms maximum.
+- Negative controls produced 21 behavioral assertion failures across 15 isolated mutations; removing the URL scanner's token-start anchor also exceeded a capped 12-second run. Restoring the committed implementation passed all 268 relevant tests, build, and TypeScript checks.
+- Ubuntu run `run-1788570862855-grads1` passed `platform-build` and `browser-dogfood-smoke` with 11/11 assertions each, complete artifact manifests, 3/3 cleanup assertions, and an empty final local-container inventory.
+- Isolated Pi/tmux smoke passed Example Domain QA, local headed handoff, a native batch, and a full Exa documentation read: `outputPath` held 104,076 bytes of valid JSON with 101,011 content characters rather than compact metadata. Browser and tmux sessions were closed.
+- The full release command passed every step before platform doctor, then stopped because localhost macOS SSH and Parallels `prlctl` are unavailable. The macOS-SSH and native-Windows suites were not run. This GitHub-only release uses an explicitly approved platform exception; npm is not published.
+
 ## 0.6.3 - 2026-09-01
 
 ### Added

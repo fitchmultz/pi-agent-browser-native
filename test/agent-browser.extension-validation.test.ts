@@ -593,6 +593,56 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	}
 });
 
+test("agentBrowserExtension rejects unsupported text= scroll targets with executable native recovery", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-scroll-text-recovery-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("get") && args.includes("url")) process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.test/modal", url: "https://example.test/modal" } }));
+else if (args.includes("get") && args.includes("title")) process.stdout.write(JSON.stringify({ success: true, data: { result: "Modal", title: "Modal" } }));
+else process.stdout.write(JSON.stringify({ success: true, data: { title: "Modal", url: "https://example.test/modal" } }));`,
+	);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test/modal"] })).isError, false);
+			const invalid = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scrollintoview", "text=Target sentence"] });
+			assert.equal(invalid.isError, true);
+			assert.equal(invalid.details?.failureCategory, "validation-error");
+			assert.match(invalid.content[0]?.text ?? "", /CSS selector, xpath=.*current @e… ref/);
+			const actions = invalid.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined;
+			const semanticRecovery = actions?.find((action) => action.id === "scroll-semantic-text-target");
+            assert.deepEqual(semanticRecovery?.params?.args?.slice(-4), ["find", "text", "Target sentence", "hover"]);
+            assert.match(invalid.content[0]?.text ?? "", /scroll-semantic-text-target.*find.*text.*Target sentence.*hover/);
+            assert.match(invalid.content[0]?.text ?? "", /refresh-refs-for-scroll-target.*snapshot.*-i/);
+            assert.equal((await readInvocationLog(logPath)).some((entry) => entry.args.includes("scrollintoview")), false);
+			assert.ok(semanticRecovery?.params);
+			const recovered = await executeRegisteredTool(harness.tool, harness.ctx, semanticRecovery.params);
+			assert.equal(recovered.isError, false, JSON.stringify(recovered));
+
+			const help = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["scrollintoview", "text=Target sentence", "--help"] });
+			assert.equal(help.isError, false, JSON.stringify(help));
+			assert.ok((await readInvocationLog(logPath)).at(-1)?.args.includes("--help"));
+
+			const invocationsBeforeBatch = (await readInvocationLog(logPath)).length;
+			const invalidBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["batch", "--bail"],
+				stdin: JSON.stringify([["scrollintoview", "text=Target sentence"]]),
+			});
+			assert.equal(invalidBatch.isError, true);
+			assert.match(invalidBatch.content[0]?.text ?? "", /scroll-semantic-text-target.*find.*text.*Target sentence.*hover/);
+			assert.equal((await readInvocationLog(logPath)).length, invocationsBeforeBatch);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension bounds dialog recovery commands and exposes recovery actions", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-dialog-timeout-"));
 	const basePath = process.env.PATH ?? "";

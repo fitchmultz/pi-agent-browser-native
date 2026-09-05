@@ -192,9 +192,10 @@ function getUnverifiedPageError(options: {
 	const inspectsTarget = (command === "tab" && subcommand === "list") || (command === "get" && subcommand === "url");
 	const selectsTab = command === "tab" && subcommand !== undefined && !["close", "list", "new"].includes(subcommand);
 	const settlesPendingWebMcp = command === "webmcp" && ["result", "cancel"].includes(subcommand ?? "");
+	const handlesBlockingDialog = command === "dialog" && ["status", "accept", "dismiss"].includes(subcommand ?? "");
 	const transitionsPage = options.allowUnverifiedPageTransitions === true && isRecoveringPageTransitionCommand(command, subcommand);
 	const navigatesExplicitly = getExplicitNavigationTarget(options.args) !== undefined;
-	return closesPage || inspectsTarget || selectsTab || settlesPendingWebMcp || transitionsPage || navigatesExplicitly || (options.trustedBatchTabSelection && command === "tab")
+	return closesPage || handlesBlockingDialog || inspectsTarget || selectsTab || settlesPendingWebMcp || transitionsPage || navigatesExplicitly || (options.trustedBatchTabSelection && command === "tab")
 		? undefined
 		: UNVERIFIED_PAGE_MESSAGE;
 }

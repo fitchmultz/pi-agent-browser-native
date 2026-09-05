@@ -539,12 +539,21 @@ if (!REAL_UPSTREAM_ENABLED) {
 						await runCoreCommand(harness, ["open", contractUrl], shapes.commands.open, managedSessionName, "restore contract fixture after WebMCP");
 					}
 
-					const readResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl] });
+					const readOutputPath = join(tempDir, "read-output.json");
+					const readResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl], outputPath: readOutputPath });
 					const readDetails = assertSuccessfulResult(readResult, shapes.commands.read, "read URL");
 					assert.equal(readDetails.sessionName, managedSessionName);
 					assert.equal(readDetails.usedImplicitSession, true);
+					assert.equal(readDetails.agentBrowserStarted, true);
+					assert.deepEqual(readDetails.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+					assert.equal(readDetails.readSource, (readDetails.data as { source?: string }).source);
+					assert.equal((readDetails.managedSessionOutcome as { activeAfter?: boolean }).activeAfter, true);
+					assert.equal((readDetails.outputFile as { status?: string }).status, "saved");
 					assert.match(readResult.content[0]?.text ?? "", /Agent Browser Contract Fixture/);
 					assert.match((readDetails.data as { content?: string }).content ?? "", /Ready for real upstream contract validation/);
+					const savedRead = JSON.parse(await readFile(readOutputPath, "utf8")) as { content?: string; source?: string };
+					assert.match(savedRead.content ?? "", /Ready for real upstream contract validation/);
+					assert.equal(savedRead.source, readDetails.readSource);
 
 					const uploadPath = join(tempDir, "upload-fixture.txt");
 					const screenshotPath = join(tempDir, "contract.png");

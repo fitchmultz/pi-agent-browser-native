@@ -42,7 +42,7 @@
       "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"]
     },
     "read": {
-      "detailKeys": ["args", "command", "data", "effectiveArgs", "exitCode", "sessionMode", "sessionName", "summary", "usedImplicitSession"],
+      "detailKeys": ["agentBrowserStarted", "args", "command", "data", "effectiveArgs", "exitCode", "lifecycle", "managedSessionOutcome", "outputFile", "readSource", "sessionMode", "sessionName", "summary", "usedImplicitSession"],
       "dataKeys": ["content", "contentType", "finalUrl", "source", "status", "url"]
     },
     "snapshot": {

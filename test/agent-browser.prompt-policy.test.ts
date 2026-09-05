@@ -324,6 +324,10 @@ test("web-search prompt guidance warns about anti-bot search form automation", (
 	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /anti-bot\/CAPTCHA-gated/);
 	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /searchType: deep-lite/);
 	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /omit it for everyday lookups/);
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /Provider rank is not proof of authority/);
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /primary current docs/);
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /Exa includeDomains; Brave site:/);
+	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /URL aliases/);
 	assert.match(WEB_SEARCH_PROMPT_GUIDELINE, /after you have a target URL/);
 	assert.doesNotMatch(WEB_SEARCH_PROMPT_GUIDELINE, /one query, one follow-up max/);
 });
