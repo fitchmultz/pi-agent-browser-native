@@ -58,9 +58,9 @@ import {
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
 import { getUpstreamEffectiveBatchSteps, parseBatchStdinJsonArray } from "../batch-stdin.js";
-import { buildElectronHostFailureResult, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
+import { buildElectronHostFailureResult, formatAgentBrowserNextActionsText, getElectronLaunchFailureCategory, redactRecoveryHint } from "./final-result.js";
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
-import { collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
+import { buildUnsupportedScrollIntoViewRecovery, collectScrollPositionSnapshot, validateQaAttachedPrecondition } from "./diagnostics.js";
 import { getScreenshotPathTokenIndex } from "./artifact-paths.js";
 import { findRequestedArtifactCloseViolation } from "./prompt-guards.js";
 
@@ -550,6 +550,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: autosavePolicyChangeError };
 	}
 	const headedLaunch = getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(agentBrowserProcessEnv.AGENT_BROWSER_HEADED);
+	const providerLaunch = executionPlan.startupScopedFlags.some((flag) => flag === "--provider" || flag === "-p") || agentBrowserProcessEnv.AGENT_BROWSER_PROVIDER !== undefined;
 	const headedManagedAutosaveDisabled = retainedHeadedAutosaveDisabled || (explicitAutosaveInterval === undefined && headedLaunch);
 	const headedManagedAutosaveInterval = retainedHeadedAutosaveInterval ?? (headedLaunch ? explicitAutosaveInterval ?? "0" : undefined);
 	const compatibilityUserAgent = executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined;
@@ -699,6 +700,12 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		}
 
 		const commandTokens = semanticActionVisibleRefResolution ? extractUpstreamCommandTokens(semanticActionVisibleRefResolution.args) : extractUpstreamCommandTokens(preparedArgs.args);
+		const unsupportedScrollIntoViewRecovery = executionPlan.validationError || executionPlan.plainTextInspection
+			? undefined
+			: [commandTokens, ...getUpstreamEffectiveBatchSteps(commandTokens, runtimeToolStdin)]
+				.map((tokens) => buildUnsupportedScrollIntoViewRecovery({ commandTokens: tokens, sessionName: executionPlan.sessionName }))
+				.find((recovery) => recovery !== undefined);
+		if (unsupportedScrollIntoViewRecovery) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: unsupportedScrollIntoViewRecovery.error };
 		const resolvedSemanticActionRefSnapshot: SessionRefSnapshot | undefined = semanticActionVisibleRefResolution?.snapshot
 			? { ...semanticActionVisibleRefResolution.snapshot, target: semanticActionVisibleRefResolution.snapshot.target ?? priorSessionTabTarget }
 			: undefined;
@@ -737,8 +744,10 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		}
 
 		if (executionPlan.validationError) {
+			const nextActions = applyNamespaceToNextActions(unsupportedScrollIntoViewRecovery?.nextActions, executionPlan.namespace);
+			const nextActionsText = formatAgentBrowserNextActionsText(nextActions);
 			return { kind: "early-result", statePatch, result: {
-				content: [{ type: "text", text: executionPlan.validationError }],
+				content: [{ type: "text", text: [executionPlan.validationError, nextActionsText].filter((text): text is string => text !== undefined).join("\n\n") }],
 				details: {
 					args: redactedArgs,
 					compiledElectron: redactedCompiledElectron,
@@ -747,6 +756,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					compiledSourceLookup: redactedCompiledSourceLookup,
 					compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
 					invalidValueFlag: executionPlan.invalidValueFlag,
+					nextActions,
 					sessionMode,
 					sessionRecoveryHint: redactedRecoveryHint,
 					startupScopedFlags: executionPlan.startupScopedFlags,
@@ -1130,6 +1140,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			kind: "ready",
 			prepared: {
 				commandTokens,
+				headedLaunch,
+				providerLaunch,
 				managedSessionPolicyLock,
 				compiledElectron,
 				compiledJob,

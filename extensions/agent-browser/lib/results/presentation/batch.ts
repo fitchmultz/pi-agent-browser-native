@@ -22,7 +22,7 @@ import type {
 } from "../contracts.js";
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../network-routes.js";
 import { appendUniqueAgentBrowserNextActions, applyNamespaceToNextActions, withOptionalSessionArgs } from "../next-actions.js";
-import { stringifyModelFacing } from "./common.js";
+import { extractAgentBrowserLifecycle, stringifyModelFacing } from "./common.js";
 import { buildArtifactVerificationSummary, classifyPresentationSuccessCategory, manifestHasNewNoticeWorthyEntries, type ArtifactRequestContext } from "./artifacts.js";
 import { formatBatchStepCommand, getPresentationImages, getPresentationPaths, getPresentationText, isStringArray } from "./content.js";
 import { buildPageChangeSummary } from "./navigation.js";
@@ -122,6 +122,12 @@ function redactExactValues(value: unknown, sensitiveValues: string[]): unknown {
 	if (Array.isArray(value)) return value.map((item) => redactExactValues(item, sensitiveValues));
 	if (!isRecord(value)) return value;
 	return redactSensitiveValue(Object.fromEntries(Object.entries(value).map(([key, entryValue]) => [key, redactExactValues(entryValue, sensitiveValues)])));
+}
+
+export function redactBatchStepErrorData(command: string[] | undefined, value: unknown): unknown {
+	return command?.[0] === "clipboard"
+		? redactSensitiveValue(redactClipboardPermissionErrorValue({ command: "clipboard", subcommand: command[1] }, value, getClipboardWritePayloadCandidates(command)))
+		: redactExactValues(value, getStatefulCommandSensitiveValues(command));
 }
 
 function getTypedTextLength(command: string[] | undefined): number | undefined {
@@ -225,12 +231,10 @@ async function buildBatchStepPresentation(options: {
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const redactedCommand = command ? redactInvocationArgs(command) : undefined;
 	const commandText = formatBatchStepCommand(hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command, index);
-	const lifecycle = extractBatchStepLifecycle(item.result);
+	const lifecycle = extractAgentBrowserLifecycle(item.result);
 
 	if (item.success === false) {
-		const redactedErrorData = command?.[0] === "clipboard"
-			? redactSensitiveValue(redactClipboardPermissionErrorValue({ command: "clipboard", subcommand: command[1] }, item.error, getClipboardWritePayloadCandidates(command)))
-			: redactExactValues(item.error, getStatefulCommandSensitiveValues(command));
+		const redactedErrorData = redactBatchStepErrorData(command, item.error);
 		const errorText = formatBatchStepError(redactedErrorData);
 		const failureCategory = classifyAgentBrowserFailureCategory({
 			args: command,
@@ -358,12 +362,6 @@ async function buildBatchStepPresentation(options: {
 		},
 		presentation,
 	};
-}
-
-function extractBatchStepLifecycle(result: unknown): BatchStepPresentationDetails["lifecycle"] {
-	if (!isRecord(result) || !isRecord(result.lifecycle) || !isRecord(result.lifecycle.effectiveLaunch)) return undefined;
-	const browserLaunched = result.lifecycle.effectiveLaunch.browserLaunched;
-	return typeof browserLaunched === "boolean" ? { effectiveLaunch: { browserLaunched } } : undefined;
 }
 
 function abandonedRecordingArtifact(artifact: FileArtifactMetadata): FileArtifactMetadata {

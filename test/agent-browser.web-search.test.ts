@@ -15,6 +15,7 @@ import {
 } from "../extensions/agent-browser/lib/config.js";
 import {
 	AGENT_BROWSER_WEB_SEARCH_TOOL_NAME,
+	EXA_SEARCH_SYSTEM_PROMPT,
 	WEB_SEARCH_MIN_REQUEST_INTERVAL_MS,
 	WebSearchRequestGate,
 	buildBraveSearchUrl,
@@ -313,6 +314,7 @@ test("uses the configured default Exa search type when the call omits it", async
 				type: "deep-lite",
 				numResults: 1,
 				contents: { highlights: true },
+				systemPrompt: EXA_SEARCH_SYSTEM_PROMPT,
 				additionalQueries: ["second angle"],
 			});
 			return new Response(JSON.stringify({ requestId: "req-default", results: [{ title: "Defaulted", url: "https://example.com/default", highlights: ["Research result"] }] }), { status: 200 });
@@ -368,10 +370,39 @@ test("per-call Exa search type overrides the configured default and normalizes h
 			const text = result.content[0]?.text ?? "";
 			assert.match(text, /Exa web search results/);
 			assert.match(text, /Relevant Exa highlight/);
+			assert.match(text, /Published: 2026-01-01/);
 			assert.doesNotMatch(JSON.stringify(result), /exa-secret|brave-secret/);
 			assert.equal(result.details?.provider, "exa");
 			assert.equal(result.details?.searchType, "fast");
 			assert.equal(result.details?.requestId, "req-123");
+		});
+	});
+});
+
+test("search execution removes exact normalized URL duplicates without collapsing distinct query URLs", async () => {
+	const fixture = await createFixture();
+	await withPatchedEnv({ HOME: fixture.home, [AGENT_BROWSER_CONFIG_ENV]: fixture.overrideConfigPath, [BRAVE_API_KEY_ENV]: undefined, [EXA_API_KEY_ENV]: "exa-secret" }, async () => {
+		const harness = createExtensionHarness({ cwd: fixture.cwd });
+		const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+		assert.ok(tool);
+		await withFakeFetch((_input, init) => {
+			assert.equal(JSON.parse(String(init?.body)).systemPrompt, EXA_SEARCH_SYSTEM_PROMPT);
+			return new Response(JSON.stringify({ results: [
+				{ title: "First", url: "https://example.com/docs" },
+				{ title: "Duplicate", url: "https://example.com/docs" },
+				{ title: "View A", url: "https://example.com/docs?view=a" },
+				{ title: "View B", url: "https://example.com/docs?view=b" },
+			] }), { status: 200 });
+		}, async () => {
+			const result = await executeRegisteredTool(tool, harness.ctx, { query: "dedupe docs", count: 4 });
+			const results = result.details?.results as Array<{ title?: string; url?: string }>;
+			assert.deepEqual(results.map(({ title, url }) => ({ title, url })), [
+				{ title: "First", url: "https://example.com/docs" },
+				{ title: "View A", url: "https://example.com/docs?view=a" },
+				{ title: "View B", url: "https://example.com/docs?view=b" },
+			]);
+			assert.equal(result.details?.duplicatesRemoved, 1);
+			assert.match(result.content[0]?.text ?? "", /Duplicate URLs removed: 1/);
 		});
 	});
 });
@@ -443,6 +474,7 @@ test("builds Exa search request body with highlights and provider-compatible opt
 		type: "deep-lite",
 		numResults: 5,
 		contents: { highlights: true },
+		systemPrompt: EXA_SEARCH_SYSTEM_PROMPT,
 		userLocation: "US",
 		moderation: true,
 		startPublishedDate: "2026-06-01T00:00:00.000Z",
@@ -479,12 +511,14 @@ test("normalizes Brave results and strips unsafe or noisy values", () => {
 		url: "https://example.com/path",
 		description: "One   two &#x27;quoted&#x27;",
 		profile: { name: "Example" },
+		page_age: "2026-01-02",
 	}), {
 		title: "Good & useful",
 		url: "https://example.com/path",
 		description: "One two 'quoted'",
 		source: "Example",
 		age: undefined,
+		pageDate: "2026-01-02",
 		language: undefined,
 	});
 	assert.deepEqual(normalizeExaSearchResult({
@@ -499,7 +533,7 @@ test("normalizes Brave results and strips unsafe or noisy values", () => {
 		description: "One & two",
 		highlights: ["One & two", "Three"],
 		source: "Example Author",
-		age: "2026-01-01",
+		pageDate: "2026-01-01",
 	});
 });
 

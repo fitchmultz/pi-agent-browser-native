@@ -739,16 +739,16 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const commandInvocations = invocations
 				.map((entry) => stripWrapperPrefix(entry.args))
 				.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin"));
-			// The navigation-summary helper reuses an already-observed title for the probed URL; this fake returns a
-			// constant URL, so only the first probe reads the title. The tab-close probe reads it again because its
-			// prior target is the other tab's URL, which has no observed title.
+			// The navigation-summary helper reuses an already-observed title for ordinary same-URL probes. Tab
+			// selection and close always verify the active target title because same-URL tabs can have different titles.
 			let navigationSummaryTitleObserved = false;
 			const expectedInvocations = commands.flatMap((args) => {
 				const normalizedArgs = stripWrapperPrefix([...args]);
 				const command = normalizedArgs[0];
-				const probesSummary = command === "click" || (command === "tab" && normalizedArgs[1] === "close") || command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval";
+				const tabAction = command === "tab" && normalizedArgs[1] !== undefined && !["list", "new"].includes(normalizedArgs[1]);
+				const probesSummary = command === "click" || tabAction || command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval";
 				if (!probesSummary) return [normalizedArgs];
-				const titleProbe = !navigationSummaryTitleObserved || (command === "tab" && normalizedArgs[1] === "close");
+				const titleProbe = !navigationSummaryTitleObserved || tabAction;
 				navigationSummaryTitleObserved = true;
 				return titleProbe ? [normalizedArgs, ["get", "url"], ["get", "title"]] : [normalizedArgs, ["get", "url"]];
 			});
