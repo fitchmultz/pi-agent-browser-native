@@ -241,15 +241,24 @@ test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
 	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
 });
 
-test("process start identity commands use absolute POSIX fallbacks and native PowerShell on Windows", async () => {
+test("process start identity commands prefer system paths before PATH and keep native PowerShell on Windows", async () => {
 	const posixCommands = buildProcessStartIdentityCommands(123, "linux");
-	assert.deepEqual(posixCommands.map((command) => command.file), ["/bin/ps", "/usr/bin/ps"]);
+	assert.deepEqual(posixCommands.map((command) => command.file), ["/bin/ps", "/usr/bin/ps", "ps"]);
+	assert.deepEqual(posixCommands.map((command) => command.args), Array(3).fill(["-p", "123", "-o", "lstart="]));
+	assert.deepEqual(buildProcessStartIdentityCommands(123, "darwin"), posixCommands);
+	assert.deepEqual(buildProcessStartIdentityCommands(0, "linux"), []);
 	const attempts: string[] = [];
 	assert.equal(await resolveProcessStartIdentityFromCommands(posixCommands, async (command) => {
 		attempts.push(command.file);
 		return command.file === "/usr/bin/ps" ? "fallback-identity" : undefined;
 	}), "fallback-identity");
 	assert.deepEqual(attempts, ["/bin/ps", "/usr/bin/ps"]);
+	attempts.length = 0;
+	assert.equal(await resolveProcessStartIdentityFromCommands(posixCommands, async (command) => {
+		attempts.push(command.file);
+		return command.file === "ps" ? "path-identity" : undefined;
+	}), "path-identity");
+	assert.deepEqual(attempts, ["/bin/ps", "/usr/bin/ps", "ps"]);
 	assert.deepEqual(
 		buildProcessStartIdentityCommands(123, "android").map((command) => command.file),
 		[join(dirname(process.execPath), "ps"), "/bin/ps", "/usr/bin/ps"],
@@ -264,6 +273,13 @@ test("process start identity commands use absolute POSIX fallbacks and native Po
 	assert.equal(normalizeProcessStartIdentity("  638000000000000000\r\n"), "638000000000000000");
 	assert.equal(processStartIdentitiesMatch("Sun Aug 3 00:00:00 2026", "win32-powershell-ticks-v1:638000000000000000"), false);
 	assert.equal(processStartIdentitiesMatch("win32-powershell-ticks-v1:1", "win32-powershell-ticks-v1:2"), false);
+});
+
+test("process start identity rejects empty, multi-record, and NUL output", () => {
+	assert.equal(normalizeProcessStartIdentity("  Sun Aug  3 00:00:00 2026\r\n"), "Sun Aug 3 00:00:00 2026");
+	assert.equal(normalizeProcessStartIdentity(" \r\n"), undefined);
+	assert.equal(normalizeProcessStartIdentity("first record\nsecond record"), undefined);
+	assert.equal(normalizeProcessStartIdentity("identity\0suffix"), undefined);
 });
 
 test("Windows managed restore commit excludes PowerShell command-not-found wrappers", () => {
