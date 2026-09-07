@@ -22,6 +22,8 @@ import {
 	extractSessionTabTargetFromBatchResults,
 	extractSessionTabTargetFromCommandData,
 	getSessionPageStateKey,
+	normalizeComparableUrl,
+	targetsMatch,
 } from "../extensions/agent-browser/lib/session-page-state.js";
 
 function toolEntry(details: Record<string, unknown>, isError = false): unknown {
@@ -106,11 +108,13 @@ test("SessionPageState.fromBranch restores tab targets, ref snapshots, invalidat
 	const restoredSession = state.get("s1");
 	assert.deepEqual(restoredSession, {
 		pinningReason: "restore",
-		refSnapshot: { refIds: ["e1"], target: { title: "Example", url: "https://example.com/page" } },
+		refSnapshot: { refIds: ["e1"], target: { title: "Example", url: "https://example.com/page#old" } },
 		refSnapshotInvalidation: undefined,
-		tabTarget: { title: "Example", url: "https://example.com/page" },
+		tabTarget: { title: "Example", url: "https://example.com/page#current" },
 	});
 	assert.ok(restoredSession.refSnapshot);
+	assert.equal(targetsMatch(restoredSession.tabTarget, restoredSession.refSnapshot.target), true, "tab/ref comparisons remain fragment-insensitive");
+	assert.equal(normalizeComparableUrl(restoredSession.tabTarget?.url), "https://example.com/page");
 	assert.equal("order" in restoredSession.refSnapshot, false);
 	assert.deepEqual(state.get("s2"), {
 		pinningReason: undefined,

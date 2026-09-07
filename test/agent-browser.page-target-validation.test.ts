@@ -50,16 +50,17 @@ test("unverified page transitions still require a live URL before content access
 test("WebMCP page tools require a verified target and may change it", () => {
 	assert.match(getExplicitSessionPageVerificationRequirement({ args: ["--session", "external", "webmcp", "list"] }) ?? "", /active page became unverified/);
 	assert.match(getExplicitSessionPageVerificationRequirement({ args: ["--session", "external", "webmcp", "invoke", "set_message"] }) ?? "", /active page became unverified/);
-	assert.deepEqual(getResultingPageTargetState({ args: ["webmcp", "invoke", "set_message"], currentPageUrl: "https://example.com/start" }), {
+	assert.deepEqual(getResultingPageTargetState({ args: ["webmcp", "invoke", "set_message"], executedBatchSteps: [["webmcp", "invoke", "set_message"]], currentPageUrl: "https://example.com/start" }), {
 		pageTargetMayHaveChanged: true,
 		pageUrlUnknown: true,
 	});
 	assert.equal(getPageTargetValidationError({ args: ["webmcp", "result", "invocation-1"], pageUrlUnknown: true }), undefined);
 	assert.equal(getPageTargetValidationError({ args: ["webmcp", "cancel", "invocation-1"], pageUrlUnknown: true }), undefined);
-	const batchStdin = JSON.stringify([["webmcp", "invoke", "set_message"], ["get", "url"], ["snapshot", "-i"]]);
+	const batchSteps = [["webmcp", "invoke", "set_message"], ["get", "url"], ["snapshot", "-i"]];
+	const batchStdin = JSON.stringify(batchSteps);
 	assert.equal(getPageTargetValidationError({ args: ["batch", "--bail"], currentPageUrl: "https://example.com/start", stdin: batchStdin }), undefined);
 	assert.match(getPageTargetValidationError({ args: ["batch"], currentPageUrl: "https://example.com/start", stdin: batchStdin }) ?? "", /--bail/);
-	assert.deepEqual(getResultingPageTargetState({ args: ["batch", "--bail"], currentPageUrl: "https://example.com/start", stdin: batchStdin }), {
+	assert.deepEqual(getResultingPageTargetState({ args: ["batch", "--bail"], currentPageUrl: "https://example.com/start", executedBatchSteps: batchSteps }), {
 		currentPageUrl: undefined,
 		pageTargetMayHaveChanged: true,
 		pageUrlUnknown: false,
@@ -92,7 +93,7 @@ test("raw batch command arguments exclusively determine validation and resulting
 	assert.equal(commandRequiresLivePageVerification(["batch", "get url"], JSON.stringify([["eval", "document.title"]])), false);
 	assert.deepEqual(getResultingPageTargetState({
 		args: ["batch", "open https://raw.example/"],
-		stdin: ignoredStdin,
+		executedBatchSteps: [["open", "https://raw.example/"]],
 	}), {
 		currentPageUrl: "https://raw.example/",
 		pageTargetMayHaveChanged: true,
@@ -101,16 +102,16 @@ test("raw batch command arguments exclusively determine validation and resulting
 });
 
 test("page-state tracking survives capability pass-through", () => {
-	assert.deepEqual(getResultingPageTargetState({ args: ["batch"], stdin: JSON.stringify([["connect", "9222"]]) }), {
+	assert.deepEqual(getResultingPageTargetState({ args: ["batch"], executedBatchSteps: [["connect", "9222"]] }), {
 		pageTargetMayHaveChanged: true,
 		pageUrlUnknown: true,
 	});
-	assert.deepEqual(getResultingPageTargetState({ args: ["pushstate", "/spa/route"], currentPageUrl: "https://example.com/start" }), {
+	assert.deepEqual(getResultingPageTargetState({ args: ["pushstate", "/spa/route"], executedBatchSteps: [["pushstate", "/spa/route"]], currentPageUrl: "https://example.com/start" }), {
 		currentPageUrl: "https://example.com/spa/route",
 		pageTargetMayHaveChanged: true,
 		pageUrlUnknown: false,
 	});
-	assert.deepEqual(getResultingPageTargetState({ args: ["batch"], stdin: JSON.stringify([["connect", "9222"], ["open", "file:///tmp/page.html"]]) }), {
+	assert.deepEqual(getResultingPageTargetState({ args: ["batch"], executedBatchSteps: [["connect", "9222"], ["open", "file:///tmp/page.html"]] }), {
 		currentPageUrl: "file:///tmp/page.html",
 		pageTargetMayHaveChanged: true,
 		pageUrlUnknown: false,

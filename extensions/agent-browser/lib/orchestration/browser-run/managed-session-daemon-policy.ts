@@ -68,7 +68,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 	context: OwnedManagedSessionContext;
 	mode?: "close" | "reuse";
 	signal?: AbortSignal;
-}): Promise<{ daemonStatus?: ManagedSessionDaemonInspection["status"]; error?: string; lock?: ManagedSessionPolicyLock }> {
+}): Promise<{ cleanupOnlyReason?: "restore-disabled-daemon-without-provenance"; daemonStatus?: ManagedSessionDaemonInspection["status"]; error?: string; lock?: ManagedSessionPolicyLock }> {
 	const { context, signal } = options;
 	if (!context.cwd) return { error: "Managed-session policy validation requires the wrapper-owned session cwd." };
 	const lock = await acquireManagedSessionPolicyLock({
@@ -117,6 +117,9 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 		if (activePolicyMatches) context.restoreState.recordDaemonRestoreKey(context.sessionName, context.namespace, daemon.restoreKey);
 		return !["inactive", "missing-binary"].includes(daemon.status) && !activePolicyMatches
 			? {
+				cleanupOnlyReason: daemon.status === "active" && restoreDisabledPolicyNeedsProvenance && !hasKnownDaemonRestoreKey
+					? "restore-disabled-daemon-without-provenance"
+					: undefined,
 				daemonStatus: daemon.status,
 				error: [
 					"This wrapper-owned session's live daemon does not match the requested managed-restore policy.",

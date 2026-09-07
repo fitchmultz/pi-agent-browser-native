@@ -22,6 +22,7 @@ import {
 	PREVALIDATED_VALUE_FLAGS,
 	resolveAgentBrowserNamespace,
 	scanUpstreamGlobalFlagOccurrences,
+	stripUpstreamGlobalFlags,
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
 import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
@@ -755,6 +756,18 @@ function getUnsupportedInlineWaitDownloadError(args: string[]): string | undefin
 	return `agent-browser ${TARGET_AGENT_BROWSER_VERSION} does not support \`wait --download=<path>\`. Pass the optional path as a separate argument: \`wait --download <path>\` (or \`wait -d <path>\`).`;
 }
 
+function getBareNoSandboxValidationError(args: string[], batchStep: boolean): string | undefined {
+	// Native batch rows skip global parsing; --args is effective only on the outer CLI call.
+	const tokens = batchStep ? args : stripUpstreamGlobalFlags(args);
+	const command = tokens[0];
+	const leading = command === "--no-sandbox";
+	if (!leading && (!isOpenNavigationCommand(command) || !tokens.slice(1).includes("--no-sandbox"))) return undefined;
+	const explanation = leading
+		? "`--no-sandbox` is not an agent-browser command."
+		: `\`--no-sandbox\` is ignored as an option by \`${command}\`.`;
+	return `${explanation} It is a Chromium launch argument. Put it in top-level \`--args\` and start a fresh session: { args: ["--args", "--no-sandbox", "open", "https://example.com"], sessionMode: "fresh" }. For batch, put --args before batch, not inside a step.`;
+}
+
 export function validateToolArgs(args: string[], options: { batchStep?: boolean } = {}): string | undefined {
 	if (args.length === 0) {
 		return "`args` must contain at least one agent-browser command token.";
@@ -774,7 +787,8 @@ export function validateToolArgs(args: string[], options: { batchStep?: boolean 
 	const invalidValueFlag = inspection ? undefined : getInvalidValueFlagDetails(args, !options.batchStep);
 	if (invalidValueFlag?.reason === "unsupported-assignment") return formatInvalidValueFlagError(invalidValueFlag, options.batchStep);
 
-	return getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args) ?? getUnsupportedInlineWaitDownloadError(args);
+	return (inspection ? undefined : getBareNoSandboxValidationError(args, options.batchStep === true))
+		?? getBareMcpValidationError(args) ?? getSingleKeyCommandValidationError(args) ?? getUnsupportedInlineWaitDownloadError(args);
 }
 
 function getInvalidValueFlagDetails(args: string[], allowRestoreAssignment = true): InvalidValueFlagDetails | undefined {
@@ -1054,6 +1068,10 @@ export function buildExecutionPlan(
 		if (explicitNamespacePresent) argsToAppend = stripExplicitNamespaceArgs(args);
 		managedSessionName = options.freshSessionName;
 		sessionName = options.freshSessionName;
+	}
+
+	if (commandInfo.command !== undefined && !sessionName && !explicitNamespacePresent) {
+		namespace = resolveAgentBrowserNamespace(args, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
 	}
 
 	const targetsActiveManagedSession = options.managedSessionActive

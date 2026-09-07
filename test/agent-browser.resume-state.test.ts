@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,8 +118,9 @@ test("agentBrowserExtension reconstructs managed session state on session_start 
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, userAgent: process.env.AGENT_BROWSER_USER_AGENT }) + "\\n");
-const envelope = args.includes("close")
-  ? { success: true, data: { closed: true } }
+const envelope = args.includes("tab") && args.includes("list")
+  ? { success: true, data: { tabs: [{ tabId: "t1", url: "https://dash.cloudflare.com/", active: true }] } }
+  : args.includes("close") ? { success: true, data: { closed: true } }
   : { success: true, data: { url: args[args.length - 1] } };
 process.stdout.write(JSON.stringify(envelope));`,
 	);
@@ -986,7 +988,8 @@ test("agentBrowserExtension retains headed autosave policy across follow-ups and
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
 const command = args.find((arg) => ["close", "get", "open", "snapshot"].includes(arg));
-const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+const data = args.includes("tab") && args.includes("list") ? { tabs: [{ tabId: "t1", url: "https://example.com/headed", active: true }] }
+  : command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
   : command === "snapshot" ? { snapshot: "- heading \\"Headed\\" [ref=e1]" }
   : command === "close" ? { closed: true }
   : { title: "Headed", url: "https://example.com/headed", lifecycle: { effectiveLaunch: { browserLaunched: true } } };
@@ -1112,7 +1115,8 @@ if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
 } else {
   const command = args.find((arg) => ["close", "get", "open"].includes(arg));
-  const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+  const data = args.includes("tab") && args.includes("list") ? { tabs: [{ tabId: "t1", url: "https://example.com/headed", active: true }] }
+  : command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
     : command === "close" ? { closed: true }
     : { title: "Headed", url: "https://example.com/headed" };
   process.stdout.write(JSON.stringify({ success: true, data }));
@@ -1232,7 +1236,8 @@ if (command === "session") {
   process.exit(1);
 } else {
   if (command === "open") fs.writeFileSync(activePath, "active");
-  const data = command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
+  const data = args.includes("tab") && args.includes("list") ? { tabs: [{ tabId: "t1", url: "https://example.com/headed", active: true }] }
+  : command === "get" ? { result: "https://example.com/headed", url: "https://example.com/headed" }
     : { title: "Headed", url: args[args.length - 1] };
   process.stdout.write(JSON.stringify({ success: true, data }));
 }`,
@@ -1297,6 +1302,175 @@ if (command === "session") {
 			assert.equal(invocations.some((entry) => entry.args.includes("--profile")), false, JSON.stringify(invocations));
 			assert.equal(explicitOldSessionFollowUps.length, 2, JSON.stringify(invocations));
 			assert.equal(explicitOldSessionFollowUps.every((entry) => entry.autosave === "0"), true, JSON.stringify(invocations));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves named older owned dispatch, semantic replanning, and queue ordering after replacement close fails", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-owned-namespace-"));
+	const cwd = join(tempDir, "project");
+	const home = join(tempDir, "home");
+	const logPath = join(tempDir, "invocations.log");
+	const waitGate = join(tempDir, "release-wait");
+	const closeGate = join(tempDir, "allow-close");
+	const basePath = process.env.PATH ?? "";
+	await mkdir(home, { mode: 0o700 });
+	execFileSync("git", ["init", "-q", cwd], { stdio: "ignore" });
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const namespaceIndex = args.indexOf("--namespace");
+const namespace = (namespaceIndex >= 0 ? args[namespaceIndex + 1] : process.env.AGENT_BROWSER_NAMESPACE ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const sessionName = args[args.indexOf("--session") + 1];
+const command = args.find((arg) => ["close", "get", "open", "select", "session", "snapshot", "tab", "wait"].includes(arg));
+const activePath = path.join(${JSON.stringify(tempDir)}, encodeURIComponent(namespace + ":" + sessionName) + ".json");
+const active = fs.existsSync(activePath) ? JSON.parse(fs.readFileSync(activePath, "utf8")) : null;
+const restoreKey = process.env.AGENT_BROWSER_RESTORE ?? null;
+const log = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event, namespace, namespaceEnv: process.env.AGENT_BROWSER_NAMESPACE ?? null, sessionName, restoreKey, observedRestoreKey: active?.restoreKey, active: active !== null }) + "\\n");
+log("start");
+if (command === "session") {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: active !== null, runtime: active ? { restoreKey: active.restoreKey } : null } }));
+} else if (command === "close" && namespace === "review-space" && !fs.existsSync(${JSON.stringify(closeGate)})) {
+  process.stdout.write(JSON.stringify({ success: false, error: "forced old-session close failure" }));
+  process.exit(1);
+} else {
+  if (command === "open") fs.writeFileSync(activePath, JSON.stringify({ namespace, sessionName, restoreKey, url: args.at(-1) }));
+  if (command === "close") fs.rmSync(activePath, { force: true });
+  if (command === "wait") {
+    log("wait-start");
+    const deadline = Date.now() + ${CONCURRENCY_TEST_TIMEOUT_MS};
+    while (!fs.existsSync(${JSON.stringify(waitGate)})) {
+      if (Date.now() > deadline) throw new Error("owned wait gate was not released");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+    log("wait-end");
+  }
+  const url = command === "open" ? args.at(-1) : active?.url ?? "https://shop.example.test/";
+  const data = command === "snapshot" ? { origin: url, refs: { e4: { role: "combobox", name: "Flavor" } }, snapshot: '- combobox "Flavor" [ref=e4]' }
+    : command === "get" ? { result: args.at(-1) === "title" ? "Shop" : url, url }
+    : command === "tab" ? { tabs: [{ tabId: "t1", url, active: true }] }
+    : command === "select" ? { selected: args.at(-1) }
+    : command === "close" ? { closed: true }
+    : { title: "Shop", url };
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}`);
+	const readEvents = async () => await readInvocationLog(logPath) as Array<{
+		args: string[]; event: string; namespace: string; namespaceEnv: string | null;
+		sessionName: string; restoreKey: string | null; observedRestoreKey?: string | null; active: boolean;
+	}>;
+	try {
+		await withPatchedEnv({
+			AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), AGENT_BROWSER_NAMESPACE: undefined,
+			HOME: home, USERPROFILE: home, PATH: `${tempDir}:${basePath}`,
+			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
+		}, async () => {
+			const harness = createExtensionHarness({ cwd });
+			let cleanupHarness = harness;
+			const pending: Array<ReturnType<typeof executeRegisteredTool>> = [];
+			try {
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "Review Space", "open", "https://shop.example.test/"] });
+				assert.equal(open.isError, false, JSON.stringify(open));
+				assert.equal(open.details?.namespace, "review-space");
+				assert.notEqual(open.details?.managedSessionRestoreDisabled, true);
+				const oldSession = open.details?.sessionName;
+				assertIsString(oldSession);
+				const launched = (await readEvents()).find((entry) => entry.args.includes("open") && entry.sessionName === oldSession);
+				assert.ok(launched);
+				assert.equal(launched.namespace, "review-space");
+				assert.match(launched.restoreKey ?? "", /^piab-r2-/);
+
+				const replacement = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://shop.example.test/replacement"], sessionMode: "fresh" });
+				assert.equal(replacement.isError, false, JSON.stringify(replacement));
+				assert.equal((replacement.details?.managedSessionOutcome as { replacedSessionClosed?: boolean } | undefined)?.replacedSessionClosed, false);
+				const currentSession = replacement.details?.sessionName;
+				assertIsString(currentSession);
+				assert.notEqual(currentSession, oldSession);
+				const replacementLaunch = (await readEvents()).find((entry) => entry.args.includes("open") && entry.sessionName === currentSession);
+				assert.equal(replacementLaunch?.namespace, "");
+				assert.match(replacementLaunch?.restoreKey ?? "", /^piab-r2-/);
+
+				await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "Review Space" }, async () => {
+					const before = (await readEvents()).length;
+					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", oldSession, "snapshot", "-i"] });
+					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+					assert.equal(snapshot.details?.namespace, "review-space");
+					assert.notEqual(snapshot.details?.managedSessionRestoreDisabled, true);
+					assert.deepEqual(snapshot.details?.effectiveArgs, ["--json", "--session", oldSession, "snapshot", "-i"]);
+					const selected = await executeRegisteredTool(harness.tool, harness.ctx, {
+						semanticAction: { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate", session: oldSession },
+					});
+					assert.equal(selected.isError, false, JSON.stringify(selected));
+					assert.equal(selected.details?.namespace, "review-space");
+					assert.deepEqual(selected.details?.effectiveArgs, ["--json", "--session", oldSession, "select", "@e4", "chocolate"]);
+					const dispatched = (await readEvents()).slice(before);
+					const inspections = dispatched.filter((entry) => entry.args.includes("session") && entry.args.includes("info"));
+					assert.equal(inspections.length, 2);
+					assert.equal(inspections.every((entry) => entry.active && entry.observedRestoreKey === launched.restoreKey), true, JSON.stringify(inspections));
+					assert.equal(dispatched.every((entry) => entry.sessionName === oldSession && entry.namespace === "review-space"), true, JSON.stringify(dispatched));
+					const content = dispatched.filter((entry) => !entry.args.includes("session"));
+					assert.ok(content.filter((entry) => entry.args.includes("snapshot")).length >= 2, JSON.stringify(content));
+					assert.ok(content.some((entry) => entry.args.includes("select")), JSON.stringify(content));
+					assert.equal(content.every((entry) => entry.namespaceEnv === "review-space" && entry.restoreKey === launched.restoreKey), true, JSON.stringify(content));
+
+					const beforeQueue = (await readEvents()).length;
+					const wait = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", oldSession, "wait", "1"] });
+					pending.push(wait);
+					const waitDeadline = Date.now() + CONCURRENCY_TEST_TIMEOUT_MS;
+					while (Date.now() <= waitDeadline && !(await readEvents()).some((entry) => entry.event === "wait-start")) await delay(10);
+					assert.ok((await readEvents()).some((entry) => entry.event === "wait-start"), "older owned wait did not dispatch");
+					const current = executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+					pending.push(current);
+					const unrelatedCall = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--namespace", "unrelated", "--session", "caller", "tab", "list"],
+					});
+					pending.push(unrelatedCall);
+					const unrelated = await withConcurrencyTestTimeout(unrelatedCall, "unrelated caller was blocked by the older owned wait");
+					assert.equal(unrelated.isError, false, JSON.stringify(unrelated));
+					const heldEvents = (await readEvents()).slice(beforeQueue);
+					assert.equal(heldEvents.some((entry) => entry.sessionName === currentSession), false, JSON.stringify(heldEvents));
+					await writeFile(waitGate, "go");
+					const [waitResult, currentResult] = await withConcurrencyTestTimeout(Promise.all([wait, current]), "owned commands did not complete after wait release");
+					assert.equal(waitResult.isError, false, JSON.stringify(waitResult));
+					assert.equal(currentResult.isError, false, JSON.stringify(currentResult));
+					assert.equal(currentResult.details?.sessionName, currentSession);
+					const events = (await readEvents()).slice(beforeQueue);
+					const waitEnd = events.findIndex((entry) => entry.event === "wait-end");
+					assert.ok(waitEnd >= 0 && events.findIndex((entry) => entry.sessionName === currentSession) > waitEnd, JSON.stringify(events));
+					const currentStart = events.findIndex((entry) => entry.sessionName === currentSession && entry.args.includes("snapshot"));
+					assert.ok(waitEnd >= 0 && currentStart > waitEnd, JSON.stringify(events));
+					assert.equal(events[currentStart]?.namespace, "");
+
+					await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+					const resumed = createExtensionHarness({
+						branch: [open, replacement, snapshot, selected, waitResult, currentResult].map((result) => createToolBranchEntry({ details: result.details ?? {}, isError: result.isError })),
+						cwd,
+					});
+					cleanupHarness = resumed;
+					await runExtensionEvent(resumed.handlers, "session_start", { reason: "resume" }, resumed.ctx);
+					const resumedOld = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["--session", oldSession, "snapshot", "-i"] });
+					assert.equal(resumedOld.isError, false, JSON.stringify(resumedOld));
+					assert.equal(resumedOld.details?.namespace, "review-space");
+					assert.notEqual(resumedOld.details?.managedSessionRestoreDisabled, true);
+					const resumedCurrent = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["snapshot", "-i"] });
+					assert.equal(resumedCurrent.isError, false, JSON.stringify(resumedCurrent));
+					assert.equal(resumedCurrent.details?.sessionName, currentSession);
+					const resumedEvents = await readEvents();
+					assert.equal(resumedEvents.filter((entry) => entry.sessionName === oldSession && entry.args.includes("snapshot")).every((entry) => entry.namespace === "review-space" && entry.restoreKey === launched.restoreKey), true, JSON.stringify(resumedEvents));
+					await writeFile(closeGate, "go");
+					for (const args of [["--namespace", "review-space", "--session", oldSession, "close"], ["close"]]) {
+						const closed = await executeRegisteredTool(resumed.tool, resumed.ctx, { args });
+						assert.equal(closed.isError, false, JSON.stringify(closed));
+					}
+				});
+			} finally {
+				await writeFile(waitGate, "go");
+				await writeFile(closeGate, "go");
+				await Promise.allSettled(pending);
+				await runExtensionEvent(cleanupHarness.handlers, "session_shutdown", { reason: "quit" }, cleanupHarness.ctx);
+			}
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1558,8 +1732,9 @@ test("agentBrowserExtension restores the rotated fresh managed session across re
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null }) + "\\n");
-const envelope = args.includes("close")
-  ? { success: true, data: { closed: true } }
+const envelope = args.includes("tab") && args.includes("list")
+  ? { success: true, data: { tabs: [{ tabId: "t1", title: "Profiled", url: "https://example.com/profile", active: true }] } }
+  : args.includes("close") ? { success: true, data: { closed: true } }
   : { success: true, data: { title: args.includes("--profile") ? "Profiled" : "Public", url: args[args.length - 1], idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null } };
 process.stdout.write(JSON.stringify(envelope));`,
 	);
@@ -1890,170 +2065,44 @@ process.stdout.write(JSON.stringify(envelope));`,
 });
 
 test("agentBrowserExtension restores pinned tab targets across resume for explicit sessions", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-	const logPath = join(tempDir, "invocations.log");
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
+	for (const wrongUrl of ["https://other.example/", "about:blank"]) {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-resume-pin-"));
+		const logPath = join(tempDir, "invocations.log");
+		const selectedPath = join(tempDir, "selected");
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
 const args = process.argv.slice(2);
-const stdin = fs.readFileSync(0, "utf8");
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-const exampleSite = { title: "Example Domain", url: "https://example.com/" };
-const gemini = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
-if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: gemini.url } }));
-} else if (args.includes("batch")) {
-  const steps = JSON.parse(stdin || "[]");
-  let active = gemini;
-  const results = steps.map((step) => {
-    const [command, ...rest] = step;
-    if (command === "tab") {
-      active = rest[0] === "t1" ? exampleSite : gemini;
-      return { command: step, success: true, result: active };
-    }
-    if (command === "snapshot") {
-      return {
-        command: step,
-        success: true,
-        result: {
-          origin: active.url,
-          refs: { e1: { name: active.title, role: "heading" } },
-          snapshot: '- heading "' + active.title + '" [level=1, ref=e1]',
-        },
-      };
-    }
-    return { command: step, success: true, result: active };
-  });
-  process.stdout.write(JSON.stringify(results));
-} else if (args.includes("tab") && args.includes("list")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false },
-    { tabId: "t2", title: gemini.title, url: gemini.url, active: true }
-  ] } }));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: {
-    origin: gemini.url,
-    refs: { e1: { name: gemini.title, role: "heading" } },
-    snapshot: '- heading "Google Gemini" [level=1, ref=e1]'
-  } }));
-}`,
-	);
-
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const resumedHarness = createExtensionHarness({
-				branch: [
-					createToolBranchEntry({
-						details: {
-							args: ["--session", "named", "--profile", "Default", "open", "https://example.com"],
-							command: "open",
-							sessionName: "named",
-							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
-						},
-						isError: false,
-					}),
-				],
-				cwd: tempDir,
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("tab") && args.includes("t1")) fs.writeFileSync(${JSON.stringify(selectedPath)}, "selected");
+const selected = fs.existsSync(${JSON.stringify(selectedPath)});
+const url = selected ? "https://example.com/" : ${JSON.stringify(wrongUrl)};
+let data = { url };
+if (args.includes("tab") && args.includes("list")) data = { tabs: [
+  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: selected },
+  { tabId: "t2", url: ${JSON.stringify(wrongUrl)}, active: !selected }
+] };
+if (args.includes("snapshot")) data = { origin: url, refs: { e1: { name: selected ? "Example Domain" : "Wrong", role: "heading" } }, snapshot: selected ? '- heading "Example Domain" [ref=e1]' : 'Wrong page' };
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: {
+					args: ["--session", "named", "open", "https://example.com"], command: "open", sessionName: "named",
+					sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
+				}, isError: false })] });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+				const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "snapshot", "-i"] });
+				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+				assert.equal((snapshot.details?.sessionTabCorrection as { selectedTab: string }).selectedTab, "t1");
+				assert.match(snapshot.content[0]?.text ?? "", /Example Domain/);
+				assert.doesNotMatch(snapshot.content[0]?.text ?? "", /Wrong page|Origin: about:blank/);
+				const invocations = await readInvocationLog(logPath);
+				assert.deepEqual(invocations.slice(0, 3).map((entry) => entry.args.slice(3)), [["tab", "list"], ["tab", "t1"], ["tab", "list"]]);
+				assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 1);
+				assert.equal(invocations.some((entry) => entry.args.includes("batch")), false);
 			});
-			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
-
-			const snapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
-				args: ["--session", "named", "snapshot", "-i"],
-			});
-			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-			assert.deepEqual(snapshot.details?.sessionTabCorrection, {
-				selectedTab: "t1",
-				selectionKind: "tabId",
-				targetTitle: "Example Domain",
-				targetUrl: "https://example.com/",
-			});
-			assert.match((snapshot.content[0] as { text: string }).text, /Example Domain/);
-
-			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 3);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [["tab", "t1"], ["snapshot", "-i"]]);
-		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
-test("agentBrowserExtension pre-pins resumed explicit-session snapshot when about:blank is active", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-blank-pin-"));
-	const logPath = join(tempDir, "invocations.log");
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const stdin = fs.readFileSync(0, "utf8");
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-const exampleSite = { title: "Example Domain", url: "https://example.com/" };
-if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "about:blank" } }));
-} else if (args.includes("batch")) {
-  const steps = JSON.parse(stdin || "[]");
-  const results = steps.map((step) => {
-    const [command, selectedTab] = step;
-    if (command === "tab") return { command: step, success: true, result: { tabId: selectedTab, ...exampleSite } };
-    if (command === "snapshot") return { command: step, success: true, result: { origin: exampleSite.url, refs: { e1: { name: exampleSite.title, role: "heading" } }, snapshot: '- heading "Example Domain" [level=1, ref=e1]' } };
-    return { command: step, success: true, result: exampleSite };
-  });
-  process.stdout.write(JSON.stringify(results));
-} else if (args.includes("tab") && args.includes("list")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { tabId: "blank", title: "", url: "about:blank", active: true },
-    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false }
-  ] } }));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: { origin: "about:blank", snapshot: "Origin: about:blank" } }));
-}`,
-	);
-
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const resumedHarness = createExtensionHarness({
-				branch: [
-					createToolBranchEntry({
-						details: {
-							args: ["--session", "named", "open", "https://example.com"],
-							command: "open",
-							sessionName: "named",
-							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
-						},
-						isError: false,
-					}),
-				],
-				cwd: tempDir,
-			});
-			await runExtensionEvent(resumedHarness.handlers, "session_start", { reason: "resume" }, resumedHarness.ctx);
-
-			const snapshot = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
-				args: ["--session", "named", "snapshot", "-i"],
-			});
-			assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-			assert.deepEqual(snapshot.details?.sessionTabCorrection, {
-				selectedTab: "t1",
-				selectionKind: "tabId",
-				targetTitle: "Example Domain",
-				targetUrl: "https://example.com/",
-			});
-			assert.match((snapshot.content[0] as { text: string }).text, /Example Domain/);
-			assert.doesNotMatch((snapshot.content[0] as { text: string }).text, /Origin: about:blank/);
-
-			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 3);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [["tab", "t1"], ["snapshot", "-i"]]);
-		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
 	}
 });
 
@@ -2120,13 +2169,14 @@ if (args.includes("tab") && args.includes("list")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 5);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "t1"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "eval", "--stdin"]);
-			assert.equal(invocations[3]?.stdin, "document.title");
-			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.equal(invocations.length, 6);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "eval", "--stdin"]);
+			assert.equal(invocations[4]?.stdin, "document.title");
+			assert.deepEqual(invocations[5]?.args, ["--json", "--session", "named", "get", "url"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -2185,7 +2235,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Wrong", url
 	}
 });
 
-test("agentBrowserExtension pre-pins resumed explicit-session user batch and derives the resulting target", { concurrency: false }, async () => {
+test("agentBrowserExtension preserves explicit navigation in a resumed user batch and derives the resulting target", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -2268,12 +2318,10 @@ if (args.includes("batch")) {
 			]);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 3);
+			assert.equal(invocations.length, 2);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
-				["tab", "t1"],
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "batch"]);
+			assert.deepEqual(JSON.parse(String(invocations[1]?.stdin ?? "[]")), [
 				["open", "https://example.org"],
 				["get", "title"],
 				["get", "url"],
@@ -2374,8 +2422,8 @@ test("agentBrowserExtension does not combine stale batch title with a later url 
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-let active = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
 const example = { title: "Example Domain", url: "https://example.com/" };
+let active = example;
 const org = { title: "Example Org", url: "https://example.org/" };
 if (args.includes("batch")) {
   const steps = JSON.parse(stdin || "[]");
@@ -2400,8 +2448,8 @@ if (args.includes("batch")) {
   process.stdout.write(JSON.stringify(results));
 } else if (args.includes("tab") && args.includes("list")) {
   process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { tabId: "t1", title: example.title, url: example.url, active: false },
-    { tabId: "t2", title: active.title, url: active.url, active: true }
+    { tabId: "t1", title: example.title, url: example.url, active: true },
+    { tabId: "t2", title: "Other", url: "https://other.example/", active: false }
   ] } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: active }));
@@ -2435,9 +2483,8 @@ if (args.includes("batch")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.length, 3);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
-				["tab", "t1"],
 				["get", "title"],
 				["open", "https://example.org"],
 				["get", "url"],

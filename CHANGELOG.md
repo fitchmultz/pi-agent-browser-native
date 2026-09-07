@@ -1,6 +1,29 @@
 # Changelog
 
-## Unreleased
+## 0.6.7 - 2026-09-07
+
+### Fixed
+
+- Remove four unused prompt suffix entries without changing runtime guidance. Thanks to @JsonKim for #133.
+- Diagnose misplaced Chromium `--no-sandbox` command/navigation options with effective top-level `--args` guidance, while preserving literal operands and help. Adapted from @ahalekelly's #152.
+- Correct Electron list timeout guidance, label explicit-ID cleaned launch records as historical, and report fresh tracked-profile path presence independently of process/port liveness. Failed-launch output capture remains unresolved (#128).
+- Return structured artifact-directory preparation failures for direct, stdin and raw batch commands, retaining the attempted path and recovery guidance. Document absolute artifact paths for raw batches without rewriting their command strings (#124).
+- Identify image media types and inline attachments from bytes instead of filename suffixes, distinguish known requested and reported artifact paths, and surface fresh-snapshot warnings for reached recording page transitions on success and failure (#127).
+- Accept native `upgrade` text without reporting a JSON parse failure, retain failure diagnostics and explicit `--json` output, and keep timeout/cancellation failures even when the child exits zero. Thanks to @fgpaz for the report and regression approach in #156.
+- Clarify positional screenshot and recording paths, the screenshot `--full` flag, batch stdin's JSON token-array format, text-only `job.assertText`, ref refreshes after clicks, focused `keyboard type <text>`, and positional `wait <ms>` in tool guidance.
+- Stop using duplicate-name snapshot ordinals as click-failure evidence after the page changes. Ambiguous refs pass through to native clicking without a probe; unique targets retain no-event checks, and native dispatch still does not prove application state.
+- Accept an unmapped owner for the operating environment's actual filesystem root when validating private socket storage in Linux user namespaces. Preserve non-root ownership, permissions, alias-destination and entry checks, including existing root-owned sticky modes; automatic restore still rejects unmapped non-root HOME ancestry.
+- Let URL-opening QA clear diagnostics and navigate even when the previous tab is gone. Explicit URL reads, URL accessibility/vitals audits, URL diffs, new windows and URL-bearing recording commands also keep their own destination in direct and batch calls; attached QA and current-page actions still require the intended page.
+- Retain a resumed managed session's pending URL reopen after confirmed shutdown, even when non-page calls start the daemon first or a batch begins with non-page steps. Reopen the complete URL, including its fragment, before current-page reads or history commands; verify the observed tab and discard old refs/frame scope. Unreached batch navigation does not consume the reopen, and native row/error order is unchanged. Restored cookies/storage do not recover unsaved forms, JavaScript memory, or history; live wrong-tab recovery and explicit navigation keep their own intent.
+- Keep follow-ups on the observed page after `window new` or `diff url`, including redirected destinations and reached native batch rows. Do not reselect the old tab for an intentional blank window or an observed blank diff destination; invalidate old refs and require a verified target when the final URL cannot be observed.
+- Preserve the consumed cold-reopen marker and exact session identity in aborted results, so cancellation after an attempted reopen cannot navigate a live browser again after reload. Cancellation before the attempt leaves the reopen pending.
+- Require observed successful page results in lifecycle verification and report the first unexpected completed tool result instead of accepting recovery text or waiting for a later result.
+
+- Preserve native arguments, literal values, refs, and continue-on-error behavior during tab recovery. Failed tab selection stops before user commands; mixed batch failures retain their per-step results and failure counts.
+- Apply stale-ref checks to `@eN`, `eN`, and `ref=eN` selector operands without treating text, paths, or keyboard/mouse data as refs. Explain unsupported `batch --bail=<value>` without running ignored stdin.
+- Retry failed recording journal writes, preserve closed recording state across branch changes and reloads, require absolute stored recording paths, and target cleanup to the exact session and namespace. Preserve the selected managed-session namespace and automatic restore when ambient namespace settings change.
+- Limit `semanticAction.values` to select actions in the tool schema and clarify the supported `stdin` commands. Valid semantic calls are unchanged; runtime validation still applies. Thanks to @lindsayemarc for #139.
+- Check socket-directory ancestry through root-owned symlinks, rejecting unsafe destination parents and intermediate user-owned links while preserving trusted system aliases.
 
 ## 0.6.6 - 2026-09-05
 

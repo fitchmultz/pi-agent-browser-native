@@ -1,5 +1,5 @@
 import { execFile, type ChildProcess } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { lstat, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import { fetchCdpJson, parseCdpTargets, parseCdpVersion } from "./cdp.js";
@@ -20,6 +20,7 @@ export interface ElectronLaunchStatus {
 	port: number;
 	portAlive: boolean;
 	targets: ElectronCdpTarget[];
+	userDataDirState: "present" | "absent" | "unknown";
 	version?: ElectronCdpVersion;
 }
 
@@ -63,6 +64,13 @@ async function isPortAlive(port: number): Promise<{ targets: ElectronCdpTarget[]
 
 export async function inspectElectronLaunchStatus(record: ElectronLaunchRecord): Promise<ElectronLaunchStatus> {
 	const cdp = await isPortAlive(record.port);
+	let userDataDirState: ElectronLaunchStatus["userDataDirState"];
+	try {
+		await lstat(record.userDataDir);
+		userDataDirState = "present";
+	} catch (error) {
+		userDataDirState = (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unknown";
+	}
 	return {
 		cleanupState: record.cleanupState,
 		launchId: record.launchId,
@@ -71,6 +79,7 @@ export async function inspectElectronLaunchStatus(record: ElectronLaunchRecord):
 		port: record.port,
 		portAlive: cdp.version !== undefined,
 		targets: cdp.targets,
+		userDataDirState,
 		version: cdp.version,
 	};
 }

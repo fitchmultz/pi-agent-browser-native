@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolve } from "node:path";
 
 import {
 	RECORDING_RESERVATION_ENTRY_TYPE,
@@ -44,6 +45,18 @@ function pendingManifestEntry(session: string, namespace: string, path: string, 
 		subcommand: "start",
 	};
 }
+
+test("recording replay rejects relative storage paths without changing display paths or valid rows", () => {
+	const valid = { absolutePath: resolve("video.webm"), cwd: process.cwd(), namespace: "scope", path: "display/video.webm", sessionName: "valid", state: "active", version: 1 };
+	const branch = [
+		valid,
+		...[{ absolutePath: "video.webm" }, { absolutePath: "" }, { cwd: "." }, { cwd: "" }].map((invalid, index) => ({ ...valid, ...invalid, sessionName: `invalid-${index}` })),
+		{ version: 1, state: "closed", sessionName: "closed" },
+	].map((data) => ({ type: "custom", customType: RECORDING_RESERVATION_ENTRY_TYPE, data }));
+	const restored = restoreRecordingReservationStateFromBranch(branch);
+	assert.deepEqual([...restored.active.values()], [{ absolutePath: valid.absolutePath, cwd: valid.cwd, namespace: valid.namespace, path: valid.path, sessionName: valid.sessionName }]);
+	assert.equal(restored.terminal.size, 1);
+});
 
 test("recording reservations distinguish namespace plus session identity", () => {
 	const reservations = new Map<string, ActiveRecordingReservation>();

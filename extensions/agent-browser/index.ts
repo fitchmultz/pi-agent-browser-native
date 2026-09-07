@@ -19,6 +19,7 @@ import {
 } from "./lib/playbook.js";
 import { SessionPageState } from "./lib/session-page-state.js";
 import {
+	buildExecutionPlan,
 	canUseHeadlessCompatibilityUserAgent,
 	createEphemeralSessionSeed,
 	createFreshSessionName,
@@ -796,7 +797,7 @@ function getOffBranchOwnedElectronLaunchRecords(ownedRecords: Map<string, Electr
 }
 
 function shouldSerializeBrowserCommand(options: {
-	explicitNamespace?: string;
+	namespace?: string;
 	explicitSessionName?: string;
 	managedSessionName: string;
 	ownedElectronLaunchRecords: Map<string, ElectronLaunchRecord>;
@@ -804,7 +805,7 @@ function shouldSerializeBrowserCommand(options: {
 }): boolean {
 	if (!options.explicitSessionName) return true;
 	if (options.explicitSessionName === options.managedSessionName) return true;
-	if (options.ownedManagedSessions.has(getSessionContextKey(options.explicitSessionName, options.explicitNamespace) ?? options.explicitSessionName)) return true;
+	if (options.ownedManagedSessions.has(getSessionContextKey(options.explicitSessionName, options.namespace) ?? options.explicitSessionName)) return true;
 	return getActiveElectronRecords(options.ownedElectronLaunchRecords).some((record) => record.sessionName === options.explicitSessionName);
 }
 
@@ -971,7 +972,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let artifactManifest: SessionArtifactManifest | undefined;
 	let activeRecordingReservations = new Map<string, ActiveRecordingReservation>();
 	let recordingSessionTombstones = new Map<string, ActiveRecordingReservation>();
-	let recordingSessionTombstonesToPersist = new Map<string, ActiveRecordingReservation>();
+	let recordingReservationsDirty = false;
 	let attachedSessionKeys = new Set<string>();
 	let networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 	let electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
@@ -989,20 +990,50 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	let branchStateGeneration = 0;
 	const validatedUpstreamPathKeys = new Set<string>();
 
+	const recordingPersistenceWarning = "Recording persistence warning: recording protection could not be saved to the Pi journal. Restart protection is not yet durable; keep recording destinations untouched until exact stop or close. The next browser operation retries journal persistence; cleanup remains available.";
+
+	const flushRecordingReservations = (): void => {
+		if (!recordingReservationsDirty) return;
+		try {
+			// Pi updates branch memory before writing. One failed append can hide an earlier
+			// durable reservation after reopen, so republish all current state, not just the failed row.
+			for (const reservation of recordingSessionTombstones.values()) appendRecordingReservationTransition(pi, { reservation, state: "closed" });
+			for (const reservation of activeRecordingReservations.values()) appendRecordingReservationTransition(pi, { reservation, state: "active" });
+			recordingReservationsDirty = false;
+		} catch {}
+	};
+
+	const warnRecordingPersistence = (result: AgentBrowserToolResult): AgentBrowserToolResult => {
+		if (!recordingReservationsDirty) return result;
+		const content = [...result.content];
+		const first = content[0];
+		let json: unknown;
+		if (first?.type === "text") {
+			try { json = JSON.parse(first.text); } catch {}
+		}
+		if (isRecord(json) && typeof json.success === "boolean") {
+			content[0] = { type: "text", text: JSON.stringify({ ...json, warnings: [...(Array.isArray(json.warnings) ? json.warnings : []), recordingPersistenceWarning] }, null, 2) };
+		} else if (first?.type === "text") content[0] = { ...first, text: `${first.text}\n\n${recordingPersistenceWarning}` };
+		else content.push({ type: "text", text: recordingPersistenceWarning });
+		return { ...result, content, details: { ...(isRecord(result.details) ? result.details : {}), recordingPersistenceWarning } };
+	};
+
+	const notifyRecordingPersistence = (ctx: ExtensionContext): void => {
+		if (!recordingReservationsDirty) return;
+		if (ctx.hasUI) ctx.ui.notify(recordingPersistenceWarning, "warning");
+		else console.warn(recordingPersistenceWarning);
+	};
+
 	const appendRecordingTransitions = (transitions: ReturnType<typeof applyRecordingArtifactsToReservations>): void => {
 		for (const transition of transitions) {
 			const key = getAgentBrowserSessionIdentityKey(transition.reservation.sessionName, transition.reservation.namespace);
-			if (transition.state === "active") {
-				recordingSessionTombstones.delete(key);
-				recordingSessionTombstonesToPersist.delete(key);
-			} else {
-				recordingSessionTombstones.set(key, transition.reservation);
-			}
+			if (transition.state === "active") recordingSessionTombstones.delete(key);
+			else recordingSessionTombstones.set(key, transition.reservation);
+			if (recordingReservationsDirty) continue;
 			try {
 				appendRecordingReservationTransition(pi, transition);
-				recordingSessionTombstonesToPersist.delete(key);
 			} catch {
-				if (transition.state === "closed") recordingSessionTombstonesToPersist.set(key, transition.reservation);
+				recordingReservationsDirty = true;
 			}
 		}
 	};
@@ -1010,21 +1041,30 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 	const appendActiveRecordingCleanupAction = (result: AgentBrowserToolResult, reservation: ActiveRecordingReservation): AgentBrowserToolResult => {
 		if (result.isError !== true) return result;
 		const details = isRecord(result.details) ? result.details : {};
-		const nextActions = Array.isArray(details.nextActions) ? [...details.nextActions] as AgentBrowserNextAction[] : [];
-		if (nextActions.some((action) => action.id === "stop-pending-recording")) return result;
+		const cleanupOnly = details.managedSessionCleanupOnlyReason === "restore-disabled-daemon-without-provenance";
+		const nextActions = (Array.isArray(details.nextActions) ? details.nextActions as AgentBrowserNextAction[] : [])
+			.filter((action) => !cleanupOnly || action.id !== "stop-pending-recording");
+		const actionId = cleanupOnly ? "close-pending-recording" : "stop-pending-recording";
+		if (nextActions.some((action) => action.id === actionId)) return result;
 		const stopActions = applyNamespaceToNextActions(
 			applySessionToNextActions([
 				buildNextToolAction({
-					args: ["record", "stop"],
-					id: "stop-pending-recording",
-					reason: "Stop the active recording so the requested video can be finalized and verified on disk.",
-					safety: "The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
+					args: cleanupOnly ? ["close"] : ["record", "stop"],
+					id: actionId,
+					reason: cleanupOnly
+						? "Close this exact session to abandon the recording; its live daemon lacks current-instance provenance."
+						: "Stop the active recording so the requested video can be finalized and verified on disk.",
+					safety: cleanupOnly
+						? "Close does not verify the WebM. The recording is abandoned/unverified, even if close leaves a file on disk."
+						: "The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
 				}),
 			], reservation.sessionName),
-			reservation.namespace,
+			cleanupOnly ? reservation.namespace ?? "" : reservation.namespace,
 		);
 		appendUniqueAgentBrowserNextActions(nextActions, stopActions);
-		const cleanupNotice = "An active recording remains open. Use the exact stop-pending-recording payload in details.nextActions before leaving this session.";
+		const cleanupNotice = cleanupOnly
+			? "This recording cannot be stopped through the unproven daemon. Use the exact close-pending-recording payload in details.nextActions; any WebM left by close is abandoned/unverified."
+			: "An active recording remains open. Use the exact stop-pending-recording payload in details.nextActions before leaving this session.";
 		let noticeAppended = false;
 		const content = result.content.map((item) => {
 			if (noticeAppended || item.type !== "text") return item;
@@ -1041,17 +1081,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		if (retireManifest && artifactManifest) artifactManifest = retirePendingRecordingManifestEntries(artifactManifest, sessionName, namespace);
 		if (!reservation && artifactManifest === previousManifest) return;
 		const terminalReservation = reservation ?? { absolutePath: "", cwd: managedSessionCwd, namespace, path: "", sessionName };
-		const terminalKey = getAgentBrowserSessionIdentityKey(sessionName, namespace);
-		recordingSessionTombstones.set(terminalKey, terminalReservation);
-		try {
-			appendRecordingReservationTransition(pi, {
-				reservation: terminalReservation,
-				state: "closed",
-			});
-			recordingSessionTombstonesToPersist.delete(terminalKey);
-		} catch {
-			recordingSessionTombstonesToPersist.set(terminalKey, terminalReservation);
-		}
+		appendRecordingTransitions([{ reservation: terminalReservation, state: "closed" }]);
 	};
 
 	const syncRecordingReservationsFromResult = (result: AgentBrowserToolResult): Set<string> => {
@@ -1229,15 +1259,21 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = restoreArtifactManifestFromBranch(branch);
 		const restoredRecordingState = restoreRecordingReservationStateFromBranch(branch);
-		for (const [key, reservation] of recordingSessionTombstones) {
-			if (restoredRecordingState.terminal.has(key)) recordingSessionTombstonesToPersist.delete(key);
-			else recordingSessionTombstonesToPersist.set(key, reservation);
+		for (const key of recordingSessionTombstones.keys()) {
+			if (!restoredRecordingState.terminal.has(key)) recordingReservationsDirty = true;
 		}
 		for (const [key, reservation] of restoredRecordingState.terminal) {
 			if (!activeRecordingReservations.has(key)) recordingSessionTombstones.set(key, reservation);
 		}
-		for (const key of recordingSessionTombstones.keys()) restoredRecordingState.active.delete(key);
-		for (const [key, reservation] of activeRecordingReservations) restoredRecordingState.active.set(key, reservation);
+		for (const [key, reservation] of recordingSessionTombstones) {
+			restoredRecordingState.active.delete(key);
+			if (artifactManifest) artifactManifest = retirePendingRecordingManifestEntries(artifactManifest, reservation.sessionName, reservation.namespace);
+		}
+		for (const [key, reservation] of activeRecordingReservations) {
+			const restored = restoredRecordingState.active.get(key);
+			if (restored?.absolutePath !== reservation.absolutePath || restored.cwd !== reservation.cwd) recordingReservationsDirty = true;
+			restoredRecordingState.active.set(key, reservation);
+		}
 		activeRecordingReservations = restoredRecordingState.active;
 		attachedSessionKeys = restoreAttachedSessionKeysFromBranch(branch);
 		networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
@@ -1335,7 +1371,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			cwd: ctx.cwd,
 			includeProjectConfig: shouldIncludeProjectConfig(ctx),
 		}));
-		await artifactExecutionQueue.run(() => managedSessionExecutionQueue.run(() => recoverScriptSessionLeasesWithinQueue(ctx)));
+		await artifactExecutionQueue.run(() => managedSessionExecutionQueue.run(async () => {
+			await recoverScriptSessionLeasesWithinQueue(ctx);
+			flushRecordingReservations();
+			notifyRecordingPersistence(ctx);
+		}));
 	});
 
 	pi.on("session_tree", async (_event, ctx) => {
@@ -1344,6 +1384,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 		await artifactExecutionQueue.run(() => managedSessionExecutionQueue.run(async () => {
 			restoreBranchBackedState(ctx, { resetRuntimeOwnership: false });
 			await recoverScriptSessionLeasesWithinQueue(ctx);
+			flushRecordingReservations();
+			notifyRecordingPersistence(ctx);
 		}));
 	});
 
@@ -1390,28 +1432,21 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					(owner) => retireRecordingSession(owner.sessionName, owner.namespace),
 				);
 			}
+			flushRecordingReservations();
+			notifyRecordingPersistence(ctx);
 		}));
 		managedSessionActive = false;
 		managedSessionCompatibilityWorkaround = undefined;
 		managedSessionHeadedAutosaveDisabled = false;
 		managedSessionHeadedAutosaveInterval = undefined;
 		managedSessionNamespace = undefined;
-		for (const reservation of recordingSessionTombstonesToPersist.values()) {
-			try {
-				appendRecordingReservationTransition(pi, { reservation, state: "closed" });
-			} catch {}
-		}
-		for (const reservation of activeRecordingReservations.values()) {
-			try {
-				appendRecordingReservationTransition(pi, { reservation, state: "active" });
-			} catch {}
-		}
 		sessionPageState.reset();
 		traceOwners = new Map<string, TraceOwner>();
 		artifactManifest = undefined;
-		activeRecordingReservations = new Map<string, ActiveRecordingReservation>();
-		recordingSessionTombstones = new Map<string, ActiveRecordingReservation>();
-		recordingSessionTombstonesToPersist = new Map<string, ActiveRecordingReservation>();
+		if (!recordingReservationsDirty) {
+			activeRecordingReservations = new Map<string, ActiveRecordingReservation>();
+			recordingSessionTombstones = new Map<string, ActiveRecordingReservation>();
+		}
 		attachedSessionKeys = new Set<string>();
 		networkRoutesBySession = new Map<string, NetworkRouteRecord[]>();
 		electronLaunchRecords = new Map<string, ElectronLaunchRecord>();
@@ -1497,8 +1532,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				return buildValidationFailureResult(resolvedInput);
 			}
 			const applyUnserializedOutputPath = async (result: AgentBrowserToolResult, preserveTextContent = false): Promise<AgentBrowserToolResult> => {
-				if (!outputPath || result.isError === true || (isRecord(result.details) && result.details.resultCategory === "failure")) return result;
+				if (!outputPath || result.isError === true || (isRecord(result.details) && result.details.resultCategory === "failure")) return warnRecordingPersistence(result);
 				return artifactExecutionQueue.run(async () => {
+					flushRecordingReservations();
 					const reservationError = getArtifactPreflightValidationError({
 						activeRecordingReservations: activeRecordingReservations.values(),
 						args: [],
@@ -1506,9 +1542,9 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						outputPath,
 					});
 					if (reservationError) {
-						return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: reservationError });
+						return warnRecordingPersistence(buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: reservationError }));
 					}
-					return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent, result });
+					return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent, result: warnRecordingPersistence(result) });
 				});
 			};
 			const versionCheckCommand = extractUpstreamCommandTokens(resolvedInput.toolArgs)[0];
@@ -1592,7 +1628,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					signal?.removeEventListener("abort", abortScript);
 					if (leased) {
 						try {
-							cleanupError = await artifactExecutionQueue.run(() => managedSessionExecutionQueue.run(() => closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd)));
+							cleanupError = await artifactExecutionQueue.run(() => managedSessionExecutionQueue.run(() => {
+								flushRecordingReservations();
+								return closeScriptSessionLeaseWithinQueue(sessionName, ctx.cwd);
+							}));
 						} catch {
 							cleanupError = "The isolated script session cleanup operation failed.";
 							try {
@@ -1694,6 +1733,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 				: runElectronHostInput();
 			const electronHostResult = compiledElectron?.action === "cleanup"
 				? await artifactExecutionQueue.run(async () => {
+						flushRecordingReservations();
 						const reservationError = outputPath ? getArtifactPreflightValidationError({
 							activeRecordingReservations: activeRecordingReservations.values(),
 							args: [],
@@ -1701,10 +1741,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							outputPath,
 						}) : undefined;
 						if (reservationError) {
-							return buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: reservationError });
+							return warnRecordingPersistence(buildValidationFailureResult({ attemptedKind: resolvedInput.kind, kind: "invalid", redactedArgs: resolvedInput.redactedArgs, status: "invalid", toolArgs: resolvedInput.toolArgs, toolStdin: resolvedInput.toolStdin, validationError: reservationError }));
 						}
 						const result = await runSerializedElectronHostInput();
-						return result ? applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result }) : result;
+						return result ? applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: warnRecordingPersistence(result) }) : result;
 					})
 				: await runSerializedElectronHostInput();
 			if (electronHostResult) {
@@ -1712,21 +1752,21 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			}
 
 			const explicitSessionName = extractExplicitSessionName(toolArgs);
-			const explicitNamespace = extractExplicitNamespace(toolArgs);
+			const callerOwnedSessionNamespace = explicitSessionName
+				? resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE)
+				: undefined;
 			const serializeBrowserCommand = shouldSerializeBrowserCommand({
-				explicitNamespace,
+				namespace: callerOwnedSessionNamespace,
 				explicitSessionName,
 				managedSessionName,
 				ownedElectronLaunchRecords,
 				ownedManagedSessions,
 			});
-			const callerOwnedSessionNamespace = explicitSessionName
-				? resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE)
-				: undefined;
 			const callerOwnedSessionQueueKey = !serializeBrowserCommand && explicitSessionName
 				? getSessionContextKey(explicitSessionName, callerOwnedSessionNamespace) ?? explicitSessionName
 				: undefined;
 			const runBrowserCommand = async () => {
+				flushRecordingReservations();
 				const branchRestoreGenerationAtStart = branchRestoreGeneration;
 				const generationAtStart = branchStateGeneration;
 				const sessionPageStateUpdate = sessionPageState.beginUpdate();
@@ -1752,6 +1792,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					sessionPageState,
 					traceOwners,
 				};
+				const selectedPlan = buildExecutionPlan(toolArgs, {
+					freshSessionName: createFreshSessionName(browserRunState.managedSessionBaseName, browserRunState.ephemeralSessionSeed, browserRunState.freshSessionOrdinal + 1),
+					managedSessionActive: browserRunState.managedSessionActive,
+					managedSessionCompatibilityWorkaround: browserRunState.managedSessionCompatibilityWorkaround,
+					managedSessionName: browserRunState.managedSessionName,
+					managedSessionNamespace: browserRunState.managedSessionNamespace,
+					sessionMode: compiledElectron?.action === "launch" ? "fresh" : params.sessionMode ?? "auto",
+				});
 				const initialArtifactManifest = browserRunState.artifactManifest;
 				const initialNetworkRoutesBySession = browserRunState.networkRoutesBySession;
 				const attachedSessionRequested = isAttachedBrowserInvocation(toolArgs)
@@ -1760,7 +1808,8 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					&& (params.sessionMode === "fresh" || (resolvedInput.kind === "electron" && resolvedInput.compiledElectron.action === "launch"));
 				const reusableSessionKey = allocatesFreshManagedSession
 					? undefined
-					: callerOwnedSessionQueueKey ?? getSessionContextKey(browserRunState.managedSessionName, browserRunState.managedSessionNamespace);
+					: getSessionContextKey(selectedPlan.sessionName, selectedPlan.namespace)
+						?? getSessionContextKey(browserRunState.managedSessionName, browserRunState.managedSessionNamespace);
 				const attachedSessionKnown = reusableSessionKey !== undefined && attachedSessionKeys.has(reusableSessionKey);
 				let result = await runAgentBrowserTool({
 					ctx,
@@ -1786,7 +1835,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					: extractExplicitSessionName(toolArgs);
 				const resultNamespace = typeof resultDetails?.namespace === "string"
 					? resultDetails.namespace
-					: resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
+					: selectedPlan.namespace;
 				if (branchRestoreStillCurrent) {
 					const resultBatchCloseLifecycle = getSuccessfulBatchCloseLifecycle(resultDetails?.batchSteps);
 					const resultSessionKey = getSessionContextKey(resultSessionName, resultNamespace) ?? resultSessionName;
@@ -1862,21 +1911,28 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 							? getTouchedElectronLaunchIds(
 								explicitSessionName ?? browserRunState.managedSessionName,
 								electronLaunchRecords,
-								explicitSessionName ? resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE) : browserRunState.managedSessionNamespace,
+								resultNamespace,
 							)
 							: undefined,
 					});
 					if (serializeBrowserCommand) branchStateGeneration += 1;
 				}
-				return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent: Array.isArray(params.args) && params.args.includes("--json"), result });
+				return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, preserveTextContent: Array.isArray(params.args) && params.args.includes("--json"), result: warnRecordingPersistence(result) });
 			};
 
 			const closesAllSessions = commandClosesAllSessions(toolArgs, resolvedInput.toolStdin);
-			const closeAllNamespace = closesAllSessions
-				? resolveAgentBrowserNamespace(toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE)
-				: undefined;
 			const runWithinSessionQueue = () => {
-				if (closesAllSessions) return managedSessionExecutionQueue.run(() => callerOwnedSessionExecutionQueues.runExclusive(closeAllNamespace, runBrowserCommand));
+				if (closesAllSessions) return managedSessionExecutionQueue.run(() => {
+					const plan = buildExecutionPlan(toolArgs, {
+						freshSessionName: createFreshSessionName(managedSessionBaseName, ephemeralSessionSeed, freshSessionOrdinal + 1),
+						managedSessionActive,
+						managedSessionCompatibilityWorkaround,
+						managedSessionName,
+						managedSessionNamespace,
+						sessionMode: params.sessionMode ?? "auto",
+					});
+					return callerOwnedSessionExecutionQueues.runExclusive(plan.namespace, runBrowserCommand);
+				});
 				if (serializeBrowserCommand) return managedSessionExecutionQueue.run(runBrowserCommand);
 				return callerOwnedSessionQueueKey
 					? callerOwnedSessionExecutionQueues.run(callerOwnedSessionQueueKey, callerOwnedSessionNamespace, runBrowserCommand)
@@ -1892,10 +1948,11 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 					stdin: resolvedInput.toolStdin,
 				});
 				if (!artifactValidationError) return runWithinSessionQueue();
+				flushRecordingReservations();
 				return applyAgentBrowserOutputPath({
 					cwd: ctx.cwd,
 					outputPath,
-					result: buildValidationFailureResult({
+					result: warnRecordingPersistence(buildValidationFailureResult({
 						attemptedKind: resolvedInput.kind,
 						kind: "invalid",
 						redactedArgs: resolvedInput.redactedArgs,
@@ -1903,7 +1960,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						toolArgs: resolvedInput.toolArgs,
 						toolStdin: resolvedInput.toolStdin,
 						validationError: artifactValidationError,
-					}),
+					})),
 				});
 			});
 		},

@@ -1,3 +1,5 @@
+import { isAbsolute } from "node:path";
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
@@ -100,7 +102,8 @@ function parseReservationTransition(data: unknown): RecordingReservationTransiti
 			state: "closed",
 		};
 	}
-	if (typeof data.absolutePath !== "string" || typeof data.cwd !== "string" || typeof data.path !== "string") return undefined;
+	if (typeof data.absolutePath !== "string" || !isAbsolute(data.absolutePath)
+		|| typeof data.cwd !== "string" || !isAbsolute(data.cwd) || typeof data.path !== "string") return undefined;
 	return {
 		reservation: {
 			absolutePath: data.absolutePath,

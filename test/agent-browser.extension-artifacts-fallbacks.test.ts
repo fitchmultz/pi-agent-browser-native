@@ -246,7 +246,7 @@ process.exit(1);`,
 	}
 });
 
-test("agentBrowserExtension keeps stale-ref guidance when tab pinning wraps a command in batch", { concurrency: false }, async () => {
+test("agentBrowserExtension keeps stale-ref guidance after same-tab verification", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-ref-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -254,18 +254,15 @@ test("agentBrowserExtension keeps stale-ref guidance when tab pinning wraps a co
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/" } }));
   process.exit(0);
-} else if (args.includes("batch")) {
-  process.stdout.write(JSON.stringify([
-    { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
-    { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
-  ]));
+} else if (args.includes("click")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "Could not locate element with role=button name=Old" }));
   process.exit(1);
 }
 process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
-  { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
+  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: true },
+  { tabId: "t2", title: "Other", url: "https://other.example/", active: false }
 ] } }));`,
 	);
 
@@ -295,7 +292,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 			assert.equal(result.content[0]?.type, "text");
 			const text = (result.content[0] as { text: string }).text;
 			assert.match(text, /Could not locate element/);
-			assert.match(text, /@ref may be stale/);
+			assert.match(text, /(?:@ref may be stale|ref may be stale)/);
 			assert.match(text, /snapshot/);
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "stale-ref");
@@ -305,25 +302,24 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 	}
 });
 
-test("agentBrowserExtension keeps stale-ref guidance for user batch stdin wrapped by tab pinning", { concurrency: false }, async () => {
+test("agentBrowserExtension keeps per-step stale-ref guidance for a verified user batch", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-batch-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const args = process.argv.slice(2);
 if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/" } }));
   process.exit(0);
 } else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
-    { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
     { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
   ]));
   process.exit(1);
 }
 process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
-  { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
+  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: true },
+  { tabId: "t2", title: "Other", url: "https://other.example/", active: false }
 ] } }));`,
 	);
 
@@ -354,8 +350,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 			assert.equal(result.content[0]?.type, "text");
 			const text = (result.content[0] as { text: string }).text;
 			assert.match(text, /Could not locate element/);
-			assert.match(text, /@ref may be stale/);
+			assert.match(text, /refresh-interactive-refs/);
 			assert.match(text, /snapshot/);
+			assert.equal((result.details?.batchSteps as Array<{ failureCategory: string }>)[0].failureCategory, "stale-ref");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -399,68 +396,6 @@ process.exit(1);`,
 			assert.equal(namedResult.details?.namespace, "");
 			assert.deepEqual(namedResult.details?.effectiveArgs, ["--json", "--namespace", "", "--session", "named", "open", "https://example.com/"]);
 			assert.deepEqual(namedAction?.params?.args, ["--namespace", "", "--session", "named", "get", "url"]);
-		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
-test("agentBrowserExtension reports wrapper-assisted fallback failures with effective batch context", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-	const logPath = join(tempDir, "invocations.log");
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const stdin = fs.readFileSync(0, "utf8");
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://other.example/" } }));
-  process.exit(0);
-} else if (args.includes("batch")) {
-  process.stdout.write(JSON.stringify([
-    { command: ["tab", "t1"], success: true, result: { tabId: "t1" } },
-    { command: ["get", "title"], success: false, result: { title: "Wrong page" } }
-  ]));
-  process.exit(1);
-}
-process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
-  { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
-] } }));`,
-	);
-
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const harness = createExtensionHarness({
-				branch: [
-					createToolBranchEntry({
-						details: {
-							args: ["--session", "named", "open", "https://example.com"],
-							command: "open",
-							sessionName: "named",
-							sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
-						},
-						isError: false,
-					}),
-				],
-				cwd: tempDir,
-			});
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
-
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "get", "title"],
-			});
-
-			assert.equal(result.isError, true, JSON.stringify(result));
-			assert.equal(result.content[0]?.type, "text");
-			const text = (result.content[0] as { text: string }).text;
-			assert.match(text, /agent-browser --json --session named batch reported failure \(exit code 1\)\./);
-			assert.match(text, /Wrapper recovery hint:/);
-			assert.match(text, /tab list/);
-			assert.deepEqual(result.details?.effectiveArgs, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String((await readInvocationLog(logPath))[2]?.stdin ?? "[]")), [["tab", "t1"], ["get", "title"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

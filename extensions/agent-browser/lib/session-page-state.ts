@@ -1,7 +1,7 @@
 import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand } from "./command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand, isWindowOrDiffPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
@@ -14,6 +14,7 @@ export interface SessionTabTarget {
 
 interface OrderedSessionTabTarget {
 	order: number;
+	reopenPending?: boolean;
 	target: SessionTabTarget;
 }
 
@@ -47,6 +48,7 @@ export type SessionPageStateUpdateToken = number & { readonly __sessionPageState
 
 export interface SessionPageStateView {
 	pinningReason?: SessionTabPinningReason;
+	tabReopenPending?: boolean;
 	tabTargetUnknown?: true;
 	refSnapshot?: SessionRefSnapshot;
 	refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
@@ -76,8 +78,8 @@ export function normalizeSessionTabTarget(target: { title?: string; url?: string
 	if (!target) {
 		return undefined;
 	}
-	const url = normalizeComparableUrl(target.url);
-	if (!url) {
+	const url = target.url?.trim();
+	if (!url || normalizeComparableUrl(url) === undefined) {
 		return undefined;
 	}
 	const title = target.title?.trim();
@@ -93,7 +95,7 @@ export function isAboutBlankSessionTabTarget(target: SessionTabTarget | undefine
 }
 
 export function commandExplicitlyTargetsAboutBlank(commandTokens: string[]): boolean {
-	return commandTokens.some((token) => isAboutBlankUrl(token));
+	return (commandTokens[0] === "window" && commandTokens[1] === "new") || commandTokens.some((token) => isAboutBlankUrl(token));
 }
 
 export function targetsMatch(left: SessionTabTarget | undefined, right: SessionTabTarget | undefined): boolean {
@@ -149,10 +151,13 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 	let currentTarget: SessionTabTarget | undefined;
 	let pendingTitle: string | undefined;
 	for (const item of data) {
-		if (!isRecord(item) || item.success === false) {
-			continue;
+		if (!isRecord(item)) continue;
+		const [name, subcommand] = extractUpstreamCommandTokens(extractBatchResultCommand(item));
+		if (isWindowOrDiffPageTransitionCommand(name, subcommand)) {
+			currentTarget = undefined;
+			pendingTitle = undefined;
 		}
-		const [name, subcommand] = extractBatchResultCommand(item);
+		if (item.success === false) continue;
 		const result = item.result;
 
 		if (isCloseCommand(name)) {
@@ -282,6 +287,9 @@ export function buildPageTransitionRefSnapshotInvalidation(summary?: string): Se
 
 export function getCommandRefSnapshotInvalidation(commandTokens: readonly string[]): SessionRefSnapshotInvalidation | undefined {
 	if (isRecordPageTransitionCommand(commandTokens)) return buildPageTransitionRefSnapshotInvalidation();
+	if (isWindowOrDiffPageTransitionCommand(commandTokens[0], commandTokens[1])) {
+		return buildPageTransitionRefSnapshotInvalidation("A window new or diff url command replaced or navigated the active page and invalidated prior refs. Run snapshot -i before using page-scoped refs.");
+	}
 	if (isWebMcpPageMutationCommand(commandTokens)) {
 		return buildPageTransitionRefSnapshotInvalidation("A WebMCP invoke, result, or cancel command can mutate, rerender, or navigate the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.");
 	}
@@ -297,7 +305,7 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 	let latestState: BatchRefSnapshotState | undefined;
 	for (const item of data) {
 		if (!isRecord(item)) continue;
-		const commandTokens = extractBatchResultCommand(item);
+		const commandTokens = extractUpstreamCommandTokens(extractBatchResultCommand(item));
 		const [name] = commandTokens;
 		if (item.success !== false && isCloseCommand(name)) {
 			latestState = undefined;
@@ -444,9 +452,10 @@ export class SessionPageState {
 			}
 			const tabTarget = getRestoredSessionTabTarget(details, command, subcommand);
 			const tabTargetUnknown = details.sessionTabTargetUnknown === true;
+			const reopenPending = typeof details.sessionTabReopenPending === "boolean" ? details.sessionTabReopenPending : undefined;
 			const refSnapshotInvalidation = getRestoredRefSnapshotInvalidation(details, command);
 			const refSnapshot = refSnapshotInvalidation ? undefined : getRestoredRefSnapshot(details);
-			if (!tabTarget && !tabTargetUnknown && !refSnapshotInvalidation && !refSnapshot) continue;
+			if (!tabTarget && !tabTargetUnknown && !refSnapshotInvalidation && !refSnapshot && reopenPending === undefined) continue;
 			restoredOrder += 1;
 			if (tabTargetUnknown) {
 				state.refSnapshots.delete(sessionKey);
@@ -458,8 +467,10 @@ export class SessionPageState {
 			}
 			if (tabTarget) {
 				state.tabTargetUnknownOrders.delete(sessionKey);
-				state.tabTargets.set(sessionKey, { order: restoredOrder, target: tabTarget });
+				state.tabTargets.set(sessionKey, { order: restoredOrder, reopenPending: state.tabTargets.get(sessionKey)?.reopenPending, target: tabTarget });
 			}
+			const currentTarget = state.tabTargets.get(sessionKey);
+			if (currentTarget && reopenPending !== undefined) currentTarget.reopenPending = reopenPending;
 			if (refSnapshotInvalidation) {
 				state.refSnapshots.delete(sessionKey);
 				state.refSnapshotInvalidations.set(sessionKey, { ...refSnapshotInvalidation, order: restoredOrder });
@@ -495,6 +506,7 @@ export class SessionPageState {
 		if (!sessionName) return {};
 		return {
 			pinningReason: this.tabPinningReasons.get(sessionName),
+			...(this.tabTargets.get(sessionName)?.reopenPending !== undefined ? { tabReopenPending: this.tabTargets.get(sessionName)?.reopenPending } : {}),
 			refSnapshot: stripRefSnapshotOrder(this.refSnapshots.get(sessionName)),
 			refSnapshotInvalidation: stripRefSnapshotInvalidationOrder(this.refSnapshotInvalidations.get(sessionName)),
 			...(this.tabTargetUnknownOrders.has(sessionName) ? { tabTargetUnknown: true as const } : {}),
@@ -512,8 +524,14 @@ export class SessionPageState {
 			return { ...this.get(options.sessionName), applied: false, stale: true };
 		}
 		this.tabTargetUnknownOrders.delete(options.sessionName);
-		this.tabTargets.set(options.sessionName, { order: options.update, target: options.target });
+		this.tabTargets.set(options.sessionName, { order: options.update, reopenPending: current?.reopenPending, target: options.target });
 		return { ...this.get(options.sessionName), applied: true };
+	}
+
+	setTabReopenPending(options: { pending: boolean; sessionName: string; update: SessionPageStateUpdateToken }): void {
+		const current = this.tabTargets.get(options.sessionName);
+		if (!current || !shouldApplyTabTargetUpdate(current, this.tabTargetUnknownOrders.get(options.sessionName), options.update)) return;
+		this.tabTargets.set(options.sessionName, { ...current, order: options.update, reopenPending: options.pending });
 	}
 
 	applyRefSnapshot(options: {

@@ -1869,14 +1869,17 @@ if (args.includes("batch")) {
 }`,
 	);
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "150" }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test/start"] })).isError, false);
 			const timedOut = await executeRegisteredTool(harness.tool, harness.ctx, {
 				job: { steps: [{ action: "open", url: "https://example.test/next" }, { action: "fill", selector: "#search", text: "query" }] },
+				timeoutMs: 1000,
 			});
 			assert.equal(timedOut.isError, true);
+			assert.equal(timedOut.details?.timedOut, true);
+			await access(failUrlPath);
 			assert.equal(timedOut.details?.sessionTabTargetUnknown, true);
 			const actions = (timedOut.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; stdin?: string } }> | undefined) ?? [];
 			assert.equal(actions.some((action) => action.params?.args?.slice(-2).join(" ") === "snapshot -i"), false);

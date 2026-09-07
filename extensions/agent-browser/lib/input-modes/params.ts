@@ -31,7 +31,7 @@ export function createAgentBrowserParamsSchema(
 		})),
 	args: Type.Optional(
 		Type.Array(Type.String(), {
-			description: "Raw agent-browser argv only: no binary, shell operators, or --json. Start with open → snapshot -i → act on current @refs; re-snapshot after page changes.",
+			description: "Raw agent-browser argv only: no binary, shell operators, or --json. Start with open → snapshot -i → act on current @refs; re-snapshot after page changes. Input: type <selector> <text>, or keyboard type <text> at current focus. Wait duration: wait <ms> (no --time). Artifacts: screenshot [selector] [path] [--full/-f]; record start <path> [url]; record restart <path> [url]; record stop. Paths are positional (no --path); use --full, not --full-page.",
 			minItems: 1,
 		}),
 	),
@@ -43,10 +43,23 @@ export function createAgentBrowserParamsSchema(
 			values: Type.Optional(Type.Array(Type.String(), { description: "Select options; required for select by label.", minItems: 1 })),
 			selector: Type.Optional(Type.String({ description: "Direct selector or @ref." })),
 			text: Type.Optional(Type.String({ description: "Fill text." })),
-			role: Type.Optional(Type.String({ description: "Role locator; alternative to value." })),
+			role: Type.Optional(Type.String({ description: "Role for locator=role; select needs combobox or listbox." })),
 			name: Type.Optional(Type.String({ description: "Accessible name." })),
 			session: Type.Optional(Type.String({ description: "Upstream session name." })),
-		}, { additionalProperties: false, description: "Stable locator or direct-selector action." }),
+		}, {
+			additionalProperties: false,
+			// Pi normalizes optional nulls through properties, not union branches.
+			anyOf: [
+				Type.Object({
+					action: StringEnum(["select"] as const),
+					locator: Type.Optional(StringEnum(["role", "label"] as const)),
+				}, { not: { required: ["text"] } }),
+				Type.Object({
+					action: StringEnum(["check", "click", "fill"] as const),
+				}, { not: { required: ["values"] } }),
+			],
+			description: "Stable locator or direct-selector action. values only with action=select.",
+		}),
 	),
 	qa: Type.Optional(
 		Type.Union([
@@ -145,7 +158,7 @@ export function createAgentBrowserParamsSchema(
 					locator: Type.Optional(StringEnum(AGENT_BROWSER_SEMANTIC_LOCATORS, { description: "Locator when selector is omitted." })),
 					role: Type.Optional(Type.String({ description: "Role locator." })),
 					name: Type.Optional(Type.String({ description: "Accessible name." })),
-					text: Type.Optional(Type.String({ description: "Fill text or assertText target." })),
+					text: Type.Optional(Type.String({ description: "Fill/type text; assertText uses only text, not selector/locator fields." })),
 					value: Type.Optional(Type.String({ description: "Select option or locator value." })),
 					values: Type.Optional(Type.Array(Type.String(), { description: "Select options.", minItems: 1 })),
 					path: Type.Optional(Type.String({ description: "Download or screenshot path." })),
@@ -155,11 +168,11 @@ export function createAgentBrowserParamsSchema(
 				}, { additionalProperties: false }),
 				{ minItems: 1 },
 			),
-		}, { additionalProperties: false, description: "Constrained multi-step batch." }),
+		}, { additionalProperties: false, description: "Constrained multi-step batch. Clicks can stale later refs; split and re-snapshot before using them." }),
 	),
-	stdin: Type.Optional(Type.String({ description: "Raw stdin for batch, eval --stdin, or auth save --password-stdin; unavailable with structured modes and electron." })),
+	stdin: Type.Optional(Type.String({ description: "For batch, a JSON array of token arrays, e.g. [[\"get\",\"title\"]]. Raw text only for eval --stdin or auth save --password-stdin; unavailable with structured modes and electron." })),
 	outputPath: Type.Optional(Type.String({ description: "Workspace-relative or absolute result-data path; keep it distinct from screenshot, download, recording, and other browser artifact destinations.", minLength: 1 })),
-	timeoutMs: Type.Optional(Type.Integer({ description: "Wrapper timeout in ms; exceed explicit waits. Electron uses electron.timeoutMs.", minimum: 1 })),
+	timeoutMs: Type.Optional(Type.Integer({ description: "Wrapper timeout in ms; exceed explicit waits. electron.list has no configurable timeout; other Electron actions use electron.timeoutMs.", minimum: 1 })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description: "auto reuses the managed session; fresh starts one for launch-only flags, then makes it the managed session.",

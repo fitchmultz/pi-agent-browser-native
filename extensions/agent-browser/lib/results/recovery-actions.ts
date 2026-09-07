@@ -76,11 +76,11 @@ function buildTabSnapshotRecoveryAction(options: {
 		});
 	}
 	return buildNextToolAction({
-		args: options.sessionArgs(["batch"]),
+		args: options.sessionArgs(["batch", "--bail"]),
 		id: options.id,
-		reason: `${options.reason} The batch selects the stable tab before snapshotting.`,
-		safety: `${options.safety} The snapshot retry is atomic with tab selection, so it does not assume the intended tab is already active.`,
-		stdin: JSON.stringify([["tab", options.tabId], ["snapshot", "-i"]]),
+		reason: `${options.reason} The batch selects and verifies the stable tab before snapshotting.`,
+		safety: `${options.safety} A failed tab selection or URL check stops before the snapshot.`,
+		stdin: JSON.stringify([["tab", options.tabId], ["get", "url"], ["snapshot", "-i"]]),
 	});
 }
 

@@ -1,6 +1,6 @@
 /**
  * Purpose: Verify pure helper behavior for the tmux-driven configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`).
- * Responsibilities: Assert CLI parsing, settings isolation shape, JSONL extraction helpers, sentinel source injection, and direct-run guarding without launching Pi or tmux.
+ * Responsibilities: Assert CLI parsing, settings isolation, observed-page checks and JSONL result waits, sentinel source injection, and direct-run guarding without launching Pi or tmux.
  * Scope: Unit coverage for `scripts/verify-lifecycle.mjs`; the end-to-end lifecycle path runs only through the explicit `npm run verify -- lifecycle` maintainer command.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: Normal tests must not mutate Pi settings, start tmux, or require a real browser/model configuration.
@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,6 +18,13 @@ import test from "node:test";
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../scripts/agent-browser-target.mjs";
 
 const execFile = promisify(execFileCallback);
+
+type LifecycleResult = {
+	toolCallId?: string;
+	isError?: boolean;
+	content?: Array<{ type: string; text: string }>;
+	details?: { command?: string; resultCategory?: string; failureCategory?: string; data?: unknown; sessionName?: string; sessionTabTarget?: { url: string } };
+};
 
 const lifecycleModule = (await import("../scripts/verify-lifecycle.mjs") as unknown) as {
 	agentBrowserResults: (entries: unknown[]) => Array<{
@@ -41,6 +48,15 @@ const lifecycleModule = (await import("../scripts/verify-lifecycle.mjs") as unkn
 	fakeAgentBrowserScript: () => string;
 	injectLifecycleSentinelSource: (source: string, token: string) => string;
 	isDirectRun: (metaUrl: string, argv?: string[]) => boolean;
+	matchesSuccessfulPageResult: (result: unknown, command: string, expectedUrl: string) => boolean;
+	waitForAgentBrowserResult: (options: {
+		describe: string;
+		sessionFile?: string;
+		sessionDir?: string;
+		timeoutMs: number;
+		sinceCount: number;
+		predicate: (result: LifecycleResult) => boolean;
+	}) => Promise<{ result: LifecycleResult; sessionFile: string }>;
 	paneLooksReady: (pane: string) => boolean;
 	parseCliArgs: (argv?: string[]) => {
 		keepArtifacts: boolean;
@@ -63,6 +79,8 @@ const {
 	createLifecycleSessionId,
 	injectLifecycleSentinelSource,
 	isDirectRun,
+	matchesSuccessfulPageResult,
+	waitForAgentBrowserResult,
 	paneLooksReady,
 	parseCliArgs,
 	parseJsonl,
@@ -170,6 +188,115 @@ test("parseJsonl and extraction helpers read agent_browser results and sentinel 
 	assert.equal(results.length, 1);
 	assert.equal(results[0]?.details?.sessionName, "s1");
 	assert.deepEqual(collectFullOutputPaths(results), ["/tmp/a.txt"]);
+});
+
+const failedResumeSnapshot: LifecycleResult = {
+	toolCallId: "call_1423577b6db24f3b9b3c6637",
+	isError: true,
+	content: [{ type: "text", text: "agent-browser could not re-select and verify the intended tab before running the command.\nNext actions:\nInspect tabs for React at https://react.dev/ before continuing after tab drift.\nResult category: failure; failureCategory: tab-drift; Pi tool isError: true." }],
+	details: {
+		sessionName: "piab-src-02ac2afca195-63810b22",
+		resultCategory: "failure",
+		failureCategory: "tab-drift",
+	},
+};
+
+const successfulSnapshot: LifecycleResult = {
+	toolCallId: "observed-snapshot",
+	isError: false,
+	details: { command: "snapshot", resultCategory: "success", data: { origin: "https://react.dev/", snapshot: '- heading "React" [ref=e1]', refs: { e1: { role: "heading", name: "React" } } } },
+};
+
+test("lifecycle page checks require successful expected-command observed data, not recovery text or remembered targets", () => {
+	assert.equal(matchesSuccessfulPageResult(failedResumeSnapshot, "snapshot", "https://react.dev/"), false);
+	assert.equal(matchesSuccessfulPageResult({
+		...successfulSnapshot,
+		content: [{ type: "text", text: "Warning: active tab is about:blank; prior intended tab was https://react.dev/" }],
+		details: { ...successfulSnapshot.details, data: { origin: "about:blank" }, sessionTabTarget: { url: "https://react.dev/" } },
+	}, "snapshot", "https://react.dev/"), false);
+	assert.equal(matchesSuccessfulPageResult(successfulSnapshot, "snapshot", "https://react.dev/#learn"), true);
+	assert.equal(matchesSuccessfulPageResult({ isError: false, details: { command: "open", resultCategory: "success", data: { title: "React", url: "https://react.dev" } } }, "open", "https://react.dev/"), true);
+	for (const command of ["open", "snapshot"]) {
+		const data = command === "open" ? { url: "https://react.dev/" } : { origin: "https://react.dev/" };
+		const valid = { isError: false, details: { command, resultCategory: "success", data } };
+		for (const result of [
+			{ ...valid, isError: true },
+			{ ...valid, isError: undefined },
+			{ ...valid, details: { ...valid.details, resultCategory: "failure" } },
+			{ ...valid, details: { ...valid.details, resultCategory: undefined } },
+			{ ...valid, details: { ...valid.details, command: undefined } },
+			{ ...valid, details: { ...valid.details, command: "get" } },
+			{ ...valid, details: { ...valid.details, data: undefined, sessionTabTarget: { url: "https://react.dev/" } } },
+			{ ...valid, details: { ...valid.details, data: command === "open" ? { origin: "https://react.dev/" } : { url: "https://react.dev/" } } },
+			{ ...valid, details: { ...valid.details, data: command === "open" ? { url: "https://react.dev/learn" } : { origin: "https://react.dev/learn" } } },
+		]) assert.equal(matchesSuccessfulPageResult(result, command, "https://react.dev/"), false, JSON.stringify(result));
+	}
+});
+
+function lifecycleResultLine(result: LifecycleResult): string {
+	return `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "agent_browser", ...result } })}\n`;
+}
+
+for (const laterSuccess of [false, true]) {
+	test(`lifecycle wait rejects the first completed mismatch instead of ${laterSuccess ? "choosing a later success" : "timing out"}`, async () => {
+		const directory = await mkdtemp(join(tmpdir(), "piab-lifecycle-results-"));
+		const sessionFile = join(directory, "session.jsonl");
+		try {
+			await writeFile(sessionFile, lifecycleResultLine(successfulSnapshot) + lifecycleResultLine(failedResumeSnapshot) + (laterSuccess ? lifecycleResultLine(successfulSnapshot) : ""));
+			await assert.rejects(waitForAgentBrowserResult({
+				describe: "same-page snapshot", sessionFile, timeoutMs: 20, sinceCount: 1,
+				predicate: (result) => result.toolCallId === successfulSnapshot.toolCallId,
+			}), /Unexpected agent_browser result.*call_1423577b6db24f3b9b3c6637.*category failure\/tab-drift/);
+		} finally {
+			await rm(directory, { force: true, recursive: true });
+		}
+	});
+}
+
+test("lifecycle wait validates the completed row outside polling's exception handler", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "piab-lifecycle-results-"));
+	const sessionFile = join(directory, "session.jsonl");
+	try {
+		await writeFile(sessionFile, lifecycleResultLine(failedResumeSnapshot));
+		await assert.rejects(waitForAgentBrowserResult({
+			describe: "throwing assertion", sessionFile, timeoutMs: 20, sinceCount: 0,
+			predicate: () => { throw new Error("stage assertion failed"); },
+		}), /^Error: stage assertion failed$/);
+	} finally {
+		await rm(directory, { force: true, recursive: true });
+	}
+});
+
+test("lifecycle wait discovers the initial transcript for observed open validation", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "piab-lifecycle-results-"));
+	const sessionFile = join(directory, "session.jsonl");
+	try {
+		await writeFile(sessionFile, lifecycleResultLine({ isError: false, details: { command: "open", resultCategory: "success", data: { url: "https://react.dev/" } } }));
+		const opened = await waitForAgentBrowserResult({
+			describe: "initial open", sessionDir: directory, timeoutMs: 2000, sinceCount: 0,
+			predicate: (result) => matchesSuccessfulPageResult(result, "open", "https://react.dev/"),
+		});
+		assert.equal(opened.sessionFile, sessionFile);
+	} finally {
+		await rm(directory, { force: true, recursive: true });
+	}
+});
+
+test("lifecycle wait accepts a newly appended expected QA failure using the original stage predicate", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "piab-lifecycle-results-"));
+	const sessionFile = join(directory, "session.jsonl");
+	try {
+		await writeFile(sessionFile, "");
+		const qaFailure = { toolCallId: "expected-qa-failure", isError: true, details: { resultCategory: "failure", failureCategory: "qa-failure" } };
+		const waiting = waitForAgentBrowserResult({
+			describe: "QA failure patch", sessionFile, timeoutMs: 2000, sinceCount: 0,
+			predicate: (result) => result?.details?.failureCategory === "qa-failure" && result?.details?.resultCategory === "failure" && result?.isError === true,
+		});
+		await appendFile(sessionFile, lifecycleResultLine(qaFailure));
+		assert.equal((await waiting).result.toolCallId, qaFailure.toolCallId);
+	} finally {
+		await rm(directory, { force: true, recursive: true });
+	}
 });
 
 test("collectFullOutputPaths de-duplicates primary and secondary spill paths", () => {

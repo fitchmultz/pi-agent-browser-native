@@ -1,19 +1,20 @@
 import { rm } from "node:fs/promises";
 
-import { getAgentBrowserSessionIdentityKey, VALUE_FLAGS } from "../../argv-grammar.js";
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
+import { parseArgvDescriptor } from "../../argv-descriptor.js";
+import { needsManagedSession } from "../../command-policy.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
 import { runAgentBrowserProcess } from "../../process.js";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
 import { parseAgentBrowserEnvelope } from "../../results/envelope.js";
-import { type AgentBrowserBatchResult, type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results/contracts.js";
+import { type AgentBrowserNextAction } from "../../results/contracts.js";
 import { buildNextToolAction, withOptionalNamespaceArgs, withOptionalSessionArgs } from "../../results/next-actions.js";
 import {
 	getSessionPageStateKey,
 	isAboutBlankUrl,
 	normalizeComparableUrl,
-	normalizeSessionTabTarget,
 	targetsMatch,
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
@@ -23,16 +24,19 @@ import {
 	isCloseCommand,
 	isElectronPostCommandHealthCommand,
 	isNavigationObservableCommandName,
+	isOpenNavigationCommand,
 	isRefGuardedCommand,
 	isRefInvalidatingBatchCommand,
+	isRecordPageTransitionCommand,
 	isSessionTabPinningExcludedCommand,
 	isSessionTabPostCommandCorrectionExcludedCommand,
+	isWindowOrDiffPageTransitionCommand,
 } from "../../command-taxonomy.js";
 import { chooseOpenResultTabCorrection, type OpenResultTabCorrection } from "../../runtime.js";
-import { isRecord } from "../../parsing.js";
-import { getUpstreamEffectiveBatchSteps, parseUserBatchStdin } from "../batch-stdin.js";
+import { isRecord, parseRefId } from "../../parsing.js";
+import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
+import { findFirstPositionalArgument } from "./prepare/wait-timeouts.js";
 import type { AboutBlankSessionMismatch,
-	BatchCommandStep,
 	BrowserRunState,
 	BrowserRunStatePatch,
 	ElectronManagedSessionTarget,
@@ -43,14 +47,10 @@ import type { AboutBlankSessionMismatch,
 	ElectronSessionMismatchReason,
 	ManagedSessionOutcome,
 	NavigationSummary,
-	PinnedBatchPlan,
-	PinnedBatchUnwrapMode,
 	StaleRefPreflight,
 	BrowserRunContext,
 	TraceOwner,
 } from "./types.js";
-
-export const NAVIGATION_SUMMARY_EVAL = `({ title: document.title, url: location.href })`;
 
 export function applyBrowserRunStatePatch(state: BrowserRunState, patch: BrowserRunStatePatch | undefined): void {
 	if (!patch) return;
@@ -346,38 +346,44 @@ export function getStaleRefArgs(commandTokens: string[], stdin?: string): string
 	return steps.length > 0 ? steps.flatMap((step) => step) : commandTokens;
 }
 
-// Selector-carrying flags whose values remain page-scoped refs; values of other value-taking flags
-// (--text, --baseline, --name, and similar) are literal text or paths that may merely look like refs,
-// per upstream parsing. Boolean flags such as --new-tab or --full do not consume the following token,
-// so a ref after them is a genuine positional selector and must stay guarded.
-const SELECTOR_FLAG_TOKENS = new Set(["--selector", "-s"]);
-const SHORT_VALUE_FLAG_TOKENS = new Set(["-b", "-o", "-t"]);
-
-function isNonSelectorValueFlagToken(token: string | undefined): boolean {
-	if (token === undefined || SELECTOR_FLAG_TOKENS.has(token)) return false;
-	return VALUE_FLAGS.has(token) || SHORT_VALUE_FLAG_TOKENS.has(token);
-}
-
+// Inspect only upstream's selector slots: fill text, file paths and key data are not refs.
 function collectRefsFromTokens(tokens: readonly string[]): string[] {
-	const refs: string[] = [];
-	for (const [index, token] of tokens.entries()) {
-		if (!/^@e\d+\b/.test(token)) continue;
-		if (isNonSelectorValueFlagToken(index > 0 ? tokens[index - 1] : undefined)) continue;
-		refs.push(token.slice(1));
+	if (!isRefGuardedCommand(tokens[0]) || (tokens[0] === "diff" && tokens[1] !== "screenshot")) return [];
+	let selectors: readonly (string | undefined)[];
+	switch (tokens[0]) {
+		case "click": selectors = [tokens.slice(1).find((token) => token !== "--new-tab")]; break;
+		case "drag": selectors = tokens.slice(1, 3); break;
+		case "get": selectors = [!["url", "title", "cdp-url", "count"].includes(tokens[1]) ? tokens[2] : undefined]; break;
+		case "is": selectors = [tokens[2]]; break;
+		case "screenshot": selectors = [tokens.slice(1).find((token) => !["--full", "-f"].includes(token))]; break;
+		case "diff":
+		case "scroll": {
+			let selector: string | undefined;
+			for (let index = tokens[0] === "diff" ? 2 : 1; index < tokens.length; index += 1) {
+				const token = tokens[index];
+				if (token === "--selector" || token === "-s") selector = tokens[++index];
+				else if (tokens[0] === "diff" && ["--baseline", "-b", "--output", "-o", "--threshold", "-t", "--depth", "-d"].includes(token)) index += 1;
+			}
+			selectors = [selector];
+			break;
+		}
+		default: selectors = [tokens[1]];
 	}
-	return refs;
+	return selectors.flatMap((selector) => {
+		const ref = selector === undefined ? undefined : parseRefId(selector);
+		return ref === undefined ? [] : [ref];
+	});
 }
 
 export function getGuardedRefUsage(commandTokens: string[], stdin?: string, options: { includeRefsAfterBatchSnapshot?: boolean } = {}): string[] {
-	const collectFromStep = (step: readonly string[]) => isRefGuardedCommand(step[0]) ? collectRefsFromTokens(step) : [];
 	if (commandTokens[0] !== "batch") {
-		return collectFromStep(commandTokens);
+		return collectRefsFromTokens(commandTokens);
 	}
 	const steps = getUpstreamEffectiveBatchSteps(commandTokens, stdin);
 	const refsBeforeInBatchSnapshot: string[] = [];
 	for (const step of steps) {
 		if (!options.includeRefsAfterBatchSnapshot && (step[0] ?? "") === "snapshot") break;
-		refsBeforeInBatchSnapshot.push(...collectFromStep(step));
+		refsBeforeInBatchSnapshot.push(...collectRefsFromTokens(step));
 	}
 	return refsBeforeInBatchSnapshot;
 }
@@ -465,76 +471,42 @@ export function buildStaleRefPreflight(options: {
 	return undefined;
 }
 
-function supportsPinnedStdinCommand(options: { command?: string; commandTokens: string[]; stdin?: string }): boolean {
-	if (options.command === "batch") {
-		return options.stdin !== undefined;
-	}
-	if (options.stdin === undefined) {
-		return true;
-	}
-	if (options.command === "eval") {
-		return options.commandTokens.includes("--stdin");
-	}
-	return false;
+export function commandChoosesSessionTabTarget(args: string[]): boolean {
+	const tokens = parseArgvDescriptor(args).upstreamCommandTokens;
+	const [command, subcommand] = tokens;
+	return isOpenNavigationCommand(command) || isCloseCommand(command) || command === "connect"
+		|| (command === "state" && subcommand === "load")
+		|| (command === "tab" && subcommand !== undefined && subcommand !== "list")
+		|| isWindowOrDiffPageTransitionCommand(command, subcommand)
+		|| (command === "a11y" && findFirstPositionalArgument(tokens) !== undefined)
+		|| (["vitals", "web-vitals"].includes(command) && tokens.slice(1).some((token) => !token.startsWith("--")))
+		|| (isRecordPageTransitionCommand(tokens) && tokens[3] !== undefined);
 }
 
 export function shouldPinSessionTabForCommand(options: {
 	command?: string;
 	commandTokens: string[];
 	pinningRequired?: boolean;
+	reopenPending?: boolean;
 	sessionName?: string;
 	stdin?: string;
 }): boolean {
-	return (
-		options.pinningRequired === true &&
-		options.sessionName !== undefined &&
-		options.command !== undefined &&
-		!isSessionTabPinningExcludedCommand(options.command) &&
-		supportsPinnedStdinCommand(options)
-	);
-}
-
-export function buildPinnedBatchPlan(options: {
-	command?: string;
-	commandTokens: string[];
-	selectedTab: string;
-	stdin?: string;
-}): PinnedBatchPlan | { error: string } | undefined {
-	if (options.command === "batch") {
-		const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
-		// Upstream executes raw argument steps exclusively when any exist, so the
-		// pinned rewrite must dispatch those same steps rather than resurrecting
-		// caller stdin the guard never scanned.
-		const argumentSteps = getUpstreamEffectiveBatchSteps(options.commandTokens, undefined);
-		if (argumentSteps.length > 0) {
-			return {
-				includeNavigationSummary: false,
-				steps: [tabSelectionStep, ...argumentSteps],
-				unwrapMode: "user-batch",
-			};
-		}
-		const parsed = parseUserBatchStdin(options.stdin);
-		if (parsed.error) {
-			return { error: parsed.error };
-		}
-		return {
-			includeNavigationSummary: false,
-			steps: [tabSelectionStep, ...(parsed.steps ?? [])],
-			unwrapMode: "user-batch",
-		};
+	if (!options.pinningRequired || !options.sessionName || !options.command) return false;
+	const steps = options.command === "batch" ? getUpstreamEffectiveBatchSteps(options.commandTokens, options.stdin) : [options.commandTokens];
+	for (const step of steps) {
+		const descriptor = parseArgvDescriptor(step);
+		const tokens = descriptor.upstreamCommandTokens;
+		const [command, subcommand] = tokens;
+		// A later page action uses the explicit destination, not the remembered tab.
+		if (commandChoosesSessionTabTarget(tokens)) return false;
+		if (!needsManagedSession(descriptor) || isSessionTabPinningExcludedCommand(command)) continue;
+		if (command === "get" && subcommand === "url" && !options.reopenPending) continue;
+		if (command === "read" && findFirstPositionalArgument(tokens) !== undefined) continue;
+		if (["console", "errors"].includes(command)) continue;
+		if (command === "network" && !(subcommand === "requests" && tokens.some((token) => ["--current-page", "--current-origin", "--current-url"].includes(token)))) continue;
+		return true;
 	}
-	if (options.commandTokens.length === 0) {
-		return undefined;
-	}
-	const includeNavigationSummary = isNavigationObservableCommandName(options.command, options.commandTokens[1]);
-	const tabSelectionStep: BatchCommandStep = ["tab", options.selectedTab];
-	const commandStep = options.commandTokens as BatchCommandStep;
-	const navigationSummarySteps: BatchCommandStep[] = includeNavigationSummary ? [["eval", NAVIGATION_SUMMARY_EVAL]] : [];
-	return {
-		includeNavigationSummary,
-		steps: [tabSelectionStep, commandStep, ...navigationSummarySteps],
-		unwrapMode: "single-command",
-	};
+	return false;
 }
 
 export function shouldCorrectSessionTabAfterCommand(options: { command?: string; pinningRequired?: boolean; sessionName?: string }): boolean {
@@ -571,71 +543,17 @@ function selectAnySessionTargetTab(options: {
 	if (!targetUrl) return undefined;
 	const matchingTabs = options.tabs.filter((tab) => normalizeComparableUrl(tab.url ?? "") === targetUrl);
 	const targetTitle = options.target.title?.trim() ?? "";
-	const selectedTab = (targetTitle ? matchingTabs.find((tab) => tab.title?.trim() === targetTitle) : undefined) ?? matchingTabs[0];
+	const titledTabs = targetTitle ? matchingTabs.filter((tab) => tab.title?.trim() === targetTitle) : [];
+	const selectedTab = titledTabs.find((tab) => tab.active) ?? titledTabs[0] ?? matchingTabs.find((tab) => tab.active) ?? matchingTabs[0];
 	const selection = selectedTab ? getTabSelection(selectedTab) : undefined;
 	return selection ? { ...selection, ...(targetTitle ? { targetTitle } : {}), targetUrl } : undefined;
-}
-
-export function unwrapPinnedSessionBatchEnvelope(options: {
-	envelope?: AgentBrowserEnvelope;
-	includeNavigationSummary: boolean;
-	mode?: PinnedBatchUnwrapMode;
-}): { envelope?: AgentBrowserEnvelope; navigationSummary?: NavigationSummary; parseError?: string } {
-	if (!options.envelope) {
-		return {};
-	}
-	if (!Array.isArray(options.envelope.data)) {
-		return {
-			parseError: "agent-browser returned an unexpected response while applying the wrapper's tab-pinning batch.",
-		};
-	}
-
-	const steps = options.envelope.data.filter(isRecord) as AgentBrowserBatchResult[];
-	const tabSelectionStep = steps[0];
-	const commandStep = steps[1];
-	if (tabSelectionStep?.success === false) {
-		return {
-			envelope: {
-				success: false,
-				error: tabSelectionStep.error ?? "agent-browser could not re-select the intended tab before running the command.",
-			},
-		};
-	}
-	if (options.mode === "user-batch") {
-		const userSteps = steps.slice(1);
-		return {
-			envelope: {
-				success: userSteps.every((step) => step.success !== false),
-				data: userSteps,
-				error: userSteps.find((step) => step.success === false)?.error,
-			},
-		};
-	}
-	if (!commandStep) {
-		return {
-			envelope: {
-				success: false,
-				error: "agent-browser did not return the corrected command result.",
-			},
-		};
-	}
-
-	const navigationSummaryStep = options.includeNavigationSummary ? steps[2] : undefined;
-	const navigationSummary = normalizeSessionTabTarget(extractNavigationSummaryFromData(navigationSummaryStep?.result));
-	return {
-		envelope: {
-			success: commandStep.success !== false,
-			data: commandStep.result,
-			error: commandStep.success === false ? commandStep.error : undefined,
-		},
-		navigationSummary,
-	};
 }
 
 export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
 	namespace?: string;
+	onProcessResult?: (result: Awaited<ReturnType<typeof runAgentBrowserProcess>>) => void;
 	pinNamespace?: boolean;
 	sessionName?: string;
 	signal?: AbortSignal;
@@ -654,6 +572,7 @@ export async function runSessionCommandData(options: {
 		timeoutMs,
 	});
 	try {
+		options.onProcessResult?.(processResult);
 		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
 			if (throwOnFailure) {
 				const reason = processResult.aborted
@@ -730,17 +649,26 @@ export async function collectSessionTabSelection(options: {
 	return tabs ? selectSessionTargetTab({ tabs, target }) : undefined;
 }
 
-export async function collectAnySessionTabSelection(options: {
+export async function ensureSessionTabTarget(options: {
 	cwd: string;
 	namespace?: string;
 	sessionName?: string;
 	signal?: AbortSignal;
 	target: SessionTabTarget;
-}): Promise<OpenResultTabCorrection | undefined> {
-	const { cwd, namespace, sessionName, signal, target } = options;
-	const tabData = await runSessionCommandData({ args: ["tab", "list"], cwd, namespace, sessionName, signal });
-	const tabs = mapTabData(tabData);
-	return tabs ? selectAnySessionTargetTab({ tabs, target }) : undefined;
+}): Promise<{ correction?: OpenResultTabCorrection; error?: string }> {
+	const readTabs = async () => mapTabData(await runSessionCommandData({ ...options, args: ["tab", "list"] }));
+	const tabs = await readTabs();
+	const active = tabs?.find((tab) => tab.active);
+	const correction = tabs && selectAnySessionTargetTab({ tabs, target: options.target });
+	const error = "agent-browser could not re-select and verify the intended tab before running the command. Run tab list and select the intended tab, then snapshot -i before retrying.";
+	if (!correction) return { error };
+	// Native tab selection clears refs and frame scope even when selecting the current tab.
+	if (active && getTabSelection(active)?.selectedTab === correction.selectedTab) return {};
+	if (!await applyOpenResultTabCorrection({ ...options, correction })) return { correction, error };
+	const selected = (await readTabs())?.find((tab) => tab.active);
+	return selected && getTabSelection(selected)?.selectedTab === correction.selectedTab && normalizeComparableUrl(selected.url ?? "") === normalizeComparableUrl(options.target.url)
+		? { correction }
+		: { correction, error };
 }
 
 export async function applyOpenResultTabCorrection(options: {

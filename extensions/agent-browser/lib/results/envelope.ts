@@ -46,7 +46,7 @@ function extractEnvelopeErrorText(error: unknown): string | undefined {
 	return fallback.length > 0 && fallback !== "{}" ? fallback : undefined;
 }
 
-export async function parseAgentBrowserEnvelope(options: string | { stdout: string; stdoutPath?: string }): Promise<{
+export async function parseAgentBrowserEnvelope(options: string | { stdout: string; stdoutPath?: string; plainText?: boolean }): Promise<{
 	envelope?: AgentBrowserEnvelope;
 	parseError?: string;
 }> {
@@ -58,7 +58,8 @@ export async function parseAgentBrowserEnvelope(options: string | { stdout: stri
 	}
 
 	const trimmed = stdout.trim();
-	if (trimmed.length === 0) {
+	const plainText = typeof options !== "string" && options.plainText === true;
+	if (trimmed.length === 0 && !plainText) {
 		return { parseError: "agent-browser returned no JSON output." };
 	}
 
@@ -91,6 +92,7 @@ export async function parseAgentBrowserEnvelope(options: string | { stdout: stri
 		}
 		return { envelope: parsed as AgentBrowserEnvelope };
 	} catch (error) {
+		if (plainText) return { envelope: { success: true, data: trimmed } };
 		const message = error instanceof Error ? error.message : String(error);
 		return { parseError: `agent-browser returned invalid JSON: ${message}` };
 	}

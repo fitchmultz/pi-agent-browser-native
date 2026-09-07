@@ -15,10 +15,15 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
+import { compileAgentBrowserElectron } from "../extensions/agent-browser/lib/input-modes/electron.js";
+import type { ElectronLaunchStatus } from "../extensions/agent-browser/lib/electron/cleanup.js";
+import type { ElectronLaunchRecord } from "../extensions/agent-browser/lib/electron/launch.js";
+
 import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getSessionPageStateKey, SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import {
 	createExtensionHarness,
+	createToolBranchEntry,
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
@@ -188,6 +193,107 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	}
 });
 
+test("Electron timeout schema keeps list unconfigurable and other nested timeouts accepted", () => {
+	const harness = createExtensionHarness({ cwd: process.cwd() });
+	assert.equal(Check(harness.tool.parameters, { electron: { action: "list", timeoutMs: 1_000 } }), false);
+	assert.match(compileAgentBrowserElectron({ action: "list", timeoutMs: 1_000 }).error ?? "", /list only supports query and maxResults; remove electron\.timeoutMs/);
+	for (const action of ["launch", "status", "cleanup", "probe"] as const) {
+		const electron = { action, timeoutMs: 1_000, ...(action === "launch" ? { appName: "Demo" } : {}) };
+		assert.equal(Check(harness.tool.parameters, { electron }), true, action);
+		const result = compileAgentBrowserElectron(electron);
+		assert.equal(result.error, undefined, action);
+		assert.ok(result.compiled && result.compiled.action !== "list");
+		assert.equal(result.compiled.timeoutMs, 1_000, action);
+	}
+	const schema = harness.tool.parameters as { properties: { timeoutMs: { description: string } } };
+	assert.match(schema.properties.timeoutMs.description, /electron\.list has no configurable timeout/);
+	assert.match(schema.properties.timeoutMs.description, /other Electron actions use electron\.timeoutMs/);
+});
+
+test("Electron list timeout guidance never recommends an unsupported nested timeout", async () => {
+	const harness = createExtensionHarness({ cwd: process.cwd() });
+	const nested = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "list", timeoutMs: 1_000 } });
+	assert.equal(nested.details?.failureCategory, "validation-error");
+	assert.match(nested.content[0]?.text ?? "", /list only supports query and maxResults; remove electron\.timeoutMs/);
+	const top = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "list" }, timeoutMs: 1_000 });
+	assert.equal(top.isError, true);
+	assert.equal(top.details?.failureCategory, "validation-error");
+	assert.match(top.content[0]?.text ?? "", /electron\.list has no configurable timeout/);
+	assert.doesNotMatch(top.content[0]?.text ?? "", /Use electron\.timeoutMs/);
+	const status = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status" }, timeoutMs: 1_000 });
+	assert.equal(status.isError, true);
+	assert.match(status.content[0]?.text ?? "", /Use electron\.timeoutMs/);
+});
+
+test("Electron status separates cleanup history from live resources and preserves replay selection", { concurrency: false }, async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-status-history-"));
+	const basePath = process.env.PATH ?? "";
+	try {
+		const app = await writeFakeLaunchableElectronApp({ applicationsDir: tempDir, bundleId: "com.example.StatusHistory", launchLogPath: join(tempDir, "launch.log"), name: "Status History" });
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(join(tempDir, "upstream.log")));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const owner = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(owner.handlers, "session_start", { reason: "new" }, owner.ctx);
+			try {
+				const launched = await executeRegisteredTool(owner.tool, owner.ctx, { electron: { action: "launch", appPath: app.appPath, handoff: "connect" } });
+				assert.equal(launched.isError, false, JSON.stringify(launched));
+				const launch = (launched.details?.electron as { launch: ElectronLaunchRecord }).launch;
+				for (const cleanupState of ["active", "partial", "dead", "failed", "cleaned"] as const) {
+					await t.test(`${cleanupState} history with a currently live PID and port`, async () => {
+						// Replay old cleanup history while the fixture's PID and port are independently live.
+						const record = { ...launch, cleanupState, sessionName: undefined };
+						const replay = createExtensionHarness({ cwd: tempDir, branch: [
+							createToolBranchEntry({ details: launched.details as Record<string, unknown> }),
+							createToolBranchEntry({ details: { electron: { cleanup: { records: [record] } } } }),
+						] });
+						await runExtensionEvent(replay.handlers, "session_start", { reason: "resume" }, replay.ctx);
+						const result = await executeRegisteredTool(replay.tool, replay.ctx, { electron: { action: "status", launchId: launch.launchId } });
+						assert.equal(result.isError, false, JSON.stringify(result));
+						const details = result.details?.electron as { launches: ElectronLaunchRecord[]; statuses: ElectronLaunchStatus[] };
+						assert.equal(details.statuses[0]?.cleanupState, cleanupState);
+						assert.equal(details.statuses[0]?.pidAlive, true);
+						assert.equal(details.statuses[0]?.portAlive, true);
+						assert.match(result.content[0]?.text ?? "", /debug port alive, pid alive/);
+						for (const all of [undefined, true]) {
+							const selected = await executeRegisteredTool(replay.tool, replay.ctx, { electron: { action: "status", ...(all ? { all } : {}) } });
+							assert.equal(selected.isError, false, JSON.stringify(selected));
+							assert.equal((selected.details?.electron as { statuses: unknown[] }).statuses.length, cleanupState === "cleaned" ? 0 : 1);
+						}
+						assert.deepEqual((result.details?.nextActions as Array<{ id: string }> | undefined)?.map((action) => action.id) ?? [], cleanupState === "cleaned" ? [] : ["status-electron-launch", "probe-electron-launch", "cleanup-electron-launch"]);
+						if (cleanupState === "cleaned") assert.match(result.content[0]?.text ?? "", /historical cleaned launch record/);
+						else assert.doesNotMatch(result.content[0]?.text ?? "", /historical|cleaned launch record/);
+						assert.equal(details.statuses[0]?.userDataDirState, "present");
+						assert.match(result.content[0]?.text ?? "", /Tracked profile path: present/);
+						assert.equal("userDataDirState" in details.launches[0]!, false);
+					});
+				}
+				const cleaned = await executeRegisteredTool(owner.tool, owner.ctx, { electron: { action: "cleanup", launchId: launch.launchId } });
+				assert.equal(cleaned.isError, false, JSON.stringify(cleaned));
+				await t.test("real cleanup and transcript replay freshly report an absent profile", async () => {
+					const replay = createExtensionHarness({ cwd: tempDir, branch: [
+						createToolBranchEntry({ details: launched.details as Record<string, unknown> }),
+						createToolBranchEntry({ details: cleaned.details as Record<string, unknown> }),
+					] });
+					await runExtensionEvent(replay.handlers, "session_start", { reason: "resume" }, replay.ctx);
+					const result = await executeRegisteredTool(replay.tool, replay.ctx, { electron: { action: "status", launchId: launch.launchId } });
+					assert.equal(result.isError, false);
+					const status = (result.details?.electron as { statuses: ElectronLaunchStatus[] }).statuses[0];
+					assert.equal(status?.cleanupState, "cleaned");
+					assert.equal(status?.pidAlive, false);
+					assert.equal(status?.portAlive, false);
+					assert.equal(status?.userDataDirState, "absent");
+					assert.match(result.content[0]?.text ?? "", /historical cleaned launch record/);
+					assert.match(result.content[0]?.text ?? "", /Tracked profile path: absent/);
+				});
+			} finally {
+				await runExtensionEvent(owner.handlers, "session_shutdown", { reason: "quit" }, owner.ctx);
+			}
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension cleans Electron after post-launch managed policy rejection", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-policy-reject-"));
 	const applicationsDir = join(tempDir, "Applications");
@@ -319,7 +425,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 		await mkdir(applicationsDir, { recursive: true });
 		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.DemoElectron", launchLogPath, name: "Demo Electron" });
 		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "ambient-at-launch", PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -366,6 +472,18 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(invocationsAfterLaunch.map((entry) => entry.args.at(-2)), ["connect", "get", "tab", "snapshot"]);
 			assert.equal(invocationsAfterLaunch[1]?.args.at(-1), "url");
 			assert.equal(invocationsAfterLaunch[0]?.args.includes("--session"), true);
+
+			const snapshotResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+			assert.equal(snapshotResult.isError, false, JSON.stringify(snapshotResult));
+			assert.equal(snapshotResult.details?.sessionName, launchDetails.electron.launch.sessionName);
+			assert.equal(snapshotResult.details?.namespace, undefined);
+			assert.equal(snapshotResult.details?.usedImplicitSession, true);
+			assert.equal(snapshotResult.details?.attachedBrowserSession, true);
+			const snapshotInvocations = (await readInvocationLog(upstreamLogPath)).slice(invocationsAfterLaunch.length);
+			const snapshotCommandIndex = snapshotInvocations.findIndex((entry) => entry.args.at(-2) === "snapshot");
+			assert.ok(snapshotCommandIndex > 0);
+			assert.ok(snapshotInvocations.slice(0, snapshotCommandIndex).some((entry) => entry.args.at(-2) === "get" && entry.args.at(-1) === "url"));
+			assert.equal(snapshotInvocations.every((entry) => entry.args[entry.args.indexOf("--session") + 1] === launchDetails.electron.launch.sessionName), true);
 
 			await rm(upstreamLogPath, { force: true });
 			const statusResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, () =>

@@ -305,6 +305,8 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("open")) {
   const url = args[args.length - 1];
   process.stdout.write(JSON.stringify({ success: true, data: { title: url.includes("second") ? "Second" : "First", url } }));
+} else if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ tabId: "t1", url: "https://second.example/", title: "Second", active: true }] } }));
 } else if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://snapshot.example/", refs: {}, snapshot: "" } }));
 } else {
@@ -1712,7 +1714,9 @@ test("agentBrowserExtension ignores restored diagnostic session targets that con
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-if (args.includes("click")) {
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ tabId: "t1", url: "https://app.example/", active: true }] } }));
+} else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e1" } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
@@ -2266,7 +2270,7 @@ if (args.includes("snapshot")) {
 			assert.equal(literalFindText.isError, false, JSON.stringify(literalFindText));
 			const literalBaselinePath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--baseline", "@e1.png"] });
 			assert.equal(literalBaselinePath.isError, false, JSON.stringify(literalBaselinePath));
-			const guardedDiffSelector = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "snapshot", "--selector", "@e1"] });
+			const guardedDiffSelector = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["diff", "screenshot", "--baseline", join(tempDir, "baseline.png"), "--selector", "@e1"] });
 			assert.equal(guardedDiffSelector.isError, true, JSON.stringify(guardedDiffSelector));
 			assert.equal(guardedDiffSelector.details?.failureCategory, "stale-ref", JSON.stringify(guardedDiffSelector));
 
@@ -2758,101 +2762,6 @@ if (args.includes("snapshot")) {
 	}
 });
 
-test("agentBrowserExtension pins raw argument batch steps and guards their refs under restore pinning", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pinned-raw-argv-"));
-	const logPath = join(tempDir, "invocations.log");
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
-const args = process.argv.slice(2);
-let stdin = "";
-try { stdin = fs.readFileSync(0, "utf8"); } catch {}
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/" } }));
-} else if (args.includes("tab") && args.includes("list")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
-    { tabId: "t2", title: "Other", url: "https://other.example/", active: true }
-  ] } }));
-} else if (args.includes("batch")) {
-  process.stdout.write(JSON.stringify([
-    { command: ["tab", "t1"], success: true, data: { tabId: "t1" } },
-    { command: ["wait", "100"], success: true, data: {} }
-  ]));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: {} }));
-}`,
-	);
-
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const savedTarget = { title: "Example Domain", url: "https://example.com/" };
-			const harness = createExtensionHarness({
-				branch: [
-					createToolBranchEntry({
-						details: {
-							args: ["--session", "named", "snapshot", "-i"],
-							command: "snapshot",
-							refSnapshot: { refIds: ["e4"], refs: { e4: { name: "Old", role: "button" } }, target: savedTarget },
-							sessionName: "named",
-							sessionTabTarget: savedTarget,
-						},
-						isError: false,
-					}),
-				],
-				cwd: tempDir,
-			});
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
-
-			// Raw argv steps are what upstream executes: the pinned rewrite must dispatch
-			// them and ignore caller stdin instead of resurrecting unguarded stdin refs.
-			const rawArgvPinned = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "batch", "wait 100"],
-				stdin: JSON.stringify([["click", "@e4"]]),
-			});
-			assert.equal(rawArgvPinned.isError, false, JSON.stringify(rawArgvPinned));
-			const batchInvocations = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch"));
-			assert.equal(batchInvocations.length, 1, JSON.stringify(batchInvocations));
-			const dispatched = JSON.parse((batchInvocations[0] as { stdin?: string }).stdin ?? "[]") as string[][];
-			assert.deepEqual(dispatched, [["tab", "t1"], ["wait", "100"]], JSON.stringify(dispatched));
-
-			// The inverse shape keeps guarded argv refs guarded before any pinned dispatch.
-			const rawArgvStaleRef = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "batch", "click @e9"],
-				stdin: JSON.stringify([["wait", "100"]]),
-			});
-			assert.equal(rawArgvStaleRef.isError, true, JSON.stringify(rawArgvStaleRef));
-			assert.equal(rawArgvStaleRef.details?.failureCategory, "stale-ref", JSON.stringify(rawArgvStaleRef));
-			const batchAfterStale = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch"));
-			assert.equal(batchAfterStale.length, 1, JSON.stringify(batchAfterStale));
-
-			// The pinned rewrite must keep the caller's exact --bail fail-fast flag in
-			// both argv mode and stdin (job/qa failFast) mode.
-			const pinnedRawBail = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "batch", "--bail", "wait 100"],
-				stdin: JSON.stringify([["click", "@e4"]]),
-			});
-			assert.equal(pinnedRawBail.isError, false, JSON.stringify(pinnedRawBail));
-			const pinnedStdinBail = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "batch", "--bail"],
-				stdin: JSON.stringify([["wait", "100"]]),
-			});
-			assert.equal(pinnedStdinBail.isError, false, JSON.stringify(pinnedStdinBail));
-			const bailBatches = (await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch")).slice(1);
-			assert.equal(bailBatches.length, 2, JSON.stringify(bailBatches));
-			for (const invocation of bailBatches) {
-				assert.equal(invocation.args.includes("--bail"), true, JSON.stringify(invocation));
-				const bailDispatched = JSON.parse((invocation as { stdin?: string }).stdin ?? "[]") as string[][];
-				assert.deepEqual(bailDispatched, [["tab", "t1"], ["wait", "100"]], JSON.stringify(bailDispatched));
-			}
-		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
 test("agentBrowserExtension keeps upstream-ignored batch stdin out of artifact and screenshot preflights", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-ignored-stdin-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -2900,7 +2809,8 @@ if (args.includes("snapshot")) {
 				stdin: JSON.stringify([["click", "@e1"]]),
 			});
 			assert.notEqual(bailEquals.details?.failureCategory, "stale-ref", JSON.stringify(bailEquals));
-			assert.equal((await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch")).length, 1);
+			assert.equal((await readInvocationLog(logPath)).filter((entry) => entry.args.includes("batch")).length, 0);
+			assert.match(bailEquals.content[0]?.text ?? "", /Use exact batch --bail/);
 
 			// Malformed ignored stdin must not fail artifact preflight for a valid raw-argv call.
 			const malformedIgnoredStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2931,7 +2841,8 @@ if (args.includes("snapshot")) {
 				args: ["batch", "--bail=true"],
 				stdin: "not json",
 			});
-			assert.equal(bailEqualsMalformed.isError, false, JSON.stringify(bailEqualsMalformed));
+			assert.equal(bailEqualsMalformed.isError, true, JSON.stringify(bailEqualsMalformed));
+			assert.match(bailEqualsMalformed.content[0]?.text ?? "", /stdin is ignored/);
 
 			// Upstream-effective raw artifact rows get parent directories prepared.
 			const rawScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, {

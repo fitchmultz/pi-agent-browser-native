@@ -18,7 +18,7 @@ import { buildAgentBrowserResultCategoryDetails } from "../../results/categories
 import { applyNamespaceToNextActions } from "../../results/next-actions.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
 import { resolveVisibleRefActionFromSnapshot } from "../../results/selector-recovery.js";
-import { extractRefSnapshotFromData, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
+import { buildPageTransitionRefSnapshotInvalidation, extractRefSnapshotFromData, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import {
 	buildExecutionPlan,
 	canUseHeadlessCompatibilityUserAgent,
@@ -28,6 +28,7 @@ import {
 	getDefaultHeadlessCompatUserAgent,
 	parseWaitCommandTokens,
 	redactInvocationArgs,
+	redactSensitiveText,
 	type CompatibilityWorkaround,
 } from "../../runtime.js";
 import {
@@ -43,15 +44,12 @@ import {
 } from "../../page-target-validation.js";
 import { acquireOwnedManagedSessionDaemonPolicy, getRunningHeadedAutosavePolicyChangeError } from "./managed-session-daemon-policy.js";
 import {
-	applyOpenResultTabCorrection,
 	buildManagedSessionOutcome,
-	buildPinnedBatchPlan,
 	buildSessionDetailFields,
 	buildStaleRefPreflight,
 	getSessionContextKey,
 	extractStringResultField,
-	collectAnySessionTabSelection,
-	collectSessionTabSelection,
+	ensureSessionTabTarget,
 	getGuardedRefUsage,
 	getTraceOwnerGuardMessage,
 	runSessionCommandData,
@@ -310,8 +308,8 @@ function getSamePageFreshnessPreflightFailure(options: {
 }): { message: string; refIds: string[] } | undefined {
 	const { refIds } = options;
 	if (refIds.length === 0) return undefined;
-	const previousUrl = options.previousSnapshot.target?.url;
-	const currentUrl = options.currentSnapshot.target?.url;
+	const previousUrl = normalizeComparableUrl(options.previousSnapshot.target?.url);
+	const currentUrl = normalizeComparableUrl(options.currentSnapshot.target?.url);
 	if (!previousUrl || !currentUrl || previousUrl !== currentUrl || currentUrl === "about:blank") return undefined;
 	const mismatchedRefs = refIds.filter((refId) => {
 		const previous = options.previousSnapshot.refs?.[refId];
@@ -341,8 +339,8 @@ async function collectSamePageRefFreshnessPreflight(options: {
 }): Promise<StaleRefPreflight | undefined> {
 	const refIds = [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin))];
 	if (!options.previousSnapshot || !options.sessionName || refIds.length === 0) return undefined;
-	const previousUrl = options.previousSnapshot.target?.url;
-	const currentTargetUrl = options.currentTarget?.url;
+	const previousUrl = normalizeComparableUrl(options.previousSnapshot.target?.url);
+	const currentTargetUrl = normalizeComparableUrl(options.currentTarget?.url);
 	if (currentTargetUrl === "about:blank" || (previousUrl && currentTargetUrl && previousUrl !== currentTargetUrl)) return undefined;
 	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
 	const currentSnapshot = extractRefSnapshotFromData(snapshotData);
@@ -496,7 +494,27 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	let managedSessionPolicyLockTransferred = false;
 	let electronLaunchTransferred = false;
 	try {
-	const preparedArgs = await prepareAgentBrowserArgs(runtimeToolArgs, runtimeToolStdin, cwd);
+	let preparedArgs: PreparedAgentBrowserArgs;
+	try {
+		preparedArgs = await prepareAgentBrowserArgs(runtimeToolArgs, runtimeToolStdin, cwd);
+	} catch (error) {
+		signal?.throwIfAborted();
+		if (!(error instanceof Error) || !("syscall" in error) || error.syscall !== "mkdir" || !("path" in error) || typeof error.path !== "string") throw error;
+		const guidance = "Choose a writable artifact path whose parent components are directories. Use absolute paths in raw batch artifact rows.";
+		const validationError = redactSensitiveText(`Could not prepare artifact directory ${error.path}: ${error.message}. ${guidance}`);
+		const nextActions = [{ artifactPath: redactSensitiveText(error.path), id: "verify-artifact-path", reason: guidance, safety: "The requested browser command did not run; inspect the directory with host file tools before retrying.", tool: "agent_browser" as const }];
+		return { kind: "early-result", result: {
+			content: [{ type: "text", text: validationError }],
+			details: {
+				agentBrowserStarted: false,
+				args: redactedArgs,
+				nextActions,
+				...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, succeeded: false, validationError }),
+				validationError,
+			},
+			isError: true,
+		} };
+	}
 	const userRequestedJson = runtimeToolArgs.includes("--json");
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {
 		freshSessionName,
@@ -573,6 +591,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		compatibilityUserAgent: compatibilityUserAgentApplied ? compatibilityUserAgent : undefined,
 		wrapperInjectedUserAgent: compatibilityUserAgentApplied,
 	});
+	let managedSessionDaemonInactive = false;
+	let managedSessionCleanupOnlyReason: Awaited<ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>>["cleanupOnlyReason"];
 	if (!executionPlan.validationError && ownedManagedSession) {
 		const closeCommand = isCloseCommand(executionPlan.commandInfo.command);
 		const policy = await acquireOwnedManagedSessionDaemonPolicy({
@@ -581,7 +601,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			signal,
 		});
 		managedSessionPolicyLock = policy.lock;
+		managedSessionDaemonInactive = policy.daemonStatus === "inactive";
 		if (policy.error) {
+			managedSessionCleanupOnlyReason = policy.cleanupOnlyReason;
 			executionPlan = {
 				...executionPlan,
 				recoveryHint: undefined,
@@ -614,10 +636,66 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		let priorSessionTabTarget: SessionTabTarget | undefined = priorSessionPageState.tabTarget;
 		let priorSessionTabTargetUnknown: true | undefined = priorSessionPageState.tabTargetUnknown;
 		const sessionTabPinningReason = priorSessionPageState.pinningReason;
-		const priorRefSnapshotState = priorSessionPageState.refSnapshot;
-		const priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
+		let priorRefSnapshotState = priorSessionPageState.refSnapshot;
+		let priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
+		const coldManagedSession = (managedSessionDaemonInactive || priorSessionPageState.tabReopenPending === true)
+			&& recordedOwnedSession !== undefined
+			&& sessionTabPinningReason === "restore"
+			&& ownedManagedSession?.restoreDecision === "enabled"
+			&& !managedSessionRestoreDisabled()
+			&& !options.preserveAttachedBrowserSession;
+		if (coldManagedSession && sessionStateKey) {
+			sessionPageState.setTabReopenPending({ pending: true, sessionName: sessionStateKey, update: options.sessionPageStateUpdate });
+			priorRefSnapshotState = undefined;
+			priorRefSnapshotInvalidation = buildPageTransitionRefSnapshotInvalidation("The managed browser shut down. Reopening its URL reloads the page; run snapshot -i before using page-scoped refs.");
+			sessionPageState.applyRefSnapshotInvalidation({ invalidation: priorRefSnapshotInvalidation, sessionName: sessionStateKey, update: options.sessionPageStateUpdate });
+		}
 		let semanticActionVisibleRefResolution: SemanticActionVisibleRefResolution | undefined;
 		let livePageVerified = false;
+		let sessionTabCorrection: PreparedBrowserRun["sessionTabCorrection"];
+		let sessionTabSelectionError: string | undefined;
+		const plannedCommandTokens = extractUpstreamCommandTokens(preparedArgs.args);
+		const knownStaleRef = buildStaleRefPreflight({ commandTokens: plannedCommandTokens, currentTarget: priorSessionTabTarget, refSnapshot: priorRefSnapshotState, refSnapshotInvalidation: priorRefSnapshotInvalidation, stdin: runtimeToolStdin });
+		const invalidStdin = validateStdinCommandContract({ command: executionPlan.commandInfo.command, commandTokens: plannedCommandTokens, stdin: runtimeToolStdin });
+		const pinSessionTab = shouldPinSessionTabForCommand({
+			command: executionPlan.commandInfo.command,
+			commandTokens: plannedCommandTokens,
+			// URL QA clears diagnostics before its explicit open; those clears do not need the old tab.
+			pinningRequired: sessionTabPinningReason !== undefined && compiledQaPreset?.checks.url === undefined,
+			reopenPending: coldManagedSession,
+			sessionName: executionPlan.sessionName,
+			stdin: runtimeToolStdin,
+		});
+		if (!executionPlan.validationError && !executionPlan.plainTextInspection && !knownStaleRef && !invalidStdin && priorSessionTabTarget && pinSessionTab) {
+			signal?.throwIfAborted();
+			const reopened = !coldManagedSession || await runSessionCommandData({
+				args: ["open", priorSessionTabTarget.url], cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal, timeoutMs: params.timeoutMs,
+				onProcessResult: ({ agentBrowserStarted }) => {
+					// A started open may have navigated even if its CLI was aborted before replying.
+					if (agentBrowserStarted && sessionStateKey) sessionPageState.setTabReopenPending({ pending: false, sessionName: sessionStateKey, update: options.sessionPageStateUpdate });
+				},
+			}) !== undefined;
+			const selection = signal?.aborted ? undefined : reopened
+				? await ensureSessionTabTarget({ cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal, target: priorSessionTabTarget })
+				: { error: "agent-browser could not reopen the remembered URL after the managed browser shut down. Navigate explicitly, then run snapshot -i before retrying." };
+			if (coldManagedSession && signal?.aborted) {
+				const errorText = "agent_browser was aborted while reopening the remembered page. The requested command did not run.";
+				return { kind: "early-result", result: {
+					content: [{ type: "text", text: errorText }],
+					details: {
+						aborted: true, args: redactedArgs, command: executionPlan.commandInfo.command,
+						effectiveArgs: redactInvocationArgs(executionPlan.effectiveArgs), sessionMode,
+						...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+						...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, command: executionPlan.commandInfo.command, errorText, failureCategory: "aborted", succeeded: false }),
+					},
+					isError: true,
+				} };
+			}
+			signal?.throwIfAborted();
+			sessionTabCorrection = selection?.correction;
+			sessionTabSelectionError = selection?.error;
+			if (selection?.error) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: selection.error };
+		}
 		const isCallerOwnedExplicitSession = () => executionPlan.sessionName !== undefined
 			&& executionPlan.usedImplicitSession === false
 			&& ownedManagedSession === undefined;
@@ -744,7 +822,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		}
 
 		if (executionPlan.validationError) {
-			const nextActions = applyNamespaceToNextActions(unsupportedScrollIntoViewRecovery?.nextActions, executionPlan.namespace);
+			const nextActions = applyNamespaceToNextActions(sessionTabSelectionError ? buildSessionTabRecoveryNextActions({ kind: "tab-drift", resultCategory: "failure", sessionName: executionPlan.sessionName, tabCorrection: sessionTabCorrection, target: priorSessionTabTarget }) : unsupportedScrollIntoViewRecovery?.nextActions, executionPlan.namespace);
 			const nextActionsText = formatAgentBrowserNextActionsText(nextActions);
 			return { kind: "early-result", statePatch, result: {
 				content: [{ type: "text", text: [executionPlan.validationError, nextActionsText].filter((text): text is string => text !== undefined).join("\n\n") }],
@@ -756,11 +834,16 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 					compiledSourceLookup: redactedCompiledSourceLookup,
 					compiledNetworkSourceLookup: redactedCompiledNetworkSourceLookup,
 					invalidValueFlag: executionPlan.invalidValueFlag,
+					managedSessionCleanupOnlyReason,
+					...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
+					...(managedSessionCleanupOnlyReason ? { namespace: ownedManagedSession?.namespace ?? "" } : {}),
 					nextActions,
 					sessionMode,
 					sessionRecoveryHint: redactedRecoveryHint,
 					startupScopedFlags: executionPlan.startupScopedFlags,
-					...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, command: executionPlan.commandInfo.command, errorText: executionPlan.validationError, succeeded: false, validationError: executionPlan.validationError }),
+					...(sessionTabSelectionError ? { effectiveArgs: redactedEffectiveArgs, sessionTabCorrection } : {}),
+					...(coldManagedSession ? { refSnapshotInvalidation: priorRefSnapshotInvalidation } : {}),
+					...buildAgentBrowserResultCategoryDetails({ args: redactedArgs, command: executionPlan.commandInfo.command, errorText: executionPlan.validationError, failureCategory: sessionTabSelectionError ? "tab-drift" : undefined, succeeded: false, validationError: executionPlan.validationError }),
 					validationError: executionPlan.validationError,
 				},
 				isError: true,
@@ -1002,110 +1085,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		});
 		if (directAnchorDownload) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: directAnchorDownload.artifactManifest ?? statePatch.artifactManifest }, result: directAnchorDownload.result };
 
-		let pinnedBatchUnwrapMode: PreparedBrowserRun["pinnedBatchUnwrapMode"];
-		let includePinnedNavigationSummary = false;
-		let sessionTabCorrection: PreparedBrowserRun["sessionTabCorrection"];
-		let processArgs = executionPlan.effectiveArgs;
-		let processStdin = preparedArgs.stdin ?? runtimeToolStdin;
-		if (
-			priorSessionTabTarget &&
-			shouldPinSessionTabForCommand({
-				command: executionPlan.commandInfo.command,
-				commandTokens,
-				pinningRequired: sessionTabPinningReason !== undefined,
-				sessionName: executionPlan.sessionName,
-				stdin: runtimeToolStdin,
-			})
-		) {
-			const collectTabSelection = promptRefSnapshot && getGuardedRefUsage(commandTokens, runtimeToolStdin).length > 0 ? collectAnySessionTabSelection : collectSessionTabSelection;
-			const plannedSessionTabSelection = await collectTabSelection({
-				cwd,
-				namespace: executionPlan.namespace,
-				sessionName: executionPlan.sessionName,
-				signal,
-				target: priorSessionTabTarget,
-			});
-			if (plannedSessionTabSelection && executionPlan.sessionName) {
-				if (executionPlan.commandInfo.command === "eval" && runtimeToolStdin !== undefined) {
-					const appliedSessionTabSelection = await applyOpenResultTabCorrection({
-						correction: plannedSessionTabSelection,
-						cwd,
-						namespace: executionPlan.namespace,
-						sessionName: executionPlan.sessionName,
-						signal,
-					});
-					if (!appliedSessionTabSelection) {
-						const error = "agent-browser could not re-select the intended tab before running the command.";
-						return { kind: "early-result", statePatch, result: {
-							content: [{ type: "text", text: error }],
-							details: {
-								args: redactedArgs,
-								command: executionPlan.commandInfo.command,
-								compatibilityWorkaround,
-								effectiveArgs: redactedEffectiveArgs,
-								sessionMode,
-								sessionTabCorrection: plannedSessionTabSelection,
-								...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: error }),
-								nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
-									kind: "tab-drift",
-									resultCategory: "failure",
-									sessionName: executionPlan.sessionName,
-									tabCorrection: plannedSessionTabSelection,
-									target: priorSessionTabTarget,
-								}), executionPlan.namespace),
-								validationError: error,
-								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
-							},
-							isError: true,
-						} };
-					}
-					sessionTabCorrection = appliedSessionTabSelection;
-				} else {
-					const pinnedBatchPlan = buildPinnedBatchPlan({
-						command: executionPlan.commandInfo.command,
-						commandTokens,
-						selectedTab: plannedSessionTabSelection.selectedTab,
-						stdin: runtimeToolStdin,
-					});
-					if (pinnedBatchPlan && "error" in pinnedBatchPlan) {
-						return { kind: "early-result", statePatch, result: {
-							content: [{ type: "text", text: pinnedBatchPlan.error }],
-							details: {
-								args: redactedArgs,
-								command: executionPlan.commandInfo.command,
-								compatibilityWorkaround,
-								effectiveArgs: redactedEffectiveArgs,
-								sessionMode,
-								sessionTabCorrection: plannedSessionTabSelection,
-								...buildAgentBrowserResultCategoryDetails({ args: redactedEffectiveArgs, command: executionPlan.commandInfo.command, errorText: pinnedBatchPlan.error, failureCategory: "tab-drift", succeeded: false, tabDrift: true, validationError: pinnedBatchPlan.error }),
-								nextActions: applyNamespaceToNextActions(buildSessionTabRecoveryNextActions({
-									kind: "tab-drift",
-									resultCategory: "failure",
-									sessionName: executionPlan.sessionName,
-									tabCorrection: plannedSessionTabSelection,
-									target: priorSessionTabTarget,
-								}), executionPlan.namespace),
-								validationError: pinnedBatchPlan.error,
-								...buildSessionDetailFields(executionPlan.sessionName, executionPlan.usedImplicitSession, executionPlan.namespace, managedSessionRestoreDisabled()),
-							},
-							isError: true,
-						} };
-					}
-					if (pinnedBatchPlan) {
-						sessionTabCorrection = plannedSessionTabSelection;
-						// The rewritten batch must keep the caller's fail-fast semantics:
-						// upstream reads only the exact --bail token, so re-emit it whenever
-						// the original batch tokens carried it (argv or stdin/job/qa mode).
-						const pinnedBailArgs = commandTokens.includes("--bail") ? ["--bail"] : [];
-						processArgs = ["--json", ...(executionPlan.namespace !== undefined ? ["--namespace", executionPlan.namespace] : []), "--session", executionPlan.sessionName, "batch", ...pinnedBailArgs];
-						processStdin = JSON.stringify(pinnedBatchPlan.steps);
-						includePinnedNavigationSummary = pinnedBatchPlan.includeNavigationSummary;
-						pinnedBatchUnwrapMode = pinnedBatchPlan.unwrapMode;
-					}
-				}
-			}
-		}
-		const clickDispatchProbe = pinnedBatchUnwrapMode === undefined && compiledElectron === undefined
+		const processArgs = executionPlan.effectiveArgs;
+		const processStdin = preparedArgs.stdin ?? runtimeToolStdin;
+		const clickDispatchProbe = compiledElectron === undefined
 			? await prepareClickDispatchProbe({ commandTokens, cwd, namespace: executionPlan.namespace, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
 			: undefined;
 		let readTimeoutPageUrl = priorSessionTabTarget?.url;
@@ -1154,9 +1136,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				electronLaunch,
 				exactSensitiveValues,
 				executionPlan,
-				includePinnedNavigationSummary,
 				ownedManagedSessionContext: ownedManagedSession,
-				pinnedBatchUnwrapMode,
 				preparedArgs,
 				priorRefSnapshotState,
 				priorSessionTabTarget,

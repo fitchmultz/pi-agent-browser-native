@@ -153,7 +153,7 @@ Handoff selection (`handoff` field):
 
 `targetType` defaults to `"page"`; use `"webview"` or `"any"` for apps whose useful UI is exposed as a webview target.
 
-Optional `timeoutMs` on `electron.launch` bounds host-side CDP readiness (waiting for `DevToolsActivePort` and attach). When omitted, the default is **15 seconds** with a hard maximum of **120 seconds**, matching `ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS` and `ELECTRON_LAUNCH_MAX_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/launch.ts`. Pi cancellation is separate: an already-cancelled call never launches the app, while cancellation during readiness polling or URL/tab/snapshot handoff closes the managed session, stops the tracked process, removes its isolated profile, and returns `failureCategory: "aborted"` without waiting for the launch timeout.
+Optional `timeoutMs` on `electron.launch` sets the host readiness polling budget for `DevToolsActivePort` and CDP metadata. The clock starts after target discovery and policy checks; upstream attach and handoff have separate subprocess budgets. When omitted, the default is **15 seconds** with a hard maximum of **120 seconds**, matching `ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS` and `ELECTRON_LAUNCH_MAX_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/launch.ts`. Pi cancellation is separate: an already-cancelled call never launches the app, while cancellation during readiness polling or URL/tab/snapshot handoff closes the managed session, stops the tracked process, removes its isolated profile, and returns `failureCategory: "aborted"` without waiting for the launch timeout.
 
 Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen port. If wrapper validation, managed-session policy, or the post-attach live-URL handoff guard fails after the host app starts, the wrapper immediately stops that process and removes the isolated profile; it retains a partial tracked record only when cleanup itself cannot finish. `--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and bare `--` in `appArgs` are rejected. There is no caller-supplied port and no way to make `electron.launch` reuse the app's normal signed-in profile or attach to an already-running app — by design. Use the manual path described above when those are the actual requirements.
 
@@ -167,7 +167,7 @@ Read-only inspection of one or more tracked launches. Without `launchId` or `all
 { "electron": { "action": "status", "all": true } }
 ```
 
-Reports `cleanupState`, debug-port and PID liveness, and bounded CDP target metadata under `details.electron.statuses`. Its managed-session title/URL reads hold the normal daemon-policy lock and owned restore context. Mismatch fields surface when the current managed session or tab no longer matches a live wrapper launch target — typically the cue to follow `reattach-electron-launch` before trusting old refs.
+Reports `cleanupState`, current debug-port and PID liveness, bounded CDP targets, and freshly measured `userDataDirState` under `details.electron.statuses`. An explicit `launchId` can inspect a **historical cleaned launch record**; default and `all: true` selection exclude cleaned records. Cleanup history does not determine current liveness. The tracked profile path is `present`, `absent` (only native `lstat` ENOENT), or `unknown` (other filesystem errors); a dangling symlink is present. This measures that path only, not all app residue, and is not stored in the launch record. Its managed-session title/URL reads hold the normal daemon-policy lock and owned restore context. Mismatch fields surface when the current managed session or tab no longer matches a live wrapper launch target — typically the cue to follow `reattach-electron-launch` before trusting old refs.
 
 ### `electron.probe` — compact state read
 
@@ -204,14 +204,14 @@ On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On
 
 ### `timeoutMs` by action (quick reference)
 
-`electron.list` does not take `timeoutMs` (host scan only). For every other action, `timeoutMs` applies to **different surfaces**; treat values as per-call budgets, not one global knob. Authoritative rules and env overrides live under **Validation and defaults** in [`TOOL_CONTRACT.md#electron`](TOOL_CONTRACT.md#electron).
+`electron.list` has no configurable timeout: neither top-level `timeoutMs` nor nested `electron.timeoutMs` is accepted for its host scan. For every other action, nested `timeoutMs` applies to **different surfaces**, not an end-to-end action deadline. Authoritative rules and env overrides live under **Validation and defaults** in [`TOOL_CONTRACT.md#electron`](TOOL_CONTRACT.md#electron).
 
 | Action | What `timeoutMs` covers when set | Typical default when omitted |
 | --- | --- | --- |
 | `launch` | Host-side wait for `DevToolsActivePort` and CDP readiness | **15 s**, hard-capped at **120 s** (`normalizeTimeoutMs` in `extensions/agent-browser/lib/electron/launch.ts`) |
-| `status` | Optional managed-session `get url`, then `get title` reads used for mismatch diagnostics | Normal tool subprocess budget from `runAgentBrowserProcess` / `AGENT_BROWSER_DEFAULT_TIMEOUT`; localhost CDP HTTP probes keep a short fixed budget (`ELECTRON_STATUS_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cleanup.ts`) |
-| `cleanup` | One combined budget for managed-session `close`, tracked process exit, debug-port verification, and temp profile removal | `PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS` when set, else **5000 ms** (`getImplicitSessionCloseTimeoutMs` in `extensions/agent-browser/lib/runtime.ts`, passed through `cleanupTrackedElectronHostLaunches` in `extensions/agent-browser/lib/orchestration/electron-host/index.ts`) |
-| `probe` | **Each** upstream read in the probe chain (`get url`, then `get title`, focused `eval --stdin`, `tab list`, `snapshot -i`) | Same default as other tool calls (typically **28 s** per subprocess unless `AGENT_BROWSER_DEFAULT_TIMEOUT` / `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides `runAgentBrowserProcess` in `extensions/agent-browser/lib/process.ts`) |
+| `status` | Each optional managed-session `get url` / `get title` subprocess used for mismatch diagnostics | Normal wrapper subprocess budget (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`); localhost CDP probes use **1000 ms** each (`ELECTRON_CDP_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cdp.ts`) |
+| `cleanup` | Applied separately to managed-session `close` and the initial tracked-process exit wait; not a deadline for debug-port checks or profile removal | `PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS` when set, else **5000 ms** (`getImplicitSessionCloseTimeoutMs` in `extensions/agent-browser/lib/runtime.ts`, passed through `cleanupTrackedElectronHostLaunches` in `extensions/agent-browser/lib/orchestration/electron-host/index.ts`) |
+| `probe` | **Each** upstream read in the probe chain (`get url`, then `get title`, focused `eval --stdin`, `tab list`, `snapshot -i`) | Same wrapper subprocess default (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`, from `getAgentBrowserProcessTimeoutMs` in `extensions/agent-browser/lib/process.ts`) |
 
 ## `qa.attached` — current-session smoke check
 

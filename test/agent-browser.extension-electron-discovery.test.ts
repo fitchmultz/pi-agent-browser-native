@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -19,7 +19,9 @@ import {
 } from "../extensions/agent-browser/lib/electron/discovery.js";
 import {
 	cleanupElectronLaunchResources,
+	inspectElectronLaunchStatus,
 } from "../extensions/agent-browser/lib/electron/cleanup.js";
+import type { ElectronLaunchRecord } from "../extensions/agent-browser/lib/electron/launch.js";
 import {
 	cleanupSecureTempArtifacts,
 	createSecureTempDirectory,
@@ -274,6 +276,49 @@ test("agentBrowserExtension cleans Electron resources when upstream connect cann
 			await assert.rejects(stat(launchLog.userDataDir));
 			assert.equal(isTestPidAlive(launchLog.pid), false);
 		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("Electron profile status measures the current path without changing the launch record", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-profile-status-"));
+	const present = join(tempDir, "present");
+	const absent = join(tempDir, "removed");
+	const dangling = join(tempDir, "dangling");
+	const parentFile = join(tempDir, "not-a-directory");
+	const unknown = join(parentFile, "profile");
+	try {
+		await mkdir(present);
+		await mkdir(absent);
+		await rm(absent, { recursive: true });
+		await writeFile(parentFile, "file");
+		await assert.rejects(lstat(unknown), { code: "ENOTDIR" });
+		if (process.platform !== "win32") {
+			await symlink(absent, dangling);
+			assert.equal((await lstat(dangling)).isSymbolicLink(), true);
+		}
+		for (const [state, userDataDir] of [["present", present], ["absent", absent], ["unknown", unknown], ["present", dangling]] as const) {
+			await t.test(`${state}: ${userDataDir === dangling ? "dangling symlink" : state}`, { skip: userDataDir === dangling && process.platform === "win32" }, async () => {
+				const record: ElectronLaunchRecord = Object.freeze({
+					appName: "Profile status", cleanupState: "cleaned", createdAtMs: 1,
+					executablePath: process.execPath, launchId: "electron-profile-status",
+					launchedByWrapper: true, pid: process.pid, port: 9, userDataDir, version: 1,
+				});
+				const status = await inspectElectronLaunchStatus(record);
+				assert.equal(status.cleanupState, "cleaned");
+				assert.equal(status.pidAlive, true);
+				assert.equal(status.portAlive, false);
+				assert.equal(status.userDataDirState, state);
+				assert.equal("userDataDirState" in record, false);
+				if (userDataDir === present) {
+					await rm(present, { recursive: true });
+					assert.equal((await inspectElectronLaunchStatus(record)).userDataDirState, "absent");
+					await mkdir(present);
+					assert.equal((await inspectElectronLaunchStatus(record)).userDataDirState, "present");
+				}
+			});
+		}
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

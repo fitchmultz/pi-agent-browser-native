@@ -27,7 +27,7 @@ function findCommandTimeoutMs(commandTokens: string[]): number | undefined {
 	return firstWaitArgument && !firstWaitArgument.startsWith("-") ? parseMillisecondsToken(firstWaitArgument) : undefined;
 }
 
-function findFirstPositionalArgument(commandTokens: string[]): string | undefined {
+export function findFirstPositionalArgument(commandTokens: string[]): string | undefined {
 	for (let index = 1; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
 		const flag = token.split("=", 1)[0];
