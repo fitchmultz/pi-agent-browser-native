@@ -70,6 +70,7 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	assert.deepEqual(labels(realUpstream), [
 		"--test --test-force-exit --test-name-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
 		"--test --test-force-exit --test-name-pattern contract suite matches test/agent-browser.real-upstream-contract.test.ts",
+		"--test --test-force-exit test/agent-browser.batch-fidelity.test.ts",
 	]);
 	assert.equal(realUpstream.every((step) => step.env?.PI_AGENT_BROWSER_REAL_UPSTREAM === "1"), true);
 

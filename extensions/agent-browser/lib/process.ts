@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { lstat, mkdir, readdir } from "node:fs/promises";
+import { lstat, mkdir, readdir, readlink, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
 
@@ -339,11 +339,24 @@ export function isTrustedSocketDirAncestor(
 	return metadata.uid === 0 && ((mode & 0o022) === 0 || (mode & 0o1000) !== 0);
 }
 
-async function hasTrustedSocketDirAncestry(socketDir: string, uid: number): Promise<boolean> {
+async function hasTrustedSocketDirAncestry(socketDir: string, uid: number, visited = new Set<string>()): Promise<boolean> {
 	for (let current = dirname(socketDir);;) {
+		current = current.replace(/\/+$/, "") || "/";
+		if (visited.has(current)) return true;
+		visited.add(current);
 		const metadata = await lstat(current);
+		// The operating environment supplies /; its reported owner may be unmapped in a user namespace.
+		if (current === "/" && metadata.isDirectory() && (metadata.mode & 0o022) === 0) return true;
 		if (isTrustedAndroidAppDataRoot(current, metadata, uid)) return true;
 		if (!isTrustedSocketDirAncestor(metadata, uid)) return false;
+		if (metadata.isSymbolicLink()) {
+			// Native stat rejects broken/cyclic links before walking their destination ancestry.
+			if (!isTrustedSocketDirAncestor(await stat(current), uid)) return false;
+			const target = await readlink(current);
+			const targetPath = isAbsolute(target) ? target : `${dirname(current)}/${target}`;
+			// Keep '..' after symlinks intact; '/.' includes the target itself in the parent walk.
+			if (!await hasTrustedSocketDirAncestry(`${targetPath}/.`, uid, visited)) return false;
+		}
 		const parent = dirname(current);
 		if (parent === current) return true;
 		current = parent;
@@ -449,7 +462,6 @@ function getManagedPreSpawnPolicyError(
 	options: ManagedSessionRestoreEnvOptions,
 	currentPageUrl?: string,
 	pageUrlUnknown = false,
-	trustedFirstBatchTabSelection = false,
 ): string | undefined {
 	if (!validateManagedSessionRestoreContextForSpawn(options)) {
 		return "Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser.";
@@ -459,7 +471,6 @@ function getManagedPreSpawnPolicyError(
 		currentPageUrl,
 		pageUrlUnknown,
 		stdin: options.stdin,
-		trustedFirstBatchTabSelection,
 	});
 }
 
@@ -475,9 +486,8 @@ export async function runAgentBrowserProcess(options: {
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
-	trustedFirstBatchTabSelection?: boolean;
 }): Promise<ProcessRunResult> {
-	const { cwd, env, managedSessionRestoreState, managedStateCurrentPageUrl, managedStatePageUrlUnknown, signal, stdin, trustedFirstBatchTabSelection } = options;
+	const { cwd, env, managedSessionRestoreState, managedStateCurrentPageUrl, managedStatePageUrlUnknown, signal, stdin } = options;
 	const preserveAttachedBrowserSession = options.preserveAttachedBrowserSession === true || attachedBrowserSessionContext.getStore() === true;
 	const ownedManagedSession = options.ownedManagedSession === true || isOwnedManagedSessionTarget(options.args);
 	const args = options.args;
@@ -495,7 +505,7 @@ export async function runAgentBrowserProcess(options: {
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
-	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection);
+	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown);
 	if (planningPolicyError) {
 		return {
 			aborted: false,
@@ -647,7 +657,7 @@ export async function runAgentBrowserProcess(options: {
 		};
 
 		const childEnv = buildAgentBrowserProcessEnv(parentEnv, effectiveEnv);
-		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, trustedFirstBatchTabSelection);
+		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown);
 		if (spawnPolicyError) {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;

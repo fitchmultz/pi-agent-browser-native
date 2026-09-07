@@ -1,9 +1,10 @@
-import { readFile, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 
 import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
+import { getExplicitArtifactDestination } from "../../orchestration/browser-run/artifact-paths.js";
 import { isRecord, parsePositiveInteger } from "../../parsing.js";
-import type { CommandInfo } from "../../runtime.js";
+import { extractUpstreamCommandTokens, type CommandInfo } from "../../runtime.js";
 import {
 	formatSessionArtifactRetentionSummary,
 	getSessionArtifactManifestEntryKey,
@@ -23,22 +24,31 @@ import type {
 	ToolPresentation,
 } from "../contracts.js";
 
-const IMAGE_EXTENSION_TO_MIME_TYPE: Record<string, string> = {
-	".gif": "image/gif",
-	".jpeg": "image/jpeg",
-	".jpg": "image/jpeg",
-	".png": "image/png",
-	".webp": "image/webp",
-};
+const PNG_HEADER = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
 
 const INLINE_IMAGE_MAX_BYTES_ENV = "PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES";
 
 const DEFAULT_INLINE_IMAGE_MAX_BYTES = 5 * 1_024 * 1_024;
 const ARTIFACT_MTIME_TOLERANCE_MS = 2_000;
 
-function getImageMimeType(filePath: string): string | undefined {
-	const extension = extname(filePath).toLowerCase();
-	return IMAGE_EXTENSION_TO_MIME_TYPE[extension];
+function getImageMimeType(bytes: Buffer): string | undefined {
+	if (bytes.length < 16) return undefined;
+	if (bytes.subarray(0, 16).equals(PNG_HEADER)) return "image/png";
+	if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff && bytes[3] !== 0xf7) return "image/jpeg";
+	if (["GIF87a", "GIF89a"].includes(bytes.toString("utf8", 0, 6))) return "image/gif";
+	if (bytes.toString("utf8", 0, 4) === "RIFF" && bytes.toString("utf8", 8, 12) === "WEBP") return "image/webp";
+	return undefined;
+}
+
+async function getFileImageMimeType(path: string): Promise<string | undefined> {
+	try {
+		const file = await open(path, "r");
+		try {
+			const bytes = Buffer.alloc(16);
+			const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
+			return getImageMimeType(bytes.subarray(0, bytesRead));
+		} finally { await file.close(); }
+	} catch { return undefined; }
 }
 
 function getInlineImageMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
@@ -99,18 +109,6 @@ const PATH_FIELD_CANDIDATES = [
 	"profilePath",
 	"videoPath",
 ] as const;
-
-const ARTIFACT_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
-	".cpuprofile": "application/json",
-	".har": "application/json",
-	".html": "text/html",
-	".json": "application/json",
-	".pdf": "application/pdf",
-	".txt": "text/plain",
-	".webm": "video/webm",
-	".zip": "application/zip",
-	...IMAGE_EXTENSION_TO_MIME_TYPE,
-};
 
 function isDownloadWaitSubcommand(subcommand: string | undefined): boolean {
 	return subcommand === "--download" || subcommand === "-d";
@@ -193,6 +191,7 @@ async function buildFileArtifactMetadata(options: {
 	const pendingRecording = isPendingRecordingCommand(options.commandInfo.command, options.commandInfo.subcommand, kind);
 	let exists: boolean | undefined;
 	let sizeBytes: number | undefined;
+	let mediaType: string | undefined;
 	let stale = false;
 	let updatedAtMs: number | undefined;
 	if (!pendingRecording) {
@@ -201,6 +200,7 @@ async function buildFileArtifactMetadata(options: {
 			exists = true;
 			sizeBytes = fileStats.size;
 			updatedAtMs = fileStats.mtimeMs;
+			mediaType = fileStats.isFile() ? await getFileImageMimeType(absolutePath) : undefined;
 			const commandCreatesArtifact = !(options.commandInfo.command === "wait" && isDownloadWaitSubcommand(options.commandInfo.subcommand));
 			stale = commandCreatesArtifact && artifactMtimeIsOutsideCommandWindow(updatedAtMs, options.artifactMinUpdatedAtMs, options.artifactMaxUpdatedAtMs);
 		} catch {
@@ -216,11 +216,11 @@ async function buildFileArtifactMetadata(options: {
 		exists,
 		extension,
 		kind,
-		mediaType: extension ? ARTIFACT_EXTENSION_TO_MEDIA_TYPE[extension] : undefined,
+		mediaType,
 		namespace: options.namespace,
 		path: displayPath,
 		recordingState: pendingRecording ? "openRecording" : undefined,
-		requestedPath: options.artifactRequest?.path,
+		requestedPath: options.artifactRequest?.path ?? getExplicitArtifactDestination(extractUpstreamCommandTokens(options.commandInfo.commandTokens ?? [])),
 		session: options.sessionName,
 		sizeBytes,
 		status: pendingRecording ? "pending" : exists === false ? "missing" : stale ? "stale" : options.artifactRequest?.status ?? "saved",
@@ -261,7 +261,7 @@ async function buildPreviousRestartRecordingArtifact(options: {
 			exists: true,
 			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
 			kind: "video",
-			mediaType: previousRecording.mediaType,
+			mediaType: fileStats.isFile() ? await getFileImageMimeType(absolutePath) : undefined,
 			namespace: previousRecording.namespace ?? options.namespace,
 			path: previousRecording.path,
 			requestedPath: previousRecording.requestedPath,
@@ -280,7 +280,6 @@ async function buildPreviousRestartRecordingArtifact(options: {
 			exists: false,
 			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
 			kind: "video",
-			mediaType: previousRecording.mediaType,
 			namespace: previousRecording.namespace ?? options.namespace,
 			path: previousRecording.path,
 			requestedPath: previousRecording.requestedPath,
@@ -520,13 +519,12 @@ export function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): 
 			return [
 				`${formatArtifactLabel(artifact)}: ${artifact.path}`,
 				`Artifact type: ${artifact.kind}`,
-				`Requested path: ${artifact.requestedPath ?? artifact.path}`,
+				artifact.requestedPath ? `Requested path: ${artifact.requestedPath}` : undefined,
 				`Absolute path: ${artifact.absolutePath}`,
 				"Exists: pending until record stop",
 				`Status: ${artifact.status ?? "pending"}`,
 				`Recording state: ${artifact.recordingState ?? "openRecording"}`,
 				`Will exist on stop: ${artifact.willExistOnStop !== false}`,
-				artifact.subcommand === "start" ? "Page state: record start uses a fresh active page for video capture; prior in-page DOM and JavaScript state does not carry over. Take a fresh snapshot before continuing." : undefined,
 				artifact.session ? `Session: ${artifact.session}` : undefined,
 				artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
 				`Machine data: details.artifacts[${index}]`,
@@ -536,14 +534,14 @@ export function formatArtifactMetadataLines(artifacts: FileArtifactMetadata[]): 
 		return [
 			`${formatArtifactLabel(artifact)}: ${artifact.path}`,
 			`Artifact type: ${artifact.kind}`,
-			`Requested path: ${artifact.requestedPath ?? artifact.path}`,
+			artifact.requestedPath ? `Requested path: ${artifact.requestedPath}` : undefined,
 			`Absolute path: ${artifact.absolutePath}`,
 			`Exists: ${artifact.exists === true}`,
 			artifact.exists === false ? "not found on disk" : undefined,
 			typeof artifact.sizeBytes === "number" ? `Size: ${formatByteCount(artifact.sizeBytes)}` : undefined,
 			typeof artifact.sizeBytes === "number" ? `Size bytes: ${artifact.sizeBytes}` : undefined,
 			`Status: ${artifact.status ?? (artifact.exists === false ? "missing" : "saved")}`,
-			artifact.tempPath ? `Temp path: ${artifact.tempPath}` : undefined,
+			artifact.tempPath ? `Reported path: ${artifact.tempPath}` : undefined,
 			artifact.mediaType ? `Media type: ${artifact.mediaType}` : undefined,
 			artifact.session ? `Session: ${artifact.session}` : undefined,
 			artifact.cwd ? `CWD: ${artifact.cwd}` : undefined,
@@ -597,23 +595,11 @@ export function extractImagePath(commandInfo: CommandInfo, cwd: string, data: un
 	if (!isTrustedScreenshotOutput(commandInfo)) {
 		return undefined;
 	}
-	if (typeof data === "string") {
-		const mimeType = getImageMimeType(data);
-		return mimeType ? resolve(cwd, data) : undefined;
-	}
-	if (!isRecord(data) || typeof data.path !== "string") {
-		return undefined;
-	}
-	const mimeType = getImageMimeType(data.path);
-	return mimeType ? resolve(cwd, data.path) : undefined;
+	const path = typeof data === "string" ? data : isRecord(data) && typeof data.path === "string" ? data.path : undefined;
+	return path?.trim() && !isNonFileArtifactPathCandidate(path) ? resolve(cwd, path) : undefined;
 }
 
 export async function attachInlineImage(presentation: ToolPresentation, imagePath: string): Promise<ToolPresentation> {
-	const mimeType = getImageMimeType(imagePath);
-	if (!mimeType) {
-		return presentation;
-	}
-
 	try {
 		const fileStats = await stat(imagePath);
 		const inlineImageMaxBytes = getInlineImageMaxBytes();
@@ -627,6 +613,8 @@ export async function attachInlineImage(presentation: ToolPresentation, imagePat
 		}
 
 		const file = await readFile(imagePath);
+		const mimeType = getImageMimeType(file);
+		if (!mimeType) return presentation;
 		presentation.content.push({ type: "image", data: file.toString("base64"), mimeType });
 		presentation.imagePath = imagePath;
 		return presentation;

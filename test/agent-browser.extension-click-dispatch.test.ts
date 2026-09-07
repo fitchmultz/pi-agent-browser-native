@@ -179,7 +179,7 @@ if (args.includes("snapshot")) {
 	}
 });
 
-test("agentBrowserExtension probes duplicate-name ref clicks with snapshot order", { concurrency: false }, async () => {
+test("agentBrowserExtension leaves duplicate-name ref clicks upstream-owned", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-duplicate-ref-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -222,22 +222,12 @@ if (args.includes("snapshot")) {
 			assert.equal(snapshot.isError, false);
 
 			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e2"] });
-			assert.equal(click.isError, true);
-			assert.deepEqual((click.details?.clickDispatch as { target?: unknown } | undefined)?.target, {
-				duplicateIndex: 1,
-				kind: "accessible",
-				name: "Add to cart",
-				refId: "e2",
-				role: "button",
-			});
+			assert.equal(click.isError, false);
+			assert.equal(click.details?.clickDispatch, undefined);
 
 			const invocations = await readInvocationLog(logPath);
-			const installInvocation = invocations.find((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("window[marker] = state"));
-			assert.ok(installInvocation, "expected a click dispatch install eval");
-			const installScript = installInvocation.stdin ?? "";
-			assert.ok(installScript.includes("duplicateIndex"));
-			assert.match(installScript, /(?:const|let|var)?\s*duplicateIndex\s*=\s*1\b|"duplicateIndex"\s*:\s*1\b/);
-			assert.ok(installScript.includes("candidates[duplicateIndex]"));
+			assert.equal(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("window[marker] = state")), false);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -319,12 +309,11 @@ if (args.includes("snapshot")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
-			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
+			const click = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "xpath=//*[@id='add-to-cart']"] });
 			assert.equal(click.isError, true);
 			assert.match((click.content[0] as { text: string }).text, /Click dispatch diagnostic:/);
 			assert.equal((click.details?.clickDispatch as { status?: string } | undefined)?.status, "no-native-event-observed");
-			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; refId?: string } } | undefined)?.target?.kind, "accessible");
-			assert.equal((click.details?.clickDispatch as { target?: { kind?: string; refId?: string } } | undefined)?.target?.refId, "e1");
+			assert.deepEqual((click.details?.clickDispatch as { target?: unknown } | undefined)?.target, { kind: "xpath", selector: "//*[@id='add-to-cart']" });
 			assert.deepEqual((click.details?.clickDispatch as { scrollContainer?: unknown } | undefined)?.scrollContainer, {
 				selector: "#todos",
 				summary: "Target appears outside nested scroll container #todos; use scrollintoview on the target or scroll that container before retrying.",

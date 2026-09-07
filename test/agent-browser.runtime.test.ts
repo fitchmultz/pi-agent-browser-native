@@ -1121,6 +1121,7 @@ test("buildExecutionPlan resolves caller-owned session namespaces from argv befo
 			sessionMode: "auto",
 		});
 		assert.equal(inherited.namespace, "review-space");
+		assert.deepEqual(inherited.effectiveArgs, ["--json", "--session", "custom", "snapshot", "-i"]);
 		const explicitDefault = buildExecutionPlan(["--namespace", "", "--session", "custom", "snapshot", "-i"], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: true,
@@ -1135,6 +1136,17 @@ test("buildExecutionPlan resolves caller-owned session namespaces from argv befo
 			sessionMode: "auto",
 		});
 		assert.equal(wrapperManaged.namespace, undefined);
+		assert.deepEqual(wrapperManaged.effectiveArgs, ["--json", "--session", "piab-demo-123", "close"]);
+		const namespacedManaged = buildExecutionPlan(["--session", "piab-demo-123", "snapshot", "-i"], {
+			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+			managedSessionActive: true,
+			managedSessionName: "piab-demo-123",
+			managedSessionNamespace: "Review Space",
+			sessionMode: "auto",
+		});
+		assert.equal(namespacedManaged.namespace, "review-space");
+		assert.deepEqual(namespacedManaged.effectiveArgs, ["--json", "--session", "piab-demo-123", "snapshot", "-i"]);
+		assert.equal(namespacedManaged.validationError, undefined);
 		const callerPrefixed = buildExecutionPlan(["--session", "piab-caller-owned", "snapshot", "-i"], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 			managedSessionActive: true,
@@ -1150,6 +1162,53 @@ test("buildExecutionPlan resolves caller-owned session namespaces from argv befo
 		});
 		assert.deepEqual(wrapperExplicitDefault.effectiveArgs, ["--json", "--namespace", "", "--session", "piab-demo-123", "close"]);
 		assert.equal(wrapperExplicitDefault.namespace, "");
+
+		for (const override of [undefined, "", "other"]) {
+			const args = [...(override !== undefined ? ["--namespace", override] : []), "close", "--all"];
+			const freshClose = buildExecutionPlan(args, {
+				freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+				managedSessionActive: true,
+				managedSessionName: "piab-demo-123",
+				managedSessionNamespace: "owned-space",
+				sessionMode: "fresh",
+			});
+			assert.equal(freshClose.namespace, override ?? "review-space");
+			assert.deepEqual(freshClose.effectiveArgs, ["--json", ...args]);
+			assert.equal(freshClose.sessionName, undefined);
+			assert.equal(freshClose.managedSessionName, undefined);
+			assert.equal(freshClose.usedImplicitSession, false);
+			assert.equal(freshClose.validationError, undefined);
+		}
+		for (const sessionMode of ["auto", "fresh"] as const) {
+			const freshSessionName = createFreshSessionName("piab-demo-123", "seed", 1);
+			const opened = buildExecutionPlan(["open", "https://example.com"], {
+				freshSessionName,
+				managedSessionActive: false,
+				managedSessionName: "piab-demo-123",
+				sessionMode,
+			});
+			const selectedSession = sessionMode === "fresh" ? freshSessionName : "piab-demo-123";
+			assert.equal(opened.namespace, undefined);
+			assert.deepEqual(opened.effectiveArgs, ["--json", "--session", selectedSession, "open", "https://example.com"]);
+			assert.equal(opened.sessionName, selectedSession);
+			assert.equal(opened.managedSessionName, selectedSession);
+			assert.equal(opened.usedImplicitSession, sessionMode === "auto");
+			assert.equal(opened.validationError, undefined);
+
+			const listed = buildExecutionPlan(["session", "list"], {
+				freshSessionName,
+				managedSessionActive: true,
+				managedSessionName: "piab-demo-123",
+				managedSessionNamespace: "owned-space",
+				sessionMode,
+			});
+			assert.equal(listed.namespace, "review-space");
+			assert.deepEqual(listed.effectiveArgs, ["--json", "session", "list"]);
+			assert.equal(listed.sessionName, undefined);
+			assert.equal(listed.managedSessionName, undefined);
+			assert.equal(listed.usedImplicitSession, false);
+			assert.equal(listed.validationError, undefined);
+		}
 	} finally {
 		if (previousNamespace === undefined) delete process.env.AGENT_BROWSER_NAMESPACE;
 		else process.env.AGENT_BROWSER_NAMESPACE = previousNamespace;

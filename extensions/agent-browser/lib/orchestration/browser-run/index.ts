@@ -1,7 +1,8 @@
 import { runAgentBrowserProcess, withAttachedBrowserSessionContext } from "../../process.js";
+import { isRecord } from "../../parsing.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
-import { applyBrowserRunStatePatch } from "./session-state.js";
+import { applyBrowserRunStatePatch, getSessionContextKey } from "./session-state.js";
 import { buildMissingBinaryFailureResult } from "./final-result.js";
 import { prepareBrowserRun } from "./prepare.js";
 import { processBrowserOutput } from "./process-output.js";
@@ -12,7 +13,14 @@ export { getSessionContextKey } from "./session-state.js";
 export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
-	return await withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options));
+	const result = await withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options));
+	const details = isRecord(result.details) ? result.details : undefined;
+	const sessionKey = getSessionContextKey(typeof details?.sessionName === "string" ? details.sessionName : undefined, typeof details?.namespace === "string" ? details.namespace : undefined);
+	const page = options.state.sessionPageState.get(sessionKey);
+	return page.tabReopenPending === undefined ? result : {
+		...result,
+		details: { ...details, sessionTabReopenPending: page.tabReopenPending, ...(page.refSnapshotInvalidation ? { refSnapshotInvalidation: page.refSnapshotInvalidation } : {}) },
+	};
 }
 
 async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
@@ -40,7 +48,6 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 				signal: options.signal,
 				stdin: prepared.processStdin,
 				timeoutMs: prepared.processTimeoutMs,
-				trustedFirstBatchTabSelection: prepared.pinnedBatchUnwrapMode !== undefined,
 			});
 
 			const missingBinaryResult = await buildMissingBinaryFailureResult({

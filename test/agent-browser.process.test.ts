@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { getEventListeners } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lchown, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, win32 } from "node:path";
 import test from "node:test";
@@ -40,6 +40,7 @@ import {
 	runAgentBrowserProcess,
 } from "../extensions/agent-browser/lib/process.js";
 import { parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
+import { buildExecutionPlan } from "../extensions/agent-browser/lib/runtime.js";
 import {
 	cleanupSecureTempArtifacts,
 	getSecureTempDebugState,
@@ -335,6 +336,8 @@ test("root-owned sticky socket ancestors and private Android app roots remain tr
 	assert.equal(isTrustedSocketDirAncestor(directory(0, 0o40777), 0), false);
 	assert.equal(isTrustedSocketDirAncestor(directory(501, 0o40700), 0), false);
 	assert.equal(isTrustedSocketDirAncestor(directory(501, 0o40700), 501), true);
+	assert.equal(isTrustedSocketDirAncestor(directory(65534, 0o40755), 501), false);
+	assert.equal(isTrustedSocketDirAncestor(directory(65534, 0o41777), 501), false);
 	assert.equal(isTrustedAndroidAppDataRoot("/data/data/com.termux", directory(10_589, 0o40700), 10_589, "android"), true);
 	assert.equal(isTrustedAndroidAppDataRoot("/data/user/0/com.termux", directory(10_589, 0o40700), 10_589, "android"), true);
 	assert.equal(isTrustedAndroidAppDataRoot("/data/data/com.termux", directory(10_589, 0o40770), 10_589, "android"), false);
@@ -384,6 +387,66 @@ test("agent-browser socket storage rejects unsafe permissions, ancestry, symlink
 		const foreignDir = join(tempDir, "foreign");
 		await mkdir(foreignDir, { mode: 0o700 });
 		assert.equal(await ensureAgentBrowserSocketDir(foreignDir, uid + 1), false);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agent-browser socket storage validates root-owned alias destination ancestry", { timeout: 5_000 }, async (context) => {
+	const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+	if (uid !== 0) return context.skip("Creating root-owned aliases and foreign-owned intermediate links requires actual uid 0");
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-socket-alias-"));
+	try {
+		const trusted = join(tempDir, "trusted");
+		const unsafe = join(tempDir, "unsafe");
+		const aliases = join(tempDir, "aliases");
+		await mkdir(trusted, { mode: 0o700 });
+		await mkdir(join(trusted, "child"), { mode: 0o700 });
+		await mkdir(join(trusted, "sibling"), { mode: 0o700 });
+		await mkdir(unsafe, { mode: 0o700 });
+		await chmod(unsafe, 0o777);
+		await mkdir(join(unsafe, "child"), { mode: 0o700 });
+		await mkdir(aliases, { mode: 0o700 });
+		await mkdir(join(aliases, "sibling"), { mode: 0o700 });
+		await chmod(join(aliases, "sibling"), 0o777);
+		await symlink(".", join(aliases, "self"), "dir");
+		await symlink("../trusted/child", join(aliases, "pivot"), "dir");
+		await symlink("../unsafe/child", join(aliases, "unsafe-pivot"), "dir");
+		await symlink("../trusted", join(aliases, "user-link"), "dir");
+		await lchown(join(aliases, "user-link"), 1, 1);
+		await symlink("cycle-b", join(aliases, "cycle-a"), "dir");
+		await symlink("cycle-a", join(aliases, "cycle-b"), "dir");
+
+		for (const [name, target, accepted] of [
+			["trusted-target", "../trusted", true],
+			["repeated-alias", `${"self/".repeat(20)}../trusted`, true],
+			["writable-target", "../unsafe", false],
+			["writable-parent", "../unsafe/child", false],
+			["intermediate-user-link", "user-link", false],
+			["trailing-user-link", "user-link/", false],
+			["cycle", "cycle-a", false],
+			["broken", "missing", false],
+			["relative-parent", "pivot/../sibling", true],
+			["relative-unsafe-parent", "unsafe-pivot/..", false],
+		] as const) {
+			await context.test(name, async () => {
+				const alias = join(aliases, name);
+				await symlink(target, alias, "dir");
+				const socketDir = join(alias, `socket-${name}`);
+				const entriesBefore = await readdir(aliases);
+				assert.equal(await ensureAgentBrowserSocketDir(socketDir, uid), accepted);
+				assert.equal(await readlink(alias), target);
+				assert.deepEqual(await readdir(aliases), entriesBefore);
+				if (accepted) {
+					assert.equal((await stat(socketDir)).mode & 0o777, 0o700);
+				} else {
+					await assert.rejects(lstat(socketDir), (error: NodeJS.ErrnoException) => error.code === "ENOENT" || error.code === "ELOOP");
+				}
+			});
+		}
+		assert.equal((await stat(unsafe)).mode & 0o777, 0o777);
+		assert.equal((await stat(join(unsafe, "child"))).mode & 0o777, 0o700);
+		assert.equal((await lstat(join(aliases, "user-link"))).uid, 1);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -915,7 +978,7 @@ test("runAgentBrowserProcess pins managed restore identity while preserving call
 				args,
 				cwd: tempDir,
 				managedSessionName: "piab-managed",
-				parentEnv: { AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` },
+				parentEnv: { AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), AGENT_BROWSER_NAMESPACE: process.env.AGENT_BROWSER_NAMESPACE, HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` },
 				restoreState,
 				sessionName: "piab-managed",
 			});
@@ -935,6 +998,37 @@ test("runAgentBrowserProcess pins managed restore identity while preserving call
 			assert.equal(data.restore, createManagedSessionRestoreKey(tempDir, "piab-managed"));
 			assert.equal(data.configContent, null);
 			assert.equal(data.config, undefined);
+
+			const plan = buildExecutionPlan(args, {
+				freshSessionName: "piab-managed-fresh-test",
+				managedSessionActive: true,
+				managedSessionName: "piab-managed",
+				managedSessionNamespace: "Review Space",
+				sessionMode: "auto",
+			});
+			assert.equal(plan.validationError, undefined);
+			assert.equal(plan.namespace, "review-space");
+			const namespacedContext = buildOwnedManagedSessionRestoreContext({
+				args: plan.effectiveArgs,
+				cwd: tempDir,
+				currentManagedSessionName: "piab-managed",
+				currentManagedSessionNamespace: "Review Space",
+				namespace: plan.namespace,
+				parentEnv: { AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), AGENT_BROWSER_NAMESPACE: process.env.AGENT_BROWSER_NAMESPACE, HOME: tempDir, PATH: `${tempDir}${delimiter}${basePath}` },
+				restoreState,
+				sessionName: plan.sessionName,
+			});
+			assert.equal(namespacedContext?.restoreDecision, "enabled");
+			const namespacedResult = await withOwnedManagedSessionContext(namespacedContext, () => runAgentBrowserProcess({
+				args: plan.effectiveArgs,
+				cwd: tempDir,
+				managedSessionRestoreState: restoreState,
+				ownedManagedSession: true,
+			}));
+			const namespacedParsed = await parseAgentBrowserEnvelope(namespacedResult.stdout);
+			const namespacedData = namespacedParsed.envelope?.data as { namespace?: string; restore?: string };
+			assert.equal(namespacedData.namespace, "review-space");
+			assert.equal(namespacedData.restore, createManagedSessionRestoreKey(tempDir, "piab-managed"));
 
 			const callerConfigPath = join(tempDir, "agent-browser.json");
 			await writeFile(callerConfigPath, "{\"headed\":true}\n");
@@ -1268,7 +1362,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.lang, "en_US.UTF-8");
 				assert.equal(data.openaiApiKey, "openai-should-not-leak");
 				assert.equal(data.secret, "should-not-leak");
-				assert.equal(data.socketDir, getAgentBrowserSocketDir());
+				assert.equal(data.socketDir, process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir());
 				if (data.socketDir) {
 					assert.equal((await stat(data.socketDir)).isDirectory(), true);
 				}

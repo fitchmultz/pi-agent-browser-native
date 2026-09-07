@@ -344,7 +344,7 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 		[
 			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.aboutBlankListTabs, args: ["--session", "named", "tab", "list"], stdin: undefined },
 			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.selectIntendedTabAfterDrift, args: ["--session", "named", "tab", "t2"], stdin: undefined },
-			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.snapshotAfterTabRecovery, args: ["--session", "named", "batch"], stdin: '[["tab","t2"],["snapshot","-i"]]' },
+			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.snapshotAfterTabRecovery, args: ["--session", "named", "batch", "--bail"], stdin: '[["tab","t2"],["get","url"],["snapshot","-i"]]' },
 		],
 	);
 	assert.deepEqual(

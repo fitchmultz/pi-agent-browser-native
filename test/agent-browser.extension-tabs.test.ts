@@ -98,6 +98,10 @@ test("agentBrowserExtension restores artifact manifest from branch history and r
 		`
 const fs = require("node:fs");
 const counterPath = ${JSON.stringify(counterPath)};
+if (process.argv.includes("tab") && process.argv.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ tabId: "t1", url: "https://example.com/first", active: true }] } }));
+  process.exit(0);
+}
 const count = Number(fs.existsSync(counterPath) ? fs.readFileSync(counterPath, "utf8") : "0") + 1;
 fs.writeFileSync(counterPath, String(count));
 const data = count === 1 ? ${JSON.stringify(firstData)} : ${JSON.stringify(secondData)};
@@ -148,7 +152,7 @@ test("agentBrowserExtension preserves rich batch rendering and inline screenshot
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
-		`require("node:fs").writeFileSync(${JSON.stringify(imagePath)}, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+		`require("node:fs").writeFileSync(${JSON.stringify(imagePath)}, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64"));
 process.stdout.write(JSON.stringify([
   { command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
   { command: ["screenshot"], success: true, result: { path: "batched.png" } }

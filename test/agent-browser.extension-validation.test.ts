@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -70,9 +70,21 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.equal(harness.tool.name, "agent_browser");
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
-		const parameterSchema = harness.tool.parameters as { description?: string; properties?: { args?: { description?: string } } };
+		const parameterSchema = harness.tool.parameters as { description?: string; properties?: { args?: { description?: string }; stdin?: { description?: string } } };
 		assert.match(parameterSchema.description ?? "", /sourceLookup, networkSourceLookup, or electron/);
 		assert.match(parameterSchema.properties?.args?.description ?? "", /snapshot -i/);
+		const argsDescription = parameterSchema.properties?.args?.description ?? "";
+		assert.match(argsDescription, /screenshot \[selector\] \[path\] \[--full\/-f\]/);
+		assert.match(argsDescription, /record start <path> \[url\]/);
+		assert.match(argsDescription, /record restart <path> \[url\]/);
+		assert.match(argsDescription, /record stop/);
+		assert.match(argsDescription, /Paths are positional \(no --path\)/);
+		assert.match(argsDescription, /use --full, not --full-page/);
+		const stdinDescription = parameterSchema.properties?.stdin?.description ?? "";
+		assert.match(stdinDescription, /JSON array of token arrays/);
+		assert.ok(stdinDescription.includes('[["get","title"]]'));
+		assert.match(stdinDescription, /Raw text only for eval --stdin or auth save --password-stdin/);
+		assert.match(stdinDescription, /unavailable with structured modes and electron/);
 
 		const docsGuideline = buildInstalledDocsGuideline({
 			readmePath: join(process.cwd(), "README.md"),
@@ -145,7 +157,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
 		);
 		assert.equal(
-			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("target tab or ref snapshot")),
+			WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) => line.includes("Routine same-session calls skip tab-list preflights")),
 			true,
 		);
 
@@ -312,6 +324,8 @@ test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], outputPath: "" }), false);
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], timeoutMs: 0 }), false);
 	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "role", role: "button", name: "Open" } }), true);
+	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "text", value: "Open", values: ["nope"] } }), false);
+	assert.equal(Check(schema, { semanticAction: { action: "select", selector: "#flavor", value: "chocolate" } }), true);
 	assert.equal(Check(schema, { sourceLookup: { selector: "main" } }), true);
 	assert.equal(Check(schema, { networkSourceLookup: { namespace: "review", url: "https://example.test/api" } }), true);
 	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }), true);
@@ -1375,10 +1389,22 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 });
 
 test("agentBrowserExtension makes close --all exclusive within its namespace", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-close-all-queue-"));
-	const logPath = join(tempDir, "events.log");
-	const nodeBinDir = dirname(process.execPath);
-	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+	for (const scenario of [
+		{ label: "caller-default", named: false, callerOwned: true, override: undefined, batch: false, ambient: undefined, fresh: false },
+		{ label: "current-named", named: true, callerOwned: false, override: undefined, batch: false, ambient: undefined, fresh: false },
+		{ label: "current-named-batch", named: true, callerOwned: false, override: undefined, batch: true, ambient: undefined, fresh: false },
+		{ label: "explicit-default", named: true, callerOwned: false, override: "", batch: false, ambient: undefined, fresh: false },
+		{ label: "explicit-other", named: true, callerOwned: false, override: "other", batch: false, ambient: undefined, fresh: false },
+		{ label: "fresh-ambient", named: true, callerOwned: false, override: undefined, batch: false, ambient: "Review Space", fresh: true },
+		{ label: "current-default-ambient", named: false, callerOwned: false, override: undefined, batch: false, ambient: "Review Space", fresh: false },
+	]) {
+		const tempDir = await mkdtemp(join(tmpdir(), "piab-close-all-queue-"));
+		const logPath = join(tempDir, "events.log");
+		const openGate = join(tempDir, "release-open");
+		const waitGate = join(tempDir, "release-wait");
+		const closeGate = join(tempDir, "release-close");
+		const nodeBinDir = dirname(process.execPath);
+		await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
 const args = process.argv.slice(2);
 const valueFlags = new Set(["--allow-file-access", "--args", "--namespace", "--session"]);
 let commandIndex = -1;
@@ -1392,42 +1418,118 @@ for (let index = 0; index < args.length; index += 1) {
 const commandArgs = args.slice(commandIndex);
 const command = commandArgs[0];
 const namespaceIndex = args.indexOf("--namespace");
-const namespace = namespaceIndex >= 0 ? args[namespaceIndex + 1] : "default";
-const writeEvent = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, event + "\\n");
-const output = () => process.stdout.write(JSON.stringify({ success: true, data: command === "get" ? { url: "https://safe.example/" } : command === "tab" ? { tabs: [] } : { url: "https://safe.example/" } }));
-if (command === "close" && commandArgs.includes("--all")) {
+const namespace = (namespaceIndex >= 0 ? args[namespaceIndex + 1] : process.env.AGENT_BROWSER_NAMESPACE ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const sessionIndex = args.indexOf("--session");
+const sessionName = sessionIndex >= 0 ? args[sessionIndex + 1] : process.env.AGENT_BROWSER_SESSION || "default";
+const writeEvent = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event, namespace, sessionName }) + "\\n");
+const waitForGate = (gate) => {
+  const deadline = Date.now() + 15000;
+  while (!fs.existsSync(gate)) {
+    if (Date.now() > deadline) throw new Error("gate was not released: " + gate);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+};
+const closesAll = (command === "close" && commandArgs.includes("--all")) || (command === "batch" && commandArgs.includes("close --all"));
+if (closesAll) {
   writeEvent("close-start");
-  setTimeout(() => { writeEvent("close-end"); output(); }, 150);
+  waitForGate(${JSON.stringify(closeGate)});
+  writeEvent("close-end");
 } else {
-  writeEvent(namespace + ":" + command + "-start");
-  output();
-}`);
-
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${nodeBinDir}` }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise global close ordering." });
-			const first = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example/"] });
-			assert.equal(first.isError, false, first.content[0]?.text);
-			await writeFile(logPath, "");
-
-			const closeAll = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "caller-owned", "close", "--all"] });
-			await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-			const otherNamespace = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "--session", "other-session", "tab", "list"] });
-			const overlappingCaller = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "same-namespace", "tab", "list"] });
-			const overlappingManaged = executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
-			const [closeResult, otherResult, callerResult, overlapResult] = await Promise.all([closeAll, otherNamespace, overlappingCaller, overlappingManaged]);
-			assert.equal(closeResult.details?.closeAllApplied, true);
-			assert.equal(otherResult.isError, false, otherResult.content[0]?.text);
-			assert.equal(callerResult.isError, false, callerResult.content[0]?.text);
-			assert.equal(overlapResult.isError, false, overlapResult.content[0]?.text);
-			const events = (await readFile(logPath, "utf8")).trim().split("\n");
-			assert.ok(events.indexOf("other:tab-start") < events.indexOf("close-end"), events.join(","));
-			assert.ok(events.indexOf("close-end") < events.indexOf("default:tab-start"), events.join(","));
-			assert.ok(events.indexOf("close-end") < events.indexOf("default:get-start"), events.join(","));
-			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
-		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
+  writeEvent(command + "-start");
+  if (command === "open") waitForGate(${JSON.stringify(openGate)});
+  if (command === "wait") { waitForGate(${JSON.stringify(waitGate)}); writeEvent("wait-end"); }
+}
+const data = command === "get" ? { result: "https://safe.example/", url: "https://safe.example/" }
+  : command === "tab" ? { tabs: [] } : command === "close" ? { closed: true } : { url: "https://safe.example/" };
+process.stdout.write(JSON.stringify(command === "batch"
+  ? [{ command: ["close", "--all"], data: { closed: true }, success: true }]
+  : { success: true, data }));`);
+		const readEvents = async () => await readInvocationLog(logPath) as Array<{ args: string[]; event: string; namespace: string; sessionName: string }>;
+		const waitForEvent = async (event: string) => {
+			const deadline = Date.now() + 15_000;
+			while (Date.now() <= deadline) {
+				const found = (await readEvents()).find((entry) => entry.event === event);
+				if (found) return found;
+				await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+			}
+			assert.fail(`${scenario.label}: ${event} did not dispatch`);
+		};
+		try {
+			await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: scenario.ambient, AGENT_BROWSER_SESSION: undefined, PATH: `${tempDir}:${nodeBinDir}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise global close ordering." });
+				const pending: Array<ReturnType<typeof executeRegisteredTool>> = [];
+				try {
+					const open = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: [...(scenario.named ? ["--namespace", "Review Space"] : []), "open", "https://safe.example/"],
+					});
+					pending.push(open);
+					const openStarted = await waitForEvent("open-start");
+					assert.match(openStarted.sessionName, /^piab-/);
+					assert.equal(openStarted.namespace, scenario.named ? "review-space" : "");
+					const namespace = scenario.override ?? (scenario.named ? "review-space" : "");
+					const matchingPrefix = namespace || scenario.ambient ? ["--namespace", namespace] : [];
+					const wait = executeRegisteredTool(harness.tool, harness.ctx, { args: [...matchingPrefix, "--session", "already-running", "wait", "1"] });
+					pending.push(wait);
+					const waitStarted = await waitForEvent("wait-start");
+					assert.equal(waitStarted.namespace, namespace);
+					const closeAll = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: [
+							...(scenario.override !== undefined ? ["--namespace", scenario.override] : []),
+							...(scenario.fresh ? [] : ["--session", scenario.callerOwned ? "caller-owned" : openStarted.sessionName]),
+							...(scenario.batch ? ["batch", "close --all"] : ["close", "--all"]),
+						],
+						sessionMode: scenario.fresh ? "fresh" : "auto",
+					});
+					pending.push(closeAll);
+					await writeFile(openGate, "go");
+					const openResult = await open;
+					assert.equal(openResult.isError, false, JSON.stringify(openResult));
+					assert.equal(openResult.details?.sessionName, openStarted.sessionName);
+					const beforeDrain = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "unrelated", "--session", "drain-control", "tab", "list"] });
+					assert.equal(beforeDrain.isError, false, JSON.stringify(beforeDrain));
+					assert.equal((await readEvents()).some((entry) => entry.event === "close-start"), false, scenario.label);
+					await writeFile(waitGate, "go");
+					const waitResult = await wait;
+					assert.equal(waitResult.isError, false, JSON.stringify(waitResult));
+					const closeStarted = await waitForEvent("close-start");
+					assert.equal(closeStarted.namespace, namespace, scenario.label);
+					assert.equal(closeStarted.sessionName, scenario.fresh ? "default" : scenario.callerOwned ? "caller-owned" : openStarted.sessionName);
+					if (scenario.fresh) assert.deepEqual(closeStarted.args, ["--json", "close", "--all"]);
+					const atCloseStart = (await readEvents()).length;
+					const overlappingCaller = executeRegisteredTool(harness.tool, harness.ctx, { args: [...matchingPrefix, "--session", "same-namespace", "tab", "list"] });
+					const overlappingManaged = executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+					pending.push(overlappingCaller, overlappingManaged);
+					const otherNamespace = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "unrelated", "--session", "other-session", "tab", "list"] });
+					assert.equal(otherNamespace.isError, false, JSON.stringify(otherNamespace));
+					const whileClosed = (await readEvents()).slice(atCloseStart);
+					assert.equal(whileClosed.some((entry) => entry.sessionName === "same-namespace" || entry.sessionName.startsWith("piab-")), false, `${scenario.label}: ${JSON.stringify(whileClosed)}`);
+					await writeFile(closeGate, "go");
+					const [closeResult, callerResult, overlapResult] = await Promise.all([closeAll, overlappingCaller, overlappingManaged]);
+					assert.equal(closeResult.isError, false, JSON.stringify(closeResult));
+					assert.equal(closeResult.details?.closeAllApplied, true, scenario.label);
+					assert.equal(closeResult.details?.namespace, scenario.override ?? (namespace || undefined), scenario.label);
+					assert.equal(closeResult.details?.sessionName, scenario.fresh ? undefined : closeStarted.sessionName);
+					assert.equal(callerResult.isError, false, JSON.stringify(callerResult));
+					assert.equal(overlapResult.isError, false, JSON.stringify(overlapResult));
+					const events = await readEvents();
+					const waitEnd = events.findIndex((entry) => entry.event === "wait-end");
+					const closeStart = events.findIndex((entry) => entry.event === "close-start");
+					const closeEnd = events.findIndex((entry) => entry.event === "close-end");
+					const otherStart = events.findIndex((entry) => entry.sessionName === "other-session" && entry.event === "tab-start");
+					const lateStart = events.findIndex((entry) => entry.sessionName === "same-namespace" && entry.event === "tab-start");
+					const managedStart = events.findIndex((entry) => entry.sessionName === overlapResult.details?.sessionName && entry.event === "get-start");
+					assert.ok(waitEnd >= 0 && closeStart > waitEnd, JSON.stringify(events));
+					assert.ok(otherStart > closeStart && otherStart < closeEnd, JSON.stringify(events));
+					assert.ok(lateStart > closeEnd && managedStart > closeEnd, JSON.stringify(events));
+				} finally {
+					await Promise.all([openGate, waitGate, closeGate].map((gate) => writeFile(gate, "go")));
+					await Promise.allSettled(pending);
+					await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+				}
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
 	}
 });
 

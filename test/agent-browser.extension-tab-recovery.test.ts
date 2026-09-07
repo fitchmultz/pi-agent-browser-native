@@ -95,122 +95,6 @@ if (args.includes("tab") && args.includes("list")) {
 	}
 });
 
-test("agentBrowserExtension pins the intended tab inside a follow-up command when reconnect drift would otherwise steal focus", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-	const logPath = join(tempDir, "invocations.log");
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const stdin = fs.readFileSync(0, "utf8");
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-const exampleSite = { title: "Example Domain", url: "https://example.com/" };
-const gemini = { title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en" };
-if (args.includes("batch")) {
-  const steps = JSON.parse(stdin || "[]");
-  let active = gemini;
-  const results = steps.map((step) => {
-    const [command, ...rest] = step;
-    if (command === "tab") {
-      active = rest[0] === "t1" ? exampleSite : gemini;
-      return { command: step, success: true, result: active };
-    }
-    if (command === "click") {
-      return { command: step, success: true, result: { clicked: rest[0] } };
-    }
-    if (command === "eval") {
-      return { command: step, success: true, result: { title: active.title, url: active.url } };
-    }
-    return { command: step, success: true, result: active };
-  });
-  process.stdout.write(JSON.stringify(results));
-} else if (args.includes("tab") && args.includes("list")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false },
-    { tabId: "t2", title: gemini.title, url: gemini.url, active: true }
-  ] } }));
-} else if (args.includes("tab") && args.includes("t1")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", ...exampleSite } }));
-} else if (args.includes("open")) {
-  process.stdout.write(JSON.stringify({ success: true, data: exampleSite }));
-} else if (args.includes("click")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.indexOf("click") + 1] } }));
-} else if (args.includes("get") && args.includes("title")) {
-  process.stdout.write(JSON.stringify({ success: true, data: gemini.title }));
-} else if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: gemini.url }));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: gemini }));
-}`,
-	);
-
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-			const initialOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "--profile", "Default", "open", "https://example.com"],
-			});
-			assert.equal(initialOpen.isError, false, JSON.stringify(initialOpen));
-
-			const clickedSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "named", "click", "@e9"],
-			});
-			assert.equal(clickedSelector.isError, false);
-			assert.equal(
-				(clickedSelector.details?.navigationSummary as { title?: string } | undefined)?.title,
-				"Example Domain",
-			);
-			assert.equal(
-				(clickedSelector.details?.navigationSummary as { url?: string } | undefined)?.url,
-				"https://example.com/",
-			);
-			assert.deepEqual(clickedSelector.details?.sessionTabCorrection, {
-				selectedTab: "t1",
-				selectionKind: "tabId",
-				targetTitle: "Example Domain",
-				targetUrl: "https://example.com/",
-			});
-			const tabRecoveryActions = (clickedSelector.details?.nextActions as Array<{ id: string; params?: { args?: string[] } }> | undefined)
-				?.filter((action) => ["list-tabs-for-tab-drift-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"].includes(action.id));
-			assert.deepEqual(tabRecoveryActions?.map((action) => action.id), ["list-tabs-for-tab-drift-recovery", "select-intended-tab-after-drift", "snapshot-after-tab-recovery"]);
-			assert.deepEqual(tabRecoveryActions?.map((action) => action.params?.args), [
-				["--session", "named", "tab", "list"],
-				["--session", "named", "tab", "t1"],
-				["--session", "named", "snapshot", "-i"],
-			]);
-			assert.match((clickedSelector.content[0] as { text: string }).text, /Current page:/);
-			assert.match((clickedSelector.content[0] as { text: string }).text, /Example Domain/);
-
-			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 6);
-			assert.deepEqual(invocations[0]?.args, [
-				"--json",
-				"--session",
-				"named",
-				"--profile",
-				"Default",
-				"open",
-				"https://example.com",
-			]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "t1"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[5]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[5]?.stdin ?? "[]")), [
-				["tab", "t1"],
-				["click", "@e9"],
-				["eval", "({ title: document.title, url: location.href })"],
-			]);
-		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
 test("agentBrowserExtension recovers and preserves the prior target when a command returns about:blank", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-about-blank-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -226,24 +110,12 @@ const exampleSite = { title: "Example Domain", url: "https://example.com/" };
 let state = { active: "blank", tabListCount: 0 };
 try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
 const save = () => fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
-if (args.includes("batch")) {
-  const steps = JSON.parse(stdin || "[]");
-  const results = steps.map((step) => {
-    const [command, selectedTab] = step;
-    if (command === "tab") {
-      state.active = selectedTab === "t1" ? "example" : "blank";
-      save();
-      return { command: step, success: true, result: { tabId: selectedTab, ...exampleSite } };
-    }
-    if (command === "click") {
-      state.active = "blank";
-      save();
-      return { command: step, success: true, result: { clicked: selectedTab } };
-    }
-    if (command === "eval") return { command: step, success: true, result: { title: "", url: "about:blank" } };
-    return { command: step, success: true, result: {} };
-  });
-  process.stdout.write(JSON.stringify(results));
+if (args.includes("click")) {
+  state.active = "blank";
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
+} else if (args.includes("get")) {
+  process.stdout.write(JSON.stringify({ success: true, data: state.active === "blank" ? { url: "about:blank", title: "" } : exampleSite }));
 } else if (args.includes("tab") && args.includes("list")) {
   state.tabListCount += 1;
   save();
@@ -312,17 +184,12 @@ if (args.includes("batch")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 5);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[2]?.stdin ?? "[]")), [
-				["tab", "t1"],
-				["click", "@e9"],
-				["eval", "({ title: document.title, url: location.href })"],
-			]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.equal(invocations.some((entry) => entry.args.includes("batch")), false);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "t1"]);
+			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", "named", "tab", "t1"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -341,35 +208,30 @@ const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 const exampleSite = { title: "Example Domain", url: "https://example.com/" };
-let state = { targetGone: false };
+let state = { targetGone: false, active: false };
 try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
 const save = () => fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
-if (args.includes("batch")) {
-  const steps = JSON.parse(stdin || "[]");
-  const results = steps.map((step) => {
-    const [command, value] = step;
-    if (command === "tab") return { command: step, success: true, result: { tabId: value, ...exampleSite } };
-    if (command === "click") {
-      state.targetGone = true;
-      save();
-      return { command: step, success: true, result: { clicked: value } };
-    }
-    if (command === "eval") return { command: step, success: true, result: { title: "", url: "about:blank" } };
-    return { command: step, success: true, result: {} };
-  });
+if (args.includes("click")) {
+  state.targetGone = true;
   save();
-  process.stdout.write(JSON.stringify(results));
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
+} else if (args.includes("tab") && args.includes("t1")) {
+  state.active = true;
+  save();
+  process.stdout.write(JSON.stringify({ success: true, data: { tabId: "t1", ...exampleSite } }));
 } else if (args.includes("tab") && args.includes("list")) {
   const tabs = state.targetGone
     ? [{ tabId: "blank", title: "", url: "about:blank", active: true }]
     : [
-        { tabId: "blank", title: "", url: "about:blank", active: true },
-        { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: false }
+        { tabId: "blank", title: "", url: "about:blank", active: !state.active },
+        { tabId: "t1", title: exampleSite.title, url: exampleSite.url, active: state.active }
       ];
   process.stdout.write(JSON.stringify({ success: true, data: { tabs } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { origin: exampleSite.url, refs: { e9: { role: "link", name: "Existing" } }, snapshot: '- link "Existing" [ref=e9]' } }));
 } else {
   save();
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "", url: "about:blank" } }));
+  process.stdout.write(JSON.stringify({ success: true, data: state.targetGone ? { title: "", url: "about:blank" } : exampleSite }));
 }`,
 	);
 
@@ -392,6 +254,7 @@ if (args.includes("batch")) {
 							command: "snapshot",
 							refSnapshot: {
 								refIds: ["e9"],
+								refs: { e9: { role: "link", name: "Existing" } },
 								target: { title: "Example Domain", url: "https://example.com/" },
 							},
 							sessionName: "named",
@@ -442,17 +305,10 @@ if (args.includes("batch")) {
 			});
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 5);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "snapshot", "-i"]);
-			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "tab", "list"]);
-			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "batch"]);
-			assert.deepEqual(JSON.parse(String(invocations[3]?.stdin ?? "[]")), [
-				["tab", "t1"],
-				["click", "@e9"],
-				["eval", "({ title: document.title, url: location.href })"],
-			]);
-			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.equal(invocations.some((entry) => entry.args.includes("batch")), false);
+			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations.at(-1)?.args, ["--json", "--session", "named", "tab", "list"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -519,6 +375,76 @@ if (args.includes("batch")) {
 			assert.equal(getUrl.details?.aboutBlankSessionMismatch, undefined);
 			assert.deepEqual(getUrl.details?.sessionTabTarget, { title: undefined, url: "about:blank" });
 			assert.doesNotMatch((getUrl.content[0] as { text: string }).text, /^Warning:/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension lets URL QA navigate when the remembered tab is missing but still pins attached QA and raw reads", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-missing-tab-"));
+	const logPath = join(tempDir, "invocations.log");
+	const statePath = join(tempDir, "page.json");
+	const basePath = process.env.PATH ?? "";
+	const targetUrl = "https://example.com/recovered";
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+let page = { title: "Blank", url: "about:blank" };
+try { page = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+function execute(tokens) {
+  if (tokens[0] === "open") {
+    page = { title: "QA page", url: tokens[1] };
+    fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(page));
+    return page;
+  }
+  if (tokens[0] === "network") return { requests: [] };
+  if (tokens[0] === "console") return { messages: [] };
+  if (tokens[0] === "errors") return { errors: [] };
+  return {};
+}
+let data;
+if (args.includes("batch")) data = JSON.parse(stdin).map((step) => ({ command: step, success: true, result: execute(step) }));
+else if (args.includes("tab") && args.includes("list")) data = { tabs: [{ tabId: "t1", ...page, active: true }] };
+else if (args.includes("open")) data = execute(args.slice(args.indexOf("open")));
+else data = page;
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			const first = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(first.handlers, "session_start", { reason: "new" }, first.ctx);
+			const opened = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com/old"] });
+			assert.equal(opened.isError, false, JSON.stringify(opened));
+			await rm(statePath);
+			const resumed = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: opened.details!, isError: opened.isError })] });
+			await runExtensionEvent(resumed.handlers, "session_start", { reason: "resume" }, resumed.ctx);
+			for (const params of [
+				{ qa: { attached: true } },
+				{ args: ["snapshot", "-i"] },
+				{ args: ["batch"], stdin: JSON.stringify([["get", "title"], ["open", targetUrl]]) },
+			]) {
+				const before = (await readInvocationLog(logPath)).length;
+				const blocked = await executeRegisteredTool(resumed.tool, resumed.ctx, params);
+				assert.equal(blocked.isError, true, JSON.stringify(blocked));
+				assert.equal(blocked.details?.failureCategory, "tab-drift");
+				assert.deepEqual((await readInvocationLog(logPath)).slice(before).map((entry) => entry.args.slice(-2)), [["tab", "list"]]);
+			}
+			const beforeQa = (await readInvocationLog(logPath)).length;
+			const qa = await executeRegisteredTool(resumed.tool, resumed.ctx, { qa: { url: targetUrl } });
+			assert.equal(qa.isError, false, JSON.stringify(qa));
+			assert.equal(qa.details?.resultCategory, "success");
+			assert.equal(qa.details?.sessionName, opened.details?.sessionName);
+			assert.equal(qa.details?.usedImplicitSession, true);
+			assert.deepEqual(qa.details?.sessionTabTarget, { title: "QA page", url: targetUrl });
+			const invocations = (await readInvocationLog(logPath)).slice(beforeQa);
+			assert.deepEqual(invocations[0]?.args.slice(-2), ["batch", "--bail"]);
+			assert.deepEqual(JSON.parse(invocations[0]!.stdin!), [
+				["network", "requests", "--clear"], ["console", "--clear"], ["errors", "--clear"], ["errors"],
+				["open", targetUrl], ["wait", "--load", "domcontentloaded"], ["wait", "150"],
+				["network", "requests"], ["console"], ["errors"],
+			]);
+			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -882,8 +808,8 @@ if (args.includes("tab") && args.includes("list")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.length, 5);
-			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
-			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "tab", "list"]);
+			assert.deepEqual(invocations[1]?.args, ["--json", "--session", "named", "get", "url"]);
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "click", "@e9"]);
 			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "tab", "list"]);
 			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "t1"]);

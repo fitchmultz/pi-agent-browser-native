@@ -487,27 +487,20 @@ async function waitFor({ describe, predicate, timeoutMs, intervalMs = 1000, onPo
 	throw new Error(`Timed out waiting for ${describe} after ${timeoutMs}ms.${suffix}`);
 }
 
-function findResult(results, predicate) {
-	for (let index = results.length - 1; index >= 0; index -= 1) {
-		const result = results[index];
-		if (predicate(result)) return result;
-	}
-	return undefined;
-}
-
 function resultText(result) {
 	return Array.isArray(result?.content)
 		? result.content.filter((item) => item?.type === "text" && typeof item.text === "string").map((item) => item.text).join("\n")
 		: "";
 }
 
-function resultUrl(result) {
-	const details = isRecord(result?.details) ? result.details : undefined;
-	const target = isRecord(details?.sessionTabTarget) ? details.sessionTabTarget : undefined;
-	if (typeof target?.url === "string") return target.url;
-	const text = resultText(result);
-	const match = text.match(/https?:\/\/[^\s)]+/);
-	return match?.[0];
+export function matchesSuccessfulPageResult(result, command, expectedUrl) {
+	const details = result?.details;
+	const observedUrl = command === "open" ? details?.data?.url : command === "snapshot" ? details?.data?.origin : undefined;
+	return result?.isError === false
+		&& details?.resultCategory === "success"
+		&& details?.command === command
+		&& typeof observedUrl === "string"
+		&& normalizeComparableUrl(observedUrl) === normalizeComparableUrl(expectedUrl);
 }
 
 function assert(condition, message) {
@@ -533,18 +526,22 @@ async function waitForSentinel({ sessionFile, timeoutMs, token }) {
 	});
 }
 
-async function waitForAgentBrowserResult({ describe, sessionFile, timeoutMs, sinceCount, predicate }) {
-	return await waitFor({
+export async function waitForAgentBrowserResult({ describe, sessionFile, sessionDir, timeoutMs, sinceCount, predicate }) {
+	const report = await waitFor({
 		describe,
 		timeoutMs,
 		predicate: async () => {
+			sessionFile ??= await newestSessionFile(sessionDir);
+			if (!sessionFile) return undefined;
 			const entries = await readEntries(sessionFile);
 			const results = agentBrowserResults(entries);
-			const newResults = results.slice(sinceCount);
-			const result = findResult(newResults, predicate);
-			return result ? { entries, result, results } : undefined;
+			const result = results[sinceCount];
+			return result ? { entries, result, results, sessionFile } : undefined;
 		},
 	});
+	const { result } = report;
+	assert(predicate(result), `Unexpected agent_browser result for ${describe}: call ${result.toolCallId ?? "unknown"}; command ${result.details?.command ?? "missing"}; isError ${result.isError}; category ${result.details?.resultCategory ?? "missing"}/${result.details?.failureCategory ?? result.details?.successCategory ?? "missing"}.`);
+	return report;
 }
 
 async function waitForAssistantFinal({ describe, sessionFile, sinceEntryCount, timeoutMs }) {
@@ -632,21 +629,14 @@ async function verifyLifecycle(options = {}) {
 		await sleep(1000);
 		if (verbose) console.log("→ initial managed open");
 		await sendLine(tmuxSession, buildPrompt(["open", EXPECTED_URL]));
-		const openReport = await waitFor({
+		const openReport = await waitForAgentBrowserResult({
 			describe: "initial managed open result",
+			sessionDir,
 			timeoutMs,
-			predicate: async () => {
-				sessionFile = sessionFile ?? (await newestSessionFile(sessionDir));
-				if (!sessionFile) return undefined;
-				const entries = await readEntries(sessionFile);
-				const results = agentBrowserResults(entries);
-				const result = findResult(
-					results,
-					(candidate) => candidate?.details?.command === "open" && normalizeComparableUrl(resultUrl(candidate)) === EXPECTED_URL,
-				);
-				return result ? { entries, result, results } : undefined;
-			},
+			sinceCount: 0,
+			predicate: (result) => matchesSuccessfulPageResult(result, "open", EXPECTED_URL),
 		});
+		sessionFile = openReport.sessionFile;
 		assert(sessionFile, "Pi did not create a session file.");
 		assert(sessionHeaderId(openReport.entries) === piSessionId, `Pi session header id ${JSON.stringify(sessionHeaderId(openReport.entries))} did not match requested lifecycle session id ${JSON.stringify(piSessionId)}.`);
 		await waitForAssistantFinal({ describe: "initial managed open", sessionFile, sinceEntryCount: 0, timeoutMs });
@@ -668,7 +658,7 @@ async function verifyLifecycle(options = {}) {
 			timeoutMs,
 			tmuxSession,
 			verbose,
-			predicate: (result) => normalizeComparableUrl(resultUrl(result)) === EXPECTED_URL || resultText(result).includes(EXPECTED_URL),
+			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", EXPECTED_URL),
 		});
 		assert(reloadSnapshot.result.details?.sessionName === firstSessionName, "Post-reload snapshot used a different managed session name.");
 
@@ -707,7 +697,7 @@ async function verifyLifecycle(options = {}) {
 			timeoutMs,
 			tmuxSession,
 			verbose,
-			predicate: (result) => normalizeComparableUrl(resultUrl(result)) === EXPECTED_URL || resultText(result).includes(EXPECTED_URL),
+			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", EXPECTED_URL),
 		});
 		assert(resumeSnapshot.result.details?.sessionName === firstSessionName, "Post-relaunch snapshot used a different managed session name.");
 		await assertFileExists(firstFullOutputPath, "Previously persisted fullOutputPath after relaunch");

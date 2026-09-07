@@ -15,7 +15,6 @@ import type { ManagedSessionRestoreState, OwnedManagedSessionContext } from "../
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import type { PromptPolicy } from "../../prompt-policy.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
-import type { BatchCommandStep } from "../batch-stdin.js";
 
 export type AgentBrowserToolResult = AgentToolResult<unknown> & { isError?: boolean };
 export type AgentBrowserProcessResult = Awaited<ReturnType<typeof runAgentBrowserProcess>>;
@@ -24,7 +23,6 @@ export type AgentBrowserToolPresentation = Awaited<ReturnType<typeof buildToolPr
 export type AgentBrowserResultCategoryDetails = ReturnType<typeof buildAgentBrowserResultCategoryDetails>;
 
 export type TraceOwner = "profiler" | "trace";
-export type PinnedBatchUnwrapMode = "single-command" | "user-batch";
 export type { BatchCommandStep } from "../batch-stdin.js";
 
 export interface BrowserRunContext {
@@ -152,7 +150,6 @@ export type ClickDispatchProbeTarget =
 		selector: string;
 	}
 	| {
-		duplicateIndex?: number;
 		kind: "accessible";
 		name: string;
 		refId: string;
@@ -346,12 +343,6 @@ export interface ScreenshotArtifactRequest extends ScreenshotPathRequest {
 	tempPath?: string;
 }
 
-export interface PinnedBatchPlan {
-	includeNavigationSummary: boolean;
-	steps: BatchCommandStep[];
-	unwrapMode: PinnedBatchUnwrapMode;
-}
-
 export interface StaleRefPreflight {
 	message: string;
 	refIds: string[];
@@ -451,11 +442,9 @@ export interface PreparedBrowserRun {
 	electronLaunch?: ElectronLaunchSuccess;
 	exactSensitiveValues: string[];
 	executionPlan: AgentBrowserExecutionPlan;
-	includePinnedNavigationSummary: boolean;
 	managedSessionPolicyLock?: ManagedSessionPolicyLock;
 	ownedManagedSessionContext?: OwnedManagedSessionContext;
 	clickDispatchProbe?: ClickDispatchProbe;
-	pinnedBatchUnwrapMode?: PinnedBatchUnwrapMode;
 	preparedArgs: PreparedAgentBrowserArgs;
 	priorRefSnapshotState?: SessionRefSnapshot;
 	priorSessionTabTarget?: SessionTabTarget;

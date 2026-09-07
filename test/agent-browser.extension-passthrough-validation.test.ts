@@ -432,12 +432,14 @@ const data = command === "batch"
             : {},
       success: true,
     }))
+  : command === "tab" && subcommand === "list"
+  ? { tabs: [{ tabId: "t1", url: currentUrl, active: true }] }
   : command === "session" && subcommand === "info"
   ? { active: sessionActive, runtime: sessionActive ? { restoreKey: null } : null }
   : command === "get" && subcommand === "url"
   ? { result: currentUrl, url: currentUrl }
   : command === "snapshot"
-    ? { snapshot: "- heading \\"Cloudflare Dashboard\\" [ref=e1]" }
+    ? { snapshot: "- heading \\"Cloudflare Dashboard\\" [ref=e1]", origin: currentUrl }
     : command === "network" && subcommand === "requests"
       ? { requests: [{ method: "GET", requestId: "after-close", resourceType: "fetch", url: "https://dash.cloudflare.com/api/test" }] }
       : { connected: command === "connect" };
@@ -905,6 +907,8 @@ if (command === "network" && subcommand === "har") {
 if (command === "diff" && subcommand === "snapshot") data = { added: 1, removed: 0 };
 if (command === "diff" && subcommand === "screenshot") { data = { diffPath: ${JSON.stringify(diffPath)}, mismatchPixels: 0 }; ensureFile(data.diffPath, "fake-png"); }
 if (command === "diff" && subcommand === "url") data = { differenceCount: 0 };
+if (command === "get" && subcommand === "url") data = { url: "https://example.test/b" };
+if (command === "get" && subcommand === "title") data = { title: "Example B" };
 if (command === "trace") { data = subcommand === "stop" ? { path: args[commandIndex + 2] || ${JSON.stringify(tracePath)}, state: "stopped" } : { state: "started" }; if (data.path) ensureFile(data.path, "trace"); }
 if (command === "profiler") { data = subcommand === "stop" ? { path: args[commandIndex + 2] || ${JSON.stringify(profilePath)}, state: "stopped" } : { state: "started" }; if (data.path) ensureFile(data.path, "profile"); }
 if (command === "record") { data = subcommand === "start" ? { path: args[commandIndex + 2] || ${JSON.stringify(recordingPath)} } : { path: ${JSON.stringify(recordingPath)} }; if (subcommand === "stop") ensureFile(data.path, "video"); }
@@ -989,7 +993,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			const invocations = await readInvocationLog(logPath);
 			const userInvocations = invocations.map((entry) => stripWrapperPrefix(entry.args));
-			assert.deepEqual(userInvocations, commands.map((args) => [...args]));
+			assert.deepEqual(userInvocations, commands.flatMap((args) => args[0] === "diff" && args[1] === "url"
+				? [[...args], ["get", "url"], ["get", "title"]]
+				: [[...args]]));
 			assert.ok(invocations.every((entry) => entry.args.includes("--json")));
 			assert.ok(invocations.every((entry) => {
 				const userArgs = stripWrapperPrefix(entry.args);
@@ -1172,7 +1178,7 @@ if (args.includes("get") && args.includes("url")) {
 			assert.match(text, new RegExp(`Absolute path: ${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.match(text, /Exists: true/);
 			assert.match(text, /Status: repaired-from-temp/);
-			assert.match(text, new RegExp(`Temp path: ${upstreamTempPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(text, new RegExp(`Reported path: ${upstreamTempPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 			assert.match(text, /Session: warden-vfr/);
 			assert.match(text, new RegExp(`CWD: ${tempDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 
@@ -1182,6 +1188,7 @@ if (args.includes("get") && args.includes("url")) {
 			assert.equal(artifacts?.[0]?.cwd, tempDir);
 			assert.equal(artifacts?.[0]?.session, "warden-vfr");
 			assert.equal(artifacts?.[0]?.status, "repaired-from-temp");
+			assert.equal(artifacts?.[0]?.tempPath, upstreamTempPath);
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.at(-2), "get");
@@ -1297,12 +1304,13 @@ process.stdin.on("end", () => {
 			assert.match(text, /Saved image: \.dogfood\/run\/good-batch\.png/);
 			assert.match(text, /Requested path: \.dogfood\/run\/good-batch\.png/);
 			assert.match(text, /Status: repaired-from-temp/);
-			assert.match(text, new RegExp(`Temp path: ${upstreamTempPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+			assert.match(text, new RegExp(`Reported path: ${upstreamTempPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 
 			const artifacts = result.details?.artifacts as Array<Record<string, unknown>> | undefined;
 			assert.equal(artifacts?.[0]?.requestedPath, ".dogfood/run/good-batch.png");
 			assert.equal(artifacts?.[0]?.absolutePath, expectedPath);
 			assert.equal(artifacts?.[0]?.status, "repaired-from-temp");
+			assert.equal(artifacts?.[0]?.tempPath, upstreamTempPath);
 
 			const [invocation] = await readInvocationLog(logPath);
 			assert.deepEqual(invocation.stdin, [["screenshot", expectedPath]]);

@@ -97,6 +97,18 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 			return;
 		}
 
+		if (url.pathname === "/duplicate-buttons") {
+			sendFixtureHtml(response, `<!doctype html><title>Duplicate buttons</title>
+				<button id="first" onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1); this.dataset.trusted = String(event.isTrusted); this.textContent = 'Remove';">Add to cart</button>
+				<button id="second" onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1); this.dataset.trusted = String(event.isTrusted); this.textContent = 'Remove';">Add to cart</button>`);
+			return;
+		}
+
+		if (url.pathname === "/headers") {
+			sendFixtureHtml(response, `<title>Header Fixture</title><input id="header-value" value="${request.headers["x-fixture"] === "batch-fidelity" ? "present" : "missing"}" />`);
+			return;
+		}
+
 		if (url.pathname === "/frame-child") {
 			sendFixtureHtml(
 				response,

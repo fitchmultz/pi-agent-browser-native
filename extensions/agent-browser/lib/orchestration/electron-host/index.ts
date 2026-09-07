@@ -201,7 +201,9 @@ function formatElectronStatusVisibleText(statuses: ElectronLaunchStatus[], recor
 		const sessionName = record?.sessionName;
 		const appName = record?.appName ?? "Electron launch";
 		const sessionText = sessionName ? `, sessionName ${sessionName}` : "";
-		lines.push(`- ${status.launchId}: ${appName}${sessionText}; ${status.portAlive ? "debug port alive" : "debug port dead"}${status.pidAlive === undefined ? "" : status.pidAlive ? ", pid alive" : ", pid dead"} (port ${status.port})`);
+		const historyText = status.cleanupState === "cleaned" ? "; historical cleaned launch record" : "";
+		lines.push(`- ${status.launchId}: ${appName}${sessionText}${historyText}; ${status.portAlive ? "debug port alive" : "debug port dead"}${status.pidAlive === undefined ? "" : status.pidAlive ? ", pid alive" : ", pid dead"} (port ${status.port})`);
+		lines.push(`  Tracked profile path: ${status.userDataDirState}.`);
 		lines.push(`  Identifiers: launchId ${status.launchId}; sessionName ${sessionName ?? "not attached"}.`);
 		for (const targetLine of formatElectronTargetLines(status.targets, 4)) lines.push(`  ${targetLine}`);
 		const managedSession = sessionName ? managedSessionsByName.get(sessionName) : undefined;

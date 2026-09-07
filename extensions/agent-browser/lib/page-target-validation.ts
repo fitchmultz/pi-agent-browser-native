@@ -39,6 +39,8 @@ function getExplicitNavigationTarget(args: string[]): string | undefined {
 	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	if (EXPLICIT_NAVIGATION_COMMANDS.has(descriptor.commandInfo.command ?? "")) return positionals[0];
 	if (descriptor.commandInfo.command === "tab" && descriptor.commandInfo.subcommand === "new") return positionals[1];
+	if (descriptor.commandInfo.command === "window" && descriptor.commandInfo.subcommand === "new") return "about:blank";
+	if (descriptor.commandInfo.command === "diff" && descriptor.commandInfo.subcommand === "url") return descriptor.upstreamCommandTokens[3];
 	return undefined;
 }
 
@@ -147,10 +149,9 @@ function getResultingPageState(options: {
 
 export function getResultingPageTargetState(options: {
 	args: string[];
+	executedBatchSteps: string[][];
 	currentPageUrl?: string;
 	pageUrlUnknown?: boolean;
-	stdin?: string;
-	trustedFirstBatchTabSelection?: boolean;
 }): { currentPageUrl?: string; pageTargetMayHaveChanged: boolean; pageUrlUnknown: boolean } {
 	const descriptor = parseArgvDescriptor(options.args);
 	let state: { currentPageUrl?: string; pageUrlUnknown: boolean } = { currentPageUrl: options.currentPageUrl, pageUrlUnknown: options.pageUrlUnknown ?? false };
@@ -160,16 +161,11 @@ export function getResultingPageTargetState(options: {
 			|| isUnverifiedPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand);
 		return { ...getResultingPageState({ ...state, args: options.args, trustedBatchTabSelection: false }), pageTargetMayHaveChanged };
 	}
-	const batch = getBatchCommandSteps(options.args, options.stdin);
-	if (batch.error) return { pageTargetMayHaveChanged: true, pageUrlUnknown: true };
-	for (let index = 0; index < batch.steps.length; index += 1) {
-		const step = batch.steps[index];
-		const trustedBatchTabSelection = options.trustedFirstBatchTabSelection === true && index === 0;
+	for (const step of options.executedBatchSteps) {
 		const stepDescriptor = parseArgvDescriptor(step);
 		pageTargetMayHaveChanged ||= getExplicitNavigationTarget(step) !== undefined
-			|| (isUnverifiedPageTransitionCommand(stepDescriptor.commandInfo.command, stepDescriptor.commandInfo.subcommand)
-				&& !(trustedBatchTabSelection && stepDescriptor.commandInfo.command === "tab"));
-		state = getResultingPageState({ ...state, args: step, trustedBatchTabSelection });
+			|| isUnverifiedPageTransitionCommand(stepDescriptor.commandInfo.command, stepDescriptor.commandInfo.subcommand);
+		state = getResultingPageState({ ...state, args: step, trustedBatchTabSelection: false });
 	}
 	return { ...state, pageTargetMayHaveChanged };
 }
@@ -212,6 +208,9 @@ export function getPageTargetValidationError(options: {
 	const command = descriptor.commandInfo.command;
 	if (["close", "exit", "quit"].includes(command ?? "")) return undefined;
 	if (command === "batch") {
+		if (descriptor.upstreamCommandTokens.slice(1).some((token) => token.startsWith("--bail="))) {
+			return "Use exact batch --bail for fail-fast, or omit it to continue after errors. --bail=<value> is a raw command upstream; stdin is ignored when raw batch arguments are present.";
+		}
 		const batch = getBatchCommandSteps(options.args, options.stdin);
 		if (batch.error) return batch.error.startsWith("agent_browser batch stdin") || batch.error === NESTED_BATCH_ARGUMENT_MESSAGE
 			? batch.error
@@ -271,7 +270,6 @@ export function getPageTargetValidationError(options: {
 export function getExplicitSessionPageVerificationRequirement(options: {
 	args: string[];
 	stdin?: string;
-	trustedFirstBatchTabSelection?: boolean;
 }): string | undefined {
 	const descriptor = parseArgvDescriptor(options.args);
 	if (!needsManagedSession(descriptor)) return undefined;
@@ -281,7 +279,6 @@ export function getExplicitSessionPageVerificationRequirement(options: {
 		pageUrlUnknown: true,
 		stdin: options.stdin,
 		allowUnverifiedPageTransitions: true,
-		trustedFirstBatchTabSelection: options.trustedFirstBatchTabSelection,
 	});
 	return validationError === UNVERIFIED_PAGE_MESSAGE || validationError === BATCH_UNVERIFIED_PAGE_MESSAGE || validationError === NON_BAIL_BATCH_NAVIGATION_MESSAGE
 		? UNVERIFIED_PAGE_MESSAGE

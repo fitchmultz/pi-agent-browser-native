@@ -163,7 +163,6 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		command: "keyboard",
 		eligibleForElectronHealthProbe: true,
 		eligibleForPageChangeSummary: true,
-		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 		triggersPostMutationSnapshot: true,
 	},
@@ -177,7 +176,6 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 	{
 		command: "mouse",
 		eligibleForElectronHealthProbe: true,
-		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 	},
 	{
@@ -201,7 +199,6 @@ const COMMAND_CAPABILITIES: readonly CommandCapabilityEntry[] = [
 		command: "press",
 		eligibleForElectronHealthProbe: true,
 		eligibleForPageChangeSummary: true,
-		guardsPageRefs: true,
 		invalidatesBatchRefs: true,
 		triggersPostMutationSnapshot: true,
 	},
@@ -363,8 +360,12 @@ export function isWebMcpPageMutationCommand(tokens: readonly string[]): boolean 
 	return isWebMcpPageMutation(tokens[0], tokens[1]);
 }
 
+export function isWindowOrDiffPageTransitionCommand(command: string | undefined, subcommand?: string): boolean {
+	return (command === "window" && subcommand === "new") || (command === "diff" && subcommand === "url");
+}
+
 export function isRefInvalidatingBatchCommand(step: readonly string[]): boolean {
-	return hasCommandCapability(step[0], "invalidatesBatchRefs") || isRecordPageTransitionCommand(step) || isWebMcpPageMutationCommand(step);
+	return hasCommandCapability(step[0], "invalidatesBatchRefs") || isRecordPageTransitionCommand(step) || isWebMcpPageMutationCommand(step) || isWindowOrDiffPageTransitionCommand(step[0], step[1]);
 }
 
 export function isRefGuardedCommand(command: string | undefined): boolean {
@@ -380,13 +381,14 @@ function isWebMcpPageMutation(command: string | undefined, subcommand?: string):
 }
 
 export function isNavigationObservableCommandName(command: string | undefined, subcommand?: string): boolean {
-	return hasCommandCapability(command, "navigationObservable") || isWebMcpPageMutation(command, subcommand);
+	return hasCommandCapability(command, "navigationObservable") || isWebMcpPageMutation(command, subcommand) || isWindowOrDiffPageTransitionCommand(command, subcommand);
 }
 
 export function isUnverifiedPageTransitionCommand(command: string | undefined, subcommand?: string): boolean {
 	return ["back", "connect", "eval", "forward", "reload"].includes(command ?? "")
 		|| (command === "state" && subcommand === "load")
 		|| (command === "tab" && subcommand !== undefined && !["list", "new"].includes(subcommand))
+		|| isWindowOrDiffPageTransitionCommand(command, subcommand)
 		|| isWebMcpPageMutation(command, subcommand);
 }
 

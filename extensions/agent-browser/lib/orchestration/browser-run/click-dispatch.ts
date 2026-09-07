@@ -1,4 +1,4 @@
-import { isRecord } from "../../parsing.js";
+import { isRecord, parseRefId } from "../../parsing.js";
 import { redactSensitiveText } from "../../runtime.js";
 import { withOptionalSessionArgs, type AgentBrowserNextAction } from "../../results/next-actions.js";
 import type { SessionRefSnapshot } from "../../session-page-state.js";
@@ -9,39 +9,21 @@ const CLICK_DISPATCH_MARKER_PREFIX = "__piAgentBrowserClickDispatchProbe_";
 const CLICK_DISPATCH_CLEANUP_TIMEOUT_MS = 2_000;
 const ACCESSIBLE_REF_CLICK_DISPATCH_ROLES = new Set(["button", "checkbox", "menuitem", "radio", "switch", "tab"]);
 
-function parseClickRefId(selector: string): string | undefined {
-	const trimmed = selector.trim();
-	const candidate = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed.startsWith("ref=") ? trimmed.slice(4) : trimmed;
-	return /^e\d+$/.test(candidate) ? candidate : undefined;
-}
-
 function normalizeAccessibleName(name: string): string {
 	return name.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-function getAccessibleRefDuplicateIndex(refSnapshot: SessionRefSnapshot | undefined, refId: string, role: string, name: string): number | undefined {
-	if (!refSnapshot?.refs) return undefined;
-	const normalizedRole = role.toLowerCase();
-	const normalizedName = normalizeAccessibleName(name);
-	const matchingRefIds = refSnapshot.refIds.filter((candidateRefId) => {
-		const candidate = refSnapshot.refs?.[candidateRefId];
-		return candidate?.role.toLowerCase() === normalizedRole && normalizeAccessibleName(candidate.name) === normalizedName;
-	});
-	if (matchingRefIds.length <= 1) return undefined;
-	const duplicateIndex = matchingRefIds.indexOf(refId);
-	return duplicateIndex >= 0 ? duplicateIndex : undefined;
 }
 
 function getClickDispatchProbeTarget(commandTokens: string[], refSnapshot?: SessionRefSnapshot): ClickDispatchProbeTarget | undefined {
 	if (commandTokens[0] !== "click" || commandTokens.includes("--new-tab")) return undefined;
 	const selector = commandTokens[1];
 	if (!selector || selector.startsWith("-")) return undefined;
-	const refId = parseClickRefId(selector);
+	const refId = parseRefId(selector);
 	if (refId) {
 		const ref = refSnapshot?.refs?.[refId];
 		if (!ref || !ACCESSIBLE_REF_CLICK_DISPATCH_ROLES.has(ref.role)) return undefined;
-		const duplicateIndex = getAccessibleRefDuplicateIndex(refSnapshot, refId, ref.role, ref.name);
-		return { ...(duplicateIndex === undefined ? {} : { duplicateIndex }), kind: "accessible", name: ref.name, refId, role: ref.role };
+		const matchingRefs = Object.values(refSnapshot?.refs ?? {}).filter((candidate) => candidate.role.toLowerCase() === ref.role.toLowerCase() && normalizeAccessibleName(candidate.name) === normalizeAccessibleName(ref.name));
+		if (matchingRefs.length !== 1) return undefined;
+		return { kind: "accessible", name: ref.name, refId, role: ref.role };
 	}
 	if (selector.startsWith("xpath=")) return { kind: "xpath", selector: selector.slice("xpath=".length) };
 	return undefined;
@@ -61,7 +43,6 @@ function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string
   const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
   const expectedRole = ${JSON.stringify(target.role)};
   const expectedName = normalize(${JSON.stringify(target.name)});
-  const duplicateIndex = ${JSON.stringify(target.duplicateIndex)};
   const inferRole = (element) => {
     const explicit = element.getAttribute("role");
     if (explicit) return explicit;
@@ -84,7 +65,6 @@ function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string
     return element.getClientRects().length > 0;
   };
   const candidates = Array.from(document.querySelectorAll("button,a[href],input,select,textarea,summary,[role],[onclick],[tabindex]")).filter((element) => inferRole(element) === expectedRole && inferName(element) === expectedName && isVisible(element));
-  if (typeof duplicateIndex === "number") return candidates[duplicateIndex] || null;
   return candidates.length === 1 ? candidates[0] : null;
 })()`;
 	return `(() => {

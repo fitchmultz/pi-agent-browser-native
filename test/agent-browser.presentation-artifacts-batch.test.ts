@@ -27,6 +27,8 @@ import {
 	withPatchedEnv
 } from "./helpers/agent-browser-harness.js";
 
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64");
+
 test("batch stdin shape errors include a copyable native-tool example", () => {
 	const error = parseUserBatchStdin(JSON.stringify([{ action: "get", target: "title" }])).error ?? "";
 	assert.match(error, /must be a non-empty array of string command tokens/);
@@ -47,7 +49,7 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 
 	assert.equal(presentation.content[0]?.type, "text");
 	assert.match((presentation.content[0] as { text: string }).text, /Download reported; file not verified: \/tmp\/report\.pdf/);
-	assert.match((presentation.content[0] as { text: string }).text, /application\/pdf/);
+	assert.doesNotMatch((presentation.content[0] as { text: string }).text, /Media type:/);
 	assert.match((presentation.content[0] as { text: string }).text, /not found on disk/);
 	assert.equal(presentation.summary, "Artifact verification failed: requested download was not found at /tmp/report.pdf.");
 	assert.equal(presentation.resultCategory, "failure");
@@ -55,7 +57,7 @@ test("buildToolPresentation formats download results as saved-file summaries", a
 	assert.equal(presentation.artifacts?.[0]?.kind, "download");
 	assert.equal(presentation.artifacts?.[0]?.path, "/tmp/report.pdf");
 	assert.equal(presentation.artifacts?.[0]?.absolutePath, "/tmp/report.pdf");
-	assert.equal(presentation.artifacts?.[0]?.mediaType, "application/pdf");
+	assert.equal(presentation.artifacts?.[0]?.mediaType, undefined);
 	assert.equal(presentation.artifacts?.[0]?.exists, false);
 	assert.equal(presentation.savedFilePath, "/tmp/report.pdf");
 	assert.deepEqual(presentation.savedFile, {
@@ -111,49 +113,42 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 			commandInfo: { command: "pdf" },
 			data: { path: "page.pdf" },
 			expectedKind: "pdf",
-			expectedMediaType: "application/pdf",
 			expectedText: "Saved PDF: page.pdf",
 		},
 		{
 			commandInfo: { command: "wait", subcommand: "--download" },
 			data: { path: "download.txt" },
 			expectedKind: "download",
-			expectedMediaType: "text/plain",
 			expectedText: "Download event reported; file not verified: download.txt",
 		},
 		{
 			commandInfo: { command: "trace", subcommand: "stop" },
 			data: { eventCount: 382, path: "trace.zip" },
 			expectedKind: "trace",
-			expectedMediaType: "application/zip",
 			expectedText: "Saved trace: trace.zip",
 		},
 		{
 			commandInfo: { command: "profiler", subcommand: "stop" },
 			data: { eventCount: 350, path: "profile.cpuprofile" },
 			expectedKind: "profile",
-			expectedMediaType: "application/json",
 			expectedText: "Saved profile: profile.cpuprofile",
 		},
 		{
 			commandInfo: { command: "record", subcommand: "stop" },
 			data: { frames: 6, path: "recording.webm" },
 			expectedKind: "video",
-			expectedMediaType: "video/webm",
 			expectedText: "Saved recording: recording.webm",
 		},
 		{
 			commandInfo: { command: "network", subcommand: "har" },
 			data: { path: "network.har", requestCount: 0 },
 			expectedKind: "har",
-			expectedMediaType: "application/json",
 			expectedText: "Saved HAR: network.har",
 		},
 		{
 			commandInfo: { command: "state", subcommand: "save" },
 			data: { path: "auth-state.json" },
 			expectedKind: "file",
-			expectedMediaType: "application/json",
 			expectedText: "State file: auth-state.json",
 		},
 	] as const;
@@ -174,7 +169,7 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 		assert.equal(presentation.artifacts?.[0]?.kind, item.expectedKind);
 		assert.equal(presentation.artifacts?.[0]?.path, item.data.path);
 		assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", item.data.path));
-		assert.equal(presentation.artifacts?.[0]?.mediaType, item.expectedMediaType);
+		assert.equal(presentation.artifacts?.[0]?.mediaType, undefined);
 		assert.equal(presentation.artifacts?.[0]?.exists, false);
 		assert.equal(presentation.artifactVerification?.missingCount, 1);
 		assert.equal(presentation.artifactVerification?.verified, false);
@@ -249,7 +244,8 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Recording started in a fresh active page; output will be written on stop: recording\.webm/);
-	assert.match(text, /prior in-page DOM and JavaScript state does not carry over.*fresh snapshot/is);
+	// Page-state guidance requires dispatch evidence; registered-tool tests cover it on success and failure.
+	assert.doesNotMatch(text, /Page state:/);
 	assert.doesNotMatch(text, /Saved recording/);
 	assert.doesNotMatch(text, /not found on disk/);
 	assert.doesNotMatch(text, /Session artifacts:/);
@@ -257,7 +253,7 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.equal(presentation.artifacts?.[0]?.kind, "video");
 	assert.equal(presentation.artifacts?.[0]?.path, "recording.webm");
 	assert.equal(presentation.artifacts?.[0]?.absolutePath, join("/tmp/pi-agent-browser-artifact-tests", "recording.webm"));
-	assert.equal(presentation.artifacts?.[0]?.mediaType, "video/webm");
+	assert.equal(presentation.artifacts?.[0]?.mediaType, undefined);
 	assert.equal(presentation.artifacts?.[0]?.exists, undefined);
 	assert.equal(presentation.artifacts?.[0]?.status, "pending");
 	assert.equal(presentation.artifacts?.[0]?.recordingState, "openRecording");
@@ -800,7 +796,7 @@ test("buildToolPresentation adds snapshot recovery for wait text assertion failu
 test("buildToolPresentation keeps eval image-like string results text-only", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-untrusted-image-"));
 	const imagePath = join(tempDir, "secret.png");
-	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	await writeFile(imagePath, png);
 
 	try {
 		const presentation = await buildToolPresentation({
@@ -859,7 +855,7 @@ test("buildToolPresentation keeps get absolute image path results text-only", as
 test("buildToolPresentation does not inline non-screenshot path records with image extensions", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-download-image-"));
 	const imagePath = join(tempDir, "downloaded.png");
-	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	await writeFile(imagePath, png);
 
 	try {
 		const presentation = await buildToolPresentation({
@@ -878,7 +874,7 @@ test("buildToolPresentation does not inline non-screenshot path records with ima
 		assert.equal(presentation.artifacts?.[0]?.absolutePath, imagePath);
 		assert.equal(presentation.artifacts?.[0]?.mediaType, "image/png");
 		assert.equal(presentation.artifacts?.[0]?.exists, true);
-		assert.equal(presentation.artifacts?.[0]?.sizeBytes, 4);
+		assert.equal(presentation.artifacts?.[0]?.sizeBytes, png.length);
 		assert.equal(presentation.imagePath, undefined);
 		assert.equal(presentation.imagePaths, undefined);
 	} finally {
@@ -967,7 +963,7 @@ test("buildToolPresentation does not re-append old artifact retention noise for 
 test("buildToolPresentation reuses standalone inline screenshot rendering inside batch output", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-image-"));
 	const imagePath = join(tempDir, "batched.png");
-	await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	await writeFile(imagePath, png);
 
 	try {
 		const presentation = await buildToolPresentation({
@@ -1044,7 +1040,7 @@ test("buildToolPresentation preserves non-screenshot file artifacts inside batch
 test("buildToolPresentation skips oversized inline image attachments", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-image-"));
 	const imagePath = join(tempDir, "large.png");
-	await writeFile(imagePath, Buffer.alloc(256, 1));
+	await writeFile(imagePath, Buffer.concat([png, Buffer.alloc(256 - png.length)]));
 
 	try {
 		await withPatchedEnv({ PI_AGENT_BROWSER_INLINE_IMAGE_MAX_BYTES: "128" }, async () => {

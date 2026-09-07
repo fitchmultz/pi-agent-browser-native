@@ -17,16 +17,19 @@ import { pathToFileURL } from "node:url";
 
 import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
+import { collectClickDispatchDiagnostic, prepareClickDispatchProbe } from "../extensions/agent-browser/lib/orchestration/browser-run/click-dispatch.js";
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
 import { MINIMUM_AGENT_BROWSER_VERSION, isSupportedAgentBrowserVersion } from "../scripts/agent-browser-target.mjs";
 import {
 	createExtensionHarness,
+	createToolBranchEntry,
 	executeRegisteredTool,
 	runExtensionEvent,
 	startAgentBrowserContractFixtureServer,
 	withPatchedEnv,
 	type FixtureServer,
 } from "./helpers/agent-browser-harness.js";
+import { waitForTestPidExit } from "./helpers/extension-validation-fixtures.js";
 
 const execFileAsync = promisify(execFile);
 const REAL_UPSTREAM_ENABLED = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
@@ -139,7 +142,7 @@ async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?
 	await runAgentBrowserProcess({
 		args: ["--json", "--namespace", "", "--session", options.sessionName, "close"],
 		cwd: options.cwd,
-		env: { AGENT_BROWSER_SOCKET_DIR: getAgentBrowserSocketDir() },
+		env: { AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir() },
 	}).catch(() => undefined);
 }
 
@@ -355,6 +358,172 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 	}
 }
 
+test("real upstream agent-browser contract suite matches duplicate-name click mutation", {
+	skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
+	timeout: 60_000,
+}, async (t) => {
+	await assertInstalledAgentBrowserVersion();
+	const tempDir = await mkdtemp(join(tmpdir(), "dp-"));
+	const socketDir = join(tempDir, "s");
+	const fixture = await startAgentBrowserContractFixtureServer();
+	try {
+		await withPatchedEnv({ HOME: tempDir, USERPROFILE: tempDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_SOCKET_DIR: socketDir, PI_AGENT_BROWSER_SOCKET_DIR: socketDir }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			try {
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `${fixture.baseUrl}/duplicate-buttons`] });
+				assert.equal(opened.isError, false, opened.content[0]?.text);
+				const sessionName = opened.details?.sessionName as string;
+				const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
+				assert.equal(snapshot.isError, false, snapshot.content[0]?.text);
+				const refSnapshot = snapshot.details?.refSnapshot as import("../extensions/agent-browser/lib/session-page-state.js").SessionRefSnapshot;
+				const duplicates = Object.entries(refSnapshot.refs!).filter(([, ref]) => ref.role === "button" && ref.name === "Add to cart");
+				assert.equal(duplicates.length, 2);
+				const first = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "xpath=//*[@id='first']"] });
+				assert.equal(first.isError, false, first.content[0]?.text);
+				assert.equal((first.details?.pageChangeSummary as { observed?: boolean }).observed, false, "native dispatch alone must not claim application-state proof");
+
+				// The first button is now Remove: its old name's ordinal points at the untouched second button.
+				const probe = await prepareClickDispatchProbe({ commandTokens: ["click", `@${duplicates[0][0]}`], cwd: tempDir, refSnapshot, sessionName });
+				const nativeClick = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, "click", "xpath=//*[@id='first']"], cwd: tempDir });
+				assert.equal(nativeClick.exitCode, 0, nativeClick.stderr);
+				assert.equal(JSON.parse(nativeClick.stdout).success, true);
+				const diagnostic = await collectClickDispatchDiagnostic({ cwd: tempDir, probe, sessionName });
+				const state = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "Array.from(document.querySelectorAll('button'), b => ({ id: b.id, text: b.textContent, clicks: Number(b.dataset.clicks || 0), trusted: b.dataset.trusted === 'true' }))" });
+				assert.equal(state.isError, false, state.content[0]?.text);
+				const buttons = getResultValue(state.details!, ["result"]);
+				assert.deepEqual(buttons, [
+					{ id: "first", text: "Remove", clicks: 2, trusted: true },
+					{ id: "second", text: "Add to cart", clicks: 0, trusted: false },
+				]);
+				t.diagnostic(JSON.stringify({ buttons, clickDispatch: diagnostic }));
+				assert.equal(diagnostic, undefined, "a stale duplicate ordinal must not contradict the native target's trusted clicks");
+
+				const probeOptions = { commandTokens: ["click", "xpath=//*[@id='second']"], cwd: tempDir, sessionName };
+				const missedProbe = await prepareClickDispatchProbe(probeOptions);
+				assert.ok(missedProbe, "an exact XPath target must still be probed");
+				const miss = await collectClickDispatchDiagnostic({ ...probeOptions, probe: missedProbe });
+				assert.equal(miss?.status, "no-native-event-observed", "no click must remain a real dispatch miss");
+				const hitProbe = await prepareClickDispatchProbe(probeOptions);
+				assert.ok(hitProbe);
+				const hit = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, ...probeOptions.commandTokens], cwd: tempDir });
+				assert.equal(hit.exitCode, 0, hit.stderr);
+				assert.equal(JSON.parse(hit.stdout).success, true);
+				assert.equal(await collectClickDispatchDiagnostic({ ...probeOptions, probe: hitProbe }), undefined, "a trusted native click must not report a miss");
+			} finally {
+				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+			}
+		});
+	} finally {
+		await fixture.close();
+		await rm(tempDir, { recursive: true, force: true });
+	}
+});
+
+test("real upstream agent-browser contract suite matches cold URL reopen after quit", {
+	skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
+	timeout: 60_000,
+}, async (t) => {
+	await assertInstalledAgentBrowserVersion();
+	for (const storage of [false, true]) {
+		await t.test(storage ? "origin storage at a non-root URL" : "empty storage at a non-root URL", async (t) => {
+			const tempDir = await mkdtemp(join(tmpdir(), "cr-"));
+			const cwd = join(tempDir, "g");
+			const home = join(tempDir, "h");
+			const socketDir = join(tempDir, "s");
+			const sessionFile = join(tempDir, "branch.json");
+			const fixture = await startAgentBrowserContractFixtureServer();
+			try {
+				await Promise.all([cwd, home, socketDir].map((path) => mkdir(path, { mode: 0o700 })));
+				await initializeGitProject(cwd);
+				await withPatchedEnv({
+					HOME: home,
+					USERPROFILE: home,
+					AGENT_BROWSER_CONFIG: undefined,
+					AGENT_BROWSER_ENCRYPTION_KEY: process.platform === "win32" ? "a".repeat(64) : undefined,
+					AGENT_BROWSER_SOCKET_DIR: socketDir,
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+					PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+				}, async () => {
+					const url = `${fixture.baseUrl}/contract?cold=${storage ? "storage" : "empty"}`;
+					const branch: unknown[] = [];
+					let harness = createExtensionHarness({ branch, cwd, sessionFile });
+					let sessionName: string | undefined;
+					const native = async (args: string[]) => {
+						assert.ok(sessionName);
+						const result = await runAgentBrowserProcess({ args: ["--json", "--namespace", "", "--session", sessionName, ...args], cwd });
+						assert.equal(result.exitCode, 0, result.stderr);
+						const envelope = JSON.parse(result.stdout);
+						assert.equal(envelope.success, true);
+						return envelope.data;
+					};
+					const run = async (params: Parameters<typeof executeRegisteredTool>[2]) => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+						branch.push(createToolBranchEntry({ details: result.details!, isError: result.isError }));
+						return result;
+					};
+					try {
+						await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+						const opened = await run({ args: ["open", url] });
+						sessionName = opened.details?.sessionName as string | undefined;
+						assert.equal(opened.isError, false, opened.content[0]?.text);
+						assert.equal(opened.details?.managedSessionRestoreDisabled, undefined);
+						const seeded = await run({
+							args: ["eval", "--stdin"],
+							stdin: `document.body.insertAdjacentHTML('beforeend', '<button>Unsaved control</button>'); document.querySelector('#name-input').value = 'unsaved'; window.coldReopenMemory = true; ${storage ? "localStorage.setItem('cold-reopen', 'kept'); sessionStorage.setItem('cold-reopen', 'kept');" : ""} true`,
+						});
+						assert.equal(seeded.isError, false, seeded.content[0]?.text);
+						const before = await run({ args: ["snapshot", "-i"] });
+						assert.equal(before.isError, false, before.content[0]?.text);
+						assert.match(JSON.stringify(before.details?.refSnapshot), /Unsaved control/);
+						const framed = await run({ args: ["frame", "#contract-frame"] });
+						assert.equal(framed.isError, false, framed.content[0]?.text);
+						const oldDaemon = await native(["session", "info"]);
+						assert.equal(typeof oldDaemon.pid, "number");
+						await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+						assert.equal(await waitForTestPidExit(oldDaemon.pid, 10_000), true, "old owned daemon must exit before the first resumed read");
+						assert.equal((await native(["session", "info"])).active, false);
+						await writeFile(sessionFile, JSON.stringify(branch));
+						harness = createExtensionHarness({ branch: JSON.parse(await readFile(sessionFile, "utf8")), cwd, sessionFile });
+						await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+
+						// No explicit open after quit: the first requested operation must read the remembered page.
+						const snapshot = await run({ args: ["snapshot", "-i"] });
+						const observed = await native(["get", "url"]);
+						const newDaemon = await native(["session", "info"]);
+						t.diagnostic(JSON.stringify({ storage, sessionName, oldPid: oldDaemon.pid, oldDaemonExited: true, newPid: newDaemon.pid, restoreStatus: newDaemon.runtime?.restoreStatus, requestedUrl: url, observedUrl: observed.url, resultCategory: snapshot.details?.resultCategory, failureCategory: snapshot.details?.failureCategory }));
+						assert.equal(snapshot.isError, false, snapshot.content[0]?.text);
+						assert.equal(snapshot.details?.resultCategory, "success");
+						assert.equal(snapshot.details?.sessionName, sessionName);
+						assert.equal(observed.url, url);
+						assert.equal((snapshot.details?.data as { origin?: string }).origin, url);
+						assert.equal((snapshot.details?.sessionTabTarget as { url?: string }).url, url);
+						assert.equal(newDaemon.runtime.restoreStatus, "loaded");
+						assert.notEqual(newDaemon.pid, oldDaemon.pid);
+						assert.equal(snapshot.details?.refSnapshotInvalidation, undefined);
+						assert.match(JSON.stringify(snapshot.details?.refSnapshot), /"name":"Name"/);
+						assert.doesNotMatch(JSON.stringify(snapshot.details?.refSnapshot), /Unsaved control/);
+						const state = await run({ args: ["eval", "--stdin"], stdin: "JSON.stringify({ local: localStorage.getItem('cold-reopen'), session: sessionStorage.getItem('cold-reopen'), form: document.querySelector('#name-input').value, memory: typeof window.coldReopenMemory })" });
+						assert.equal(state.isError, false, state.content[0]?.text);
+						assert.deepEqual(JSON.parse(String(getResultValue(state.details!, ["result"]))), { local: storage ? "kept" : null, session: storage ? "kept" : null, form: "", memory: "undefined" });
+					} finally {
+						if (sessionName) {
+							const daemon = await native(["session", "info"]);
+							await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+							assert.equal(await waitForTestPidExit(daemon.pid, 10_000), true, "final owned daemon must exit");
+							assert.equal((await native(["session", "info"])).active, false);
+							t.diagnostic(JSON.stringify({ sessionName, cleanup: "closed", daemonExited: true }));
+						}
+					}
+				});
+			} finally {
+				await fixture.close();
+				await rm(tempDir, { recursive: true, force: true });
+			}
+		});
+	}
+});
+
 if (!REAL_UPSTREAM_ENABLED) {
 	test("real upstream agent-browser contract suite is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
 	test("real upstream agent-browser plugin list probe is opt-in", { skip: REAL_UPSTREAM_SKIP_REASON }, () => undefined);
@@ -494,6 +663,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 
 					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 					const snapshotDetails = assertSuccessfulResult(snapshot, shapes.commands.snapshot, "snapshot -i");
+					assert.equal((snapshotDetails.data as { origin?: string }).origin, contractUrl);
 					assert.equal(snapshotDetails.sessionName, managedSessionName);
 					assert.equal(snapshotDetails.usedImplicitSession, true);
 					assertJsonIncludes(snapshotDetails.data, ["Agent Browser Contract Fixture"], "snapshot data");
@@ -828,7 +998,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await new Promise((resolve) => setTimeout(resolve, 200));
 					const closedInfo = await execFileAsync("agent-browser", ["--json", "--namespace", "", "--session", managedSessionName ?? "", "session", "info"], {
 						cwd: tempDir,
-						env: { ...process.env, AGENT_BROWSER_NAMESPACE: "redirected", AGENT_BROWSER_SOCKET_DIR: getAgentBrowserSocketDir() ?? socketDir, HOME: tempDir },
+						env: { ...process.env, AGENT_BROWSER_NAMESPACE: "redirected", AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir() ?? socketDir, HOME: tempDir },
 					});
 					assert.equal((JSON.parse(closedInfo.stdout) as { data?: { active?: boolean } }).data?.active, false, "owned close must override a redirecting namespace environment");
 
