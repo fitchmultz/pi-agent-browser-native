@@ -78,6 +78,22 @@ test("buildToolPresentation enriches semanticAction find click like direct click
 	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
 });
 
+test("buildToolPresentation adds overlay recovery for direct semanticAction click errors", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "find", subcommand: "text" },
+		compiledSemanticAction: semanticClick,
+		cwd: process.cwd(),
+		errorText: "Element 'Close' is covered by <div role=dialog> at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header).",
+		sessionName: "work",
+	});
+
+	assert.equal(presentation.resultCategory, "failure");
+	assert.equal(presentation.failureCategory, "upstream-error");
+	assert.deepEqual(presentation.nextActions?.map((action) => action.id), ["inspect-overlay-state"]);
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "work", "snapshot", "-i"]);
+	assert.equal(presentation.nextActions?.some((action) => action.params?.args?.includes("click")), false);
+});
+
 test("buildToolPresentation preserves direct click presentation", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "click" },

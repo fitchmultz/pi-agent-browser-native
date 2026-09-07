@@ -22,7 +22,7 @@ async function readEnvelopeSource(options: { stdout: string; stdoutPath?: string
 	}
 }
 
-function extractEnvelopeErrorText(error: unknown): string | undefined {
+export function extractEnvelopeErrorText(error: unknown): string | undefined {
 	if (typeof error === "string") {
 		return error.trim() || undefined;
 	}
@@ -179,10 +179,12 @@ export function getAgentBrowserErrorText(options: {
 	if (spawnError) return spawnError.message;
 	if (parseError) return parseError;
 	if (envelope?.success === false) {
-		if ((hasStructuredBatchStepFailure(envelope.data) || detectConfirmationRequired(envelope.data)) && envelope.error === undefined) {
+		const explicitErrorText = extractEnvelopeErrorText(envelope.error);
+		if ((hasStructuredBatchStepFailure(envelope.data) || detectConfirmationRequired(envelope.data)) && explicitErrorText === undefined) {
 			return undefined;
 		}
-		const envelopeErrorText = extractEnvelopeErrorText(envelope.error);
+		const envelopeErrorText = explicitErrorText
+			?? extractEnvelopeErrorText(typeof envelope.data === "string" ? envelope.data : isRecord(envelope.data) ? envelope.data.error : undefined);
 		if (envelopeErrorText && isUpstreamIpcReadTimeoutMessage(envelopeErrorText)) {
 			return buildUpstreamIpcReadTimeoutMessage();
 		}

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Add session- and namespace-aware `inspect-overlay-state` recovery for direct, semantic, raw `find` (including `nth` and default-click), and batched/job clicks that upstream rejects because another element covers the target's click point. These failures remain `upstream-error`; the wrapper recommends refreshing refs for inspection without retrying the blocked click or guessing a dismiss control. Thanks to @MDGChamomile for #147.
+
 ## 0.6.7 - 2026-09-07
 
 ### Fixed
