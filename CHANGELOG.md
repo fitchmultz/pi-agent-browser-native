@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Add session- and namespace-aware `inspect-overlay-state` recovery for direct, semantic, raw `find` (including `nth` and default-click), and batched/job clicks that upstream rejects because another element covers the target's click point. These failures remain `upstream-error`; the wrapper recommends refreshing refs for inspection without retrying the blocked click or guessing a dismiss control. Thanks to @MDGChamomile for #147.
+
 ## 0.6.7 - 2026-09-07
 
 ### Fixed
@@ -24,10 +30,6 @@
 - Retry failed recording journal writes, preserve closed recording state across branch changes and reloads, require absolute stored recording paths, and target cleanup to the exact session and namespace. Preserve the selected managed-session namespace and automatic restore when ambient namespace settings change.
 - Limit `semanticAction.values` to select actions in the tool schema and clarify the supported `stdin` commands. Valid semantic calls are unchanged; runtime validation still applies. Thanks to @lindsayemarc for #139.
 - Check socket-directory ancestry through root-owned symlinks, rejecting unsafe destination parents and intermediate user-owned links while preserving trusted system aliases.
-
-### Fixed
-
-- Added session- and namespace-aware `inspect-overlay-state` recovery for direct, semantic, raw `find` (including `nth` and default-click), and batched/job clicks that upstream rejects because another element covers the target's click point. These failures remain `upstream-error`; the wrapper recommends refreshing refs for inspection without retrying the blocked click or guessing a dismiss control.
 
 ## 0.6.6 - 2026-09-05
 
