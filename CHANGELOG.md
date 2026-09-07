@@ -25,6 +25,10 @@
 - Limit `semanticAction.values` to select actions in the tool schema and clarify the supported `stdin` commands. Valid semantic calls are unchanged; runtime validation still applies. Thanks to @lindsayemarc for #139.
 - Check socket-directory ancestry through root-owned symlinks, rejecting unsafe destination parents and intermediate user-owned links while preserving trusted system aliases.
 
+### Fixed
+
+- Added session- and namespace-aware `inspect-overlay-state` recovery for direct, semantic, raw `find` (including `nth` and default-click), and batched/job clicks that upstream rejects because another element covers the target's click point. These failures remain `upstream-error`; the wrapper recommends refreshing refs for inspection without retrying the blocked click or guessing a dismiss control.
+
 ## 0.6.6 - 2026-09-05
 
 ### Fixed

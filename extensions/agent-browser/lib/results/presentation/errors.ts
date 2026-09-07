@@ -1,5 +1,5 @@
 import { isOpenNavigationCommand } from "../../command-taxonomy.js";
-import { redactSensitiveText, type CommandInfo } from "../../runtime.js";
+import { extractUpstreamCommandTokens, redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.js";
 import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
@@ -70,6 +70,14 @@ function getKeyboardPressHint(commandInfo: CommandInfo, errorText: string): stri
 	if (commandInfo.command !== "keyboard" || commandInfo.subcommand !== "press") return undefined;
 	if (!/\bunknown\s+subcommand\b|\bvalid options?\b/i.test(errorText)) return undefined;
 	return KEYBOARD_PRESS_ERROR_HINT;
+}
+
+export function isOverlayBlockedClickError(command: string | undefined, errorText: string | undefined, args?: string[]): boolean {
+	const tokens = args ? extractUpstreamCommandTokens(args) : [];
+	const action = tokens[0] === "find"
+		? tokens[tokens[1] === "nth" ? 4 : 3] ?? "click"
+		: tokens[0] ?? command;
+	return action === "click" && errorText !== undefined && /\bis covered by\b[\s\S]*\bat its click point\b/i.test(errorText);
 }
 
 export function redactClipboardPermissionEcho(commandInfo: CommandInfo, errorText: string): string {
@@ -180,9 +188,10 @@ export function buildErrorPresentation(options: {
 	args?: string[];
 	commandInfo: CommandInfo;
 	errorText: string;
+	presentationCommand?: string;
 	sessionName?: string;
 }): ToolPresentation {
-	const { args, commandInfo, errorText, sessionName } = options;
+	const { args, commandInfo, errorText, presentationCommand, sessionName } = options;
 	const safeErrorText = redactModelFacingText(
 		redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
 	);
@@ -215,6 +224,7 @@ export function buildErrorPresentation(options: {
 			args,
 			command: commandInfo.command,
 			failureCategory: categoryDetails.failureCategory,
+			overlayBlockedClick: isOverlayBlockedClickError(presentationCommand ?? commandInfo.command, safeErrorText, args ?? commandInfo.commandTokens),
 			resultCategory: "failure",
 			sessionName,
 		}) ?? []),

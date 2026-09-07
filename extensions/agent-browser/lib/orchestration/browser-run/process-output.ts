@@ -14,7 +14,7 @@ import { analyzeQaPresetResults, analyzeQaPresetTimeout, buildQaCompactFailureTe
 import { applyNetworkRouteRecords, buildNetworkRouteDiagnostics } from "../../results/network-routes.js";
 import { buildToolPresentation } from "../../results/presentation.js";
 import { compactLargePresentationOutput } from "../../results/presentation/large-output.js";
-import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
+import { extractEnvelopeErrorText, getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { type AgentBrowserEnvelope } from "../../results/contracts.js";
 import type { NetworkRouteRecord } from "../../results/contracts.js";
 import { omitUpstreamLifecycle } from "../../results/presentation/common.js";
@@ -702,6 +702,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 
 		let errorText = getAgentBrowserErrorText({ aborted: processResult.aborted, command: prepared.executionPlan.commandInfo.command, effectiveArgs: prepared.redactedProcessArgs, envelope: presentationEnvelope, exitCode: processResult.exitCode, parseError, plainTextInspection, staleRefArgs: getStaleRefArgs(prepared.commandTokens, prepared.runtimeToolStdin), spawnError: processResult.spawnError, stderr: processResult.stderr, timedOut: processResult.timedOut, timeoutMs: processResult.timeoutMs, wrapperRecoveryHint: buildWrapperRecoveryHint({ sessionTabCorrection }) });
+		if (errorText && presentationEnvelope?.success === false && extractEnvelopeErrorText(presentationEnvelope.error) === undefined) presentationEnvelope = { ...presentationEnvelope, error: errorText };
 		if (errorText) {
 			const clipboardWritePayloadCandidates = getClipboardWritePayloadCandidates(prepared.commandTokens);
 			errorText = redactClipboardPermissionEcho(prepared.executionPlan.commandInfo, errorText);
