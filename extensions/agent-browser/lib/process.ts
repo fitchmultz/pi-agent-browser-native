@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { lstat, mkdir, readdir, readlink, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
@@ -91,6 +92,24 @@ function quoteWindowsPowerShellArg(value: string): string {
 	return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** Prefer the native binary so Windows does not round-trip argv through PowerShell 5.1. */
+export function resolveWindowsAgentBrowserNativeBinary(env: NodeJS.ProcessEnv = processEnv): string | undefined {
+	const pathEntries = env.PATH?.split(";").filter(Boolean);
+	if (pathEntries) {
+		for (const pathEntry of pathEntries) {
+			if (!existsSync(join(pathEntry, "agent-browser.cmd"))) continue;
+			const candidate = join(pathEntry, "node_modules", "agent-browser", "bin", "agent-browser-win32-x64.exe");
+			return existsSync(candidate) ? candidate : undefined;
+		}
+		return undefined;
+	}
+	const appData = env.APPDATA;
+	if (!appData) return undefined;
+	const npmBin = join(appData, "npm");
+	const candidate = join(npmBin, "node_modules", "agent-browser", "bin", "agent-browser-win32-x64.exe");
+	return existsSync(candidate) ? candidate : undefined;
+}
+
 /** Exported for unit tests that lock Windows launcher argv ordering. */
 export function reorderWindowsLeadingGlobalArgs(args: string[]): string[] {
 	const leadingGlobals: string[] = [];
@@ -152,10 +171,12 @@ export function prepareAgentBrowserSpawnArgs(args: string[], wrapperCompatibilit
 	return ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`, ...args];
 }
 
-export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform): { command: string; args: string[] } {
+export function buildAgentBrowserSpawnCommand(args: string[], platform: NodeJS.Platform = processPlatform, env: NodeJS.ProcessEnv = processEnv): { command: string; args: string[] } {
 	if (platform !== "win32") {
 		return { command: "agent-browser", args };
 	}
+	const nativeBinary = resolveWindowsAgentBrowserNativeBinary(env);
+	if (nativeBinary) return { command: nativeBinary, args };
 	const invocationArgs = reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg).join(" ");
 	const commandLine = [
 		"$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue;",
@@ -662,7 +683,7 @@ export async function runAgentBrowserProcess(options: {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;
 		}
-		const spawnCommand = buildAgentBrowserSpawnCommand(prepareAgentBrowserSpawnArgs(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession));
+		const spawnCommand = buildAgentBrowserSpawnCommand(prepareAgentBrowserSpawnArgs(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession), processPlatform, childEnv);
 		const child = spawn(spawnCommand.command, spawnCommand.args, {
 			cwd,
 			env: childEnv,
