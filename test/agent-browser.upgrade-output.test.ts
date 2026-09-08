@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 
 import {
 	createExtensionHarness,
@@ -51,7 +50,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { url: ${JSON.st
 
 
 for (const mode of ["nonzero", "nonzero-json", "large-nonzero", "structured-error", "timeout", "abort", "missing-binary", "ordinary-json", "unsupported-upgrade-shape"] as const) {
-	test(`registered upgrade output keeps failure precedence: ${mode}`, { concurrency: false }, async () => {
+	test(`registered upgrade output keeps failure precedence: ${mode}`, { concurrency: false }, async (t) => {
 		const root = await mkdtemp(join(tmpdir(), "up-"));
 		const marker = join(root, "started");
 		const logPath = join(root, "calls.jsonl");
@@ -76,54 +75,62 @@ if (mode === 'structured-error') {
 				const harness = createExtensionHarness({ cwd: root });
 				const controller = new AbortController();
 				const args = mode === "ordinary-json" ? ["snapshot", "-i"] : mode === "unsupported-upgrade-shape" ? ["upgrade", "future"] : mode === "nonzero-json" || mode === "structured-error" ? ["--json", "upgrade"] : ["upgrade"];
+				const realSetTimeout = setTimeout;
+				if (mode === "timeout") t.mock.timers.enable({ apis: ["setTimeout"] });
 				const pending = executeRegisteredTool(harness.tool, harness.ctx, { args, ...(mode === "timeout" ? { timeoutMs: 500 } : {}) }, controller.signal);
-				if (mode === "abort") {
-					try {
+				try {
+					if (mode === "abort" || mode === "timeout") {
 						const deadline = Date.now() + 5000;
 						while (true) {
 							try { await readFile(marker); break; }
 							catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-							assert.ok(Date.now() < deadline, "the controlled upgrade child must start before abort");
-							await delay(5);
+							assert.ok(Date.now() < deadline, "the controlled upgrade child must install its signal handler before timeout or abort");
+							await new Promise((resolve) => realSetTimeout(resolve, 5));
 						}
-					} finally { controller.abort(); }
-				}
-				const result = await pending;
-				assert.equal(result.isError, true);
-				assert.equal(result.details?.resultCategory, "failure");
-				const expectedCategory = mode === "timeout" ? "timeout" : mode === "abort" ? "aborted" : mode === "missing-binary" ? "missing-binary" : mode === "ordinary-json" || mode === "unsupported-upgrade-shape" ? "parse-failure" : "upstream-error";
-				assert.equal(result.details?.failureCategory, expectedCategory, result.content[0]?.text);
-				assert.doesNotMatch(JSON.stringify(result), /upgrade-secret|stderr-secret/);
-				if (mode.startsWith("nonzero")) {
-					assert.equal(result.details?.exitCode, 7);
-					assert.equal(result.details?.parseError, undefined);
-					assert.match(String(result.details?.data), /Detected installation via npm/);
-					if (mode === "nonzero-json") {
-						const json = JSON.parse(result.content[0]?.text ?? "");
-						assert.equal(json.success, false);
-						assert.match(json.error, /Native upgrade failed/);
-						assert.match(json.data, /Detected installation via npm/);
-					} else assert.match(JSON.stringify(result.content), /Native upgrade failed[\s\S]*Detected installation via npm/);
-				}
-				if (mode === "large-nonzero") {
-					assert.equal((result.details?.data as { compacted?: boolean }).compacted, true);
-					assert.ok(JSON.stringify(result.content).length < 8000, "failed upgrade logs must use the existing bounded presentation");
-					const spill = await readFile(String(result.details?.fullOutputPath), "utf8");
-					assert.match(spill, /Detected installation via npm/);
-					assert.equal(spill.split("npm install progress").length - 1, 2000);
-					assert.doesNotMatch(spill, /upgrade-secret/);
-				}
-				if (mode === "timeout" || mode === "abort") {
-					assert.equal(result.details?.exitCode, 0, "even a clean signal-handler exit must retain cancellation/timeout failure");
-					assert.equal(result.details?.parseError, undefined);
-					if (mode === "timeout") assert.equal(result.details?.timedOut, true);
-					const pid = Number(await readFile(marker, "utf8"));
-					assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-					assert.deepEqual((await readInvocationLog(logPath)).map((row) => row.args), [["--json", "upgrade"]]);
-				}
-				if (mode === "missing-binary") {
-					assert.equal(result.details?.agentBrowserStarted, false);
-					assert.deepEqual(await readInvocationLog(logPath), []);
+						if (mode === "timeout") t.mock.timers.tick(500);
+						else controller.abort();
+					}
+					const result = await pending;
+					assert.equal(result.isError, true);
+					assert.equal(result.details?.resultCategory, "failure");
+					const expectedCategory = mode === "timeout" ? "timeout" : mode === "abort" ? "aborted" : mode === "missing-binary" ? "missing-binary" : mode === "ordinary-json" || mode === "unsupported-upgrade-shape" ? "parse-failure" : "upstream-error";
+					assert.equal(result.details?.failureCategory, expectedCategory, result.content[0]?.text);
+					assert.doesNotMatch(JSON.stringify(result), /upgrade-secret|stderr-secret/);
+					if (mode.startsWith("nonzero")) {
+						assert.equal(result.details?.exitCode, 7);
+						assert.equal(result.details?.parseError, undefined);
+						assert.match(String(result.details?.data), /Detected installation via npm/);
+						if (mode === "nonzero-json") {
+							const json = JSON.parse(result.content[0]?.text ?? "");
+							assert.equal(json.success, false);
+							assert.match(json.error, /Native upgrade failed/);
+							assert.match(json.data, /Detected installation via npm/);
+						} else assert.match(JSON.stringify(result.content), /Native upgrade failed[\s\S]*Detected installation via npm/);
+					}
+					if (mode === "large-nonzero") {
+						assert.equal((result.details?.data as { compacted?: boolean }).compacted, true);
+						assert.ok(JSON.stringify(result.content).length < 8000, "failed upgrade logs must use the existing bounded presentation");
+						const spill = await readFile(String(result.details?.fullOutputPath), "utf8");
+						assert.match(spill, /Detected installation via npm/);
+						assert.equal(spill.split("npm install progress").length - 1, 2000);
+						assert.doesNotMatch(spill, /upgrade-secret/);
+					}
+					if (mode === "timeout" || mode === "abort") {
+						assert.equal(result.details?.exitCode, 0, "even a clean signal-handler exit must retain cancellation/timeout failure");
+						assert.equal(result.details?.parseError, undefined);
+						if (mode === "timeout") assert.equal(result.details?.timedOut, true);
+						const pid = Number(await readFile(marker, "utf8"));
+						assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+						assert.deepEqual((await readInvocationLog(logPath)).map((row) => row.args), [["--json", "upgrade"]]);
+					}
+					if (mode === "missing-binary") {
+						assert.equal(result.details?.agentBrowserStarted, false);
+						assert.deepEqual(await readInvocationLog(logPath), []);
+					}
+				} finally {
+					if (mode === "timeout") t.mock.timers.reset();
+					controller.abort();
+					await Promise.allSettled([pending]);
 				}
 			});
 		} finally { await rm(root, { recursive: true, force: true }); }

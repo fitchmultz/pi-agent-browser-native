@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { access, link, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { access, link, mkdir, mkdtemp, readFile, readdir, rm, utimes, watch, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -227,54 +227,52 @@ if (args.includes("get") && args.includes("url")) {
 		await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "Review Space", PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const controller = new AbortController();
+			const liveProbeReady = (async () => {
+				for await (const event of watch(tempDir, { signal: controller.signal })) {
+					if (event.filename === "live-probe-started") return;
+				}
+			})();
 			const contentPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "caller-race", "get", "html", "body"],
-			});
-			// Spawn-visibility wait matching the sibling contention test's budget; the queue contract is
-			// asserted below, not by this latency window.
-			for (let attempt = 0; attempt < 100; attempt += 1) {
-				try {
-					await access(liveProbePath);
-					break;
-				} catch {
-					if (attempt === 99) assert.fail("live probe did not reach the fake upstream process");
-					await new Promise((resolve) => setTimeout(resolve, 10));
-				}
+			}, controller.signal);
+			const pendingCalls = [contentPromise];
+			try {
+				await Promise.race([liveProbeReady, contentPromise.then((result) => assert.fail(`Live probe did not become ready before the content call settled: ${JSON.stringify(result)}`))]);
+				const tabPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "review-space", "--session", "caller-race", "tab", "t2"],
+				}, controller.signal);
+				const otherSessionPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", "caller-other", "open", "https://other.example"],
+				}, controller.signal);
+				pendingCalls.push(tabPromise, otherSessionPromise);
+				await Promise.race([otherSessionPromise, contentPromise.then((result) => assert.fail(`Content call must remain blocked while the other session completes: ${JSON.stringify(result)}`))]);
+				const beforeRelease = await readInvocationLog(logPath);
+				assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-other")), true);
+				assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-race") && entry.args.includes("tab")), false);
+				await writeFile(releaseLiveProbePath, "release", "utf8");
+				const [contentResult, tabResult, otherSessionResult] = await Promise.all([contentPromise, tabPromise, otherSessionPromise]);
+				assert.equal(contentResult.isError, false, JSON.stringify(contentResult));
+				assert.match(contentResult.content[0]?.text ?? "", /SAFE CONTENT/);
+				assert.doesNotMatch(JSON.stringify(contentResult), /SECRET_RACE_FROM_PROTECTED_FILE/);
+				assert.equal(tabResult.isError, false, JSON.stringify(tabResult));
+				assert.equal(otherSessionResult.isError, false, JSON.stringify(otherSessionResult));
+				const invocations = await readInvocationLog(logPath);
+				const callerRaceInvocations = invocations.filter((entry) => entry.args.includes("caller-race"));
+				assert.deepEqual(callerRaceInvocations.map((entry) => entry.args.slice(-2)), [
+					["get", "url"],
+					["html", "body"],
+					["tab", "t2"],
+					["get", "url"],
+					["get", "title"],
+				]);
+				const otherOpenIndex = invocations.findIndex((entry) => entry.args.includes("caller-other") && entry.args.includes("open"));
+				const raceContentIndex = invocations.findIndex((entry) => entry.args.includes("caller-race") && entry.args.includes("html"));
+				assert.equal(otherOpenIndex > 0 && otherOpenIndex < raceContentIndex, true);
+			} finally {
+				controller.abort();
+				await Promise.allSettled([...pendingCalls, liveProbeReady]);
 			}
-			const tabPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--namespace", "review-space", "--session", "caller-race", "tab", "t2"],
-			});
-			const otherSessionPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "caller-other", "open", "https://other.example"],
-			});
-			let beforeRelease = await readInvocationLog(logPath);
-			// Spawn-visibility wait matching the sibling contention test's budget; the queue contract is
-			// asserted below, not by this latency window.
-			for (let attempt = 0; attempt < 100 && !beforeRelease.some((entry) => entry.args.includes("caller-other")); attempt += 1) {
-				await new Promise((resolve) => setTimeout(resolve, 10));
-				beforeRelease = await readInvocationLog(logPath);
-			}
-			assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-other")), true);
-			assert.equal(beforeRelease.some((entry) => entry.args.includes("caller-race") && entry.args.includes("tab")), false);
-			await writeFile(releaseLiveProbePath, "release", "utf8");
-			const [contentResult, tabResult, otherSessionResult] = await Promise.all([contentPromise, tabPromise, otherSessionPromise]);
-			assert.equal(contentResult.isError, false, JSON.stringify(contentResult));
-			assert.match(contentResult.content[0]?.text ?? "", /SAFE CONTENT/);
-			assert.doesNotMatch(JSON.stringify(contentResult), /SECRET_RACE_FROM_PROTECTED_FILE/);
-			assert.equal(tabResult.isError, false, JSON.stringify(tabResult));
-			assert.equal(otherSessionResult.isError, false, JSON.stringify(otherSessionResult));
-			const invocations = await readInvocationLog(logPath);
-			const callerRaceInvocations = invocations.filter((entry) => entry.args.includes("caller-race"));
-			assert.deepEqual(callerRaceInvocations.map((entry) => entry.args.slice(-2)), [
-				["get", "url"],
-				["html", "body"],
-				["tab", "t2"],
-				["get", "url"],
-				["get", "title"],
-			]);
-			const otherOpenIndex = invocations.findIndex((entry) => entry.args.includes("caller-other") && entry.args.includes("open"));
-			const raceContentIndex = invocations.findIndex((entry) => entry.args.includes("caller-race") && entry.args.includes("html"));
-			assert.equal(otherOpenIndex > 0 && otherOpenIndex < raceContentIndex, true);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
