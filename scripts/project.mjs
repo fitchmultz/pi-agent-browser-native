@@ -360,6 +360,7 @@ export function verifySteps(options) {
 					"test/platform-smoke.test.ts",
 					"test/verify-package.test.ts",
 					"test/agent-browser.runtime.test.ts",
+					"test/agent-browser.windows-argv.test.ts",
 				]),
 			];
 		case "platform-smoke":

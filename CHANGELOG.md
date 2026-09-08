@@ -6,6 +6,12 @@
 
 - Add session- and namespace-aware `inspect-overlay-state` recovery for direct, semantic, raw `find` (including `nth` and default-click), and batched/job clicks that upstream rejects because another element covers the target's click point. These failures remain `upstream-error`; the wrapper recommends refreshing refs for inspection without retrying the blocked click or guessing a dismiss control. Thanks to @MDGChamomile for #147.
 
+- Replace Windows PowerShell argument forwarding with `cross-spawn` at the shared process boundary, preserving empty operands, literal doublequotes, the selected `PATH` shim and upstream architecture selection. Remove command reordering and the old empty-argument/namespace workarounds; POSIX keeps native Node `spawn`. Thanks to @MaartenDMT (#109) and @dagve11 (#134) for their reports and proposed fixes.
+
+### Validation
+
+- Retain runnable Windows argv and failure/lifecycle contracts in the local and platform-target gates. Native macOS and Ubuntu validate the POSIX process path; PowerShell Legacy diagnostics reproduced both old corruptions but do not validate the replacement Windows transport. Native Windows/`cmd.exe` was unavailable and was not run under the task-specific waiver; permanent release requirements remain intact.
+
 ## 0.6.7 - 2026-09-07
 
 ### Fixed
