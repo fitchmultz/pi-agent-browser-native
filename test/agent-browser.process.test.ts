@@ -24,19 +24,14 @@ import {
 import { buildProcessStartIdentityCommand, buildProcessStartIdentityCommands, normalizeProcessStartIdentity, processStartIdentitiesMatch, resolveProcessStartIdentityFromCommands } from "../extensions/agent-browser/lib/process-identity.js";
 import {
 	buildAgentBrowserProcessEnv,
-	buildAgentBrowserSpawnCommand,
 	ensureAgentBrowserSocketDir,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
 	getAgentBrowserSocketPathValidationError,
-	getWindowsExplicitDefaultNamespaceEnv,
 	isTrustedAndroidAppDataRoot,
 	isTrustedSocketDirAncestor,
-	isWindowsAgentBrowserCommandMissing,
 	prepareAgentBrowserSpawnArgs,
-	reorderWindowsLeadingGlobalArgs,
 	resolveSpawnedChildExitCode,
-	shouldCommitManagedRestoreAfterWindowsProcess,
 	runAgentBrowserProcess,
 } from "../extensions/agent-browser/lib/process.js";
 import { parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
@@ -97,88 +92,6 @@ test("resolveSpawnedChildExitCode prefers close, then timeout, then exit fallbac
 	);
 });
 
-test("reorderWindowsLeadingGlobalArgs preserves supported global flag values", () => {
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs([
-			"--json",
-			"--session",
-			"managed-session",
-			"--proxy",
-			"http://127.0.0.1:8080",
-			"--headers",
-			'{"authorization":"Bearer token"}',
-			"--max-output",
-			"2000",
-			"open",
-			"https://example.com",
-		]),
-		[
-			"open",
-			"--json",
-			"--session",
-			"managed-session",
-			"--proxy",
-			"http://127.0.0.1:8080",
-			"--headers",
-			'{"authorization":"Bearer token"}',
-			"--max-output",
-			"2000",
-			"https://example.com",
-		],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--json", "--headed", "false", "--download-path", "/tmp/downloads", "open", "https://example.com"]),
-		["open", "--json", "--headed", "false", "--download-path", "/tmp/downloads", "https://example.com"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--restore", "login-state", "open", "https://example.com"]),
-		["open", "--restore=login-state", "https://example.com"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--restore", "open", "https://example.com"]),
-		["open", "--restore", "https://example.com"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--restore=login-state", "open", "https://example.com"]),
-		["open", "--restore=login-state", "https://example.com"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--hide-scrollbars", "false", "open", "https://example.com"]),
-		["open", "--hide-scrollbars", "false", "https://example.com"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--hide-scrollbars", "open", "https://example.com"]),
-		["open", "--hide-scrollbars", "https://example.com"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--json", "--namespace", "", "--session", "managed", "session", "info"]),
-		["session", "info", "--json", "--session", "managed"],
-	);
-	assert.deepEqual(getWindowsExplicitDefaultNamespaceEnv(["--namespace", "", "open", "https://example.com"], "prod", "win32"), { AGENT_BROWSER_NAMESPACE: "" });
-	assert.deepEqual(getWindowsExplicitDefaultNamespaceEnv(["open", "https://example.com"], "prod", "win32"), {});
-	assert.deepEqual(getWindowsExplicitDefaultNamespaceEnv(["--namespace", "", "open", "https://example.com"], "prod", "darwin"), {});
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--json", "--args", "", "--allow-file-access", "false", "--session", "managed", "get", "url"]),
-		["get", "url", "--json", "--allow-file-access", "false", "--session", "managed"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--json", "--session", "managed", "find", "role", "combobox", "select", "chocolate", "--name", "Flavor"]),
-		["find", "role", "--json", "--session", "managed", "combobox", "select", "chocolate", "--name", "Flavor"],
-	);
-	assert.deepEqual(
-		reorderWindowsLeadingGlobalArgs(["--json", "--session", "managed", "webmcp", "invoke", "search", "--params", `{"query":"Mitch's browser"}`]),
-		["webmcp", "invoke", "--json", "--session", "managed", "search", "--params", `{"query":"Mitch's browser"}`],
-	);
-	for (const invalid of [
-		["--json", "--body", "secret", "session", "list"],
-		["--auto-connect", "FALSE", "open", "https://example.com"],
-		["--auto-connect=false", "open", "https://example.com"],
-		["--download-path=/tmp/downloads", "open", "https://example.com"],
-	]) {
-		assert.deepEqual(reorderWindowsLeadingGlobalArgs(invalid), invalid);
-	}
-});
-
 test("prepareAgentBrowserSpawnArgs preserves caller launch controls", () => {
 	assert.deepEqual(prepareAgentBrowserSpawnArgs(["open", "about:blank"]), ["open", "about:blank"]);
 	assert.deepEqual(prepareAgentBrowserSpawnArgs(["--allow-file-access", "true", "open", "file:///tmp/page.html"]), ["--allow-file-access", "true", "open", "file:///tmp/page.html"]);
@@ -226,22 +139,6 @@ process.stdout.write(JSON.stringify({ success: true, data: { allowFileAccessEnv:
 	}
 });
 
-
-test("buildAgentBrowserSpawnCommand uses the npm cmd shim on Windows", () => {
-	assert.deepEqual(
-		buildAgentBrowserSpawnCommand(["--json", "--session", "managed", "open", "https://example.com"], "win32"),
-		{
-			command: "powershell.exe",
-			args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "$agentBrowser = Get-Command agent-browser.cmd -ErrorAction SilentlyContinue; if (-not $agentBrowser) { [Console]::Error.WriteLine('PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd'); exit 127 }; & $agentBrowser.Source 'open' '--json' '--session' 'managed' 'https://example.com'"],
-		},
-	);
-	assert.match(
-		buildAgentBrowserSpawnCommand(["--json", "--session", "managed", "webmcp", "invoke", "search", "--params", `{"query":"Mitch's browser"}`], "win32").args.at(-1) ?? "",
-		/& \$agentBrowser\.Source 'webmcp' 'invoke' '--json' '--session' 'managed' 'search' '--params' '\{"query":"Mitch''s browser"\}'$/,
-	);
-	assert.deepEqual(buildAgentBrowserSpawnCommand(["--version"], "darwin"), { command: "agent-browser", args: ["--version"] });
-});
-
 test("process start identity commands prefer system paths before PATH and keep native PowerShell on Windows", async () => {
 	const posixCommands = buildProcessStartIdentityCommands(123, "linux");
 	assert.deepEqual(posixCommands.map((command) => command.file), ["/bin/ps", "/usr/bin/ps", "ps"]);
@@ -281,16 +178,6 @@ test("process start identity rejects empty, multi-record, and NUL output", () =>
 	assert.equal(normalizeProcessStartIdentity(" \r\n"), undefined);
 	assert.equal(normalizeProcessStartIdentity("first record\nsecond record"), undefined);
 	assert.equal(normalizeProcessStartIdentity("identity\0suffix"), undefined);
-});
-
-test("Windows managed restore commit excludes PowerShell command-not-found wrappers", () => {
-	const missing = "& : The term 'agent-browser.cmd' is not recognized as the name of a cmdlet. CategoryInfo: ObjectNotFound CommandNotFoundException";
-	assert.equal(isWindowsAgentBrowserCommandMissing(missing), true);
-	assert.equal(isWindowsAgentBrowserCommandMissing("PI_AGENT_BROWSER_COMMAND_NOT_FOUND:agent-browser.cmd"), true);
-	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 1, stderr: missing }), false);
-	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 1, stderr: "selector not found" }), true);
-	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 0, stderr: "" }), true);
-	assert.equal(shouldCommitManagedRestoreAfterWindowsProcess({ exitCode: 127, spawnError: new Error("spawn powershell ENOENT"), stderr: "" }), false);
 });
 
 test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is win32", async () => {

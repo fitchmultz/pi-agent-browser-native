@@ -48,8 +48,9 @@ Usage:
 Options:
   --list-files   Print every packed file path after validation.
   --smoke-pi     Pack and extract the package, verify Pi can load exactly one
-                 agent_browser tool from that package in isolation, and execute
-                 a deterministic fake-binary-backed agent_browser --version smoke.
+                 agent_browser tool from that package in isolation after installing
+                 runtime dependencies (no lifecycle scripts), and execute a
+                 deterministic fake-binary-backed agent_browser --version smoke.
   -h, --help     Show this help text.
 
 Checks:
@@ -521,6 +522,12 @@ export async function verifyPackagedPiLoad(options = {}) {
 
 	try {
 		tempAgentDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-agent-"));
+		// The tarball already contains dist; install only its runtime dependencies, as a consumer would.
+		await execFile(npmCommand, ["install", "--omit=dev", "--omit=peer", "--ignore-scripts", "--no-audit", "--no-fund"], {
+			...npmExecOptions,
+			cwd: packageDir,
+			maxBuffer: 5 * 1024 * 1024,
+		});
 		const resourceLoader = new DefaultResourceLoader({
 			agentDir: tempAgentDir,
 			cwd: packageDir,
@@ -542,6 +549,7 @@ export async function verifyPackagedPiLoad(options = {}) {
 
 		const tools = session.getAllTools();
 		const failures = evaluatePiSmokeResult({ packageDir, tools });
+		failures.push(...resourceLoader.getExtensions().errors.map(({ path, error }) => `Packaged extension ${path} failed to load: ${error}`));
 		let invocation;
 
 		if (failures.length === 0) {

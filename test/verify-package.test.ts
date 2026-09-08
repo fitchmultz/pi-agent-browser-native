@@ -236,12 +236,14 @@ test("executePackagedAgentBrowserSmoke reports packaged invocation failures clea
 	assert.match(failures, /boom/);
 });
 
-test("package metadata keeps Pi core packages host-provided peers and git installs build dist", async () => {
+test("package metadata keeps Pi peers host-provided and declares the Windows spawner at runtime", async () => {
 	const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
+		dependencies?: Record<string, string>;
 		peerDependencies?: Record<string, string>;
 		scripts?: Record<string, string>;
 	};
 
+	assert.equal(packageJson.dependencies?.["cross-spawn"], "7.0.6", "the spawner must not rely on Pi's private transitive dependencies");
 	for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
 		assert.equal(packageJson.peerDependencies?.[packageName], "*", `${packageName} should stay host-provided per Pi package docs`);
 	}

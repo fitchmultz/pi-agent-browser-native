@@ -86,7 +86,7 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 		"./scripts/check-command-reference-baseline.mjs --check",
 		"./scripts/build.mjs",
 		"--noEmit",
-		"--test --test-concurrency=1 test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts",
+		"--test --test-concurrency=1 test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts test/agent-browser.windows-argv.test.ts",
 	]);
 
 	const platformSmoke = verifySteps({ mode: "platform-smoke", passthrough: ["run", "--target", "macos", "--suite", "platform-build"], showHelp: false });
