@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
+import { prepareAgentBrowserArgs } from "../extensions/agent-browser/lib/orchestration/browser-run/prepare.js";
 import type { FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import {
@@ -175,17 +176,70 @@ test("image header inspection preserves the inline bound for a large misleading 
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("typed batch artifacts recover requested paths across native global flags", async () => {
+test("direct artifacts recover requested paths across native outer global flags", async () => {
 	const root = await mkdtemp(join(tmpdir(), "ad-"));
 	try {
 		const path = join(root, "file.txt");
 		await writeFile(path, "downloaded bytes");
-		const result = await buildToolPresentation({ commandInfo: { command: "batch" }, cwd: root, envelope: { success: true, data: [
-			{ command: ["--namespace", "tenant", "download", "--quiet", "#download", "./file.txt"], success: true, result: { path } },
-		] } });
-		assert.equal(result.batchSteps?.[0]?.artifacts?.[0]?.requestedPath, "./file.txt");
-		assert.equal(result.batchSteps?.[0]?.artifacts?.[0]?.absolutePath, path);
-		assert.match(result.batchSteps?.[0]?.text ?? "", /Requested path: \.\/file\.txt/);
+		const result = await buildToolPresentation({
+			args: ["--namespace", "tenant", "download", "--quiet", "#download", "./file.txt"],
+			commandInfo: { command: "download" }, cwd: root, envelope: { success: true, data: { path } },
+		});
+		assert.equal(result.artifacts?.[0]?.requestedPath, "./file.txt");
+		assert.equal(result.artifacts?.[0]?.absolutePath, path);
+		assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Requested path: \.\/file\.txt/);
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+for (const [command, path] of [
+	[["pdf", "--quick", "ignored/page.pdf"], "--quick"],
+	[["download", "#download", "--quiet", "ignored/file.txt"], "--quiet"],
+	[["screenshot", "body", "--screenshot-dir", "ignored/shot.png"], "--screenshot-dir"],
+] as const) {
+	test(`batch artifact presentation keeps literal global-looking operands: ${command[0]}`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "ad-"));
+		try {
+			const absolutePath = join(root, path);
+			await writeFile(absolutePath, "saved bytes");
+			const result = await buildToolPresentation({ commandInfo: { command: "batch" }, cwd: root, envelope: { success: true, data: [
+				{ command: [...command], success: true, result: { path: absolutePath } },
+			] } });
+			assert.equal(result.batchSteps?.[0]?.artifacts?.[0]?.requestedPath, path);
+			assert.equal(result.batchSteps?.[0]?.artifacts?.[0]?.absolutePath, absolutePath);
+			assert.equal(result.batchSteps?.[0]?.artifactVerification?.verifiedCount, 1);
+		} finally { await rm(root, { recursive: true, force: true }); }
+	});
+
+	test(`batch artifact preparation keeps native operands and leaves ignored directories absent: ${command[0]}`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "ad-"));
+		try {
+			const stdin = JSON.stringify([command]);
+			const prepared = await prepareAgentBrowserArgs(["batch"], stdin, root);
+			const expected = command[0] === "screenshot" ? ["screenshot", "body", join(root, path), command[3]] : [...command];
+			assert.deepEqual(JSON.parse(prepared.stdin ?? stdin), [expected]);
+			await assert.rejects(stat(join(root, "ignored")), { code: "ENOENT" });
+			const raw = ["batch", command.join(" ")];
+			assert.deepEqual((await prepareAgentBrowserArgs(raw, stdin, root)).args, raw);
+			await assert.rejects(stat(join(root, "ignored")), { code: "ENOENT" });
+		} finally { await rm(root, { recursive: true, force: true }); }
+	});
+
+	test(`batch artifact preflight reserves the literal native destination: ${command[0]}`, { concurrency: false }, async () => {
+		await withFixture(async (_root, harness) => {
+			for (const params of [{ args: ["batch"], stdin: JSON.stringify([command]) }, { args: ["batch", command.join(" ")] }]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { ...params, outputPath: path });
+				assert.equal(result.details?.failureCategory, "validation-error", JSON.stringify(result));
+				assert.ok(result.content[0]?.text?.includes(`same destination as artifact path ${path}`));
+			}
+		});
+	});
+}
+
+test("batch screenshot normalization preserves a literal double-dash selector", async () => {
+	const root = await mkdtemp(join(tmpdir(), "ad-"));
+	try {
+		const prepared = await prepareAgentBrowserArgs(["batch"], JSON.stringify([["screenshot", "--", "nested/capture.png"]]), root);
+		assert.deepEqual(JSON.parse(prepared.stdin ?? "[]"), [["screenshot", "--", join(root, "nested/capture.png")]]);
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 

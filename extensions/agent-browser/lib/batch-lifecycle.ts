@@ -8,13 +8,6 @@ export interface SuccessfulBatchCloseLifecycle {
 	statePath?: string;
 }
 
-function getRowBrowserLaunched(row: Record<string, unknown>): boolean | undefined {
-	const result = isRecord(row.result) ? row.result : isRecord(row.data) ? row.data : undefined;
-	const lifecycle = isRecord(row.lifecycle) ? row.lifecycle : isRecord(result?.lifecycle) ? result.lifecycle : undefined;
-	const effectiveLaunch = isRecord(lifecycle?.effectiveLaunch) ? lifecycle.effectiveLaunch : undefined;
-	return typeof effectiveLaunch?.browserLaunched === "boolean" ? effectiveLaunch.browserLaunched : undefined;
-}
-
 export function batchHasSuccessfulCloseAll(data: unknown, fallbackCommands: string[][] = []): boolean {
 	if (!Array.isArray(data)) return false;
 	return data.some((row, index) => {
@@ -42,7 +35,10 @@ export function getSuccessfulBatchCloseLifecycle(
 		const rowCommand = Array.isArray(row.command) && row.command.every((token) => typeof token === "string")
 			? row.command
 			: fallbackCommands[index];
-		const browserLaunched = getRowBrowserLaunched(row);
+		const result = isRecord(row.result) ? row.result : isRecord(row.data) ? row.data : undefined;
+		const lifecycle = isRecord(row.lifecycle) ? row.lifecycle : isRecord(result?.lifecycle) ? result.lifecycle : undefined;
+		const effectiveLaunch = isRecord(lifecycle?.effectiveLaunch) ? lifecycle.effectiveLaunch : undefined;
+		const browserLaunched = typeof effectiveLaunch?.browserLaunched === "boolean" ? effectiveLaunch.browserLaunched : undefined;
 		if (!rowCommand) {
 			if (sawClose && browserLaunched !== false) {
 				endsClosed = false;
@@ -57,7 +53,6 @@ export function getSuccessfulBatchCloseLifecycle(
 			endsClosed = true;
 			browserActiveAfterClose = false;
 			recordingClosedAfterBatch = true;
-			const result = isRecord(row.result) ? row.result : isRecord(row.data) ? row.data : undefined;
 			statePath = typeof result?.statePath === "string" ? result.statePath : undefined;
 		} else if (sawClose && command === "record") {
 			if (browserLaunched !== false) {

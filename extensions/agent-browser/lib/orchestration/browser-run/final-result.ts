@@ -296,7 +296,7 @@ export async function prepareFinalResultRecoveryState(options: {
 }
 
 function buildTimeoutPartialProgressNextActions(options: FinalResultInput): AgentBrowserNextAction[] {
-	const retryArgs = options.timeoutPartialProgress?.retryStep?.retry?.args;
+	const retry = options.timeoutPartialProgress?.retryStep?.retry;
 	const stepIndex = options.timeoutPartialProgress?.retryStep?.index;
 	const freshSessionAbandoned = options.sessionMode === "fresh" && options.timeoutPartialProgress?.liveUrlRecovered !== true;
 	if (options.currentSessionTabTargetUnknown && !freshSessionAbandoned && options.executionPlan.sessionName) {
@@ -311,12 +311,12 @@ function buildTimeoutPartialProgressNextActions(options: FinalResultInput): Agen
 			tool: "agent_browser" as const,
 		}];
 	}
-	if (retryArgs) {
+	if (retry) {
 		return [{
 			id: "retry-timeout-step",
 			params: freshSessionAbandoned
-				? { args: retryArgs, sessionMode: "fresh" }
-				: { args: withOptionalSessionArgs(options.executionPlan.sessionName, retryArgs) },
+				? { ...retry, sessionMode: "fresh" }
+				: { ...retry, args: withOptionalSessionArgs(options.executionPlan.sessionName, retry.args) },
 			reason: freshSessionAbandoned
 				? `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} in a fresh browser session because the timed-out fresh session was not proven live.`
 				: `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} against the current browser session.`,

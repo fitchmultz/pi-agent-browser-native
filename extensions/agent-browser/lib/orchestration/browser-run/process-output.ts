@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { parseArgvDescriptor } from "../../argv-descriptor.js";
 import { needsManagedSession } from "../../command-policy.js";
-import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
+import { deleteIdentityKeysInNamespace, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
 import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWindowOrDiffPageTransitionCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
@@ -189,12 +189,6 @@ function withoutNamespaceEntries<T>(entries: ReadonlyMap<string, T>, namespace?:
 	return new Map([...entries].filter(([key]) => !isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)));
 }
 
-function deleteNamespaceEntries(entries: Set<string> | Map<string, unknown>, namespace?: string): void {
-	for (const key of entries.keys()) {
-		if (isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)) entries.delete(key);
-	}
-}
-
 function setNetworkRouteState(options: { routes?: NetworkRouteRecord[]; routesBySession: Map<string, NetworkRouteRecord[]>; sessionName: string | undefined }): Map<string, NetworkRouteRecord[]> {
 	if (!options.sessionName) return options.routesBySession;
 	const previousRoutes = options.routesBySession.get(options.sessionName);
@@ -298,8 +292,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		if (closeAllApplied) {
 			networkRoutesBySession = withoutNamespaceEntries(networkRoutesBySession, prepared.executionPlan.namespace);
-			deleteNamespaceEntries(state.attachedSessionKeys, prepared.executionPlan.namespace);
-			deleteNamespaceEntries(traceOwners, prepared.executionPlan.namespace);
+			deleteIdentityKeysInNamespace(state.attachedSessionKeys, prepared.executionPlan.namespace);
+			deleteIdentityKeysInNamespace(traceOwners, prepared.executionPlan.namespace);
 			sessionPageState.clearNamespace(prepared.executionPlan.namespace);
 			const retainedSessionKey = nestedBatchRemainsActive ? sessionStateKey : undefined;
 			for (const [key, owner] of state.ownedManagedSessions) {
@@ -446,7 +440,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let fillVerificationDiagnostic: Awaited<ReturnType<typeof collectFillVerificationDiagnostic>>;
 		let selectorTextVisibilityDiagnostics: Awaited<ReturnType<typeof collectSelectorTextVisibilityDiagnostics>> = [];
 		let electronBroadGetTextScopeDiagnostics: ReturnType<typeof collectElectronBroadGetTextScopeDiagnostics> = [];
-		const timeoutPartialProgress = processResult.timedOut ? await collectTimeoutPartialProgress({ command: prepared.executionPlan.commandInfo.command, compiledJob: prepared.compiledJob, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, stdin: prepared.runtimeToolStdin }) : undefined;
+		const timeoutPartialProgress = processResult.timedOut ? await collectTimeoutPartialProgress({ commandTokens: prepared.commandTokens, compiledJob: prepared.compiledJob, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, stdin: prepared.runtimeToolStdin }) : undefined;
 		if (!currentSessionTabTarget && timeoutPartialProgress?.currentPage?.source === "live") {
 			currentSessionTabTarget = normalizeSessionTabTarget(timeoutPartialProgress.currentPage);
 		}

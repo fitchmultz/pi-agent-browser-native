@@ -29,6 +29,7 @@ import {
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
 	parseArgvDescriptor,
+	parseWaitCommandTokens,
 	redactInvocationArgs,
 	redactSensitiveText,
 	redactSensitiveValue,
@@ -1468,6 +1469,16 @@ test("buildExecutionPlan rejects value-taking flags followed by another flag", (
 	assert.deepEqual(plan.commandInfo, {});
 	assert.equal(plan.usedImplicitSession, false);
 });
+
+for (const flag of ["--download", "-d"]) {
+	test(`wait ${flag} keeps the next retained operand and its original index after timeout removal`, () => {
+		assert.deepEqual(parseWaitCommandTokens(["wait", flag, "--timeout", "30000", "-capture.csv", "ignored.csv"]), {
+			downloadPath: "-capture.csv",
+			downloadPathIndex: 4,
+			subcommand: flag,
+		});
+	});
+}
 
 test("buildExecutionPlan allows optional wait download path to be omitted", () => {
 	const plan = buildExecutionPlan(["wait", "--download", "--timeout", "25000"], {

@@ -4,8 +4,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import { foldAgentBrowserFilesystemIdentity } from "../../argv-grammar.js";
 import { parseWaitCommandTokens } from "../../argv-descriptor.js";
 
-const SCREENSHOT_BOOLEAN_FLAGS = new Set(["--annotate", "--full", "-f"]);
-const SCREENSHOT_VALUE_FLAGS = new Set(["--screenshot-dir", "--screenshot-format", "--screenshot-quality"]);
 const SCREENSHOT_IMAGE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".webp"];
 
 function isSingleScreenshotPathToken(token: string): boolean {
@@ -19,11 +17,7 @@ function getScreenshotPositionalIndices(commandTokens: string[]): number[] {
 	const positionalIndices: number[] = [];
 	for (let index = 1; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
-		if (SCREENSHOT_VALUE_FLAGS.has(token)) {
-			index += 1;
-			continue;
-		}
-		if (SCREENSHOT_BOOLEAN_FLAGS.has(token)) continue;
+		if (token === "--full" || token === "-f") continue;
 		positionalIndices.push(index);
 	}
 
@@ -56,10 +50,6 @@ function getDiffScreenshotOutputPath(commandTokens: string[]): string | undefine
 	return outputPath;
 }
 
-function foldArtifactPath(path: string, platform: NodeJS.Platform): string {
-	return foldAgentBrowserFilesystemIdentity(path, platform);
-}
-
 function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platform, seenSymlinks: Set<string>): string {
 	let cursor = absolutePath;
 	const suffix: string[] = [];
@@ -72,7 +62,7 @@ function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platfor
 			} catch {
 				// The destination does not exist yet; canonical ancestry still catches aliases.
 			}
-			return foldArtifactPath(canonicalPath, platform);
+			return foldAgentBrowserFilesystemIdentity(canonicalPath, platform);
 		} catch {
 			let symlinkTarget: string | undefined;
 			try {
@@ -85,7 +75,7 @@ function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platfor
 				return canonicalizeArtifactPath(join(symlinkTarget, ...suffix), platform, seenSymlinks);
 			}
 			const parent = dirname(cursor);
-			if (parent === cursor) return foldArtifactPath(absolutePath, platform);
+			if (parent === cursor) return foldAgentBrowserFilesystemIdentity(absolutePath, platform);
 			suffix.unshift(basename(cursor));
 			cursor = parent;
 		}

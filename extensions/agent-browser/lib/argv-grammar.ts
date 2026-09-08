@@ -186,6 +186,12 @@ export function isAgentBrowserSessionIdentityKeyInNamespace(identityKey: string,
 	return prefix ? identityKey.startsWith(prefix) : !identityKey.includes("\0");
 }
 
+export function deleteIdentityKeysInNamespace(entries: Set<string> | Map<string, unknown>, namespace?: string): void {
+	for (const key of entries.keys()) {
+		if (isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)) entries.delete(key);
+	}
+}
+
 /** Mirror upstream global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
 export function scanUpstreamGlobalFlagOccurrences(args: string[], targetFlag: string): UpstreamGlobalFlagOccurrence[] {
 	const occurrences: UpstreamGlobalFlagOccurrence[] = [];

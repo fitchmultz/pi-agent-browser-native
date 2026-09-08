@@ -34,7 +34,7 @@ import {
 	isPlainTextInspectionArgs,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
-import { extractExplicitNamespace, extractExplicitSessionName, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
+import { deleteIdentityKeysInNamespace, extractExplicitNamespace, extractExplicitSessionName, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
 import { parseArgvDescriptor } from "./lib/argv-descriptor.js";
 import { needsManagedSession } from "./lib/command-policy.js";
 import { ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
@@ -161,7 +161,7 @@ function getArtifactPreflightValidationError(options: {
 
 	const activeRecordingDestinations = new Set<string>();
 	const cleanupOnly = steps.length > 0 && steps.every((step) => {
-		const [command, subcommand] = extractUpstreamCommandTokens(step);
+		const [command, subcommand] = step;
 		return isCloseCommand(command) || (command === "record" && subcommand === "stop");
 	});
 	for (const reservation of options.activeRecordingReservations ?? []) {
@@ -185,10 +185,9 @@ function getArtifactPreflightValidationError(options: {
 	}
 	const artifactDestinations = new Map<string, number>();
 	let sawBatchClose = false;
-	for (const [index, step] of steps.entries()) {
-		const commandStep = extractUpstreamCommandTokens(step);
+	for (const [index, commandStep] of steps.entries()) {
 		if (batch) {
-			const stepValidationError = validateToolArgs(step, { batchStep: true });
+			const stepValidationError = validateToolArgs(commandStep, { batchStep: true });
 			if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
 			if (sawBatchClose && commandStep[0] === "record" && (commandStep[1] === "start" || commandStep[1] === "restart")) {
 				return `Unsupported batch step ${index + 1}: record ${commandStep[1]} cannot follow close, quit, or exit in one upstream batch because upstream can report success without starting a recording. Split the close and recording into separate agent_browser calls.`;
@@ -216,7 +215,7 @@ function getArtifactPreflightValidationError(options: {
 			}
 			artifactDestinations.set(canonicalDestination, index);
 		}
-		if (batch && commandStep[0] === "screenshot" && step.includes("--annotate")) {
+		if (batch && commandStep[0] === "screenshot" && commandStep.includes("--annotate")) {
 			return [
 				`Unsupported batch screenshot annotation in step ${index + 1}: put --annotate in top-level args, not inside the batch step.`,
 				`Use: { "args": ["--annotate", "batch"], "stdin": "[[\\"screenshot\\",\\"/path/to/image.png\\"]]" }`,
@@ -228,17 +227,14 @@ function getArtifactPreflightValidationError(options: {
 
 function commandClosesAllSessions(args: string[], stdin: string | undefined): boolean {
 	const parsed = getArtifactCommandSteps(args, stdin);
-	return !parsed.error && parsed.steps.some((step) => isCloseAllCommand(extractUpstreamCommandTokens(step)));
+	return !parsed.error && parsed.steps.some(isCloseAllCommand);
 }
 
 function commandTouchesArtifactLifecycle(args: string[], stdin: string | undefined, outputPath?: string): boolean {
 	if (outputPath) return true;
 	const parsed = getArtifactCommandSteps(args, stdin);
 	if (parsed.error) return true;
-	return parsed.steps.some((step) => {
-		const commandStep = extractUpstreamCommandTokens(step);
-		return getExplicitArtifactDestination(commandStep) !== undefined || commandStep[0] === "record" || commandStep[0] === "screenshot" || isCloseCommand(commandStep[0]);
-	});
+	return parsed.steps.some((step) => getExplicitArtifactDestination(step) !== undefined || step[0] === "record" || step[0] === "screenshot" || isCloseCommand(step[0]));
 }
 
 function isResultFileArtifact(artifact: unknown): artifact is FileArtifactMetadata {
@@ -387,12 +383,6 @@ function detailsReportCloseAllApplied(details: Record<string, unknown>, succeede
 	return details.closeAllApplied === true
 		|| (succeeded && isCloseAllCommand(extractUpstreamCommandTokens(args)))
 		|| batchHasSuccessfulCloseAll(details.batchSteps);
-}
-
-function deleteIdentityKeysInNamespace(entries: Set<string> | Map<string, unknown>, namespace?: string): void {
-	for (const key of entries.keys()) {
-		if (isAgentBrowserSessionIdentityKeyInNamespace(key, namespace)) entries.delete(key);
-	}
 }
 
 function isAttachedBrowserInvocation(args: string[], env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): boolean {
@@ -781,10 +771,6 @@ async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManage
 			onClosed?.(owner);
 		}
 	}
-}
-
-async function closeOwnedManagedSessions(sessions: Map<string, OwnedManagedSession>, restoreState: ManagedSessionRestoreState, timeoutMs: number, attachedSessionKeys: ReadonlySet<string>, onClosed?: (owner: OwnedManagedSession) => void): Promise<void> {
-	await closeOwnedManagedSessionsExcept(sessions, restoreState, undefined, timeoutMs, attachedSessionKeys, undefined, onClosed);
 }
 
 function getOffBranchOwnedElectronLaunchRecords(ownedRecords: Map<string, ElectronLaunchRecord>, branchRecords: Map<string, ElectronLaunchRecord>): Map<string, ElectronLaunchRecord> {
@@ -1420,7 +1406,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
 			for (const identity of getCleanupResultsClosedManagedSessionIdentities(electronCleanupResults)) retireRecordingSession(identity.sessionName, identity.namespace);
 			if (quitting) {
-				await closeOwnedManagedSessions(ownedManagedSessions, managedSessionRestoreState, implicitSessionCloseTimeoutMs, attachedSessionKeys, (owner) => retireRecordingSession(owner.sessionName, owner.namespace));
+				await closeOwnedManagedSessionsExcept(ownedManagedSessions, managedSessionRestoreState, undefined, implicitSessionCloseTimeoutMs, attachedSessionKeys, undefined, (owner) => retireRecordingSession(owner.sessionName, owner.namespace));
 			} else {
 				await closeOwnedManagedSessionsExcept(
 					ownedManagedSessions,

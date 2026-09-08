@@ -118,25 +118,22 @@ async function ensureArtifactParentDirectory(commandTokens: string[], cwd: strin
 	await mkdir(dirname(resolve(cwd, requestedPath)), { recursive: true });
 }
 
-async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: string): Promise<{
+async function normalizeScreenshotPathInTokens(commandTokens: string[], cwd: string, batchStep = false): Promise<{
 	request?: ScreenshotPathRequest;
 	tokens: string[];
 }> {
-	const scopedCommandTokens = extractCommandTokens(commandTokens);
-	const projection = projectUpstreamGlobalFlags(scopedCommandTokens);
-	const projectedPathTokenIndex = getScreenshotPathTokenIndex(projection.tokens);
-	const scopedPathTokenIndex = projectedPathTokenIndex === undefined ? undefined : projection.indices[projectedPathTokenIndex];
-	if (scopedPathTokenIndex === undefined) {
-		return { tokens: commandTokens };
-	}
-	const screenshotPathTokenIndex = commandTokens.length - scopedCommandTokens.length + scopedPathTokenIndex;
+	// Native batch rows skip outer CLI global-flag cleanup.
+	const projection = batchStep ? undefined : projectUpstreamGlobalFlags(commandTokens);
+	const pathIndex = getScreenshotPathTokenIndex(projection?.tokens ?? commandTokens);
+	const screenshotPathTokenIndex = pathIndex === undefined ? undefined : projection ? projection.indices[pathIndex] : pathIndex;
+	if (screenshotPathTokenIndex === undefined) return { tokens: commandTokens };
 	const requestedPath = commandTokens[screenshotPathTokenIndex];
 	const absolutePath = resolve(cwd, requestedPath);
 	await mkdir(dirname(absolutePath), { recursive: true });
 
 	const tokens = [...commandTokens];
 	tokens[screenshotPathTokenIndex] = absolutePath;
-	const terminatorIndex = tokens.indexOf("--");
+	const terminatorIndex = batchStep ? -1 : tokens.indexOf("--");
 	if (terminatorIndex >= 0) {
 		tokens.splice(terminatorIndex, 1);
 	}
@@ -161,13 +158,12 @@ async function prepareBatchScreenshotPaths(args: string[], stdin: string | undef
 		// prepare parent directories for the rows that will run and skip stdin
 		// preparation (no directories for never-executed rows).
 		for (const step of argumentSteps) {
-			const stepTokens = extractUpstreamCommandTokens(step);
-			await ensureArtifactParentDirectory(stepTokens, cwd);
-			if (stepTokens[0] === "screenshot") {
+			await ensureArtifactParentDirectory(step, cwd);
+			if (step[0] === "screenshot") {
 				// Reuse the screenshot path resolution for its parent-directory side
 				// effect only: raw strings are never rewritten, so the normalized
 				// tokens and path request are deliberately discarded.
-				await normalizeScreenshotPathInTokens(step, cwd);
+				await normalizeScreenshotPathInTokens(step, cwd, true);
 			}
 		}
 		return undefined;
@@ -186,12 +182,11 @@ async function prepareBatchScreenshotPaths(args: string[], stdin: string | undef
 		if (!Array.isArray(step) || !step.every((item) => typeof item === "string")) {
 			return step;
 		}
-		const upstreamStep = extractUpstreamCommandTokens(step);
-		await ensureArtifactParentDirectory(upstreamStep, cwd);
-		if (upstreamStep[0] !== "screenshot") {
+		await ensureArtifactParentDirectory(step, cwd);
+		if (step[0] !== "screenshot") {
 			return step;
 		}
-		const normalized = await normalizeScreenshotPathInTokens(step, cwd);
+		const normalized = await normalizeScreenshotPathInTokens(step, cwd, true);
 		batchScreenshotPathRequests[index] = normalized.request;
 		if (normalized.request) {
 			changed = true;

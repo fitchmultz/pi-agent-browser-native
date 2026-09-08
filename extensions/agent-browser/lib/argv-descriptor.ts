@@ -68,14 +68,13 @@ export function parseWaitCommandTokens(commandTokens: string[]): WaitCommandShap
 		const match = considered.find((entry) => (flags as readonly string[]).includes(entry.token));
 		if (match) return { subcommand: match.token };
 	}
-	const download = considered.find((entry) => entry.token === "--download" || entry.token === "-d");
-	if (download) {
-		const downloadPathIndex = download.index + 1;
-		const candidate = commandTokens[downloadPathIndex];
+	const downloadIndex = considered.findIndex((entry) => entry.token === "--download" || entry.token === "-d");
+	if (downloadIndex >= 0) {
+		const candidate = considered[downloadIndex + 1];
 		return {
-			downloadPath: candidate && !candidate.startsWith("--") ? candidate : undefined,
-			downloadPathIndex: candidate && !candidate.startsWith("--") ? downloadPathIndex : undefined,
-			subcommand: download.token,
+			downloadPath: candidate && !candidate.token.startsWith("--") ? candidate.token : undefined,
+			downloadPathIndex: candidate && !candidate.token.startsWith("--") ? candidate.index : undefined,
+			subcommand: considered[downloadIndex].token,
 		};
 	}
 	return { subcommand: considered[0]?.token };

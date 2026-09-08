@@ -233,7 +233,7 @@ export interface TimeoutProgressStep {
 	generatedFrom?: string;
 	index: number;
 	reason?: string;
-	retry?: { args: string[] };
+	retry?: { args: string[]; stdin: string };
 	status: TimeoutProgressStepStatus;
 }
 

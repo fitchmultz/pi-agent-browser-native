@@ -4,7 +4,7 @@ import { extname, resolve } from "node:path";
 import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { getExplicitArtifactDestination } from "../../orchestration/browser-run/artifact-paths.js";
 import { isRecord, parsePositiveInteger } from "../../parsing.js";
-import { extractUpstreamCommandTokens, type CommandInfo } from "../../runtime.js";
+import type { CommandInfo } from "../../runtime.js";
 import {
 	formatSessionArtifactRetentionSummary,
 	getSessionArtifactManifestEntryKey,
@@ -220,7 +220,7 @@ async function buildFileArtifactMetadata(options: {
 		namespace: options.namespace,
 		path: displayPath,
 		recordingState: pendingRecording ? "openRecording" : undefined,
-		requestedPath: options.artifactRequest?.path ?? getExplicitArtifactDestination(extractUpstreamCommandTokens(options.commandInfo.commandTokens ?? [])),
+		requestedPath: options.artifactRequest?.path ?? getExplicitArtifactDestination(options.commandInfo.commandTokens ?? []),
 		session: options.sessionName,
 		sizeBytes,
 		status: pendingRecording ? "pending" : exists === false ? "missing" : stale ? "stale" : options.artifactRequest?.status ?? "saved",
@@ -250,43 +250,32 @@ async function buildPreviousRestartRecordingArtifact(options: {
 	));
 	if (!previousRecording) return undefined;
 	const absolutePath = previousRecording.absolutePath ?? resolve(options.cwd, previousRecording.path);
+	const base: FileArtifactMetadata = {
+		absolutePath,
+		artifactType: "video",
+		command: "record",
+		cwd: previousRecording.cwd ?? options.cwd,
+		extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
+		kind: "video",
+		namespace: previousRecording.namespace ?? options.namespace,
+		path: previousRecording.path,
+		requestedPath: previousRecording.requestedPath,
+		session: previousRecording.session ?? options.sessionName,
+		subcommand: "restart-previous",
+	};
 	try {
 		const fileStats = await stat(absolutePath);
 		const stale = artifactMtimeIsOutsideCommandWindow(fileStats.mtimeMs, options.artifactMinUpdatedAtMs, options.artifactMaxUpdatedAtMs);
 		return {
-			absolutePath,
-			artifactType: "video",
-			command: "record",
-			cwd: previousRecording.cwd ?? options.cwd,
+			...base,
 			exists: true,
-			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
-			kind: "video",
 			mediaType: fileStats.isFile() ? await getFileImageMimeType(absolutePath) : undefined,
-			namespace: previousRecording.namespace ?? options.namespace,
-			path: previousRecording.path,
-			requestedPath: previousRecording.requestedPath,
-			session: previousRecording.session ?? options.sessionName,
 			sizeBytes: fileStats.size,
 			status: stale ? "stale" : "saved",
-			subcommand: "restart-previous",
 			updatedAtMs: fileStats.mtimeMs,
 		};
 	} catch {
-		return {
-			absolutePath,
-			artifactType: "video",
-			command: "record",
-			cwd: previousRecording.cwd ?? options.cwd,
-			exists: false,
-			extension: previousRecording.extension ?? (extname(absolutePath).toLowerCase() || undefined),
-			kind: "video",
-			namespace: previousRecording.namespace ?? options.namespace,
-			path: previousRecording.path,
-			requestedPath: previousRecording.requestedPath,
-			session: previousRecording.session ?? options.sessionName,
-			status: "missing",
-			subcommand: "restart-previous",
-		};
+		return { ...base, exists: false, status: "missing" };
 	}
 }
 
