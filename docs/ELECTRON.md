@@ -200,7 +200,7 @@ Closes the tracked managed session, stops only the wrapper-tracked process, veri
 
 For manual launches, close commands (`close`, `quit`, or `exit`) only close the browser/CDP session. Close the app yourself and clean its profile/temp files with normal host tools.
 
-On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On `/reload`, the current branch-visible active Electron launch and its isolated temp `userDataDir` are preserved for continuity while off-branch owned Electron launches are cleaned before process-local ownership is cleared. If cleanup is partial and skips or fails `user-data-dir` removal because the process or debug port is still live, the generic temp sweep preserves that profile path across reload, quit, repeated temp cleanup, process-exit cleanup, and stale temp-root pruning after restart rather than deleting it out from under the remaining host resource. If `electron.cleanup` closes the attached managed session but host process/profile cleanup is partial, later default browser calls still rotate away from that closed wrapper-managed session. Stale restored records (PID gone, port dead) are **reported** instead of guessed at or killed.
+On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On `/reload`, the current branch-visible active Electron launch and its isolated temp `userDataDir` are preserved for continuity while off-branch owned Electron launches are cleaned before process-local ownership is cleared. First reuse after reload/resume checks that the PID and profile are present, the saved browser WebSocket endpoint still matches the live app, and upstream `get cdp-url` points to that browser or one of its current targets. Ordinary browser calls, status reads, and probes share this check under the existing session lock; no reconnect or ref reset is needed. The `get cdp-url` read honors the caller's `timeoutMs` and cancellation, while localhost CDP requests keep their short fixed fetch budgets. Missing or mismatched evidence does not grant reuse, and generic restore-disabled sessions keep their existing rules. If cleanup is partial and skips or fails `user-data-dir` removal because the process or debug port is still live, the generic temp sweep preserves that profile path across reload, quit, repeated temp cleanup, process-exit cleanup, and stale temp-root pruning after restart rather than deleting it out from under the remaining host resource. If `electron.cleanup` closes the attached managed session but host process/profile cleanup is partial, later default browser calls still rotate away from that closed wrapper-managed session. Stale restored records (PID gone, port dead) are **reported** instead of guessed at or killed.
 
 ### `timeoutMs` by action (quick reference)
 
@@ -209,9 +209,9 @@ On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On
 | Action | What `timeoutMs` covers when set | Typical default when omitted |
 | --- | --- | --- |
 | `launch` | Host-side wait for `DevToolsActivePort` and CDP readiness | **15 s**, hard-capped at **120 s** (`normalizeTimeoutMs` in `extensions/agent-browser/lib/electron/launch.ts`) |
-| `status` | Each optional managed-session `get url` / `get title` subprocess used for mismatch diagnostics | Normal wrapper subprocess budget (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`); localhost CDP probes use **1000 ms** each (`ELECTRON_CDP_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cdp.ts`) |
+| `status` | Each optional managed-session `get url` / `get title` subprocess, including `get cdp-url` when verifying a restored connection | Normal wrapper subprocess budget (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`); localhost CDP probes use **1000 ms** each (`ELECTRON_CDP_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cdp.ts`) |
 | `cleanup` | Applied separately to managed-session `close` and the initial tracked-process exit wait; not a deadline for debug-port checks or profile removal | `PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS` when set, else **5000 ms** (`getImplicitSessionCloseTimeoutMs` in `extensions/agent-browser/lib/runtime.ts`, passed through `cleanupTrackedElectronHostLaunches` in `extensions/agent-browser/lib/orchestration/electron-host/index.ts`) |
-| `probe` | **Each** upstream read in the probe chain (`get url`, then `get title`, focused `eval --stdin`, `tab list`, `snapshot -i`) | Same wrapper subprocess default (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`, from `getAgentBrowserProcessTimeoutMs` in `extensions/agent-browser/lib/process.ts`) |
+| `probe` | **Each** upstream read: optional `get cdp-url` verification, then `get url`, `get title`, focused `eval --stdin`, `tab list`, and `snapshot -i` | Same wrapper subprocess default (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`, from `getAgentBrowserProcessTimeoutMs` in `extensions/agent-browser/lib/process.ts`) |
 
 ## `qa.attached` — current-session smoke check
 
@@ -311,6 +311,10 @@ Policy mismatches fail with `failureCategory: "policy-blocked"` and `details.ele
 | `cleanup-failed` | Cleanup only partially succeeded | Inspect `details.electron.cleanup.results[].steps` for remaining process/port/profile state; `retry-electron-cleanup` references the same `launchId` |
 | `stale-ref` | `@e…` ref reused after a navigation/rerender | Take a fresh `snapshot -i` (or follow `refresh-electron-refs-after-rerender` when the wrapper appends it) |
 
+Failed startup diagnostics include `outputCaptured`, `stdoutTail` / `stderrTail`, and `stdoutTruncated` / `stderrTruncated`. Each tail reads at most the last **4096 source bytes** before UTF-8 decoding and normal credential redaction, and appears in both visible failure text and structured details. Empty output is reported explicitly; `stdoutError` / `stderrError` report capture-read or close errors without replacing the original startup reason, exit status, or cleanup warning.
+
+The app writes to mode-0600 `stdout.log` and `stderr.log` inside its isolated profile. These are regular files, not pipes to Pi, so retained apps can keep writing after reload or host exit. Logs follow profile preservation and removal; **the read limit is not a lifetime disk limit**. If failed-startup process cleanup cannot finish, the profile and logs are protected from general temp cleanup. Any failure to persist that protection appears alongside the original `failure.cleanupError`; in-memory protection remains. Use the reported PID and profile path to resolve that failed cleanup before removing files.
+
 Single-instance Electron behavior is a common cause of `timeout` and `upstream-error`. Many Electron apps enforce a single running instance and silently drop a second invocation's `--remote-debugging-port` flag. If the app is already running without a debug port, quit it first or use the manual host-launch path against the existing instance instead.
 
 ## Troubleshooting
@@ -319,7 +323,7 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 - The app is enforcing single-instance; quit the running copy first, then retry.
 - The app may have moved its Electron framework directory; pass `executablePath` explicitly.
 - `timeoutMs` is too short for a heavy app; raise it (`launch.timeoutMs` is bounded but generous).
-- Read `details.electron.failure.diagnostics`: presence/absence of `DevToolsActivePort`, port number, PID liveness, and elapsed time usually identify the issue.
+- Read the redacted stdout/stderr tails in the failure text or `details.electron.failure.diagnostics` first; dependency and startup errors often explain the failure. `DevToolsActivePort`, port number, PID liveness, and timing provide the remaining context.
 
 ### `electron.list` returns nothing
 - On Linux, the binary may be a custom rebrand without `chrome_*.pak` siblings, an AppImage without a `.desktop` entry, or a statically linked fork. Pass `executablePath` directly.

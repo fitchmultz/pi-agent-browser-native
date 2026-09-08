@@ -1,18 +1,23 @@
 import { rm } from "node:fs/promises";
 
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
+import { inspectElectronLaunchStatus } from "../../electron/cleanup.js";
+import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import { acquireManagedSessionPolicyLock, type ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import {
 	type ManagedSessionRestoreState,
 	type OwnedManagedSessionContext,
 	pruneOwnedManagedSessionRestoreSnapshots,
 	resolveExplicitAutosaveInterval,
+	withOwnedManagedSessionContext,
 } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { isRecord } from "../../parsing.js";
 import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
-import { runAgentBrowserProcess } from "../../process.js";
+import { runAgentBrowserProcess, withAttachedBrowserSessionContext } from "../../process.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { redactInvocationArgs } from "../../runtime.js";
+import { runSessionCommandData } from "./session-state.js";
 
 const MANAGED_SESSION_DAEMON_INSPECTION_TIMEOUT_MS = 35_000;
 const RUNNING_HEADED_AUTOSAVE_POLICY_CHANGE_ERROR = "AGENT_BROWSER_AUTOSAVE_INTERVAL_MS cannot change a running wrapper-owned headed session's launch-time periodic autosave interval. Close that session first, then retry with sessionMode: \"fresh\" so the new daemon starts with the requested interval.";
@@ -64,8 +69,26 @@ export async function inspectManagedSessionDaemon(options: {
 	}
 }
 
+async function verifyRestoredElectronAttachment(context: OwnedManagedSessionContext, record: ElectronLaunchRecord | undefined, signal?: AbortSignal, timeoutMs?: number): Promise<boolean> {
+	const cwd = context.cwd;
+	if (!cwd || !record?.webSocketDebuggerUrl || !record.sessionName || record.cleanupState === "cleaned"
+		|| getAgentBrowserSessionIdentityKey(record.sessionName, record.namespace) !== getAgentBrowserSessionIdentityKey(context.sessionName, context.namespace)) return false;
+	const status = await inspectElectronLaunchStatus(record, signal);
+	if (signal?.aborted || status.pidAlive !== true || status.userDataDirState !== "present"
+		|| status.version?.webSocketDebuggerUrl !== record.webSocketDebuggerUrl) return false;
+	// This metadata probe must not grant daemon provenance just by spawning.
+	const connection = await withAttachedBrowserSessionContext(true, () => withOwnedManagedSessionContext(undefined, () => runSessionCommandData({
+		args: ["get", "cdp-url"], cwd, env: getHeadedManagedAutosaveEnv(context.headedManagedAutosaveInterval), namespace: context.namespace, pinNamespace: true,
+		sessionName: context.sessionName, signal, timeoutMs,
+	})));
+	return !signal?.aborted && isRecord(connection) && typeof connection.cdpUrl === "string"
+		&& (connection.cdpUrl === record.webSocketDebuggerUrl || status.targets.some((target) => target.webSocketDebuggerUrl === connection.cdpUrl));
+}
+
 export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 	context: OwnedManagedSessionContext;
+	electronLaunchRecord?: ElectronLaunchRecord;
+	electronVerificationTimeoutMs?: number;
 	mode?: "close" | "reuse";
 	signal?: AbortSignal;
 }): Promise<{ cleanupOnlyReason?: "restore-disabled-daemon-without-provenance"; daemonStatus?: ManagedSessionDaemonInspection["status"]; error?: string; lock?: ManagedSessionPolicyLock }> {
@@ -99,7 +122,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 		}
 
 		const stickyDisabled = context.restoreState.isDisabled(context.sessionName, context.namespace);
-		const hasKnownDaemonRestoreKey = context.restoreState.hasDaemonRestoreKey(context.sessionName, context.namespace);
+		let hasKnownDaemonRestoreKey = context.restoreState.hasDaemonRestoreKey(context.sessionName, context.namespace);
 		const knownDaemonRestoreKey = context.restoreState.getDaemonRestoreKey(context.sessionName, context.namespace);
 		const requestedDaemonRestoreKey = context.restoreDecision === "enabled" && stickyDisabled
 			? knownDaemonRestoreKey ?? null
@@ -111,6 +134,9 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 			};
 		}
 		const restoreDisabledPolicyNeedsProvenance = stickyDisabled || context.restoreDecision !== "enabled";
+		if (daemon.status === "active" && restoreDisabledPolicyNeedsProvenance && !hasKnownDaemonRestoreKey && daemon.restoreKey === requestedDaemonRestoreKey) {
+			hasKnownDaemonRestoreKey = await verifyRestoredElectronAttachment(context, options.electronLaunchRecord, signal, options.electronVerificationTimeoutMs);
+		}
 		const activePolicyMatches = daemon.status === "active"
 			&& (!restoreDisabledPolicyNeedsProvenance || hasKnownDaemonRestoreKey)
 			&& daemon.restoreKey === requestedDaemonRestoreKey;

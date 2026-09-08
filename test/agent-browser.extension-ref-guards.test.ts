@@ -8,8 +8,9 @@
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, watch, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1241,6 +1242,138 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	} finally {
 		if (pidIsAlive(child?.pid)) child?.kill("SIGKILL");
 		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension reuses only verified tracked Electron connections after reload", { concurrency: false }, async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-electron-reload-"));
+	const logPath = join(tempDir, "invocations.log");
+	const connectionPath = join(tempDir, "connection.json");
+	let child: ChildProcess | undefined;
+	let userDataDir: string | undefined;
+	let liveBrowserEndpoint: string;
+	let pageEndpoint: string;
+	const server = createServer((request, response) => {
+		response.writeHead(pidIsAlive(child?.pid) ? 200 : 503, { "content-type": "application/json" });
+		response.end(JSON.stringify(request.url === "/json/version"
+			? { Browser: "Electron/Test", webSocketDebuggerUrl: liveBrowserEndpoint }
+			: [{ id: "page", type: "page", url: "app://reload-verified", webSocketDebuggerUrl: pageEndpoint }]));
+	});
+	const port = await listenOnLoopback(server);
+	const browserEndpoint = `ws://127.0.0.1:${port}/devtools/browser/original`;
+	liveBrowserEndpoint = browserEndpoint;
+	pageEndpoint = `ws://127.0.0.1:${port}/devtools/page/page`;
+	await writeFile(connectionPath, JSON.stringify({ active: true, cdpUrl: pageEndpoint }));
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const connection = JSON.parse(fs.readFileSync(${JSON.stringify(connectionPath)}, "utf8"));
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("cdp-url") && connection.readyPath) {
+  process.on("SIGTERM", () => process.exit(0));
+  fs.writeFileSync(connection.readyPath, String(process.pid));
+  setInterval(() => {}, 1000);
+  return;
+}
+let data = { url: "app://reload-verified", title: "Verified Electron" };
+if (args.includes("session") && args.includes("info")) data = { active: connection.active, runtime: { restoreKey: null } };
+else if (args.includes("cdp-url")) data = { cdpUrl: connection.cdpUrl };
+else if (args.includes("tab")) data = { tabs: [{ tabId: "t1", active: true, url: data.url, title: data.title }] };
+else if (args.includes("snapshot")) data = { origin: data.url, snapshot: '- button "Run" [ref=e1]', refs: { e1: { role: "button", name: "Run" } } };
+else if (args.includes("close")) { fs.writeFileSync(${JSON.stringify(connectionPath)}, JSON.stringify({ ...connection, active: false })); data = { closed: true }; }
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}`, AGENT_BROWSER_NAMESPACE: "reload-team", PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
+			userDataDir = await createSecureTempDirectory("electron-profile-");
+			child = spawnElectronFixtureProcess(userDataDir);
+			const sessionName = `${createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed")}-fresh-electron-verified`;
+			const record = { appName: "Verified Electron", cleanupState: "active", createdAtMs: Date.now(), executablePath: process.execPath, launchId: "electron-reload-verified", launchedByWrapper: true, namespace: "reload-team", pid: child.pid, port, processGroupId: child.pid, sessionName, userDataDir, version: 1, webSocketDebuggerUrl: browserEndpoint };
+			const branch = (launch = record) => [createToolBranchEntry({ details: { ...electronManagedSessionDetails(sessionName, launch), attachedBrowserSession: true, managedSessionRestoreDisabled: true, namespace: "reload-team" }, isError: false })];
+			const previous = createExtensionHarness({ branch: branch(), cwd: tempDir });
+			await runExtensionEvent(previous.handlers, "session_start", { reason: "resume" }, previous.ctx);
+			await runExtensionEvent(previous.handlers, "session_shutdown", { reason: "reload" }, previous.ctx);
+			assert.equal(pidIsAlive(child.pid), true);
+			assert.equal(await directoryExists(userDataDir), true);
+
+			for (const mismatch of ["browser-instance", "connection", "namespace"]) {
+				liveBrowserEndpoint = mismatch === "browser-instance" ? browserEndpoint + "-replaced" : browserEndpoint;
+				await writeFile(connectionPath, JSON.stringify({ active: true, cdpUrl: mismatch === "connection" ? pageEndpoint + "-other" : pageEndpoint }));
+				const harness = createExtensionHarness({ branch: branch(mismatch === "namespace" ? { ...record, namespace: "other" } : record), cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "reload" }, harness.ctx);
+				const before = (await readInvocationLog(logPath)).length;
+				for (let attempt = 0; attempt < 2; attempt += 1) {
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"] });
+					assert.equal(result.isError, true, `${mismatch}: ${JSON.stringify(result)}`);
+					assert.equal(result.details?.managedSessionCleanupOnlyReason, "restore-disabled-daemon-without-provenance");
+				}
+				assert.equal((await readInvocationLog(logPath)).slice(before).some((entry) => entry.args.includes("title")), false);
+			}
+
+			liveBrowserEndpoint = browserEndpoint;
+			await writeFile(connectionPath, JSON.stringify({ active: true, cdpUrl: pageEndpoint }));
+			let lastHarness = previous;
+			for (const params of [
+				{ args: ["get", "title"] },
+				{ args: ["--namespace", "reload-team", "--session", sessionName, "get", "title"] },
+				{ electron: { action: "status", launchId: record.launchId } },
+				{ electron: { action: "probe", launchId: record.launchId } },
+			]) {
+				const harness = createExtensionHarness({ branch: branch(), cwd: tempDir });
+				lastHarness = harness;
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "reload" }, harness.ctx);
+				const before = (await readInvocationLog(logPath)).length;
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+				assert.equal(result.isError, false, JSON.stringify(result));
+				assert.match(JSON.stringify(result.content), /Verified Electron/);
+				assert.doesNotMatch(JSON.stringify(result.content), /Managed session warning/);
+				const verification = (await readInvocationLog(logPath)).slice(before).filter((entry) => entry.args.includes("cdp-url"));
+				assert.deepEqual(verification.map((entry) => entry.args), [["--json", "--namespace", "reload-team", "--session", sessionName, "get", "cdp-url"]]);
+				assert.equal(pidIsAlive(child.pid), true);
+			}
+			for (const mode of ["timeout", "abort"]) {
+				const marker = `cdp-${mode}-ready`;
+				await writeFile(connectionPath, JSON.stringify({ active: true, cdpUrl: pageEndpoint, readyPath: join(tempDir, marker) }));
+				const harness = createExtensionHarness({ branch: branch(), cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "reload" }, harness.ctx);
+				const controller = new AbortController();
+				const ready = (async () => {
+					for await (const event of watch(tempDir, { signal: controller.signal })) {
+						if (event.filename === marker) return;
+					}
+				})();
+				const realSetTimeout = setTimeout;
+				let guard: NodeJS.Timeout | undefined;
+				t.mock.timers.enable({ apis: ["setTimeout"] });
+				const pending = executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId: record.launchId, timeoutMs: 500 } }, controller.signal);
+				try {
+					await Promise.race([ready, pending.then((result) => assert.fail(`Verification settled before its controlled read: ${JSON.stringify(result)}`))]);
+					if (mode === "timeout") t.mock.timers.tick(500);
+					else controller.abort();
+					const result = await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+						guard = realSetTimeout(() => reject(new Error(`Electron verification must honor the caller's ${mode}`)), 1000);
+					})]);
+					assert.equal(result.isError, true, JSON.stringify(result));
+					const pid = Number(await readFile(join(tempDir, marker), "utf8"));
+					assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+				} finally {
+					t.mock.timers.reset();
+					controller.abort();
+					if (guard) clearTimeout(guard);
+					await Promise.allSettled([pending, ready]);
+				}
+			}
+			await runExtensionEvent(lastHarness.handlers, "session_shutdown", { reason: "quit" }, lastHarness.ctx);
+			assert.equal(pidIsAlive(child.pid), false);
+			assert.equal(await directoryExists(userDataDir), false);
+		});
+	} finally {
+		if (child?.pid && child.exitCode === null && child.signalCode === null) {
+			const exited = once(child, "exit");
+			process.kill(-child.pid, "SIGKILL");
+			await exited;
+		}
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		if (userDataDir) await rm(userDataDir, { recursive: true, force: true });
+		await rm(tempDir, { recursive: true, force: true });
 	}
 });
 

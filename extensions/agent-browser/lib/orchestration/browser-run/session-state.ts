@@ -552,6 +552,7 @@ function selectAnySessionTargetTab(options: {
 export async function runSessionCommandData(options: {
 	args: string[];
 	cwd: string;
+	env?: NodeJS.ProcessEnv;
 	namespace?: string;
 	onProcessResult?: (result: Awaited<ReturnType<typeof runAgentBrowserProcess>>) => void;
 	pinNamespace?: boolean;
@@ -561,12 +562,13 @@ export async function runSessionCommandData(options: {
 	throwOnFailure?: boolean;
 	timeoutMs?: number;
 }): Promise<unknown | undefined> {
-	const { args, cwd, namespace, pinNamespace, sessionName, signal, stdin, throwOnFailure, timeoutMs } = options;
+	const { args, cwd, env, namespace, pinNamespace, sessionName, signal, stdin, throwOnFailure, timeoutMs } = options;
 	if (!sessionName) return undefined;
 
 	const processResult = await runAgentBrowserProcess({
 		args: ["--json", ...(namespace !== undefined || pinNamespace ? ["--namespace", namespace ?? ""] : []), "--session", sessionName, ...args],
 		cwd,
+		env,
 		signal,
 		stdin,
 		timeoutMs,

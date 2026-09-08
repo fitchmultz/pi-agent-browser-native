@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { open, readFile, rm, type FileHandle } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import {
 	fetchCdpJson,
@@ -16,7 +16,7 @@ import {
 	inspectElectronExecutablePath,
 	type ElectronAppDiscovery,
 } from "./discovery.js";
-import { createSecureTempDirectory } from "../temp.js";
+import { createSecureTempDirectory, preserveSecureTempDirectory } from "../temp.js";
 
 export type { ElectronCdpTarget, ElectronCdpVersion } from "./cdp.js";
 
@@ -28,6 +28,8 @@ const DEVTOOLS_ACTIVE_PORT_FILE = "DevToolsActivePort";
 export const ELECTRON_PROFILE_DIR_PREFIX = "electron-profile-";
 const ELECTRON_DEFAULT_APP_ARGS = ["--disable-extensions", "--no-first-run", "--no-default-browser-check"] as const;
 const ELECTRON_DEVTOOLS_POLL_INTERVAL_MS = 100;
+// ponytail: bound failure reads, not lifetime log growth; noisy long-lived apps need rotation if that becomes a problem.
+const ELECTRON_OUTPUT_TAIL_BYTES = 4096;
 
 export interface ElectronDevToolsActivePortRead {
 	error?: string;
@@ -42,7 +44,13 @@ export interface ElectronLaunchFailureDiagnostics {
 	elapsedMs?: number;
 	exitCode?: number | null;
 	exitSignal?: NodeJS.Signals | null;
-	outputCaptured: false;
+	outputCaptured: boolean;
+	stdoutTail?: string;
+	stdoutTruncated?: boolean;
+	stdoutError?: string;
+	stderrTail?: string;
+	stderrTruncated?: boolean;
+	stderrError?: string;
 	pid?: number;
 	pidAlive?: boolean;
 	port?: number;
@@ -422,19 +430,35 @@ export async function launchElectronApp(options: {
 	let exitCode: number | null = null;
 	let exitSignal: NodeJS.Signals | null = null;
 	const args = buildLaunchArgs(userDataDir, appArgs);
-	const child = spawn(target.executablePath, args, {
-		cwd: dirname(target.executablePath),
-		detached: process.platform !== "win32",
-		stdio: "ignore",
-	});
-	child.once("error", (error) => {
-		spawnError = error;
-	});
-	child.once("exit", (code, signal) => {
-		exitCode = code;
-		exitSignal = signal;
-	});
-	child.unref();
+	let child: ChildProcess | undefined;
+	let outputCaptured = false;
+	const outputFiles: FileHandle[] = [];
+	try {
+		for (const stream of ["stdout", "stderr"]) outputFiles.push(await open(join(userDataDir, `${stream}.log`), "wx", 0o600));
+		options.signal?.throwIfAborted();
+		child = spawn(target.executablePath, args, {
+			cwd: dirname(target.executablePath),
+			detached: process.platform !== "win32",
+			stdio: ["ignore", outputFiles[0]!.fd, outputFiles[1]!.fd],
+		});
+		outputCaptured = true;
+		child.once("error", (error) => {
+			spawnError = error;
+		});
+		child.once("exit", (code, signal) => {
+			exitCode = code;
+			exitSignal = signal;
+		});
+		child.unref();
+	} catch (error) {
+		spawnError = error instanceof Error ? error : new Error(String(error));
+	} finally {
+		for (const file of outputFiles) {
+			await file.close().catch((error) => {
+				cleanupError = [cleanupError, `Output handle close failed: ${error instanceof Error ? error.message : String(error)}`].filter(Boolean).join("; ");
+			});
+		}
+	}
 
 	const buildFailureDiagnostics = (options: {
 		cdpVersionReached?: boolean;
@@ -446,9 +470,9 @@ export async function launchElectronApp(options: {
 		elapsedMs: Math.max(0, Date.now() - startedAtMs),
 		exitCode,
 		exitSignal,
-		outputCaptured: false,
-		pid: child.pid,
-		pidAlive: isLaunchChildPidAlive(child),
+		outputCaptured,
+		pid: child?.pid,
+		pidAlive: child ? isLaunchChildPidAlive(child) : undefined,
 		port: options.port ?? options.devToolsActivePort?.port,
 		timeoutMs,
 		userDataDir,
@@ -456,11 +480,36 @@ export async function launchElectronApp(options: {
 
 	const fail = async (reason: ElectronLaunchFailureReason, detail?: string, diagnosticOptions?: Parameters<typeof buildFailureDiagnostics>[0]): Promise<ElectronLaunchResult> => {
 		const diagnostics = buildFailureDiagnostics(diagnosticOptions);
-		const processCleanupError = await terminateLaunchChild(child);
+		const processCleanupError = child ? await terminateLaunchChild(child) : undefined;
+		const outputLines: string[] = [];
+		if (outputCaptured) {
+			for (const stream of ["stdout", "stderr"] as const) {
+				let file: FileHandle | undefined;
+				try {
+					file = await open(join(userDataDir, `${stream}.log`), "r");
+					const { size } = await file.stat();
+					const buffer = Buffer.alloc(Math.min(size, ELECTRON_OUTPUT_TAIL_BYTES));
+					const { bytesRead } = await file.read(buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+					diagnostics[`${stream}Tail`] = buffer.subarray(0, bytesRead).toString("utf8");
+					diagnostics[`${stream}Truncated`] = size > buffer.length;
+				} catch (error) {
+					diagnostics[`${stream}Error`] = error instanceof Error ? error.message : String(error);
+				} finally {
+					await file?.close().catch((error) => {
+						diagnostics[`${stream}Error`] = [diagnostics[`${stream}Error`], `Output reader close failed: ${error instanceof Error ? error.message : String(error)}`].filter(Boolean).join("; ");
+					});
+				}
+				const tail = diagnostics[`${stream}Tail`];
+				if (tail !== undefined) outputLines.push(`App ${stream}${diagnostics[`${stream}Truncated`] ? ` (last ${ELECTRON_OUTPUT_TAIL_BYTES} bytes)` : ""}: ${tail || "(empty)"}`);
+				if (diagnostics[`${stream}Error`]) outputLines.push(`App ${stream} capture error: ${diagnostics[`${stream}Error`]}`);
+			}
+		}
 		try {
-			await rm(userDataDir, { force: true, recursive: true });
+			if (processCleanupError) await preserveSecureTempDirectory(userDataDir);
+			else await rm(userDataDir, { force: true, recursive: true });
 		} catch (error) {
-			cleanupError = error instanceof Error ? error.message : String(error);
+			const message = error instanceof Error ? error.message : String(error);
+			cleanupError = [cleanupError, processCleanupError ? `Profile preservation failed: ${message}` : message].filter(Boolean).join("; ");
 		}
 		cleanupError = [processCleanupError, cleanupError].filter((value): value is string => value !== undefined).join("; ") || undefined;
 		return {
@@ -469,7 +518,7 @@ export async function launchElectronApp(options: {
 				appArgs,
 				cleanupError,
 				diagnostics,
-				error: launchFailureMessage(reason, target, detail),
+				error: [launchFailureMessage(reason, target, detail), ...outputLines].join("\n"),
 				reason,
 				target,
 				userDataDir,
@@ -477,6 +526,7 @@ export async function launchElectronApp(options: {
 		};
 	};
 
+	if (!child) return fail(options.signal?.aborted ? "aborted" : "spawn-error", spawnError?.message);
 	const portResult = await pollDevToolsActivePort({
 		deadlineMs,
 		getChildExit: () => ({ code: exitCode, signal: exitSignal }),

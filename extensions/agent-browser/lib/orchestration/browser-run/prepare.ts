@@ -48,6 +48,7 @@ import {
 	buildSessionDetailFields,
 	buildStaleRefPreflight,
 	getSessionContextKey,
+	findElectronLaunchRecordForSession,
 	extractStringResultField,
 	ensureSessionTabTarget,
 	getGuardedRefUsage,
@@ -597,6 +598,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const closeCommand = isCloseCommand(executionPlan.commandInfo.command);
 		const policy = await acquireOwnedManagedSessionDaemonPolicy({
 			context: ownedManagedSession,
+			electronLaunchRecord: findElectronLaunchRecordForSession(executionPlan.sessionName, state.electronLaunchRecords, executionPlan.namespace),
+			electronVerificationTimeoutMs: params.timeoutMs,
 			mode: closeCommand ? "close" : "reuse",
 			signal,
 		});

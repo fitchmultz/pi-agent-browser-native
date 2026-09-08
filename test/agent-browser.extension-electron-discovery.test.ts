@@ -7,9 +7,12 @@
  */
 
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import fsPromises, { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile, type FileHandle } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -21,7 +24,7 @@ import {
 	cleanupElectronLaunchResources,
 	inspectElectronLaunchStatus,
 } from "../extensions/agent-browser/lib/electron/cleanup.js";
-import type { ElectronLaunchRecord } from "../extensions/agent-browser/lib/electron/launch.js";
+import type { ElectronLaunchFailure, ElectronLaunchRecord } from "../extensions/agent-browser/lib/electron/launch.js";
 import {
 	cleanupSecureTempArtifacts,
 	createSecureTempDirectory,
@@ -31,7 +34,9 @@ import {
 	createToolBranchEntry,
 	executeRegisteredTool,
 	readInvocationLog,
+	readChildStdoutJsonLine,
 	runExtensionEvent,
+	stopChildProcess,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 	type AgentBrowserToolParams,
@@ -244,6 +249,187 @@ test("agentBrowserExtension cleans Electron resources when launch fails before u
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
+	}
+});
+
+test("agentBrowserExtension returns bounded redacted Electron startup output and preserves empty-output failures", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-output-"));
+	const launchLogPath = join(tempDir, "launch.json");
+	const stdoutEnd = "\nstdout-end\nAuthorization: Bearer fixture-output-secret\n";
+	const stderrEnd = "\nstderr-end\nAPI_KEY=fixture-error-secret\n";
+	try {
+		const app = await writeFakeMacElectronApp({ applicationsDir: tempDir, bundleId: "com.example.StartupOutput", name: "Startup Output" });
+		await writeFile(app.executablePath, `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(launchLogPath)}, JSON.stringify([1, 2].map((fd) => {
+	const stats = fs.fstatSync(fd);
+	return { regular: stats.isFile(), mode: stats.mode & 0o777 };
+})));
+if (!process.argv.includes("--quiet")) {
+	fs.writeSync(1, "dropped-stdout-start\\n" + "O".repeat(262144) + ${JSON.stringify(stdoutEnd)});
+	fs.writeSync(2, "dropped-stderr-start\\n" + "E".repeat(262144) + ${JSON.stringify(stderrEnd)});
+}
+process.exit(42);
+`);
+		const harness = createExtensionHarness({ cwd: tempDir });
+		for (const quiet of [false, true]) {
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "launch", appPath: app.appPath, appArgs: quiet ? ["--quiet"] : [], timeoutMs: 5_000 },
+			});
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "upstream-error");
+			const failure = (result.details?.electron as { failure: ElectronLaunchFailure }).failure;
+			assert.equal(failure.reason, "spawn-error");
+			assert.equal(failure.cleanupError, undefined);
+			assert.equal(failure.diagnostics?.exitCode, 42);
+			assert.equal(failure.diagnostics?.pidAlive, false);
+			assert.equal(failure.diagnostics?.outputCaptured, true);
+			const text = result.content.map((item) => item.text ?? "").join("\n");
+			for (const [stream, fill, end, secret] of [["stdout", "O", stdoutEnd, "fixture-output-secret"], ["stderr", "E", stderrEnd, "fixture-error-secret"]] as const) {
+				const expected = quiet ? "" : (fill.repeat(4096 - Buffer.byteLength(end)) + end).replace(secret, "[REDACTED]");
+				assert.equal(failure.diagnostics?.[`${stream}Tail`], expected);
+				assert.equal(failure.diagnostics?.[`${stream}Truncated`], !quiet);
+				assert.ok(text.includes(quiet ? `App ${stream}: (empty)` : expected));
+			}
+			assert.doesNotMatch(JSON.stringify(result), /fixture-output-secret|fixture-error-secret|dropped-stdout-start|dropped-stderr-start|not captured/);
+			assert.deepEqual(JSON.parse(await readFile(launchLogPath, "utf8")), [{ regular: true, mode: 0o600 }, { regular: true, mode: 0o600 }]);
+			assert.ok(failure.userDataDir);
+			await assert.rejects(stat(failure.userDataDir), { code: "ENOENT" });
+			assert.equal(isTestPidAlive(failure.diagnostics?.pid), false);
+		}
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("failed Electron startup preserves a live writer after injected kill denial, temp cleanup, and host exit", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-live-output-"));
+	const launchLogPath = join(tempDir, "launch.json");
+	const app = await writeFakeMacElectronApp({ applicationsDir: tempDir, bundleId: "com.example.LiveOutput", name: "Live Output" });
+	await writeFile(app.executablePath, `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const userDataDir = process.argv.find((arg) => arg.startsWith("--user-data-dir=")).slice("--user-data-dir=".length);
+fs.writeFileSync(${JSON.stringify(launchLogPath)}, JSON.stringify({ pid: process.pid, userDataDir }));
+if (process.argv.includes("--break-marker")) {
+	const marker = path.join(path.dirname(userDataDir), ".pi-agent-browser-owner.json");
+	fs.unlinkSync(marker);
+	fs.mkdirSync(marker);
+}
+setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-live\\n"); }, 20);
+`);
+	try {
+		for (const breakMarker of [false, true]) {
+			const script = `
+				import { ChildProcess } from "node:child_process";
+				import { stat } from "node:fs/promises";
+				import { launchElectronApp } from "./extensions/agent-browser/lib/electron/launch.ts";
+				import { cleanupSecureTempArtifacts, writeSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+				const sibling = await writeSecureTempFile({ content: "keep until sweep", prefix: "sibling", suffix: ".txt" });
+				const kill = ChildProcess.prototype.kill;
+				// The process is real; only its kill request is denied at the OS boundary.
+				ChildProcess.prototype.kill = function (signal) {
+					if (this.spawnfile === ${JSON.stringify(app.executablePath)}) throw new Error("fixture: child.kill denied");
+					return kill.call(this, signal);
+				};
+				const result = await launchElectronApp({ appPath: ${JSON.stringify(app.appPath)}, appArgs: ${JSON.stringify(breakMarker ? ["--break-marker"] : [])}, timeoutMs: 500 });
+				ChildProcess.prototype.kill = kill;
+				const siblingKept = await stat(sibling).then(() => true, () => false);
+				await cleanupSecureTempArtifacts();
+				console.log(JSON.stringify({ result, siblingKept, sibling }));
+			`;
+			const host = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+			let launch: { pid: number; userDataDir: string } | undefined;
+			// The detached app writes its own receipt independently of the short launch timeout.
+			const readLaunchReceipt = async () => {
+				for (let attempt = 0; attempt < 100; attempt++) {
+					const receipt = await readFile(launchLogPath, "utf8").then(JSON.parse, () => undefined);
+					if (receipt) return receipt as { pid: number; userDataDir: string };
+					await delay(20);
+				}
+				return undefined;
+			};
+			try {
+				const exited = once(host, "exit");
+				const receipt = await readChildStdoutJsonLine<{ result: { ok: false; failure: ElectronLaunchFailure }; siblingKept: boolean; sibling: string }>(host);
+				assert.equal((await exited)[0], 0);
+				launch = await readLaunchReceipt();
+				assert.ok(launch, "fixture app must record its pid and profile");
+				assert.equal(receipt.result.ok, false);
+				assert.equal(receipt.result.failure.reason, "timeout");
+				assert.match(receipt.result.failure.cleanupError ?? "", /fixture: child\.kill denied/);
+				assert.equal(receipt.siblingKept, true, "preserving a profile must not sweep siblings");
+				assert.equal(isTestPidAlive(launch.pid), true);
+				for (const stream of ["stdout", "stderr"]) {
+					const path = join(launch.userDataDir, `${stream}.log`);
+					const before = await stat(path);
+					await delay(60);
+					assert.ok((await stat(path)).size > before.size, "detached app must still write after the host exits");
+				}
+				const markerPath = join(dirname(launch.userDataDir), ".pi-agent-browser-owner.json");
+				if (breakMarker) assert.match(receipt.result.failure.cleanupError ?? "", /preserv/i);
+				else assert.deepEqual(JSON.parse(await readFile(markerPath, "utf8")).protectedChildNames, [basename(launch.userDataDir)]);
+				await assert.rejects(stat(receipt.sibling), { code: "ENOENT" });
+			} finally {
+				await stopChildProcess(host);
+				launch ??= await readLaunchReceipt();
+				await stopTestPid(launch?.pid);
+				assert.equal(isTestPidAlive(launch?.pid), false);
+				if (launch) await rm(dirname(launch.userDataDir), { force: true, recursive: true });
+				await rm(launchLogPath, { force: true });
+			}
+		}
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("Electron capture closes real file handles and retains startup errors when capture or spawn fails", { concurrency: false }, async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-capture-errors-"));
+	const app = await writeFakeMacElectronApp({ applicationsDir: tempDir, bundleId: "com.example.CaptureErrors", name: "Capture Errors" });
+	const nativeOpen = fsPromises.open;
+	const handles: FileHandle[] = [];
+	let fault: "open-stderr" | "spawn-sync" | "spawn-async" | "read-stdout";
+	t.mock.method(fsPromises, "open", async (...args: Parameters<typeof fsPromises.open>) => {
+		const path = String(args[0]);
+		if (fault === "open-stderr" && path.endsWith("stderr.log") && args[1] === "wx") throw new Error("fixture: cannot open stderr capture");
+		if (fault === "read-stdout" && path.endsWith("stdout.log") && args[1] === "r") throw new Error("fixture: cannot read stdout capture");
+		const handle = await nativeOpen(...args);
+		if (path.endsWith("stdout.log") || path.endsWith("stderr.log")) handles.push(handle);
+		return handle;
+	});
+	syncBuiltinESMExports();
+	try {
+		for (fault of ["open-stderr", "spawn-sync", "spawn-async", "read-stdout"] as const) {
+			handles.length = 0;
+			await writeFile(app.executablePath, fault === "spawn-async" ? "#!/does-not-exist/piab-node\n" : "#!/usr/bin/env node\nprocess.exit(42);\n");
+			const harness = createExtensionHarness({ cwd: tempDir });
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "launch", appPath: app.appPath, appArgs: fault === "spawn-sync" ? ["bad\0argument"] : [], timeoutMs: 5_000 },
+			});
+			assert.equal(result.isError, true, fault);
+			const failure = (result.details?.electron as { failure: ElectronLaunchFailure }).failure;
+			assert.equal(failure.reason, "spawn-error", fault);
+			assert.equal(failure.cleanupError, undefined, fault);
+			assert.ok(handles.length > 0, fault);
+			assert.ok(handles.every((handle) => handle.fd === -1), `${fault}: all acquired native capture/read handles must close`);
+			if (fault === "open-stderr") assert.match(failure.error, /cannot open stderr capture/);
+			if (fault === "spawn-sync") assert.match(failure.error, /null bytes/);
+			if (fault === "spawn-async") assert.match(failure.error, /ENOENT/);
+			if (fault === "read-stdout") {
+				assert.equal(failure.diagnostics?.exitCode, 42);
+				assert.equal(failure.diagnostics?.stdoutTail, undefined);
+				assert.equal(failure.diagnostics?.stdoutError, "fixture: cannot read stdout capture");
+				assert.equal(failure.diagnostics?.stderrTail, "");
+				assert.match(result.content[0]?.text ?? "", /App stdout capture error: fixture: cannot read stdout capture/);
+			}
+			assert.ok(failure.userDataDir);
+			await assert.rejects(stat(failure.userDataDir), { code: "ENOENT" });
+		}
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 

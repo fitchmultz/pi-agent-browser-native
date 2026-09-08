@@ -467,29 +467,43 @@ else if (args.includes("close")) process.stdout.write(JSON.stringify({ success: 
 else process.stdout.write(JSON.stringify({ success: true, data: { title: "Tree probe" } }));`);
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
+			let resolveActive!: () => void;
+			const activeLease = new Promise<void>((resolve) => { resolveActive = resolve; });
+			const harness = createExtensionHarness({
+				cwd: tempDir,
+				sessionFile: join(tempDir, "session.jsonl"),
+				onAppendEntry(_customType, data) {
+					if ((data as { cleanup?: string }).cleanup === "active") resolveActive();
+				},
+			});
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const controller = new AbortController();
 			const pendingResult = executeRegisteredTool(harness.tool, harness.ctx, {
 				script: `await browser({ args: ["get", "title"] }); while (true) {}`,
 				timeoutMs: 10_000,
-			});
-			for (let index = 0; index < 100 && !harness.appendedEntries.some((entry) => (entry.data as { cleanup?: string }).cleanup === "active"); index += 1) await delay(10);
-			assert.ok(harness.appendedEntries.some((entry) => (entry.data as { cleanup?: string }).cleanup === "active"));
-			for (let index = 0; index < 100; index += 1) {
+			}, controller.signal);
+			try {
+				await Promise.race([activeLease, pendingResult.then((result) => assert.fail(`Script settled before its active lease: ${JSON.stringify(result)}`))]);
+				assert.ok(harness.appendedEntries.some((entry) => (entry.data as { cleanup?: string }).cleanup === "active"));
+				for (let index = 0; index < 100; index += 1) {
+					const invocations = await readInvocationLog(logPath);
+					if (invocations.some((entry) => entry.args.includes("get") && entry.args.includes("title"))) break;
+					await delay(10);
+				}
+				assert.ok((await readInvocationLog(logPath)).some((entry) => entry.args.includes("get") && entry.args.includes("title")), "browser subprocess should start before branch abort");
+				const startedAt = Date.now();
+				await runExtensionEvent(harness.handlers, "session_tree", { reason: "switch" }, harness.ctx);
+				const result = await pendingResult;
+				assert.ok(Date.now() - startedAt < 2_000, "branch change should abort instead of waiting for the script deadline");
+				assert.equal(result.details?.failureCategory, "aborted");
+				assert.equal((result.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed");
+				assert.deepEqual(harness.appendedEntries.map((entry) => (entry.data as { cleanup?: string }).cleanup), ["active", "closed"]);
 				const invocations = await readInvocationLog(logPath);
-				if (invocations.some((entry) => entry.args.includes("get") && entry.args.includes("title"))) break;
-				await delay(10);
+				assert.equal(invocations.filter((entry) => entry.args.at(-1) === "close").length, 1);
+			} finally {
+				controller.abort();
+				await Promise.allSettled([pendingResult]);
 			}
-			assert.ok((await readInvocationLog(logPath)).some((entry) => entry.args.includes("get") && entry.args.includes("title")), "browser subprocess should start before branch abort");
-			const startedAt = Date.now();
-			await runExtensionEvent(harness.handlers, "session_tree", { reason: "switch" }, harness.ctx);
-			const result = await pendingResult;
-			assert.ok(Date.now() - startedAt < 2_000, "branch change should abort instead of waiting for the script deadline");
-			assert.equal(result.details?.failureCategory, "aborted");
-			assert.equal((result.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed");
-			assert.deepEqual(harness.appendedEntries.map((entry) => (entry.data as { cleanup?: string }).cleanup), ["active", "closed"]);
-			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.filter((entry) => entry.args.at(-1) === "close").length, 1);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
