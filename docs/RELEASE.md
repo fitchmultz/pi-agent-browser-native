@@ -316,6 +316,8 @@ Recommended configured-source lifecycle follow-up:
 
 ## Post-publish install validation
 
+After updating `pi-agent-browser-native`, fully quit and restart Pi before using the updated tools. `/reload` can retain previously loaded compiled JavaScript even after `dist/` is rebuilt, so it is not a reliable way to pick up package updates.
+
 After publishing a release, validate the package-first path in isolation. `npm run verify -- release` includes the deterministic fake-binary packaged execution gate and the pre-publish Crabbox platform matrix, but it does not replace a real-browser installed-package smoke against the published npm package:
 
 ```bash

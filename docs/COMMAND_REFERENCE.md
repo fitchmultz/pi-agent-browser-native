@@ -14,6 +14,8 @@ Provide a local, repo-readable command reference for the native `agent_browser` 
 
 This project intentionally blocks normal `agent-browser` bash usage in most agent sessions, so the agent still needs an accessible local equivalent of the upstream command surface. This document is the durable reference the agent can read inside the repository without calling the binary directly.
 
+After updating `pi-agent-browser-native`, fully quit and restart Pi before using the updated tools. `/reload` can retain previously loaded compiled JavaScript even after `dist/` is rebuilt, so it is not a reliable way to pick up package updates.
+
 ## Upstream baseline
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
