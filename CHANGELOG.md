@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.6.9 - 2026-09-08
 
 ### Fixed
 
 - Include redacted stdout/stderr tails in failed Electron startup diagnostics and visible errors (#128). Capture uses private regular files inside the isolated profile, with the last 4096 bytes read per stream; this is not a lifetime disk limit. Preserve the profile and logs when failed-startup process cleanup cannot finish, without changing normal quit cleanup.
 
 - Restore ordinary browser access to a tracked Electron app after Pi reload or resume by checking its live debug endpoint and the named upstream connection. Keep the app, profile, and session intact; unrelated or replaced connections still fail verification.
+
+### Validation
+
+- Verified startup output, reload continuity and quit cleanup with genuine Electron through the official Pi SDK on native macOS and Ubuntu. Native Windows was waived and not run; permanent release gates are unchanged.
 
 ## 0.6.8 - 2026-09-07
 
