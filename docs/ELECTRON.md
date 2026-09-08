@@ -311,6 +311,10 @@ Policy mismatches fail with `failureCategory: "policy-blocked"` and `details.ele
 | `cleanup-failed` | Cleanup only partially succeeded | Inspect `details.electron.cleanup.results[].steps` for remaining process/port/profile state; `retry-electron-cleanup` references the same `launchId` |
 | `stale-ref` | `@e…` ref reused after a navigation/rerender | Take a fresh `snapshot -i` (or follow `refresh-electron-refs-after-rerender` when the wrapper appends it) |
 
+Failed startup diagnostics include `outputCaptured`, `stdoutTail` / `stderrTail`, and `stdoutTruncated` / `stderrTruncated`. Each tail reads at most the last **4096 source bytes** before UTF-8 decoding and normal credential redaction, and appears in both visible failure text and structured details. Empty output is reported explicitly; `stdoutError` / `stderrError` report capture-read or close errors without replacing the original startup reason, exit status, or cleanup warning.
+
+The app writes to mode-0600 `stdout.log` and `stderr.log` inside its isolated profile. These are regular files, not pipes to Pi, so retained apps can keep writing after reload or host exit. Logs follow profile preservation and removal; **the read limit is not a lifetime disk limit**. If failed-startup process cleanup cannot finish, the profile and logs are protected from general temp cleanup. Any failure to persist that protection appears alongside the original `failure.cleanupError`; in-memory protection remains. Use the reported PID and profile path to resolve that failed cleanup before removing files.
+
 Single-instance Electron behavior is a common cause of `timeout` and `upstream-error`. Many Electron apps enforce a single running instance and silently drop a second invocation's `--remote-debugging-port` flag. If the app is already running without a debug port, quit it first or use the manual host-launch path against the existing instance instead.
 
 ## Troubleshooting
@@ -319,7 +323,7 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 - The app is enforcing single-instance; quit the running copy first, then retry.
 - The app may have moved its Electron framework directory; pass `executablePath` explicitly.
 - `timeoutMs` is too short for a heavy app; raise it (`launch.timeoutMs` is bounded but generous).
-- Read `details.electron.failure.diagnostics`: presence/absence of `DevToolsActivePort`, port number, PID liveness, and elapsed time usually identify the issue.
+- Read the redacted stdout/stderr tails in the failure text or `details.electron.failure.diagnostics` first; dependency and startup errors often explain the failure. `DevToolsActivePort`, port number, PID liveness, and timing provide the remaining context.
 
 ### `electron.list` returns nothing
 - On Linux, the binary may be a custom rebrand without `chrome_*.pak` siblings, an AppImage without a `.desktop` entry, or a statically linked fork. Pass `executablePath` directly.

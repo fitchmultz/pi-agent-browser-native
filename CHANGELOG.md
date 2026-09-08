@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Include redacted stdout/stderr tails in failed Electron startup diagnostics and visible errors (#128). Capture uses private regular files inside the isolated profile, with the last 4096 bytes read per stream; this is not a lifetime disk limit. Preserve the profile and logs when failed-startup process cleanup cannot finish, without changing normal quit cleanup.
+
 ## 0.6.8 - 2026-09-07
 
 ### Fixed

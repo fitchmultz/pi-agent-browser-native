@@ -372,6 +372,21 @@ async function assertSecureTempRootBudget(tempRoot: string, additionalBytes: num
 	}
 }
 
+export async function preserveSecureTempDirectory(path: string): Promise<void> {
+	await enqueueTempMutation(async () => {
+		const childPath = resolve(path);
+		const tempRoot = dirname(childPath);
+		if (!ownedTempRoots.has(tempRoot) || !getProtectedTempChildName(tempRoot, childPath) || !(await stat(childPath)).isDirectory()) {
+			throw new Error(`Cannot preserve ${path}; expected an existing child directory of a currently owned temp root.`);
+		}
+		protectedTempChildren.add(childPath);
+		await persistProtectedTempChildren(tempRoot, new Set([childPath]));
+		if (!getPersistedProtectedChildPaths(tempRoot, await readTempRootOwnershipMarker(tempRoot)).has(childPath)) {
+			throw new Error(`Could not persist temp directory preservation for ${path}.`);
+		}
+	});
+}
+
 export async function cleanupSecureTempArtifacts(options: { preservePaths?: readonly string[] } = {}): Promise<void> {
 	await enqueueTempMutation(async () => {
 		const tempRoot = await sessionTempRootPromise?.catch(() => undefined);
