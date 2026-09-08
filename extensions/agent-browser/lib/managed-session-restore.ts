@@ -178,7 +178,6 @@ export function agentBrowserExplicitConfigIsPresent(
 
 /** Caller-selected upstream config disables the wrapper's automatic restore injection without blocking that config. */
 export function agentBrowserConfigBlocksManagedRestore(
-	_cwd: string,
 	parentEnv: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment(),
 	args: string[] = [],
 	platform: NodeJS.Platform = process.platform,
@@ -232,7 +231,7 @@ function isManagedSessionRestoreIncompatible(options: ManagedSessionRestorePolic
 	const effectiveEnv = { ...(options.parentEnv ?? getAgentBrowserProcessEnvironment()), ...options.env };
 	const args = omitWrapperInjectedUserAgent(options.args, options.wrapperInjectedUserAgent);
 	if (options.cwd && !hasManagedSessionRestoreProjectIdentity(options.cwd)) return true;
-	if (options.cwd && agentBrowserConfigBlocksManagedRestore(options.cwd, effectiveEnv, args)) return true;
+	if (options.cwd && agentBrowserConfigBlocksManagedRestore(effectiveEnv, args)) return true;
 	return !ensureManagedSessionRestoreStorageIsSecure(effectiveEnv, process.platform, namespace);
 }
 

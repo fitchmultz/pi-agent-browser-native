@@ -11,7 +11,7 @@ import { formatSessionArtifactRetentionSummary } from "../../results/artifact-ma
 import { buildInspectOverlayStateAction, buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
 import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTarget, type VisibleRefFallbackDiagnostic } from "../../results/selector-recovery.js";
 import { extractRefSnapshotFromData, isAboutBlankUrl, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
-import { extractUpstreamCommandTokens, parseWaitCommandTokens, redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
+import { redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
 import {
 	extractBatchResultCommand,
@@ -20,8 +20,8 @@ import {
 	findElectronLaunchRecordForSession,
 	runSessionCommandData,
 } from "./session-state.js";
-import { parseValidBatchStepEntries } from "../batch-stdin.js";
-import { getScreenshotPathTokenIndex } from "./artifact-paths.js";
+import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
+import { getExplicitArtifactDestination } from "./artifact-paths.js";
 import type {
 	ArtifactCleanupGuidance,
 	ComboboxFocusDiagnostic,
@@ -711,10 +711,9 @@ export async function collectElectronHandoff(options: { cwd: string; handoff: "c
 	return { handoff: "snapshot", refSnapshot, snapshot, ...(snapshotRetryCount > 0 ? { snapshotRetryCount } : {}), tabs };
 }
 
-function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, command: string | undefined, stdin: string | undefined): Array<{ args: string[]; generatedFrom?: string; index: number }> {
+function getTimeoutProgressSteps(compiledJob: CompiledAgentBrowserJob | undefined, commandTokens: string[], stdin: string | undefined): Array<{ args: string[]; generatedFrom?: string; index: number }> {
 	if (compiledJob) return compiledJob.steps.map((step, index) => ({ args: step.args, generatedFrom: step.generatedFrom, index: index + 1 }));
-	if (command !== "batch" || !stdin) return [];
-	return parseValidBatchStepEntries(stdin).map(({ index, step }) => ({ args: step, index: index + 1 }));
+	return getUpstreamEffectiveBatchSteps(commandTokens, stdin).map((args, index) => ({ args, index: index + 1 }));
 }
 
 function getLastPositionalToken(args: string[], startIndex = 1): string | undefined {
@@ -725,17 +724,8 @@ function getLastPositionalToken(args: string[], startIndex = 1): string | undefi
 	return undefined;
 }
 
-function getTimeoutStepArtifactPath(args: string[]): string | undefined {
-	const commandArgs = extractUpstreamCommandTokens(args);
-	const [command] = commandArgs;
-	if (command === "screenshot") {
-		const index = getScreenshotPathTokenIndex(commandArgs);
-		return index === undefined ? undefined : commandArgs[index];
-	}
-	if (command === "pdf") return getLastPositionalToken(commandArgs);
-	if (command === "download") return getLastPositionalToken(commandArgs, 2);
-	if (command === "wait") return parseWaitCommandTokens(commandArgs).downloadPath;
-	return undefined;
+function getTimeoutStepArtifactPath(commandTokens: string[]): string | undefined {
+	return ["screenshot", "pdf", "download", "wait"].includes(commandTokens[0]) ? getExplicitArtifactDestination(commandTokens) : undefined;
 }
 
 async function statTimeoutArtifactPath(absolutePath: string): Promise<{ exists: false } | { exists: true; sizeBytes: number }> {
@@ -872,8 +862,8 @@ function buildTimeoutProgressSteps(options: {
 	};
 }
 
-export async function collectTimeoutPartialProgress(options: { command?: string; compiledJob?: CompiledAgentBrowserJob; cwd: string; namespace?: string; sessionName?: string; stdin?: string }): Promise<TimeoutPartialProgress | undefined> {
-	const rawSteps = getTimeoutProgressSteps(options.compiledJob, options.command, options.stdin);
+export async function collectTimeoutPartialProgress(options: { commandTokens: string[]; compiledJob?: CompiledAgentBrowserJob; cwd: string; namespace?: string; sessionName?: string; stdin?: string }): Promise<TimeoutPartialProgress | undefined> {
+	const rawSteps = getTimeoutProgressSteps(options.compiledJob, options.commandTokens, options.stdin);
 	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, rawSteps);
 	const urlData = await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName });
 	const recoveredUrl = extractStringResultField(urlData, "result") ?? extractStringResultField(urlData, "url");

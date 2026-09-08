@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -11,6 +11,9 @@ import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mj
 import { getGuardedRefUsage, shouldPinSessionTabForCommand } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state.js";
 import { getPageTargetValidationError } from "../extensions/agent-browser/lib/page-target-validation.js";
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
+import type { FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
+import { waitForTestPidExit } from "./helpers/extension-validation-fixtures.js";
+
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
@@ -72,6 +75,115 @@ test("unsupported batch bail assignment explains raw argv precedence without rec
 });
 
 const real = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
+
+test("real upstream artifact argv matches native operand selection", { skip: !real, timeout: 120_000 }, async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "av-"));
+	const socketDir = join(dir, "s");
+	await mkdir(socketDir, { mode: 0o700 });
+	const fixture = await startAgentBrowserContractFixtureServer();
+	try {
+		await withPatchedEnv({
+			HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"),
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir,
+			AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined,
+			AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined,
+			AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined,
+		}, async () => {
+			const session = `av-${randomUUID().slice(0, 8)}`;
+			const prefix = ["--session", session];
+			const h = createExtensionHarness({ cwd: dir, sessionId: randomUUID() });
+			await runExtensionEvent(h.handlers, "session_start", { reason: "new" }, h.ctx);
+			const call = (args: string[], stdin?: string, timeoutMs?: number) => executeRegisteredTool(h.tool, h.ctx, { args: [...prefix, ...args], stdin, timeoutMs });
+			let daemonPid: number | undefined;
+			try {
+				const opened = await call(["open", `${fixture.baseUrl}/download`]);
+				assert.equal(opened.isError, false, opened.content[0]?.text);
+				daemonPid = Number(await readFile(join(socketDir, `${session}.pid`), "utf8"));
+				await t.test("outer CLI globals still clean before PDF operand selection", async () => {
+					const result = await call(["pdf", "--quick", "outer.pdf"]);
+					assert.equal(result.isError, false, result.content[0]?.text);
+					assert.equal((result.details?.artifacts as FileArtifactMetadata[])[0]?.requestedPath, "outer.pdf");
+					assert.equal((await readFile(join(dir, "outer.pdf"))).subarray(0, 5).toString(), "%PDF-");
+				});
+				for (const [step, path, header] of [
+					[["pdf", "--quick", "ignored/page.pdf"], "--quick", "%PDF-"],
+					[["download", "#direct-download", "--quiet", "ignored/file.txt"], "--quiet", "download contract fixture report\n"],
+					[["screenshot", "body", "--screenshot-dir", "ignored/shot.png"], "--screenshot-dir", "89504e470d0a1a0a"],
+				] as const) {
+					for (const raw of [false, true]) await t.test(`${step[0]} ${raw ? "raw" : "stdin"} batch keeps its literal destination`, async () => {
+						await rm(join(dir, path), { force: true });
+						const result = await call(raw ? ["batch", step.join(" ")] : ["batch"], raw ? undefined : JSON.stringify([step]));
+						assert.equal(result.isError, false, result.content[0]?.text);
+						const bytes = await readFile(join(dir, path));
+						assert.equal(step[0] === "screenshot" ? bytes.subarray(0, 8).toString("hex") : bytes.subarray(0, header.length).toString(), header);
+						const artifact = (result.details?.artifacts as FileArtifactMetadata[])[0];
+						t.diagnostic(JSON.stringify({ step, raw, nativePath: artifact?.path, requestedPath: artifact?.requestedPath, sizeBytes: bytes.length }));
+						assert.equal(artifact?.requestedPath, path);
+						assert.equal(artifact?.exists, true);
+						await assert.rejects(stat(join(dir, "ignored")), { code: "ENOENT" });
+					});
+				}
+				for (const flag of ["--download", "-d"]) await t.test(`wait ${flag} keeps the operand after an interleaved timeout`, async (wait) => {
+					const path = `wait-${flag.slice(1)}/capture.csv`;
+					const result = await call(["batch"], JSON.stringify([["click", "#delayed-anchor-download"], ["wait", flag, "--timeout", "30000", path, "ignored.csv"]]));
+					const artifact = (result.details?.artifacts as FileArtifactMetadata[])[0];
+					t.diagnostic(JSON.stringify({ flag, nativePath: artifact?.path, requestedPath: artifact?.requestedPath, exists: artifact?.exists }));
+					assert.equal(artifact?.path, path);
+					await wait.test("prepares the native retained path's parent directory", async () => {
+						assert.equal((await stat(join(dir, `wait-${flag.slice(1)}`))).isDirectory(), true);
+					});
+					await wait.test("retains the native requested path in artifact metadata", () => assert.equal(artifact?.requestedPath, path));
+					// Native 0.36 reports the requested wait path without moving the completed download there.
+					assert.equal(result.isError, true);
+					assert.equal(artifact?.exists, false);
+					await assert.rejects(readFile(join(dir, path)), { code: "ENOENT" });
+				});
+				for (const raw of [false, true]) await t.test(`timeout evidence follows ${raw ? "raw argv instead of ignored stdin" : "stdin native operands"}`, async () => {
+					const pdf = `timeout-${raw}.pdf`;
+					const download = `-timeout-${raw}.bin`;
+					const steps = [["pdf", pdf, "ignored.pdf"], ["download", "#direct-download", download, "ignored.bin"], ["pdf", "--quick", "ignored.pdf"], ["wait", "8000"]];
+					const result = await call(raw ? ["batch", ...steps.map((step) => step.join(" "))] : ["batch"], JSON.stringify(raw ? [["pdf", "ignored-stdin.pdf"]] : steps), 1000);
+					assert.equal(result.details?.timedOut, true, result.content[0]?.text);
+					assert.equal((await readFile(join(dir, pdf))).subarray(0, 5).toString(), "%PDF-");
+					assert.equal(await readFile(join(dir, download), "utf8"), "download contract fixture report\n");
+					const progress = result.details?.timeoutPartialProgress as { artifacts: Array<{ exists: boolean; path: string }> };
+					t.diagnostic(JSON.stringify({ raw, timeoutArtifacts: progress?.artifacts }));
+					assert.deepEqual(progress?.artifacts.map(({ path, exists }) => ({ path, exists })), [pdf, download, "--quick"].map((path) => ({ path, exists: true })));
+					await assert.rejects(stat(join(dir, "ignored-stdin.pdf")), { code: "ENOENT" });
+				});
+				await t.test("native recording reservations cover interleaved waits and literal batch paths", async (recording) => {
+					const held = join(dir, "--quick");
+					await rm(held, { force: true });
+					const started = await call(["record", "start", held]);
+					assert.equal(started.isError, false, started.content[0]?.text);
+					assert.equal((started.details?.artifacts as FileArtifactMetadata[])[0]?.status, "pending");
+					for (const [index, params] of [
+						{ args: [...prefix, "wait", "--download", "--timeout", "100", held] },
+						{ args: [...prefix, "wait", "-d", "--timeout", "100", held] },
+						{ args: [...prefix, "batch"], stdin: JSON.stringify([["pdf", "--quick", "ignored.pdf"]]) },
+						{ args: [...prefix, "batch", "download #direct-download --quick ignored.bin"] },
+					].entries()) await recording.test(`reserved native path rejects command ${index + 1}`, async () => {
+						const blocked = await executeRegisteredTool(h.tool, h.ctx, params);
+						assert.equal(blocked.details?.failureCategory, "validation-error", blocked.content[0]?.text);
+						assert.match(blocked.content[0]?.text ?? "", /reserved by an active recording/);
+						assert.equal(blocked.details?.exitCode, undefined);
+					});
+					t.diagnostic(JSON.stringify({ reservedPath: held, nativeRecordingStarted: true }));
+				});
+			} finally {
+				const closed = await runAgentBrowserProcess({ args: ["--json", ...prefix, "close"], cwd: dir });
+				assert.equal(closed.exitCode, 0, closed.stderr);
+				await runExtensionEvent(h.handlers, "session_shutdown", { reason: "quit" }, h.ctx);
+				assert.equal(await waitForTestPidExit(daemonPid, 10_000), true, "owned native daemon must exit");
+				t.diagnostic(JSON.stringify({ session, daemonPid, closed: true }));
+			}
+		});
+	} finally {
+		await fixture.close();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("real upstream batch argv and ref fidelity for pinned and unpinned registered tools", { skip: !real, timeout: 180_000 }, async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "bf-"));
 	const socketDir = join(dir, "s");

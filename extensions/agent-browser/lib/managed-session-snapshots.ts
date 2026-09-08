@@ -3,10 +3,8 @@ import { chmodSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSyn
 import { basename, dirname, isAbsolute, join } from "node:path";
 
 import {
-	createManagedSessionRestoreKey,
 	directoryContainsSymlink,
 	ensureManagedSessionRestoreStorageIsSecure,
-	hasManagedSessionRestoreProjectIdentity,
 	ensureOwnerOnlyDirectory,
 	getManagedRestoreSessionsDirectory,
 	isManagedSessionRestoreKey,
@@ -272,15 +270,13 @@ export function pruneOwnedManagedSessionRestoreSnapshots(options: {
 	namespace?: string;
 	parentEnv?: NodeJS.ProcessEnv;
 	platform?: NodeJS.Platform;
-	restoreKey?: string | null;
+	restoreKey: string | null;
 	statePath?: string;
 }): number {
 	const parentEnv = options.parentEnv ?? process.env;
 	const platform = options.platform ?? process.platform;
-	const restoreKey = options.restoreKey === undefined
-		? hasManagedSessionRestoreProjectIdentity(options.cwd) ? createManagedSessionRestoreKey(options.cwd) : undefined
-		: isManagedSessionRestoreKey(options.restoreKey) ? options.restoreKey : undefined;
-	if (!restoreKey) return 0;
+	const restoreKey = options.restoreKey;
+	if (!isManagedSessionRestoreKey(restoreKey)) return 0;
 	const home = resolveManagedSessionRestoreHome(parentEnv, platform);
 	if (!home) return 0;
 	const directory = getManagedRestoreSessionsDirectory(home, options.namespace);

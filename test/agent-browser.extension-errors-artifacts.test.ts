@@ -1932,6 +1932,23 @@ if (args.includes("batch")) {
 	}
 });
 
+test("timeout artifact evidence follows native operands, not ignored tails or outer globals", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "timeout-argv-"));
+	const paths = ["actual.pdf", "-actual.bin", "--quick", "--screenshot-dir", "capture.csv"];
+	try {
+		for (const path of paths) await writeFile(join(cwd, path), "saved bytes");
+		const progress = await collectTimeoutPartialProgress({ commandTokens: ["batch"], cwd, stdin: JSON.stringify([
+			["pdf", paths[0], "ignored.pdf"],
+			["download", "#link", paths[1], "ignored.bin"],
+			["pdf", paths[2], "ignored.pdf"],
+			["screenshot", "body", paths[3], "ignored.png"],
+			["wait", "--download", "--timeout", "30000", paths[4], "ignored.csv"],
+			["state", "save", "not-a-timeout-family.json"],
+		]) });
+		assert.deepEqual(progress?.artifacts.map(({ path, exists, stepIndex }) => ({ path, exists, stepIndex })), paths.map((path, index) => ({ path, exists: true, stepIndex: index + 1 })));
+	} finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("collectTimeoutPartialProgress recovers live page state when session probes succeed", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 	const basePath = process.env.PATH ?? "";
@@ -1952,7 +1969,7 @@ if (args.includes("get") && args.includes("url")) {
 		await writeFile(join(tempDir, "dogfood/secret-token/filled.png"), "fake image");
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const progress = await collectTimeoutPartialProgress({
-				command: "batch",
+				commandTokens: ["batch"],
 				cwd: tempDir,
 				sessionName: "named",
 				stdin: JSON.stringify([
@@ -1979,7 +1996,7 @@ if (args.includes("get") && args.includes("url")) {
 					{ action: "wait", milliseconds: 500 },
 				],
 			}).compiled;
-			const generatedProgress = await collectTimeoutPartialProgress({ command: "batch", compiledJob, cwd: tempDir, sessionName: "named" });
+			const generatedProgress = await collectTimeoutPartialProgress({ commandTokens: ["batch"], compiledJob, cwd: tempDir, sessionName: "named" });
 			assert.equal(generatedProgress?.steps?.[1]?.generatedFrom, "open.loadState");
 			assert.match(formatTimeoutPartialProgressText(generatedProgress as NonNullable<typeof generatedProgress>), /Step 2 \[failed, generated from open\.loadState\]: wait --load domcontentloaded/);
 		});
@@ -2002,7 +2019,7 @@ const data = subcommand === "url"
 process.stdout.write(JSON.stringify({ success: true, data }));`);
 	try {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const progress = await collectTimeoutPartialProgress({ command: "batch", cwd: tempDir, sessionName: "named", stdin: "[]" });
+			const progress = await collectTimeoutPartialProgress({ commandTokens: ["batch"], cwd: tempDir, sessionName: "named", stdin: "[]" });
 			assert.equal(progress?.currentPage?.url, "file:///tmp/local-timeout-page.html");
 			assert.equal(progress?.currentPage?.title, "SECRET LOCAL TITLE");
 			assert.deepEqual((await readInvocationLog(logPath)).map((entry) => entry.args.at(-1)), ["url", "title"]);
@@ -2019,7 +2036,7 @@ test("collectTimeoutPartialProgress falls back to the planned page URL when live
 	try {
 		for (const command of ["open", "goto", "navigate"] as const) {
 			const progress = await collectTimeoutPartialProgress({
-				command: "batch",
+				commandTokens: ["batch"],
 				cwd: tempDir,
 				stdin: JSON.stringify([
 					[command, `https://example.test/${command}-planned`],
