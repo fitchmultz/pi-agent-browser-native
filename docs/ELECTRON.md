@@ -209,9 +209,9 @@ On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On
 | Action | What `timeoutMs` covers when set | Typical default when omitted |
 | --- | --- | --- |
 | `launch` | Host-side wait for `DevToolsActivePort` and CDP readiness | **15 s**, hard-capped at **120 s** (`normalizeTimeoutMs` in `extensions/agent-browser/lib/electron/launch.ts`) |
-| `status` | Each optional managed-session `get url` / `get title` subprocess used for mismatch diagnostics | Normal wrapper subprocess budget (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`); localhost CDP probes use **1000 ms** each (`ELECTRON_CDP_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cdp.ts`) |
+| `status` | Each optional managed-session `get url` / `get title` subprocess, including `get cdp-url` when verifying a restored connection | Normal wrapper subprocess budget (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`); localhost CDP probes use **1000 ms** each (`ELECTRON_CDP_FETCH_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/cdp.ts`) |
 | `cleanup` | Applied separately to managed-session `close` and the initial tracked-process exit wait; not a deadline for debug-port checks or profile removal | `PI_AGENT_BROWSER_IMPLICIT_SESSION_CLOSE_TIMEOUT_MS` when set, else **5000 ms** (`getImplicitSessionCloseTimeoutMs` in `extensions/agent-browser/lib/runtime.ts`, passed through `cleanupTrackedElectronHostLaunches` in `extensions/agent-browser/lib/orchestration/electron-host/index.ts`) |
-| `probe` | **Each** upstream read in the probe chain (`get url`, then `get title`, focused `eval --stdin`, `tab list`, `snapshot -i`) | Same wrapper subprocess default (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`, from `getAgentBrowserProcessTimeoutMs` in `extensions/agent-browser/lib/process.ts`) |
+| `probe` | **Each** upstream read: optional `get cdp-url` verification, then `get url`, `get title`, focused `eval --stdin`, `tab list`, and `snapshot -i` | Same wrapper subprocess default (**35 s**, or `PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS`, from `getAgentBrowserProcessTimeoutMs` in `extensions/agent-browser/lib/process.ts`) |
 
 ## `qa.attached` — current-session smoke check
 
