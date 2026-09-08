@@ -135,6 +135,8 @@ Then install this Pi package:
 pi install npm:pi-agent-browser-native
 ```
 
+After updating `pi-agent-browser-native`, fully quit and restart Pi before using the updated tools. `/reload` can retain previously loaded compiled JavaScript even after `dist/` is rebuilt, so it is not a reliable way to pick up package updates.
+
 Start Pi and ask for a browser action:
 
 ```text
