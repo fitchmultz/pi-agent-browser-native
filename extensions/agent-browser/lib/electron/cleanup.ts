@@ -55,15 +55,15 @@ function isPidAlive(pid: number | undefined): boolean | undefined {
 	}
 }
 
-async function isPortAlive(port: number): Promise<{ targets: ElectronCdpTarget[]; version?: ElectronCdpVersion }> {
-	const version = parseCdpVersion(await fetchCdpJson(`http://127.0.0.1:${port}/json/version`));
+async function isPortAlive(port: number, signal?: AbortSignal): Promise<{ targets: ElectronCdpTarget[]; version?: ElectronCdpVersion }> {
+	const version = parseCdpVersion(await fetchCdpJson(`http://127.0.0.1:${port}/json/version`, signal));
 	if (!version) return { targets: [] };
-	const targets = parseCdpTargets(await fetchCdpJson(`http://127.0.0.1:${port}/json/list`));
+	const targets = parseCdpTargets(await fetchCdpJson(`http://127.0.0.1:${port}/json/list`, signal));
 	return { targets, version };
 }
 
-export async function inspectElectronLaunchStatus(record: ElectronLaunchRecord): Promise<ElectronLaunchStatus> {
-	const cdp = await isPortAlive(record.port);
+export async function inspectElectronLaunchStatus(record: ElectronLaunchRecord, signal?: AbortSignal): Promise<ElectronLaunchStatus> {
+	const cdp = await isPortAlive(record.port, signal);
 	let userDataDirState: ElectronLaunchStatus["userDataDirState"];
 	try {
 		await lstat(record.userDataDir);

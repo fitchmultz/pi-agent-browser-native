@@ -487,12 +487,14 @@ class ElectronManagedSessionPolicyError extends Error {}
 async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	args: string[];
 	cwd: string;
+	electronLaunchRecord?: ElectronLaunchRecord;
 	headedManagedAutosaveDisabled?: boolean;
 	headedManagedAutosaveInterval?: string;
 	namespace?: string;
 	restoreState: ManagedSessionRestoreState;
 	sessionName: string;
 	signal?: AbortSignal;
+	timeoutMs?: number;
 }, run: () => Promise<T>): Promise<T> {
 	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(options.headedManagedAutosaveInterval);
 	if (autosavePolicyChangeError) throw new ElectronManagedSessionPolicyError(autosavePolicyChangeError);
@@ -508,7 +510,7 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	if (!context) throw new ElectronManagedSessionPolicyError("Electron helper could not establish wrapper ownership for its managed session.");
 	let policy: Awaited<ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>>;
 	try {
-		policy = await acquireOwnedManagedSessionDaemonPolicy({ context, signal: options.signal });
+		policy = await acquireOwnedManagedSessionDaemonPolicy({ context, electronLaunchRecord: options.electronLaunchRecord, electronVerificationTimeoutMs: options.timeoutMs, signal: options.signal });
 	} catch (error) {
 		throw new ElectronManagedSessionPolicyError(error instanceof Error ? error.message : String(error), { cause: error });
 	}
@@ -523,6 +525,7 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 
 async function collectOwnedElectronManagedSessionTarget(options: {
 	cwd: string;
+	electronLaunchRecord?: ElectronLaunchRecord;
 	headedManagedAutosaveDisabled?: boolean;
 	headedManagedAutosaveInterval?: string;
 	namespace?: string;
@@ -847,6 +850,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 				const sessionKey = getSessionPageStateKey(record.sessionName, record.namespace) ?? record.sessionName;
 				return collectOwnedElectronManagedSessionTarget({
 					cwd,
+					electronLaunchRecord: record,
 					headedManagedAutosaveDisabled: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveDisabled,
 					headedManagedAutosaveInterval: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveInterval,
 					namespace: record.namespace,
@@ -922,12 +926,14 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 				{
 					args: ["snapshot", "-i"],
 					cwd,
+					electronLaunchRecord: launchRecord,
 					headedManagedAutosaveDisabled,
 					headedManagedAutosaveInterval,
 					namespace: probeNamespace,
 					restoreState: managedSessionRestoreState,
 					sessionName: probeSessionName,
 					signal,
+					timeoutMs: compiledElectron.timeoutMs,
 				},
 				async () => await collectElectronProbe({ cwd, namespace: probeNamespace, sessionName: probeSessionName, signal, timeoutMs: compiledElectron.timeoutMs }),
 			);
