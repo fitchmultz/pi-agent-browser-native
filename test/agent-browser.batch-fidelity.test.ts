@@ -11,7 +11,7 @@ import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mj
 import { getGuardedRefUsage, shouldPinSessionTabForCommand } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state.js";
 import { getPageTargetValidationError } from "../extensions/agent-browser/lib/page-target-validation.js";
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
-import type { FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
+import type { AgentBrowserNextAction, FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
 import { waitForTestPidExit } from "./helpers/extension-validation-fixtures.js";
 
 import {
@@ -150,6 +150,34 @@ test("real upstream artifact argv matches native operand selection", { skip: !re
 					t.diagnostic(JSON.stringify({ raw, timeoutArtifacts: progress?.artifacts }));
 					assert.deepEqual(progress?.artifacts.map(({ path, exists }) => ({ path, exists })), [pdf, download, "--quick"].map((path) => ({ path, exists: true })));
 					await assert.rejects(stat(join(dir, "ignored-stdin.pdf")), { code: "ENOENT" });
+				});
+				for (const command of ["pdf", "screenshot"]) await t.test(`timeout retry preserves the native ${command} destination`, { skip: process.platform === "win32" }, async (retryTest) => {
+					const ignored = `ignored-retry-${command}`;
+					const step = command === "pdf" ? [command, "--quick", ignored] : [command, "body", "--quick", ignored];
+					const path = join(dir, "--quick");
+					await rm(path, { force: true });
+					await symlink("missing/retry-output", path);
+					// A real filesystem failure leaves this row incomplete before the later wait times out.
+					const timedOut = await call(["batch"], JSON.stringify([step, ["wait", "3000"]]), 1000);
+					assert.equal(timedOut.details?.timedOut, true, timedOut.content[0]?.text);
+					const retry = (timedOut.details?.nextActions as AgentBrowserNextAction[]).find((action) => action.id === "retry-timeout-step");
+					assert.ok(retry?.params);
+					await rm(path);
+					const retried = await executeRegisteredTool(h.tool, h.ctx, retry.params);
+					t.diagnostic(JSON.stringify({ step, retry: retry.params, retriedError: retried.isError, retriedPaths: (retried.details?.artifacts as FileArtifactMetadata[] | undefined)?.map((artifact) => artifact.path) }));
+					await retryTest.test("following nextActions writes the original path", async () => {
+						assert.equal(retried.isError, false, retried.content[0]?.text);
+						const bytes = await readFile(path);
+						assert.equal(command === "pdf" ? bytes.subarray(0, 5).toString() : bytes.subarray(0, 8).toString("hex"), command === "pdf" ? "%PDF-" : "89504e470d0a1a0a");
+						await assert.rejects(stat(join(dir, ignored)), { code: "ENOENT" });
+					});
+					await retryTest.test("visible retry and session-scoped action retain the same native row", () => {
+						const text = timedOut.content[0]?.text ?? "";
+						const payload = JSON.parse(text.split("\n").find((line) => line.startsWith("Retry failed step: "))?.slice("Retry failed step: ".length) ?? "null");
+						assert.deepEqual(payload, { args: ["batch"], stdin: JSON.stringify([step]) });
+						assert.deepEqual(retry.params, { args: [...prefix, "batch"], stdin: JSON.stringify([step]) });
+						assert.ok(text.includes(JSON.stringify(retry.params)));
+					});
 				});
 				await t.test("native recording reservations cover interleaved waits and literal batch paths", async (recording) => {
 					const held = join(dir, "--quick");

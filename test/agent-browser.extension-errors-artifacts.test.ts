@@ -1796,9 +1796,12 @@ if (args.includes("get") && args.includes("url")) {
 			assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
 			assert.match(text, /Step 2 \[completed\]: fill #search export/);
 			assert.match(text, /Step 4 \[failed\]: wait --download dogfood\/export\.csv/);
-			assert.match(text, /Retry failed step: \{"args":\["wait","--download","dogfood\/export\.csv"\]\}/);
+			assert.ok(text.includes(`Retry failed step: ${JSON.stringify({ args: ["batch"], stdin: JSON.stringify([["wait", "--download", "dogfood/export.csv"]]) })}`));
 			assert.match(text, /Artifact from step 4: dogfood\/export\.csv \(missing\)/);
-			assert.deepEqual((result.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "retry-timeout-step")?.params?.args?.slice(-3), ["wait", "--download", "dogfood/export.csv"]);
+			assert.deepEqual((result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; stdin?: string } }> | undefined)?.find((action) => action.id === "retry-timeout-step")?.params, {
+				args: ["--session", result.details?.sessionName, "batch"],
+				stdin: JSON.stringify([["wait", "--download", "dogfood/export.csv"]]),
+			});
 
 			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
@@ -1897,7 +1900,8 @@ if (args.includes("batch")) {
 });
 
 test("agentBrowserExtension retries fresh timed-out navigation in a new session when no live URL is recovered", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-fresh-timeout-retry-"));
+	// Fresh-session names plus the namespace must fit Darwin's Unix socket limit.
+	const tempDir = await mkdtemp(join(tmpdir(), "fr-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -1925,11 +1929,30 @@ if (args.includes("batch")) {
 			assert.equal(progress?.liveUrlRecovered, false);
 			assert.deepEqual(progress?.retryStep?.args, ["open", "https://example.test/fresh-timeout"]);
 			const retryAction = (result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; sessionMode?: string } }> | undefined)?.find((action) => action.id === "retry-timeout-step");
-			assert.deepEqual(retryAction?.params, { args: ["open", "https://example.test/fresh-timeout"], sessionMode: "fresh" });
+			assert.deepEqual(retryAction?.params, { args: ["batch"], stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]), sessionMode: "fresh" });
+			const namespaced = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--namespace", "r", "batch"],
+				stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"], ["wait", "100"]]),
+				sessionMode: "fresh",
+			});
+			const namespacedRetry = (namespaced.details?.nextActions as Array<{ id: string; params?: unknown }>).find((action) => action.id === "retry-timeout-step");
+			assert.deepEqual(namespacedRetry?.params, { args: ["--namespace", "r", "batch"], stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]), sessionMode: "fresh" }, JSON.stringify(namespaced));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
+});
+
+test("timeout retries preserve native row semantics in visible and structured payloads", async () => {
+	const cwd = await mkdtemp(join(tmpdir(), "timeout-retry-"));
+	try {
+		const step = ["pdf", "--quick", "ignored.pdf"];
+		const progress = await collectTimeoutPartialProgress({ commandTokens: ["batch"], cwd, stdin: JSON.stringify([step]) });
+		assert.ok(progress);
+		const retry = { args: ["batch"], stdin: JSON.stringify([step]) };
+		assert.deepEqual(progress.retryStep?.retry, retry);
+		assert.ok(formatTimeoutPartialProgressText(progress).includes(`Retry failed step: ${JSON.stringify(retry)}`));
+	} finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
 test("timeout artifact evidence follows native operands, not ignored tails or outer globals", async () => {

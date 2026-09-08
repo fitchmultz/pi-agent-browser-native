@@ -780,9 +780,9 @@ const TIMEOUT_RETRYABLE_COMMANDS = new Set([
 	"wait",
 ]);
 
-function getTimeoutStepRetry(step: { args: string[] }): { args: string[] } | undefined {
+function getTimeoutStepRetry(step: { args: string[] }): TimeoutProgressStep["retry"] {
 	const command = step.args[0];
-	return command && TIMEOUT_RETRYABLE_COMMANDS.has(command) ? { args: step.args } : undefined;
+	return command && TIMEOUT_RETRYABLE_COMMANDS.has(command) ? { args: ["batch"], stdin: JSON.stringify([step.args]) } : undefined;
 }
 
 function normalizeUrlForTimeoutComparison(url: string | undefined): URL | undefined {
@@ -917,7 +917,7 @@ export function formatTimeoutPartialProgressText(progress: TimeoutPartialProgres
 		if (progress.steps.length > shownSteps.length) lines.push(`- ... ${progress.steps.length - shownSteps.length} more step${progress.steps.length - shownSteps.length === 1 ? "" : "s"} omitted`);
 	}
 	if (progress.retryStep?.retry?.args) {
-		const payload = JSON.stringify({ args: redactInvocationArgs(progress.retryStep.retry.args) });
+		const payload = JSON.stringify({ ...progress.retryStep.retry, stdin: JSON.stringify([redactInvocationArgs(progress.retryStep.args)]) });
 		lines.push(pageTargetUnknown
 			? `Retry candidate for step ${progress.retryStep.index}: ${payload}. Verify the current URL before running it.`
 			: `Retry failed step: ${payload}`);
