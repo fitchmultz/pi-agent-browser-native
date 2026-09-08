@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { foldAgentBrowserFilesystemIdentity } from "../../argv-grammar.js";
 import { parseWaitCommandTokens } from "../../argv-descriptor.js";
+import { getRecordCommandOperands } from "../../command-taxonomy.js";
 
 const SCREENSHOT_IMAGE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".webp"];
 
@@ -100,6 +101,6 @@ export function getExplicitArtifactDestination(commandTokens: string[]): string 
 	if (command === "diff" && subcommand === "screenshot") return getDiffScreenshotOutputPath(commandTokens);
 	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return commandTokens[3];
 	if ((command === "trace" || command === "profiler") && subcommand === "stop") return commandTokens[2];
-	if (command === "record" && (subcommand === "start" || subcommand === "restart")) return commandTokens[2];
+	if (command === "record") return getRecordCommandOperands(commandTokens).path;
 	return undefined;
 }

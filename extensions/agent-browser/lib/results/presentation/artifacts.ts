@@ -482,7 +482,7 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 				return "Previous recording saved";
 			}
 			if (!isPendingRecordingArtifact(artifact)) return "Saved recording";
-			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started in a fresh active page; output will be written on stop";
+			return artifact.subcommand === "restart" ? "Recording restarted; output will be written on stop" : "Recording started; output will be written on stop";
 	}
 }
 

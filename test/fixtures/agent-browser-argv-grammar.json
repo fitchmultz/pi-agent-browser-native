@@ -1,6 +1,6 @@
 {
-  "version": "0.36.0",
-  "source": "https://github.com/vercel-labs/agent-browser/blob/eb05921bad874cd2a1b4fa5d1149f1ed26576cae/cli/src/flags.rs#L1116-L1232",
+  "version": "0.37.0",
+  "source": "https://github.com/vercel-labs/agent-browser/blob/471ab3852b47b98847f1d9c855c272bb62d0d50b/cli/src/flags.rs#L1116-L1232",
   "globalValueFlags": ["--session", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--namespace", "--headers", "--executable-path", "--cdp", "--extension", "--init-script", "--enable", "--profile", "--state", "--proxy", "--proxy-bypass", "--args", "--user-agent", "-p", "--provider", "--device", "--session-name", "--color-scheme", "--download-path", "--max-output", "--allowed-domains", "--action-policy", "--confirm-actions", "--config", "--engine", "--screenshot-dir", "--screenshot-quality", "--screenshot-format", "--idle-timeout", "--ca-cert", "--model"],
   "globalBooleanFlags": ["--json", "--headed", "--webgpu", "--no-webmcp", "--debug", "--ignore-https-errors", "--allow-file-access", "--hide-scrollbars", "--auto-connect", "--pin-tab", "--no-pin-tab", "--no-ca-cert", "--annotate", "--content-boundaries", "--confirm-interactive", "--no-auto-dialog", "-v", "--verbose", "-q", "--quiet", "--offline", "--quick", "--fix"]
 }

@@ -183,6 +183,30 @@ test("buildToolPresentation enriches open results with a compact page-change sum
 	assert.deepEqual(presentation.pageChangeSummary?.nextActionIds, ["inspect-opened-page"]);
 });
 
+test("navigation content exposes native WebMCP availability and retains its data", async () => {
+	const data = { title: "Docs", url: "https://example.com/docs", webmcp: { experimental: true, available: true, toolCount: 2 } };
+	for (const batch of [false, true]) {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: batch ? "batch" : "open" }, cwd: process.cwd(),
+			envelope: { success: true, data: batch ? [{ command: ["open", data.url], success: true, result: data }] : data },
+		});
+		const text = presentation.content.filter((item) => item.type === "text").map((item) => item.text).join("\n");
+		assert.match(text, /WebMCP tools are available.*experimental/);
+		assert.match(text, /webmcp list/);
+		assert.deepEqual(batch ? presentation.batchSteps?.[0]?.data : presentation.data, data);
+	}
+});
+
+test("navigation content keeps absent or unavailable WebMCP hints quiet", async () => {
+	for (const webmcp of [undefined, { available: false, toolCount: 2 }, { available: true, toolCount: 0 }, { available: true, toolCount: -1 }, { available: true, toolCount: 0.5 }, { available: true, toolCount: "2" }]) {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "open" }, cwd: process.cwd(),
+			envelope: { success: true, data: { title: "Docs", url: "https://example.com/docs", webmcp } },
+		});
+		assert.equal((presentation.content[0] as { text: string }).text, "Docs\nhttps://example.com/docs");
+	}
+});
+
 test("buildToolPresentation treats upstream aliases as page-changing commands", async () => {
 	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
 		const presentation = await buildToolPresentation({

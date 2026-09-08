@@ -70,9 +70,11 @@ export function getPageSummary(data: Record<string, unknown>): string | undefine
 	const title = typeof data.title === "string" ? data.title : undefined;
 	const url = typeof data.url === "string" ? data.url : undefined;
 	if (title === undefined && url === undefined) return undefined;
-	if (title && url) return `${title}\n${url}`;
-	if (url) return url;
-	return title || UNTITLED_PAGE_SUMMARY;
+	const summary = title && url ? `${title}\n${url}` : url || title || UNTITLED_PAGE_SUMMARY;
+	const webmcp = isRecord(data.webmcp) ? data.webmcp : undefined;
+	return webmcp?.available === true && typeof webmcp.toolCount === "number" && Number.isInteger(webmcp.toolCount) && webmcp.toolCount > 0
+		? `${summary}\n\nWebMCP tools are available on this page (experimental). Run webmcp list to view them.`
+		: summary;
 }
 
 export function formatCount(count: number, singular: string, plural = `${singular}s`): string {

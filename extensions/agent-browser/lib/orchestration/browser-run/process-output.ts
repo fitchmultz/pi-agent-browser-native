@@ -803,7 +803,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			? presentation.batchSteps?.some((step) => isRecordPageTransitionCommand(extractUpstreamCommandTokens(step.command ?? [])))
 			: isRecordPageTransitionCommand(prepared.commandTokens);
 		const recordingPageWarning = processResult.agentBrowserStarted && !prepared.executionPlan.plainTextInspection && recordingTransitionReached
-			? "Page state: this recording command can replace or navigate the active page, even on failure; prior in-page DOM and JavaScript state may not carry over. Take a fresh snapshot before continuing with page-scoped refs."
+			? "Page state: this wrapper conservatively invalidates earlier refs after recording starts and URL-bearing restarts. Take a fresh snapshot before continuing; this does not prove the page changed."
 			: undefined;
 		const sessionWarning = electronPostCommandHealth ? formatElectronPostCommandHealthText(electronPostCommandHealth) : electronSessionMismatch ? formatElectronSessionMismatchText(electronSessionMismatch) : aboutBlankSessionMismatch ? buildAboutBlankWarning(aboutBlankSessionMismatch) : undefined;
 		const warningText = [sessionWarning, recordingPageWarning].filter(Boolean).join("\n\n") || undefined;

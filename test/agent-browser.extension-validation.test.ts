@@ -133,7 +133,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.doesNotMatch(guidelineText, /get title\/url\/text\/html\/value\/attr\/count/);
 		assert.match(guidelineText, /never pass --json/);
 		assert.match(harness.tool.description, /Input choice:/);
-		assert.match(guidelineText, /record stop needs ffmpeg/);
+		assert.match(guidelineText, /ffmpeg before recording/);
 		assert.match(guidelineText, /Dashboards: verify scroll/);
 		assert.match(guidelineText, /When agent_browser details\.nextActions exists/);
 		assert.equal(harness.tool.promptGuidelines.includes(SHARED_BROWSER_PLAYBOOK_GUIDELINES[12]), false);
@@ -1746,11 +1746,11 @@ if (firstCallFailure) process.exit(1);`,
 			assert.deepEqual(missingDetails.recordingDependencyWarning, {
 				command: "record start",
 				dependency: "ffmpeg",
-				message: "record start can begin recording, but record stop needs ffmpeg on PATH to encode the WebM output.",
+				message: "record start reported a pending recording, but ffmpeg is not on PATH. Its output is unverified; install ffmpeg before starting a new recording.",
 				reason: "ffmpeg-missing-for-recording",
 				recommendations: [
-					"Install ffmpeg before relying on this recording workflow; on macOS with Homebrew, brew install ffmpeg or brew install ffmpeg-full.",
-					"If ffmpeg was just installed, restart pi or ensure the PATH visible to pi includes the ffmpeg binary before running record stop.",
+					"Install ffmpeg before recording; on macOS with Homebrew, brew install ffmpeg or brew install ffmpeg-full.",
+					"Stop this recording, check the result, and start a new recording after ensuring Pi can find ffmpeg on PATH.",
 				],
 			});
 

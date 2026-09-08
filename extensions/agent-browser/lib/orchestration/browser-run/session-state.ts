@@ -21,13 +21,13 @@ import {
 	type SessionTabTarget,
 } from "../../session-page-state.js";
 import {
+	getRecordCommandOperands,
 	isCloseCommand,
 	isElectronPostCommandHealthCommand,
 	isNavigationObservableCommandName,
 	isOpenNavigationCommand,
 	isRefGuardedCommand,
 	isRefInvalidatingBatchCommand,
-	isRecordPageTransitionCommand,
 	isSessionTabPinningExcludedCommand,
 	isSessionTabPostCommandCorrectionExcludedCommand,
 	isWindowOrDiffPageTransitionCommand,
@@ -480,7 +480,7 @@ export function commandChoosesSessionTabTarget(args: string[]): boolean {
 		|| isWindowOrDiffPageTransitionCommand(command, subcommand)
 		|| (command === "a11y" && findFirstPositionalArgument(tokens) !== undefined)
 		|| (["vitals", "web-vitals"].includes(command) && tokens.slice(1).some((token) => !token.startsWith("--")))
-		|| (isRecordPageTransitionCommand(tokens) && tokens[3] !== undefined);
+		|| getRecordCommandOperands(tokens).url !== undefined;
 }
 
 export function shouldPinSessionTabForCommand(options: {

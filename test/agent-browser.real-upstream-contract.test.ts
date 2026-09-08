@@ -358,6 +358,48 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 	}
 }
 
+test("real upstream agent-browser contract suite matches navigation availability and tab setup", { skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 }, async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "wm-"));
+	const socketDir = join(dir, "s");
+	await mkdir(socketDir, { mode: 0o700 });
+	const fixture = await startAgentBrowserContractFixtureServer();
+	try {
+		await withPatchedEnv({ HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
+			const version = (await runAgentBrowserProcess({ args: ["--version"], cwd: dir })).stdout.match(/agent-browser (\d+)\.(\d+)\./);
+			assert.ok(version);
+			if (Number(version[1]) === 0 && Number(version[2]) < 37) { t.skip("Native navigation availability and tab setup require 0.37 or newer."); return; }
+			const h = createExtensionHarness({ cwd: dir });
+			await runExtensionEvent(h.handlers, "session_start", { reason: "new" }, h.ctx);
+			const call = async (args: string[]) => {
+				const result = await executeRegisteredTool(h.tool, h.ctx, { args });
+				assert.equal(result.isError, false, result.content[0]?.text);
+				return result;
+			};
+			let daemonPid: number | undefined;
+			try {
+				const plain = await call(["open", `${fixture.baseUrl}/contract`]);
+				daemonPid = Number(await readFile(join(socketDir, `${plain.details?.sessionName}.pid`), "utf8"));
+				assert.equal((plain.details?.data as { webmcp?: unknown }).webmcp, undefined);
+				assert.doesNotMatch(plain.content[0]?.text ?? "", /WebMCP tools are available/);
+				const available = await call(["open", `${fixture.baseUrl}/webmcp`]);
+				assert.deepEqual((available.details?.data as { webmcp: unknown }).webmcp, { experimental: true, available: true, toolCount: 2 });
+				assert.match(available.content[0]?.text ?? "", /WebMCP tools are available.*webmcp list/);
+				for (const [headers, expected] of [[{ "x-fixture": "batch-fidelity" }, "present"], [{}, "missing"]] as const) {
+					await call(["set", "headers", JSON.stringify(headers)]);
+					await call(["tab", "new", `${fixture.baseUrl}/headers`]);
+					const value = await call(["get", "value", "#header-value"]);
+					assert.equal((value.details?.data as { value: string }).value, expected);
+				}
+				t.diagnostic("Native WebMCP availability is visible; native first-load header inheritance and clearing both match the fixture.");
+			} finally {
+				await executeRegisteredTool(h.tool, h.ctx, { args: ["close"] });
+				await runExtensionEvent(h.handlers, "session_shutdown", { reason: "quit" }, h.ctx);
+				assert.equal(await waitForTestPidExit(daemonPid, 10_000), true, "owned native daemon must exit");
+			}
+		});
+	} finally { await fixture.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test("real upstream agent-browser contract suite matches duplicate-name click mutation", {
 	skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
 	timeout: 60_000,

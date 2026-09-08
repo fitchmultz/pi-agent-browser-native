@@ -349,11 +349,22 @@ export function isSessionTabPostCommandCorrectionExcludedCommand(command: string
 	return hasCommandCapability(command, "excludedFromPostCommandCorrection");
 }
 
-/** Upstream 0.33.2 record start swaps to a fresh active page before its already-active check, so even a failed start can replace the page; record restart navigates the current page only when a URL operand (any fourth token, mirroring upstream's positional slot) is present. */
+export function getRecordCommandOperands(tokens: readonly string[]): { path?: string; url?: string } {
+	if (tokens[0] !== "record" || !["start", "restart"].includes(tokens[1] ?? "")) return {};
+	const operands: string[] = [];
+	for (let index = 2; index < tokens.length && operands.length < 2; index += 1) {
+		// Native validates the range; bare/non-numeric --fps keeps its old literal meaning.
+		if (tokens[index] === "--fps" && /^\+?\d+$/.test(tokens[index + 1] ?? "")) index += 1;
+		else operands.push(tokens[index]);
+	}
+	return operands.length > 0 ? { path: operands[0], url: operands[1] } : { path: tokens[2], url: tokens[3] };
+}
+
+/** Starts conservatively invalidate refs because older supported natives replace the page, even on failure. Restarts invalidate only when they have a URL. */
 export function isRecordPageTransitionCommand(tokens: readonly string[]): boolean {
 	if (tokens[0] !== "record") return false;
 	if (tokens[1] === "start") return true;
-	return tokens[1] === "restart" && tokens.length >= 4;
+	return tokens[1] === "restart" && getRecordCommandOperands(tokens).url !== undefined;
 }
 
 export function isWebMcpPageMutationCommand(tokens: readonly string[]): boolean {
