@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -64,6 +64,22 @@ test("tab pinning leaves explicit recovery available but still guards content af
 test("history and page actions still require the intended tab", () => {
 	for (const commandTokens of [["back"], ["forward"], ["reload"], ["click", "#field"], ["frame", "#child"]]) {
 		assert.equal(shouldPinSessionTabForCommand({ command: commandTokens[0], commandTokens, pinningRequired: true, sessionName: "named" }), true);
+	}
+});
+
+test("recording FPS options alone keep the intended tab", () => {
+	for (const subcommand of ["start", "restart"]) {
+		for (const step of [
+			["record", subcommand, "capture.webm", "--fps", "30"],
+			["record", subcommand, "--fps", "12", "capture.webm", "--fps", "24"],
+		]) {
+			assert.equal(shouldPinSessionTabForCommand({ command: "record", commandTokens: step, pinningRequired: true, sessionName: "named" }), true, JSON.stringify(step));
+			assert.equal(shouldPinSessionTabForCommand({ command: "batch", commandTokens: ["batch"], stdin: JSON.stringify([step]), pinningRequired: true, sessionName: "named" }), true);
+			assert.equal(shouldPinSessionTabForCommand({ command: "batch", commandTokens: ["batch", step.join(" ")], stdin: '[["open","https://ignored.example/"]]', pinningRequired: true, sessionName: "named" }), true);
+			for (const withUrl of [[...step, "https://chosen.example/"], ["record", subcommand, "capture.webm", "https://chosen.example/", "--fps", "24"]]) {
+				assert.equal(shouldPinSessionTabForCommand({ command: "record", commandTokens: withUrl, pinningRequired: true, sessionName: "named" }), false);
+			}
+		}
 	}
 });
 
@@ -180,8 +196,11 @@ test("real upstream artifact argv matches native operand selection", { skip: !re
 					});
 				});
 				await t.test("native recording reservations cover interleaved waits and literal batch paths", async (recording) => {
-					const held = join(dir, "--quick");
-					await rm(held, { force: true });
+					const held = join(dir, "held.webm");
+					const literal = join(dir, "--quick");
+					await rm(literal, { force: true });
+					await writeFile(held, "");
+					await link(held, literal); // Keep the literal-global alias while 0.37 requires a recording extension.
 					const started = await call(["record", "start", held]);
 					assert.equal(started.isError, false, started.content[0]?.text);
 					assert.equal((started.details?.artifacts as FileArtifactMetadata[])[0]?.status, "pending");
@@ -210,6 +229,100 @@ test("real upstream artifact argv matches native operand selection", { skip: !re
 		await fixture.close();
 		await rm(dir, { recursive: true, force: true });
 	}
+});
+
+test("real upstream recording FPS preserves destinations and the intended page", { skip: !real, timeout: 180_000 }, async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "rf-"));
+	const socketDir = join(dir, "s");
+	await mkdir(socketDir, { mode: 0o700 });
+	const fixture = await startAgentBrowserContractFixtureServer();
+	const url = `${fixture.baseUrl}/contract`;
+	try {
+		await withPatchedEnv({ HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
+			const version = (await runAgentBrowserProcess({ args: ["--version"], cwd: dir })).stdout.match(/agent-browser (\d+)\.(\d+)\./);
+			assert.ok(version);
+			if (Number(version[1]) === 0 && Number(version[2]) < 37) { t.skip("Recording FPS requires native 0.37 or newer; older recording controls run separately."); return; }
+			const h = createExtensionHarness({ cwd: dir, sessionId: randomUUID() });
+			await runExtensionEvent(h.handlers, "session_start", { reason: "new" }, h.ctx);
+			const call = (args: string[], stdin?: string, outputPath?: string) => executeRegisteredTool(h.tool, h.ctx, { args, stdin, outputPath });
+			let daemonPid: number | undefined;
+			try {
+				const opened = await call(["open", url]);
+				assert.equal(opened.isError, false, opened.content[0]?.text);
+				const sessionName = opened.details?.sessionName;
+				assert.ok(typeof sessionName === "string");
+				daemonPid = Number(await readFile(join(socketDir, `${sessionName}.pid`), "utf8"));
+				const direct = (args: string[]) => runAgentBrowserProcess({ args: ["--json", "--session", sessionName, ...args], cwd: dir });
+				for (const mode of ["direct", "stdin", "raw"]) await t.test(`${mode} FPS outputPath collision stops before native recording`, async () => {
+					const path = join(dir, `preflight-${mode}.webm`);
+					const row = ["record", "start", "--fps", "12", path];
+					let reached = false;
+					try {
+						const result = await call(mode === "direct" ? row : mode === "raw" ? ["batch", row.join(" ")] : ["batch"], mode === "stdin" ? JSON.stringify([row]) : undefined, path);
+						reached = result.details?.agentBrowserStarted === true;
+						t.diagnostic(JSON.stringify({ mode, nativeReached: reached, outputFile: result.details?.outputFile, error: result.content[0]?.text }));
+						assert.equal(result.details?.failureCategory, "validation-error");
+						assert.equal(reached, false, "a post-write outputPath guard is not early artifact protection");
+						await assert.rejects(stat(path), { code: "ENOENT" });
+					} finally {
+						if (reached) {
+							const stopped = await call(["record", "stop"]);
+							if (stopped.isError) await call(["record", "stop"]); // Retire a native failed-encoder take during RED too.
+						}
+					}
+				});
+				for (const subcommand of ["start", "restart"]) {
+					assert.equal((await call(["open", url])).isError, false);
+					assert.equal((await direct(["tab", "new", "about:blank"])).exitCode, 0);
+					const recovered = await call(["snapshot", "-i"]);
+					assert.equal((recovered.details?.sessionTabCorrection as { targetUrl?: string })?.targetUrl, url);
+					const snapshot = await call(["snapshot", "-i"]);
+					const refs = (snapshot.details?.refSnapshot as { refs: Record<string, { name: string }> }).refs;
+					const ref = Object.entries(refs).find(([, entry]) => entry.name === "Go to next fixture page")?.[0];
+					assert.ok(ref);
+					if (subcommand === "start") {
+						const blocked = await call(["batch"], JSON.stringify([["record", "start", join(dir, "blocked.webm")], ["get", "text", `@${ref}`]]));
+						assert.equal(blocked.details?.failureCategory, "stale-ref", "keep the older-native start-then-ref latch");
+						assert.notEqual(blocked.details?.agentBrowserStarted, true);
+					}
+					assert.equal((await direct(["tab", "new", `${fixture.baseUrl}/next`])).exitCode, 0);
+					const path = join(dir, `${subcommand}.webm`);
+					const args = ["record", subcommand, "--fps", "12", path];
+					const recording = await call(args);
+					assert.equal(recording.isError, false, recording.content[0]?.text);
+					const observedUrl = JSON.parse((await direct(["get", "url"])).stdout).data.url;
+					await t.test(`${subcommand} FPS retains the declared native destination`, () => {
+						assert.equal((recording.details?.artifacts as FileArtifactMetadata[])[0]?.requestedPath, path);
+						assert.deepEqual((recording.details?.effectiveArgs as string[]).slice(-args.length), args);
+					});
+					await t.test(`${subcommand} FPS records the pinned page rather than the drifted tab`, () => assert.equal(observedUrl, url));
+					await t.test(`${subcommand} FPS ref policy is conservative rather than false page-change evidence`, async () => {
+						const invalidation = recording.details?.refSnapshotInvalidation as { summary?: string } | undefined;
+						const read = await call(["get", "text", `@${ref}`]);
+						if (subcommand === "start") {
+							assert.equal(read.details?.failureCategory, "stale-ref");
+							assert.match(invalidation?.summary ?? "", /conservatively/);
+						} else {
+							assert.equal(invalidation, undefined);
+							assert.equal(read.isError, false, read.content[0]?.text);
+						}
+						assert.doesNotMatch(`${recording.content[0]?.text}\n${invalidation?.summary}`, /fresh active page|replaced or navigated/);
+					});
+					const began = Date.now();
+					assert.equal((await direct(["wait", "12000"])).exitCode, 0);
+					t.diagnostic(JSON.stringify({ subcommand, observedUrl, captureHoldMs: Date.now() - began, note: "Explicit 12s fixture capture; short/cold native Ubuntu captures can fail before encoding." }));
+					const stopped = await call(["record", "stop"]);
+					assert.equal(stopped.isError, false, stopped.content[0]?.text);
+					assert.equal((await readFile(path)).subarray(0, 4).toString("hex"), "1a45dfa3");
+					assert.equal((stopped.details?.data as { fps: number }).fps, 12);
+				}
+			} finally {
+				await call(["close"]);
+				await runExtensionEvent(h.handlers, "session_shutdown", { reason: "quit" }, h.ctx);
+				assert.equal(await waitForTestPidExit(daemonPid, 10_000), true, "owned native daemon must exit");
+			}
+		});
+	} finally { await fixture.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
 test("real upstream batch argv and ref fidelity for pinned and unpinned registered tools", { skip: !real, timeout: 180_000 }, async (t) => {

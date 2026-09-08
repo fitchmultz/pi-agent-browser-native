@@ -262,7 +262,7 @@ export async function collectRecordingDependencyWarning(options: { command: stri
 	const recordCommand = getRecordStartLikeCommand(options.command, options.commandTokens);
 	if (!recordCommand) return undefined;
 	if (await executableExistsOnPath("ffmpeg")) return undefined;
-	return { command: recordCommand, dependency: "ffmpeg", message: `${recordCommand} can begin recording, but record stop needs ffmpeg on PATH to encode the WebM output.`, reason: "ffmpeg-missing-for-recording", recommendations: ["Install ffmpeg before relying on this recording workflow; on macOS with Homebrew, brew install ffmpeg or brew install ffmpeg-full.", "If ffmpeg was just installed, restart pi or ensure the PATH visible to pi includes the ffmpeg binary before running record stop."] };
+	return { command: recordCommand, dependency: "ffmpeg", message: `${recordCommand} reported a pending recording, but ffmpeg is not on PATH. Its output is unverified; install ffmpeg before starting a new recording.`, reason: "ffmpeg-missing-for-recording", recommendations: ["Install ffmpeg before recording; on macOS with Homebrew, brew install ffmpeg or brew install ffmpeg-full.", "Stop this recording, check the result, and start a new recording after ensuring Pi can find ffmpeg on PATH."] };
 }
 
 export function formatRecordingDependencyWarningText(warning: RecordingDependencyWarning | undefined): string | undefined {

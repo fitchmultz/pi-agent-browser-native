@@ -20,15 +20,24 @@ After updating `pi-agent-browser-native`, fully quit and restart Pi before using
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.36.0` command/help surface, audited against vercel-labs/agent-browser@eb05921bad874cd2a1b4fa5d1149f1ed26576cae. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.37.0` command/help surface, audited against vercel-labs/agent-browser@471ab3852b47b98847f1d9c855c272bb62d0d50b. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.37.0 rebaseline
+
+The recommended release keeps the stable 0.35.0 floor and no upper version cap.
+
+- `record start` / `record restart` accept command-local `--fps <n>` before, between or after path/URL operands (1–60, default 30). WebM uses VP8/libvpx; MP4 uses H.264/libx264. Other extensions are handed to ffmpeg; extensionless paths are rejected. Native startup validates the path, rate and ffmpeg availability.
+- Recording uses the current active page without replacing its DOM/JavaScript state unless a URL is supplied. The wrapper still conservatively requires a fresh snapshot after dispatched starts and URL-bearing restarts to protect older supported natives; this is not evidence that a page changed. FPS alone neither chooses another tab nor makes a restart invalidate refs.
+- Successful navigation may advertise page-provided WebMCP tools. The wrapper shows the native positive hint and retains `data.webmcp`; absent, unavailable or empty results add no hint.
+- Native `tab new` and `click --new-tab` apply session user agent, headers, HTTP credentials, init scripts, routes and emulation before the first document loads. The wrapper adds no tab-setup engine.
+
 ### Upstream 0.36.0 rebaseline
 
-The recommended 0.36.0 release adds experimental page-provided WebMCP tools while preserving the stable 0.35.0 runtime floor.
+The 0.36.0 release adds experimental page-provided WebMCP tools while preserving the stable 0.35.0 runtime floor.
 
 - `webmcp list` discovers tools registered by the current page. `webmcp invoke <tool>` accepts JSON or file input, frame selection, detached execution, and a timeout; `webmcp result <id>` waits for a detached call and `webmcp cancel <id>` cancels one.
 - Locally managed Chrome enables WebMCP by default. `--no-webmcp`, `AGENT_BROWSER_NO_WEBMCP`, and upstream config `noWebmcp` disable it; attached browsers, remote providers, Lightpanda, Safari/iOS, and older Chrome builds may return `webmcp_unsupported` instead. The wrapper treats `--no-webmcp` as launch-scoped.
@@ -541,8 +550,8 @@ For evidence-only screenshots, QA captures, or audit artifacts, save to an expli
 
 Wrapper result rendering is metadata-first for saved files. Image MIME types come from a bounded header read for PNG, JPEG, GIF and WebP, never from a filename suffix; missing, unreadable, unknown or truncated headers omit `mediaType`. This identifies a format, not full image validity. Inline screenshots use the same byte check and existing size limit, so a PNG saved as `.webm` still attaches as `image/png`; other artifact kinds are not auto-inlined. An artifact-producing command fails as `artifact-missing` with artifact `status: "stale"` when the reported path's `mtimeMs` falls outside the command's bounded start/end window (with two seconds of filesystem precision tolerance), including a previous recording that `record restart` claims to finalize; clearly old or future-dated evidence is never accepted as a fresh capture. A batch, whether supplied through stdin arrays or argument command strings, must use distinct explicit artifact destinations; preflight canonicalizes existing path ancestry, compares existing file identities to catch hardlinks, and applies full Unicode plus platform case folding on macOS/Windows so aliases cannot satisfy another step's verification. The same preflight prevents `outputPath` from aliasing a same-call browser artifact, follows upstream's forward option consumption and final effective `-o` / `--output` for `diff screenshot`, and treats the optional path on `network har stop` as an artifact destination; upstream ignores positional paths on `network har start`. Outer CLI artifact parsing removes upstream global flags, so direct forms such as `record --json start <path>` and `pdf --quiet <path>` retain their native destinations. Native batch rows do not run that cleanup: `pdf --quick ignored.pdf` writes to the literal path `--quick`, and `download #link --quiet ignored.bin` writes to `--quiet`. Preflight, directory preparation, presentation, and timeout evidence use those same operands, not the ignored trailing tokens. Screenshot destination parsing mirrors upstream's exact flag matching and `[selector] [path]` positional order: `--` is positional, `true` / `false` after screenshot-only `--full` / `-f` remain positional, extra positionals are ignored after the path slot, selector-prefixed (`.`, `#`, `@`) or uppercase-extension single arguments remain selectors, and lowercase image extensions or slash-bearing arguments are paths. The wrapper deliberately keeps its existing slash-bearing hidden-workspace path normalization (for example `.dogfood/run/foo.png`) before launch. `wait --download` is observational and may verify a download that completed just before the wait began, so it is exempt from the command-window mtime gate; an explicit wait destination, in long `--download <path>` or short `-d <path>` form (including `wait --download --timeout 30000 capture.csv`), still participates in active-recording reservation preflight; the path is the next retained operand after the first timeout pair is removed; unsupported `--download=<path>` fails with split-argument guidance:
 - screenshots return a saved-path summary, visible artifact metadata, structured `details.artifacts` metadata, and an inline image attachment when safe; the visible block includes artifact type, requested path, absolute path, existence, size, cwd, session, and repair/copy status when applicable
-- downloads, PDFs, `wait --download` files, `state save` state files, diff screenshot output images, traces, CPU profiles, completed WebM recordings from `record stop`, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
-- `record start <path>` and `record restart <path>` report `successCategory: "artifact-pending"` and that output will be written on `record stop`; dispatched `record start` and URL-bearing `record restart` attempts append one `Page state:` warning on success or failure, advising a fresh snapshot because in-page DOM and JavaScript state may not carry over; explicit `--json` puts that warning in `warnings`. Only reached batch rows qualify, not preflight failures, missing binaries, help calls or unconfirmed planned rows — the wrapper invalidates the session’s prior ref snapshot (direct calls and batch steps alike, and even when the start fails with `Recording already active`, because upstream swaps the page before that check), so old `@e…` refs fail as `stale-ref` until a fresh `snapshot -i` succeeds; `record restart <path> <url>` navigates the current page and invalidates refs the same way, while a plain `record restart <path>` keeps the current page and refs; `details.artifacts` / `details.artifactVerification` mark that future file as `pending` with `recordingState: "openRecording"` and `willExistOnStop: true`, and `details.nextActions` includes exact `stop-pending-recording` args. When `record restart` finalizes a previous wrapper-known recording, that file must exist and fall within the command mtime window before the result includes `Previous recording saved: …`; a missing or stale prior file fails as `artifact-missing` while the new recording remains visible as pending and the prior manifest row is retired. Within one Pi extension process, an unbounded transcript-backed index reserves active recording destinations independently of the bounded artifact manifest. Artifact lifecycle calls and result `outputPath` writes serialize around that global check; reservations use canonical namespace/session identity, survive manifest eviction and branch replay, and retire after direct, ordered nested-batch, fresh-replacement, script, Electron, or shutdown close; the newest pending row per identity is authoritative. Legacy batch replay retires a pending manifest only when the ordered close lifecycle leaves recording closed; a later successful browser reactivation plus `record start` keeps the new pending reservation. Lexical, hardlink, existing/dangling symlink, full Unicode-fold, and macOS/Windows case aliases are rejected, so `record restart` must use a distinct new path. Do not place `record start` or `record restart` after `close` / `quit` / `exit` in one batch: wrapper preflight rejects it because upstream can report success without starting a recording; split the close and recording into separate calls. A definitive `No recording in progress` stop failure, whether direct or inside a batch, retires stale reservation state at that ordered step; a later successful batch recording row opens its new pending path normally. Any success or failure result that still contains pending recording output includes `stop-pending-recording`. The target may not exist until recording stops, and upstream needs `ffmpeg` on `PATH` at stop time to encode the WebM. If `ffmpeg` is missing after a successful `record start` / `record restart`, the wrapper appends `Recording dependency warning: ffmpeg not found on PATH` and sets `details.recordingDependencyWarning` without blocking the upstream command.
+- downloads, PDFs, `wait --download` files, `state save` state files, diff screenshot output images, traces, CPU profiles, completed video recordings from `record stop`, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
+- `record start <path>` and `record restart <path>` report `successCategory: "artifact-pending"` and that output will be written on `record stop`; dispatched `record start` and URL-bearing `record restart` attempts append one `Page state:` warning on success or failure, describing conservative ref invalidation rather than an observed page change; explicit `--json` puts that warning in `warnings`. Only reached batch rows qualify, not preflight failures, missing binaries, help calls or unconfirmed planned rows — the wrapper invalidates the session’s prior ref snapshot (direct calls and batch steps alike, and even when the start fails with `Recording already active`, to protect older supported natives that can swap the page before that check), so old `@e…` refs fail as `stale-ref` until a fresh `snapshot -i` succeeds; `record restart <path> <url>` navigates the current page and invalidates refs the same way, while a restart without a URL, including FPS-only options, keeps the current page and refs; `details.artifacts` / `details.artifactVerification` mark that future file as `pending` with `recordingState: "openRecording"` and `willExistOnStop: true`, and `details.nextActions` includes exact `stop-pending-recording` args. When `record restart` finalizes a previous wrapper-known recording, that file must exist and fall within the command mtime window before the result includes `Previous recording saved: …`; a missing or stale prior file fails as `artifact-missing` while the new recording remains visible as pending and the prior manifest row is retired. Within one Pi extension process, an unbounded transcript-backed index reserves active recording destinations independently of the bounded artifact manifest. Artifact lifecycle calls and result `outputPath` writes serialize around that global check; reservations use canonical namespace/session identity, survive manifest eviction and branch replay, and retire after direct, ordered nested-batch, fresh-replacement, script, Electron, or shutdown close; the newest pending row per identity is authoritative. Legacy batch replay retires a pending manifest only when the ordered close lifecycle leaves recording closed; a later successful browser reactivation plus `record start` keeps the new pending reservation. Lexical, hardlink, existing/dangling symlink, full Unicode-fold, and macOS/Windows case aliases are rejected, so `record restart` must use a distinct new path. Do not place `record start` or `record restart` after `close` / `quit` / `exit` in one batch: wrapper preflight rejects it because upstream can report success without starting a recording; split the close and recording into separate calls. A definitive `No recording in progress` stop failure, whether direct or inside a batch, retires stale reservation state at that ordered step; a later successful batch recording row opens its new pending path normally. Any success or failure result that still contains pending recording output includes `stop-pending-recording`. The target remains unverified until recording stops. Native 0.37 checks `ffmpeg` before starting; older supported natives may defer failure. If a successful start/restart reports pending output without `ffmpeg`, the wrapper appends `Recording dependency warning: ffmpeg not found on PATH` and `details.recordingDependencyWarning`; stop, check the result, then install the dependency before starting a new recording.
 - `batch` keeps each step's artifacts in `details.batchSteps[].artifacts`; top-level `details.artifacts` and `details.artifactManifest` coalesce an earlier pending recording into the later saved, missing, or stale terminal result for the same namespace/session identity; a successful later close marks an unfinalized pending recording `missing` / `close-abandoned`, removes its stop action, and resets earlier ref/page/network-route batch state; a later successful `record stop` replaces that intermediate abandoned row with its verified saved artifact, and later rows—including failed rows—whose lifecycle reports a browser launch may rebuild state without triggering stale pre-close `about:blank` recovery; failed-step `batchSteps[]` retains only the bounded `lifecycle.effectiveLaunch.browserLaunched` boolean for replay, explicitly non-launching diagnostics leave the close terminal, missing lifecycle evidence remains conservatively active even on the first managed call, every successful close clears wrapper trace/profiler ownership before ordered later successful rows can rebuild it, namespace-scoped `close --all` clears all matching managed/attached/page/ref/route/trace/recording ownership, and any later same-session failure before recording stops keeps exact `stop-pending-recording` args alongside its normal recovery
 
 `diff screenshot` follows the file-artifact path above for the **diff** image: model-visible text and `details.artifacts` focus on that output, while baseline paths stay out of the artifact summary block, and Pi does **not** auto-inline the diff the way it inlines trusted `screenshot` captures. `state load` may print the loaded path in prose but does not add a saved-file artifact entry the way `state save` does.
@@ -767,7 +776,7 @@ Privacy note: `cookies get` can expose real profile cookies. Do not run it again
 
 ### WebMCP page tools
 
-WebMCP support is experimental and browser-dependent. Locally managed Chrome enables it by default; use a fresh launch with `--no-webmcp` or set `AGENT_BROWSER_NO_WEBMCP=1` to disable it. Page tool metadata and results come from the page itself.
+WebMCP support is experimental and browser-dependent. Locally managed Chrome enables it by default; use a fresh launch with `--no-webmcp` or set `AGENT_BROWSER_NO_WEBMCP=1` to disable it. Page tool metadata and results come from the page itself. On 0.37, successful navigation with native `webmcp.available: true` and a positive tool count shows a `webmcp list` hint; the raw object stays in `details.data`. No hint is added for absent, unavailable or empty metadata.
 
 | Command | Purpose |
 | --- | --- |
@@ -840,9 +849,9 @@ Current upstream still does not parse `wait <selector> --state hidden` / `wait <
 | `diff url <u1> <u2>` | Navigate to both pages and compare them, leaving the second destination active. The wrapper observes the final URL, including redirects to `about:blank`, and invalidates old refs without recovering the old tab; direct and reached batch rows use the same rule. If the URL cannot be observed, run `get url` before taking a fresh snapshot. Use `diff url <u1> <u2> --screenshot --wait-until <strategy> --selector <sel> --compact --depth <n>` when you need screenshot comparison, navigation wait control, or scoped/compact snapshot comparison. |
 | `trace start`, `trace stop [path]` | Record a Chrome DevTools trace. |
 | `profiler start|stop [path]` | Record a Chrome DevTools profile. |
-| `record start <path> [url]` | Start WebM video recording; output is written on `record stop`. Requires `ffmpeg` on `PATH` for the final encode. |
+| `record start <path> [url]` | Record the active page; an optional URL navigates first. Use `.webm` or `.mp4` and optional `--fps <n>` (1–60, default 30); native validates startup and requires `ffmpeg` on `PATH`. Verify output after `record stop`. |
 | `record stop` | Stop and save video. If this fails with `ffmpeg not found`, install `ffmpeg` / `ffmpeg-full` and rerun the recording. |
-| `record restart <path> [url]` | Stop any current recording and start a new WebM recording. |
+| `record restart <path> [url]` | Stop any current recording and start a new video. Supports the same formats and `--fps` option; without a URL it keeps the page and refs. |
 | `console [--clear]` | View or clear console logs. |
 | `errors [--clear]` | View or clear page errors. |
 | `highlight <sel>` | Highlight an element. |
@@ -863,7 +872,7 @@ Current upstream still does not parse `wait <selector> --state hidden` / `wait <
 
 Recording destinations are reserved within one Pi process, not across processes. Use unique paths for concurrent Pi processes: different explicit sessions can overwrite one file even when both `record stop` results are verified. Upstream’s same-session `record start` guard does not reserve the filename across other sessions.
 
-When these diagnostic commands are invoked through the native `agent_browser` tool, structured console, page-error, React, Web Vitals, and SPA outputs render as compact summaries when possible, with large outputs previewed and spilled instead of dumped into context. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. Artifact-producing commands such as `network har stop`, `diff screenshot`, `trace stop`, `profiler stop`, and `record stop` report `details.artifacts[]` plus `details.artifactVerification`; `record start` / `record restart` are reported as pending until `record stop` completes. For video workflows, keep `ffmpeg` on `PATH` first; on macOS with Homebrew, `brew install ffmpeg` or `brew install ffmpeg-full` is sufficient. Successful `record start` / `record restart` results warn early with `details.recordingDependencyWarning` when the wrapper cannot find `ffmpeg`, so fix PATH before `record stop` instead of discovering the missing encoder after the capture. The README install section keeps the concise external-dependency list for maximal extension use.
+When these diagnostic commands are invoked through the native `agent_browser` tool, structured console, page-error, React, Web Vitals, and SPA outputs render as compact summaries when possible, with large outputs previewed and spilled instead of dumped into context. Large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. Artifact-producing commands such as `network har stop`, `diff screenshot`, `trace stop`, `profiler stop`, and `record stop` report `details.artifacts[]` plus `details.artifactVerification`; `record start` / `record restart` are reported as pending until `record stop` completes. For video workflows, keep `ffmpeg` on `PATH` first; on macOS with Homebrew, `brew install ffmpeg` or `brew install ffmpeg-full` is sufficient. Native 0.37 checks `ffmpeg` before capture and native `doctor` checks its encoders. Older supported natives may report pending output first; `details.recordingDependencyWarning` marks that output unverified, not recoverable merely by installing ffmpeg before stop. The README install section keeps the concise external-dependency list for maximal extension use.
 
 Long-running or lifecycle commands should be explicitly paired with cleanup calls: `stream enable` → `stream disable`, `dashboard start` → `dashboard stop`, `trace start` → `trace stop`, `profiler start` → `profiler stop`, and `record start` → `record stop`. The wrapper keeps each subprocess bounded by its normal timeout; it does not keep an interactive `chat` REPL open, so prefer `chat <message>` with `--model` or `AI_GATEWAY_MODEL` for single-shot AI use.
 
@@ -1095,14 +1104,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.36.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.37.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `eb05921bad874cd2a1b4fa5d1149f1ed26576cae`
-- upstream package version: `0.36.0`
+- upstream HEAD: `471ab3852b47b98847f1d9c855c272bb62d0d50b`
+- upstream package version: `0.37.0`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1122,6 +1131,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/mcp.rs`
 - inspected: `cli/src/flags.rs`
 - inspected: `cli/src/read.rs`
+- inspected: `cli/src/doctor/ffmpeg.rs`
 - inspected: `cli/src/doctor/webgpu.rs`
 - inspected: `cli/src/native/actions.rs`
 - inspected: `cli/src/native/a11y/mod.rs`
@@ -1129,6 +1139,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/tab_binding.rs`
 - inspected: `cli/src/native/daemon.rs`
 - inspected: `cli/src/native/element.rs`
+- inspected: `cli/src/native/recording.rs`
 - inspected: `cli/src/native/stream/cdp_loop.rs`
 - inspected: `cli/src/native/stream/dashboard.rs`
 - inspected: `cli/src/native/test_fixtures/webmcp_frame_probe.html`
@@ -1144,6 +1155,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `docs/src/app/commands/page.mdx`
 - inspected: `skill-data/derive-client/SKILL.md`
 - inspected: `skill-data/core/SKILL.md`
+- inspected: `skill-data/core/references/video-recording.md`
 - inspected: `skill-data/protected-vercel-deployments/SKILL.md`
 - inspected: `skill-data/webmcp-gen/SKILL.md`
 - inspected: `test/launcher.test.mjs`
@@ -1217,9 +1229,9 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Inventory sections
 - Built-in skills: 19 human-doc token(s), 24 upstream token(s)
-- Core page, element, navigation, and extraction commands: 82 human-doc token(s), 84 upstream token(s)
-- Sessions, state, tabs, frames, dialogs, and windows: 28 human-doc token(s), 25 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 57 human-doc token(s), 67 upstream token(s)
+- Core page, element, navigation, and extraction commands: 82 human-doc token(s), 85 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 28 human-doc token(s), 26 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 58 human-doc token(s), 68 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 36 human-doc token(s), 40 upstream token(s)
 - Global flags, config, providers, policy, and environment: 152 human-doc token(s), 119 upstream token(s)
 
@@ -1393,6 +1405,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `profiler start|stop [path]`
 - `record start <path> [url]`
 - `record restart <path> [url]`
+- `--fps <n>`
 - `record stop`
 - `console [--clear]`
 - `errors [--clear]`
@@ -1640,6 +1653,7 @@ This generated block is review data for maintainers. The human-authored referenc
 ##### Core page, element, navigation, and extraction commands
 - open help: `open [url]`
 - open help: `aliases still require a URL.`
+- open help: `agent-browser webmcp list`
 - root help: `open <url>`
 - root help: `read [url]`
 - read help: `read [url]`
@@ -1741,6 +1755,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - tab help: `new --label <name> [url]`
 - tab help: `close [t<N>|label|target]`
 - tab help: `Stable tab ids`
+- tab help: `overrides before their first document loads.`
 - tab help: `tab_gone`
 - tab help: `data.targetId`
 - tab help: `data.lastUrl`
@@ -1815,7 +1830,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - trace help: `trace start`
 - trace help: `trace stop [path]`
 - profiler help: `--categories <list>`
-- record help: `record restart <path.webm> [url]`
+- record help: `record restart <path.webm|path.mp4> [url] [--fps <n>]`
+- record help: `--fps <n>`
 - console help: `--clear`
 - errors help: `--clear`
 

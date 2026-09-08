@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
+import { getExplicitArtifactDestination } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
 import { prepareAgentBrowserArgs } from "../extensions/agent-browser/lib/orchestration/browser-run/prepare.js";
 import type { FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
@@ -235,6 +236,42 @@ for (const [command, path] of [
 	});
 }
 
+test("recording destinations follow FPS operands without consuming literal or ignored values", () => {
+	for (const [operands, expected] of [
+		[["--fps", "30", "take.webm"], "take.webm"],
+		[["--fps", "+24", "take.webm", "--fps", "12", "https://example.com"], "take.webm"],
+		[["--fps", "0", "take.webm"], "take.webm"], // Native, not the path reader, validates the range.
+		[["take.webm", "https://example.com", "--fps", "30", "ignored"], "take.webm"],
+		[["./--fps.webm", "https://example.com/--fps"], "./--fps.webm"],
+		[["--fps"], "--fps"],
+		[["--fps", "literal.webm"], "--fps"],
+		[["--fps", "30"], "--fps"],
+	] as const) {
+		for (const subcommand of ["start", "restart"]) assert.equal(getExplicitArtifactDestination(["record", subcommand, ...operands]), expected);
+	}
+	assert.equal(getExplicitArtifactDestination(["record", "stop"]), undefined);
+});
+
+for (const subcommand of ["start", "restart"]) {
+	for (const mode of ["direct", "stdin", "raw"]) {
+		test(`recording FPS artifact collisions fail before dispatch: ${subcommand}/${mode}`, { concurrency: false }, async () => {
+			await withFixture(async (root, harness, log) => {
+				const path = join(root, "capture.webm");
+				const step = ["record", subcommand, "--fps", "30", path];
+				if (mode === "raw") await writeFile(join(root, "raw-steps.json"), JSON.stringify([step]));
+				const params = mode === "direct" ? { args: step } : mode === "stdin" ? { args: ["batch"], stdin: JSON.stringify([step]) } : { args: ["batch", step.join(" ")] };
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { ...params, outputPath: path });
+				assert.equal(result.isError, true);
+				assert.equal(result.details?.failureCategory, "validation-error");
+				assert.match(result.content[0]?.text ?? "", /same destination as artifact path/);
+				assert.equal(result.details?.exitCode, undefined);
+				assert.deepEqual(await readInvocationLog(log), []);
+				await assert.rejects(stat(path), { code: "ENOENT" });
+			});
+		});
+	}
+}
+
 test("batch screenshot normalization preserves a literal double-dash selector", async () => {
 	const root = await mkdtemp(join(tmpdir(), "ad-"));
 	try {
@@ -279,8 +316,11 @@ for (const batch of [false, true]) {
 				const transitions = subcommand === "start" || withUrl;
 				assert.equal((result.content[0]?.text?.match(/Page state:/g) ?? []).length, transitions ? 1 : 0);
 				if (transitions) {
-					assert.match(result.content[0]?.text ?? "", /fresh snapshot/i);
-					assert.equal((result.details?.refSnapshotInvalidation as { reason?: string })?.reason, "page-transition");
+					assert.match(result.content[0]?.text ?? "", /conservatively.*fresh snapshot/i);
+					const invalidation = result.details?.refSnapshotInvalidation as { reason?: string; summary?: string };
+					assert.equal(invalidation?.reason, "page-transition");
+					assert.match(invalidation.summary ?? "", /conservatively/);
+					assert.doesNotMatch(`${result.content[0]?.text}\n${invalidation.summary}`, /replaced or navigated|fresh active page|state may not carry over/);
 				} else assert.deepEqual(result.details?.refSnapshot, snapshot.details?.refSnapshot);
 				const read = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "value", "@e1"] });
 				assert.equal(read.isError, transitions, read.content[0]?.text);

@@ -240,10 +240,10 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 		envelope: { success: true, data: { path: "recording.webm" } },
 	});
 
-	assert.equal(presentation.summary, "Recording started in a fresh active page; output will be written on stop: recording.webm");
+	assert.equal(presentation.summary, "Recording started; output will be written on stop: recording.webm");
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = (presentation.content[0] as { text: string }).text;
-	assert.match(text, /Recording started in a fresh active page; output will be written on stop: recording\.webm/);
+	assert.match(text, /Recording started; output will be written on stop: recording\.webm/);
 	// Page-state guidance requires dispatch evidence; registered-tool tests cover it on success and failure.
 	assert.doesNotMatch(text, /Page state:/);
 	assert.doesNotMatch(text, /Saved recording/);
@@ -1046,7 +1046,7 @@ test("buildToolPresentation preserves non-screenshot file artifacts inside batch
 	assert.match(text, /Step 2 — profiler stop profile\.cpuprofile/);
 	assert.match(text, /Saved profile: profile\.cpuprofile/);
 	assert.match(text, /Step 3 — record start recording\.webm/);
-	assert.match(text, /Recording started in a fresh active page; output will be written on stop: recording\.webm/);
+	assert.match(text, /Recording started; output will be written on stop: recording\.webm/);
 	assert.doesNotMatch(presentation.batchSteps?.[2]?.text ?? "", /Saved recording|not found on disk/);
 	assert.match(text, /Step 4 — record stop/);
 	assert.match(text, /Saved recording: recording\.webm/);

@@ -281,7 +281,7 @@ export function buildNoActivePageRefSnapshotInvalidation(): SessionRefSnapshotIn
 export function buildPageTransitionRefSnapshotInvalidation(summary?: string): SessionRefSnapshotInvalidation {
 	return {
 		reason: "page-transition",
-		summary: summary ?? "A recording command (record start, or record restart with a URL) replaced or navigated the active page and invalidated the prior snapshot. Run snapshot -i before using page-scoped refs.",
+		summary: summary ?? "Recording starts and URL-bearing restarts conservatively invalidate earlier page-scoped refs. Run snapshot -i before using refs; this is not evidence of a page change.",
 	};
 }
 

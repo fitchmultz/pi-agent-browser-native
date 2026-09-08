@@ -72,6 +72,15 @@ test("WebMCP mutation commands invalidate refs while list remains read-only", ()
 	assert.equal(isRefInvalidatingBatchCommand(["webmcp", "invoke", "set_message"]), true);
 });
 
+test("recording FPS without a URL preserves restart refs", () => {
+	for (const operands of [["take.webm", "--fps", "30"], ["--fps", "+24", "take.webm"], ["--fps", "12", "take.webm", "--fps", "24"]]) {
+		assert.equal(isRecordPageTransitionCommand(["record", "restart", ...operands]), false);
+		assert.equal(isRefInvalidatingBatchCommand(["record", "restart", ...operands]), false);
+		assert.equal(isRefInvalidatingBatchCommand(["record", "start", ...operands]), true, "older native starts still need conservative ref protection");
+		assert.equal(isRecordPageTransitionCommand(["record", "restart", ...operands, "https://example.com"]), true);
+	}
+});
+
 test("record page transitions cover failed starts and navigating restarts", () => {
 	assert.equal(isRecordPageTransitionCommand(["record", "start", "out.webm"]), true);
 	assert.equal(isRecordPageTransitionCommand(["record", "restart", "out.webm"]), false);

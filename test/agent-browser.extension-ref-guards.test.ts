@@ -2336,7 +2336,7 @@ if (args.includes("snapshot")) {
 			const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["click", "@e1"] });
 			assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
 			assert.equal(staleClick.details?.failureCategory, "stale-ref", JSON.stringify(staleClick));
-			assert.match(staleClick.content[0]?.text ?? "", /cannot be used yet\. A recording command \(record start, or record restart with a URL\) replaced or navigated the active page/);
+			assert.match(staleClick.content[0]?.text ?? "", /cannot be used yet\..*conservatively invalidate/);
 
 			const staleGuardedRead = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["is", "visible", "@e1"] });
 			assert.equal(staleGuardedRead.isError, true, JSON.stringify(staleGuardedRead));
