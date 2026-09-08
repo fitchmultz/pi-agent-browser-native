@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.10 - 2026-09-08
+
+### Fixed
+
+- Follow native artifact operands and raw-batch precedence consistently in preflight, recording reservations, result metadata and timeout recovery. Preserve literal batch operands and replay retries as a single native row (#168).
+- Handle recording `--fps` options without losing the requested path or intended pinned page. Keep conservative start/ref protection for older supported natives without claiming a page replacement; FPS-only restarts keep refs (#169).
+- Show positive native WebMCP availability in navigation summaries and distinguish current recording dependency checks from older deferred failures (#169).
+
+### Changed
+
+- Recommend `agent-browser` 0.37.0 while keeping the stable 0.35.0 minimum, no upper cap and native-owned recording/tab setup.
+
+### Known limitations
+
+- Native 0.37 short/cold recordings on Ubuntu can still fail or produce a shorter clip. This release does not change the upstream recording engine.
+
 ## 0.6.9 - 2026-09-08
 
 ### Fixed
