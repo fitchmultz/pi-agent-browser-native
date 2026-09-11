@@ -6,8 +6,9 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { chmod, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
@@ -73,6 +74,43 @@ test("managed session policy lock cleans dead removal artifacts", async () => {
 	assert.ok(lock);
 	await assert.rejects(stat(testOrphanPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 	await lock.release();
+});
+
+test("unrelated lock acquisitions bound and rotate GC without reclaiming live, young or ambiguous claims", async () => {
+	const first = await acquireManagedSessionPolicyLock({ sessionName });
+	assert.ok(first);
+	const liveOwner = JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8"));
+	await first.release();
+	const paths: string[] = [];
+	const old = new Date(Date.now() - 31 * 60 * 1_000);
+	const triggerSession = `${sessionName}-gc`;
+	try {
+		for (let index = 0; index < 16; index += 1) {
+			const token = randomUUID();
+			const path = `${lockBasePath}.claim-${token}`;
+			paths.push(path);
+			await mkdir(path, { mode: 0o700 });
+			const owner = { ...liveOwner, pid: index === 0 ? process.pid : 2_147_483_647, token };
+			if (index === 2) owner.version = 2;
+			if (index === 3) owner.startIdentity = "";
+			await writeFile(join(path, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
+			if (index !== 1) await utimes(path, old, old);
+		}
+		const exists = (path: string) => stat(path).then(() => true, () => false);
+		let remaining = 12;
+		for (let attempt = 0; attempt < 32 && remaining > 0; attempt += 1) {
+			const lock = await acquireManagedSessionPolicyLock({ sessionName: triggerSession });
+			assert.ok(lock, "stale claims must not block a different session");
+			await lock.release();
+			const after = (await Promise.all(paths.slice(4).map(exists))).filter(Boolean).length;
+			assert.ok(remaining - after <= 8, "each acquisition may reclaim at most eight GC candidates");
+			remaining = after;
+		}
+		assert.equal(remaining, 0, "unrelated acquisitions must eventually collect old dead claims");
+		assert.deepEqual(await Promise.all(paths.slice(0, 4).map(exists)), [true, true, true, true]);
+	} finally {
+		for (const path of paths) await rm(path, { force: true, recursive: true });
+	}
 });
 
 test("managed session policy lock fails closed without repairing unsafe owner permissions", async () => {

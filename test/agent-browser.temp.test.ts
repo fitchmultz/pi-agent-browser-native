@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -20,6 +20,21 @@ import {
 	writeSecureTempRootOwnershipMarker,
 } from "../extensions/agent-browser/lib/temp.js";
 import { readChildStdoutJsonLine, stopChildProcess, withPatchedEnv } from "./helpers/agent-browser-harness.js";
+
+const originalTempEnv = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+let suiteTempDir: string;
+test.before(async () => {
+	suiteTempDir = await mkdtemp(join(tmpdir(), "piab-temp-tests-"));
+	process.env.TMPDIR = process.env.TEMP = process.env.TMP = suiteTempDir;
+});
+test.after(async () => {
+	await cleanupSecureTempArtifacts();
+	for (const [key, value] of Object.entries(originalTempEnv)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+	await rm(suiteTempDir, { recursive: true, force: true });
+});
 
 test("secure temp cleanup can recreate and track a later temp root", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
@@ -75,6 +90,38 @@ test("stale temp pruning only removes explicitly owned roots", { concurrency: fa
 		await rm(unownedRoot, { force: true, recursive: true }).catch(() => undefined);
 		await rm(ownedRoot, { force: true, recursive: true }).catch(() => undefined);
 		await cleanupSecureTempArtifacts();
+	}
+});
+
+test("stale temp pruning bounds each allocation and advances past retained roots", { concurrency: false }, async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "bounded-temp-gc-"));
+	try {
+		await withPatchedEnv({ TMPDIR: tempDir, TEMP: tempDir, TMP: tempDir }, async () => {
+			const old = Date.now() - 25 * 60 * 60 * 1_000;
+			for (let index = 0; index < 20; index += 1) {
+				const path = join(tempDir, `pi-agent-browser-${String(index).padStart(2, "0")}`);
+				await mkdir(path, { mode: 0o700 });
+				await writeSecureTempRootOwnershipMarker(path, {
+					createdAtMs: index < 8 ? Date.now() : old,
+					ownerPid: 2_147_483_647,
+					ownerProcessStartIdentity: "dead",
+				});
+			}
+			let remaining = 20;
+			for (let attempt = 0; attempt < 8 && remaining > 8; attempt += 1) {
+				const file = await openSecureTempFile("bounded-gc", ".txt");
+				await file.fileHandle.close();
+				const after = (await readdir(tempDir)).filter((name) => /^pi-agent-browser-\d{2}$/.test(name)).length;
+				assert.ok(remaining - after <= 8, "one allocation must not sweep all stale roots");
+				remaining = after;
+			}
+			assert.equal(remaining, 8, "GC must advance past the eight young roots");
+			await cleanupSecureTempArtifacts();
+		});
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { recursive: true, force: true });
 	}
 });
 
