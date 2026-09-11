@@ -7,9 +7,9 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -30,6 +30,55 @@ const stripWrapperPrefix = (args: string[]) => {
 	if (stripped[0] === "--session") stripped.splice(0, 2);
 	return stripped;
 };
+
+test("agentBrowserExtension exposes native session-info facts in model-visible content", { concurrency: false }, async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-si-"));
+	const home = join(root, "home");
+	const temp = join(root, "tmp");
+	const sockets = join(root, "s");
+	const logPath = join(root, "calls.jsonl");
+	const dataPath = join(root, "data.json");
+	await Promise.all([home, temp, sockets].map((path) => mkdir(path, { mode: 0o700 })));
+	await writeFakeAgentBrowserBinary(root, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+if (!args.includes("session") || !args.includes("info")) throw new Error("Unexpected browser command");
+process.stdout.write(JSON.stringify({ success: true, data: JSON.parse(fs.readFileSync(${JSON.stringify(dataPath)}, "utf8")) }));`);
+	const clearedEnv = Object.fromEntries(Object.keys(process.env)
+		.filter((key) => /^(?:PI_)?AGENT_BROWSER_/.test(key)).map((key) => [key, undefined]));
+	try {
+		await withPatchedEnv({ ...clearedEnv, HOME: home, USERPROFILE: home, TMPDIR: temp, TMP: temp, TEMP: temp,
+			PATH: `${root}${delimiter}${dirname(process.execPath)}`, PI_AGENT_BROWSER_SOCKET_DIR: sockets,
+			AGENT_BROWSER_SOCKET_DIR: sockets, AGENT_BROWSER_NAMESPACE: "fixture",
+			PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
+		}, async () => {
+			const harness = createExtensionHarness({ cwd: root });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			try {
+				for (const status of [
+					{ active: false, pid: null, version: null, runtime: null, runtimeError: null },
+					{ active: true, pid: 1234, version: "0.37.1", runtime: { browserLaunched: true, engine: "chromium", launchHash: "launch-identity", restoreKey: "shared-auth" }, runtimeError: null },
+					{ active: true, pid: 1234, version: "0.37.1", runtime: null, runtimeError: "Runtime info unavailable" },
+				]) {
+					const data = { session: "fixture", namespace: "fixture", socketDir: sockets, ...status };
+					await writeFile(dataPath, JSON.stringify(data));
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fixture", "session", "info"] });
+					assert.equal(result.isError, false);
+					assert.deepEqual(JSON.parse(result.content[0]?.text ?? ""), data);
+					assert.deepEqual(result.details?.data, data);
+				}
+				await writeFile(dataPath, JSON.stringify({ session: "fixture" }));
+				const legacy = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fixture", "session", "info"] });
+				assert.equal(legacy.content[0]?.text, "Current session: fixture");
+				assert.equal((await readInvocationLog(logPath)).length, 4);
+			} finally {
+				await runExtensionEvent(harness.handlers, "session_shutdown", {}, harness.ctx);
+			}
+		});
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
 
 test("agentBrowserExtension keeps successful plain-text inspection stateless and machine-readable", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));

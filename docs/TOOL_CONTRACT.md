@@ -961,6 +961,8 @@ If `agent-browser` is not on `PATH`, fail with a message that:
 
 ## Session behavior
 
+`session info` text preserves native `active`, PID, namespace/socket directory, version, and returned runtime identity/status fields, including null values and redacted runtime errors. `active` describes daemon inventory, not browser readiness; check `runtime.browserLaunched` separately. An active daemon with `runtime: null` has unavailable runtime information, not proof of a reusable browser. Name-only `session` responses identify the selected session without proving liveness. Fields upstream does not return (including the browser profile in 0.37.1) remain unknown; restore check URLs, text, and code are omitted from the status text.
+
 - maintain one extension-managed active session per `pi` session for the common path
 - derive the base implicit session name from the official `pi` session id plus a cwd hash so same-named checkouts do not collide
 - respect explicit upstream `--session` and configured native session/namespace defaults with minimal interference; per-call `--config` reaches helpers without changing native precedence

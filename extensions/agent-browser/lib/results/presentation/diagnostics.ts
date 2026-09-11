@@ -296,6 +296,18 @@ function formatSessionText(data: Record<string, unknown>): string | undefined {
 			})
 			.join("\n");
 	}
+	if (typeof data.active === "boolean") {
+		const runtime = data.runtime;
+		return stringifyModelFacing({
+			...Object.fromEntries(["session", "namespace", "socketDir", "active", "pid", "version", "runtimeError"].map((key) => [key, data[key]])),
+			// Native runtime also includes restore check URLs, text and code; show status/identity only.
+			runtime: isRecord(runtime) ? Object.fromEntries([
+				"session", "namespace", "socketDir", "backgroundPid", "browserLaunched", "pageCount", "engine", "launchHash",
+				"compatibilityStatus", "restoreKey", "restoreStatus", "restoreLoadedPath", "restoreValidationPending",
+				"restoreSave", "saveStatus", "restoreSavedPath",
+			].map((key) => [key, runtime[key]])) : runtime,
+		});
+	}
 	const session = getStringField(data, "session");
 	return session ? `Current session: ${redactModelFacingText(session)}` : undefined;
 }

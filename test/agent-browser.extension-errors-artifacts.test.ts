@@ -1336,9 +1336,7 @@ if (args.includes("session") && args.includes("info")) {
 test("agentBrowserExtension reports managed-session outcomes after failed fresh launches", { concurrency: false }, async (context) => {
 	const shortTempRoot = dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab"));
 	const tempDir = await mkdtemp(join(shortTempRoot, "a-"));
-	const socketDir = join(shortTempRoot, `p${(process.pid % 36).toString(36)}`);
-	await rm(socketDir, { force: true, recursive: true });
-	await mkdir(socketDir, { mode: 0o700 });
+	const socketDir = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "p-"));
 	context.after(async () => {
 		await rm(socketDir, { force: true, recursive: true });
 	});

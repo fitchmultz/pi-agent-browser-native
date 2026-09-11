@@ -14,7 +14,7 @@ const clearedBrowserEnv = Object.fromEntries(Object.keys(process.env)
 	.map((name) => [name, undefined]));
 
 test("native environment defaults share caller ownership across Pi sessions and helpers", async () => {
-	const root = await mkdtemp(join(tmpdir(), "piab-shared-"));
+	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-shared-"));
 	const log = join(root, "calls.jsonl");
 	await writeFakeAgentBrowserBinary(root, `
 const args = process.argv.slice(2);
@@ -23,7 +23,7 @@ const data = args.includes("snapshot") ? { snapshot: "- button \\"Continue\\" [r
 console.log(JSON.stringify({ success: true, data }));
 `);
 	try {
-		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PATH: `${root}${delimiter}${process.env.PATH}`, AGENT_BROWSER_SESSION: "shared", AGENT_BROWSER_NAMESPACE: "Team Work", PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}`, AGENT_BROWSER_SESSION: "shared", AGENT_BROWSER_NAMESPACE: "Team Work", PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
 			const one = createExtensionHarness({ cwd: root, sessionId: "pi-one" });
 			const two = createExtensionHarness({ cwd: root, sessionId: "pi-two" });
 			for (const harness of [one, two]) {
@@ -50,7 +50,7 @@ console.log(JSON.stringify({ success: true, data }));
 });
 
 test("unconfigured implicit sessions retain ownership and idle cleanup", async () => {
-	const root = await mkdtemp(join(tmpdir(), "piab-owned-"));
+	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-owned-"));
 	const log = join(root, "calls.jsonl");
 	await writeFakeAgentBrowserBinary(root, `
 const args = process.argv.slice(2);
@@ -58,7 +58,7 @@ require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args,
 console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "about:blank" } }));
 `);
 	try {
-		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PATH: `${root}${delimiter}${process.env.PATH}`, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}`, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
 			const harness = createExtensionHarness({ cwd: root });
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"] });
 			assert.equal(result.isError, false, result.content[0]?.text);
@@ -75,7 +75,7 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "abou
 });
 
 test("real native config identity follows file, environment and argv precedence", { skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1" }, async () => {
-	const root = await mkdtemp(join(tmpdir(), "piab-config-"));
+	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-config-"));
 	await mkdir(join(root, ".agent-browser"));
 	const global = join(root, ".agent-browser", "config.json");
 	const project = join(root, "agent-browser.json");
@@ -84,7 +84,7 @@ test("real native config identity follows file, environment and argv precedence"
 	await writeFile(project, JSON.stringify({ session: "project" }));
 	await writeFile(explicit, JSON.stringify({ session: "default", namespace: "" }));
 	try {
-		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root }, async () => {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s") }, async () => {
 			const harness = createExtensionHarness({ cwd: root });
 			const inspect = async (args: string[], session: string, namespace?: string) => {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args, "session"] });
