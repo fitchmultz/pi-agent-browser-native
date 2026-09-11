@@ -186,6 +186,51 @@ test("buildToolPresentation formats session status and session list", async () =
 	assert.match((list.content[0] as { text: string }).text, /name=work/);
 });
 
+test("buildToolPresentation exposes native session-info liveness and runtime identity", async () => {
+	const identity = { session: "shared", namespace: null, socketDir: "/tmp/isolated-sockets" };
+	for (const status of [
+		{ active: false, pid: null, version: null, runtime: null, runtimeError: null },
+		{ active: true, pid: 1234, version: "0.37.1", runtime: null, runtimeError: null },
+		{ active: true, pid: 1234, version: "0.37.1", runtime: null, runtimeError: "Runtime info unavailable" },
+		{ active: true, pid: 1234, version: "0.37.1", runtime: {
+			session: "shared", namespace: null, socketDir: identity.socketDir, backgroundPid: 1234,
+			browserLaunched: false, pageCount: 0, engine: "chromium", launchHash: null,
+			compatibilityStatus: "current", restoreKey: null, restoreStatus: "disabled",
+			restoreValidationPending: false, restoreSave: false, saveStatus: "disabled",
+		}, runtimeError: null },
+	]) {
+		const data = { ...identity, ...status };
+		const result = await buildToolPresentation({
+			commandInfo: { command: "session", subcommand: "info" },
+			cwd: process.cwd(), envelope: { success: true, data },
+		});
+		assert.deepEqual(JSON.parse((result.content[0] as { text: string }).text), data);
+	}
+});
+
+test("buildToolPresentation limits native session-info text to redacted status metadata", async () => {
+	const runtime = {
+		browserLaunched: true, pageCount: 2, engine: "chromium", launchHash: "launch-identity",
+		restoreKey: "shared-auth", restoreStatus: "loaded", restoreLoadedPath: "/tmp/shared-auth.json",
+		saveStatus: "saved", restoreSavedPath: "/tmp/shared-auth.json",
+	};
+	const result = await buildToolPresentation({
+		commandInfo: { command: "session", subcommand: "info" }, cwd: process.cwd(),
+		envelope: { success: true, data: {
+			session: "shared", namespace: "team", active: true, pid: 1234,
+			runtimeError: "Authorization: Bearer runtime-secret",
+			runtime: { ...runtime, restoreCheckUrl: "https://private.test/path", restoreCheckText: "private-text",
+				restoreCheckFn: "private-function", restoreStatusDetail: "private-detail",
+				password: "private-password", cdpUrl: "ws://private.test/control" },
+		} },
+	});
+	const text = (result.content[0] as { text: string }).text;
+	const visible = JSON.parse(text);
+	assert.deepEqual(visible.runtime, runtime);
+	assert.match(visible.runtimeError, /REDACTED/);
+	assert.doesNotMatch(text, /runtime-secret|private|profile/);
+});
+
 test("buildToolPresentation formats Chrome profile arrays", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "profiles" },
