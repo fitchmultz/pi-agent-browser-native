@@ -97,6 +97,21 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 			return;
 		}
 
+		if (url.pathname === "/qa-error-residue") {
+			sendFixtureHtml(response, `<!doctype html><title>Repeated error fixture</title>
+				<h1>Repeated error fixture</h1><script>
+				window.qaErrorsThrown = 0;
+				const requested = sessionStorage.getItem("qa-error-count");
+				const count = requested === "0" ? 0 : requested === "1" ? 1 : 1100;
+				function raiseError() {
+					window.qaErrorsThrown += 1;
+					throw new Error("qa-repeat-error");
+				}
+				for (let i = 0; i < count; i++) setTimeout(raiseError, 0);
+			</script>`);
+			return;
+		}
+
 		if (url.pathname === "/duplicate-buttons") {
 			sendFixtureHtml(response, `<!doctype html><title>Duplicate buttons</title>
 				<button id="first" onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1); this.dataset.trusted = String(event.isTrusted); this.textContent = 'Remove';">Add to cart</button>
