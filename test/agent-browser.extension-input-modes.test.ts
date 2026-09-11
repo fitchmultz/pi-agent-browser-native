@@ -39,19 +39,84 @@ test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA fai
 	const analysis = analyzeQaPresetTimeout(compiled);
 	assert.equal(analysis?.passed, false);
 	assert.deepEqual(analysis?.failedChecks, ['expected text was not verified before timeout: "Definitely Not On This Page"']);
+	assert.deepEqual(analysis?.notRunChecks, []);
 	assert.match(analysis?.summary ?? "", /QA preset failed/);
 });
 
 test("analyzeQaPresetResults reports missing expected text as QA failure", () => {
-	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/", expectedText: "Definitely Not On This Page" }).compiled;
+	const compiled = compileAgentBrowserQaPreset({
+		url: "https://example.test/",
+		expectedText: "Definitely Not On This Page",
+		checkConsole: false,
+		checkErrors: false,
+		checkNetwork: false,
+	}).compiled;
 	assert.ok(compiled);
 	const analysis = analyzeQaPresetResults([
 		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
 		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
-		{ command: ["get", "text", "body"], success: true, result: { result: "Example Domain" } },
+		{ command: compiled.steps[2]?.args, success: true, result: { result: false } },
 	], compiled);
 	assert.equal(analysis?.passed, false);
 	assert.deepEqual(analysis?.failedChecks, ['expected text not found: "Definitely Not On This Page"']);
+	assert.deepEqual(analysis?.notRunChecks, []);
+});
+
+test("analyzeQaPresetResults reports checks after a fail-fast open failure as not run", () => {
+	const compiled = compileAgentBrowserQaPreset({
+		url: "https://example.test/",
+		expectedText: ["First expected text", "Second expected text", "Third expected text"],
+	}).compiled;
+	assert.ok(compiled);
+	assert.equal(compiled.steps.length, 13);
+	const analysis = analyzeQaPresetResults([
+		{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } },
+		{ command: ["console", "--clear"], success: true, result: { messages: [] } },
+		{ command: ["errors", "--clear"], success: true, result: { errors: [] } },
+		{ command: ["errors"], success: true, result: { errors: [] } },
+		{ command: ["open", "https://example.test/"], success: false, error: "Navigation failed" },
+	], compiled);
+	assert.deepEqual(analysis?.failedChecks, ["open failed"]);
+	assert.deepEqual(analysis?.notRunChecks, [
+		"load state: domcontentloaded",
+		'expected text: "First expected text"',
+		'expected text: "Second expected text"',
+		'expected text: "Third expected text"',
+		"network diagnostics",
+		"console diagnostics",
+		"page error diagnostics",
+	]);
+	assert.equal(analysis?.summary, "QA preset failed: open failed.");
+});
+
+test("analyzeQaPresetResults distinguishes an executed text assertion from later checks not run", () => {
+	const compiled = compileAgentBrowserQaPreset({
+		url: "https://example.test/",
+		expectedText: "Missing text",
+		expectedSelector: "main",
+		screenshotPath: "qa.png",
+	}).compiled;
+	assert.ok(compiled);
+	const assertionStep = compiled.steps.find((step) => step.action === "assertText");
+	assert.ok(assertionStep);
+	const analysis = analyzeQaPresetResults([
+		{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } },
+		{ command: ["console", "--clear"], success: true, result: { messages: [] } },
+		{ command: ["errors", "--clear"], success: true, result: { errors: [] } },
+		{ command: ["errors"], success: true, result: { errors: [] } },
+		{ command: ["open", "https://example.test/"], success: true, result: { url: "https://example.test/" } },
+		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["wait", "150"], success: true, result: { ok: true } },
+		{ command: assertionStep.args, success: false, error: "Timed out waiting for text" },
+	], compiled);
+	assert.deepEqual(analysis?.failedChecks, ["wait failed", 'expected text not found: "Missing text"']);
+	assert.deepEqual(analysis?.notRunChecks, [
+		'expected selector: "main"',
+		"network diagnostics",
+		"console diagnostics",
+		"page error diagnostics",
+		'screenshot: "qa.png"',
+	]);
 });
 
 test("analyzeQaPresetResults ignores reset-phase diagnostic rows for URL QA", () => {
@@ -64,6 +129,7 @@ test("analyzeQaPresetResults ignores reset-phase diagnostic rows for URL QA", ()
 		{ command: ["errors"], success: true, result: { errors: [] } },
 		{ command: ["open", "https://example.test/"], success: true, result: { title: "Example", url: "https://example.test/" } },
 		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["wait", "150"], success: true, result: { ok: true } },
 		{ command: ["wait", "--fn", compiled.steps.find((step) => step.action === "assertText")?.args[2] ?? "", "--timeout", "5000"], success: true, result: true },
 		{ command: ["network", "requests"], success: true, result: { requests: [] } },
 		{ command: ["console"], success: true, result: { messages: [] } },
@@ -118,6 +184,7 @@ test("analyzeQaPresetResults subtracts unchanged post-clear page-error residue w
 		{ command: ["errors"], success: true, result: { errors: [staleError] } },
 		{ command: ["open", "https://clean.example.test/"], success: true, result: { url: "https://clean.example.test/" } },
 		{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+		{ command: ["wait", "150"], success: true, result: { ok: true } },
 		{ command: ["errors"], success: true, result: { errors: [staleError] } },
 	], compiled);
 	assert.equal(analysis?.passed, true);
@@ -937,8 +1004,11 @@ process.stdin.on("end", () => {
     if (name === "open") {
       const url = String(command[1] || "");
       const title = url.includes("blank") ? "Blank Page" : "QA Page";
-      writeSessionState({ title, url });
-      mode = url.includes("fail") ? "fail" : url.includes("favicon") ? "favicon" : "clean";
+	  if (process.env.AGENT_BROWSER_FAKE_QA_MODE === "open-bail") {
+		return { command, success: false, error: "Navigation failed: net::ERR_CERT_AUTHORITY_INVALID at https://qa.example.test/?token=secret" };
+	  }
+	  writeSessionState({ title, url });
+	  mode = url.includes("fail") ? "fail" : url.includes("favicon") ? "favicon" : "clean";
       return { command, success: true, result: { title, url } };
     }
     if (name === "network") {
@@ -969,7 +1039,7 @@ process.stdin.on("end", () => {
     }
     return { command, success: true, result: { ok: true } };
   });
-  process.stdout.write(JSON.stringify(results));
+  process.stdout.write(JSON.stringify(process.env.AGENT_BROWSER_FAKE_QA_MODE === "open-bail" ? results.slice(0, 5) : results));
 });`,
 	);
 
@@ -1018,6 +1088,26 @@ process.stdin.on("end", () => {
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary:/);
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Step 1 —/);
 
+			process.env.AGENT_BROWSER_FAKE_QA_MODE = "open-bail";
+			const openBailHarness = createExtensionHarness({ cwd: tempDir, sessionId: "qa-open-bail-session" });
+			await runExtensionEvent(openBailHarness.handlers, "session_start", { reason: "new" }, openBailHarness.ctx);
+			const openBailResult = await executeRegisteredTool(openBailHarness.tool, openBailHarness.ctx, {
+				qa: {
+					url: "https://qa.example.test/?token=secret",
+					expectedText: ["First expected text", "Second expected text", "Third expected text"],
+				},
+			});
+			const openBailText = openBailResult.content[0]?.text ?? "";
+			assert.equal(openBailResult.isError, true);
+			assert.match(openBailText, /^Error: Navigation failed: net::ERR_CERT_AUTHORITY_INVALID/);
+			assert.match(openBailText, /Not run:\n- load state: domcontentloaded/);
+			assert.match(openBailText, /expected text: "First expected text"/);
+			assert.match(openBailText, /Execution: 5\/13 batch steps/);
+			assert.doesNotMatch(openBailText, /expected text not found/);
+			assert.doesNotMatch(openBailText, /token=secret/);
+			assert.deepEqual((openBailResult.details?.qaPreset as { failedChecks?: string[]; notRunChecks?: string[] } | undefined)?.failedChecks, ["open failed"]);
+			assert.equal((openBailResult.details?.qaPreset as { notRunChecks?: string[] } | undefined)?.notRunChecks?.length, 7);
+
 			process.env.AGENT_BROWSER_FAKE_QA_MODE = "wait-fail";
 			const failedWaitQaResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				qa: {
@@ -1026,8 +1116,8 @@ process.stdin.on("end", () => {
 				},
 			});
 			assert.equal(failedWaitQaResult.isError, true);
-			assert.equal(failedWaitQaResult.details?.failureCategory, "qa-failure");
-			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /QA preset failed/);
+			assert.equal(failedWaitQaResult.details?.failureCategory, "qa-failure", failedWaitQaResult.content[0]?.text);
+			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /^Error: Timed out waiting for QA assertion/);
 			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /Failed checks:/);
 			assert.match((failedWaitQaResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps/);
 			assert.doesNotMatch((failedWaitQaResult.content[0] as { text: string }).text, /Step 1 —/);

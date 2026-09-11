@@ -202,6 +202,7 @@ export interface AgentBrowserNetworkSourceLookupAnalysis {
 
 export interface AgentBrowserQaPresetAnalysis {
 	failedChecks: string[];
+	notRunChecks: string[];
 	passed: boolean;
 	summary: string;
 	warnings: string[];

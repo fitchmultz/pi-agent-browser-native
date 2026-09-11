@@ -756,13 +756,14 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			presentation.failureCategory = "qa-failure";
 			presentation.summary = qaPreset.summary;
 			const compactText = buildQaCompactFailureText({
-				batchStepCount: presentation.batchSteps?.length ?? prepared.compiledQaPreset.steps.length,
-				checks: prepared.compiledQaPreset.checks,
+				causalError: presentation.batchFailure?.failedStep.text,
+				executedStepCount: presentation.batchSteps?.length ?? 0,
 				page: extractQaPageContext({
 					attachedTarget: qaAttachedTarget,
 					batchData: presentationEnvelope?.data,
 					compiled: prepared.compiledQaPreset,
 				}),
+				plannedStepCount: prepared.compiledQaPreset.steps.length,
 				qaPreset,
 			});
 			const nonTextContent = presentation.content.filter((item) => item.type !== "text");
