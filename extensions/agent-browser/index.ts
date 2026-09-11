@@ -41,6 +41,7 @@ import { ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
+import { withNativeSessionDefaults } from "./lib/orchestration/native-session-defaults.js";
 import {
 	MINIMUM_AGENT_BROWSER_VERSION,
 	SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
@@ -1511,11 +1512,14 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({
 				getBatchPreflightValidationError: (args, stdin) => getArtifactPreflightValidationError({ args, cwd: ctx.cwd, outputPath, stdin }),
-				managedSessionActive,
 				params,
 			});
 			if (resolvedInput.status === "invalid") {
 				return buildValidationFailureResult(resolvedInput);
+			}
+			return withNativeSessionDefaults(resolvedInput, ctx.cwd, signal, async (resolvedInput) => {
+			if (resolvedInput.kind === "qa" && resolvedInput.compiledQaPreset.checks.attached && !managedSessionActive && !extractExplicitSessionName(resolvedInput.toolArgs)) {
+				return buildValidationFailureResult({ ...resolvedInput, attemptedKind: "qa", kind: "invalid", status: "invalid", validationError: "qa.attached requires an active attached session. Run electron.launch or connect to an Electron debug port first, or configure a native shared session." });
 			}
 			const applyUnserializedOutputPath = async (result: AgentBrowserToolResult, preserveTextContent = false): Promise<AgentBrowserToolResult> => {
 				if (!outputPath || result.isError === true || (isRecord(result.details) && result.details.resultCategory === "failure")) return warnRecordingPersistence(result);
@@ -1948,6 +1952,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 						validationError: artifactValidationError,
 					})),
 				});
+			});
 			});
 		},
 	} satisfies ToolDefinition<typeof AGENT_BROWSER_PARAMS>;

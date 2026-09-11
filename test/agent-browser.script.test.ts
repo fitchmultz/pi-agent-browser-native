@@ -43,7 +43,6 @@ const successEnvelope = (data: unknown, summary = "Browser call completed."): Ag
 
 const resolveInput = (params: Parameters<typeof resolveAgentBrowserInput>[0]["params"]) => resolveAgentBrowserInput({
 	getBatchPreflightValidationError: () => undefined,
-	managedSessionActive: false,
 	params,
 });
 
@@ -523,7 +522,7 @@ test("script inner calls and cleanup clear ambient upstream launch controls", { 
 	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
 const args = process.argv.slice(2);
 const names = ${JSON.stringify(ambientNames)};
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, env: Object.fromEntries(names.map(name => [name, process.env[name] ?? null])), config: process.env.AGENT_BROWSER_CONFIG ?? null }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, env: Object.fromEntries(names.map(name => [name, process.env[name] ?? null])), config: process.env.AGENT_BROWSER_CONFIG ?? null, configContent: process.env.AGENT_BROWSER_CONFIG ? fs.readFileSync(process.env.AGENT_BROWSER_CONFIG, "utf8") : null }) + "\\n");
 if (args.includes("session") && args.includes("info")) process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
 else if (args.includes("close")) process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolated env", url: "https://example.test" } }));`);
@@ -545,7 +544,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolat
 			assert.equal((result.details?.scriptRun as { callCount?: number } | undefined)?.callCount, 2);
 			assert.equal(result.details?.attachedBrowserSession, undefined);
 			const sessionName = (result.details?.scriptSession as { sessionName?: string } | undefined)?.sessionName;
-			const invocations = (await readInvocationLog(logPath) as Array<{ args: string[]; config?: string | null; env?: Record<string, string | null> }>).filter((entry) => entry.args.includes(sessionName ?? "missing"));
+			const invocations = (await readInvocationLog(logPath) as Array<{ args: string[]; config?: string | null; configContent?: string | null; env?: Record<string, string | null> }>).filter((entry) => entry.args.includes(sessionName ?? "missing"));
 			assert.ok(invocations.some((invocation) => invocation.args.includes("snapshot")), "script should replay the policy-compatible next action");
 			for (const invocation of invocations) {
 				for (const name of ambientNames) {
@@ -554,6 +553,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolat
 					assert.notEqual(value, "http://proxy.invalid", `${name} leaked into ${JSON.stringify(invocation.args)}`);
 				}
 				assert.notEqual(invocation.config, join(tempDir, "ambient-agent-browser.json"));
+				assert.equal(invocation.configContent, "{}", "script and cleanup must bypass HOME/project native config");
 			}
 		});
 	} finally {

@@ -172,10 +172,9 @@ function normalizeExplicitEvalStdinArgs(args: string[], stdin: string | undefine
 
 export function resolveAgentBrowserInput(options: {
 	getBatchPreflightValidationError: (args: string[], stdin: string | undefined) => string | undefined;
-	managedSessionActive: boolean;
 	params: AgentBrowserExecuteParams;
 }): ResolvedAgentBrowserInput {
-	const { getBatchPreflightValidationError, managedSessionActive, params } = options;
+	const { getBatchPreflightValidationError, params } = options;
 	const semanticActionResult = params.semanticAction === undefined ? {} : compileAgentBrowserSemanticAction(params.semanticAction);
 	const jobResult = params.job === undefined ? {} : compileAgentBrowserJob(params.job);
 	const qaResult = params.qa === undefined ? {} : compileAgentBrowserQaPreset(params.qa);
@@ -238,9 +237,7 @@ export function resolveAgentBrowserInput(options: {
 	const attachedQaSessionError = compiledQaPreset?.checks.attached
 		? params.sessionMode === "fresh"
 			? "qa.attached cannot be used with sessionMode=fresh; attach or launch a session first, then run qa.attached with the current session."
-			: !managedSessionActive
-				? "qa.attached requires an active attached session. Run electron.launch or connect to an Electron debug port first."
-				: undefined
+			: undefined
 		: undefined;
 	const validationError = semanticActionResult.error
 		?? jobResult.error
