@@ -16,6 +16,8 @@ This project intentionally blocks normal `agent-browser` bash usage in most agen
 
 After updating `pi-agent-browser-native`, fully quit and restart Pi before using the updated tools. `/reload` can retain previously loaded compiled JavaScript even after `dist/` is rebuilt, so it is not a reliable way to pick up package updates.
 
+SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host-execution-hook) to save host state before ordinary or script-inner browser dispatch. This is a factory option, not a tool argument; normal installations do not need it.
+
 ## Upstream baseline
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->

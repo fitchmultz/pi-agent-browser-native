@@ -32,6 +32,24 @@ The tool also needs an operating playbook, not just a capability list. The model
 
 The native command reference in `docs/COMMAND_REFERENCE.md` is driven by the same pattern: `scripts/agent-browser-target.mjs` owns the runtime version and `scripts/agent-browser-capability-baseline.mjs` imports it alongside help/doc inventory; selected regions are generated into the Markdown by `npm run docs -- command-reference write`, and `npm run docs` plus `npm run verify -- command-reference` catch drift (the latter also samples the installed `agent-browser` on `PATH`). Maintainer workflow details live in `AGENTS.md` under upstream capability baseline.
 
+## Host execution hook
+
+An SDK host can import the package's compiled `dist/extensions/agent-browser/index.js` default export and register it once through a Pi extension factory:
+
+```ts
+agentBrowserExtension(pi, {
+  async beforeExecute(toolCallId, ctx) {
+    await saveHostState(toolCallId, ctx.signal);
+  },
+});
+```
+
+`beforeExecute` is an optional host callback, not a tool input or package config field. It receives the original outer Pi tool-call ID and the current `ExtensionContext`, with `ctx.signal` set to the dispatched call's abort signal. Hosts must honor that signal when waiting so Stop remains responsive.
+
+The extension awaits it after input resolution succeeds and before each non-script dispatch, including each accepted `browser(...)` call inside a script. The script wrapper itself does not call it; inner calls retain the original outer ID and use their own cancellation signals. The existing script queue remains serial even for `Promise.all`, so a completed inner call's files are available to the next callback. Internal helper probes and cleanup do not call it, nor does each row of a native `batch` get a separate callback. Script setup may probe the upstream version before the first inner callback.
+
+Supplying the callback registers `agent_browser` with Pi's native `executionMode: "sequential"`. Pi then finishes earlier sibling tools before entering the callback and dispatching the browser call. Rejection prevents that dispatch: direct calls become Pi tool errors, while script inner calls receive the existing failed-call envelope. The host owns saving/retry policy; the extension adds no checkpoint store, retry loop, or deadline. Existing script deadlines and cleanup still apply. Omitting the callback preserves ordinary scheduling and behavior; the separate web-search tool is unchanged.
+
 ## Optional companion web search
 
 `agent_browser_web_search` is a separate custom tool, not an `agent_browser` input mode. It is available when the extension can see at least one configured/resolvable Exa or Brave credential source from `~/.pi/config/pi-agent-browser-native/config.json`, `.pi/config/pi-agent-browser-native/config.json`, `PI_AGENT_BROWSER_CONFIG`, or the `EXA_API_KEY` / `BRAVE_API_KEY` environment fallbacks, and runtime execution still checks that the final available merged config has not set `webSearch.enabled` to `false`. Config layers merge global → project → `PI_AGENT_BROWSER_CONFIG` override; under Pi 0.84.0+, globally installed and CLI-loaded copies read `.pi/config/...` when Pi trust allows that project layer, and they skip the project layer when Pi reports the project is untrusted or when launched with `--no-approve`. Disable scope is explicit: a global disable is a normal user default, a project disable applies to one repo, and an override file with `webSearch.enabled: false` is the highest-priority hard disable for that run. Credential sources may be plaintext, `$ENV_VAR` / `${ENV_VAR}` interpolation, escaped literals, or command sources such as `"!op read 'op://Private/Exa/API Key'"` from any loaded config layer; they make the tool available without exposing the value in status text, and command values resolve when the tool executes. Browser profile/executable config uses the same paths and emits prompt guidance from the highest-priority loaded layer, including project config when that layer is loaded.

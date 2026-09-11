@@ -5,10 +5,12 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { Type } from "typebox";
 
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
@@ -18,12 +20,16 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 	type ToolResultMessage,
+	type ToolCall,
 } from "@earendil-works/pi-ai/compat";
 import {
 	createAgentSession,
 	DefaultResourceLoader,
 	ModelRuntime,
 	SessionManager,
+	SettingsManager,
+	type AgentSession,
+	type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 
 import agentBrowserExtension from "../extensions/agent-browser/index.js";
@@ -92,7 +98,7 @@ function streamTextResponse(model: Model<any>, text: string) {
 	return stream;
 }
 
-function createToolCallingStream(toolArguments: Record<string, unknown>) {
+function createToolCallingStream(toolArguments: Record<string, unknown>, priorCalls: ToolCall[] = []) {
 	return (model: Model<any>, context: Context, _options?: SimpleStreamOptions) => {
 		const hasToolResult = context.messages.some((message) => message.role === "toolResult" && message.toolName === "agent_browser");
 		if (hasToolResult) return streamTextResponse(model, "Observed agent_browser result.");
@@ -107,10 +113,13 @@ function createToolCallingStream(toolArguments: Record<string, unknown>) {
 				type: "toolCall" as const,
 			};
 			stream.push({ type: "start", partial: output });
-			output.content.push(toolCall);
-			stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
-			stream.push({ type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(toolArguments), partial: output });
-			stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: output });
+			for (const call of [...priorCalls, toolCall]) {
+				const contentIndex = output.content.length;
+				output.content.push(call);
+				stream.push({ type: "toolcall_start", contentIndex, partial: output });
+				stream.push({ type: "toolcall_delta", contentIndex, delta: JSON.stringify(call.arguments), partial: output });
+				stream.push({ type: "toolcall_end", contentIndex, toolCall: call, partial: output });
+			}
 			stream.push({ type: "done", reason: "toolUse", message: output });
 			stream.end();
 		});
@@ -148,7 +157,7 @@ async function readPersistedAgentBrowserResult(sessionDir: string): Promise<{ re
 	return { result, sessionFile };
 }
 
-function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: Record<string, unknown>): Model<any> {
+function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: Record<string, unknown>, priorCalls?: ToolCall[]): Model<any> {
 	modelRuntime.registerProvider(PIPELINE_PROVIDER, {
 		api: "openai-completions",
 		apiKey: "piab-pipeline-key",
@@ -162,16 +171,23 @@ function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: Rec
 			name: "Pi Agent Browser Pipeline Test",
 			reasoning: false,
 		}],
-		streamSimple: createToolCallingStream(toolArguments),
+		streamSimple: createToolCallingStream(toolArguments, priorCalls),
 	});
 	const model = modelRuntime.getModel(PIPELINE_PROVIDER, PIPELINE_MODEL_ID);
 	assert.ok(model, "pipeline test model should be registered");
 	return model;
 }
 
-async function runPipelinePrompt(options: { fakeScript: string; toolArguments: Record<string, unknown> }): Promise<PipelinePromptResult> {
+async function runPipelinePrompt(options: {
+	fakeScript: string;
+	toolArguments: Record<string, unknown>;
+	extensionFactory?: ExtensionFactory;
+	priorCalls?: ToolCall[];
+	runPrompt?: (session: AgentSession) => Promise<void>;
+}): Promise<PipelinePromptResult> {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pipeline-"));
-	const sessionDir = join(tempDir, "sessions");
+	// Keep real Pi transcripts outside the disposable executable/workspace fixture.
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pipeline-sessions-"));
 	const invocationLogPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -186,11 +202,11 @@ async function runPipelinePrompt(options: { fakeScript: string; toolArguments: R
 				credentials: new InMemoryCredentialStore(),
 				modelsPath: null,
 			});
-			const model = registerPipelineProvider(modelRuntime, options.toolArguments);
+			const model = registerPipelineProvider(modelRuntime, options.toolArguments, options.priorCalls);
 			const resourceLoader = new DefaultResourceLoader({
 				agentDir: tempDir,
 				cwd: tempDir,
-				extensionFactories: [agentBrowserExtension],
+				extensionFactories: [options.extensionFactory ?? agentBrowserExtension],
 				noContextFiles: true,
 				noExtensions: true,
 				noPromptTemplates: true,
@@ -203,12 +219,14 @@ async function runPipelinePrompt(options: { fakeScript: string; toolArguments: R
 				model,
 				modelRuntime,
 				noTools: "builtin",
+				settingsManager: SettingsManager.inMemory(),
 				resourceLoader,
 				sessionManager: SessionManager.create(tempDir, sessionDir, { id: "piab-pipeline-session" }),
-				tools: ["agent_browser"],
+				tools: [...(options.priorCalls ?? []).map((call) => call.name), "agent_browser"],
 			});
 			try {
-				await session.prompt("Use agent_browser once.");
+				if (options.runPrompt) await options.runPrompt(session);
+				else await session.prompt("Use agent_browser once.");
 				const inMemoryResult = session.messages.find(isAgentBrowserToolResult);
 				assert.ok(inMemoryResult, "agent_browser tool result should be recorded by Pi");
 				const persisted = await readPersistedAgentBrowserResult(sessionDir);
@@ -226,6 +244,147 @@ async function runPipelinePrompt(options: { fakeScript: string; toolArguments: R
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
+
+test("Pi pipeline awaits beforeExecute after earlier sibling writes and before browser effects", async () => {
+	const capturedIds: string[] = [];
+	const pipeline = await runPipelinePrompt({
+		priorCalls: [{ type: "toolCall", id: "writer", name: "write_fixture", arguments: {} }],
+		toolArguments: { args: ["open", "https://fixture.example.test/"] },
+		extensionFactory(pi) {
+			pi.registerTool({
+				name: "write_fixture", label: "Write fixture", description: "Write a file in two stages.",
+				parameters: Type.Object({}),
+				async execute(_id, _params, signal, _update, ctx) {
+					await writeFile(join(ctx.cwd, "writer.txt"), "partial");
+					await delay(100, undefined, { signal });
+					await writeFile(join(ctx.cwd, "writer.txt"), "complete");
+					return { content: [{ type: "text", text: "Written." }], details: {} };
+				},
+			});
+			agentBrowserExtension(pi, {
+				async beforeExecute(id, ctx) {
+					capturedIds.push(id);
+					assert.ok(ctx.signal instanceof AbortSignal);
+					assert.equal(await readFile(join(ctx.cwd, "writer.txt"), "utf8"), "complete");
+					await delay(100, undefined, { signal: ctx.signal });
+					await writeFile(join(ctx.cwd, "captured.txt"), id);
+				},
+			});
+		},
+		fakeScript: `const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("open")) {
+  if (fs.readFileSync("writer.txt", "utf8") !== "complete" || fs.readFileSync("captured.txt", "utf8") !== "call_agent_browser_pipeline") throw Error("Effect preceded capture");
+}
+process.stdout.write(JSON.stringify({ success: true, data: { title: "Fixture", url: "https://fixture.example.test/" } }));`,
+	});
+	assert.deepEqual(capturedIds, ["call_agent_browser_pipeline"]);
+	assert.equal(pipeline.inMemoryResult.isError, false, JSON.stringify(pipeline.inMemoryResult.content));
+	assert.equal(pipeline.persistedResult.isError, false);
+	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
+});
+
+test("Pi pipeline captures script-created files before the next inner dispatch using the outer call ID", async () => {
+	const capturedIds: string[] = [];
+	const signals: AbortSignal[] = [];
+	const pipeline = await runPipelinePrompt({
+		toolArguments: { script: `emit(await Promise.all([
+  browser({ args: ["download", "#export", "report.txt"] }),
+  browser({ args: ["open", "https://fixture.example.test/effect"] })
+]));` },
+		extensionFactory(pi) {
+			agentBrowserExtension(pi, {
+				async beforeExecute(id, ctx) {
+					capturedIds.push(id);
+					assert.ok(ctx.signal instanceof AbortSignal);
+					signals.push(ctx.signal);
+					if (capturedIds.length === 2) {
+						const report = await readFile(join(ctx.cwd, "report.txt"), "utf8");
+						assert.equal(report, "downloaded report");
+						await writeFile(join(ctx.cwd, "captured-report.txt"), report);
+					}
+				},
+			});
+		},
+		fakeScript: `const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("download")) fs.writeFileSync("report.txt", "downloaded report");
+if (args.includes("open") && fs.readFileSync("captured-report.txt", "utf8") !== "downloaded report") throw Error("Effect preceded file capture");
+process.stdout.write(JSON.stringify({ success: true, data: { path: "report.txt", title: "Fixture", url: "https://fixture.example.test/", closed: true } }));`,
+	});
+	assert.deepEqual(capturedIds, ["call_agent_browser_pipeline", "call_agent_browser_pipeline"]);
+	assert.notEqual(signals[0], signals[1], "each inner dispatch supplies its own abort signal");
+	assert.equal(pipeline.inMemoryResult.isError, false, JSON.stringify(pipeline.inMemoryResult.content));
+	const details = pipeline.persistedResult.details as { data: Array<{ ok: boolean }> };
+	assert.deepEqual(details.data.map((result) => result.ok), [true, true]);
+	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("download")).length, 1);
+	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
+	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 1);
+});
+
+for (const script of [false, true]) {
+	test(`Pi Stop cancels a pending beforeExecute without dispatching ${script ? "script" : "direct"} browser effects`, { timeout: 15_000 }, async () => {
+		let notifyEntered!: () => void;
+		const entered = new Promise<void>((resolve) => { notifyEntered = resolve; });
+		let hookSignal: AbortSignal | undefined;
+		const pipeline = await runPipelinePrompt({
+			toolArguments: script
+				? { script: `await browser({ args: ["open", "https://fixture.example.test/effect"] });` }
+				: { args: ["open", "https://fixture.example.test/effect"] },
+			extensionFactory(pi) {
+				agentBrowserExtension(pi, {
+					async beforeExecute(id, ctx) {
+						assert.equal(id, "call_agent_browser_pipeline");
+						assert.ok(ctx.signal instanceof AbortSignal);
+						hookSignal = ctx.signal;
+						notifyEntered();
+						await delay(60_000, undefined, { signal: ctx.signal });
+					},
+				});
+			},
+			async runPrompt(session) {
+				const pending = session.prompt("Use agent_browser once.");
+				try {
+					await Promise.race([entered, pending.then(() => assert.fail("Tool completed without entering beforeExecute"))]);
+				} finally {
+					await session.abort();
+				}
+				await pending;
+			},
+			fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
+		});
+		assert.equal(hookSignal?.aborted, true);
+		assert.equal(pipeline.persistedResult.isError, true);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 0);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, script ? 1 : 0);
+	});
+}
+
+test("Pi pipeline records a rejected beforeExecute without spawning upstream", async () => {
+	const pipeline = await runPipelinePrompt({
+		toolArguments: { args: ["open", "https://fixture.example.test/effect"] },
+		extensionFactory(pi) {
+			agentBrowserExtension(pi, { beforeExecute: async () => { throw new Error("Capture failed"); } });
+		},
+		fakeScript: `throw Error("Unexpected browser effect");`,
+	});
+	assert.deepEqual(pipeline.invocations, []);
+	assert.equal(pipeline.persistedResult.isError, true);
+	assert.match(pipeline.persistedResult.content.find((item) => item.type === "text")?.text ?? "", /Capture failed/);
+});
+
+test("Pi pipeline keeps unconfigured browser scheduling and ordinary execution unchanged", async () => {
+	const pipeline = await runPipelinePrompt({
+		toolArguments: { args: ["open", "https://fixture.example.test/"] },
+		async runPrompt(session) {
+			assert.equal(session.agent.state.tools.find((tool) => tool.name === "agent_browser")?.executionMode, undefined);
+			await session.prompt("Use agent_browser once.");
+		},
+		fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: { url: "https://fixture.example.test/", title: "Fixture" } }));`,
+	});
+	assert.equal(pipeline.persistedResult.isError, false);
+	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
+});
 
 test("Pi pipeline patches persisted QA reclassification failures to isError with model-visible prose", async () => {
 	const pipeline = await runPipelinePrompt({

@@ -19,6 +19,8 @@ Start here for install and common usage. For deeper work, use the active docs by
 
 The complete documentation ownership map lives in the repository source at [`docs/SOURCE_OF_TRUTH.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/docs/SOURCE_OF_TRUTH.md).
 
+Embedding Pi in another host? The extension factory accepts an optional awaited [`beforeExecute` callback](docs/TOOL_CONTRACT.md#host-execution-hook) for saving host state before browser dispatch. Ordinary Pi installation needs no callback.
+
 ## What this looks like in Pi
 
 You prompt the agent in plain English:
