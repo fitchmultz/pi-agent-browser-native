@@ -408,7 +408,7 @@ export async function runAgentBrowserProcess(options: {
 	const managedSessionRestoreEnv = getManagedSessionRestoreEnv(managedSessionRestoreOptions);
 	const ownedManagedSessionCompatibilityEnv = getOwnedManagedSessionCompatibilityEnv(managedSessionRestoreOptions);
 	const processOverrides: NodeJS.ProcessEnv = {
-		[AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()),
+		...(ownedManagedSession ? { [AGENT_BROWSER_IDLE_TIMEOUT_ENV]: String(getImplicitSessionIdleTimeoutMs()) } : {}),
 		...managedSessionRestoreEnv,
 		...env,
 		...getManagedSessionRestoreProtectedEnv(managedSessionRestoreOptions, managedSessionRestoreEnv),
@@ -417,7 +417,8 @@ export async function runAgentBrowserProcess(options: {
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
-	const requestedSocketDir = explicitSocketDir ?? parentEnv[PI_AGENT_BROWSER_SOCKET_DIR_ENV] ?? getAgentBrowserSocketDir();
+	const requestedSocketDir = explicitSocketDir ?? parentEnv[PI_AGENT_BROWSER_SOCKET_DIR_ENV]
+		?? (!ownedManagedSession ? parentEnv[AGENT_BROWSER_SOCKET_DIR_ENV] : undefined) ?? getAgentBrowserSocketDir();
 	if (requestedSocketDir !== undefined) {
 		const socketDirError = requestedSocketDir.length > 0
 			? await getAgentBrowserSocketDirValidationError(requestedSocketDir)

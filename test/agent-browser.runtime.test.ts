@@ -1455,7 +1455,7 @@ test("validateToolArgs rejects press/key commands with selector-like extra args"
 });
 
 test("buildExecutionPlan rejects value-taking flags followed by another flag", () => {
-	const plan = buildExecutionPlan(["--session", "--profile", "Default", "open", "https://example.com"], {
+	const plan = buildExecutionPlan(["--cdp", "--profile", "Default", "open", "https://example.com"], {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: false,
 		managedSessionName: "piab-demo-123",
@@ -1463,7 +1463,7 @@ test("buildExecutionPlan rejects value-taking flags followed by another flag", (
 	});
 
 	assert.match(plan.validationError ?? "", /received `--profile`/i);
-	assert.equal(plan.invalidValueFlag?.flag, "--session");
+	assert.equal(plan.invalidValueFlag?.flag, "--cdp");
 	assert.equal(plan.invalidValueFlag?.reason, "unexpected-flag");
 	assert.equal(plan.invalidValueFlag?.receivedToken, "--profile");
 	assert.deepEqual(plan.commandInfo, {});

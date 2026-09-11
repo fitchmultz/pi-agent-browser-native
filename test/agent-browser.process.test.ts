@@ -26,7 +26,6 @@ import {
 	buildAgentBrowserProcessEnv,
 	ensureAgentBrowserSocketDir,
 	getAgentBrowserProcessTimeoutMs,
-	getAgentBrowserSocketDir,
 	getAgentBrowserSocketPathValidationError,
 	isTrustedAndroidAppDataRoot,
 	isTrustedSocketDirAncestor,
@@ -1144,7 +1143,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				AGENT_BROWSER_NO_XVFB: "1",
 				AGENT_BROWSER_SESSION_NAME: "from-parent-session-name",
 				AGENT_BROWSER_WEBGPU: "true",
-				AGENT_BROWSER_SOCKET_DIR: "/tmp/from-parent-should-not-leak",
+				AGENT_BROWSER_SOCKET_DIR: join(tempDir, "caller-sockets"),
 				AGENTCORE_API_KEY: "agentcore-key",
 				AGENTCORE_REGION: "us-west-2",
 				AI_GATEWAY_API_KEY: "ai-gateway-key",
@@ -1249,7 +1248,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(data.lang, "en_US.UTF-8");
 				assert.equal(data.openaiApiKey, "openai-should-not-leak");
 				assert.equal(data.secret, "should-not-leak");
-				assert.equal(data.socketDir, process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir());
+				assert.equal(data.socketDir, process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? join(tempDir, "caller-sockets"));
 				if (data.socketDir) {
 					assert.equal((await stat(data.socketDir)).isDirectory(), true);
 				}

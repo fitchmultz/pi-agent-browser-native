@@ -175,7 +175,7 @@ export function createAgentBrowserParamsSchema(
 	timeoutMs: Type.Optional(Type.Integer({ description: "Wrapper timeout in ms; exceed explicit waits. electron.list has no configurable timeout; other Electron actions use electron.timeoutMs.", minimum: 1 })),
 	sessionMode: Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
-			description: "auto reuses the managed session; fresh starts one for launch-only flags, then makes it the managed session.",
+			description: "Native configured sessions win; otherwise auto reuses the managed session and fresh starts a new managed browser for launch-only flags.",
 			default: DEFAULT_SESSION_MODE,
 		}),
 	),

@@ -345,7 +345,7 @@ test("agentBrowserExtension allows local Electron snapshot handoff", { concurren
 		await mkdir(applicationsDir, { recursive: true });
 		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.ProtectedHandoff", launchLogPath, name: "Protected Handoff" });
 		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath, { sessionUrl: protectedUrl, snapshotTitle: "SECRET LOCAL CONTENT", snapshotUrl: protectedUrl }));
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ AGENT_BROWSER_SESSION: "shared-default", PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "launch", appPath: app.appPath } });
@@ -355,6 +355,8 @@ test("agentBrowserExtension allows local Electron snapshot handoff", { concurren
 			assert.equal(invocations.some((entry) => entry.args.includes("snapshot") || entry.args.includes("tab")), true);
 			const launch = JSON.parse((await readFile(launchLogPath, "utf8")).trim()) as { pid: number; userDataDir: string };
 			launchPid = launch.pid;
+			assert.match(String(result.details?.sessionName), /^piab-/);
+			assert.equal(invocations.some((entry) => entry.args.includes("shared-default")), false, "Electron's owned launch must not attach the shared default browser session");
 			const launchId = (result.details?.electron as { identifiers?: { launchId?: string } } | undefined)?.identifiers?.launchId;
 			assert.ok(launchId);
 			const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId } });

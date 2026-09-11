@@ -43,7 +43,6 @@ const successEnvelope = (data: unknown, summary = "Browser call completed."): Ag
 
 const resolveInput = (params: Parameters<typeof resolveAgentBrowserInput>[0]["params"]) => resolveAgentBrowserInput({
 	getBatchPreflightValidationError: () => undefined,
-	managedSessionActive: false,
 	params,
 });
 
@@ -379,6 +378,8 @@ test("script inner policy rejects identity, lifecycle, batch, local, and persist
 		["state", "save", "saved.json"],
 		["auth", "login", "example"],
 		["--profile", "Default", "open", "https://example.test"],
+		["--config", "fixture.json", "open", "https://example.test"],
+		["open", "https://example.test", "--config", "fixture.json"],
 		["--state", "state.json", "open", "https://example.test"],
 		["--restore", "open", "https://example.test"],
 		["--cdp", "9222", "get", "title"],
@@ -408,25 +409,41 @@ test("script mode fails closed when Pi session persistence is disabled", async (
 
 test("script policy rejections fail the top-level result with disjoint counters", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-rejection-"));
+	const logPath = join(tempDir, "calls.jsonl");
+	const configPath = join(tempDir, "config.json");
+	await writeFakeAgentBrowserBinary(tempDir, `
+require("node:fs").appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "about:blank" } }));
+`);
+	writeFileSync(configPath, "{}");
 	try {
-		const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
-		await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-		const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-			script: `const rejected = await browser({ args: ["close"] }); emit(rejected.error);`,
+		await withPatchedEnv({ PATH: `${tempDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const ordinary = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--config", configPath, "--session", "ordinary", "get", "title"] });
+			assert.equal(ordinary.isError, false, ordinary.content[0]?.text);
+			const ordinaryCalls = await readInvocationLog(logPath);
+			assert.ok(ordinaryCalls.some((call) => call.args.includes("--config") && call.args.includes(configPath)), "ordinary args still pass native --config through");
+			for (const args of [["close"], ["--config", configPath, "open", "https://example.test"]]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+					script: `const rejected = await browser({ args: ${JSON.stringify(args)} }); emit(rejected.error);`,
+				});
+				assert.deepEqual(await readInvocationLog(logPath), ordinaryCalls, "rejected inner calls must not dispatch");
+				assert.equal(result.isError, true);
+				assert.equal(result.details?.failureCategory, "policy-blocked");
+				assert.match(result.content[0]?.text ?? "", /Script failed: 1 browser call was rejected before dispatch/);
+				assert.deepEqual(result.details?.scriptRun, {
+					aborted: undefined,
+					callCount: 1,
+					emitCount: 1,
+					failedCallCount: 0,
+					preDispatchRejectedCallCount: 1,
+					successfulCallCount: 0,
+					timedOut: undefined,
+				});
+				assert.equal(result.details?.scriptSession, undefined);
+			}
 		});
-		assert.equal(result.isError, true);
-		assert.equal(result.details?.failureCategory, "policy-blocked");
-		assert.match(result.content[0]?.text ?? "", /Script failed: 1 browser call was rejected before dispatch/);
-		assert.deepEqual(result.details?.scriptRun, {
-			aborted: undefined,
-			callCount: 1,
-			emitCount: 1,
-			failedCallCount: 0,
-			preDispatchRejectedCallCount: 1,
-			successfulCallCount: 0,
-			timedOut: undefined,
-		});
-		assert.equal(result.details?.scriptSession, undefined);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
@@ -523,7 +540,7 @@ test("script inner calls and cleanup clear ambient upstream launch controls", { 
 	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
 const args = process.argv.slice(2);
 const names = ${JSON.stringify(ambientNames)};
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, env: Object.fromEntries(names.map(name => [name, process.env[name] ?? null])), config: process.env.AGENT_BROWSER_CONFIG ?? null }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, env: Object.fromEntries(names.map(name => [name, process.env[name] ?? null])), config: process.env.AGENT_BROWSER_CONFIG ?? null, configContent: process.env.AGENT_BROWSER_CONFIG ? fs.readFileSync(process.env.AGENT_BROWSER_CONFIG, "utf8") : null }) + "\\n");
 if (args.includes("session") && args.includes("info")) process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
 else if (args.includes("close")) process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolated env", url: "https://example.test" } }));`);
@@ -545,7 +562,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolat
 			assert.equal((result.details?.scriptRun as { callCount?: number } | undefined)?.callCount, 2);
 			assert.equal(result.details?.attachedBrowserSession, undefined);
 			const sessionName = (result.details?.scriptSession as { sessionName?: string } | undefined)?.sessionName;
-			const invocations = (await readInvocationLog(logPath) as Array<{ args: string[]; config?: string | null; env?: Record<string, string | null> }>).filter((entry) => entry.args.includes(sessionName ?? "missing"));
+			const invocations = (await readInvocationLog(logPath) as Array<{ args: string[]; config?: string | null; configContent?: string | null; env?: Record<string, string | null> }>).filter((entry) => entry.args.includes(sessionName ?? "missing"));
 			assert.ok(invocations.some((invocation) => invocation.args.includes("snapshot")), "script should replay the policy-compatible next action");
 			for (const invocation of invocations) {
 				for (const name of ambientNames) {
@@ -554,6 +571,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Isolat
 					assert.notEqual(value, "http://proxy.invalid", `${name} leaked into ${JSON.stringify(invocation.args)}`);
 				}
 				assert.notEqual(invocation.config, join(tempDir, "ambient-agent-browser.json"));
+				assert.equal(invocation.configContent, "{}", "script and cleanup must bypass HOME/project native config");
 			}
 		});
 	} finally {

@@ -122,7 +122,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			true,
 		);
 		assert.match(guidelineText, /sessionMode=fresh/);
-		assert.match(guidelineText, /macOS profile copies may omit encrypted cookies/);
+		assert.match(guidelineText, /honors native shared-session defaults on bare calls/);
 		assert.match(SHARED_BROWSER_PLAYBOOK_GUIDELINES.join("\n"), /copied Chrome profiles may omit encrypted cookies/);
 		assert.match(guidelineText, /exact user paths/);
 		assert.match(guidelineText, /requested\/configured profiles only/);

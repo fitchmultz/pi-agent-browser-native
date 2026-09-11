@@ -418,7 +418,7 @@ Use top-level `script` when the browser work needs a loop, a conditional page br
 }
 ```
 
-This mode is intentionally one-shot, not a reusable recipe runtime. Each invocation gets a unique non-profile browser session, never touches the implicit conversation session, serializes inner calls, and closes the isolated session in `finally`. It rejects caller `--session` / `--namespace`, browser lifecycle and attachment commands, persistent launch/profile/restore controls, nested `batch`, local/sessionless commands, and every other top-level input mode. Every script-owned helper and cleanup subprocess also clears ambient `AGENT_BROWSER_*` and standard proxy variables before the wrapper reapplies its own isolated-session controls, so shell defaults cannot attach, restore, or select a profile behind the script’s back. The sandbox has no imports, `require`, process, filesystem, network, timers, dynamic code generation, or host object/function references.
+This mode is intentionally one-shot, not a reusable recipe runtime. Each invocation gets a unique non-profile browser session, never touches the implicit conversation session, serializes inner calls, and closes the isolated session in `finally`. It rejects caller `--session` / `--namespace` / `--config`, browser lifecycle and attachment commands, persistent launch/profile/restore controls, nested `batch`, local/sessionless commands, and every other top-level input mode. Every script-owned helper and cleanup subprocess also clears ambient `AGENT_BROWSER_*` and standard proxy variables before the wrapper reapplies its own isolated-session controls, so shell defaults cannot attach, restore, or select a profile behind the script’s back. The sandbox has no imports, `require`, process, filesystem, network, timers, dynamic code generation, or host object/function references.
 
 Limits are fixed: 25 attempted `browser()` calls, 64 KiB source, 64 KiB final emitted JSON, a 120-second default timeout, and a 300-second hard timeout ceiling. Final data is redacted, serialized compactly, and checked again before presentation; unsafe depth or post-redaction growth becomes a structured validation failure rather than unbounded prose. One approved top-level `agent_browser` call can authorize all 25 inner calls, so inspect the visible script source before approving it: the collapsed Pi tool row shows a bounded terminal-safe preview with source line breaks marked as `↵`, and expanding that row shows the full terminal-safe source with JavaScript line terminators preserved as visible newlines and removed controls marked visibly. The extension rehydrates only wrapper-verified parse-valid compact-result spills before returning inner `data`; ordinary result redaction still applies. Inner `summary` and `text` are bounded, and a complete envelope that still exceeds the IPC message cap becomes a handleable `upstream-error` browser result instead of breaking the sandbox bridge. Pi session persistence is required so the wrapper can append a model-invisible cleanup lease before the first browser launch and retry a failed close after restart. A rejected inner policy/validation call fails the top-level result even when source handles its returned envelope; an uncaught source exception returns `failureCategory: "script-error"`; a failed cleanup overrides any script outcome with `failureCategory: "cleanup-failed"`, `details.scriptSession.closeCommandArgs`, and an exact `close-script-session-after-cleanup-failure` next action. Compact prose confirms a successful isolated-session close after browser-bearing runs. Pi branch changes, quit, and reload abort active scripts, wait for isolated-session cleanup, and reap the sandbox child before restoring branch-visible state.
 
@@ -593,6 +593,31 @@ After resuming a wrapper-managed session whose daemon has fully stopped, the fir
 After a successful unnamed fresh launch, later default `sessionMode: "auto"` calls follow that browser automatically. If the fresh launch fails or times out, `details.managedSessionOutcome` records whether the previous managed session was preserved or the attempted fresh session was abandoned before any managed session became current; a `Managed session outcome: …` line is appended only when the failing call used `sessionMode: "fresh"`. If you explicitly close the current wrapper-managed session with `--session <name> close`, later default auto calls rotate to a new wrapper-generated session instead of reusing that closed name, and repeated closes keep reserving fresh names across resume/branch restore.
 
 ## Authenticated/profile workflows
+
+### Shared browser defaults
+
+To reuse one signed-in browser across Pi sessions, configure native `agent-browser` defaults in `~/.agent-browser/config.json`:
+
+```json
+{
+  "session": "shared-work",
+  "namespace": "",
+  "profile": "/absolute/path/to/persistent-browser-profile",
+  "headed": true
+}
+```
+
+Use a dedicated full profile directory path, not a copied Chrome profile name. Add native `executablePath` if needed. Ordinary `args`, `semanticAction`, `job`, `qa`, and lookup calls then select that same caller-owned browser without repeating flags. This is separate from the advisory Pi package `browser.defaultProfile` setting. Existing native project config, environment and per-call flags keep their precedence; `--config` or `AGENT_BROWSER_CONFIG` replaces user/project config discovery.
+
+Pi quit does not close a caller-owned shared browser or impose its implicit 15-minute idle timeout. Native idle policy applies, including its default headed-browser exemption; explicit `--idle-timeout` applies to every helper in that call too. Keep native idle settings consistent between calls because changing them can restart the daemon. `AGENT_BROWSER_SOCKET_DIR` is honored for caller-owned sessions; the wrapper-specific socket override still takes priority.
+
+A configured native session, like explicit `--session`, takes precedence over `sessionMode: "fresh"`. To select a different browser, override the native session **and** profile/config as appropriate; changing only the name can contend for the same profile. Without a configured session, implicit ownership and fresh rotation are unchanged. `script` remains disposable: its helpers and cleanup use an empty temporary native config, never your user/project profile defaults. Electron launch retains its own isolated app lifecycle and generated session, even with a native session environment default. With a shared native default configured, target Electron's returned `sessionName` explicitly for browser follow-ups.
+
+Coordinate tabs/navigation between agents sharing a browser; the wrapper's per-session queue is local to one Pi process. Persistent profile storage preserves browser data, not a promise of permanent website login: sites can expire or revoke sessions and require a new human challenge. Standing permission avoids repeated permission requests, but cannot change those site policies.
+
+Before enabling global native profile defaults, update and fully restart every participating Pi runtime. Older loaded wrappers can still let disposable `script` launches read HOME config; editing this source or running `/reload` does not replace their cached code. Coordinate the browser cutover too: moving an existing daemon from the old wrapper's explicit 15-minute idle timeout to native idle policy changes its launch fingerprint and can restart it. Do not change that policy while another agent is using the browser.
+
+### Profile selection
 
 The wrapper does not clone profiles or hide what upstream Chrome/Chromium profile or executable you chose. Passing `--profile` or `--executable-path` is an explicit upstream `agent-browser` choice. Visible page content from real profiles is model-visible and may persist in transcripts or saved artifacts; redaction protects credential-like cookie/storage/auth values, not ordinary page text you asked the browser to read.
 

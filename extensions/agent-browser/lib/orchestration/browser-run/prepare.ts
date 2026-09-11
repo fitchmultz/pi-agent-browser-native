@@ -1,7 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { getBooleanFlagValue, isUpstreamEnvFlagEnabled, projectUpstreamGlobalFlags } from "../../argv-grammar.js";
+import { extractExplicitSessionName, getBooleanFlagValue, isUpstreamEnvFlagEnabled, projectUpstreamGlobalFlags } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
@@ -520,8 +520,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		managedSessionNamespace: state.managedSessionNamespace,
 		sessionMode,
 	});
-	const idleTimeoutMismatch = getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs);
-	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
 	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const plannedSessionPageState = sessionPageState.get(ownedSessionKey);
 	const pageTargetError = getPageTargetValidationError({
@@ -535,6 +533,10 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
 	const targetsOffCurrentOwnedSession = recordedOwnedSession !== undefined && !targetsCurrentManagedSession;
+	const idleTimeoutMismatch = executionPlan.managedSessionName || recordedOwnedSession || targetsCurrentManagedSession || (state.managedSessionActive && extractExplicitSessionName(preparedArgs.args) === undefined)
+		? getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs)
+		: undefined;
+	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
 	const offCurrentLaunchScopedFlags = targetsOffCurrentOwnedSession
 		? executionPlan.startupScopedFlags.filter((flag) => flag !== "--namespace")
 		: [];

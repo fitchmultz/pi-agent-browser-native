@@ -906,6 +906,7 @@ export function getDefaultHeadlessCompatUserAgent(platform: NodeJS.Platform = pr
 }
 
 export function canUseHeadlessCompatibilityUserAgent(args: string[], env: NodeJS.ProcessEnv = getAgentBrowserProcessEnvironment()): boolean {
+	if (env.AGENT_BROWSER_SESSION !== undefined) return false;
 	if (hasFlagToken(args, "--user-agent") || hasFlagToken(args, "--args")) return false;
 	if (hasFlagToken(args, "--cdp") || hasFlagToken(args, "--provider") || hasFlagToken(args, "-p")) return false;
 	if (env.AGENT_BROWSER_USER_AGENT !== undefined || env.AGENT_BROWSER_ARGS !== undefined || env.AGENT_BROWSER_CDP !== undefined || env.AGENT_BROWSER_PROVIDER !== undefined) return false;
@@ -969,6 +970,8 @@ export function buildExecutionPlan(
 		sessionMode: SessionMode;
 	},
 ): ExecutionPlan {
+	const nativeSession = getAgentBrowserProcessEnvironment().AGENT_BROWSER_SESSION;
+	if (nativeSession !== undefined && !isPlainTextInspectionArgs(args) && extractExplicitSessionName(args) === undefined) args = ["--session", nativeSession, ...args];
 	const invalidValueFlag = getInvalidValueFlagDetails(args);
 	const explicitNamespacePresent = scanUpstreamGlobalFlagOccurrences(args, "--namespace").length > 0;
 	const explicitNamespace = extractExplicitNamespace(args);
