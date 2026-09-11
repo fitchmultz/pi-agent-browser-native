@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Redact `authorization_session_id` in URLs, including contextual `state` / `nonce`, from model-visible content, details, and explicit result exports while preserving ordinary query values.
 - Honor configured native session/namespace defaults as caller-owned browsers across Pi sessions, including ordinary structured calls and helpers, without imposing implicit-session idle policy or quit cleanup.
 - Keep disposable script sessions out of native user/project profile defaults by using an empty temporary config through execution and cleanup. Reject inner `--config` overrides without restricting ordinary native `args`.
 

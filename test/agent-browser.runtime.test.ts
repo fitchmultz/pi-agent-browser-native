@@ -1937,6 +1937,10 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"open",
 		"https://example.com/sso?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&ok=1",
 	]);
+	assert.deepEqual(redactInvocationArgs(["open", "https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=https%3A%2F%2Fexample.invalid%2Freturn&state=EXAMPLE_STATE&nonce=EXAMPLE_NONCE&Authorization%2DSession%2DId=EXAMPLE_ID"]), [
+		"open",
+		"https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=https%3A%2F%2Fexample.invalid%2Freturn&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&Authorization-Session-Id=%5BREDACTED%5D",
+	]);
 	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/orders?state=open&nonce=7"]), [
 		"open",
 		"https://example.com/orders?state=open&nonce=7",
@@ -2028,6 +2032,10 @@ test("redactSensitiveText preserves help placeholders while redacting bearer cre
 	assert.equal(
 		redactSensitiveText("Redirect /sso?SAMLRequest=request-secret&SAMLResponse=response-secret&RelayState=relay-secret#state=oauth-secret&nonce=oidc-secret"),
 		"Redirect /sso?SAMLRequest=[REDACTED]&SAMLResponse=[REDACTED]&RelayState=[REDACTED]#state=[REDACTED]&nonce=[REDACTED]",
+	);
+	assert.equal(
+		redactSensitiveText("Redirect /?authorizationSessionId=EXAMPLE_ID&state=EXAMPLE_STATE#nonce=EXAMPLE_NONCE&view=table"),
+		"Redirect /?authorizationSessionId=[REDACTED]&state=[REDACTED]#nonce=[REDACTED]&view=table",
 	);
 	assert.equal(redactSensitiveText("Login help. Status /orders?state=open&nonce=7"), "Login help. Status /orders?state=open&nonce=7");
 	assert.equal(

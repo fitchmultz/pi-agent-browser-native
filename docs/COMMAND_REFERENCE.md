@@ -620,7 +620,7 @@ If the result says `Pending confirmation id: c_8f3a1234`, choose one follow-up:
 { "args": ["deny", "c_8f3a1234"] }
 ```
 
-Confirmation context may be redacted when it contains credentials, tokens, cookies, or auth-bearing URLs. URL scrubbing covers SAMLRequest, SAMLResponse, RelayState, and auth-context `state` / `nonce` while retaining ordinary non-auth state URLs; persisted snapshot spills receive the same redaction, while exact internal page-target URLs remain available to browser state logic. Use the id exactly as printed.
+Confirmation context may be redacted when it contains credentials, tokens, cookies, or auth-bearing URLs. URL scrubbing covers SAMLRequest, SAMLResponse, RelayState, `authorization_session_id`, and auth-context `state` / `nonce` while retaining ordinary non-auth state URLs; persisted snapshot spills receive the same redaction, while exact internal page-target URLs remain available to browser state logic. Use the id exactly as printed.
 
 ### Use stateful browser-context commands safely
 
