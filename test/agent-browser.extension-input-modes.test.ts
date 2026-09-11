@@ -122,7 +122,7 @@ test("analyzeQaPresetResults subtracts unchanged post-clear page-error residue w
 	], compiled);
 	assert.equal(analysis?.passed, true);
 	assert.deepEqual(analysis?.failedChecks, []);
-	assert.deepEqual(analysis?.warnings, ["1 post-clear page error residue row(s) ignored as unchanged"]);
+	assert.deepEqual(analysis?.warnings, ["1 page error row(s) matched the post-clear baseline; identical new errors may be hidden by native buffer rollover (retry in a new isolated browser)"]);
 });
 
 test("analyzeQaPresetResults reports a new matching error after a successful clear", () => {
@@ -994,7 +994,7 @@ process.stdin.on("end", () => {
 			assert.equal(cleanResult.isError, false);
 			assert.deepEqual((cleanResult.details?.qaPreset as { failedChecks?: string[] } | undefined)?.failedChecks, []);
 			assert.match((cleanResult.content[0] as { text: string }).text, /QA preset passed with warnings/);
-			assert.match((cleanResult.content[0] as { text: string }).text, /post-clear page error residue/);
+			assert.match((cleanResult.content[0] as { text: string }).text, /matched the post-clear baseline/);
 			assert.match((cleanResult.content[0] as { text: string }).text, /Page: QA Page — https:\/\/example\.test\//);
 			assert.match((cleanResult.content[0] as { text: string }).text, /Checks run:/);
 			assert.match((cleanResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
@@ -1011,9 +1011,9 @@ process.stdin.on("end", () => {
 			assert.deepEqual((benignNetworkResult.details?.qaPreset as { failedChecks?: string[]; warnings?: string[] } | undefined)?.failedChecks, []);
 			assert.deepEqual((benignNetworkResult.details?.qaPreset as { warnings?: string[] } | undefined)?.warnings, [
 				"1 benign network request failure(s) ignored",
-				"1 post-clear page error residue row(s) ignored as unchanged",
+				"1 page error row(s) matched the post-clear baseline; identical new errors may be hidden by native buffer rollover (retry in a new isolated browser)",
 			]);
-			assert.match((benignNetworkResult.content[0] as { text: string }).text, /QA preset passed with warnings: 1 benign network request failure\(s\) ignored; 1 post-clear page error residue row\(s\) ignored as unchanged\./);
+			assert.match((benignNetworkResult.content[0] as { text: string }).text, /QA preset passed with warnings: 1 benign network request failure\(s\) ignored; 1 page error row\(s\) matched the post-clear baseline;/);
 			assert.match((benignNetworkResult.content[0] as { text: string }).text, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Network failure summary:/);
 			assert.doesNotMatch((benignNetworkResult.content[0] as { text: string }).text, /Step 1 —/);

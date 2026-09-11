@@ -277,7 +277,7 @@ export function buildQaCompactPassText(options: {
 	if (pageParts.length > 0) lines.push(`Page: ${pageParts.join(" — ")}`);
 	lines.push(`Checks run: ${describeQaChecksRun(options.checks)} (${options.batchStepCount} batch step${options.batchStepCount === 1 ? "" : "s"})`);
 	if (options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
-		lines.push("Diagnostic isolation: URL QA clears enabled network/console buffers, then snapshots any page-error residue before opening the target. Only unchanged residue is ignored because upstream page-error clear is not reliable.");
+		lines.push("Diagnostic isolation: URL QA clears enabled network/console buffers, then snapshots any page-error residue before opening the target. Matching rows are subtracted, not proven stale; identical new errors can be hidden by native buffer rollover.");
 	}
 	if (options.checks.attached && !options.checks.diagnosticsResetAtStart && (options.checks.checkNetwork || options.checks.checkConsole || options.checks.checkErrors)) {
 		lines.push("Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started.");
@@ -442,7 +442,7 @@ export function analyzeQaPresetResults(data: unknown, compiled?: CompiledAgentBr
 		if (commandName === "errors" && Array.isArray(result?.errors) && result.errors.length > 0) {
 			const { ignoredCount, novelErrors } = subtractQaBaselineErrors(result.errors, baselineErrors);
 			if (novelErrors.length > 0) failedChecks.push(`${novelErrors.length} page error(s)`);
-			if (ignoredCount > 0) warnings.push(`${ignoredCount} post-clear page error residue row(s) ignored as unchanged`);
+			if (ignoredCount > 0) warnings.push(`${ignoredCount} page error row(s) matched the post-clear baseline; identical new errors may be hidden by native buffer rollover (retry in a new isolated browser)`);
 		}
 		if (commandName === "console" && Array.isArray(result?.messages)) {
 			const errorCount = result.messages.filter((message) => isRecord(message) && /error/i.test(String(message.type ?? message.level ?? ""))).length;

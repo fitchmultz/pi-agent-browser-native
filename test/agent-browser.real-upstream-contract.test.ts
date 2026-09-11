@@ -400,6 +400,56 @@ test("real upstream agent-browser contract suite matches navigation availability
 	} finally { await fixture.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test("real upstream agent-browser contract suite reports QA error-residue ambiguity", { skip: !REAL_UPSTREAM_ENABLED, timeout: 90_000 }, async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "qr-"));
+	const socketDir = join(dir, "s");
+	const fixture = await startAgentBrowserContractFixtureServer();
+	const url = `${fixture.baseUrl}/qa-error-residue`;
+	try {
+		await withPatchedEnv({ HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_SESSION: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
+			const h = createExtensionHarness({ cwd: dir });
+			await runExtensionEvent(h.handlers, "session_start", { reason: "new" }, h.ctx);
+			const call = async (args: string[]) => {
+				const result = await executeRegisteredTool(h.tool, h.ctx, { args });
+				assert.equal(result.isError, false, result.content[0]?.text);
+				return result;
+			};
+			const qa = () => executeRegisteredTool(h.tool, h.ctx, { qa: { url, expectedText: "Repeated error fixture", checkConsole: false, checkNetwork: false } });
+			try {
+				await call(["open", url]);
+				await call(["wait", "--fn", "window.qaErrorsThrown === 1100"]);
+				const before = (await call(["errors"])).details?.data;
+				await call(["eval", "sessionStorage.setItem('qa-error-count', '1')"]);
+				const repeated = await qa();
+				const counter = await call(["eval", "window.qaErrorsThrown"]);
+				assert.equal(getResultValue(counter.details!, ["result"]), 1, "the new document must actually throw again");
+				const analysis = repeated.details?.qaPreset as { passed: boolean; failedChecks: string[]; warnings: string[] };
+				if (analysis.passed) {
+					assert.deepEqual((await call(["errors"])).details?.data, before, "native rows cannot distinguish the new event");
+					assert.match(analysis.warnings.join("\n"), /identical new errors may be hidden by native buffer rollover/);
+					assert.doesNotMatch(repeated.content[0]?.text ?? "", /ignored as unchanged|Only unchanged residue/);
+					t.diagnostic("Known upstream limitation reproduced: a saturated buffer hid a new matching error; QA warns but does not fix native event identity.");
+				} else {
+					assert.ok(analysis.failedChecks.some((check) => /page error/.test(check)), "a native fix must still report the repeated error");
+					t.diagnostic("Native diagnostics detected the new error; the rollover limitation did not reproduce.");
+				}
+				await call(["eval", "sessionStorage.setItem('qa-error-count', '0')"]);
+				assert.equal((await qa()).isError, false, "unchanged residue must not fail a clean navigation");
+				await call(["close"]);
+				const fresh = await qa();
+				assert.equal(fresh.isError, true, "an isolated new browser must detect the fixture errors");
+				assert.equal(fresh.details?.failureCategory, "qa-failure");
+			} finally {
+				await call(["close"]);
+				await runExtensionEvent(h.handlers, "session_shutdown", { reason: "quit" }, h.ctx);
+			}
+		});
+	} finally {
+		await fixture.close();
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("real upstream agent-browser contract suite matches duplicate-name click mutation", {
 	skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
 	timeout: 60_000,
