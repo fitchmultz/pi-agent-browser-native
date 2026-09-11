@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Optional host `beforeExecute` callback before browser dispatch, including serial script inner calls with the original Pi call ID and cancellation signal. Configured hosts use Pi's native sequential scheduling; ordinary installs are unchanged.
+
 ### Fixed
 
 - Honor configured native session/namespace defaults as caller-owned browsers across Pi sessions, including ordinary structured calls and helpers, without imposing implicit-session idle policy or quit cleanup.

@@ -131,6 +131,10 @@ Why:
 
 The published package should exclude agent-only and internal planning materials such as `AGENTS.md`.
 
+## Host execution hook
+
+The default extension factory optionally accepts `{ beforeExecute }`. `index.ts` awaits this host callback after input resolution and before non-script dispatch, forwarding the original outer Pi tool-call ID through recursive script calls and supplying each dispatch's signal. Configured hosts use Pi's native sequential tool scheduling; inner script calls retain the existing serial queue. No separate controller, persistence store, retry policy, or timeout is introduced. Ordinary installation, internal helper probes, cleanup, batch-row execution, and web search are unchanged. See [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#host-execution-hook) for cancellation and error behavior; `test/agent-browser.pi-pipeline.test.ts` exercises the registered factory through real Pi with a fake upstream executable.
+
 ## Session model
 
 ### Default

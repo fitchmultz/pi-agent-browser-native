@@ -929,7 +929,10 @@ function shouldIncludeProjectConfig(ctx: { isProjectTrusted?: () => boolean } | 
 	return ctx?.isProjectTrusted?.() ?? true;
 }
 
-export default function agentBrowserExtension(pi: ExtensionAPI) {
+export default function agentBrowserExtension(
+	pi: ExtensionAPI,
+	{ beforeExecute }: { beforeExecute?: (toolCallId: string, ctx: ExtensionContext) => Promise<void> } = {},
+) {
 	const ephemeralSessionSeed = createEphemeralSessionSeed();
 	const agentBrowserConfig = loadAgentBrowserConfigSync({
 		cwd: process.cwd(),
@@ -1507,7 +1510,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			component.setState(formatAgentBrowserRenderResult(result, options, theme, context.isError), options.expanded, theme);
 			return component;
 		},
-		async execute(toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx) {
+		async execute(toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx, nativeToolCallId: string = toolCallId) {
 			const promptPolicy = buildPromptPolicy(getLatestUserPrompt(ctx.sessionManager.getBranch()));
 			const outputPath = isRecord(params) && typeof params.outputPath === "string" ? params.outputPath : undefined;
 			const resolvedInput = resolveAgentBrowserInput({
@@ -1517,6 +1520,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			if (resolvedInput.status === "invalid") {
 				return buildValidationFailureResult(resolvedInput);
 			}
+			if (resolvedInput.kind !== "script") await beforeExecute?.(nativeToolCallId, { ...ctx, signal });
 			return withNativeSessionDefaults(resolvedInput, ctx.cwd, signal, async (resolvedInput) => {
 			if (resolvedInput.kind === "qa" && resolvedInput.compiledQaPreset.checks.attached && !managedSessionActive && !extractExplicitSessionName(resolvedInput.toolArgs)) {
 				return buildValidationFailureResult({ ...resolvedInput, attemptedKind: "qa", kind: "invalid", status: "invalid", validationError: "qa.attached requires an active attached session. Run electron.launch or connect to an Electron debug port first, or configure a native shared session." });
@@ -1605,6 +1609,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 								innerSignal,
 								undefined,
 								ctx,
+								nativeToolCallId,
 							)) as AgentBrowserToolResult;
 							innerResults.push(innerResult);
 							return await buildScriptBrowserEnvelope(innerResult, innerParams.args, sessionName);
@@ -1956,7 +1961,7 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 			});
 		},
 	} satisfies ToolDefinition<typeof AGENT_BROWSER_PARAMS>;
-	pi.registerTool(agentBrowserTool);
+	pi.registerTool(beforeExecute ? { ...agentBrowserTool, executionMode: "sequential" } : agentBrowserTool);
 
 	registerWebSearchToolIfAvailable(agentBrowserConfig);
 }
