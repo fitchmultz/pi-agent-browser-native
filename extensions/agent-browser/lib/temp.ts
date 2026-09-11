@@ -11,6 +11,8 @@ const TEMP_ROOT_MARKER_FILE_NAME = ".pi-agent-browser-owner.json";
 const TEMP_ROOT_MARKER_KIND = "pi-agent-browser-temp-root";
 const TEMP_ROOT_MARKER_VERSION = 2;
 const STALE_TEMP_ROOT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const STALE_TEMP_ROOT_BATCH_SIZE = 8;
+let lastTempGcName = "";
 const TEMP_ROOT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES";
 const DEFAULT_TEMP_ROOT_MAX_BYTES = 32 * 1_024 * 1_024;
 const SESSION_ARTIFACT_MAX_BYTES_ENV = "PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES";
@@ -278,44 +280,48 @@ async function getMarkerOwnerLiveness(ownershipMarker: TempRootOwnershipRecord):
 	return identitiesMatch === undefined ? "unknown" : identitiesMatch ? "alive" : "dead";
 }
 
-async function pruneStaleTempRoots(currentTempRoot: string | undefined): Promise<void> {
+async function pruneStaleTempRoots(currentTempRoot: string): Promise<void> {
 	const entries = await readdir(tmpdir(), { withFileTypes: true }).catch(() => []);
 	const cutoffTime = Date.now() - STALE_TEMP_ROOT_MAX_AGE_MS;
 	const currentUid = getCurrentProcessUid();
 
+	// ponytail: list/sort all names; stream directories if enumeration becomes the bottleneck.
+	const candidates = entries.filter((entry) => entry.isDirectory() && entry.name.startsWith(TEMP_ROOT_PREFIX))
+		.map((entry) => entry.name).sort();
+	const start = Math.max(0, candidates.findIndex((name) => name > lastTempGcName));
+	const batch = [...candidates.slice(start), ...candidates.slice(0, start)].slice(0, STALE_TEMP_ROOT_BATCH_SIZE);
+	lastTempGcName = batch.at(-1) ?? "";
 	await Promise.all(
-		entries
-			.filter((entry) => entry.isDirectory() && entry.name.startsWith(TEMP_ROOT_PREFIX))
-			.map(async (entry) => {
-				const path = join(tmpdir(), entry.name);
-				if (path === currentTempRoot) return;
+		batch.map(async (name) => {
+			const path = join(tmpdir(), name);
+			if (path === currentTempRoot) return;
 
-				const ownershipMarker = await readTempRootOwnershipMarker(path);
-				if (!ownershipMarker) return;
-				if (
-					currentUid !== undefined &&
-					ownershipMarker.ownerUid !== undefined &&
-					ownershipMarker.ownerUid !== currentUid
-				) {
-					return;
-				}
-				const staleTimestampMs = ownershipMarker.leaseUpdatedAtMs ?? ownershipMarker.createdAtMs;
-				if (staleTimestampMs >= cutoffTime) return;
-				// Preserve roots when owner liveness cannot be proven; safe cleanup beats deleting another live process's files.
-				if ((await getMarkerOwnerLiveness(ownershipMarker)) !== "dead") return;
+			const ownershipMarker = await readTempRootOwnershipMarker(path);
+			if (!ownershipMarker) return;
+			if (
+				currentUid !== undefined &&
+				ownershipMarker.ownerUid !== undefined &&
+				ownershipMarker.ownerUid !== currentUid
+			) {
+				return;
+			}
+			const staleTimestampMs = ownershipMarker.leaseUpdatedAtMs ?? ownershipMarker.createdAtMs;
+			if (staleTimestampMs >= cutoffTime) return;
+			// Preserve roots when owner liveness cannot be proven; safe cleanup beats deleting another live process's files.
+			if ((await getMarkerOwnerLiveness(ownershipMarker)) !== "dead") return;
 
-				const stats = await stat(path).catch(() => undefined);
-				if (!stats?.isDirectory()) return;
-				const protectedChildren = await getExistingProtectedChildren(
-					path,
-					getPersistedProtectedChildPaths(path, ownershipMarker),
-				);
-				if (protectedChildren.size > 0) {
-					await removeTempRootChildrenExcept(path, protectedChildren);
-					return;
-				}
-				await rm(path, { force: true, recursive: true }).catch(() => undefined);
-			}),
+			const stats = await stat(path).catch(() => undefined);
+			if (!stats?.isDirectory()) return;
+			const protectedChildren = await getExistingProtectedChildren(
+				path,
+				getPersistedProtectedChildPaths(path, ownershipMarker),
+			);
+			if (protectedChildren.size > 0) {
+				await removeTempRootChildrenExcept(path, protectedChildren);
+				return;
+			}
+			await rm(path, { force: true, recursive: true }).catch(() => undefined);
+		}),
 	);
 }
 
@@ -453,7 +459,6 @@ async function prunePersistentSessionArtifactsToBudget(
 async function getSessionTempRoot(): Promise<string> {
 	if (!sessionTempRootPromise) {
 		sessionTempRootPromise = (async () => {
-			await pruneStaleTempRoots(undefined);
 			const tempRoot = await mkdtemp(join(tmpdir(), TEMP_ROOT_PREFIX));
 			await chmod(tempRoot, 0o700).catch(() => undefined);
 			await writeSecureTempRootOwnershipMarker(tempRoot);

@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Bound and rotate opportunistic cleanup of crash-abandoned policy artifacts and secure-temp roots (#120). Reclaim old, proven-dead v3 claims across session identities without touching live/ambiguous owners or legacy entries; preserve the temp lease floor and protected Electron profiles.
 - Honor configured native session/namespace defaults as caller-owned browsers across Pi sessions, including ordinary structured calls and helpers, without imposing implicit-session idle policy or quit cleanup.
 - Keep disposable script sessions out of native user/project profile defaults by using an empty temporary config through execution and cleanup. Reject inner `--config` overrides without restricting ordinary native `args`.
 

@@ -11,6 +11,9 @@ const POLICY_LOCK_RETRY_MS = 10;
 const POLICY_LOCK_MAX_BYTES = 4_096;
 const LOCK_OWNER_FILE = "owner.json";
 const LOCK_TICKET_FILE = "ticket.json";
+const STALE_CLAIM_MIN_AGE_MS = 30 * 60 * 1_000;
+const POLICY_GC_BATCH_SIZE = 8;
+let lastPolicyGcName = "";
 
 interface PolicyLockOwner {
 	pid: number;
@@ -190,12 +193,22 @@ async function removeClaimOwnedBy(path: string, token: string): Promise<boolean>
 async function cleanDeadPolicyArtifacts(directory: string): Promise<void> {
 	let names: string[];
 	try { names = await readdir(directory); } catch { return; }
-	for (const name of names.filter((candidate) =>
-		candidate.startsWith(".pi-agent-browser-policy-remove-")
-		|| candidate.includes(".lock-v3.candidate-"))) {
+	// ponytail: list/sort all names; stream directories if enumeration becomes the bottleneck.
+	const candidates = names.filter((name) => name.startsWith(".pi-agent-browser-policy-remove-")
+		|| /^\.pi-agent-browser-policy-[a-f0-9]{64}\.lock-v3\.(?:candidate|claim)-/.test(name)).sort();
+	const start = Math.max(0, candidates.findIndex((name) => name > lastPolicyGcName));
+	const batch = [...candidates.slice(start), ...candidates.slice(0, start)].slice(0, POLICY_GC_BATCH_SIZE);
+	lastPolicyGcName = batch.at(-1) ?? "";
+	for (const name of batch) {
 		const path = join(directory, name);
+		const published = name.includes(".lock-v3.claim-");
+		if (published) {
+			const entry = await lstat(path).catch(() => undefined);
+			if (!entry || entry.mtimeMs >= Date.now() - STALE_CLAIM_MIN_AGE_MS) continue;
+		}
 		const claim = await readClaim(path);
-		if (claim && await ownerAlive(claim.owner) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
+		if (!claim || (published && !name.endsWith(`.claim-${claim.owner.token}`))) continue;
+		if (await ownerAlive(claim.owner) === false) await removeClaimOwnedBy(path, claim.owner.token).catch(() => false);
 	}
 }
 
@@ -228,6 +241,8 @@ export async function acquireManagedSessionPolicyLock(options: {
 	const platform = process.platform;
 	const directory = getCoordinationDirectory(platform);
 	if (!await ensureCoordinationDirectory(directory, platform)) return undefined;
+	await cleanDeadPolicyArtifacts(directory);
+	if (options.signal?.aborted) return undefined;
 	const basePath = getManagedSessionPolicyLockPath(options.sessionName, options.namespace);
 	const token = randomUUID();
 	const startIdentity = await readProcessStartIdentity(process.pid);
@@ -270,7 +285,6 @@ export async function acquireManagedSessionPolicyLock(options: {
 				break;
 			}
 			if (!blocked) {
-				await cleanDeadPolicyArtifacts(directory);
 				lockAcquired = true;
 				return { release: async () => { await removeClaimOwnedBy(claimPath, token); } };
 			}
