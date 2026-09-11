@@ -47,6 +47,7 @@ const SCRIPT_FORBIDDEN_FLAGS = new Set<string>([
 	...MANAGED_RESTORE_INCOMPATIBLE_FLAGS.filter((flag) => flag !== SCRIPT_ALLOWED_LAUNCH_FLAG),
 	"--namespace",
 	"--session",
+	"--config",
 ]);
 
 export interface CompiledAgentBrowserScript {
