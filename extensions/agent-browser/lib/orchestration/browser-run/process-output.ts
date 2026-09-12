@@ -523,7 +523,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				if (currentSessionTabTarget) {
 					const tabUpdate = sessionPageState.applyTabTarget({ sessionName: sessionStateKey, target: currentSessionTabTarget, update: sessionPageStateUpdate });
 					if (!tabUpdate.applied && succeeded) sessionPageState.markPinning(sessionStateKey, "drift");
-				} else if (processResult.agentBrowserStarted && (resultingPageState.pageUrlUnknown || resultingPageState.pageTargetMayHaveChanged)) {
+				} else if (processResult.agentBrowserStarted && (resultingPageState.pageUrlUnknown || resultingPageState.pageTargetMayHaveChanged) && !(prepared.commandTokens[0] === "session" && prepared.commandTokens[1] === "info")) {
 					sessionPageState.markTabTargetUnknown({ sessionName: sessionStateKey, update: sessionPageStateUpdate });
 				}
 				const refSnapshot = unsettledWebMcpMutation

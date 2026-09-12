@@ -864,7 +864,7 @@ function buildTimeoutProgressSteps(options: {
 }
 
 export async function collectTimeoutPartialProgress(options: { commandTokens: string[]; compiledJob?: CompiledAgentBrowserJob; cwd: string; namespace?: string; sessionName?: string; stdin?: string }): Promise<TimeoutPartialProgress | undefined> {
-	if (isBrowserIndependentRead(options.commandTokens, options.stdin)) return undefined;
+	if ((options.commandTokens[0] === "session" && options.commandTokens[1] === "info") || isBrowserIndependentRead(options.commandTokens, options.stdin)) return undefined;
 	const rawSteps = getTimeoutProgressSteps(options.compiledJob, options.commandTokens, options.stdin);
 	const artifacts = await collectTimeoutArtifactEvidence(options.cwd, rawSteps);
 	const urlData = await runSessionCommandData({ args: ["get", "url"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName });

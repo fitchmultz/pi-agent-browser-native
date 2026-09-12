@@ -227,6 +227,7 @@ export function buildErrorPresentation(options: {
 			overlayBlockedClick: isOverlayBlockedClickError(presentationCommand ?? commandInfo.command, safeErrorText, args ?? commandInfo.commandTokens),
 			resultCategory: "failure",
 			sessionName,
+			subcommand: commandInfo.subcommand,
 		}) ?? []),
 	];
 	return {

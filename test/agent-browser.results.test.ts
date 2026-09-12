@@ -308,6 +308,9 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	}
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.equal(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[0]?.id, "inspect-after-timeout");
+	assert.deepEqual(buildAgentBrowserNextActions({ command: "session", subcommand: "info", resultCategory: "failure", failureCategory: "timeout", sessionName: "named" })?.map(action => ({ id: action.id, args: action.params?.args })), [
+		{ id: "retry-session-info", args: ["--session", "named", "session", "info"] },
+	]);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--url", "**/cart.html"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.map((action) => action.id), ["inspect-after-timeout", "fresh-session-after-url-wait-timeout"]);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--url", "**/cart.html"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[1]?.params, { args: ["open", "about:blank"], sessionMode: "fresh" });
 	// Fresh-session recovery must stay unprefixed: the planner ignores sessionMode when --session is explicit.

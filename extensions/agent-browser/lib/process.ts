@@ -350,10 +350,12 @@ function getManagedPreSpawnPolicyError(
 	options: ManagedSessionRestoreEnvOptions,
 	currentPageUrl?: string,
 	pageUrlUnknown = false,
+	browserIndependentReadConfirmation = false,
 ): string | undefined {
 	if (!validateManagedSessionRestoreContextForSpawn(options)) {
 		return "Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser.";
 	}
+	if (browserIndependentReadConfirmation) return undefined;
 	return getPageTargetValidationError({
 		args: options.args,
 		currentPageUrl,
@@ -364,6 +366,7 @@ function getManagedPreSpawnPolicyError(
 
 export async function runAgentBrowserProcess(options: {
 	args: string[];
+	browserIndependentReadConfirmation?: boolean;
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
 	managedSessionRestoreState?: ManagedSessionRestoreState;
@@ -393,7 +396,7 @@ export async function runAgentBrowserProcess(options: {
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
-	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown);
+	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, options.browserIndependentReadConfirmation);
 	if (planningPolicyError) {
 		return {
 			aborted: false,
@@ -542,7 +545,7 @@ export async function runAgentBrowserProcess(options: {
 		};
 
 		const childEnv = buildAgentBrowserProcessEnv(parentEnv, effectiveEnv);
-		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown);
+		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, options.browserIndependentReadConfirmation);
 		if (spawnPolicyError) {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;

@@ -296,6 +296,7 @@ export async function prepareFinalResultRecoveryState(options: {
 }
 
 function buildTimeoutPartialProgressNextActions(options: FinalResultInput): AgentBrowserNextAction[] {
+	if (options.executionPlan.commandInfo.command === "session" && options.executionPlan.commandInfo.subcommand === "info") return [];
 	const retry = options.timeoutPartialProgress?.retryStep?.retry;
 	const stepIndex = options.timeoutPartialProgress?.retryStep?.index;
 	const freshSessionAbandoned = options.sessionMode === "fresh" && options.timeoutPartialProgress?.liveUrlRecovered !== true;

@@ -32,6 +32,7 @@ import {
 	prepareAgentBrowserSpawnArgs,
 	resolveSpawnedChildExitCode,
 	runAgentBrowserProcess,
+	type ProcessRunResult,
 } from "../extensions/agent-browser/lib/process.js";
 import { parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
 import { buildExecutionPlan } from "../extensions/agent-browser/lib/runtime.js";
@@ -957,14 +958,18 @@ test("runAgentBrowserProcess refuses a changed checkout identity before spawning
 			});
 			assert.equal(context?.restoreDecision, "enabled");
 			await chmod(join(tempDir, ".git", "pi-agent-browser-project-generation-v1.json"), 0o644);
-			const result = await withOwnedManagedSessionContext(context, () => runAgentBrowserProcess({
-				args,
-				cwd: tempDir,
-				managedSessionRestoreState: restoreState,
-				ownedManagedSession: true,
-			}));
-			assert.equal(result.agentBrowserStarted, false);
-			assert.match(result.spawnError?.message ?? "", /checkout identity changed/);
+			for (const browserIndependentReadConfirmation of [false, true]) {
+				const result: ProcessRunResult = await withOwnedManagedSessionContext(context, () => runAgentBrowserProcess({
+					args: browserIndependentReadConfirmation ? ["--session", "piab-managed", "confirm", "read-id"] : args,
+					browserIndependentReadConfirmation,
+					cwd: tempDir,
+					managedSessionRestoreState: restoreState,
+					managedStatePageUrlUnknown: browserIndependentReadConfirmation,
+					ownedManagedSession: true,
+				}));
+				assert.equal(result.agentBrowserStarted, false);
+				assert.match(result.spawnError?.message ?? "", /checkout identity changed/);
+			}
 			await assert.rejects(stat(startedPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
 		});
 	} finally {

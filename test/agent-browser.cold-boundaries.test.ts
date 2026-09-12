@@ -69,6 +69,7 @@ function execute(row) {
   if (command === 'not-a-command') throw new Error('Unknown command: not-a-command');
   if (['open', 'goto', 'navigate', 'a11y', 'vitals', 'web-vitals'].includes(command)) state.url = urlOperand(row) ?? (command === 'open' ? 'about:blank' : state.url);
   if (command === 'connect' || (command === 'state' && subcommand === 'load')) { state.url = ${JSON.stringify(chosenUrl)}; return { connected: true }; }
+  if (command === 'webmcp') return { invocationId: 'pending-job', status: 'pending' };
   if (command === 'pushstate') state.url = new URL(row[1], state.url).href;
   if (command === 'diff' && subcommand === 'url') { state.url = row[3]; return { url1: row[2], url2: row[3], diff: 'Different pages' }; }
   if (command === 'window' && subcommand === 'new') { state.url = 'about:blank'; return { tabId: 't2', total: 2 }; }
@@ -92,6 +93,8 @@ function result(row) {
   try { return { command: row, success: true, result: { ...execute(row), lifecycle: { effectiveLaunch: { browserLaunched: state.browser } } } }; }
   catch (error) { return { command: row, success: false, error: error.message }; }
 }
+if (tokens[0] === 'session' && tokens[1] === 'info' && state.timeoutInfo) setInterval(() => {}, 1000);
+else {
 let output, failed;
 if (tokens[0] === 'batch') {
   const raw = tokens.slice(1).filter((token) => token !== '--bail');
@@ -102,7 +105,8 @@ if (tokens[0] === 'batch') {
 } else { const entry = result(tokens); output = { success: entry.success, data: entry.result, error: entry.error }; failed = !entry.success; }
 fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
 process.stdout.write(JSON.stringify(output));
-process.exitCode = failed ? 1 : 0;`);
+process.exitCode = failed ? 1 : 0;
+}`);
 	try {
 		await withPatchedEnv({
 			PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
@@ -148,6 +152,58 @@ process.exitCode = failed ? 1 : 0;`);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+}
+
+for (const state of ["cold", "known", "unknown", "reopen"]) {
+	test(`session info timeout preserves ${state} state without browser recovery`, { concurrency: false }, async () => {
+		await withPage(async (page) => {
+			const before = await page.call({ args: state === "cold" ? ["--namespace", "cold", "--session", "cold-inspected", "session", "info"]
+				: state === "reopen" ? ["tab", "list"]
+				: state === "unknown" ? ["webmcp", "invoke", "wait_for_navigation", "--detach"] : ["snapshot", "-i"] });
+			assert.equal(before.isError, false, before.content[0]?.text);
+			if (state === "known") assert.ok(before.details?.refSnapshot);
+			if (state === "unknown") assert.equal(before.details?.sessionTabTargetUnknown, true);
+			if (state === "reopen") assert.equal(before.details?.sessionTabReopenPending, true);
+			const prefix = ["--namespace", "cold", "--session", String(before.details?.sessionName)];
+			const args = [...prefix, "session", "info"];
+			const nativeBefore = await page.state();
+			const offset = (await page.calls()).length;
+			await page.patch({ timeoutInfo: true });
+			let timedOut;
+			try { timedOut = await page.call({ args, timeoutMs: 800 }); }
+			finally { await page.patch({ timeoutInfo: false }); }
+			assert.equal(timedOut.isError, true);
+			assert.equal(timedOut.details?.exitCode, 124);
+			assert.equal(timedOut.details?.timedOut, true);
+			assert.equal(timedOut.details?.failureCategory, "timeout");
+			assert.deepEqual((await page.calls()).slice(offset).map(row => row.args), [["--json", ...args]]);
+			assert.deepEqual({ ...await page.state(), timeoutInfo: undefined }, { ...nativeBefore, timeoutInfo: undefined });
+			for (const key of ["sessionTabTarget", "sessionTabTargetUnknown", "refSnapshot", "refSnapshotInvalidation", "sessionTabReopenPending"]) {
+				assert.deepEqual(timedOut.details?.[key], before.details?.[key], key);
+			}
+			for (const key of ["timeoutPartialProgress", "artifacts", "artifactVerification", "browserWindow", "lifecycle", "data", "managedSessionOutcome"]) {
+				assert.equal(timedOut.details?.[key], undefined, key);
+			}
+			const actions = timedOut.details?.nextActions as Array<{ id: string; params: { args: string[] } }>;
+			assert.deepEqual(actions.map(action => ({ id: action.id, args: action.params.args })), [{ id: "retry-session-info", args }]);
+			const retried = await page.call(actions[0].params);
+			assert.equal(retried.isError, false, retried.content[0]?.text);
+			assert.equal((retried.details?.data as { piCleanupOwnership: string }).piCleanupOwnership, state === "cold" ? "caller-owned" : "wrapper-managed");
+			assert.deepEqual((await page.calls()).slice(offset).map(row => row.args), [["--json", ...args], ["--json", ...args]]);
+			assert.deepEqual({ ...await page.state(), timeoutInfo: undefined }, { ...nativeBefore, timeoutInfo: undefined });
+			if (state === "unknown") {
+				const blocked = await page.call({ args: [...prefix, "snapshot", "-i"] });
+				assert.equal(blocked.isError, true);
+				assert.match(blocked.content[0]?.text ?? "", /active page became unverified/);
+				assert.equal((await page.calls()).length, offset + 2);
+			}
+			if (state === "reopen") {
+				const snapshot = await page.call({ args: [...prefix, "snapshot", "-i"] });
+				assert.equal(snapshot.isError, false, snapshot.content[0]?.text);
+				assert.equal((snapshot.details?.data as { origin: string }).origin, page.url);
+			}
+		}, { live: state === "known" || state === "unknown" });
+	});
 }
 
 for (const prefix of [["tab", "list"], ["read", chosenUrl]]) {

@@ -28,6 +28,7 @@ function execute(tokens) {
 let data, success = true, error;
 if (tokens[0] === 'read' && tokens[1] === 'public.test/body') data = { content: JSON.stringify({ confirmation_required: true, confirmation_id: 'read-id', action: 'read', capabilities: { readRequiresConfirmation: true } }), source: 'http' };
 else if (tokens[0] === 'read') { state.pending = { id: 'read-id', action: 'read', sessionName, namespace, failure: tokens[1]?.endsWith('failure') === true }; data = { confirmation_required: true, confirmation_id: 'read-id', action: 'read', ...(tokens[1]?.startsWith('public.test/legacy') ? {} : { capabilities: { readRequiresConfirmation: true } }) }; }
+else if (tokens[0] === 'webmcp') data = { invocationId: 'pending-job', status: 'pending' };
 else if (tokens[0] === 'click') { state.pending = { id: 'dom-id', action: 'click', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'dom-id', action: 'click' }; }
 else if (['confirm', 'deny'].includes(tokens[0])) {
   if (!state.pending || state.pending.id !== tokens[1] || state.pending.sessionName !== sessionName || state.pending.namespace !== namespace) { success = false; error = 'Confirmation ID or session mismatch'; }
@@ -82,6 +83,40 @@ for (const shared of [false, true]) for (const command of ["confirm", "deny"]) {
 		});
 	});
 }
+
+for (const command of ["confirm", "deny"]) test(`proven HTTP ${command} preserves an unknown DOM target without page probes`, { concurrency: false }, async () => {
+	await withConfirmations(async ({ log, harness }) => {
+		const prefix = ["--namespace", "team", "--session", "shared"];
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "click", "#guarded"] });
+		const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "webmcp", "invoke", "wait_for_navigation", "--detach"] });
+		assert.equal(pending.details?.sessionTabTargetUnknown, true);
+		for (const id of ["dom-id", "unproven-id"]) {
+			await writeFile(log, "");
+			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, command, id] });
+			assert.equal(blocked.isError, true);
+			assert.deepEqual(await readInvocationLog(log), []);
+		}
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "read", "public.test/legacy"] });
+		await writeFile(log, "");
+		const legacy = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, command, "read-id"] });
+		assert.equal(legacy.isError, true);
+		assert.deepEqual(await readInvocationLog(log), []);
+		const read = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "read", "public.test/docs"] });
+		assert.equal(read.details?.failureCategory, "confirmation-required");
+		await writeFile(log, "");
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, command, "read-id"] });
+		assert.equal(result.isError, false, result.content[0]?.text);
+		assert.deepEqual((await readInvocationLog(log)).map(call => call.args), [["--json", ...prefix, command, "read-id"]]);
+		assert.equal(result.details?.sessionTabTargetUnknown, true);
+		assert.equal(result.details?.sessionTabTarget, undefined);
+		assert.equal(result.details?.managedSessionOutcome, undefined);
+		await writeFile(log, "");
+		const stillUnknown = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "click", "#guarded"] });
+		assert.equal(stillUnknown.isError, true);
+		assert.match(stillUnknown.content[0]?.text ?? "", /active page became unverified/);
+		assert.deepEqual(await readInvocationLog(log), []);
+	});
+});
 
 test("legacy read confirmation retains native-default routing without the browserless exemption", { concurrency: false }, async () => {
 	await withConfirmations(async ({ log, harness }) => {

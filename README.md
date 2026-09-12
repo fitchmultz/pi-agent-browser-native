@@ -379,6 +379,8 @@ Read documentation or other unstructured text without requiring a Chrome page, o
 
 Explicit URL reads prefer `text/markdown`, then try a `.md` path and nearby `llms.txt` links before falling back to readable HTML text. Use `--outline`, `--llms index|full`, `--require-md`, `--raw`, or `--timeout <ms>` when needed. Explicit reads, including all-read batches, do not allocate or replace a managed browser, require a known page, or run browser helpers before, after, or following a timeout. Native config and argv pass through unchanged; the native HTTP reader owns fetching. A visible `Read execution` line reports the source, CLI start and native launch evidence without treating an HTTP read as proof of shared-browser liveness. Bare `read` still uses and verifies the current DOM. The native no-browser-effects path requires the companion upstream fix; older supported binaries do not guarantee it merely because this wrapper skips helpers. It renders upstream `data.content` first, preserves metadata in `details.data`, keeps fetched URLs from replacing the active browser tab target, and budgets explicit long read timeouts across upstream's `.md` and ancestor-`llms.txt` request fallbacks.
 
+Use `session info` to inspect browser status. A timeout proves no liveness and returns only `retry-session-info` for that same session/namespace; it does not run page probes or change existing page/ref state.
+
 Evaluate page JavaScript through stdin. Put the script in the top-level `stdin` field, not as an extra `args` token after `--stdin`. Return the value you want as an expression; `eval --stdin` may warn with `details.evalStdinHint` when a function-shaped snippet serializes to `{}` instead of being invoked:
 
 ```json

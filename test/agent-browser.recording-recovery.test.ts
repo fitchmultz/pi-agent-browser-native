@@ -77,7 +77,6 @@ if (tokens[0] === 'batch') {
   catch (error) { output = { success: false, error: error.message }; }
 }
 if (output !== undefined && (tokens[0] !== 'batch' || mode === 'mixed-failure')) { process.stdout.write(JSON.stringify(output)); process.exitCode = Array.isArray(output) ? Number(output.some(row => row.success === false)) : output.success === false ? 1 : 0; }
-else if (tokens[0] === 'batch' && !tokens.includes('record stop')) { /* a timed-out batch deliberately has no result rows */ }
 `);
 	try {
 		await withPatchedEnv({ PATH: `${root}${delimiter}${process.env.PATH ?? ""}`, HOME: root, USERPROFILE: root, AGENT_BROWSER_SESSION: undefined, AGENT_BROWSER_NAMESPACE: undefined, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
