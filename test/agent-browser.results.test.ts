@@ -43,8 +43,10 @@ test("retirePendingRecordingManifestEntries retires only the closed session reco
 	const retired = retirePendingRecordingManifestEntries(manifest, "a", undefined, 4);
 	assert.deepEqual(retired.entries.map((entry) => entry.path), ["a.webm", "b.webm", "a.png"]);
 	assert.equal(retired.entries[0]?.subcommand, "close-abandoned");
-	assert.equal(retired.entries[0]?.retentionState, "missing");
-	assert.equal(retired.liveCount, 2);
+	assert.equal(retired.entries[0]?.retentionState, "live");
+	assert.equal(retired.entries[0]?.status, "unverified");
+	assert.equal(retired.entries[0]?.exists, undefined, "retiring a reservation does not prove a file is missing");
+	assert.equal(retired.liveCount, 3);
 	assert.equal(retired.updatedAtMs, 4);
 });
 
@@ -268,6 +270,13 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 		validationError: "qa.attached requires an attached session with a readable page URL.",
 	}), "validation-error");
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), "upstream-error");
+});
+
+test("unverified recording evidence cannot become artifact-saved merely because the file exists", () => {
+	const unverified = { absolutePath: "/tmp/take.webm", path: "take.webm", command: "record", subcommand: "stop", kind: "video" as const, status: "unverified" as const, exists: true };
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [unverified] }), "artifact-unverified");
+	const pending = { ...unverified, absolutePath: "/tmp/next.webm", path: "next.webm", exists: undefined, status: "pending" as const, subcommand: "restart" };
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [unverified, pending] }), "artifact-unverified");
 });
 
 test("classifyAgentBrowserSuccessCategory locks common machine-readable success categories", () => {

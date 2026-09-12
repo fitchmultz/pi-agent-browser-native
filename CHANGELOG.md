@@ -9,6 +9,11 @@
 
 ### Fixed
 
+- Keep explicit URL reads and all-read batches out of browser preflights, managed-session replacement and timeout page probes. Preserve policy-required read confirmations in the correct native session; only native ID-check capability enables browser-independent confirm/deny.
+- Separate daemon and browser identity in `session info`, including native ownership versus Pi cleanup ownership and explicit unknowns for unavailable fields.
+- Carry native recording receipts and actual capture/encoder measurements through direct, restart and batch results, including failures. Recover uncertain stops with one bounded, identity-matched native receipt query; keep original attempt evidence and export failed or recovered recording receipts without overwriting artifacts.
+- Preserve harmless bearer technical prose and unchanged URL spelling. Credential replacements remain visibly marked, and structured results use the same URL redaction as visible text and exports.
+- Redact `authorization_session_id` in URLs, including contextual `state` / `nonce`, from model-visible content, details, and explicit result exports while preserving ordinary query values.
 - Honor configured native session/namespace defaults as caller-owned browsers across Pi sessions, including ordinary structured calls and helpers, without imposing implicit-session idle policy or quit cleanup.
 - Keep disposable script sessions out of native user/project profile defaults by using an empty temporary config through execution and cleanup. Reject inner `--config` overrides without restricting ordinary native `args`.
 

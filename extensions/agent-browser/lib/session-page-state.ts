@@ -3,6 +3,7 @@ import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNa
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand, isWindowOrDiffPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
+import { findReadConfirmation as findPendingReadConfirmation, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
 import { parseSnapshotLines } from "./results/snapshot-segments.js";
@@ -412,6 +413,7 @@ export function getSessionPageStateKey(sessionName: string | undefined, namespac
 }
 
 export class SessionPageState {
+	private readConfirmations = new Map<string, { order: number; value: ReadConfirmation }>();
 	private refSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
 	private refSnapshots = new Map<string, OrderedSessionRefSnapshot>();
 	private tabPinningReasons = new Map<string, SessionTabPinningReason>();
@@ -439,17 +441,17 @@ export class SessionPageState {
 			const closeAllApplied = details.closeAllApplied === true
 				|| (message.isError !== true && isCloseAllCommand(commandTokens))
 				|| batchHasSuccessfulCloseAll(details.batchSteps);
+			const lifecycleReset = (isCloseCommand(command) && message.isError !== true) || batchCloseLifecycle !== undefined;
 			if (closeAllApplied) {
 				restoredOrder += 1;
 				state.clearNamespace(namespace);
-				if (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true) continue;
-			}
-			if (!sessionKey) continue;
-			if (!closeAllApplied && ((isCloseCommand(command) && message.isError !== true) || batchCloseLifecycle)) {
+			} else if (sessionKey && lifecycleReset) {
 				restoredOrder += 1;
 				state.clearSession(sessionKey);
-				if (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true) continue;
 			}
+			const readConfirmation = parseReadConfirmation(details.readConfirmation);
+			if (readConfirmation) state.applyReadConfirmation(readConfirmation, ++restoredOrder as SessionPageStateUpdateToken);
+			if (!sessionKey || ((closeAllApplied || lifecycleReset) && (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true))) continue;
 			const tabTarget = getRestoredSessionTabTarget(details, command, subcommand);
 			const tabTargetUnknown = details.sessionTabTargetUnknown === true;
 			const reopenPending = typeof details.sessionTabReopenPending === "boolean" ? details.sessionTabReopenPending : undefined;
@@ -494,6 +496,7 @@ export class SessionPageState {
 	}
 
 	reset(): void {
+		this.readConfirmations.clear();
 		this.refSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
 		this.refSnapshots = new Map<string, OrderedSessionRefSnapshot>();
 		this.tabPinningReasons = new Map<string, SessionTabPinningReason>();
@@ -512,6 +515,19 @@ export class SessionPageState {
 			...(this.tabTargetUnknownOrders.has(sessionName) ? { tabTargetUnknown: true as const } : {}),
 			tabTarget: this.tabTargets.get(sessionName)?.target,
 		};
+	}
+
+	findReadConfirmation(args: string[], namespace?: string): ReadConfirmation | undefined {
+		return findPendingReadConfirmation(args, [...this.readConfirmations.values()].map(entry => entry.value), namespace);
+	}
+
+	getReadConfirmation(sessionKey: string): ReadConfirmation | undefined {
+		return this.readConfirmations.get(sessionKey)?.value;
+	}
+
+	applyReadConfirmation(value: ReadConfirmation, update: SessionPageStateUpdateToken): void {
+		const key = getAgentBrowserSessionIdentityKey(value.sessionName, value.namespace);
+		if (update >= (this.readConfirmations.get(key)?.order ?? 0)) this.readConfirmations.set(key, { value, order: update });
 	}
 
 	applyTabTarget(options: {
@@ -582,6 +598,7 @@ export class SessionPageState {
 	}
 
 	clearSession(sessionName: string): void {
+		this.readConfirmations.delete(sessionName);
 		this.refSnapshotInvalidations.delete(sessionName);
 		this.refSnapshots.delete(sessionName);
 		this.tabPinningReasons.delete(sessionName);
@@ -591,6 +608,7 @@ export class SessionPageState {
 
 	clearNamespace(namespace?: string): void {
 		const sessionKeys = new Set([
+			...this.readConfirmations.keys(),
 			...this.refSnapshotInvalidations.keys(),
 			...this.refSnapshots.keys(),
 			...this.tabPinningReasons.keys(),

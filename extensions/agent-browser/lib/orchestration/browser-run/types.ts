@@ -14,6 +14,8 @@ import type { buildExecutionPlan, CompatibilityWorkaround, OpenResultTabCorrecti
 import type { ManagedSessionRestoreState, OwnedManagedSessionContext } from "../../managed-session-restore.js";
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import type { PromptPolicy } from "../../prompt-policy.js";
+import type { ActiveRecordingReservation } from "../../recording-reservations.js";
+import type { ReadConfirmation } from "../../read-confirmation.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
 
 export type AgentBrowserToolResult = AgentToolResult<unknown> & { isError?: boolean };
@@ -62,6 +64,7 @@ export interface OwnedManagedSessionReference {
 }
 
 export interface BrowserRunState {
+	activeRecordingReservations?: ReadonlyMap<string, ActiveRecordingReservation>;
 	attachedSessionKeys: Set<string>;
 	artifactManifest?: SessionArtifactManifest;
 	closedManagedSessionNames: Set<string>;
@@ -426,6 +429,7 @@ export interface ElectronRefFreshnessDiagnostic {
 }
 
 export interface PreparedBrowserRun {
+	readConfirmation?: ReadConfirmation;
 	batchScreenshotArtifactRequests?: Array<ScreenshotArtifactRequest | undefined>;
 	headedLaunch: boolean;
 	providerLaunch: boolean;

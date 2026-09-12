@@ -137,12 +137,12 @@ async function initializeGitProject(path: string): Promise<void> {
 	await execFileAsync("git", ["init", "-q", path]);
 }
 
-async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string }): Promise<void> {
+async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string; socketDir?: string }): Promise<void> {
 	if (!options.sessionName) return;
 	await runAgentBrowserProcess({
 		args: ["--json", "--namespace", "", "--session", options.sessionName, "close"],
 		cwd: options.cwd,
-		env: { AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir() },
+		env: { AGENT_BROWSER_SOCKET_DIR: options.socketDir ?? process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir(), ...(options.socketDir ? { PI_AGENT_BROWSER_SOCKET_DIR: options.socketDir } : {}) },
 	}).catch(() => undefined);
 }
 
@@ -751,21 +751,32 @@ if (!REAL_UPSTREAM_ENABLED) {
 						await runCoreCommand(harness, ["open", contractUrl], shapes.commands.open, managedSessionName, "restore contract fixture after WebMCP");
 					}
 
+					await runCoreCommand(harness, ["fill", "#name-input", "read preserves this page"], shapes.commands.coreCommand, managedSessionName);
 					const readOutputPath = join(tempDir, "read-output.json");
-					const readResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl], outputPath: readOutputPath });
+					const readResult = await withPatchedEnv({ AGENT_BROWSER_SESSION: undefined, AGENT_BROWSER_NAMESPACE: undefined, PI_AGENT_BROWSER_SOCKET_DIR: undefined }, async () => {
+						try {
+							return await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl], outputPath: readOutputPath });
+						} finally {
+							// Legacy native URL reads may leave a browserless default daemon in this isolated socket directory.
+							await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: "default", socketDir });
+						}
+					});
 					const readDetails = assertSuccessfulResult(readResult, shapes.commands.read, "read URL");
-					assert.equal(readDetails.sessionName, managedSessionName);
-					assert.equal(readDetails.usedImplicitSession, true);
+					assert.equal(readDetails.sessionName, undefined);
+					assert.equal(readDetails.usedImplicitSession, undefined);
 					assert.equal(readDetails.agentBrowserStarted, true);
-					assert.deepEqual(readDetails.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+					assert.deepEqual(readDetails.lifecycle, { effectiveLaunch: { browserLaunched: false } });
 					assert.equal(readDetails.readSource, (readDetails.data as { source?: string }).source);
-					assert.equal((readDetails.managedSessionOutcome as { activeAfter?: boolean }).activeAfter, true);
+					assert.equal(readDetails.managedSessionOutcome, undefined);
 					assert.equal((readDetails.outputFile as { status?: string }).status, "saved");
 					assert.match(readResult.content[0]?.text ?? "", /Agent Browser Contract Fixture/);
 					assert.match((readDetails.data as { content?: string }).content ?? "", /Ready for real upstream contract validation/);
 					const savedRead = JSON.parse(await readFile(readOutputPath, "utf8")) as { content?: string; source?: string };
 					assert.match(savedRead.content ?? "", /Ready for real upstream contract validation/);
 					assert.equal(savedRead.source, readDetails.readSource);
+					const ownedPageAfterRead = await runCoreCommand(harness, ["get", "url"], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(getResultValue(ownedPageAfterRead, ["url", "result"]), contractUrl);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "value", "#name-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]), "read preserves this page");
 
 					const uploadPath = join(tempDir, "upload-fixture.txt");
 					const screenshotPath = join(tempDir, "contract.png");

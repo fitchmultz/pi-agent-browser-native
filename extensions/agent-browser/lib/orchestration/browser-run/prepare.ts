@@ -1,8 +1,9 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { extractExplicitSessionName, getBooleanFlagValue, isUpstreamEnvFlagEnabled, projectUpstreamGlobalFlags } from "../../argv-grammar.js";
+import { extractExplicitSessionName, getBooleanFlagValue, isUpstreamEnvFlagEnabled, projectUpstreamGlobalFlags, resolveAgentBrowserNamespace } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
+import { isBrowserIndependentRead } from "../../command-policy.js";
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
@@ -512,6 +513,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		} };
 	}
 	const userRequestedJson = runtimeToolArgs.includes("--json");
+	const routedReadConfirmation = state.sessionPageState.findReadConfirmation(preparedArgs.args, resolveAgentBrowserNamespace(preparedArgs.args, agentBrowserProcessEnv.AGENT_BROWSER_NAMESPACE));
+	const readConfirmation = routedReadConfirmation?.capabilities?.readRequiresConfirmation === true ? routedReadConfirmation : undefined;
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {
 		freshSessionName,
 		managedSessionActive: state.managedSessionActive,
@@ -519,10 +522,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		managedSessionName: state.managedSessionName,
 		managedSessionNamespace: state.managedSessionNamespace,
 		sessionMode,
+		stdin: runtimeToolStdin,
+		browserIndependentReadConfirmation: readConfirmation !== undefined,
 	});
+	const browserIndependent = readConfirmation !== undefined || isBrowserIndependentRead(extractUpstreamCommandTokens(preparedArgs.args), runtimeToolStdin)
+		|| (executionPlan.commandInfo.command === "session" && executionPlan.commandInfo.subcommand === "info");
 	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const plannedSessionPageState = sessionPageState.get(ownedSessionKey);
-	const pageTargetError = getPageTargetValidationError({
+	const pageTargetError = readConfirmation ? undefined : getPageTargetValidationError({
 		args: executionPlan.effectiveArgs,
 		currentPageUrl: plannedSessionPageState.tabTarget?.url,
 		pageUrlUnknown: plannedSessionPageState.tabTargetUnknown === true,
@@ -533,7 +540,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const targetsCurrentManagedSession = state.managedSessionActive
 		&& ownedSessionKey === getSessionContextKey(state.managedSessionName, state.managedSessionNamespace);
 	const targetsOffCurrentOwnedSession = recordedOwnedSession !== undefined && !targetsCurrentManagedSession;
-	const idleTimeoutMismatch = executionPlan.managedSessionName || recordedOwnedSession || targetsCurrentManagedSession || (state.managedSessionActive && extractExplicitSessionName(preparedArgs.args) === undefined)
+	const idleTimeoutMismatch = !browserIndependent && (executionPlan.managedSessionName || recordedOwnedSession || targetsCurrentManagedSession || (state.managedSessionActive && extractExplicitSessionName(preparedArgs.args) === undefined))
 		? getIdleTimeoutMismatch(preparedArgs.args, options.implicitSessionIdleTimeoutMs)
 		: undefined;
 	if (idleTimeoutMismatch) executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: idleTimeoutMismatch };
@@ -543,7 +550,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const offCurrentCompatibilityUpgrade = targetsOffCurrentOwnedSession
 		&& executionPlan.compatibilityWorkaround !== undefined
 		&& recordedOwnedSession.compatibilityWorkaround === undefined;
-	if (targetsOffCurrentOwnedSession && canUseHeadlessCompatibilityUserAgent(preparedArgs.args, agentBrowserProcessEnv)) {
+	if (!browserIndependent && targetsOffCurrentOwnedSession && canUseHeadlessCompatibilityUserAgent(preparedArgs.args, agentBrowserProcessEnv)) {
 		const compatibilityWorkaround = executionPlan.compatibilityWorkaround ?? recordedOwnedSession.compatibilityWorkaround;
 		if (compatibilityWorkaround) {
 			const userAgentIndex = executionPlan.effectiveArgs.indexOf("--user-agent");
@@ -562,7 +569,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		?? (targetsCurrentManagedSession ? state.managedSessionHeadedAutosaveInterval : undefined);
 	const explicitAutosaveInterval = resolveExplicitAutosaveInterval(agentBrowserProcessEnv.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
 	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(retainedHeadedAutosaveInterval, isCloseCommand(executionPlan.commandInfo.command));
-	if (!executionPlan.validationError && autosavePolicyChangeError) {
+	if (!browserIndependent && !executionPlan.validationError && autosavePolicyChangeError) {
 		executionPlan = { ...executionPlan, recoveryHint: undefined, validationError: autosavePolicyChangeError };
 	}
 	const headedLaunch = getBooleanFlagValue(executionPlan.effectiveArgs, "--headed") ?? isUpstreamEnvFlagEnabled(agentBrowserProcessEnv.AGENT_BROWSER_HEADED);
@@ -572,7 +579,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const compatibilityUserAgent = executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined;
 	const compatibilityUserAgentApplied = compatibilityUserAgent !== undefined
 		&& executionPlan.effectiveArgs.some((token, index) => token === "--user-agent" && executionPlan.effectiveArgs[index + 1] === compatibilityUserAgent);
-	const ownedManagedSession = buildOwnedManagedSessionRestoreContext({
+	const ownedManagedSession = browserIndependent ? undefined : buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
 		cwd: recordedOwnedSession?.cwd ?? cwd,
 		currentManagedSessionName: state.managedSessionName,
@@ -661,7 +668,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			command: executionPlan.commandInfo.command,
 			commandTokens: plannedCommandTokens,
 			// URL QA clears diagnostics before its explicit open; those clears do not need the old tab.
-			pinningRequired: sessionTabPinningReason !== undefined && compiledQaPreset?.checks.url === undefined,
+			pinningRequired: !readConfirmation && sessionTabPinningReason !== undefined && compiledQaPreset?.checks.url === undefined,
 			reopenPending: coldManagedSession,
 			sessionName: executionPlan.sessionName,
 			stdin: runtimeToolStdin,
@@ -699,7 +706,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const isCallerOwnedExplicitSession = () => executionPlan.sessionName !== undefined
 			&& executionPlan.usedImplicitSession === false
 			&& ownedManagedSession === undefined;
-		const requiresLivePageVerification = () => isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true;
+		const requiresLivePageVerification = () => !readConfirmation && (isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true);
 		const verifyLivePage = async (request: { args: string[]; requirement?: string; stdin?: string }) => {
 			if (!request.requirement || !executionPlan.sessionName) return;
 			if (options.establishAttachedBrowserSession) {
@@ -1138,6 +1145,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				executionPlan,
 				ownedManagedSessionContext: ownedManagedSession,
 				preparedArgs,
+				readConfirmation,
 				priorRefSnapshotState,
 				priorSessionTabTarget,
 				priorSessionTabTargetUnknown,

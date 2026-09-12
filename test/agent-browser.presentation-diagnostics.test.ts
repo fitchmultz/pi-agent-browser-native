@@ -204,7 +204,7 @@ test("buildToolPresentation exposes native session-info liveness and runtime ide
 			commandInfo: { command: "session", subcommand: "info" },
 			cwd: process.cwd(), envelope: { success: true, data },
 		});
-		assert.deepEqual(JSON.parse((result.content[0] as { text: string }).text), data);
+		assert.deepEqual(JSON.parse((result.content[0] as { text: string }).text.split("\n\n").slice(1).join("\n\n")), data);
 	}
 });
 
@@ -225,10 +225,11 @@ test("buildToolPresentation limits native session-info text to redacted status m
 		} },
 	});
 	const text = (result.content[0] as { text: string }).text;
-	const visible = JSON.parse(text);
+	const visible = JSON.parse(text.split("\n\n").slice(1).join("\n\n"));
 	assert.deepEqual(visible.runtime, runtime);
 	assert.match(visible.runtimeError, /REDACTED/);
-	assert.doesNotMatch(text, /runtime-secret|private|profile/);
+	assert.doesNotMatch(text, /runtime-secret|private/);
+	assert.match(text, /Exact profile: unknown/);
 });
 
 test("buildToolPresentation formats Chrome profile arrays", async () => {
@@ -306,8 +307,15 @@ test("buildToolPresentation formats stateful browser-context results without lea
 			commandInfo: { command: "dialog", subcommand: "status" },
 			data: { message: "Authorization: Bearer dialog-secret", open: true, type: "prompt" },
 			summary: "Dialog open",
-			matches: [/Dialog open/, /Type: prompt/, /Message: \[REDACTED\]/],
+			matches: [/Dialog open/, /Type: prompt/, /Message: Authorization: Bearer \[REDACTED\]/],
 			missing: /dialog-secret/,
+		},
+		{
+			commandInfo: { command: "dialog", subcommand: "status" },
+			data: { message: "Bearer authentication uses an access token.", open: true, type: "alert" },
+			summary: "Dialog open",
+			matches: [/Message: Bearer authentication uses an access token\./],
+			missing: /REDACTED/,
 		},
 		{
 			commandInfo: { command: "frame", subcommand: "main" },

@@ -40,7 +40,7 @@ async function withPage(run: (page: Page) => Promise<void>, options: { live?: bo
 	const url = options.url ?? rememberedUrl;
 	await Promise.all([cwd, home].map((path) => mkdir(path, { mode: 0o700 })));
 	execFileSync("git", ["init", "-q", cwd]);
-	// Native 0.36: session info is local, HTTP read starts only the daemon, tab list launches the browser.
+	// Native HTTP reads and session info leave cold browsers untouched; tab list launches the browser.
 	await writeFakeAgentBrowserBinary(root, `const fs = require('node:fs');
 const args = process.argv.slice(2), stdin = fs.readFileSync(0, 'utf8');
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + '\\n');
@@ -61,12 +61,12 @@ function execute(row) {
   const [command, subcommand] = row;
   if (command === 'session') return { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey } : null };
   if (['close', 'quit', 'exit'].includes(command)) { state = { ...state, active: false, browser: false, url: 'about:blank', restoreKey: null }; return { closed: true }; }
-  if (!state.active) { state.active = true; state.restoreKey = process.env.AGENT_BROWSER_RESTORE ?? null; }
   const explicitRead = command === 'read' && urlOperand(row) !== undefined;
-  if (!explicitRead && !state.browser) { state.browser = true; state.url = ${JSON.stringify(new URL(url).origin + "/")}; }
+  if (explicitRead) return { content: 'HTTP-only read', source: 'http', url: urlOperand(row) };
+  if (!state.active) { state.active = true; state.restoreKey = process.env.AGENT_BROWSER_RESTORE ?? null; }
+  if (!state.browser) { state.browser = true; state.url = ${JSON.stringify(new URL(url).origin + "/")}; }
   if (state.failNext === command) { delete state.failNext; throw new Error('Fixture command failed'); }
   if (command === 'not-a-command') throw new Error('Unknown command: not-a-command');
-  if (explicitRead) return { content: 'HTTP-only read', source: 'http', url: urlOperand(row) };
   if (['open', 'goto', 'navigate', 'a11y', 'vitals', 'web-vitals'].includes(command)) state.url = urlOperand(row) ?? (command === 'open' ? 'about:blank' : state.url);
   if (command === 'connect' || (command === 'state' && subcommand === 'load')) { state.url = ${JSON.stringify(chosenUrl)}; return { connected: true }; }
   if (command === 'pushstate') state.url = new URL(row[1], state.url).href;
@@ -151,11 +151,11 @@ process.exitCode = failed ? 1 : 0;`);
 }
 
 for (const prefix of [["tab", "list"], ["read", chosenUrl]]) {
-	test(`cold reopen survives ${prefix.join(" ")} daemon startup before snapshot`, { concurrency: false }, async () => {
+	test(`cold reopen survives ${prefix.join(" ")} before snapshot`, { concurrency: false }, async () => {
 		await withPage(async (page) => {
 			const first = await page.call({ args: prefix });
 			assert.equal(first.isError, false, first.content[0]?.text);
-			assert.equal((await page.state()).active, true);
+			assert.equal((await page.state()).active, prefix[0] !== "read");
 			assert.equal((await page.state()).browser, prefix[0] === "tab");
 			assert.equal((await page.state()).url, prefix[0] === "tab" ? new URL(page.url).origin + "/" : "about:blank");
 			assert.equal((await page.calls()).some((row) => row.args.includes("open")), false);
@@ -184,7 +184,7 @@ for (const prefix of [["tab", "list"], ["read", "--timeout", "100", chosenUrl], 
 		await withPage(async (page) => {
 			const first = await page.call({ args: prefix });
 			assert.equal(first.isError, false, first.content[0]?.text);
-			assert.equal((await page.state()).active, true, "non-page calls may start the daemon");
+			assert.equal((await page.state()).active, prefix[0] !== "read", "HTTP reads leave the cold managed daemon untouched");
 			assert.equal((await page.calls()).some((row) => row.args.includes("open")), false);
 			await page.tree();
 			await page.reload();

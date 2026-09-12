@@ -2312,7 +2312,7 @@ if (args.includes("batch")) {
 			});
 			const batchSteps = batchResult.details?.batchSteps as Array<{ command?: string[] }> | undefined;
 			assert.deepEqual(batchSteps?.map((step) => step.command), [
-				["open", "https://example.org/"],
+				["open", "https://example.org"],
 				["get", "title"],
 				["get", "url"],
 			]);

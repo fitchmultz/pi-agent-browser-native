@@ -1,4 +1,7 @@
 import type { AgentBrowserNextAction } from "./next-actions.js";
+import type { RecordingReceipt } from "./recording.js";
+import type { ReadConfirmation } from "../read-confirmation.js";
+import type { RecordingRecovery } from "../orchestration/browser-run/recording-recovery.js";
 
 export type { AgentBrowserNextAction } from "./next-actions.js";
 
@@ -59,7 +62,7 @@ export interface AgentBrowserPageChangeSummary {
 
 export type FileArtifactKind = "download" | "file" | "har" | "image" | "pdf" | "profile" | "trace" | "video";
 
-export type FileArtifactStatus = "missing" | "pending" | "repaired-from-temp" | "saved" | "stale" | "upstream-temp-only";
+export type FileArtifactStatus = "failed" | "missing" | "pending" | "repaired-from-temp" | "saved" | "stale" | "unverified" | "upstream-temp-only";
 
 export interface FileArtifactMetadata {
 	absolutePath: string;
@@ -72,6 +75,8 @@ export interface FileArtifactMetadata {
 	mediaType?: string;
 	namespace?: string;
 	path: string;
+	recording?: RecordingReceipt;
+	recordingStartedAtMs?: number;
 	recordingState?: "openRecording";
 	requestedPath?: string;
 	session?: string;
@@ -93,6 +98,8 @@ export interface ArtifactVerificationEntry {
 	mediaType?: string;
 	path: string;
 	requestedPath?: string;
+	recording?: RecordingReceipt;
+	recordingStartedAtMs?: number;
 	recordingState?: "openRecording";
 	retentionState?: ArtifactRetentionState;
 	sizeBytes?: number;
@@ -126,6 +133,10 @@ export type ArtifactStorageScope = "explicit-path" | "persistent-session" | "pro
 
 export interface SessionArtifactManifestEntry {
 	absolutePath?: string;
+	recording?: RecordingReceipt;
+	recordingStartedAtMs?: number;
+	recordingState?: "openRecording";
+	status?: FileArtifactStatus;
 	command?: string;
 	createdAtMs: number;
 	cwd?: string;
@@ -197,6 +208,8 @@ export interface BatchFailurePresentationDetails {
 }
 
 export interface ToolPresentation {
+	readConfirmation?: ReadConfirmation;
+	recordingRecovery?: RecordingRecovery;
 	artifactManifest?: SessionArtifactManifest;
 	artifactRetentionSummary?: string;
 	artifactVerification?: ArtifactVerificationSummary;

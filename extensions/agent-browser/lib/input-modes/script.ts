@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseArgvDescriptor } from "../argv-descriptor.js";
 import { getFlagName } from "../argv-grammar.js";
-import { needsManagedSession } from "../command-policy.js";
+import { isBrowserIndependentRead, needsManagedSession } from "../command-policy.js";
 import { isCloseCommand } from "../command-taxonomy.js";
 import { LAUNCH_SCOPED_FLAGS, MANAGED_RESTORE_INCOMPATIBLE_FLAGS } from "../launch-scoped-flags.js";
 import { isRecord } from "../parsing.js";
@@ -139,7 +139,7 @@ function getScriptCallPolicyError(args: string[]): string | undefined {
 	if (!command) return "script browser call args must contain an agent-browser command.";
 	if (isCloseCommand(command)) return "script browser calls cannot close, quit, or exit their isolated session.";
 	if (SCRIPT_FORBIDDEN_COMMANDS.has(command)) return `script browser calls cannot use ${command}.`;
-	if (!needsManagedSession(descriptor)) return `script browser calls cannot use sessionless/local command ${command}.`;
+	if (!needsManagedSession(descriptor) && !isBrowserIndependentRead(descriptor.upstreamCommandTokens)) return `script browser calls cannot use sessionless/local command ${command}.`;
 	for (const token of args) {
 		const flag = getFlagName(token);
 		if (SCRIPT_FORBIDDEN_FLAGS.has(flag)) {

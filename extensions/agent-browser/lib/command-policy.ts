@@ -1,5 +1,6 @@
 import type { ArgvDescriptor } from "./argv-descriptor.js";
 import { hasOnlyBooleanFlags, hasOnlyOptionFlags, isNonFlagToken, stripSessionlessShapeGlobalFlags } from "./argv-grammar.js";
+import { getUpstreamEffectiveBatchSteps } from "./orchestration/batch-stdin.js";
 
 const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete", "remove"]);
 const PLUGIN_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "add", "run"]);
@@ -75,6 +76,37 @@ function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 	return false;
 }
 
-export function needsManagedSession(descriptor: ArgvDescriptor): boolean {
-	return !isSessionlessCommand(descriptor.upstreamCommandTokens);
+// undefined is a valid DOM read; null is invalid native syntax, which must not trigger page helpers.
+export function getExplicitReadUrl(commandTokens: readonly string[]): string | null | undefined {
+	if (commandTokens[0] !== "read") return undefined;
+	let url: string | undefined;
+	let llms = false;
+	let outline = false;
+	for (let index = 1; index < commandTokens.length; index += 1) {
+		const token = commandTokens[index];
+		if (["--filter", "--llms", "--timeout"].includes(token)) {
+			const value = commandTokens[++index];
+			if (value === undefined) return null;
+			if (token === "--llms") {
+				if (!["index", "full"].includes(value)) return null;
+				llms = true;
+			}
+			if (token === "--timeout" && (!/^\+?\d+$/.test(value) || BigInt(value) === 0n || BigInt(value) > 18446744073709551615n)) return null;
+		} else if (["--raw", "--require-md", "--outline", "--json"].includes(token)) {
+			if (token === "--outline") outline = true;
+		}
+		else if (token.startsWith("--") || url !== undefined) return null;
+		else url = token;
+	}
+	return llms && outline ? null : url;
+}
+
+export function isBrowserIndependentRead(commandTokens: readonly string[], stdin?: string): boolean {
+	if (commandTokens[0] !== "batch") return getExplicitReadUrl(commandTokens) !== undefined;
+	const steps = getUpstreamEffectiveBatchSteps(commandTokens, stdin);
+	return steps.length > 0 && steps.every((step) => getExplicitReadUrl(step) !== undefined);
+}
+
+export function needsManagedSession(descriptor: ArgvDescriptor, stdin?: string): boolean {
+	return !isSessionlessCommand(descriptor.upstreamCommandTokens) && !isBrowserIndependentRead(descriptor.upstreamCommandTokens, stdin);
 }

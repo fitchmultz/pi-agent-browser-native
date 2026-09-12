@@ -334,6 +334,32 @@ test("buildToolPresentation does not classify confirmation-like records without 
 	assert.notEqual(presentation.summary, "Confirmation required: undefined");
 });
 
+test("buildToolPresentation consistently redacts authentication query values in direct and batch data", async () => {
+	const data = { sessions: [
+		{ name: "code", url: "https://example.invalid/?code=C123" },
+		{ name: "state", url: "https://example.invalid/oauth?state=S123&nonce=N123" },
+		{ name: "signin", url: "https://example.invalid/?authorization_session_id=A456&state=S456&nonce=N456" },
+		{ name: "ordinary", title: "Bearer authentication uses an access token.", url: "https://EXAMPLE.invalid?state=open&nonce=7" },
+	] };
+	const expectedData = { sessions: [
+		{ name: "code", url: "https://example.invalid/?code=%5BREDACTED%5D" },
+		{ name: "state", url: "https://example.invalid/oauth?state=%5BREDACTED%5D&nonce=%5BREDACTED%5D" },
+		{ name: "signin", url: "https://example.invalid/?authorization_session_id=%5BREDACTED%5D&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D" },
+		data.sessions[3],
+	] };
+	for (const batch of [false, true]) {
+		const presentation = await buildToolPresentation({
+			commandInfo: batch ? { command: "batch" } : { command: "session", subcommand: "list" },
+			cwd: process.cwd(),
+			envelope: { success: true, data: batch ? [{ command: ["session", "list"], success: true, result: data }] : data },
+		});
+		assert.deepEqual(batch ? presentation.batchSteps?.[0]?.data : presentation.data, expectedData);
+		assert.doesNotMatch(JSON.stringify(presentation), /C123|S123|N123|A456|S456|N456/);
+		assert.ok(presentationText(presentation).includes("Bearer authentication uses an access token."));
+		assert.ok(presentationText(presentation).includes("https://EXAMPLE.invalid?state=open&nonce=7"));
+	}
+});
+
 test("buildToolPresentation redacts sensitive generic string summaries", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "eval", subcommand: "--stdin" },

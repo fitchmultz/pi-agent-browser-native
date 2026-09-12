@@ -1399,6 +1399,8 @@ test("agentBrowserExtension makes close --all exclusive within its namespace", {
 		{ label: "current-default-ambient", named: false, callerOwned: false, override: undefined, batch: false, ambient: "Review Space", fresh: false },
 	]) {
 		const tempDir = await mkdtemp(join(tmpdir(), "piab-close-all-queue-"));
+		const cwd = join(tempDir, "g");
+		await mkdir(cwd);
 		const logPath = join(tempDir, "events.log");
 		const openGate = join(tempDir, "release-open");
 		const waitGate = join(tempDir, "release-wait");
@@ -1456,14 +1458,18 @@ process.stdout.write(JSON.stringify(command === "batch"
 		};
 		try {
 			await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: scenario.ambient, AGENT_BROWSER_SESSION: undefined, PATH: `${tempDir}:${nodeBinDir}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir, prompt: "Exercise global close ordering." });
+				const harness = createExtensionHarness({ cwd, prompt: "Exercise global close ordering." });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 				const pending: Array<ReturnType<typeof executeRegisteredTool>> = [];
 				try {
 					const open = executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...(scenario.named ? ["--namespace", "Review Space"] : []), "open", "https://safe.example/"],
 					});
 					pending.push(open);
-					const openStarted = await waitForEvent("open-start");
+					const openStarted = await Promise.race([
+						waitForEvent("open-start"),
+						open.then(result => assert.fail(`${scenario.label}: open ended before the fixture gate: ${result.content[0]?.text}`)),
+					]);
 					assert.match(openStarted.sessionName, /^piab-/);
 					assert.equal(openStarted.namespace, scenario.named ? "review-space" : "");
 					const namespace = scenario.override ?? (scenario.named ? "review-space" : "");

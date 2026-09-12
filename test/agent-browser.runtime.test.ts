@@ -1922,6 +1922,13 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 	}
 });
 
+test("redaction preserves harmless URL spelling", () => {
+	for (const url of ["https://EXAMPLE.com", "HTTPS://EXAMPLE.com:443/A%2fb?q=a%20b&state=open&nonce=7#part", "ws://127.0.0.1:9222"]) {
+		assert.equal(redactSensitiveText(`Read ${url}`), `Read ${url}`);
+		assert.deepEqual(redactInvocationArgs(["open", url]), ["open", url]);
+	}
+});
+
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(redactInvocationArgs(["--headers", '{"Authorization":"Bearer demo"}', "open", "https://user:pass@example.com/path?token=abc&ok=1#access_token=xyz"]), [
 		"--headers",
@@ -1937,6 +1944,10 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"open",
 		"https://example.com/sso?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&ok=1",
 	]);
+	assert.deepEqual(redactInvocationArgs(["open", "https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=https%3A%2F%2Fexample.invalid%2Freturn&state=EXAMPLE_STATE&nonce=EXAMPLE_NONCE&Authorization%2DSession%2DId=EXAMPLE_ID"]), [
+		"open",
+		"https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=https%3A%2F%2Fexample.invalid%2Freturn&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&Authorization-Session-Id=%5BREDACTED%5D",
+	]);
 	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/orders?state=open&nonce=7"]), [
 		"open",
 		"https://example.com/orders?state=open&nonce=7",
@@ -1948,7 +1959,7 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(redactInvocationArgs(["--proxy=http://user:pass@proxy.example:8080", "open", "https://example.com"]), [
 		"--proxy=[REDACTED]",
 		"open",
-		"https://example.com/",
+		"https://example.com",
 	]);
 	assert.deepEqual(redactInvocationArgs(["network", "route", "**/api", "--body", '{"token":"route-secret"}']), [
 		"network",
@@ -1985,7 +1996,7 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"sid",
 		"[REDACTED]",
 		"--url",
-		"https://example.com/",
+		"https://example.com",
 	]);
 	assert.deepEqual(redactInvocationArgs(["storage", "local", "set", "authToken", "storage-secret"]), [
 		"storage",
@@ -2009,18 +2020,40 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	]);
 });
 
-test("redactSensitiveText preserves help placeholders while redacting bearer credentials", () => {
+test("redactSensitiveText preserves bearer prose while redacting credential contexts", () => {
+	for (const text of [
+		"The endpoint requires a bearer token.",
+		"Bearer authentication uses an access token.",
+		"Do not log bearer tokens or bearer credentials.",
+		"The phrase “bearer token.” is public.",
+		"Description: Bearer authentication uses an access token.",
+		"Authorization bearer tokens are credentials.",
+		"Bearer <code>token</code>",
+		"Bearer https://docs.example/guide",
+		"Use `bearer token.` or **bearer authentication.** as technical terms.",
+	]) assert.equal(redactSensitiveText(text), text);
 	assert.equal(
 		redactSensitiveText('Headers help: --headers <json> (e.g., Authorization bearer token)'),
 		'Headers help: --headers <json> (e.g., Authorization bearer token)',
 	);
 	assert.equal(redactSensitiveText("Error: Authorization: Bearer raw-token)"), "Error: Authorization: Bearer [REDACTED])");
 	assert.equal(redactSensitiveText("Authorization bearer raw-token."), "Authorization bearer [REDACTED].");
-	assert.equal(redactSensitiveText("Authorization bearer secrettoken"), "Authorization bearer [REDACTED]");
-	assert.equal(redactSensitiveText("Authorization bearer token,"), "Authorization bearer [REDACTED],");
+	assert.equal(redactSensitiveText("Authorization bearer secrettoken"), "Authorization bearer secrettoken");
+	assert.equal(redactSensitiveText("Authorization bearer token,"), "Authorization bearer token,");
 	assert.equal(redactSensitiveText("curl -H 'Bearer secrettoken'"), "curl -H 'Bearer [REDACTED]'");
 	assert.equal(redactSensitiveText("curl -H 'Bearer abc123'"), "curl -H 'Bearer [REDACTED]'");
 	assert.equal(redactSensitiveText("curl -H 'Bearer token.'"), "curl -H 'Bearer [REDACTED].'");
+	const proxyHeader = redactSensitiveText("Proxy-Authorization: Bearer token");
+	assert.match(proxyHeader, /^Proxy-Authorization:.*\[REDACTED\]$/);
+	assert.doesNotMatch(proxyHeader, /\btoken\b/);
+	assert.equal(redactSensitiveText("curl --header='Bearer token'"), "curl --header='Bearer [REDACTED]'");
+	for (const text of ["Authorization: 'Bearer canary'", "Authorization=Bearer canary", "X-Api-Key: Bearer canary"]) {
+		const redacted = redactSensitiveText(text);
+		assert.match(redacted, /\[REDACTED\]/);
+		assert.doesNotMatch(redacted, /canary/);
+	}
+	assert.equal(redactSensitiveText("Observed Bearer mF_9.B5f-4.1JqM."), "Observed Bearer [REDACTED].");
+	assert.deepEqual(redactSensitiveValue({ Authorization: "Bearer token", "Proxy-Authorization": "Bearer credentials" }), { Authorization: "[REDACTED]", "Proxy-Authorization": "[REDACTED]" });
 	assert.equal(
 		redactSensitiveText("OPENAI_API_KEY=openai-secret AWS_SECRET_ACCESS_KEY: aws-secret export STRIPE_SECRET_KEY='stripe-secret' PRIVATE_KEY=-----BEGIN_PRIVATE_KEY----- X-Private-Key: prose-header-secret private-key=prose-key API-KEY=prose-api Secret-Key: prose-secret apiKey=camel-api privateKey: camel-private connectionString=camel-connection databaseUrl: camel-db mongodbUri=mongodb://user:pass@example/db MONGODB_URI=mongodb://user:pass@example/db failedChecks=true"),
 		"OPENAI_API_KEY=[REDACTED] AWS_SECRET_ACCESS_KEY: [REDACTED] export STRIPE_SECRET_KEY=[REDACTED] PRIVATE_KEY=[REDACTED] X-Private-Key: [REDACTED] private-key=[REDACTED] API-KEY=[REDACTED] Secret-Key: [REDACTED] apiKey=[REDACTED] privateKey: [REDACTED] connectionString=[REDACTED] databaseUrl: [REDACTED] mongodbUri=[REDACTED] MONGODB_URI=[REDACTED] failedChecks=true",
@@ -2028,6 +2061,10 @@ test("redactSensitiveText preserves help placeholders while redacting bearer cre
 	assert.equal(
 		redactSensitiveText("Redirect /sso?SAMLRequest=request-secret&SAMLResponse=response-secret&RelayState=relay-secret#state=oauth-secret&nonce=oidc-secret"),
 		"Redirect /sso?SAMLRequest=[REDACTED]&SAMLResponse=[REDACTED]&RelayState=[REDACTED]#state=[REDACTED]&nonce=[REDACTED]",
+	);
+	assert.equal(
+		redactSensitiveText("Redirect /?authorizationSessionId=EXAMPLE_ID&state=EXAMPLE_STATE#nonce=EXAMPLE_NONCE&view=table"),
+		"Redirect /?authorizationSessionId=[REDACTED]&state=[REDACTED]#nonce=[REDACTED]&view=table",
 	);
 	assert.equal(redactSensitiveText("Login help. Status /orders?state=open&nonce=7"), "Login help. Status /orders?state=open&nonce=7");
 	assert.equal(
