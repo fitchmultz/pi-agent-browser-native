@@ -765,7 +765,8 @@ if (!REAL_UPSTREAM_ENABLED) {
 					assert.equal(readDetails.sessionName, undefined);
 					assert.equal(readDetails.usedImplicitSession, undefined);
 					assert.equal(readDetails.agentBrowserStarted, true);
-					assert.deepEqual(readDetails.lifecycle, { effectiveLaunch: { browserLaunched: false } });
+					const nativeReadLaunch = (readDetails.data as { lifecycle?: { effectiveLaunch?: { browserLaunched?: boolean } } }).lifecycle?.effectiveLaunch?.browserLaunched;
+					assert.deepEqual(readDetails.lifecycle, typeof nativeReadLaunch === "boolean" ? { effectiveLaunch: { browserLaunched: nativeReadLaunch } } : undefined, "forward native launch evidence without inventing it for HTTP reads");
 					assert.equal(readDetails.readSource, (readDetails.data as { source?: string }).source);
 					assert.equal(readDetails.managedSessionOutcome, undefined);
 					assert.equal((readDetails.outputFile as { status?: string }).status, "saved");
