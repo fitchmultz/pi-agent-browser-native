@@ -248,6 +248,16 @@ function findBalancedJsonEnd(text: string, startIndex: number): number | undefin
 	return undefined;
 }
 
+function redactSerializedJson(text: string): string | undefined {
+	try {
+		const parsed = JSON.parse(text) as unknown;
+		const redacted = JSON.stringify(redactSensitiveValue(parsed));
+		return redacted === JSON.stringify(parsed) ? text : redacted;
+	} catch {
+		return undefined;
+	}
+}
+
 function redactEmbeddedStructuredText(text: string): string {
 	let output = "";
 	let cursor = 0;
@@ -265,14 +275,7 @@ function redactEmbeddedStructuredText(text: string): string {
 			continue;
 		}
 		const candidate = text.slice(cursor, endIndex + 1);
-		try {
-			const parsed = JSON.parse(candidate) as unknown;
-			const redacted = typeof parsed === "string" ? redactSensitiveText(parsed) : JSON.stringify(redactSensitiveValue(parsed));
-			const original = typeof parsed === "string" ? parsed : JSON.stringify(parsed);
-			output += redacted === original ? candidate : redacted;
-		} catch {
-			output += candidate;
-		}
+		output += redactSerializedJson(candidate) ?? candidate;
 		cursor = endIndex + 1;
 	}
 	return output;
@@ -326,6 +329,10 @@ function redactEnvSecretAssignments(text: string): string {
 }
 
 export function redactSensitiveText(text: string): string {
+	// Decode complete JSON before text heuristics can consume string escapes.
+	// Non-JSON stays whole so assignments and headers retain their credential context.
+	const serialized = redactSerializedJson(text);
+	if (serialized !== undefined) return serialized;
 	return redactEmbeddedStructuredText(
 		redactEnvSecretAssignments(
 			redactStandaloneBasicCredential(

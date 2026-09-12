@@ -1926,7 +1926,27 @@ test("redaction preserves harmless URL spelling", () => {
 	for (const url of ["https://EXAMPLE.com", "HTTPS://EXAMPLE.com:443/A%2fb?q=a%20b&state=open&nonce=7#part", "ws://127.0.0.1:9222"]) {
 		assert.equal(redactSensitiveText(`Read ${url}`), `Read ${url}`);
 		assert.deepEqual(redactInvocationArgs(["open", url]), ["open", url]);
+		const serialized = JSON.stringify({ evidence: { prehydration: JSON.stringify({ url }) } }, null, 2);
+		assert.equal(redactSensitiveText(serialized), serialized);
+		assert.deepEqual(redactSensitiveValue({ result: serialized }), { result: serialized });
 	}
+});
+
+test("redactSensitiveText preserves nested serialized JSON through repeated redaction", () => {
+	const prehydration = { url: "https://example.test/callback?authorization_session_id=private-fixture&state=flow-fixture", label: 'A "quoted" value', count: 2, ready: true, missing: null };
+	const serialized = JSON.stringify({ evidence: { prehydration: JSON.stringify(prehydration), apiKey: "adjacent-fixture" }, values: [1, false, null] }, null, 2);
+	const redacted = redactSensitiveText(serialized);
+	const parsed = JSON.parse(redacted);
+	assert.equal(typeof parsed.evidence.prehydration, "string");
+	assert.deepEqual(JSON.parse(parsed.evidence.prehydration), {
+		...prehydration,
+		url: "https://example.test/callback?authorization_session_id=%5BREDACTED%5D&state=%5BREDACTED%5D",
+	});
+	assert.equal(parsed.evidence.apiKey, "[REDACTED]");
+	assert.deepEqual(parsed.values, [1, false, null]);
+	assert.doesNotMatch(redacted, /private-fixture|flow-fixture|adjacent-fixture/);
+	assert.equal(redactSensitiveText(redacted), redacted);
+	assert.deepEqual(redactSensitiveValue({ result: redacted }), { result: redacted });
 });
 
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
@@ -2058,6 +2078,9 @@ test("redactSensitiveText preserves bearer prose while redacting credential cont
 		redactSensitiveText("OPENAI_API_KEY=openai-secret AWS_SECRET_ACCESS_KEY: aws-secret export STRIPE_SECRET_KEY='stripe-secret' PRIVATE_KEY=-----BEGIN_PRIVATE_KEY----- X-Private-Key: prose-header-secret private-key=prose-key API-KEY=prose-api Secret-Key: prose-secret apiKey=camel-api privateKey: camel-private connectionString=camel-connection databaseUrl: camel-db mongodbUri=mongodb://user:pass@example/db MONGODB_URI=mongodb://user:pass@example/db failedChecks=true"),
 		"OPENAI_API_KEY=[REDACTED] AWS_SECRET_ACCESS_KEY: [REDACTED] export STRIPE_SECRET_KEY=[REDACTED] PRIVATE_KEY=[REDACTED] X-Private-Key: [REDACTED] private-key=[REDACTED] API-KEY=[REDACTED] Secret-Key: [REDACTED] apiKey=[REDACTED] privateKey: [REDACTED] connectionString=[REDACTED] databaseUrl: [REDACTED] mongodbUri=[REDACTED] MONGODB_URI=[REDACTED] failedChecks=true",
 	);
+	for (const prefix of ["API_KEY=", "X-Api-Key: "]) {
+		assert.equal(redactSensitiveText(`${prefix}{"value":"assignment-fixture"} status=ok`), `${prefix}[REDACTED] status=ok`);
+	}
 	assert.equal(
 		redactSensitiveText("Redirect /sso?SAMLRequest=request-secret&SAMLResponse=response-secret&RelayState=relay-secret#state=oauth-secret&nonce=oidc-secret"),
 		"Redirect /sso?SAMLRequest=[REDACTED]&SAMLResponse=[REDACTED]&RelayState=[REDACTED]#state=[REDACTED]&nonce=[REDACTED]",

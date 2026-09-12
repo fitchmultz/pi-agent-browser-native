@@ -177,6 +177,48 @@ test("agentBrowserExtension redacts sign-in authorization sessions in content, d
 	}
 });
 
+test("agentBrowserExtension preserves nested serialized JSON in eval presentation and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-nested-json-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const harmless = JSON.stringify({ url: "HTTPS://EXAMPLE.test:443/A%2fb?q=a%20b&state=open&nonce=7#part" }, null, 2);
+	const payload = { evidence: { prehydration: JSON.stringify({ url: "https://example.test/callback?authorization_session_id=private-fixture&state=flow-fixture" }), harmless, apiKey: "adjacent-fixture" }, values: [1, false, null] };
+	const stdin = `JSON.stringify(${JSON.stringify(payload)}, null, 2)`;
+	const expectedUrl = "https://example.test/callback?authorization_session_id=%5BREDACTED%5D&state=%5BREDACTED%5D";
+	const expected = { evidence: { prehydration: JSON.stringify({ url: expectedUrl }), harmless, apiKey: "[REDACTED]" }, values: [1, false, null] };
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin: fs.readFileSync(0, "utf8") }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: ${JSON.stringify(JSON.stringify(payload, null, 2))} } }));`);
+
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			for (const args of [["eval", "--stdin"], ["--json", "eval", "--stdin"]]) {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args, stdin, outputPath: "eval.json" });
+				assert.equal(result.isError, false, JSON.stringify(result));
+				const exportedText = await readFile(join(tempDir, "eval.json"), "utf8");
+				const exported = JSON.parse(exportedText);
+				assert.deepEqual(result.details?.data, exported);
+				assert.equal(typeof exported.result, "string");
+				const parsed = JSON.parse(exported.result);
+				assert.deepEqual(parsed, expected);
+				assert.equal(typeof parsed.evidence.prehydration, "string");
+				assert.deepEqual(JSON.parse(parsed.evidence.prehydration), { url: expectedUrl });
+				const text = result.content[0]?.text ?? "";
+				const visible = args.includes("--json") ? JSON.parse(text).data.result : text.split("\n\nOutput file:")[0];
+				assert.deepEqual(JSON.parse(visible), expected);
+				assert.doesNotMatch(JSON.stringify(result) + exportedText, /private-fixture|flow-fixture|adjacent-fixture/);
+			}
+			const invocations = (await readInvocationLog(logPath)).filter(({ args }) => args.includes("eval"));
+			assert.equal(invocations.length, 2);
+			assert.ok(invocations.every((invocation) => invocation.stdin === stdin), "native eval input must remain unchanged");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension allows auth password stdin without echoing the secret in tool details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-stdin-"));
 	const logPath = join(tempDir, "invocations.log");
