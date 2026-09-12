@@ -359,6 +359,7 @@ export function getSecureTempRootMaxBytes(env: NodeJS.ProcessEnv = process.env):
 }
 
 export function getPersistentSessionArtifactMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+	if (env[SESSION_ARTIFACT_MAX_BYTES_ENV]?.trim() === "0") return 0;
 	return parsePositiveInteger(env[SESSION_ARTIFACT_MAX_BYTES_ENV]) ?? DEFAULT_SESSION_ARTIFACT_MAX_BYTES;
 }
 
@@ -429,6 +430,7 @@ async function prunePersistentSessionArtifactsToBudget(
 ): Promise<PersistentSessionArtifactEviction[]> {
 	if (additionalBytes <= 0) return [];
 	const maxBytes = getPersistentSessionArtifactMaxBytes();
+	if (maxBytes === 0) return [];
 	let files = await listArtifactFiles(sessionArtifactDir);
 	let totalBytes = files.reduce((total, file) => total + file.size, 0);
 	if (totalBytes + additionalBytes <= maxBytes) {
