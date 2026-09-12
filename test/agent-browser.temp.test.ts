@@ -14,12 +14,45 @@ import test from "node:test";
 
 import {
 	cleanupSecureTempArtifacts,
+	getPersistentSessionArtifactMaxBytes,
 	getSecureTempDebugState,
+	getSecureTempRootMaxBytes,
 	openSecureTempFile,
+	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 	writeSecureTempRootOwnershipMarker,
 } from "../extensions/agent-browser/lib/temp.js";
-import { readChildStdoutJsonLine, stopChildProcess, withPatchedEnv } from "./helpers/agent-browser-harness.js";
+import { readChildStdoutJsonLine, stopChildProcess, TEST_SESSION_ID, withPatchedEnv } from "./helpers/agent-browser-harness.js";
+
+test("persistent session artifact budget accepts zero without changing bounded defaults", () => {
+	const defaultBytes = 32 * 1_024 * 1_024;
+	assert.equal(getPersistentSessionArtifactMaxBytes({}), defaultBytes);
+	assert.equal(getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: "0" }), 0);
+	assert.equal(getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: " 0 " }), 0);
+	assert.equal(getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: " 01024 " }), 1_024);
+	for (const value of ["", "invalid", "-1", "1.5", "00", "-0", "0.0", "0e0", "9007199254740992"]) {
+		assert.equal(getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: value }), defaultBytes, value);
+	}
+	assert.equal(getSecureTempRootMaxBytes({ PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES: "0" }), defaultBytes);
+});
+
+test("writePersistentSessionArtifactFile preserves earlier files with a zero budget", { concurrency: false }, async () => {
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-unlimited-"));
+	const store = { sessionDir, sessionId: TEST_SESSION_ID };
+	try {
+		await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: "0" }, async () => {
+			const earlier = await writePersistentSessionArtifactFile({ content: "earlier output", prefix: "earlier", suffix: ".txt", store });
+			const latest = await writePersistentSessionArtifactFile({ content: Buffer.alloc(32 * 1_024 * 1_024, "a"), prefix: "latest", suffix: ".bin", store });
+
+			assert.equal(await readFile(earlier.path, "utf8"), "earlier output");
+			assert.equal((await stat(latest.path)).size, 32 * 1_024 * 1_024);
+			assert.deepEqual(earlier.evictedArtifacts, []);
+			assert.deepEqual(latest.evictedArtifacts, []);
+		});
+	} finally {
+		await rm(sessionDir, { force: true, recursive: true });
+	}
+});
 
 test("secure temp cleanup can recreate and track a later temp root", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();

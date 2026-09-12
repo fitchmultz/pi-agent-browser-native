@@ -4,6 +4,7 @@
 
 ### Added
 
+- Set `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES=0` to disable automatic persistent-session spill eviction. The default remains 32 MiB; positive limits and temporary spill cleanup are unchanged.
 - Optional host `beforeExecute` callback before browser dispatch, including serial script inner calls with the original Pi call ID and cancellation signal. Configured hosts use Pi's native sequential scheduling; ordinary installs are unchanged.
 
 ### Fixed
