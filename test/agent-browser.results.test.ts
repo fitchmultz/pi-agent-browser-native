@@ -860,6 +860,7 @@ test("buildQaCompactPassText summarizes successful URL QA", async () => {
 		page: { title: "Example", url: "https://example.test/" },
 		qaPreset: {
 			failedChecks: [],
+			notRunChecks: [],
 			passed: true,
 			summary: "QA preset passed.",
 			warnings: [],
@@ -871,3 +872,23 @@ test("buildQaCompactPassText summarizes successful URL QA", async () => {
 	assert.match(compact, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 });
 
+test("buildQaCompactFailureText leads with the redacted cause and reports execution coverage", async () => {
+	const { buildQaCompactFailureText } = await import("../extensions/agent-browser/lib/input-modes/job.js");
+	const compact = buildQaCompactFailureText({
+		causalError: "Navigation failed: https://[REDACTED]/",
+		executedStepCount: 5,
+		plannedStepCount: 13,
+		qaPreset: {
+			failedChecks: ["open failed"],
+			notRunChecks: ['expected text: "Welcome"'],
+			passed: false,
+			summary: "QA preset failed: token=raw-secret.",
+			warnings: [],
+		},
+	});
+	assert.equal(compact.split("\n")[0], "Navigation failed: https://[REDACTED]/");
+	assert.match(compact, /Failed checks:\n- open failed/);
+	assert.match(compact, /Not run:\n- expected text: "Welcome"/);
+	assert.match(compact, /Execution: 5\/13 batch steps/);
+	assert.doesNotMatch(compact, /raw-secret/);
+});
