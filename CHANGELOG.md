@@ -20,6 +20,7 @@
 - Preserve harmless bearer technical prose and unchanged URL spelling. Credential replacements remain visibly marked, and structured results use the same URL redaction as visible text and exports.
 - Redact `authorization_session_id` in URLs, including contextual `state` / `nonce`, from model-visible content, details, and explicit result exports while preserving ordinary query values.
 - Preserve nested serialized JSON, duplicate members and exact numeric literals during redaction; scrub auth URL keys and adjacent secrets before plaintext formatting.
+- Bound eval and get summaries for large single-line output while retaining complete source in spills and exports.
 - Honor configured native session/namespace defaults as caller-owned browsers across Pi sessions, including ordinary structured calls and helpers, without imposing implicit-session idle policy or quit cleanup.
 - Keep disposable script sessions out of native user/project profile defaults by using an empty temporary config through execution and cleanup. Reject inner `--config` overrides without restricting ordinary native `args`.
 

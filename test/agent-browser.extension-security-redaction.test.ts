@@ -258,6 +258,45 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.parse(
 	}
 });
 
+test("agentBrowserExtension bounds minified JSON summaries while preserving full spills and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-summary-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const source = '{"url":"https://example.test/callback?token=summary-secret","url":"https://example.test/safe","requestId":9007199254740993,"body":' + JSON.stringify("row ".repeat(22_000)) + ',"end":"MINIFIED-SOURCE-END"}';
+	const expected = source.replace("summary-secret", "%5BREDACTED%5D");
+	const stdin = JSON.stringify(source);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.parse(stdin) } }));`);
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionDir: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin, outputPath: "minified.json" });
+			assert.equal(result.isError, false);
+			assert.equal((result.details?.data as { compacted?: boolean })?.compacted, true);
+			const spillPath = result.details?.fullOutputPath;
+			assert.ok(typeof spillPath === "string");
+			assert.deepEqual(JSON.parse(await readFile(spillPath, "utf8")), { result: expected });
+			assert.deepEqual(JSON.parse(await readFile(join(tempDir, "minified.json"), "utf8")), { result: expected });
+			const invocations = (await readInvocationLog(logPath)).filter(({ args }) => args.includes("eval"));
+			assert.equal(invocations.length, 1);
+			assert.equal(invocations[0]?.stdin, stdin);
+			const summary = result.details?.summary;
+			assert.ok(typeof summary === "string");
+			const summaryLimit = "Eval result: ".length + 160 + " (compact)".length;
+			assert.ok(summary.length <= summaryLimit, `firstLine's 160-character bound must hold: got ${summary.length}`);
+			assert.match(summary, /%5BREDACTED%5D/);
+			const inline = JSON.stringify(result);
+			assert.ok(inline.length < 8_000, `compacted result must stay below the existing inline limit: got ${inline.length}`);
+			assert.doesNotMatch(inline, /MINIFIED-SOURCE-END|summary-secret/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension allows auth password stdin without echoing the secret in tool details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-stdin-"));
 	const logPath = join(tempDir, "invocations.log");
