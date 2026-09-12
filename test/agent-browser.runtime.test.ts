@@ -1949,6 +1949,48 @@ test("redactSensitiveText preserves nested serialized JSON through repeated reda
 	assert.deepEqual(redactSensitiveValue({ result: redacted }), { result: redacted });
 });
 
+test("redactSensitiveText redacts every serialized JSON member without dropping duplicates", () => {
+	for (const [source, expected] of [
+		['{"url":"https://example.test/callback?token=synthetic-secret","url":"https://example.test/safe"}', '{"url":"https://example.test/callback?token=%5BREDACTED%5D","url":"https://example.test/safe"}'],
+		['{"value":"Authorization: Bearer synthetic-secret","value":"ordinary"}', '{"value":"Authorization: Bearer [REDACTED]","value":"ordinary"}'],
+		['{"value":"Cookie: sid=synthetic-secret","value":"ordinary"}', '{"value":"Cookie: [REDACTED]","value":"ordinary"}'],
+		['{"\\u0061piKey":{"nested":"synthetic-first"},"apiKey":["synthetic-second"],"apiKey":1234,"apiKey":false,"apiKey":null,"apiKey":"synthetic-third"}', '{"\\u0061piKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]"}'],
+	]) {
+		const redacted = redactSensitiveText(source);
+		assert.equal(redacted, expected);
+		assert.equal(redactSensitiveText(redacted), expected);
+		assert.deepEqual(redactSensitiveValue({ result: source }), { result: expected });
+	}
+});
+
+test("redactSensitiveText preserves serialized JSON numeric and literal source", () => {
+	const source = '{\n  "url" : "https://example.test/callback?token=synthetic-secret",\n  "requestId":9007199254740993,\n  "values":[-0,1.2300e+02,"0","false","null",null,true,false],\n  "label":"\\u0041"\n}\n';
+	const harmless = source.replace("token=synthetic-secret", "view=all");
+	assert.equal(redactSensitiveText(harmless), harmless);
+	const expected = source.replace("synthetic-secret", "%5BREDACTED%5D");
+	assert.equal(redactSensitiveText(source), expected);
+	assert.equal(redactSensitiveText(expected), expected);
+	for (const value of ['"\\u0041"', '[null,true,false,9007199254740993,"0","false","null"]']) {
+		assert.equal(redactSensitiveText(value), value);
+	}
+});
+
+test("redactSensitiveText redacts auth URL keys in serialized JSON text", () => {
+	const source = '{ "https://example.test/callback?token=synthetic-secret" : 9007199254740993 }';
+	const expected = '{ "https://example.test/callback?token=%5BREDACTED%5D" : 9007199254740993 }';
+	assert.equal(redactSensitiveText(source), expected);
+	assert.equal(redactSensitiveText(expected), expected);
+});
+
+test("redactSensitiveText masks embedded JSON secrets before plaintext URL redaction", () => {
+	const source = "Payload: " + JSON.stringify({ evidence: { prehydration: JSON.stringify({ url: "https://example.test/callback?authorization_session_id=private-fixture&state=flow-fixture" }), apiKey: "adjacent-fixture" } });
+	const redacted = redactSensitiveText(source);
+	assert.match(redacted, /^Payload: /);
+	assert.match(redacted, /"apiKey":"\[REDACTED\]"/);
+	assert.doesNotMatch(redacted, /private-fixture|flow-fixture|adjacent-fixture/);
+	assert.equal(redactSensitiveText(redacted), redacted);
+});
+
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(redactInvocationArgs(["--headers", '{"Authorization":"Bearer demo"}', "open", "https://user:pass@example.com/path?token=abc&ok=1#access_token=xyz"]), [
 		"--headers",

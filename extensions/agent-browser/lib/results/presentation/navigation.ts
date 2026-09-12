@@ -31,7 +31,7 @@ function getScalarExtractionResult(commandInfo: CommandInfo, data: Record<string
 	if (typeof result === "string") return result.trim().length > 0 ? result : "(empty string)";
 	if (typeof result === "number" || typeof result === "boolean") return String(result);
 	if (result === null || result === undefined) return "null";
-	if (typeof result === "object") return JSON.stringify(result);
+	if (typeof result === "object") return JSON.stringify(result, null, 2);
 	return undefined;
 }
 

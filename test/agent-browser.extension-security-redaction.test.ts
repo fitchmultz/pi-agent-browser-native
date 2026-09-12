@@ -219,6 +219,45 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: ${JSON.stri
 	}
 });
 
+test("agentBrowserExtension preserves serialized JSON source in eval presentation and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-json-source-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const sources = [
+		'{"url":"https://example.test/callback?token=synthetic-secret","url":"https://example.test/safe"}',
+		'{"url":"https://example.test/callback?token=synthetic-secret","requestId":9007199254740993}',
+		'{ "https://example.test/callback?token=synthetic-secret" : "ordinary" }',
+	];
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.parse(stdin) } }));`);
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			for (const source of sources) {
+				const expected = source.replace("synthetic-secret", "%5BREDACTED%5D");
+				const stdin = JSON.stringify(source);
+				for (const args of [["eval", "--stdin"], ["--json", "eval", "--stdin"]]) {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args, stdin, outputPath: "eval-source.json" });
+					assert.equal(result.isError, false, JSON.stringify(result));
+					assert.deepEqual(result.details?.data, { result: expected });
+					const exportedText = await readFile(join(tempDir, "eval-source.json"), "utf8");
+					assert.deepEqual(JSON.parse(exportedText), { result: expected });
+					const text = result.content[0]?.text ?? "";
+					assert.equal(args.includes("--json") ? JSON.parse(text).data.result : text.split("\n\nOutput file:")[0], expected);
+					assert.doesNotMatch(JSON.stringify(result) + exportedText, /synthetic-secret/);
+				}
+			}
+			const invocations = (await readInvocationLog(logPath)).filter(({ args }) => args.includes("eval"));
+			assert.deepEqual(invocations.map(({ stdin }) => stdin), sources.flatMap(source => [JSON.stringify(source), JSON.stringify(source)]));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension allows auth password stdin without echoing the secret in tool details", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-stdin-"));
 	const logPath = join(tempDir, "invocations.log");

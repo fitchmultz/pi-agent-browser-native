@@ -15,7 +15,7 @@ import type {
 	ToolPresentation,
 } from "./contracts.js";
 import { buildSnapshotPresentation } from "./snapshot.js";
-import { parseJsonPreviewString, redactModelFacingText, stringifyModelFacing } from "./presentation/common.js";
+import { redactModelFacingText } from "./presentation/common.js";
 import {
 	applyArtifactManifest,
 	attachInlineImage,
@@ -50,8 +50,7 @@ import { resolvePresentationCommandInfo } from "./presentation/semantic-action.j
 function sanitizeModelFacingPresentation(presentation: ToolPresentation): ToolPresentation {
 	presentation.content = presentation.content.map((item) => {
 		if (item.type !== "text") return item;
-		const parsed = parseJsonPreviewString(item.text);
-		return parsed === item.text ? item : { ...item, text: stringifyModelFacing(parsed) };
+		return { ...item, text: redactModelFacingText(item.text) };
 	});
 	presentation.summary = redactModelFacingText(presentation.summary);
 	return presentation;

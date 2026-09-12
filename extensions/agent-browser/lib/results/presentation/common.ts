@@ -9,21 +9,7 @@ export function stringifyModelFacing(value: unknown): string {
 	return stringifyUnknown(redactSensitiveValue(value));
 }
 
-export function parseJsonPreviewString(value: string): unknown {
-	const trimmed = value.trim();
-	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
-	try {
-		return JSON.parse(trimmed) as unknown;
-	} catch {
-		return value;
-	}
-}
-
 export function redactModelFacingText(text: string): string {
-	const parsed = parseJsonPreviewString(text);
-	if (parsed !== text) {
-		return stringifyModelFacing(parsed);
-	}
 	return redactSensitiveText(text);
 }
 

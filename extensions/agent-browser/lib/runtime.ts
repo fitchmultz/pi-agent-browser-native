@@ -249,13 +249,44 @@ function findBalancedJsonEnd(text: string, startIndex: number): number | undefin
 }
 
 function redactSerializedJson(text: string): string | undefined {
+	// Validate grammar only; rebuilding parsed values loses duplicates and numeric spelling.
 	try {
-		const parsed = JSON.parse(text) as unknown;
-		const redacted = JSON.stringify(redactSensitiveValue(parsed));
-		return redacted === JSON.stringify(parsed) ? text : redacted;
+		JSON.parse(text);
 	} catch {
 		return undefined;
 	}
+	let output = "";
+	let cursor = 0;
+	const strings = /"(?:\\.|[^"\\])*"/g;
+	let match: RegExpExecArray | null;
+	while ((match = strings.exec(text)) !== null) {
+		const end = strings.lastIndex;
+		const value = JSON.parse(match[0]) as string;
+		const redacted = redactSensitiveText(value);
+		if (redacted !== value) {
+			output += text.slice(cursor, match.index) + JSON.stringify(redacted);
+			cursor = end;
+		}
+		const separator = /^\s*:\s*/.exec(text.slice(end));
+		if (!separator || !isSensitiveFieldName(value)) continue;
+		const valueStart = end + separator[0].length;
+		let valueEnd = findBalancedJsonEnd(text, valueStart);
+		if (valueEnd !== undefined) {
+			valueEnd += 1;
+		} else if (text[valueStart] === '"') {
+			strings.lastIndex = valueStart;
+			const fieldValue = strings.exec(text)!;
+			valueEnd = strings.lastIndex;
+			if (JSON.parse(fieldValue[0]) === "[REDACTED]") continue;
+		} else {
+			valueEnd = valueStart;
+			while (valueEnd < text.length && !/[\s,\]}]/.test(text[valueEnd])) valueEnd += 1;
+		}
+		output += text.slice(cursor, valueStart) + '"[REDACTED]"';
+		cursor = valueEnd;
+		strings.lastIndex = valueEnd;
+	}
+	return output + text.slice(cursor);
 }
 
 function redactEmbeddedStructuredText(text: string): string {
@@ -329,14 +360,15 @@ function redactEnvSecretAssignments(text: string): string {
 }
 
 export function redactSensitiveText(text: string): string {
-	// Decode complete JSON before text heuristics can consume string escapes.
+	// Redact JSON string literals before text heuristics can consume their escapes.
 	// Non-JSON stays whole so assignments and headers retain their credential context.
 	const serialized = redactSerializedJson(text);
 	if (serialized !== undefined) return serialized;
+	const embeddedRedactedText = redactEmbeddedStructuredText(text);
 	return redactEmbeddedStructuredText(
 		redactEnvSecretAssignments(
 			redactStandaloneBasicCredential(
-				redactBearerCredentials(redactLooseUrlParameterText(redactLooseUrlUserinfo(redactLooseUrlMatches(text))))
+				redactBearerCredentials(redactLooseUrlParameterText(redactLooseUrlUserinfo(redactLooseUrlMatches(embeddedRedactedText))))
 					.replace(/\b(Authorization\s*:\s*Basic)\s+[^\s",]+/gi, "$1 [REDACTED]")
 					.replace(/\b(Cookie|Set-Cookie)\s*:\s*[^\n\r"]+/gi, "$1: [REDACTED]"),
 			),

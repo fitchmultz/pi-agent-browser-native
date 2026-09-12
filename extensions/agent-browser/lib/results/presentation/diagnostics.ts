@@ -9,7 +9,6 @@ import {
 	formatCount,
 	getArrayField,
 	getStringField,
-	parseJsonPreviewString,
 	redactModelFacingText,
 	stringifyModelFacing,
 } from "./common.js";
@@ -348,8 +347,7 @@ function getPreviewCandidate(item: Record<string, unknown>, keys: readonly strin
 
 function formatNetworkPreviewValue(value: unknown, maxChars: number): string | undefined {
 	if (value === undefined || value === null) return undefined;
-	const previewValue = typeof value === "string" ? parseJsonPreviewString(value) : value;
-	const redacted = redactSensitiveValue(previewValue);
+	const redacted = redactSensitiveValue(value);
 	const raw = typeof redacted === "string" ? redacted : stringifyUnknown(redacted);
 	const normalized = raw.replace(/\s+/g, " ").trim();
 	if (normalized.length === 0) return undefined;
