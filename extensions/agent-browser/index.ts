@@ -1574,6 +1574,8 @@ export default function agentBrowserExtension(
 							appendScriptSessionLease(pi, sessionName, "active");
 							trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd, { namespace: AGENT_BROWSER_SCRIPT_NAMESPACE });
 							managedSessionRestoreState.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
+							// This fresh, unselectable lease owns any daemon its first read starts.
+							managedSessionRestoreState.recordDaemonRestoreKey(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE, null);
 							leased = true;
 						},
 						code: resolvedInput.compiledScript.code,

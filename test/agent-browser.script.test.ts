@@ -608,6 +608,56 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: true }
 	}
 });
 
+test("read-first scripts retain ownership of a browserless null-restore daemon", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-read-first-"));
+	const statePath = join(tempDir, "daemon.json");
+	const logPath = join(tempDir, "invocations.log");
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const command = args.find(arg => ["read", "open", "session", "close"].includes(arg));
+const url = args[args.indexOf(command) + 1];
+let state = { active: false, restoreKey: null, browserLaunched: false };
+try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, restore: process.env.AGENT_BROWSER_RESTORE ?? null }) + "\\n");
+if (command === "session") {
+  console.log(JSON.stringify({ success: true, data: { active: state.active, runtime: state.active ? state : null } }));
+} else {
+  if (command === "read") state = { active: true, restoreKey: null, browserLaunched: false };
+  if (command === "open") state.browserLaunched = true;
+  if (command === "close") state.active = false;
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify(state));
+  const failedRead = command === "read" && url.endsWith("/unavailable");
+  console.log(JSON.stringify(failedRead
+    ? { success: false, error: "HTTP 503 Service Unavailable" }
+    : { success: true, data: { url, title: "Read-first fixture", browserLaunched: state.browserLaunched } }));
+  if (failedRead) process.exitCode = 1;
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionFile: join(tempDir, "session.jsonl") });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			for (const failedRead of [false, true]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+					script: `const read = await browser({ args: ["read", "https://example.test/${failedRead ? "unavailable" : "content"}"] });
+const opened = await browser({ args: ["open", "https://example.test/page"] });
+if (!opened.ok) throw new Error(opened.error);
+emit({ readOk: read.ok, url: opened.data.url });`,
+				});
+				assert.equal(result.isError, false, JSON.stringify(result));
+				assert.deepEqual(result.details?.data, { readOk: !failedRead, url: "https://example.test/page" });
+				const session = result.details?.scriptSession as { cleanup: string; sessionName: string };
+				assert.equal(session.cleanup, "closed");
+				assert.equal(JSON.parse(await readFile(statePath, "utf8")).active, false);
+				const calls = (await readInvocationLog(logPath) as Array<{ args: string[]; restore: string | null }>).filter(call => call.args.includes(session.sessionName));
+				assert.ok(calls[0]?.args.includes("read"), "read must not add a browser preflight");
+				assert.ok(calls.every(call => call.restore === null), "script restore must remain disabled");
+			}
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("agentBrowserExtension injects an isolated script session, persists its lease before spawn, and closes it", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-script-extension-"));
 	const logPath = join(tempDir, "invocations.log");
