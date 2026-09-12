@@ -8,12 +8,13 @@
 
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
+import ts from "typescript";
 
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../scripts/agent-browser-target.mjs";
 
@@ -313,17 +314,33 @@ test("parseJsonl reports malformed session transcript lines", () => {
 	assert.throws(() => parseJsonl('{"ok":true}\nnot-json'), /Invalid JSONL at line 2/);
 });
 
-test("injectLifecycleSentinelSource inserts and replaces deterministic command token", () => {
-	const source = 'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n\nexport default function agentBrowserExtension(pi: ExtensionAPI) {\n\tpi.registerTool({ name: "agent_browser" });\n}\n';
-	const v1 = injectLifecycleSentinelSource(source, "v1");
-	assert.match(v1, /registerCommand\("piab-lifecycle-sentinel-v1"/);
-	assert.match(v1, /token: "v1"/);
-
-	const v2 = injectLifecycleSentinelSource(v1, "v2");
-	assert.doesNotMatch(v2, /token: "v1"/);
-	assert.match(v2, /registerCommand\("piab-lifecycle-sentinel-v2"/);
-	assert.match(v2, /token: "v2"/);
-	assert.equal((v2.match(/PIAB_LIFECYCLE_SENTINEL_START/g) ?? []).length, 1);
+test("injectLifecycleSentinelSource inserts and replaces one command inside the compiled extension factory", async () => {
+	const compilerOptions = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext };
+	const { outputText: source } = ts.transpileModule(
+		await readFile(new URL("../extensions/agent-browser/index.ts", import.meta.url), "utf8"),
+		{ compilerOptions },
+	);
+	const factoryStatements = (text: string) => {
+		const file = ts.createSourceFile("index.js", text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
+		const factories = file.statements.filter(ts.isFunctionDeclaration)
+			.filter((statement) => statement.name?.text === "agentBrowserExtension");
+		assert.equal(factories.length, 1);
+		assert.ok(factories[0].body);
+		return factories[0].body.statements.map((statement) => statement.getText(file));
+	};
+	const originalStatements = factoryStatements(source);
+	let injected = source;
+	for (const token of ["v1", "v2"]) {
+		injected = injectLifecycleSentinelSource(injected, token);
+		const [registration, ...remainingStatements] = factoryStatements(injected);
+		assert.ok(registration.startsWith(`pi.registerCommand("piab-lifecycle-sentinel-${token}", {`));
+		assert.ok(registration.includes(`pi.appendEntry("piab-lifecycle-sentinel", { token: "${token}" });`));
+		assert.deepEqual(remainingStatements, originalStatements);
+		assert.equal((injected.match(/PIAB_LIFECYCLE_SENTINEL_START/g) ?? []).length, 1);
+		assert.equal((injected.match(/PIAB_LIFECYCLE_SENTINEL_END/g) ?? []).length, 1);
+		assert.deepEqual(ts.transpileModule(injected, { compilerOptions, reportDiagnostics: true }).diagnostics, []);
+	}
+	assert.doesNotMatch(injected, /piab-lifecycle-sentinel-v1|token: "v1"/);
 });
 
 test("injectLifecycleSentinelSource requires the extension factory marker", () => {
