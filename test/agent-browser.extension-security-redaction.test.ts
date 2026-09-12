@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -106,6 +106,40 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: "
 			assert.equal(JSON.stringify(result).includes("url-private-key-should-not-leak"), false);
 			assert.equal(JSON.stringify(result).includes("url-connection-string-should-not-leak"), false);
 			assert.equal(JSON.stringify(result).includes("failedChecks"), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension redacts sign-in authorization sessions in content, details, and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-url-"));
+	const basePath = process.env.PATH ?? "";
+	const origin = "https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=EXAMPLE_REDIRECT&state=EXAMPLE_STATE&authorization_session_id=EXAMPLE_ID";
+	const redactedOrigin = "https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=EXAMPLE_REDIRECT&state=%5BREDACTED%5D&authorization_session_id=%5BREDACTED%5D";
+	const data = { origin, snapshot: '- button "Continue" [ref=e1]', refs: { e1: { role: "button", name: "Continue" } } };
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: ${JSON.stringify(data)} }));`);
+
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["snapshot", "-i"],
+				outputPath: "snapshot.json",
+			});
+
+			assert.equal(result.isError, false);
+			assert.deepEqual({
+				contentOrigin: result.content[0]?.text?.split("\n")[0],
+				data: result.details?.data,
+				exported: JSON.parse(await readFile(join(tempDir, "snapshot.json"), "utf8")),
+			}, {
+				contentOrigin: `Origin: ${redactedOrigin}`,
+				data: { ...data, origin: redactedOrigin },
+				exported: { ...data, origin: redactedOrigin },
+			});
+			assert.doesNotMatch(JSON.stringify(result), /EXAMPLE_STATE|EXAMPLE_ID/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
