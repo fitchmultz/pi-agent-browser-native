@@ -264,12 +264,12 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 	});
 });
 
-test("buildToolPresentation renders pending confirmations with approve and deny recovery calls", async () => {
+for (const success of [false, true]) test(`buildToolPresentation renders pending confirmations with approve and deny recovery calls (success=${success})`, async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "click", subcommand: "@e7" },
 		cwd: process.cwd(),
 		envelope: {
-			success: false,
+			success,
 			data: {
 				action: "click @e7",
 				confirmation_id: "c_8f3a1234",
@@ -283,6 +283,8 @@ test("buildToolPresentation renders pending confirmations with approve and deny 
 	assert.match(text, /Confirmation required\./);
 	assert.match(text, /Pending confirmation id: c_8f3a1234/);
 	assert.match(text, /Action: click @e7/);
+	assert.equal(presentation.resultCategory, "failure");
+	assert.equal(presentation.failureCategory, "confirmation-required");
 	assert.match(text, /\{ "args": \["confirm", "c_8f3a1234"\] \}/);
 	assert.match(text, /\{ "args": \["deny", "c_8f3a1234"\] \}/);
 	assert.deepEqual(presentation.nextActions?.map((action) => action.params?.args), [["confirm", "c_8f3a1234"], ["deny", "c_8f3a1234"]]);

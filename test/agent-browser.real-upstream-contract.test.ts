@@ -358,6 +358,72 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 	}
 }
 
+for (const reconstructed of [false, true]) test(`real upstream agent-browser contract suite matches owned read continuity (reconstructed=${reconstructed})`, { skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 }, async () => {
+	await assertInstalledAgentBrowserVersion();
+	const dir = await mkdtemp(join(tmpdir(), "or-"));
+	const socketDir = await mkdtemp(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "or-"));
+	const fixture = await startAgentBrowserContractFixtureServer();
+	await initializeGitProject(dir);
+	try {
+		await withPatchedEnv({
+			...Object.fromEntries(Object.keys(process.env).filter(name => /^(?:PI_)?AGENT_BROWSER_/.test(name)).map(name => [name, undefined])),
+			HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"),
+			AGENT_BROWSER_ENCRYPTION_KEY: process.platform === "win32" ? "a".repeat(64) : undefined,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir,
+		}, async () => {
+			const branch: unknown[] = [];
+			let harness = createExtensionHarness({ cwd: dir, branch });
+			let sessionName: string | undefined, restoreKey: string | undefined;
+			try {
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const url = `${fixture.baseUrl}/contract`, marker = "unsaved-owned-read";
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", url] });
+				sessionName = opened.details?.sessionName as string;
+				assert.equal(opened.isError, false, opened.content[0]?.text);
+				branch.push(createToolBranchEntry({ details: opened.details!, isError: opened.isError }));
+				const prefix = ["--namespace", "", "--session", sessionName];
+				const marked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: `(() => { window.__ownedContinuity = ${JSON.stringify(marker)}; document.querySelector('#name-input').value = window.__ownedContinuity; sessionStorage.setItem('ownedContinuity', window.__ownedContinuity); return true; })()` });
+				assert.equal(marked.isError, false, marked.content[0]?.text);
+				const before = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "session", "info"] });
+				assert.equal(before.isError, false, before.content[0]?.text);
+				const nativeBefore = before.details?.data as { pid: number; runtime: { restoreKey: string } };
+				assert.ok(nativeBefore.pid > 0);
+				restoreKey = nativeBefore.runtime.restoreKey;
+				assert.match(restoreKey, /^piab-r2-/);
+				if (reconstructed) {
+					await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+					harness = createExtensionHarness({ cwd: dir, branch });
+					await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+					assert.equal(Number(await readFile(join(socketDir, `${sessionName}.pid`), "utf8")), nativeBefore.pid);
+				}
+				for (const args of [["read", url], ["batch", `read ${url}`], ["session", "info"]]) {
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
+					assert.equal(result.isError, false, result.content[0]?.text);
+					const after = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "session", "info"] });
+					const nativeAfter = after.details?.data as { pid: number; runtime: { restoreKey: string } };
+					assert.equal(nativeAfter.pid, nativeBefore.pid, `${args[0]} must not replace the owned daemon`);
+					assert.equal(nativeAfter.runtime.restoreKey, restoreKey);
+					const current = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+					assert.equal(current.isError, false, current.content[0]?.text);
+					assert.equal(current.details?.sessionName, sessionName);
+					const state = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "({ url: location.href, marker: window.__ownedContinuity, form: document.querySelector('#name-input').value, sessionMarker: sessionStorage.getItem('ownedContinuity') })" });
+					assert.equal(state.isError, false, state.content[0]?.text);
+					assert.deepEqual(getResultValue(state.details!, ["result"]), { url, marker, form: marker, sessionMarker: marker });
+				}
+			} finally {
+				await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+				if (sessionName) {
+					const pid = Number(await readFileIfPresent(join(socketDir, `${sessionName}.pid`))) || undefined;
+					const closed = await runAgentBrowserProcess({ args: ["--json", "--namespace", "", "close", "--all"], cwd: dir, env: { AGENT_BROWSER_SOCKET_DIR: socketDir } });
+					assert.equal(closed.exitCode, 0, closed.stderr);
+					assert.equal(await waitForTestPidExit(pid, 10_000), true, "the private native daemon must exit");
+				}
+			}
+		});
+	} finally { await fixture.close(); await rm(dir, { recursive: true, force: true }); await rm(socketDir, { recursive: true, force: true }); }
+});
+
 test("real upstream agent-browser contract suite matches navigation availability and tab setup", { skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 }, async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "wm-"));
 	const socketDir = join(dir, "s");

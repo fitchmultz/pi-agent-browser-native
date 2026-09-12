@@ -579,13 +579,14 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	const compatibilityUserAgent = executionPlan.compatibilityWorkaround ? getDefaultHeadlessCompatUserAgent() : undefined;
 	const compatibilityUserAgentApplied = compatibilityUserAgent !== undefined
 		&& executionPlan.effectiveArgs.some((token, index) => token === "--user-agent" && executionPlan.effectiveArgs[index + 1] === compatibilityUserAgent);
-	const ownedManagedSession = browserIndependent ? undefined : buildOwnedManagedSessionRestoreContext({
+	const ownedManagedSession = browserIndependent && !recordedOwnedSession && !targetsCurrentManagedSession ? undefined : buildOwnedManagedSessionRestoreContext({
 		args: executionPlan.effectiveArgs,
+		reuseOnly: browserIndependent,
 		cwd: recordedOwnedSession?.cwd ?? cwd,
 		currentManagedSessionName: state.managedSessionName,
 		currentManagedSessionNamespace: state.managedSessionNamespace,
-		headedManagedAutosaveDisabled,
-		headedManagedAutosaveInterval,
+		headedManagedAutosaveDisabled: browserIndependent ? retainedHeadedAutosaveDisabled : headedManagedAutosaveDisabled,
+		headedManagedAutosaveInterval: browserIndependent ? retainedHeadedAutosaveInterval : headedManagedAutosaveInterval,
 		managedSessionName: executionPlan.managedSessionName,
 		namespace: executionPlan.namespace,
 		parentEnv: agentBrowserProcessEnv,
@@ -598,7 +599,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	});
 	let managedSessionDaemonInactive = false;
 	let managedSessionCleanupOnlyReason: Awaited<ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>>["cleanupOnlyReason"];
-	if (!executionPlan.validationError && ownedManagedSession) {
+	if (!browserIndependent && !executionPlan.validationError && ownedManagedSession) {
 		const closeCommand = isCloseCommand(executionPlan.commandInfo.command);
 		const policy = await acquireOwnedManagedSessionDaemonPolicy({
 			context: ownedManagedSession,
@@ -645,7 +646,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const sessionTabPinningReason = priorSessionPageState.pinningReason;
 		let priorRefSnapshotState = priorSessionPageState.refSnapshot;
 		let priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
-		const coldManagedSession = (managedSessionDaemonInactive || priorSessionPageState.tabReopenPending === true)
+		const coldManagedSession = !browserIndependent && (managedSessionDaemonInactive || priorSessionPageState.tabReopenPending === true)
 			&& recordedOwnedSession !== undefined
 			&& sessionTabPinningReason === "restore"
 			&& ownedManagedSession?.restoreDecision === "enabled"

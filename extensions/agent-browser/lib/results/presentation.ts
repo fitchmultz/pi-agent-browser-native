@@ -273,7 +273,7 @@ export async function buildToolPresentation(options: {
 			confirmationRequired: confirmationRequired !== undefined,
 			errorText: envelope?.success === false ? presentationWithManifest.summary : undefined,
 			savedFile: presentationWithManifest.savedFile,
-			succeeded: envelope?.success !== false,
+			succeeded: envelope?.success !== false && confirmationRequired === undefined,
 		});
 		presentationWithManifest.resultCategory = categoryDetails.resultCategory;
 		presentationWithManifest.successCategory = categoryDetails.resultCategory === "success"

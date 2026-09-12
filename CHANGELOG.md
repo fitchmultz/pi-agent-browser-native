@@ -9,7 +9,9 @@
 
 ### Fixed
 
-- Keep explicit URL reads and all-read batches out of browser preflights, managed-session replacement and timeout page probes. Preserve policy-required read confirmations in the correct native session; only native ID-check capability enables browser-independent confirm/deny.
+- Keep explicit URL reads and all-read batches out of browser preflights, managed-session replacement and timeout page probes. Preserve existing owned daemon settings and unsaved page state across reads, including after reload/resume.
+- Preserve policy-required read confirmations in the correct native session; only native ID-check capability enables browser-independent confirm/deny. Report failed confirmed reads as failures on older natives too, and retain the correct actions when a new DOM confirmation replaces a pending read.
+- Resolve source-build dependencies through their ESM exports so Git installs and package preparation do not reinstall dependencies that are already available.
 - Separate daemon and browser identity in `session info`, including native ownership versus Pi cleanup ownership and explicit unknowns for unavailable fields.
 - Carry native recording receipts and actual capture/encoder measurements through direct, restart and batch results, including failures. Recover uncertain stops with one bounded, identity-matched native receipt query; keep original attempt evidence and export failed or recovered recording receipts without overwriting artifacts.
 - Preserve harmless bearer technical prose and unchanged URL spelling. Credential replacements remain visibly marked, and structured results use the same URL redaction as visible text and exports.

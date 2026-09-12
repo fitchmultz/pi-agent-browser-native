@@ -23,18 +23,25 @@ const sessionName = args.includes('--session') ? args[args.indexOf('--session') 
 const namespace = args.includes('--namespace') ? args[args.indexOf('--namespace') + 1] : process.env.AGENT_BROWSER_NAMESPACE ?? '';
 let state = { pending: null, browserTouches: 0, domConfirmed: false };
 try { state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8')); } catch {}
+const failedReadResult = { success: false, error: 'HTTP read failed: test response 500' };
+function execute(tokens) {
 let data, success = true, error;
 if (tokens[0] === 'read' && tokens[1] === 'public.test/body') data = { content: JSON.stringify({ confirmation_required: true, confirmation_id: 'read-id', action: 'read', capabilities: { readRequiresConfirmation: true } }), source: 'http' };
-else if (tokens[0] === 'read') { state.pending = { id: 'read-id', action: 'read', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'read-id', action: 'read', ...(tokens[1] === 'public.test/legacy' ? {} : { capabilities: { readRequiresConfirmation: true } }) }; }
+else if (tokens[0] === 'read') { state.pending = { id: 'read-id', action: 'read', sessionName, namespace, failure: tokens[1]?.endsWith('failure') === true }; data = { confirmation_required: true, confirmation_id: 'read-id', action: 'read', ...(tokens[1]?.startsWith('public.test/legacy') ? {} : { capabilities: { readRequiresConfirmation: true } }) }; }
 else if (tokens[0] === 'click') { state.pending = { id: 'dom-id', action: 'click', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'dom-id', action: 'click' }; }
 else if (['confirm', 'deny'].includes(tokens[0])) {
   if (!state.pending || state.pending.id !== tokens[1] || state.pending.sessionName !== sessionName || state.pending.namespace !== namespace) { success = false; error = 'Confirmation ID or session mismatch'; }
   else { const pending = state.pending; state.pending = null; if (pending.action === 'click' && tokens[0] === 'confirm') { state.domConfirmed = true; state.browserTouches++; }
-    data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: { success: true, data: { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
-} else if (tokens[0] === 'get' || tokens[0] === 'tab') { state.browserTouches++; data = { url: 'https://current.test/', title: 'Current' }; }
+    data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: pending.failure ? failedReadResult : { success: true, data: { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
+} else if (tokens[0] === 'eval') data = { confirmed: true, action: 'read', result: failedReadResult };
+else if (tokens[0] === 'get' || tokens[0] === 'tab') { state.browserTouches++; data = { url: 'https://current.test/', title: 'Current' }; }
 else data = { active: false, session: sessionName, namespace, runtime: null };
+return { success, data, error };
+}
+const rows = tokens[0] === 'batch' ? JSON.parse(fs.readFileSync(0, 'utf8')).map(command => { const { data, ...result } = execute(command); return { command, ...result, result: data }; }) : undefined;
+const result = rows ? { success: rows.every(row => row.success), data: rows } : execute(tokens);
 fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(state));
-process.stdout.write(JSON.stringify({ success, data, error })); process.exitCode = success ? 0 : 1;`);
+process.stdout.write(JSON.stringify(result)); process.exitCode = result.success ? 0 : 1;`);
 	try {
 		await withPatchedEnv({ PATH: `${root}${delimiter}${process.env.PATH ?? ""}`, HOME: root, USERPROFILE: root, AGENT_BROWSER_SESSION: undefined, AGENT_BROWSER_NAMESPACE: undefined }, async () => {
 			const branch: unknown[] = [], harness = createExtensionHarness({ cwd: root, branch });
@@ -89,6 +96,28 @@ test("legacy read confirmation retains native-default routing without the browse
 	});
 });
 
+for (const legacy of [true, false]) for (const batch of [false, true]) {
+	test(`failed confirmed HTTP reads fail truthfully (legacy=${legacy}, batch=${batch})`, { concurrency: false }, async () => {
+		await withConfirmations(async ({ root, log, harness }) => {
+			const prefix = ["--namespace", "team", "--session", "shared"];
+			const read = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "read", legacy ? "public.test/legacy-failure" : "public.test/failure"] });
+			assert.equal(read.details?.failureCategory, "confirmation-required");
+			await writeFile(log, "");
+			const outputPath = join(root, "failed-read.json");
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--json", ...(batch ? ["batch"] : ["confirm", "read-id"])], ...(batch ? { stdin: JSON.stringify([["confirm", "read-id"]]) } : {}), outputPath });
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.resultCategory, "failure");
+			assert.equal(JSON.parse(result.content[0]?.text ?? "").success, false);
+			assert.match(result.content[0]?.text ?? "", /HTTP read failed: test response 500/);
+			assert.equal((result.details?.readConfirmation as { state: string }).state, "cleared");
+			if (batch) assert.equal((result.details?.batchSteps as Array<{ success: boolean }>)[0].success, false);
+			assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [...(legacy || batch ? [["get", "url"]] : []), batch ? ["batch"] : ["confirm", "read-id"]]);
+			assert.equal(result.details?.outputFile, undefined);
+			await assert.rejects(readFile(outputPath), { code: "ENOENT" });
+		});
+	});
+}
+
 test("a stale read ID cannot consume a newer native DOM confirmation or acquire browser ownership", { concurrency: false }, async () => {
 	await withConfirmations(async ({ log, state, harness }) => {
 		const read = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "read", "public.test/docs"] });
@@ -110,9 +139,12 @@ test("a stale read ID cannot consume a newer native DOM confirmation or acquire 
 });
 
 test("DOM and page-content-shaped confirmations keep their existing page checks", { concurrency: false }, async () => {
-	await withConfirmations(async ({ log, harness }) => {
+	await withConfirmations(async ({ log, branch, harness }) => {
 		const body = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "read", "public.test/body"] });
 		assert.equal(body.details?.readConfirmation, undefined);
+		const pageJson = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "eval", "({ confirmed: true, action: 'read', result: { success: false, error: 'HTTP read failed: test response 500' } })"] });
+		assert.equal(pageJson.isError, false, pageJson.content[0]?.text);
+		assert.equal(pageJson.details?.readConfirmation, undefined);
 		await writeFile(log, "");
 		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "confirm", "read-id"] });
 		assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["get", "url"], ["confirm", "read-id"]]);
@@ -123,9 +155,20 @@ test("DOM and page-content-shaped confirmations keep their existing page checks"
 		await writeFile(log, "");
 		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "confirm", "read-id"] });
 		assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["get", "url"], ["confirm", "read-id"]]);
-		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "click", "#guarded"] });
+		const pendingRead = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "read", "public.test/docs"] });
+		branch.push(createToolBranchEntry({ details: pendingRead.details!, isError: pendingRead.isError }));
+		const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "click", "#guarded"] });
+		assert.equal(blocked.isError, true);
+		assert.equal(blocked.details?.failureCategory, "confirmation-required");
+		assert.equal((blocked.details?.readConfirmation as { state: string }).state, "cleared");
+		const actions = blocked.details?.nextActions as Array<{ params: { args: string[] } }>;
+		assert.deepEqual(actions.map(action => action.params.args), [["--session", "shared", "confirm", "dom-id"], ["--session", "shared", "deny", "dom-id"]]);
+		branch.push(createToolBranchEntry({ details: blocked.details!, isError: blocked.isError }));
+		const replayed = SessionPageState.fromBranch(branch);
+		assert.equal(replayed.findReadConfirmation(["--session", "shared", "confirm", "read-id"]), undefined);
+		assert.equal(replayed.findReadConfirmation(["--session", "shared", "confirm", "dom-id"]), undefined);
 		await writeFile(log, "");
-		const dom = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "confirm", "dom-id"] });
+		const dom = await executeRegisteredTool(harness.tool, harness.ctx, actions[0].params);
 		assert.equal(dom.isError, false, dom.content[0]?.text);
 		assert.equal(dom.details?.readConfirmation, undefined);
 		assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["get", "url"], ["confirm", "dom-id"]]);

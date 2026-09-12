@@ -5,6 +5,7 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
+import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import { createExtensionHarness, createToolBranchEntry, executeRegisteredTool, readInvocationLog, runExtensionEvent, withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
 
 async function withRecorder(mode: string, run: (options: {
@@ -46,7 +47,7 @@ function execute(row) {
     if (!receipt) throw new Error('No recording in progress');
     fs.writeFileSync(receipt.path, 'video');
     const ended = Date.now() - (mode === 'old-receipt' ? 58000 : 0);
-    state.last = { ...receipt, recordingId: mode === 'id-mismatch' ? 'unrelated-take' : receipt.recordingId, success: !['encode-failed', 'timeout-native-failed'].includes(mode), error: ['encode-failed', 'timeout-native-failed'].includes(mode) ? 'Encoder failed' : null,
+    state.last = { ...receipt, recordingId: mode === 'id-mismatch' ? 'unrelated-take' : receipt.recordingId, success: !['encode-failed', 'timeout-native-failed'].includes(mode), error: ['encode-failed', 'timeout-native-failed'].includes(mode) ? 'Encoder failed: https://recording.test/?authorization_session_id=RECORDING_AUTH_SECRET&state=RECORDING_STATE_SECRET' : null,
       capture: { ...receipt.capture, endedAt: new Date(ended).toISOString() },
       output: { ...receipt.output, encodedFrames: 60, durationMs: 2000, encoderSucceeded: !['encode-failed', 'timeout-native-failed'].includes(mode) }, file: { exists: true, sizeBytes: mode === 'file-mismatch' ? 999 : 5 } };
     if (mode === 'path-mismatch') state.last.path = path.join(path.dirname(receipt.path), 'other.webm');
@@ -94,6 +95,24 @@ else if (tokens[0] === 'batch' && !tokens.includes('record stop')) { /* a timed-
 			} finally { await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx); }
 		});
 	} finally { await rm(root, { recursive: true, force: true }); }
+}
+
+for (const outputPrefix of ["", "@"]) {
+	test(`record stop rejects recording outputPath alias: ${outputPrefix || "exact"}`, { concurrency: false }, async () => {
+		await withRecorder("no-recording", async ({ root, logPath, harness, prefix }) => {
+			const path = join(root, "capture.webm"), media = "recording bytes written before stop";
+			const started = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "record", "start", path] });
+			assert.equal(started.isError, false, started.content[0]?.text);
+			await writeFile(path, media);
+			await writeFile(logPath, "");
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "record", "stop"], outputPath: `${outputPrefix}${path}` });
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /reserved by an active recording/);
+			assert.deepEqual(await readInvocationLog(logPath), []);
+			assert.equal(await readFile(path, "utf8"), media);
+			assert.equal(result.details?.outputFile, undefined);
+		});
+	});
 }
 
 for (const mode of ["timeout", "no-recording", "no-recording-no-receipt", "old-receipt", "pending-reused-path", "id-mismatch", "namespace-mismatch", "path-mismatch", "file-mismatch", "no-receipt", "query-failed", "timeout-native-failed", "encode-failed"]) {
@@ -152,6 +171,28 @@ for (const mode of ["timeout", "no-recording", "no-recording-no-receipt", "old-r
 		});
 	});
 }
+
+test("recording failure secrets stay redacted in retained public manifests", { concurrency: false }, async () => {
+	await withRecorder("encode-failed", async ({ root, harness, prefix }) => {
+		const path = join(root, "capture.webm");
+		const started = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "record", "start", path] });
+		assert.equal(started.isError, false, started.content[0]?.text);
+		const stopped = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "record", "stop"] });
+		assert.equal(stopped.isError, true);
+		const followup = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "get", "url"] });
+		assert.equal(followup.isError, false, followup.content[0]?.text);
+		for (const result of [stopped, followup]) {
+			assert.equal(JSON.stringify(result).includes("RECORDING_AUTH_SECRET"), false);
+			assert.equal(JSON.stringify(result).includes("RECORDING_STATE_SECRET"), false);
+			const artifact = (result.details?.artifactManifest as SessionArtifactManifest).entries.find(entry => entry.absolutePath === path);
+			assert.equal(artifact?.recording?.recordingId, "new-take");
+			assert.equal(artifact?.recording?.path, path);
+			assert.equal(artifact?.exists, true);
+			assert.equal(decodeURIComponent(artifact?.recording?.error ?? ""), "Encoder failed: https://recording.test/?authorization_session_id=[REDACTED]&state=[REDACTED]");
+		}
+		assert.equal(await readFile(path, "utf8"), "video");
+	});
+});
 
 test("a recovered later stop preserves the earlier failed batch step's repair action", { concurrency: false }, async () => {
 	await withRecorder("mixed-failure", async ({ root, harness, prefix }) => {

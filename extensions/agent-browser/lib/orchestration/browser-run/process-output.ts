@@ -16,6 +16,7 @@ import { buildToolPresentation } from "../../results/presentation.js";
 import { compactLargePresentationOutput } from "../../results/presentation/large-output.js";
 import { extractEnvelopeErrorText, getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { type AgentBrowserEnvelope } from "../../results/contracts.js";
+import { detectConfirmationRequired } from "../../results/confirmation.js";
 import type { NetworkRouteRecord } from "../../results/contracts.js";
 import { omitUpstreamLifecycle } from "../../results/presentation/common.js";
 import { getClipboardWritePayloadCandidates, redactClipboardPermissionEcho, redactClipboardPermissionErrorValue } from "../../results/presentation/errors.js";
@@ -267,14 +268,16 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let readConfirmation = state.sessionPageState.getReadConfirmation(getAgentBrowserSessionIdentityKey(confirmationSessionName, prepared.executionPlan.namespace));
 		let readConfirmationEvent: ReadConfirmation | undefined;
 		const confirmationRows = prepared.executionPlan.commandInfo.command === "batch" && Array.isArray(presentationEnvelope?.data)
-			? presentationEnvelope.data.flatMap((row, index) => isRecord(row) ? [{ tokens: batchCommandSteps[index] ?? [], data: row.result, succeeded: row.success === true }] : [])
-			: [{ tokens: prepared.commandTokens, data: presentationEnvelope?.data, succeeded: presentationEnvelope?.success === true }];
+			? presentationEnvelope.data.flatMap((row, index) => isRecord(row) ? [{ tokens: batchCommandSteps[index] ?? [], data: row.result, response: row, succeeded: row.success === true }] : [])
+			: [{ tokens: prepared.commandTokens, data: presentationEnvelope?.data, response: presentationEnvelope, succeeded: presentationEnvelope?.success === true }];
 		for (const row of confirmationRows) {
 			const transition = nextReadConfirmation({ commandTokens: row.tokens, current: readConfirmation, data: row.data, namespace: prepared.executionPlan.namespace, sessionName: confirmationSessionName, succeeded: row.succeeded });
 			if (transition) { readConfirmationEvent = transition; readConfirmation = transition; }
-		}
-		if (prepared.readConfirmation && isRecord(presentationEnvelope?.data) && presentationEnvelope.data.confirmed === true && presentationEnvelope.data.action === "read" && isRecord(presentationEnvelope.data.result) && presentationEnvelope.data.result.success === false) {
-			presentationEnvelope = { ...presentationEnvelope, success: false, error: presentationEnvelope.data.result.error };
+			if (row.tokens.length === 2 && row.tokens[0] === "confirm" && isRecord(row.data) && row.data.confirmed === true && row.data.action === "read" && isRecord(row.data.result) && row.data.result.success === false && row.response) {
+				row.response.success = false;
+				row.response.error = row.data.result.error;
+				if (presentationEnvelope) presentationEnvelope.success = false;
+			}
 		}
 		const destinationTransition = dispatchedCommands.some((step) => {
 			const [command, subcommand] = extractUpstreamCommandTokens(step);
@@ -603,7 +606,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			managedSessionCompatibilityWorkaround = undefined;
 			managedSessionHeadedAutosaveDisabled = false;
 			managedSessionHeadedAutosaveInterval = undefined;
-		} else if (managedTransitionSucceeded && executionTargetsManagedSession) {
+		} else if (managedTransitionSucceeded && executionTargetsManagedSession && prepared.ownedManagedSessionContext && !prepared.ownedManagedSessionContext.reuseOnly) {
 			managedSessionCompatibilityWorkaround = prepared.compatibilityWorkaround;
 			managedSessionHeadedAutosaveDisabled = prepared.ownedManagedSessionContext?.headedManagedAutosaveDisabled === true;
 			managedSessionHeadedAutosaveInterval = prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval;
@@ -730,7 +733,9 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const confirmation = readConfirmationEvent ?? prepared.readConfirmation;
 		if (confirmation) {
 			presentation.readConfirmation = confirmation;
-			presentation.nextActions = buildReadConfirmationNextActions(confirmation, readConfirmationEvent?.state === "pending");
+			if (confirmation.state !== "cleared" || !detectConfirmationRequired(presentationEnvelope?.data)) {
+				presentation.nextActions = buildReadConfirmationNextActions(confirmation, readConfirmationEvent?.state === "pending");
+			}
 			if (readConfirmationEvent?.state === "pending") {
 				presentation.resultCategory = "failure";
 				presentation.failureCategory = "confirmation-required";
@@ -853,9 +858,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			&& managedSessionOutcome.attemptedSessionName === managedSessionOutcome.currentSessionName
 		);
 		const resultHeadedManagedAutosaveDisabled = prepared.ownedManagedSessionContext?.headedManagedAutosaveDisabled === true
+			&& !prepared.ownedManagedSessionContext.reuseOnly
 			&& resultRetainsPreparedManagedSession
 			&& !(commandClosesSession && succeeded);
-		const resultHeadedManagedAutosaveInterval = resultRetainsPreparedManagedSession && !(commandClosesSession && succeeded)
+		const resultHeadedManagedAutosaveInterval = resultRetainsPreparedManagedSession && !prepared.ownedManagedSessionContext?.reuseOnly && !(commandClosesSession && succeeded)
 			? prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval
 			: undefined;
 		const result = buildFinalAgentBrowserToolResult({ aboutBlankSessionMismatch, artifactCleanup, categoryDetails: finalRecoveryState.categoryDetails, clickDispatchDiagnostic, commandTokens: prepared.commandTokens, comboboxFocusDiagnostic, compiledNetworkSourceLookup: prepared.compiledNetworkSourceLookup, compiledSemanticAction: prepared.compiledSemanticAction, compatibilityWorkaround: prepared.compatibilityWorkaround, currentRefSnapshot, currentRefSnapshotInvalidation, currentSessionTabTarget, currentSessionTabTargetUnknown, electronBroadGetTextScopeDiagnostics, electronFailedConnectCleanup, electronHandoff, electronLaunch: prepared.electronLaunch, electronLaunchRecord, electronLaunchRecords, electronPostCommandHealth, electronProfileIsolationDetails: input.electronProfileIsolationDetails, electronRefFreshnessDiagnostic, electronSessionMismatch, errorText, evalResultWarning, evalStdinHint, exactSensitiveValues: prepared.exactSensitiveValues, executionPlan: prepared.executionPlan, fillVerificationDiagnostic, headedLaunch: prepared.headedLaunch, inspectionText, preserveAttachedBrowserSession: input.preserveAttachedBrowserSession === true, providerLaunch: prepared.providerLaunch, managedSessionHeadedAutosaveDisabled: resultHeadedManagedAutosaveDisabled || undefined, managedSessionHeadedAutosaveInterval: resultHeadedManagedAutosaveInterval, managedSessionOutcome, managedSessionRestoreDisabled: state.managedSessionRestoreState.isDisabled(prepared.executionPlan.sessionName, prepared.executionPlan.namespace), navigationSummary, networkSourceLookup, noActivePageSnapshotFailure: finalRecoveryState.noActivePageSnapshotFailure, openResultTabCorrection, overlayBlockerDiagnostic, parseError, parseFailureOutput, parseSucceeded, plainTextInspection, presentation, presentationEnvelope, priorSessionTabTarget: prepared.priorSessionTabTarget, processResult, qaAttachedTarget, qaPreset, recordingDependencyWarning, redactedArgs: prepared.redactedArgs, redactedCompiledElectron: prepared.redactedCompiledElectron, redactedCompiledJob: prepared.redactedCompiledJob, redactedCompiledNetworkSourceLookup: prepared.redactedCompiledNetworkSourceLookup, redactedCompiledQaPreset: prepared.redactedCompiledQaPreset, redactedCompiledSemanticAction: prepared.redactedCompiledSemanticAction, redactedCompiledSourceLookup: prepared.redactedCompiledSourceLookup, redactedContent, redactedProcessArgs: prepared.redactedProcessArgs, redactedRecoveryHint: prepared.redactedRecoveryHint, resultArtifactManifest, richInputRecoveryDiagnostic: finalRecoveryState.richInputRecoveryDiagnostic, scrollNoopDiagnostic, selectorTextVisibilityDiagnostics, sessionMode: prepared.sessionMode, sessionTabCorrection, sourceLookup, succeeded, timeoutPartialProgress, unsettledWebMcpMutation, userRequestedJson: prepared.userRequestedJson, visibleRefFallbackDiagnostic: finalRecoveryState.visibleRefFallbackDiagnostic, visibleRefFallbackSessionName: finalRecoveryState.visibleRefFallbackSessionName });

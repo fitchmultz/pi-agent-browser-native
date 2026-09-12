@@ -1393,6 +1393,14 @@ if (command === "session") {
 				assert.match(replacementLaunch?.restoreKey ?? "", /^piab-r2-/);
 
 				await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "Review Space" }, async () => {
+					const beforeRead = (await readEvents()).length;
+					const read = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", oldSession, "read", "https://public.test/"] });
+					assert.equal(read.isError, false, read.content[0]?.text);
+					assert.equal(read.details?.managedSessionOutcome, undefined);
+					const readCalls = (await readEvents()).slice(beforeRead);
+					assert.equal(readCalls.length, 1);
+					assert.equal(readCalls[0].namespaceEnv, "review-space");
+					assert.equal(readCalls[0].restoreKey, launched.restoreKey);
 					const before = (await readEvents()).length;
 					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", oldSession, "snapshot", "-i"] });
 					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
@@ -1450,6 +1458,13 @@ if (command === "session") {
 					});
 					cleanupHarness = resumed;
 					await runExtensionEvent(resumed.handlers, "session_start", { reason: "resume" }, resumed.ctx);
+					const beforeResumedRead = (await readEvents()).length;
+					const resumedRead = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["--session", oldSession, "read", "https://public.test/"] });
+					assert.equal(resumedRead.isError, false, resumedRead.content[0]?.text);
+					const resumedReadCalls = (await readEvents()).slice(beforeResumedRead);
+					assert.equal(resumedReadCalls.length, 1);
+					assert.equal(resumedReadCalls[0].namespaceEnv, "review-space");
+					assert.equal(resumedReadCalls[0].restoreKey, launched.restoreKey);
 					const resumedOld = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["--session", oldSession, "snapshot", "-i"] });
 					assert.equal(resumedOld.isError, false, JSON.stringify(resumedOld));
 					assert.equal(resumedOld.details?.namespace, "review-space");

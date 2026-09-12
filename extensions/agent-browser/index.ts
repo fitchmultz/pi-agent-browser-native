@@ -31,6 +31,7 @@ import {
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
 	redactSensitiveText,
+	redactSensitiveValue,
 	isPlainTextInspectionArgs,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
@@ -1623,7 +1624,7 @@ export default function agentBrowserExtension(
 						...scriptResult,
 						details: {
 							...(isRecord(scriptResult.details) ? scriptResult.details : {}),
-							artifactManifest,
+							artifactManifest: redactSensitiveValue(artifactManifest),
 							artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest),
 						},
 					};
@@ -1695,7 +1696,7 @@ export default function agentBrowserExtension(
 							...electronHostResult,
 							details: {
 								...(isRecord(electronHostResult.details) ? electronHostResult.details : {}),
-								artifactManifest,
+								artifactManifest: redactSensitiveValue(artifactManifest),
 								artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest),
 							},
 						};
@@ -1860,7 +1861,7 @@ export default function agentBrowserExtension(
 							...result,
 							details: {
 								...(isRecord(result.details) ? result.details : {}),
-								artifactManifest,
+								artifactManifest: redactSensitiveValue(artifactManifest),
 								artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest),
 							},
 						};
@@ -1925,19 +1926,15 @@ export default function agentBrowserExtension(
 				});
 				if (!artifactValidationError) return runWithinSessionQueue();
 				flushRecordingReservations();
-				return applyAgentBrowserOutputPath({
-					cwd: ctx.cwd,
-					outputPath,
-					result: warnRecordingPersistence(buildValidationFailureResult({
-						attemptedKind: resolvedInput.kind,
-						kind: "invalid",
-						redactedArgs: resolvedInput.redactedArgs,
-						status: "invalid",
-						toolArgs: resolvedInput.toolArgs,
-						toolStdin: resolvedInput.toolStdin,
-						validationError: artifactValidationError,
-					})),
-				});
+				return warnRecordingPersistence(buildValidationFailureResult({
+					attemptedKind: resolvedInput.kind,
+					kind: "invalid",
+					redactedArgs: resolvedInput.redactedArgs,
+					status: "invalid",
+					toolArgs: resolvedInput.toolArgs,
+					toolStdin: resolvedInput.toolStdin,
+					validationError: artifactValidationError,
+				}));
 			});
 			});
 		},
