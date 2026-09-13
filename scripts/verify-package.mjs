@@ -9,7 +9,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join, posix as posixPath, resolve, sep } from "node:path";
+import { basename, delimiter, join, posix as posixPath, resolve, sep } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -164,7 +164,8 @@ export async function packToTemporaryPackageDir(cwd = process.cwd()) {
 		}
 
 		tarballPath = resolve(tempDir, packResult.filename);
-		await execFile(tarCommand, [...(process.platform === "win32" ? ["--force-local"] : []), "-xzf", tarballPath, "-C", tempDir], {
+		await execFile(tarCommand, ["-xzf", basename(tarballPath)], {
+			cwd: tempDir,
 			maxBuffer: 5 * 1024 * 1024,
 		});
 
