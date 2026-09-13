@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { createManagedSessionRestoreKey, getManagedSessionRestoreScope } from "../extensions/agent-browser/lib/managed-session-restore.js";
+import { createManagedSessionRestoreKey, getManagedSessionRestoreScope, ManagedSessionRestoreState, withOwnedManagedSessionContext } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getAgentBrowserSocketDir, runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import { collectClickDispatchDiagnostic, prepareClickDispatchProbe } from "../extensions/agent-browser/lib/orchestration/browser-run/click-dispatch.js";
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
@@ -148,7 +148,7 @@ async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?
 
 async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<void> {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-orphan-daemon-"));
-	const socketDir = join(tempDir, "sockets");
+	const socketDir = await mkdtemp(join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "ru-"));
 	let sessionName: string | undefined;
 	try {
 		await initializeGitProject(tempDir);
@@ -156,6 +156,7 @@ async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<voi
 			AGENT_BROWSER_CONFIG: undefined,
 			AGENT_BROWSER_ENCRYPTION_KEY: process.platform === "win32" ? "a".repeat(64) : undefined,
 			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
 			HOME: tempDir,
 			USERPROFILE: tempDir,
 			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
@@ -180,15 +181,16 @@ async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<voi
 			sessionName = undefined;
 		});
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
 		await rm(tempDir, { force: true, recursive: true });
+		await rm(socketDir, { force: true, recursive: true });
 	}
 }
 
 async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<void> {
 	if (process.platform === "win32") return;
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-symlink-"));
-	const socketDir = join(tempDir, "sockets");
+	const socketDir = await mkdtemp(join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "ru-"));
 	const targetDir = join(tempDir, "outside-state-target");
 	await initializeGitProject(tempDir);
 	await mkdir(join(tempDir, ".agent-browser"), { recursive: true, mode: 0o700 });
@@ -200,6 +202,7 @@ async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<voi
 			AGENT_BROWSER_CONFIG: undefined,
 			AGENT_BROWSER_ENCRYPTION_KEY: undefined,
 			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
 			HOME: tempDir,
 			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
 		}, async () => {
@@ -214,15 +217,16 @@ async function assertRealUpstreamRestoreStorageSymlinkFailsClosed(): Promise<voi
 		});
 		assert.deepEqual(await readdir(targetDir), [], "real upstream must not write restore state through the sessions symlink, including on close");
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
 		await rm(tempDir, { force: true, recursive: true });
+		await rm(socketDir, { force: true, recursive: true });
 	}
 }
 
 async function assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed(): Promise<void> {
 	if (process.platform === "win32") return;
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-nested-symlink-"));
-	const socketDir = join(tempDir, "sockets");
+	const socketDir = await mkdtemp(join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "ru-"));
 	const outsideStateFile = join(tempDir, "outside-candidate.json");
 	const temporaryDirectory = join(tempDir, ".agent-browser", "sessions", ".tmp");
 	await initializeGitProject(tempDir);
@@ -235,6 +239,7 @@ async function assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed(): Promi
 			AGENT_BROWSER_CONFIG: undefined,
 			AGENT_BROWSER_ENCRYPTION_KEY: undefined,
 			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
 			HOME: tempDir,
 			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
 		}, async () => {
@@ -249,15 +254,16 @@ async function assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed(): Promi
 		});
 		assert.equal(await readFile(outsideStateFile, "utf8"), "unchanged");
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
 		await rm(tempDir, { force: true, recursive: true });
+		await rm(socketDir, { force: true, recursive: true });
 	}
 }
 
 async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 	if (process.platform === "win32") return;
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-relative-home-"));
-	const socketDir = join(tempDir, "sockets");
+	const socketDir = await mkdtemp(join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "ru-"));
 	let sessionName: string | undefined;
 	try {
 		await initializeGitProject(tempDir);
@@ -265,6 +271,7 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 			AGENT_BROWSER_CONFIG: undefined,
 			AGENT_BROWSER_ENCRYPTION_KEY: undefined,
 			AGENT_BROWSER_SOCKET_DIR: socketDir,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
 			HOME: "relative-home",
 			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
 		}, async () => {
@@ -279,8 +286,9 @@ async function assertRealUpstreamRelativeHomeFailsClosed(): Promise<void> {
 		});
 		await assert.rejects(readdir(join(tempDir, "relative-home", ".agent-browser")));
 	} finally {
-		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName });
+		await closeManagedSessionIfPresent({ cwd: tempDir, sessionName, socketDir });
 		await rm(tempDir, { force: true, recursive: true });
+		await rm(socketDir, { force: true, recursive: true });
 	}
 }
 
@@ -555,33 +563,35 @@ test("real upstream agent-browser contract suite matches duplicate-name click mu
 				assert.equal(first.isError, false, first.content[0]?.text);
 				assert.equal((first.details?.pageChangeSummary as { observed?: boolean }).observed, false, "native dispatch alone must not claim application-state proof");
 
-				// The first button is now Remove: its old name's ordinal points at the untouched second button.
-				const probe = await prepareClickDispatchProbe({ commandTokens: ["click", `@${duplicates[0][0]}`], cwd: tempDir, refSnapshot, sessionName });
-				const nativeClick = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, "click", "xpath=//*[@id='first']"], cwd: tempDir });
-				assert.equal(nativeClick.exitCode, 0, nativeClick.stderr);
-				assert.equal(JSON.parse(nativeClick.stdout).success, true);
-				const diagnostic = await collectClickDispatchDiagnostic({ cwd: tempDir, probe, sessionName });
-				const state = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "Array.from(document.querySelectorAll('button'), b => ({ id: b.id, text: b.textContent, clicks: Number(b.dataset.clicks || 0), trusted: b.dataset.trusted === 'true' }))" });
-				assert.equal(state.isError, false, state.content[0]?.text);
-				const buttons = getResultValue(state.details!, ["result"]);
-				assert.deepEqual(buttons, [
-					{ id: "first", text: "Remove", clicks: 2, trusted: true },
-					{ id: "second", text: "Add to cart", clicks: 0, trusted: false },
-				]);
-				t.diagnostic(JSON.stringify({ buttons, clickDispatch: diagnostic }));
-				assert.equal(diagnostic, undefined, "a stale duplicate ordinal must not contradict the native target's trusted clicks");
+				await withOwnedManagedSessionContext({ cwd: tempDir, sessionName, restoreState: new ManagedSessionRestoreState() }, async () => {
+					// The first button is now Remove: its old name's ordinal points at the untouched second button.
+					const probe = await prepareClickDispatchProbe({ commandTokens: ["click", `@${duplicates[0][0]}`], cwd: tempDir, refSnapshot, sessionName });
+					const nativeClick = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, "click", "xpath=//*[@id='first']"], cwd: tempDir });
+					assert.equal(nativeClick.exitCode, 0, nativeClick.stderr);
+					assert.equal(JSON.parse(nativeClick.stdout).success, true);
+					const diagnostic = await collectClickDispatchDiagnostic({ cwd: tempDir, probe, sessionName });
+					const state = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "Array.from(document.querySelectorAll('button'), b => ({ id: b.id, text: b.textContent, clicks: Number(b.dataset.clicks || 0), trusted: b.dataset.trusted === 'true' }))" });
+					assert.equal(state.isError, false, state.content[0]?.text);
+					const buttons = getResultValue(state.details!, ["result"]);
+					assert.deepEqual(buttons, [
+						{ id: "first", text: "Remove", clicks: 2, trusted: true },
+						{ id: "second", text: "Add to cart", clicks: 0, trusted: false },
+					]);
+					t.diagnostic(JSON.stringify({ buttons, clickDispatch: diagnostic }));
+					assert.equal(diagnostic, undefined, "a stale duplicate ordinal must not contradict the native target's trusted clicks");
 
-				const probeOptions = { commandTokens: ["click", "xpath=//*[@id='second']"], cwd: tempDir, sessionName };
-				const missedProbe = await prepareClickDispatchProbe(probeOptions);
-				assert.ok(missedProbe, "an exact XPath target must still be probed");
-				const miss = await collectClickDispatchDiagnostic({ ...probeOptions, probe: missedProbe });
-				assert.equal(miss?.status, "no-native-event-observed", "no click must remain a real dispatch miss");
-				const hitProbe = await prepareClickDispatchProbe(probeOptions);
-				assert.ok(hitProbe);
-				const hit = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, ...probeOptions.commandTokens], cwd: tempDir });
-				assert.equal(hit.exitCode, 0, hit.stderr);
-				assert.equal(JSON.parse(hit.stdout).success, true);
-				assert.equal(await collectClickDispatchDiagnostic({ ...probeOptions, probe: hitProbe }), undefined, "a trusted native click must not report a miss");
+					const probeOptions = { commandTokens: ["click", "xpath=//*[@id='second']"], cwd: tempDir, sessionName };
+					const missedProbe = await prepareClickDispatchProbe(probeOptions);
+					assert.ok(missedProbe, "an exact XPath target must still be probed");
+					const miss = await collectClickDispatchDiagnostic({ ...probeOptions, probe: missedProbe });
+					assert.equal(miss?.status, "no-native-event-observed", "no click must remain a real dispatch miss");
+					const hitProbe = await prepareClickDispatchProbe(probeOptions);
+					assert.ok(hitProbe);
+					const hit = await runAgentBrowserProcess({ args: ["--json", "--session", sessionName, ...probeOptions.commandTokens], cwd: tempDir });
+					assert.equal(hit.exitCode, 0, hit.stderr);
+					assert.equal(JSON.parse(hit.stdout).success, true);
+					assert.equal(await collectClickDispatchDiagnostic({ ...probeOptions, probe: hitProbe }), undefined, "a trusted native click must not report a miss");
+				});
 			} finally {
 				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 			}
@@ -621,13 +631,12 @@ test("real upstream agent-browser contract suite matches cold URL reopen after q
 					const branch: unknown[] = [];
 					let harness = createExtensionHarness({ branch, cwd, sessionFile });
 					let sessionName: string | undefined;
-					const native = async (args: string[]) => {
+					const observe = async (args: string[]) => {
 						assert.ok(sessionName);
-						const result = await runAgentBrowserProcess({ args: ["--json", "--namespace", "", "--session", sessionName, ...args], cwd });
-						assert.equal(result.exitCode, 0, result.stderr);
-						const envelope = JSON.parse(result.stdout);
-						assert.equal(envelope.success, true);
-						return envelope.data;
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "", "--session", sessionName, ...args] });
+						assert.equal(result.details?.exitCode, 0, result.content[0]?.text);
+						assert.equal(result.isError, false, result.content[0]?.text);
+						return result.details?.data as { active?: boolean; pid?: number; url?: string; runtime?: { restoreStatus?: string } };
 					};
 					const run = async (params: Parameters<typeof executeRegisteredTool>[2]) => {
 						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
@@ -650,19 +659,19 @@ test("real upstream agent-browser contract suite matches cold URL reopen after q
 						assert.match(JSON.stringify(before.details?.refSnapshot), /Unsaved control/);
 						const framed = await run({ args: ["frame", "#contract-frame"] });
 						assert.equal(framed.isError, false, framed.content[0]?.text);
-						const oldDaemon = await native(["session", "info"]);
+						const oldDaemon = await observe(["session", "info"]);
 						assert.equal(typeof oldDaemon.pid, "number");
 						await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 						assert.equal(await waitForTestPidExit(oldDaemon.pid, 10_000), true, "old owned daemon must exit before the first resumed read");
-						assert.equal((await native(["session", "info"])).active, false);
+						assert.equal((await observe(["session", "info"])).active, false);
 						await writeFile(sessionFile, JSON.stringify(branch));
 						harness = createExtensionHarness({ branch: JSON.parse(await readFile(sessionFile, "utf8")), cwd, sessionFile });
 						await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
 
 						// No explicit open after quit: the first requested operation must read the remembered page.
 						const snapshot = await run({ args: ["snapshot", "-i"] });
-						const observed = await native(["get", "url"]);
-						const newDaemon = await native(["session", "info"]);
+						const observed = await observe(["get", "url"]);
+						const newDaemon = await observe(["session", "info"]);
 						t.diagnostic(JSON.stringify({ storage, sessionName, oldPid: oldDaemon.pid, oldDaemonExited: true, newPid: newDaemon.pid, restoreStatus: newDaemon.runtime?.restoreStatus, requestedUrl: url, observedUrl: observed.url, resultCategory: snapshot.details?.resultCategory, failureCategory: snapshot.details?.failureCategory }));
 						assert.equal(snapshot.isError, false, snapshot.content[0]?.text);
 						assert.equal(snapshot.details?.resultCategory, "success");
@@ -670,7 +679,7 @@ test("real upstream agent-browser contract suite matches cold URL reopen after q
 						assert.equal(observed.url, url);
 						assert.equal((snapshot.details?.data as { origin?: string }).origin, url);
 						assert.equal((snapshot.details?.sessionTabTarget as { url?: string }).url, url);
-						assert.equal(newDaemon.runtime.restoreStatus, "loaded");
+						assert.equal(newDaemon.runtime?.restoreStatus, "loaded");
 						assert.notEqual(newDaemon.pid, oldDaemon.pid);
 						assert.equal(snapshot.details?.refSnapshotInvalidation, undefined);
 						assert.match(JSON.stringify(snapshot.details?.refSnapshot), /"name":"Name"/);
@@ -680,10 +689,10 @@ test("real upstream agent-browser contract suite matches cold URL reopen after q
 						assert.deepEqual(JSON.parse(String(getResultValue(state.details!, ["result"]))), { local: storage ? "kept" : null, session: storage ? "kept" : null, form: "", memory: "undefined" });
 					} finally {
 						if (sessionName) {
-							const daemon = await native(["session", "info"]);
+							const daemon = await observe(["session", "info"]);
 							await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 							assert.equal(await waitForTestPidExit(daemon.pid, 10_000), true, "final owned daemon must exit");
-							assert.equal((await native(["session", "info"])).active, false);
+							assert.equal((await observe(["session", "info"])).active, false);
 							t.diagnostic(JSON.stringify({ sessionName, cleanup: "closed", daemonExited: true }));
 						}
 					}
@@ -706,7 +715,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 		assert.equal(shapes.targetVersion, CAPABILITY_BASELINE.targetVersion, "output-shape fixture must track the canonical target version");
 
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-upstream-"));
-		const socketDir = join(tempDir, "sockets");
+		const socketDir = await mkdtemp(join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "ru-"));
 		const downloadDir = join(tempDir, "Downloads");
 		await initializeGitProject(tempDir);
 		await mkdir(downloadDir, { recursive: true });
@@ -718,6 +727,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 				{
 					AGENT_BROWSER_DOWNLOAD_PATH: downloadDir,
 					AGENT_BROWSER_SOCKET_DIR: socketDir,
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
 					AGENT_BROWSER_SCREENSHOT_DIR: join(tempDir, "screenshots"),
 					HOME: tempDir,
 				},
@@ -1301,9 +1311,10 @@ if (!REAL_UPSTREAM_ENABLED) {
 				},
 			);
 		} finally {
-			await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: managedSessionName });
+			await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: managedSessionName, socketDir });
 			await fixtureServer?.close();
 			await rm(tempDir, { force: true, recursive: true });
+			await rm(socketDir, { force: true, recursive: true });
 		}
 		await assertRealUpstreamLocalDaemonPassesThrough();
 		await assertRealUpstreamUnrecordedDaemonReuseFailsClosed();

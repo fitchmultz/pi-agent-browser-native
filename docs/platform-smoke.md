@@ -2,7 +2,7 @@
 
 `pi-agent-browser-native` uses a Crabbox-backed local platform smoke gate to prove the package on macOS, Ubuntu Linux, and native Windows before release.
 
-This is a release-blocking gate. Missing Crabbox setup, Docker, macOS SSH, the native Windows template, upstream `agent-browser`, or browser runtime dependencies is a blocked release setup, not a skipped pass.
+This is a release-blocking gate. Missing setup is not a skipped pass. When a maintainer approves an [alternate native transport](#alternate-native-transports), it must prove the same target-local suites; missing upstream `agent-browser` or browser dependencies still blocks that target.
 
 ## Required release gate
 
@@ -35,6 +35,14 @@ npm run verify -- platform-smoke run --target ubuntu --suite platform-build
 | `macos` | `ssh` static localhost | POSIX shell on macOS | Required |
 | `ubuntu` | `local-container` | POSIX shell in a Docker-compatible local container | Required |
 | `windows-native` | `parallels` | native Windows PowerShell over OpenSSH | Required |
+
+## Alternate native transports
+
+For the 0.6.12 release, local macOS execution replaces localhost SSH, and the [Native Windows workflow](../.github/workflows/windows-native.yml) runs the existing Windows suites on a GitHub-hosted Windows runner. These are native platform checks, not Crabbox SSH or Parallels passes. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
+
+On macOS, run the unchanged commands returned by `buildPlatformBuildCommand('macos', 'pi-agent-browser-native', 24)` and `buildBrowserDogfoodCommand('macos', '0.37.0', true)` in [`scripts/platform-smoke/targets.mjs`](../scripts/platform-smoke/targets.mjs), serially in a clean private source copy. Use private HOME, npm and Pi settings, and headless browser profiles. No Remote Login or host security change is required.
+
+Retain the exact source head/tree, package and tool versions, native OS/architecture, generated commands, stdout/stderr, every `PLATFORM_*` exit marker, actual Pi registration output, dogfood JSON and verified screenshot. Check the suite assertions below and clean up only the run's processes and temporary files. Hosted Windows uploads this evidence from one bounded job; it does not upload installed projects, dependencies or browser profiles. These alternatives do not waive Ubuntu or any non-platform release check.
 
 ## Required environment
 

@@ -10,6 +10,7 @@ import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, GLOBAL_VALUE_FLAGS, VALUE_FL
 import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mjs";
 import { getGuardedRefUsage, shouldPinSessionTabForCommand } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state.js";
 import { getPageTargetValidationError } from "../extensions/agent-browser/lib/page-target-validation.js";
+import { ManagedSessionRestoreState, withOwnedManagedSessionContext } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import type { AgentBrowserNextAction, FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
 import { waitForTestPidExit } from "./helpers/extension-validation-fixtures.js";
@@ -252,7 +253,8 @@ test("real upstream recording FPS preserves destinations and the intended page",
 				const sessionName = opened.details?.sessionName;
 				assert.ok(typeof sessionName === "string");
 				daemonPid = Number(await readFile(join(socketDir, `${sessionName}.pid`), "utf8"));
-				const direct = (args: string[]) => runAgentBrowserProcess({ args: ["--json", "--session", sessionName, ...args], cwd: dir });
+				const owned = { cwd: dir, sessionName, restoreState: new ManagedSessionRestoreState() };
+				const direct = (args: string[]) => withOwnedManagedSessionContext(owned, () => runAgentBrowserProcess({ args: ["--json", "--session", sessionName, ...args], cwd: dir }));
 				for (const mode of ["direct", "stdin", "raw"]) await t.test(`${mode} FPS outputPath collision stops before native recording`, async () => {
 					const path = join(dir, `preflight-${mode}.webm`);
 					const row = ["record", "start", "--fps", "12", path];

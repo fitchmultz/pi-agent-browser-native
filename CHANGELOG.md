@@ -8,6 +8,11 @@
 
 - Make QA non-pass when final page-error rows match a nonempty post-clear baseline. Report “page-error check could not be verified” instead of ignoring matches as unchanged; preserve separate novel-error counts, clean passes, and explicit `checkErrors: false` checks.
 
+### Validation
+
+- Keep real-browser fixture probes on the correct owned daemon and use matching private socket directories; preserve the cold first-snapshot and 12-second recording checks.
+- Add a native hosted-Windows PR gate using the existing packed-Pi and browser suites. Document direct local macOS qualification without Remote Login; neither alternative is a Crabbox SSH/Parallels pass.
+
 ## 0.6.11 - 2026-09-12
 
 ### Added
