@@ -1,5 +1,5 @@
 import { isRecord } from "../../parsing.js";
-import { isSensitiveFieldName, redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
+import { redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
 import { classifyNetworkRequestFailure, isApiLikeNetworkRequest, isNetworkArtifactNoiseRequest, summarizeNetworkFailures } from "../network.js";
 import { withOptionalSessionArgs } from "../next-actions.js";
@@ -9,9 +9,7 @@ import {
 	formatCount,
 	getArrayField,
 	getStringField,
-	parseJsonPreviewString,
 	redactModelFacingText,
-	redactModelFacingTextIfSensitive,
 	stringifyModelFacing,
 } from "./common.js";
 
@@ -206,11 +204,11 @@ export function formatDiagnosticSummary(commandInfo: CommandInfo, data: Record<s
 		}
 		if (commandInfo.subcommand === "route") {
 			const routed = getStringField(data, "routed") ?? getStringField(data, "url") ?? getStringField(data, "pattern");
-			return routed ? `Network route: ${redactModelFacingTextIfSensitive(routed)}` : "Network route configured";
+			return routed ? `Network route: ${redactSensitiveText(routed)}` : "Network route configured";
 		}
 		if (commandInfo.subcommand === "unroute") {
 			const unrouted = getStringField(data, "unrouted") ?? getStringField(data, "url") ?? getStringField(data, "pattern");
-			return unrouted ? `Network unroute: ${redactModelFacingTextIfSensitive(unrouted)}` : "Network route removed";
+			return unrouted ? `Network unroute: ${redactSensitiveText(unrouted)}` : "Network route removed";
 		}
 		if (commandInfo.subcommand === "har") {
 			const state = getStringField(data, "state") ?? getStringField(data, "status") ?? commandInfo.subcommand;
@@ -288,8 +286,8 @@ function formatSessionText(data: Record<string, unknown>): string | undefined {
 				const metadata = [
 					`active=${active ? "true" : "false"}`,
 					label ? `label=${redactModelFacingText(label)}` : undefined,
-					title ? `title=${redactModelFacingTextIfSensitive(title)}` : undefined,
-					url ? `url=${redactModelFacingTextIfSensitive(url)}` : undefined,
+					title ? `title=${redactSensitiveText(title)}` : undefined,
+					url ? `url=${redactSensitiveText(url)}` : undefined,
 					tabCount,
 				].filter(Boolean).join("; ");
 				return `${index + 1}. name=${name}${active ? " *active*" : ""}; ${metadata}`;
@@ -298,15 +296,22 @@ function formatSessionText(data: Record<string, unknown>): string | undefined {
 	}
 	if (typeof data.active === "boolean") {
 		const runtime = data.runtime;
-		return stringifyModelFacing({
+		const browser = isRecord(runtime) && isRecord(runtime.browser) ? runtime.browser : undefined;
+		const identity = [
+			`Daemon: ${data.active ? "active" : "inactive"}; PID: ${data.pid ?? "unknown"}`,
+			`Browser: ${browser?.status ?? "unknown"}; alive: ${browser?.alive ?? "unknown"}; Chrome PID: ${browser?.pid ?? "unknown"}`,
+			`Exact profile: ${browser?.userDataDir ?? "unknown"}`,
+			`Native browser ownership: ${browser?.ownership ?? "unknown"}; Pi cleanup ownership: ${data.piCleanupOwnership ?? "unknown"}`,
+		].join("\n");
+		return `${redactModelFacingText(identity)}\n\n${stringifyModelFacing({
 			...Object.fromEntries(["session", "namespace", "socketDir", "active", "pid", "version", "runtimeError"].map((key) => [key, data[key]])),
 			// Native runtime also includes restore check URLs, text and code; show status/identity only.
 			runtime: isRecord(runtime) ? Object.fromEntries([
-				"session", "namespace", "socketDir", "backgroundPid", "browserLaunched", "pageCount", "engine", "launchHash",
+				"session", "namespace", "socketDir", "backgroundPid", "browserLaunched", "browser", "recording", "capabilities", "pageCount", "engine", "launchHash",
 				"compatibilityStatus", "restoreKey", "restoreStatus", "restoreLoadedPath", "restoreValidationPending",
 				"restoreSave", "saveStatus", "restoreSavedPath",
 			].map((key) => [key, runtime[key]])) : runtime,
-		});
+		})}`;
 	}
 	const session = getStringField(data, "session");
 	return session ? `Current session: ${redactModelFacingText(session)}` : undefined;
@@ -342,8 +347,7 @@ function getPreviewCandidate(item: Record<string, unknown>, keys: readonly strin
 
 function formatNetworkPreviewValue(value: unknown, maxChars: number): string | undefined {
 	if (value === undefined || value === null) return undefined;
-	const previewValue = typeof value === "string" ? parseJsonPreviewString(value) : value;
-	const redacted = redactSensitiveValue(previewValue);
+	const redacted = redactSensitiveValue(value);
 	const raw = typeof redacted === "string" ? redacted : stringifyUnknown(redacted);
 	const normalized = raw.replace(/\s+/g, " ").trim();
 	if (normalized.length === 0) return undefined;
@@ -801,7 +805,7 @@ function valueContainsStorageSecret(value: unknown): boolean {
 			const url = new URL(trimmed);
 			if (url.protocol === "http:" || url.protocol === "https:" || url.username || url.password || url.search) return true;
 		} catch {}
-		if (redactSensitiveText(trimmed) !== trimmed || redactModelFacingTextIfSensitive(trimmed) !== trimmed) return true;
+		if (redactSensitiveText(trimmed) !== trimmed) return true;
 		try {
 			return valueContainsStorageSecret(JSON.parse(trimmed));
 		} catch {
@@ -827,12 +831,12 @@ function formatStorageValue(key: string | undefined, value: unknown): string {
 }
 
 function redactStorageEntryValue(item: Record<string, unknown>): Record<string, unknown> {
-	if (!Object.hasOwn(item, "value")) return redactStructuredPresentationValue(item) as Record<string, unknown>;
+	if (!Object.hasOwn(item, "value")) return redactSensitiveValue(item) as Record<string, unknown>;
 	const key = getStringField(item, "key") ?? getStringField(item, "name");
 	const value = item.value;
-	if (shouldRevealStorageValue(key, value)) return redactStructuredPresentationValue(item) as Record<string, unknown>;
+	if (shouldRevealStorageValue(key, value)) return redactSensitiveValue(item) as Record<string, unknown>;
 	return {
-		...redactStructuredPresentationValue({ ...item, value: undefined }) as Record<string, unknown>,
+		...redactSensitiveValue({ ...item, value: undefined }) as Record<string, unknown>,
 		value: "[REDACTED]",
 		valueRedacted: true,
 		valueRedactionReason: key && STORAGE_SECRET_KEY_PATTERN.test(key) ? "sensitive-key" : "sensitive-value",
@@ -841,14 +845,14 @@ function redactStorageEntryValue(item: Record<string, unknown>): Record<string, 
 
 function redactStorageData(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map((item) => redactStorageData(item));
-	if (!isRecord(value)) return redactStructuredPresentationValue(value);
+	if (!isRecord(value)) return redactSensitiveValue(value);
 	const entries = Object.fromEntries(Object.entries(value).map(([key, entryValue]) => {
-		if ((key === "entries" || key === "items") && Array.isArray(entryValue)) return [key, entryValue.map((item) => isRecord(item) ? redactStorageEntryValue(item) : redactStructuredPresentationValue(item))];
+		if ((key === "entries" || key === "items") && Array.isArray(entryValue)) return [key, entryValue.map((item) => isRecord(item) ? redactStorageEntryValue(item) : redactSensitiveValue(item))];
 		if (key === "value") {
 			const itemKey = getStringField(value, "key") ?? getStringField(value, "name");
-			return [key, shouldRevealStorageValue(itemKey, entryValue) ? redactStructuredPresentationValue(entryValue) : "[REDACTED]"];
+			return [key, shouldRevealStorageValue(itemKey, entryValue) ? redactSensitiveValue(entryValue) : "[REDACTED]"];
 		}
-		return [key, redactStructuredPresentationValue(entryValue)];
+		return [key, redactSensitiveValue(entryValue)];
 	}));
 	if (Object.hasOwn(value, "value")) {
 		const key = getStringField(value, "key") ?? getStringField(value, "name");
@@ -887,7 +891,7 @@ function formatDialogText(data: Record<string, unknown>): string | undefined {
 	const type = getStringField(data, "type");
 	if (type) lines.push(`Type: ${redactModelFacingText(type)}`);
 	const message = getStringField(data, "message");
-	if (message) lines.push(`Message: ${/(?:auth|authorization|bearer|cookie|pass(?:word)?|secret|session|token)/i.test(message) ? "[REDACTED]" : redactModelFacingText(message)}`);
+	if (message) lines.push(`Message: ${redactModelFacingText(message)}`);
 	if (data.accepted === true) lines.push("Accepted.");
 	if (data.dismissed === true) lines.push("Dismissed.");
 	return lines.length > 0 ? lines.join("\n") : undefined;
@@ -897,7 +901,7 @@ function formatFrameText(data: Record<string, unknown>): string | undefined {
 	const frame = getStringField(data, "frame") ?? getStringField(data, "name") ?? getStringField(data, "selector");
 	const url = getStringField(data, "url");
 	const title = getStringField(data, "title");
-	const lines = [frame ? `Frame: ${redactModelFacingText(frame)}` : undefined, title ? `Title: ${redactModelFacingText(title)}` : undefined, url ? `URL: ${redactModelFacingTextIfSensitive(url)}` : undefined].filter(Boolean);
+	const lines = [frame ? `Frame: ${redactModelFacingText(frame)}` : undefined, title ? `Title: ${redactModelFacingText(title)}` : undefined, url ? `URL: ${redactSensitiveText(url)}` : undefined].filter(Boolean);
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
@@ -916,10 +920,10 @@ function formatStateText(data: Record<string, unknown>, subcommand?: string): st
 		if (states.length === 0) return "No saved states.";
 		return states
 			.map((item, index) => {
-				if (!isRecord(item)) return `${index + 1}. ${redactModelFacingTextIfSensitive(stringifyModelFacing(item))}`;
+				if (!isRecord(item)) return `${index + 1}. ${stringifyModelFacing(item)}`;
 				const name = getStringField(item, "name") ?? getStringField(item, "file") ?? getStringField(item, "path") ?? `(state ${index + 1})`;
 				const url = getStringField(item, "url");
-				return url ? `${index + 1}. ${redactModelFacingText(name)} — ${redactModelFacingTextIfSensitive(url)}` : `${index + 1}. ${redactModelFacingText(name)}`;
+				return url ? `${index + 1}. ${redactModelFacingText(name)} — ${redactSensitiveText(url)}` : `${index + 1}. ${redactModelFacingText(name)}`;
 			})
 			.join("\n");
 	}
@@ -928,21 +932,9 @@ function formatStateText(data: Record<string, unknown>, subcommand?: string): st
 	return undefined;
 }
 
-function redactStructuredPresentationValue(value: unknown): unknown {
-	if (typeof value === "string") return redactModelFacingTextIfSensitive(value);
-	if (Array.isArray(value)) return value.map((item) => redactStructuredPresentationValue(item));
-	if (!isRecord(value)) return value;
-	return Object.fromEntries(
-		Object.entries(value).map(([key, entryValue]) => [
-			key,
-			isSensitiveFieldName(key) ? "[REDACTED]" : redactStructuredPresentationValue(entryValue),
-		]),
-	);
-}
-
 function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unknown {
 	if (Array.isArray(value)) return value.map((item) => redactStatefulValues(item, sensitiveKeys));
-	if (!isRecord(value)) return redactStructuredPresentationValue(value);
+	if (!isRecord(value)) return redactSensitiveValue(value);
 	return Object.fromEntries(
 		Object.entries(value).map(([key, entryValue]) => [
 			key,
@@ -954,10 +946,8 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 export function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
 	if (commandInfo.command === "storage") return redactStorageData(data);
-	if (commandInfo.command === "session" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(data);
-	if (commandInfo.command === "state" && commandInfo.subcommand === "list") return redactStructuredPresentationValue(data);
 	if (commandInfo.command === "state" && commandInfo.subcommand === "show") return redactStatefulValues(data, new Set(["value"]));
-	return redactStructuredPresentationValue(data);
+	return redactSensitiveValue(data);
 }
 
 export function formatDiagnosticText(commandInfo: CommandInfo, data: Record<string, unknown>): string | undefined {

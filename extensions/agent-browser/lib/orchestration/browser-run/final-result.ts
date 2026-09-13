@@ -159,7 +159,7 @@ export function buildJsonVisibleContent(options: {
 	warnings?: string[];
 }): AgentBrowserToolResult["content"] {
 	const { error, presentation, succeeded, warnings } = options;
-	const payload = redactSensitiveValue({ artifacts: presentation.artifacts, data: presentation.data, error, success: succeeded, warnings: warnings && warnings.length > 0 ? warnings : undefined });
+	const payload = redactSensitiveValue({ artifacts: presentation.artifacts, data: presentation.data, error, recordingRecovery: presentation.recordingRecovery, readConfirmation: presentation.readConfirmation, success: succeeded, warnings: warnings && warnings.length > 0 ? warnings : undefined });
 	if (isRecord(payload) && isRecord(payload.data) && isRecord(presentation.data) && typeof presentation.data.wsUrl === "string") payload.data.wsUrl = presentation.data.wsUrl;
 	const images = presentation.content.filter((item): item is { data: string; mimeType: string; type: "image" } => item.type === "image");
 	return [{ type: "text", text: JSON.stringify(payload, null, 2) }, ...images];
@@ -296,6 +296,7 @@ export async function prepareFinalResultRecoveryState(options: {
 }
 
 function buildTimeoutPartialProgressNextActions(options: FinalResultInput): AgentBrowserNextAction[] {
+	if (options.executionPlan.commandInfo.command === "session" && options.executionPlan.commandInfo.subcommand === "info") return [];
 	const retry = options.timeoutPartialProgress?.retryStep?.retry;
 	const stepIndex = options.timeoutPartialProgress?.retryStep?.index;
 	const freshSessionAbandoned = options.sessionMode === "fresh" && options.timeoutPartialProgress?.liveUrlRecovered !== true;
@@ -362,6 +363,7 @@ function buildDialogTimeoutNextActions(options: { command?: string; sessionName?
 }
 
 function buildResultNextActions(options: FinalResultInput): AgentBrowserNextAction[] | undefined {
+	if (options.presentation.recordingRecovery || options.presentation.readConfirmation) return options.presentation.nextActions;
 	let nextActions = options.presentation.nextActions ? [...options.presentation.nextActions] : [];
 	const append = (actions: AgentBrowserNextAction[] | undefined): void => {
 		if (actions && actions.length > 0) nextActions.push(...actions);
@@ -433,7 +435,7 @@ function getReadSource(options: FinalResultInput): string | undefined {
 function formatReadExecutionText(options: FinalResultInput, lifecycle: AgentBrowserLifecycle | undefined): string | undefined {
 	const source = getReadSource(options);
 	if (!source) return undefined;
-	return `Read execution: source ${source}; CLI started: ${options.processResult.agentBrowserStarted ? "yes" : "no"}; managed browser lifecycle active: ${lifecycle?.effectiveLaunch.browserLaunched === true ? "yes" : "no"}; managed session outcome: ${options.managedSessionOutcome?.status ?? "not managed"}.`;
+	return `Read execution: source ${source}; CLI started: ${options.processResult.agentBrowserStarted ? "yes" : "no"}; reported browserLaunched: ${lifecycle ? String(lifecycle.effectiveLaunch.browserLaunched) : "unknown"}; managed session outcome: ${options.managedSessionOutcome?.status ?? "not managed"}. An HTTP read does not establish shared-browser liveness; use session info for that.`;
 }
 
 function buildBrowserWindowStatus(options: FinalResultInput, lifecycle: AgentBrowserLifecycle | undefined): AgentBrowserWindow | undefined {
@@ -480,6 +482,8 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		browserWindow,
 		lifecycle,
 		readSource: getReadSource(options),
+		recordingRecovery: options.presentation.recordingRecovery,
+		readConfirmation: options.presentation.readConfirmation,
 		aboutBlankSessionMismatch: options.aboutBlankSessionMismatch,
 		electronPostCommandHealth: options.electronPostCommandHealth,
 		electronRefFreshness: options.electronRefFreshnessDiagnostic,

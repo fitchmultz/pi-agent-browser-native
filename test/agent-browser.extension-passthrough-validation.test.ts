@@ -64,8 +64,11 @@ process.stdout.write(JSON.stringify({ success: true, data: JSON.parse(fs.readFil
 					await writeFile(dataPath, JSON.stringify(data));
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fixture", "session", "info"] });
 					assert.equal(result.isError, false);
-					assert.deepEqual(JSON.parse(result.content[0]?.text ?? ""), data);
-					assert.deepEqual(result.details?.data, data);
+					const text = result.content[0]?.text ?? "";
+					assert.ok(text.startsWith(`Daemon: ${status.active ? "active" : "inactive"}; PID: ${status.pid ?? "unknown"}\n`));
+					assert.match(text, /\nBrowser: unknown; alive: unknown; Chrome PID: unknown\nExact profile: unknown\nNative browser ownership: unknown; Pi cleanup ownership: caller-owned\n\n/);
+					assert.deepEqual(JSON.parse(text.slice(text.indexOf("\n\n") + 2)), data);
+					assert.deepEqual(result.details?.data, { ...data, piCleanupOwnership: "caller-owned" });
 				}
 				await writeFile(dataPath, JSON.stringify({ session: "fixture" }));
 				const legacy = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "fixture", "session", "info"] });

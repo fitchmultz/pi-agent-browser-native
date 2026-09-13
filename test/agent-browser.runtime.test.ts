@@ -1922,6 +1922,75 @@ test("buildExecutionPlan injects and retains site-specific headless compatibilit
 	}
 });
 
+test("redaction preserves harmless URL spelling", () => {
+	for (const url of ["https://EXAMPLE.com", "HTTPS://EXAMPLE.com:443/A%2fb?q=a%20b&state=open&nonce=7#part", "ws://127.0.0.1:9222"]) {
+		assert.equal(redactSensitiveText(`Read ${url}`), `Read ${url}`);
+		assert.deepEqual(redactInvocationArgs(["open", url]), ["open", url]);
+		const serialized = JSON.stringify({ evidence: { prehydration: JSON.stringify({ url }) } }, null, 2);
+		assert.equal(redactSensitiveText(serialized), serialized);
+		assert.deepEqual(redactSensitiveValue({ result: serialized }), { result: serialized });
+	}
+});
+
+test("redactSensitiveText preserves nested serialized JSON through repeated redaction", () => {
+	const prehydration = { url: "https://example.test/callback?authorization_session_id=private-fixture&state=flow-fixture", label: 'A "quoted" value', count: 2, ready: true, missing: null };
+	const serialized = JSON.stringify({ evidence: { prehydration: JSON.stringify(prehydration), apiKey: "adjacent-fixture" }, values: [1, false, null] }, null, 2);
+	const redacted = redactSensitiveText(serialized);
+	const parsed = JSON.parse(redacted);
+	assert.equal(typeof parsed.evidence.prehydration, "string");
+	assert.deepEqual(JSON.parse(parsed.evidence.prehydration), {
+		...prehydration,
+		url: "https://example.test/callback?authorization_session_id=%5BREDACTED%5D&state=%5BREDACTED%5D",
+	});
+	assert.equal(parsed.evidence.apiKey, "[REDACTED]");
+	assert.deepEqual(parsed.values, [1, false, null]);
+	assert.doesNotMatch(redacted, /private-fixture|flow-fixture|adjacent-fixture/);
+	assert.equal(redactSensitiveText(redacted), redacted);
+	assert.deepEqual(redactSensitiveValue({ result: redacted }), { result: redacted });
+});
+
+test("redactSensitiveText redacts every serialized JSON member without dropping duplicates", () => {
+	for (const [source, expected] of [
+		['{"url":"https://example.test/callback?token=synthetic-secret","url":"https://example.test/safe"}', '{"url":"https://example.test/callback?token=%5BREDACTED%5D","url":"https://example.test/safe"}'],
+		['{"value":"Authorization: Bearer synthetic-secret","value":"ordinary"}', '{"value":"Authorization: Bearer [REDACTED]","value":"ordinary"}'],
+		['{"value":"Cookie: sid=synthetic-secret","value":"ordinary"}', '{"value":"Cookie: [REDACTED]","value":"ordinary"}'],
+		['{"\\u0061piKey":{"nested":"synthetic-first"},"apiKey":["synthetic-second"],"apiKey":1234,"apiKey":false,"apiKey":null,"apiKey":"synthetic-third"}', '{"\\u0061piKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]","apiKey":"[REDACTED]"}'],
+	]) {
+		const redacted = redactSensitiveText(source);
+		assert.equal(redacted, expected);
+		assert.equal(redactSensitiveText(redacted), expected);
+		assert.deepEqual(redactSensitiveValue({ result: source }), { result: expected });
+	}
+});
+
+test("redactSensitiveText preserves serialized JSON numeric and literal source", () => {
+	const source = '{\n  "url" : "https://example.test/callback?token=synthetic-secret",\n  "requestId":9007199254740993,\n  "values":[-0,1.2300e+02,"0","false","null",null,true,false],\n  "label":"\\u0041"\n}\n';
+	const harmless = source.replace("token=synthetic-secret", "view=all");
+	assert.equal(redactSensitiveText(harmless), harmless);
+	const expected = source.replace("synthetic-secret", "%5BREDACTED%5D");
+	assert.equal(redactSensitiveText(source), expected);
+	assert.equal(redactSensitiveText(expected), expected);
+	for (const value of ['"\\u0041"', '[null,true,false,9007199254740993,"0","false","null"]']) {
+		assert.equal(redactSensitiveText(value), value);
+	}
+});
+
+test("redactSensitiveText redacts auth URL keys in serialized JSON text", () => {
+	const source = '{ "https://example.test/callback?token=synthetic-secret" : 9007199254740993 }';
+	const expected = '{ "https://example.test/callback?token=%5BREDACTED%5D" : 9007199254740993 }';
+	assert.equal(redactSensitiveText(source), expected);
+	assert.equal(redactSensitiveText(expected), expected);
+});
+
+test("redactSensitiveText masks embedded JSON secrets before plaintext URL redaction", () => {
+	const source = "Payload: " + JSON.stringify({ evidence: { prehydration: JSON.stringify({ url: "https://example.test/callback?authorization_session_id=private-fixture&state=flow-fixture" }), apiKey: "adjacent-fixture" } });
+	const redacted = redactSensitiveText(source);
+	assert.match(redacted, /^Payload: /);
+	assert.match(redacted, /"apiKey":"\[REDACTED\]"/);
+	assert.doesNotMatch(redacted, /private-fixture|flow-fixture|adjacent-fixture/);
+	assert.equal(redactSensitiveText(redacted), redacted);
+});
+
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(redactInvocationArgs(["--headers", '{"Authorization":"Bearer demo"}', "open", "https://user:pass@example.com/path?token=abc&ok=1#access_token=xyz"]), [
 		"--headers",
@@ -1937,6 +2006,10 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"open",
 		"https://example.com/sso?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&ok=1",
 	]);
+	assert.deepEqual(redactInvocationArgs(["open", "https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=https%3A%2F%2Fexample.invalid%2Freturn&state=EXAMPLE_STATE&nonce=EXAMPLE_NONCE&Authorization%2DSession%2DId=EXAMPLE_ID"]), [
+		"open",
+		"https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=https%3A%2F%2Fexample.invalid%2Freturn&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&Authorization-Session-Id=%5BREDACTED%5D",
+	]);
 	assert.deepEqual(redactInvocationArgs(["open", "https://example.com/orders?state=open&nonce=7"]), [
 		"open",
 		"https://example.com/orders?state=open&nonce=7",
@@ -1948,7 +2021,7 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(redactInvocationArgs(["--proxy=http://user:pass@proxy.example:8080", "open", "https://example.com"]), [
 		"--proxy=[REDACTED]",
 		"open",
-		"https://example.com/",
+		"https://example.com",
 	]);
 	assert.deepEqual(redactInvocationArgs(["network", "route", "**/api", "--body", '{"token":"route-secret"}']), [
 		"network",
@@ -1985,7 +2058,7 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 		"sid",
 		"[REDACTED]",
 		"--url",
-		"https://example.com/",
+		"https://example.com",
 	]);
 	assert.deepEqual(redactInvocationArgs(["storage", "local", "set", "authToken", "storage-secret"]), [
 		"storage",
@@ -2009,25 +2082,54 @@ test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	]);
 });
 
-test("redactSensitiveText preserves help placeholders while redacting bearer credentials", () => {
+test("redactSensitiveText preserves bearer prose while redacting credential contexts", () => {
+	for (const text of [
+		"The endpoint requires a bearer token.",
+		"Bearer authentication uses an access token.",
+		"Do not log bearer tokens or bearer credentials.",
+		"The phrase “bearer token.” is public.",
+		"Description: Bearer authentication uses an access token.",
+		"Authorization bearer tokens are credentials.",
+		"Bearer <code>token</code>",
+		"Bearer https://docs.example/guide",
+		"Use `bearer token.` or **bearer authentication.** as technical terms.",
+	]) assert.equal(redactSensitiveText(text), text);
 	assert.equal(
 		redactSensitiveText('Headers help: --headers <json> (e.g., Authorization bearer token)'),
 		'Headers help: --headers <json> (e.g., Authorization bearer token)',
 	);
 	assert.equal(redactSensitiveText("Error: Authorization: Bearer raw-token)"), "Error: Authorization: Bearer [REDACTED])");
 	assert.equal(redactSensitiveText("Authorization bearer raw-token."), "Authorization bearer [REDACTED].");
-	assert.equal(redactSensitiveText("Authorization bearer secrettoken"), "Authorization bearer [REDACTED]");
-	assert.equal(redactSensitiveText("Authorization bearer token,"), "Authorization bearer [REDACTED],");
+	assert.equal(redactSensitiveText("Authorization bearer secrettoken"), "Authorization bearer secrettoken");
+	assert.equal(redactSensitiveText("Authorization bearer token,"), "Authorization bearer token,");
 	assert.equal(redactSensitiveText("curl -H 'Bearer secrettoken'"), "curl -H 'Bearer [REDACTED]'");
 	assert.equal(redactSensitiveText("curl -H 'Bearer abc123'"), "curl -H 'Bearer [REDACTED]'");
 	assert.equal(redactSensitiveText("curl -H 'Bearer token.'"), "curl -H 'Bearer [REDACTED].'");
+	const proxyHeader = redactSensitiveText("Proxy-Authorization: Bearer token");
+	assert.match(proxyHeader, /^Proxy-Authorization:.*\[REDACTED\]$/);
+	assert.doesNotMatch(proxyHeader, /\btoken\b/);
+	assert.equal(redactSensitiveText("curl --header='Bearer token'"), "curl --header='Bearer [REDACTED]'");
+	for (const text of ["Authorization: 'Bearer canary'", "Authorization=Bearer canary", "X-Api-Key: Bearer canary"]) {
+		const redacted = redactSensitiveText(text);
+		assert.match(redacted, /\[REDACTED\]/);
+		assert.doesNotMatch(redacted, /canary/);
+	}
+	assert.equal(redactSensitiveText("Observed Bearer mF_9.B5f-4.1JqM."), "Observed Bearer [REDACTED].");
+	assert.deepEqual(redactSensitiveValue({ Authorization: "Bearer token", "Proxy-Authorization": "Bearer credentials" }), { Authorization: "[REDACTED]", "Proxy-Authorization": "[REDACTED]" });
 	assert.equal(
 		redactSensitiveText("OPENAI_API_KEY=openai-secret AWS_SECRET_ACCESS_KEY: aws-secret export STRIPE_SECRET_KEY='stripe-secret' PRIVATE_KEY=-----BEGIN_PRIVATE_KEY----- X-Private-Key: prose-header-secret private-key=prose-key API-KEY=prose-api Secret-Key: prose-secret apiKey=camel-api privateKey: camel-private connectionString=camel-connection databaseUrl: camel-db mongodbUri=mongodb://user:pass@example/db MONGODB_URI=mongodb://user:pass@example/db failedChecks=true"),
 		"OPENAI_API_KEY=[REDACTED] AWS_SECRET_ACCESS_KEY: [REDACTED] export STRIPE_SECRET_KEY=[REDACTED] PRIVATE_KEY=[REDACTED] X-Private-Key: [REDACTED] private-key=[REDACTED] API-KEY=[REDACTED] Secret-Key: [REDACTED] apiKey=[REDACTED] privateKey: [REDACTED] connectionString=[REDACTED] databaseUrl: [REDACTED] mongodbUri=[REDACTED] MONGODB_URI=[REDACTED] failedChecks=true",
 	);
+	for (const prefix of ["API_KEY=", "X-Api-Key: "]) {
+		assert.equal(redactSensitiveText(`${prefix}{"value":"assignment-fixture"} status=ok`), `${prefix}[REDACTED] status=ok`);
+	}
 	assert.equal(
 		redactSensitiveText("Redirect /sso?SAMLRequest=request-secret&SAMLResponse=response-secret&RelayState=relay-secret#state=oauth-secret&nonce=oidc-secret"),
 		"Redirect /sso?SAMLRequest=[REDACTED]&SAMLResponse=[REDACTED]&RelayState=[REDACTED]#state=[REDACTED]&nonce=[REDACTED]",
+	);
+	assert.equal(
+		redactSensitiveText("Redirect /?authorizationSessionId=EXAMPLE_ID&state=EXAMPLE_STATE#nonce=EXAMPLE_NONCE&view=table"),
+		"Redirect /?authorizationSessionId=[REDACTED]&state=[REDACTED]#nonce=[REDACTED]&view=table",
 	);
 	assert.equal(redactSensitiveText("Login help. Status /orders?state=open&nonce=7"), "Login help. Status /orders?state=open&nonce=7");
 	assert.equal(

@@ -246,9 +246,7 @@ export function injectLifecycleSentinelSource(source, token) {
 		new RegExp(`\\n\\t${SENTINEL_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?\\n\\t${SENTINEL_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n`),
 		"\n",
 	);
-	const marker = withoutOldSentinel.includes("export default function agentBrowserExtension(pi: ExtensionAPI) {")
-		? "export default function agentBrowserExtension(pi: ExtensionAPI) {"
-		: "export default function agentBrowserExtension(pi) {";
+	const marker = "export default function agentBrowserExtension(pi, { beforeExecute } = {}) {";
 	const snippet = `
 	${SENTINEL_MARKER_START}
 	pi.registerCommand(${JSON.stringify(lifecycleSentinelCommand(token))}, {

@@ -8,7 +8,7 @@ import type {
 import { isPendingRecordingArtifact } from "./artifact-manifest.js";
 
 function hasUnverifiedFileArtifact(artifacts: FileArtifactMetadata[] | undefined): boolean {
-	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && artifact.exists !== true);
+	return (artifacts ?? []).some((artifact) => !isPendingRecordingArtifact(artifact) && (artifact.exists !== true || ["failed", "stale", "unverified"].includes(artifact.status ?? "")));
 }
 
 export function classifyAgentBrowserSuccessCategory(options: {
@@ -17,8 +17,9 @@ export function classifyAgentBrowserSuccessCategory(options: {
 	savedFile?: SavedFilePresentationDetails;
 }): AgentBrowserSuccessCategory {
 	if (options.inspection) return "inspection";
+	if (hasUnverifiedFileArtifact(options.artifacts)) return "artifact-unverified";
 	if ((options.artifacts ?? []).some(isPendingRecordingArtifact)) return "artifact-pending";
-	if ((options.artifacts ?? []).length > 0) return hasUnverifiedFileArtifact(options.artifacts) ? "artifact-unverified" : "artifact-saved";
+	if ((options.artifacts ?? []).length > 0) return "artifact-saved";
 	if (options.savedFile) return "artifact-saved";
 	return "completed";
 }

@@ -6,8 +6,9 @@ export function isPendingRecordingCommand(command: string | undefined, subcomman
 	return command === "record" && (subcommand === "start" || subcommand === "restart") && kind === "video";
 }
 
-export function isPendingRecordingArtifact(artifact: FileArtifactMetadata): boolean {
-	return isPendingRecordingCommand(artifact.command, artifact.subcommand, artifact.kind);
+export function isPendingRecordingArtifact(artifact: Pick<FileArtifactMetadata, "command" | "subcommand" | "status" | "recordingState"> & { kind: FileArtifactKind | "spill" }): boolean {
+	return artifact.recordingState === "openRecording" || artifact.status === "pending"
+		|| (artifact.status === undefined && isPendingRecordingCommand(artifact.command, artifact.subcommand, artifact.kind));
 }
 
 export const SESSION_ARTIFACT_MANIFEST_VERSION = 1;
@@ -97,9 +98,9 @@ export function retirePendingRecordingManifestEntries(
 			|| !entry.session
 			|| getAgentBrowserSessionIdentityKey(entry.session, entry.namespace) !== sessionKey
 			|| entry.kind !== "video"
-			|| !isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind)) return entry;
+			|| !isPendingRecordingArtifact(entry)) return entry;
 		changed = true;
-		return { ...entry, retentionState: "missing" as const, subcommand: "close-abandoned" };
+		return { ...entry, recordingState: undefined, status: "unverified" as const, subcommand: "close-abandoned" };
 	});
 	if (!changed) return manifest;
 	return {
@@ -137,7 +138,7 @@ export function mergeSessionArtifactManifest(options: {
 				if (candidateKey !== key
 					&& sameRecordingSession
 					&& candidate.kind === "video"
-					&& isPendingRecordingCommand(candidate.command, candidate.subcommand, candidate.kind)) {
+					&& isPendingRecordingArtifact(candidate)) {
 					byPath.delete(candidateKey);
 				}
 			}
@@ -156,7 +157,7 @@ export function mergeSessionArtifactManifest(options: {
 			const leftTime = left.evictedAtMs ?? left.createdAtMs;
 			const rightTime = right.evictedAtMs ?? right.createdAtMs;
 			return rightTime - leftTime
-				|| Number(isPendingRecordingCommand(right.command, right.subcommand, right.kind)) - Number(isPendingRecordingCommand(left.command, left.subcommand, left.kind))
+				|| Number(isPendingRecordingArtifact(right)) - Number(isPendingRecordingArtifact(left))
 				|| left.path.localeCompare(right.path);
 		})
 		.slice(0, maxEntries);

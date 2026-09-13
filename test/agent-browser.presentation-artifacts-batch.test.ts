@@ -137,7 +137,7 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 			commandInfo: { command: "record", subcommand: "stop" },
 			data: { frames: 6, path: "recording.webm" },
 			expectedKind: "video",
-			expectedText: "Saved recording: recording.webm",
+			expectedText: "Recording reported; file not verified: recording.webm",
 		},
 		{
 			commandInfo: { command: "network", subcommand: "har" },
@@ -288,7 +288,7 @@ test("buildToolPresentation renders record restart as a pending lifecycle state"
 	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
 });
 
-test("buildToolPresentation notes the previous recording saved by record restart", async () => {
+test("buildToolPresentation keeps a legacy restart file unverified without a terminal native receipt", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-restart-"));
 	try {
 		const firstPath = join(tempDir, "first.webm");
@@ -307,16 +307,17 @@ test("buildToolPresentation notes the previous recording saved by record restart
 			envelope: { success: true, data: { path: restartedPath } },
 		});
 
-		assert.match(restarted.summary, /Previous recording saved: .*first\.webm/);
+		assert.match(restarted.summary, /Previous recording unverified: .*first\.webm/);
 		assert.match(restarted.summary, /Recording restarted; output will be written on stop: .*restarted\.webm/);
 		const text = (restarted.content[0] as { text: string }).text;
-		assert.match(text, /Previous recording saved: .*first\.webm/);
+		assert.match(text, /Previous recording unverified: .*first\.webm/);
 		assert.match(text, /Recording restarted; output will be written on stop: .*restarted\.webm/);
 		assert.deepEqual(restarted.artifacts?.map((artifact) => ({ exists: artifact.exists, path: artifact.path, status: artifact.status, subcommand: artifact.subcommand })), [
-			{ exists: true, path: firstPath, status: "saved", subcommand: "restart-previous" },
+			{ exists: true, path: firstPath, status: "unverified", subcommand: "restart-previous" },
 			{ exists: undefined, path: restartedPath, status: "pending", subcommand: "restart" },
 		]);
-		assert.equal(restarted.artifactVerification?.verifiedCount, 1);
+		assert.equal(restarted.artifactVerification?.verifiedCount, 0);
+		assert.equal(restarted.artifactVerification?.unverifiedCount, 1);
 		assert.equal(restarted.artifactVerification?.pendingCount, 1);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1049,7 +1050,7 @@ test("buildToolPresentation preserves non-screenshot file artifacts inside batch
 	assert.match(text, /Recording started; output will be written on stop: recording\.webm/);
 	assert.doesNotMatch(presentation.batchSteps?.[2]?.text ?? "", /Saved recording|not found on disk/);
 	assert.match(text, /Step 4 — record stop/);
-	assert.match(text, /Saved recording: recording\.webm/);
+	assert.match(text, /Recording reported; file not verified: recording\.webm/);
 	assert.match(text, /Step 5 — network har stop network\.har/);
 	assert.match(text, /Saved HAR: network\.har/);
 	assert.deepEqual(presentation.artifacts?.map((artifact) => artifact.kind), ["trace", "profile", "video", "har"]);

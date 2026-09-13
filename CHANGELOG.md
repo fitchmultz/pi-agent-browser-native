@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.11 - 2026-09-12
+
 ### Added
 
 - Set `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES=0` to disable automatic persistent-session spill eviction. The default remains 32 MiB; positive limits and temporary spill cleanup are unchanged.
@@ -9,8 +11,26 @@
 
 ### Fixed
 
+- Keep explicit URL reads and all-read batches out of browser preflights, managed-session replacement and timeout page probes. Preserve existing owned daemon settings and unsaved page state across reads, including after reload/resume.
+- Keep read-first scripts connected to the daemon created by their fresh isolated session, including after a failed HTTP read, without enabling restore or adding browser preflights.
+- Preserve policy-required read confirmations in the correct native session; only native ID-check capability enables browser-independent confirm/deny, including when the DOM target is unknown. Report failed confirmed reads as failures on older natives too, and retain the correct actions when a new DOM confirmation replaces a pending read.
+- Resolve source-build dependencies through their ESM exports so Git installs and package preparation do not reinstall dependencies that are already available.
+- Separate daemon and browser identity in `session info`, including native ownership versus Pi cleanup ownership and explicit unknowns for unavailable fields. Timed-out status checks preserve page state and offer a status-only retry.
+- Carry native recording receipts and actual capture/encoder measurements through direct, restart and batch results, including failures. Recover uncertain stops with one bounded, identity-matched native receipt query; keep original attempt evidence and export failed or recovered recording receipts without overwriting artifacts.
+- Preserve harmless bearer technical prose and unchanged URL spelling. Credential replacements remain visibly marked, and structured results use the same URL redaction as visible text and exports.
+- Redact `authorization_session_id` in URLs, including contextual `state` / `nonce`, from model-visible content, details, and explicit result exports while preserving ordinary query values.
+- Preserve nested serialized JSON, duplicate members and exact numeric literals during redaction; scrub auth URL keys and adjacent secrets before plaintext formatting.
+- Bound eval and get summaries for large single-line output while retaining complete source in spills and exports.
 - Honor configured native session/namespace defaults as caller-owned browsers across Pi sessions, including ordinary structured calls and helpers, without imposing implicit-session idle policy or quit cleanup.
 - Keep disposable script sessions out of native user/project profile defaults by using an empty temporary config through execution and cleanup. Reject inner `--config` overrides without restricting ordinary native `args`.
+
+### Known limitations
+
+- Full native browser-independent read/confirmation behavior, live browser identity, and detailed recording receipts require matching upstream support, currently in unmerged [agent-browser PR #1844](https://github.com/vercel-labs/agent-browser/pull/1844). Public 0.37.1 lacks these companion fixes; wrapper-owned read continuity does not add missing native capabilities. Missing native facts remain unknown; absent evidence does not imply a guarantee.
+
+### Validation
+
+- The macOS-SSH and native-Windows platform gates were explicitly waived for this release and were not run. Permanent release gates are unchanged.
 
 ## 0.6.10 - 2026-09-08
 

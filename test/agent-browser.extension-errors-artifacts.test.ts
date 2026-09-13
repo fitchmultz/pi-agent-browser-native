@@ -1529,8 +1529,8 @@ if (args.includes("batch")) {
 			assert.equal(largeReadResult.details?.agentBrowserStarted, true);
 			assert.equal(largeReadResult.details?.readSource, "raw");
 			assert.deepEqual(largeReadResult.details?.lifecycle, { effectiveLaunch: { browserLaunched: false } });
-			assert.match(largeReadResult.content[0]?.text ?? "", /Read execution: source raw; CLI started: yes; managed browser lifecycle active: no; managed session outcome: unchanged\./);
-			assert.equal((largeReadResult.details?.managedSessionOutcome as { status?: string } | undefined)?.status, "unchanged");
+			assert.match(largeReadResult.content[0]?.text ?? "", /Read execution: source raw; CLI started: yes; reported browserLaunched: false; managed session outcome: not managed\./);
+			assert.equal(largeReadResult.details?.managedSessionOutcome, undefined);
 			const fullReadText = await readFile(join(tempDir, "logs/full-read.json"), "utf8");
 			const fullRead = JSON.parse(fullReadText) as Record<string, unknown>;
 			assert.match(String(fullRead.content), /END-SENTINEL Authorization: Bearer \[REDACTED\]$/);

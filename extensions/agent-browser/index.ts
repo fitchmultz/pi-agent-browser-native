@@ -31,6 +31,7 @@ import {
 	restoreManagedSessionStateFromBranch,
 	validateToolArgs,
 	redactSensitiveText,
+	redactSensitiveValue,
 	isPlainTextInspectionArgs,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
@@ -76,7 +77,7 @@ import {
 	type ElectronLaunchRecord,
 } from "./lib/orchestration/electron-host/index.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
-import { applyAgentBrowserOutputPath, normalizeRequestedOutputPath } from "./lib/orchestration/output-file.js";
+import { applyAgentBrowserOutputPath, canWriteAgentBrowserOutput, normalizeRequestedOutputPath } from "./lib/orchestration/output-file.js";
 import { appendScriptSessionLease, buildScriptBrowserEnvelope, buildScriptToolResult, getScriptSessionLeasesFromBranch } from "./lib/orchestration/script-mode.js";
 import type { FileArtifactMetadata, NetworkRouteRecord, SessionArtifactManifest } from "./lib/results/contracts.js";
 import { formatSessionArtifactRetentionSummary, getSessionArtifactManifestEntryKey, isPendingRecordingCommand, isSessionArtifactManifest, mergeSessionArtifactManifest, retirePendingRecordingManifestEntries } from "./lib/results/artifact-manifest.js";
@@ -90,6 +91,7 @@ import {
 	type ActiveRecordingReservation,
 } from "./lib/recording-reservations.js";
 import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
+import { scopeReadConfirmationArgs } from "./lib/read-confirmation.js";
 import {
 	isDirectAgentBrowserBashAllowed,
 	isHarmlessAgentBrowserInspectionCommand,
@@ -250,25 +252,7 @@ function getResultFileArtifacts(result: AgentBrowserToolResult): FileArtifactMet
 	return Array.isArray(details?.artifacts) ? details.artifacts.filter(isResultFileArtifact) : [];
 }
 
-function reportsNoRecordingInProgress(value: unknown): boolean {
-	try {
-		return /no recording in progress/i.test(JSON.stringify(value));
-	} catch {
-		return false;
-	}
-}
 
-function batchStepReportsNoRecordingInProgress(step: unknown): boolean {
-	if (!isRecord(step) || step.success !== false) return false;
-	const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? extractUpstreamCommandTokens(step.command) : [];
-	return command[0] === "record" && command[1] === "stop" && reportsNoRecordingInProgress(step);
-}
-
-function resultReportsNoRecordingInProgress(result: AgentBrowserToolResult): boolean {
-	if (result.isError !== true) return false;
-	const details = isRecord(result.details) ? result.details : undefined;
-	return details?.command === "record" && details.subcommand === "stop" && reportsNoRecordingInProgress(result.content);
-}
 
 function restoreArtifactManifestFromBranch(branch: unknown[]): SessionArtifactManifest | undefined {
 	let restoredManifest: SessionArtifactManifest | undefined;
@@ -1031,6 +1015,7 @@ export default function agentBrowserExtension(
 	const appendActiveRecordingCleanupAction = (result: AgentBrowserToolResult, reservation: ActiveRecordingReservation): AgentBrowserToolResult => {
 		if (result.isError !== true) return result;
 		const details = isRecord(result.details) ? result.details : {};
+		if (details.recordingRecovery) return result;
 		const cleanupOnly = details.managedSessionCleanupOnlyReason === "restore-disabled-daemon-without-provenance";
 		const nextActions = (Array.isArray(details.nextActions) ? details.nextActions as AgentBrowserNextAction[] : [])
 			.filter((action) => !cleanupOnly || action.id !== "stop-pending-recording");
@@ -1090,12 +1075,6 @@ export default function agentBrowserExtension(
 			const command = Array.isArray(step.command) && step.command.every((token) => typeof token === "string") ? step.command : undefined;
 			const commandTokens = command ? extractUpstreamCommandTokens(command) : [];
 			const commandName = commandTokens[0];
-			if (resultSessionName && batchStepReportsNoRecordingInProgress(step)) {
-				const sessionKey = getAgentBrowserSessionIdentityKey(resultSessionName, resultNamespace);
-				retireRecordingSession(resultSessionName, resultNamespace, false);
-				handledClosedSessionKeys.add(sessionKey);
-				continue;
-			}
 			if (step.success === true && commandName && isCloseCommand(commandName) && resultSessionName) {
 				const sessionKey = getAgentBrowserSessionIdentityKey(resultSessionName, resultNamespace);
 				retireRecordingSession(resultSessionName, resultNamespace, false);
@@ -1261,7 +1240,7 @@ export default function agentBrowserExtension(
 		}
 		for (const [key, reservation] of activeRecordingReservations) {
 			const restored = restoredRecordingState.active.get(key);
-			if (restored?.absolutePath !== reservation.absolutePath || restored.cwd !== reservation.cwd) recordingReservationsDirty = true;
+			if (restored?.absolutePath !== reservation.absolutePath || restored.cwd !== reservation.cwd || restored.recordingId !== reservation.recordingId || restored.startedAtMs !== reservation.startedAtMs) recordingReservationsDirty = true;
 			restoredRecordingState.active.set(key, reservation);
 		}
 		activeRecordingReservations = restoredRecordingState.active;
@@ -1522,11 +1501,13 @@ export default function agentBrowserExtension(
 			}
 			if (resolvedInput.kind !== "script") await beforeExecute?.(nativeToolCallId, { ...ctx, signal });
 			return withNativeSessionDefaults(resolvedInput, ctx.cwd, signal, async (resolvedInput) => {
+			const readConfirmation = sessionPageState.findReadConfirmation(resolvedInput.toolArgs, resolveAgentBrowserNamespace(resolvedInput.toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE));
+			if (readConfirmation) resolvedInput = { ...resolvedInput, toolArgs: scopeReadConfirmationArgs(resolvedInput.toolArgs, readConfirmation) };
 			if (resolvedInput.kind === "qa" && resolvedInput.compiledQaPreset.checks.attached && !managedSessionActive && !extractExplicitSessionName(resolvedInput.toolArgs)) {
 				return buildValidationFailureResult({ ...resolvedInput, attemptedKind: "qa", kind: "invalid", status: "invalid", validationError: "qa.attached requires an active attached session. Run electron.launch or connect to an Electron debug port first, or configure a native shared session." });
 			}
 			const applyUnserializedOutputPath = async (result: AgentBrowserToolResult, preserveTextContent = false): Promise<AgentBrowserToolResult> => {
-				if (!outputPath || result.isError === true || (isRecord(result.details) && result.details.resultCategory === "failure")) return warnRecordingPersistence(result);
+				if (!outputPath || !canWriteAgentBrowserOutput(result)) return warnRecordingPersistence(result);
 				return artifactExecutionQueue.run(async () => {
 					flushRecordingReservations();
 					const reservationError = getArtifactPreflightValidationError({
@@ -1543,7 +1524,7 @@ export default function agentBrowserExtension(
 			};
 			const versionCheckCommand = extractUpstreamCommandTokens(resolvedInput.toolArgs)[0];
 			const electronHostOnlyAction = resolvedInput.kind === "electron" && ["cleanup", "list", "status"].includes(resolvedInput.compiledElectron.action);
-			const browserBackedVersionCheck = needsManagedSession(parseArgvDescriptor(resolvedInput.toolArgs));
+			const browserBackedVersionCheck = readConfirmation?.capabilities?.readRequiresConfirmation !== true && needsManagedSession(parseArgvDescriptor(resolvedInput.toolArgs), resolvedInput.toolStdin);
 			if (resolvedInput.kind !== "script" && !electronHostOnlyAction && browserBackedVersionCheck && !isPlainTextInspectionArgs(resolvedInput.toolArgs) && !isCloseCommand(versionCheckCommand) && signal?.aborted !== true) {
 				const versionFailure = await validateUpstreamVersion(ctx.cwd, signal);
 				if (versionFailure) return applyAgentBrowserOutputPath({ cwd: ctx.cwd, outputPath, result: versionFailure });
@@ -1593,6 +1574,8 @@ export default function agentBrowserExtension(
 							appendScriptSessionLease(pi, sessionName, "active");
 							trackOwnedManagedSession(ownedManagedSessions, sessionName, ctx.cwd, { namespace: AGENT_BROWSER_SCRIPT_NAMESPACE });
 							managedSessionRestoreState.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
+							// This fresh, unselectable lease owns any daemon its first read starts.
+							managedSessionRestoreState.recordDaemonRestoreKey(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE, null);
 							leased = true;
 						},
 						code: resolvedInput.compiledScript.code,
@@ -1643,7 +1626,7 @@ export default function agentBrowserExtension(
 						...scriptResult,
 						details: {
 							...(isRecord(scriptResult.details) ? scriptResult.details : {}),
-							artifactManifest,
+							artifactManifest: redactSensitiveValue(artifactManifest),
 							artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest),
 						},
 					};
@@ -1715,7 +1698,7 @@ export default function agentBrowserExtension(
 							...electronHostResult,
 							details: {
 								...(isRecord(electronHostResult.details) ? electronHostResult.details : {}),
-								artifactManifest,
+								artifactManifest: redactSensitiveValue(artifactManifest),
 								artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest),
 							},
 						};
@@ -1766,6 +1749,7 @@ export default function agentBrowserExtension(
 				const generationAtStart = branchStateGeneration;
 				const sessionPageStateUpdate = sessionPageState.beginUpdate();
 				const browserRunState: BrowserRunState = {
+					activeRecordingReservations,
 					artifactManifest,
 					attachedSessionKeys,
 					closedManagedSessionNames: new Set<string>(),
@@ -1794,6 +1778,8 @@ export default function agentBrowserExtension(
 					managedSessionName: browserRunState.managedSessionName,
 					managedSessionNamespace: browserRunState.managedSessionNamespace,
 					sessionMode: compiledElectron?.action === "launch" ? "fresh" : params.sessionMode ?? "auto",
+					stdin: resolvedInput.toolStdin,
+					browserIndependentReadConfirmation: readConfirmation?.capabilities?.readRequiresConfirmation === true,
 				});
 				const initialArtifactManifest = browserRunState.artifactManifest;
 				const initialNetworkRoutesBySession = browserRunState.networkRoutesBySession;
@@ -1868,9 +1854,6 @@ export default function agentBrowserExtension(
 						const reservation = activeRecordingReservations.get(closedSessionKey);
 						if (reservation) retireRecordingSession(reservation.sessionName, reservation.namespace);
 					}
-					if (resultSessionName && resultReportsNoRecordingInProgress(result)) {
-						retireRecordingSession(resultSessionName, resultNamespace);
-					}
 					if (resultSessionName) {
 						const reservation = activeRecordingReservations.get(getAgentBrowserSessionIdentityKey(resultSessionName, resultNamespace));
 						if (reservation) result = appendActiveRecordingCleanupAction(result, reservation);
@@ -1880,7 +1863,7 @@ export default function agentBrowserExtension(
 							...result,
 							details: {
 								...(isRecord(result.details) ? result.details : {}),
-								artifactManifest,
+								artifactManifest: redactSensitiveValue(artifactManifest),
 								artifactRetentionSummary: formatSessionArtifactRetentionSummary(artifactManifest),
 							},
 						};
@@ -1925,6 +1908,7 @@ export default function agentBrowserExtension(
 						managedSessionName,
 						managedSessionNamespace,
 						sessionMode: params.sessionMode ?? "auto",
+						stdin: resolvedInput.toolStdin,
 					});
 					return callerOwnedSessionExecutionQueues.runExclusive(plan.namespace, runBrowserCommand);
 				});
@@ -1944,19 +1928,15 @@ export default function agentBrowserExtension(
 				});
 				if (!artifactValidationError) return runWithinSessionQueue();
 				flushRecordingReservations();
-				return applyAgentBrowserOutputPath({
-					cwd: ctx.cwd,
-					outputPath,
-					result: warnRecordingPersistence(buildValidationFailureResult({
-						attemptedKind: resolvedInput.kind,
-						kind: "invalid",
-						redactedArgs: resolvedInput.redactedArgs,
-						status: "invalid",
-						toolArgs: resolvedInput.toolArgs,
-						toolStdin: resolvedInput.toolStdin,
-						validationError: artifactValidationError,
-					})),
-				});
+				return warnRecordingPersistence(buildValidationFailureResult({
+					attemptedKind: resolvedInput.kind,
+					kind: "invalid",
+					redactedArgs: resolvedInput.redactedArgs,
+					status: "invalid",
+					toolArgs: resolvedInput.toolArgs,
+					toolStdin: resolvedInput.toolStdin,
+					validationError: artifactValidationError,
+				}));
 			});
 			});
 		},

@@ -43,8 +43,10 @@ test("retirePendingRecordingManifestEntries retires only the closed session reco
 	const retired = retirePendingRecordingManifestEntries(manifest, "a", undefined, 4);
 	assert.deepEqual(retired.entries.map((entry) => entry.path), ["a.webm", "b.webm", "a.png"]);
 	assert.equal(retired.entries[0]?.subcommand, "close-abandoned");
-	assert.equal(retired.entries[0]?.retentionState, "missing");
-	assert.equal(retired.liveCount, 2);
+	assert.equal(retired.entries[0]?.retentionState, "live");
+	assert.equal(retired.entries[0]?.status, "unverified");
+	assert.equal(retired.entries[0]?.exists, undefined, "retiring a reservation does not prove a file is missing");
+	assert.equal(retired.liveCount, 3);
 	assert.equal(retired.updatedAtMs, 4);
 });
 
@@ -270,6 +272,13 @@ test("classifyAgentBrowserFailureCategory locks common machine-readable failure 
 	assert.equal(classifyAgentBrowserFailureCategory({ errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), "upstream-error");
 });
 
+test("unverified recording evidence cannot become artifact-saved merely because the file exists", () => {
+	const unverified = { absolutePath: "/tmp/take.webm", path: "take.webm", command: "record", subcommand: "stop", kind: "video" as const, status: "unverified" as const, exists: true };
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [unverified] }), "artifact-unverified");
+	const pending = { ...unverified, absolutePath: "/tmp/next.webm", path: "next.webm", exists: undefined, status: "pending" as const, subcommand: "restart" };
+	assert.equal(classifyAgentBrowserSuccessCategory({ artifacts: [unverified, pending] }), "artifact-unverified");
+});
+
 test("classifyAgentBrowserSuccessCategory locks common machine-readable success categories", () => {
 	assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
 	assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
@@ -299,6 +308,9 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 	}
 	assert.deepEqual(buildAgentBrowserNextActions({ command: "click", resultCategory: "failure", failureCategory: "stale-ref" })?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.equal(buildAgentBrowserNextActions({ command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[0]?.id, "inspect-after-timeout");
+	assert.deepEqual(buildAgentBrowserNextActions({ command: "session", subcommand: "info", resultCategory: "failure", failureCategory: "timeout", sessionName: "named" })?.map(action => ({ id: action.id, args: action.params?.args })), [
+		{ id: "retry-session-info", args: ["--session", "named", "session", "info"] },
+	]);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--url", "**/cart.html"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.map((action) => action.id), ["inspect-after-timeout", "fresh-session-after-url-wait-timeout"]);
 	assert.deepEqual(buildAgentBrowserNextActions({ args: ["wait", "--url", "**/cart.html"], command: "wait", resultCategory: "failure", failureCategory: "timeout" })?.[1]?.params, { args: ["open", "about:blank"], sessionMode: "fresh" });
 	// Fresh-session recovery must stay unprefixed: the planner ignores sessionMode when --session is explicit.

@@ -3,7 +3,7 @@ import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired } from "../confirmation.js";
 import type { AgentBrowserPageChangeSummary, FileArtifactMetadata } from "../contracts.js";
-import { omitUpstreamLifecycle, redactModelFacingText, stringifyModelFacing } from "./common.js";
+import { firstLine, omitUpstreamLifecycle, redactModelFacingText, stringifyModelFacing } from "./common.js";
 
 const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
 
@@ -31,7 +31,7 @@ function getScalarExtractionResult(commandInfo: CommandInfo, data: Record<string
 	if (typeof result === "string") return result.trim().length > 0 ? result : "(empty string)";
 	if (typeof result === "number" || typeof result === "boolean") return String(result);
 	if (result === null || result === undefined) return "null";
-	if (typeof result === "object") return JSON.stringify(result);
+	if (typeof result === "object") return JSON.stringify(result, null, 2);
 	return undefined;
 }
 
@@ -61,7 +61,7 @@ export function formatExtractionSummary(commandInfo: CommandInfo, data: Record<s
 		return undefined;
 	}
 	const safeScalarResult = redactModelFacingText(scalarResult);
-	const firstResultLine = safeScalarResult.split("\n", 1)[0] ?? safeScalarResult;
+	const firstResultLine = firstLine(safeScalarResult);
 	if (commandInfo.command === "get") {
 		return `${formatGetSummaryLabel(commandInfo.subcommand)}: ${firstResultLine}`;
 	}

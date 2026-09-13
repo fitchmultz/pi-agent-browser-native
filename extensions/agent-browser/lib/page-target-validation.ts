@@ -3,7 +3,7 @@ import {
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	VALUE_FLAGS,
 } from "./argv-grammar.js";
-import { needsManagedSession } from "./command-policy.js";
+import { isBrowserIndependentRead, needsManagedSession } from "./command-policy.js";
 import { isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import { type BatchCommandStep, parseBatchCommandArgument, parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 
@@ -182,16 +182,18 @@ function getUnverifiedPageError(options: {
 	pageUrlUnknown?: boolean;
 	trustedBatchTabSelection?: boolean;
 }): string | undefined {
-	if (!options.pageUrlUnknown) return undefined;
-	const { command, subcommand } = parseArgvDescriptor(options.args).commandInfo;
+	const descriptor = parseArgvDescriptor(options.args);
+	if (!options.pageUrlUnknown || !needsManagedSession(descriptor)) return undefined;
+	const { command, subcommand } = descriptor.commandInfo;
 	const closesPage = ["close", "exit", "quit"].includes(command ?? "") || (command === "tab" && subcommand === "close");
 	const inspectsTarget = (command === "tab" && subcommand === "list") || (command === "get" && subcommand === "url");
 	const selectsTab = command === "tab" && subcommand !== undefined && !["close", "list", "new"].includes(subcommand);
 	const settlesPendingWebMcp = command === "webmcp" && ["result", "cancel"].includes(subcommand ?? "");
+	const stopsRecording = command === "record" && subcommand === "stop";
 	const handlesBlockingDialog = command === "dialog" && ["status", "accept", "dismiss"].includes(subcommand ?? "");
 	const transitionsPage = options.allowUnverifiedPageTransitions === true && isRecoveringPageTransitionCommand(command, subcommand);
 	const navigatesExplicitly = getExplicitNavigationTarget(options.args) !== undefined;
-	return closesPage || handlesBlockingDialog || inspectsTarget || selectsTab || settlesPendingWebMcp || transitionsPage || navigatesExplicitly || (options.trustedBatchTabSelection && command === "tab")
+	return closesPage || handlesBlockingDialog || inspectsTarget || selectsTab || settlesPendingWebMcp || stopsRecording || transitionsPage || navigatesExplicitly || (options.trustedBatchTabSelection && command === "tab")
 		? undefined
 		: UNVERIFIED_PAGE_MESSAGE;
 }
@@ -206,6 +208,7 @@ export function getPageTargetValidationError(options: {
 }): string | undefined {
 	const descriptor = parseArgvDescriptor(options.args);
 	const command = descriptor.commandInfo.command;
+	if (isBrowserIndependentRead(descriptor.upstreamCommandTokens, options.stdin)) return undefined;
 	if (["close", "exit", "quit"].includes(command ?? "")) return undefined;
 	if (command === "batch") {
 		if (descriptor.upstreamCommandTokens.slice(1).some((token) => token.startsWith("--bail="))) {
@@ -272,7 +275,7 @@ export function getExplicitSessionPageVerificationRequirement(options: {
 	stdin?: string;
 }): string | undefined {
 	const descriptor = parseArgvDescriptor(options.args);
-	if (!needsManagedSession(descriptor)) return undefined;
+	if (!needsManagedSession(descriptor, options.stdin)) return undefined;
 	if (isRecoveringPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand)) return undefined;
 	const validationError = getPageTargetValidationError({
 		args: options.args,

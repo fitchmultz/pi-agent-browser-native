@@ -1,5 +1,6 @@
 import type { CompiledAgentBrowserSemanticAction } from "../input-modes/types.js";
 import { isRecord } from "../parsing.js";
+import { buildReadConfirmationNextActions, nextReadConfirmation } from "../read-confirmation.js";
 import { extractUpstreamCommandTokens, parseCommandInfo, redactInvocationArgs, type CommandInfo } from "../runtime.js";
 import type { PersistentSessionArtifactStore } from "../temp.js";
 import { buildAgentBrowserNextActions } from "./action-recommendations.js";
@@ -14,7 +15,7 @@ import type {
 	ToolPresentation,
 } from "./contracts.js";
 import { buildSnapshotPresentation } from "./snapshot.js";
-import { parseJsonPreviewString, redactModelFacingText, stringifyModelFacing } from "./presentation/common.js";
+import { redactModelFacingText } from "./presentation/common.js";
 import {
 	applyArtifactManifest,
 	attachInlineImage,
@@ -49,8 +50,7 @@ import { resolvePresentationCommandInfo } from "./presentation/semantic-action.j
 function sanitizeModelFacingPresentation(presentation: ToolPresentation): ToolPresentation {
 	presentation.content = presentation.content.map((item) => {
 		if (item.type !== "text") return item;
-		const parsed = parseJsonPreviewString(item.text);
-		return parsed === item.text ? item : { ...item, text: stringifyModelFacing(parsed) };
+		return { ...item, text: redactModelFacingText(item.text) };
 	});
 	presentation.summary = redactModelFacingText(presentation.summary);
 	return presentation;
@@ -99,6 +99,8 @@ export async function buildToolPresentation(options: {
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	networkRoutes?: import("./contracts.js").NetworkRouteRecord[];
 	persistentArtifactStore?: PersistentSessionArtifactStore;
+	piCleanupOwnership?: "caller-owned" | "wrapper-managed";
+	recordingPending?: boolean;
 	sessionName?: string;
 }): Promise<ToolPresentation> {
 	const {
@@ -119,7 +121,10 @@ export async function buildToolPresentation(options: {
 	const commandInfoWithTokens = commandInfo.commandTokens || !args ? commandInfo : { ...commandInfo, commandTokens: extractUpstreamCommandTokens(args) };
 	const presentationCommandInfo = resolvePresentationCommandInfo(commandInfoWithTokens, compiledSemanticAction);
 
-	if (errorText) {
+	const recordingCommand = commandInfo.command === "record";
+	const recordingBatch = commandInfo.command === "batch" && isAgentBrowserBatchResultArray(envelope?.data)
+		&& envelope.data.some((row) => row.command?.[0] === "record");
+	if (errorText && !recordingCommand && !recordingBatch) {
 		return buildErrorPresentation({
 			args,
 			commandInfo,
@@ -129,11 +134,15 @@ export async function buildToolPresentation(options: {
 		});
 	}
 
-	const data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
+	let data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
+	if (commandInfo.command === "session" && commandInfo.subcommand === "info" && isRecord(data)) {
+		data = { ...data, piCleanupOwnership: options.piCleanupOwnership ?? "unknown" };
+	}
+	const readConfirmation = nextReadConfirmation({ commandTokens: commandInfoWithTokens.commandTokens ?? [], data, namespace, sessionName: sessionName ?? "default", succeeded: envelope?.success !== false });
 	const presentationData = commandInfo.command === "batch" && isAgentBrowserBatchResultArray(data)
 		? redactBatchSpillData(data)
 		: redactPresentationData(commandInfoWithTokens, data);
-	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, namespace, sessionName });
+	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, namespace, recordingOutcome: recordingCommand ? envelope?.success : undefined, recordingPending: options.recordingPending, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
 	const summary = artifactSummary ?? formatPresentationSummary(commandInfoWithTokens, data, compiledSemanticAction);
@@ -152,6 +161,7 @@ export async function buildToolPresentation(options: {
 			namespace,
 			networkRoutes,
 			persistentArtifactStore,
+			piCleanupOwnership: options.piCleanupOwnership,
 			sessionName,
 			summary,
 		});
@@ -164,6 +174,13 @@ export async function buildToolPresentation(options: {
 			content: [{ type: "text", text: artifactText ?? formatPresentationContentText(commandInfoWithTokens, data, compiledSemanticAction) }],
 			data: presentationData,
 			summary,
+		};
+	}
+
+	if (errorText && (recordingCommand || recordingBatch)) {
+		const errorPresentation = buildErrorPresentation({ args, commandInfo, errorText, presentationCommand: presentationCommandInfo.command, sessionName });
+		presentation = { ...presentation, resultCategory: "failure", failureCategory: errorPresentation.failureCategory, summary: errorPresentation.summary,
+			content: [{ type: "text", text: `${errorPresentation.content[0]?.type === "text" ? errorPresentation.content[0].text : errorText}\n\n${presentation.content[0]?.type === "text" ? presentation.content[0].text : ""}` }],
 		};
 	}
 
@@ -219,7 +236,7 @@ export async function buildToolPresentation(options: {
 
 	const confirmationRequired = detectConfirmationRequired(data);
 	const missingArtifactFailureText = formatMissingArtifactFailureText(presentationWithManifest.artifacts);
-	if (missingArtifactFailureText && hasMissingFileArtifact(presentationWithManifest.artifacts)) {
+	if (!errorText && missingArtifactFailureText && hasMissingFileArtifact(presentationWithManifest.artifacts)) {
 		presentationWithManifest.resultCategory = "failure";
 		presentationWithManifest.failureCategory = "artifact-missing";
 		presentationWithManifest.successCategory = undefined;
@@ -231,6 +248,23 @@ export async function buildToolPresentation(options: {
 		}
 	}
 
+	const failedRecording = presentationWithManifest.artifacts?.find((artifact) => artifact.recording?.success === false || artifact.recording?.output.encoderSucceeded === false);
+	if (failedRecording && !errorText) {
+		const failure = `Recording failed: ${failedRecording.recording?.error ?? "native capture/encoder failure"}`;
+		presentationWithManifest.resultCategory = "failure";
+		presentationWithManifest.failureCategory = "upstream-error";
+		presentationWithManifest.successCategory = undefined;
+		presentationWithManifest.summary = failure;
+		presentationWithManifest.content.unshift({ type: "text", text: failure });
+	}
+
+	if (readConfirmation?.state === "pending") {
+		presentationWithManifest.readConfirmation = readConfirmation;
+		presentationWithManifest.resultCategory = "failure";
+		presentationWithManifest.failureCategory = "confirmation-required";
+		presentationWithManifest.successCategory = undefined;
+	}
+
 	if (!presentationWithManifest.resultCategory) {
 		const categoryDetails = buildAgentBrowserResultCategoryDetails({
 			artifacts: presentationWithManifest.artifacts,
@@ -238,7 +272,7 @@ export async function buildToolPresentation(options: {
 			confirmationRequired: confirmationRequired !== undefined,
 			errorText: envelope?.success === false ? presentationWithManifest.summary : undefined,
 			savedFile: presentationWithManifest.savedFile,
-			succeeded: envelope?.success !== false,
+			succeeded: envelope?.success !== false && confirmationRequired === undefined,
 		});
 		presentationWithManifest.resultCategory = categoryDetails.resultCategory;
 		presentationWithManifest.successCategory = categoryDetails.resultCategory === "success"
@@ -275,7 +309,7 @@ export async function buildToolPresentation(options: {
 		? buildNetworkRequestsNextActions(data, sessionName, presentationWithManifest.networkRouteDiagnostics)
 		: undefined;
 	const streamNextActions = presentationWithManifest.resultCategory === "success" ? buildStreamNextActions(commandInfoWithTokens, data, sessionName) : undefined;
-	presentationWithManifest.nextActions = mergeNextActions(
+	presentationWithManifest.nextActions = readConfirmation ? buildReadConfirmationNextActions(readConfirmation, true) : mergeNextActions(
 		presentationWithManifest.nextActions,
 		genericNextActions,
 		networkNextActions,

@@ -292,7 +292,7 @@ test("real upstream recording FPS preserves destinations and the intended page",
 					assert.equal(recording.isError, false, recording.content[0]?.text);
 					const observedUrl = JSON.parse((await direct(["get", "url"])).stdout).data.url;
 					await t.test(`${subcommand} FPS retains the declared native destination`, () => {
-						assert.equal((recording.details?.artifacts as FileArtifactMetadata[])[0]?.requestedPath, path);
+						assert.equal((recording.details?.artifacts as FileArtifactMetadata[]).find((artifact) => artifact.subcommand === subcommand)?.requestedPath, path);
 						assert.deepEqual((recording.details?.effectiveArgs as string[]).slice(-args.length), args);
 					});
 					await t.test(`${subcommand} FPS records the pinned page rather than the drifted tab`, () => assert.equal(observedUrl, url));

@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -106,6 +106,191 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: "
 			assert.equal(JSON.stringify(result).includes("url-private-key-should-not-leak"), false);
 			assert.equal(JSON.stringify(result).includes("url-connection-string-should-not-leak"), false);
 			assert.equal(JSON.stringify(result).includes("failedChecks"), true);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves bearer prose while marking credentials in content, details, and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bearer-prose-"));
+	const basePath = process.env.PATH ?? "";
+	const prose = "The endpoint requires a bearer token.\nBearer authentication uses an access token.\nDo not log bearer tokens or bearer credentials.\nA bearer token(s) discussion is not a credential.\nThe phrase “bearer token.” is public.\nAuthorization bearer tokens are credentials.\nBearer <code>token</code>\nBearer https://docs.example/guide";
+	const data = {
+		content: `${prose}\nAuthorization: Bearer secrettoken\ncurl -H 'Bearer token.'\nObserved Bearer abc123_.456\nRedirect: https://example.invalid/?code=C123`,
+		source: "raw",
+		url: "https://example.invalid/docs",
+	};
+	const expectedData = { ...data, content: `${prose}\nAuthorization: Bearer [REDACTED]\ncurl -H 'Bearer [REDACTED].'\nObserved Bearer [REDACTED]\nRedirect: https://example.invalid/?code=%5BREDACTED%5D` };
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: ${JSON.stringify(data)} }));`);
+
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			for (const args of [["read", data.url], ["--json", "read", data.url]]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args, outputPath: "read.json" });
+				assert.equal(result.isError, false);
+				assert.deepEqual(result.details?.data, expectedData);
+				assert.deepEqual(JSON.parse(await readFile(join(tempDir, "read.json"), "utf8")), expectedData);
+				if (args.includes("--json")) assert.deepEqual(JSON.parse(result.content[0]?.text ?? "").data, expectedData);
+				else assert.ok(result.content[0]?.text?.includes(expectedData.content));
+				assert.doesNotMatch(JSON.stringify(result), /secrettoken|abc123_\.456|C123/);
+			}
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension redacts sign-in authorization sessions in content, details, and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-url-"));
+	const basePath = process.env.PATH ?? "";
+	const origin = "https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=EXAMPLE_REDIRECT&state=EXAMPLE_STATE&nonce=EXAMPLE_NONCE&authorization_session_id=EXAMPLE_ID";
+	const redactedOrigin = "https://signin.example.invalid/?client_id=EXAMPLE_CLIENT&redirect_uri=EXAMPLE_REDIRECT&state=%5BREDACTED%5D&nonce=%5BREDACTED%5D&authorization_session_id=%5BREDACTED%5D";
+	const data = { origin, snapshot: '- button "Continue" [ref=e1]', refs: { e1: { role: "button", name: "Continue" } } };
+	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: ${JSON.stringify(data)} }));`);
+
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["snapshot", "-i"],
+				outputPath: "snapshot.json",
+			});
+
+			assert.equal(result.isError, false);
+			assert.deepEqual({
+				contentOrigin: result.content[0]?.text?.split("\n")[0],
+				data: result.details?.data,
+				exported: JSON.parse(await readFile(join(tempDir, "snapshot.json"), "utf8")),
+			}, {
+				contentOrigin: `Origin: ${redactedOrigin}`,
+				data: { ...data, origin: redactedOrigin },
+				exported: { ...data, origin: redactedOrigin },
+			});
+			assert.doesNotMatch(JSON.stringify(result), /EXAMPLE_STATE|EXAMPLE_NONCE|EXAMPLE_ID/);
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves nested serialized JSON in eval presentation and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-nested-json-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const harmless = JSON.stringify({ url: "HTTPS://EXAMPLE.test:443/A%2fb?q=a%20b&state=open&nonce=7#part" }, null, 2);
+	const payload = { evidence: { prehydration: JSON.stringify({ url: "https://example.test/callback?authorization_session_id=private-fixture&state=flow-fixture" }), harmless, apiKey: "adjacent-fixture" }, values: [1, false, null] };
+	const stdin = `JSON.stringify(${JSON.stringify(payload)}, null, 2)`;
+	const expectedUrl = "https://example.test/callback?authorization_session_id=%5BREDACTED%5D&state=%5BREDACTED%5D";
+	const expected = { evidence: { prehydration: JSON.stringify({ url: expectedUrl }), harmless, apiKey: "[REDACTED]" }, values: [1, false, null] };
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin: fs.readFileSync(0, "utf8") }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: ${JSON.stringify(JSON.stringify(payload, null, 2))} } }));`);
+
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			for (const args of [["eval", "--stdin"], ["--json", "eval", "--stdin"]]) {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args, stdin, outputPath: "eval.json" });
+				assert.equal(result.isError, false, JSON.stringify(result));
+				const exportedText = await readFile(join(tempDir, "eval.json"), "utf8");
+				const exported = JSON.parse(exportedText);
+				assert.deepEqual(result.details?.data, exported);
+				assert.equal(typeof exported.result, "string");
+				const parsed = JSON.parse(exported.result);
+				assert.deepEqual(parsed, expected);
+				assert.equal(typeof parsed.evidence.prehydration, "string");
+				assert.deepEqual(JSON.parse(parsed.evidence.prehydration), { url: expectedUrl });
+				const text = result.content[0]?.text ?? "";
+				const visible = args.includes("--json") ? JSON.parse(text).data.result : text.split("\n\nOutput file:")[0];
+				assert.deepEqual(JSON.parse(visible), expected);
+				assert.doesNotMatch(JSON.stringify(result) + exportedText, /private-fixture|flow-fixture|adjacent-fixture/);
+			}
+			const invocations = (await readInvocationLog(logPath)).filter(({ args }) => args.includes("eval"));
+			assert.equal(invocations.length, 2);
+			assert.ok(invocations.every((invocation) => invocation.stdin === stdin), "native eval input must remain unchanged");
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension preserves serialized JSON source in eval presentation and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-json-source-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const sources = [
+		'{"url":"https://example.test/callback?token=synthetic-secret","url":"https://example.test/safe"}',
+		'{"url":"https://example.test/callback?token=synthetic-secret","requestId":9007199254740993}',
+		'{ "https://example.test/callback?token=synthetic-secret" : "ordinary" }',
+	];
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.parse(stdin) } }));`);
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			for (const source of sources) {
+				const expected = source.replace("synthetic-secret", "%5BREDACTED%5D");
+				const stdin = JSON.stringify(source);
+				for (const args of [["eval", "--stdin"], ["--json", "eval", "--stdin"]]) {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args, stdin, outputPath: "eval-source.json" });
+					assert.equal(result.isError, false, JSON.stringify(result));
+					assert.deepEqual(result.details?.data, { result: expected });
+					const exportedText = await readFile(join(tempDir, "eval-source.json"), "utf8");
+					assert.deepEqual(JSON.parse(exportedText), { result: expected });
+					const text = result.content[0]?.text ?? "";
+					assert.equal(args.includes("--json") ? JSON.parse(text).data.result : text.split("\n\nOutput file:")[0], expected);
+					assert.doesNotMatch(JSON.stringify(result) + exportedText, /synthetic-secret/);
+				}
+			}
+			const invocations = (await readInvocationLog(logPath)).filter(({ args }) => args.includes("eval"));
+			assert.deepEqual(invocations.map(({ stdin }) => stdin), sources.flatMap(source => [JSON.stringify(source), JSON.stringify(source)]));
+		});
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+test("agentBrowserExtension bounds minified JSON summaries while preserving full spills and exports", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-summary-"));
+	const logPath = join(tempDir, "invocations.log");
+	const basePath = process.env.PATH ?? "";
+	const source = '{"url":"https://example.test/callback?token=summary-secret","url":"https://example.test/safe","requestId":9007199254740993,"body":' + JSON.stringify("row ".repeat(22_000)) + ',"end":"MINIFIED-SOURCE-END"}';
+	const expected = source.replace("summary-secret", "%5BREDACTED%5D");
+	const stdin = JSON.stringify(source);
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.parse(stdin) } }));`);
+	try {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir, sessionDir: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin, outputPath: "minified.json" });
+			assert.equal(result.isError, false);
+			assert.equal((result.details?.data as { compacted?: boolean })?.compacted, true);
+			const spillPath = result.details?.fullOutputPath;
+			assert.ok(typeof spillPath === "string");
+			assert.deepEqual(JSON.parse(await readFile(spillPath, "utf8")), { result: expected });
+			assert.deepEqual(JSON.parse(await readFile(join(tempDir, "minified.json"), "utf8")), { result: expected });
+			const invocations = (await readInvocationLog(logPath)).filter(({ args }) => args.includes("eval"));
+			assert.equal(invocations.length, 1);
+			assert.equal(invocations[0]?.stdin, stdin);
+			const summary = result.details?.summary;
+			assert.ok(typeof summary === "string");
+			const summaryLimit = "Eval result: ".length + 160 + " (compact)".length;
+			assert.ok(summary.length <= summaryLimit, `firstLine's 160-character bound must hold: got ${summary.length}`);
+			assert.match(summary, /%5BREDACTED%5D/);
+			const inline = JSON.stringify(result);
+			assert.ok(inline.length < 8_000, `compacted result must stay below the existing inline limit: got ${inline.length}`);
+			assert.doesNotMatch(inline, /MINIFIED-SOURCE-END|summary-secret/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

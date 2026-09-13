@@ -37,6 +37,7 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 			const artifactRunStartedAtMs = Date.now();
 			const processResult = await runAgentBrowserProcess({
 				args: prepared.processArgs,
+				browserIndependentReadConfirmation: prepared.readConfirmation !== undefined,
 				cwd: options.cwd,
 				env: ownedManagedSession
 					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs }

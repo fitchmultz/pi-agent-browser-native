@@ -4,6 +4,7 @@ import { dirname, extname, isAbsolute, resolve } from "node:path";
 import { isRecord } from "../parsing.js";
 import { isSessionArtifactManifest } from "../results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../results/contracts.js";
+import { parseCommandInfo, redactSensitiveValue } from "../runtime.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
 
 export interface AgentBrowserOutputFileDetails {
@@ -11,7 +12,7 @@ export interface AgentBrowserOutputFileDetails {
 	bytes?: number;
 	error?: string;
 	path: string;
-	source: "content.text" | "details.data";
+	source: "content.text" | "details.data" | "recording-receipt";
 	status: "failed" | "saved";
 }
 
@@ -26,7 +27,23 @@ function getTextContent(result: AgentBrowserToolResult): string {
 		.join("\n\n") ?? "";
 }
 
+function getResultCommand(details: Record<string, unknown> | undefined) {
+	const args = Array.isArray(details?.args) && details.args.every(value => typeof value === "string") ? details.args : [];
+	return parseCommandInfo(args);
+}
+
+function isRecordingReceiptResult(result: AgentBrowserToolResult): boolean {
+	const details = isRecord(result.details) ? result.details : undefined;
+	return details?.command === "record" || getResultCommand(details).command === "record" || details?.recordingRecovery !== undefined
+		|| (Array.isArray(details?.batchSteps) && details.batchSteps.some((step) => isRecord(step) && Array.isArray(step.command) && step.command[0] === "record"));
+}
+
+export function canWriteAgentBrowserOutput(result: AgentBrowserToolResult): boolean {
+	return isRecordingReceiptResult(result) || (!result.isError && !(isRecord(result.details) && result.details.resultCategory === "failure"));
+}
+
 function getOutputSource(result: AgentBrowserToolResult): AgentBrowserOutputFileDetails["source"] {
+	if (isRecordingReceiptResult(result)) return "recording-receipt";
 	return isRecord(result.details) && result.details.data !== undefined ? "details.data" : "content.text";
 }
 
@@ -59,18 +76,37 @@ async function rehydrateCompactedData(data: unknown, details: Record<string, unk
 
 async function getOutputPayload(result: AgentBrowserToolResult): Promise<{ source: AgentBrowserOutputFileDetails["source"]; value: unknown }> {
 	const details = isRecord(result.details) ? result.details : undefined;
-	if (details?.data === undefined) return { source: "content.text", value: getTextContent(result) };
+	if (!details) return { source: "content.text", value: getTextContent(result) };
 	const manifest = isSessionArtifactManifest(details.artifactManifest) ? details.artifactManifest : undefined;
-	return { source: "details.data", value: await rehydrateCompactedData(details.data, details, manifest) };
+	const data = await rehydrateCompactedData(details.data, details, manifest);
+	if (isRecordingReceiptResult(result)) {
+		const success = !result.isError && details.resultCategory !== "failure";
+		const recovery = isRecord(details.recordingRecovery) ? details.recordingRecovery : undefined;
+		const commandInfo = getResultCommand(details);
+		return { source: "recording-receipt", value: redactSensitiveValue({
+			success, error: details.error ?? (success ? null : details.summary ?? getTextContent(result)),
+			command: details.command ?? commandInfo.command, subcommand: details.subcommand ?? commandInfo.subcommand, sessionName: details.sessionName, namespace: details.namespace,
+			attempt: recovery?.attempt ?? { success, agentBrowserStarted: details.agentBrowserStarted ?? null, exitCode: details.exitCode ?? null, timedOut: details.timedOut === true, error: details.error ?? details.validationError ?? null, parseError: details.parseError ?? null },
+			data: data ?? null, artifacts: details.artifacts, artifactVerification: details.artifactVerification, recordingRecovery: recovery,
+		}) };
+	}
+	return data === undefined ? { source: "content.text", value: getTextContent(result) } : { source: "details.data", value: data };
 }
 
 function serializeOutputPayload(value: unknown): string {
 	return typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function appendOutputFileNotice(result: AgentBrowserToolResult, message: string): AgentBrowserToolResult["content"] {
+function appendOutputFileNotice(result: AgentBrowserToolResult, message: string, failed = false): AgentBrowserToolResult["content"] {
 	const content = [...(result.content ?? [])] as AgentBrowserToolResult["content"];
 	if (content[0]?.type === "text") {
+		try {
+			const json = JSON.parse(content[0].text);
+			if (isRecord(json) && typeof json.success === "boolean") {
+				content[0] = { type: "text", text: JSON.stringify({ ...json, ...(failed ? { success: false, error: message } : {}), outputFileNotice: message }, null, 2) };
+				return content;
+			}
+		} catch {}
 		content[0] = { ...content[0], text: `${content[0].text}\n\n${message}` };
 		return content;
 	}
@@ -107,7 +143,7 @@ export async function applyAgentBrowserOutputPath(options: {
 	result: AgentBrowserToolResult;
 }): Promise<AgentBrowserToolResult> {
 	if (!options.outputPath) return options.result;
-	if (options.result.isError || (isRecord(options.result.details) && options.result.details.resultCategory === "failure")) return options.result;
+	if (!canWriteAgentBrowserOutput(options.result)) return options.result;
 	const requestedPath = normalizeRequestedOutputPath(options.outputPath);
 	const absolutePath = isAbsolute(requestedPath) ? requestedPath : resolve(options.cwd, requestedPath);
 	const source = getOutputSource(options.result);
@@ -119,7 +155,7 @@ export async function applyAgentBrowserOutputPath(options: {
 		delete details.successCategory;
 		return {
 			...options.result,
-			content: appendOutputFileNotice(options.result, `Output file rejected: ${message}`),
+			content: appendOutputFileNotice(options.result, `Output file rejected: ${message}`, true),
 			details: { ...details, failureCategory: "validation-error", outputFile, resultCategory: "failure" },
 			isError: true,
 		};
@@ -149,7 +185,7 @@ export async function applyAgentBrowserOutputPath(options: {
 			: { failureCategory: "upstream-error", outputFile, resultCategory: "failure" };
 		return {
 			...options.result,
-			content: options.preserveTextContent ? options.result.content : appendOutputFileNotice(options.result, `Output file failed: ${requestedPath} (${message}).`),
+			content: appendOutputFileNotice(options.result, `Output file failed: ${requestedPath} (${message}).`, true),
 			details,
 			isError: true,
 		};

@@ -258,12 +258,14 @@ test("checkout-generation marker creation converges across processes", async () 
 	}
 });
 
-test("managed restore rejects a tampered checkout-generation marker", () => {
+test("managed restore rejects a tampered checkout-generation marker", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "piab-marker-project-"));
 	const home = mkdtempSync(join(tmpdir(), "piab-marker-home-"));
 	try {
 		initializeGitProject(cwd);
 		assert.match(createManagedSessionRestoreKey(cwd), /^piab-r2-/);
+		const readOptions = { args: ["--session", "piab-marker", "read", "https://example.com"], cwd, sessionName: "piab-marker", recordedOwnedSession: { cwd, sessionName: "piab-marker" }, parentEnv: { HOME: home }, restoreState: new ManagedSessionRestoreState() };
+		const readContext = buildOwnedManagedSessionRestoreContext({ ...readOptions, reuseOnly: true });
 		const marker = join(cwd, ".git", "pi-agent-browser-project-generation-v1.json");
 		chmodSync(marker, 0o644);
 		assert.deepEqual(getManagedSessionRestoreEnv({
@@ -273,6 +275,10 @@ test("managed restore rejects a tampered checkout-generation marker", () => {
 			parentEnv: { HOME: home },
 			restoreState: new ManagedSessionRestoreState(),
 		}), {});
+		await withOwnedManagedSessionContext(readContext, async () => {
+			assert.equal(validateManagedSessionRestoreContextForSpawn(readOptions), false);
+			assert.deepEqual(getManagedSessionRestoreEnv(readOptions), {});
+		});
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 		rmSync(home, { recursive: true, force: true });
@@ -955,7 +961,7 @@ test("managed restore pins a trusted canonical HOME and rejects writable ancestr
 	}
 });
 
-test("managed restore fails closed outside a durable Git checkout generation", () => {
+test("managed restore fails closed outside a durable Git checkout generation", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "piab-non-git-"));
 	const home = mkdtempSync(join(tmpdir(), "piab-non-git-home-"));
 	try {
@@ -966,6 +972,10 @@ test("managed restore fails closed outside a durable Git checkout generation", (
 			parentEnv: { HOME: home },
 			restoreState: new ManagedSessionRestoreState(),
 		}), {});
+		const options = { args: ["--session", "piab-non-git", "read", "https://example.com"], cwd, sessionName: "piab-non-git", recordedOwnedSession: { cwd, sessionName: "piab-non-git" }, parentEnv: { HOME: home }, restoreState: new ManagedSessionRestoreState() };
+		const context = buildOwnedManagedSessionRestoreContext({ ...options, reuseOnly: true });
+		assert.equal(context?.restoreKey, undefined, "a browser-independent read must not create an unavailable-checkout fallback key");
+		await withOwnedManagedSessionContext(context, async () => assert.deepEqual(getManagedSessionRestoreEnv(options), {}));
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 		rmSync(home, { recursive: true, force: true });
@@ -991,7 +1001,7 @@ test("managed restore rejects writable checkout ancestry", { skip: process.platf
 	}
 });
 
-test("managed restore rejects symlinks and files along POSIX restore state paths", { skip: process.platform === "win32" }, () => {
+test("managed restore rejects symlinks and files along POSIX restore state paths", { skip: process.platform === "win32" }, async () => {
 	const symlinkHome = mkdtempSync(join(tmpdir(), "piab-home-link-"));
 	const sessionsSymlinkHome = mkdtempSync(join(tmpdir(), "piab-sessions-link-"));
 	const namespaceSymlinkHome = mkdtempSync(join(tmpdir(), "piab-namespace-link-"));
@@ -1032,6 +1042,18 @@ test("managed restore rejects symlinks and files along POSIX restore state paths
 		symlinkSync(outsideCandidate, join(temporaryFileSymlinkHome, ".agent-browser", "sessions", ".tmp", "candidate.json"), "file");
 		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: temporaryFileSymlinkHome }), false);
 		assert.equal(readFileSync(outsideCandidate, "utf8"), "unchanged");
+		rmSync(join(temporaryFileSymlinkHome, ".agent-browser", "sessions", ".tmp"), { recursive: true });
+		symlinkSync(target, join(temporaryFileSymlinkHome, ".agent-browser", "sessions", ".tmp"), "dir");
+
+		for (const home of [sessionsSymlinkHome, stateFileSymlinkHome, temporaryFileSymlinkHome]) {
+			const options = { args: ["--session", "piab-managed", "read", "https://example.com"], cwd: isolatedProject, sessionName: "piab-managed", recordedOwnedSession: { cwd: isolatedProject, sessionName: "piab-managed" }, parentEnv: { HOME: home }, restoreState: new ManagedSessionRestoreState() };
+			const context = buildOwnedManagedSessionRestoreContext({ ...options, reuseOnly: true });
+			await withOwnedManagedSessionContext(context, async () => {
+				assert.equal(validateManagedSessionRestoreContextForSpawn(options), false);
+				assert.deepEqual(getManagedSessionRestoreEnv(options), {});
+				assert.equal(options.restoreState.isDisabled("piab-managed"), false);
+			});
+		}
 
 		writeFileSync(join(fileHome, ".agent-browser"), "not a directory");
 		assert.equal(ensureManagedSessionRestoreStorageIsSecure({ HOME: fileHome }), false);

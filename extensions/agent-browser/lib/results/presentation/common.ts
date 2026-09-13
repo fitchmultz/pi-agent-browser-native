@@ -9,28 +9,8 @@ export function stringifyModelFacing(value: unknown): string {
 	return stringifyUnknown(redactSensitiveValue(value));
 }
 
-export function parseJsonPreviewString(value: string): unknown {
-	const trimmed = value.trim();
-	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
-	try {
-		return JSON.parse(trimmed) as unknown;
-	} catch {
-		return value;
-	}
-}
-
 export function redactModelFacingText(text: string): string {
-	const parsed = parseJsonPreviewString(text);
-	if (parsed !== text) {
-		return stringifyModelFacing(parsed);
-	}
 	return redactSensitiveText(text);
-}
-
-export function redactModelFacingTextIfSensitive(text: string): string {
-	return /(?:@|\b(?:access[_-]?key|api[_-]?key|auth|authorization|basic|bearer|connection[_-]?string|cookie|database[_-]?url|db[_-]?url|mongo(?:db)?[_-]?uri|pass(?:word)?|private[_-]?key|redis[_-]?url|secret|session[_-]?id|token)\b)/i.test(text)
-		? redactModelFacingText(text)
-		: text;
 }
 
 export function getArrayField(data: Record<string, unknown>, key: string): unknown[] | undefined {

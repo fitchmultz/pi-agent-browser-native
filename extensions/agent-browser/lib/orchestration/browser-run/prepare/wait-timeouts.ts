@@ -1,5 +1,6 @@
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "../../../argv-grammar.js";
 import { isOpenNavigationCommand } from "../../../command-taxonomy.js";
+import { getExplicitReadUrl, isBrowserIndependentRead } from "../../../command-policy.js";
 import { getAgentBrowserProcessTimeoutMs } from "../../../process.js";
 import { getUpstreamEffectiveBatchSteps } from "../../batch-stdin.js";
 
@@ -45,11 +46,11 @@ export function findFirstPositionalArgument(commandTokens: string[]): string | u
 }
 
 function readUsesActivePageUrl(commandTokens: string[]): boolean {
-	return findFirstPositionalArgument(commandTokens) === undefined && commandTokens.some((token) => token === "--require-md" || token === "--llms" || token.startsWith("--llms="));
+	return !isBrowserIndependentRead(commandTokens) && commandTokens.some((token) => token === "--require-md" || token === "--llms" || token.startsWith("--llms="));
 }
 
 function readRequestBudget(commandTokens: string[], activePageUrl: string | undefined): number {
-	const target = findFirstPositionalArgument(commandTokens) ?? activePageUrl;
+	const target = getExplicitReadUrl(commandTokens) ?? activePageUrl;
 	if (target === undefined) return 1;
 	let url: URL;
 	try {

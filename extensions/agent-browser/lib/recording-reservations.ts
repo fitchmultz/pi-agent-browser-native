@@ -14,6 +14,8 @@ export interface ActiveRecordingReservation {
 	cwd: string;
 	namespace?: string;
 	path: string;
+	recordingId?: string;
+	startedAtMs?: number;
 	sessionName: string;
 }
 
@@ -33,6 +35,8 @@ function getArtifactReservation(artifact: FileArtifactMetadata): ActiveRecording
 		cwd: artifact.cwd ?? process.cwd(),
 		namespace: artifact.namespace,
 		path: artifact.path,
+		...(artifact.recording?.recordingId ? { recordingId: artifact.recording.recordingId } : {}),
+		...(artifact.recordingStartedAtMs !== undefined ? { startedAtMs: artifact.recordingStartedAtMs } : {}),
 		sessionName: artifact.session,
 	};
 }
@@ -61,7 +65,7 @@ export function applyRecordingArtifactsToReservations(
 	for (const [key, pending] of pendingBySession) {
 		const existing = reservations.get(key);
 		reservations.set(key, pending);
-		if (!existing || existing.absolutePath !== pending.absolutePath || existing.cwd !== pending.cwd) {
+		if (!existing || existing.absolutePath !== pending.absolutePath || existing.cwd !== pending.cwd || existing.recordingId !== pending.recordingId || existing.startedAtMs !== pending.startedAtMs) {
 			transitions.push({ reservation: pending, state: "active" });
 		}
 	}
@@ -86,6 +90,8 @@ export function appendRecordingReservationTransition(pi: ExtensionAPI, transitio
 		cwd: state === "active" ? reservation.cwd : undefined,
 		namespace: reservation.namespace,
 		path: state === "active" ? reservation.path : undefined,
+		recordingId: state === "active" ? reservation.recordingId : undefined,
+		startedAtMs: state === "active" ? reservation.startedAtMs : undefined,
 		sessionName: reservation.sessionName,
 		state,
 		version: 1,
@@ -102,6 +108,8 @@ function parseReservationTransition(data: unknown): RecordingReservationTransiti
 			state: "closed",
 		};
 	}
+	if (data.recordingId !== undefined && (typeof data.recordingId !== "string" || !data.recordingId)) return undefined;
+	if (data.startedAtMs !== undefined && (typeof data.startedAtMs !== "number" || !Number.isFinite(data.startedAtMs))) return undefined;
 	if (typeof data.absolutePath !== "string" || !isAbsolute(data.absolutePath)
 		|| typeof data.cwd !== "string" || !isAbsolute(data.cwd) || typeof data.path !== "string") return undefined;
 	return {
@@ -110,6 +118,8 @@ function parseReservationTransition(data: unknown): RecordingReservationTransiti
 			cwd: data.cwd,
 			namespace: data.namespace,
 			path: data.path,
+			...(typeof data.recordingId === "string" ? { recordingId: data.recordingId } : {}),
+			...(typeof data.startedAtMs === "number" ? { startedAtMs: data.startedAtMs } : {}),
 			sessionName: data.sessionName,
 		},
 		state: "active",

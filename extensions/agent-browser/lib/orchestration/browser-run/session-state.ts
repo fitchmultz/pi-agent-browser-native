@@ -2,7 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { parseArgvDescriptor } from "../../argv-descriptor.js";
-import { needsManagedSession } from "../../command-policy.js";
+import { isBrowserIndependentRead, needsManagedSession } from "../../command-policy.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
@@ -491,7 +491,7 @@ export function shouldPinSessionTabForCommand(options: {
 	sessionName?: string;
 	stdin?: string;
 }): boolean {
-	if (!options.pinningRequired || !options.sessionName || !options.command) return false;
+	if (!options.pinningRequired || !options.sessionName || !options.command || isBrowserIndependentRead(options.commandTokens, options.stdin)) return false;
 	const steps = options.command === "batch" ? getUpstreamEffectiveBatchSteps(options.commandTokens, options.stdin) : [options.commandTokens];
 	for (const step of steps) {
 		const descriptor = parseArgvDescriptor(step);
@@ -501,7 +501,7 @@ export function shouldPinSessionTabForCommand(options: {
 		if (commandChoosesSessionTabTarget(tokens)) return false;
 		if (!needsManagedSession(descriptor) || isSessionTabPinningExcludedCommand(command)) continue;
 		if (command === "get" && subcommand === "url" && !options.reopenPending) continue;
-		if (command === "read" && findFirstPositionalArgument(tokens) !== undefined) continue;
+		if (command === "record" && subcommand === "stop") continue;
 		if (["console", "errors"].includes(command)) continue;
 		if (command === "network" && !(subcommand === "requests" && tokens.some((token) => ["--current-page", "--current-origin", "--current-url"].includes(token)))) continue;
 		return true;

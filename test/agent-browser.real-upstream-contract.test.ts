@@ -137,12 +137,12 @@ async function initializeGitProject(path: string): Promise<void> {
 	await execFileAsync("git", ["init", "-q", path]);
 }
 
-async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string }): Promise<void> {
+async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?: string; socketDir?: string }): Promise<void> {
 	if (!options.sessionName) return;
 	await runAgentBrowserProcess({
 		args: ["--json", "--namespace", "", "--session", options.sessionName, "close"],
 		cwd: options.cwd,
-		env: { AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir() },
+		env: { AGENT_BROWSER_SOCKET_DIR: options.socketDir ?? process.env.PI_AGENT_BROWSER_SOCKET_DIR ?? getAgentBrowserSocketDir(), ...(options.socketDir ? { PI_AGENT_BROWSER_SOCKET_DIR: options.socketDir } : {}) },
 	}).catch(() => undefined);
 }
 
@@ -357,6 +357,72 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
+
+for (const reconstructed of [false, true]) test(`real upstream agent-browser contract suite matches owned read continuity (reconstructed=${reconstructed})`, { skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 }, async () => {
+	await assertInstalledAgentBrowserVersion();
+	const dir = await mkdtemp(join(tmpdir(), "or-"));
+	const socketDir = await mkdtemp(join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "or-"));
+	const fixture = await startAgentBrowserContractFixtureServer();
+	await initializeGitProject(dir);
+	try {
+		await withPatchedEnv({
+			...Object.fromEntries(Object.keys(process.env).filter(name => /^(?:PI_)?AGENT_BROWSER_/.test(name)).map(name => [name, undefined])),
+			HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"),
+			AGENT_BROWSER_ENCRYPTION_KEY: process.platform === "win32" ? "a".repeat(64) : undefined,
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir,
+		}, async () => {
+			const branch: unknown[] = [];
+			let harness = createExtensionHarness({ cwd: dir, branch });
+			let sessionName: string | undefined, restoreKey: string | undefined;
+			try {
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const url = `${fixture.baseUrl}/contract`, marker = "unsaved-owned-read";
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", url] });
+				sessionName = opened.details?.sessionName as string;
+				assert.equal(opened.isError, false, opened.content[0]?.text);
+				branch.push(createToolBranchEntry({ details: opened.details!, isError: opened.isError }));
+				const prefix = ["--namespace", "", "--session", sessionName];
+				const marked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: `(() => { window.__ownedContinuity = ${JSON.stringify(marker)}; document.querySelector('#name-input').value = window.__ownedContinuity; sessionStorage.setItem('ownedContinuity', window.__ownedContinuity); return true; })()` });
+				assert.equal(marked.isError, false, marked.content[0]?.text);
+				const before = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "session", "info"] });
+				assert.equal(before.isError, false, before.content[0]?.text);
+				const nativeBefore = before.details?.data as { pid: number; runtime: { restoreKey: string } };
+				assert.ok(nativeBefore.pid > 0);
+				restoreKey = nativeBefore.runtime.restoreKey;
+				assert.match(restoreKey, /^piab-r2-/);
+				if (reconstructed) {
+					await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "reload" }, harness.ctx);
+					harness = createExtensionHarness({ cwd: dir, branch });
+					await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+					assert.equal(Number(await readFile(join(socketDir, `${sessionName}.pid`), "utf8")), nativeBefore.pid);
+				}
+				for (const args of [["read", url], ["batch", `read ${url}`], ["session", "info"]]) {
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
+					assert.equal(result.isError, false, result.content[0]?.text);
+					const after = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "session", "info"] });
+					const nativeAfter = after.details?.data as { pid: number; runtime: { restoreKey: string } };
+					assert.equal(nativeAfter.pid, nativeBefore.pid, `${args[0]} must not replace the owned daemon`);
+					assert.equal(nativeAfter.runtime.restoreKey, restoreKey);
+					const current = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+					assert.equal(current.isError, false, current.content[0]?.text);
+					assert.equal(current.details?.sessionName, sessionName);
+					const state = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "({ url: location.href, marker: window.__ownedContinuity, form: document.querySelector('#name-input').value, sessionMarker: sessionStorage.getItem('ownedContinuity') })" });
+					assert.equal(state.isError, false, state.content[0]?.text);
+					assert.deepEqual(getResultValue(state.details!, ["result"]), { url, marker, form: marker, sessionMarker: marker });
+				}
+			} finally {
+				await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
+				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+				if (sessionName) {
+					const pid = Number(await readFileIfPresent(join(socketDir, `${sessionName}.pid`))) || undefined;
+					const closed = await runAgentBrowserProcess({ args: ["--json", "--namespace", "", "close", "--all"], cwd: dir, env: { AGENT_BROWSER_SOCKET_DIR: socketDir } });
+					assert.equal(closed.exitCode, 0, closed.stderr);
+					assert.equal(await waitForTestPidExit(pid, 10_000), true, "the private native daemon must exit");
+				}
+			}
+		});
+	} finally { await fixture.close(); await rm(dir, { recursive: true, force: true }); await rm(socketDir, { recursive: true, force: true }); }
+});
 
 test("real upstream agent-browser contract suite matches navigation availability and tab setup", { skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 }, async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "wm-"));
@@ -751,21 +817,33 @@ if (!REAL_UPSTREAM_ENABLED) {
 						await runCoreCommand(harness, ["open", contractUrl], shapes.commands.open, managedSessionName, "restore contract fixture after WebMCP");
 					}
 
+					await runCoreCommand(harness, ["fill", "#name-input", "read preserves this page"], shapes.commands.coreCommand, managedSessionName);
 					const readOutputPath = join(tempDir, "read-output.json");
-					const readResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl], outputPath: readOutputPath });
+					const readResult = await withPatchedEnv({ AGENT_BROWSER_SESSION: undefined, AGENT_BROWSER_NAMESPACE: undefined, PI_AGENT_BROWSER_SOCKET_DIR: undefined }, async () => {
+						try {
+							return await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read", contractUrl], outputPath: readOutputPath });
+						} finally {
+							// Legacy native URL reads may leave a browserless default daemon in this isolated socket directory.
+							await closeManagedSessionIfPresent({ cwd: tempDir, sessionName: "default", socketDir });
+						}
+					});
 					const readDetails = assertSuccessfulResult(readResult, shapes.commands.read, "read URL");
-					assert.equal(readDetails.sessionName, managedSessionName);
-					assert.equal(readDetails.usedImplicitSession, true);
+					assert.equal(readDetails.sessionName, undefined);
+					assert.equal(readDetails.usedImplicitSession, undefined);
 					assert.equal(readDetails.agentBrowserStarted, true);
-					assert.deepEqual(readDetails.lifecycle, { effectiveLaunch: { browserLaunched: true } });
+					const nativeReadLaunch = (readDetails.data as { lifecycle?: { effectiveLaunch?: { browserLaunched?: boolean } } }).lifecycle?.effectiveLaunch?.browserLaunched;
+					assert.deepEqual(readDetails.lifecycle, typeof nativeReadLaunch === "boolean" ? { effectiveLaunch: { browserLaunched: nativeReadLaunch } } : undefined, "forward native launch evidence without inventing it for HTTP reads");
 					assert.equal(readDetails.readSource, (readDetails.data as { source?: string }).source);
-					assert.equal((readDetails.managedSessionOutcome as { activeAfter?: boolean }).activeAfter, true);
+					assert.equal(readDetails.managedSessionOutcome, undefined);
 					assert.equal((readDetails.outputFile as { status?: string }).status, "saved");
 					assert.match(readResult.content[0]?.text ?? "", /Agent Browser Contract Fixture/);
 					assert.match((readDetails.data as { content?: string }).content ?? "", /Ready for real upstream contract validation/);
 					const savedRead = JSON.parse(await readFile(readOutputPath, "utf8")) as { content?: string; source?: string };
 					assert.match(savedRead.content ?? "", /Ready for real upstream contract validation/);
 					assert.equal(savedRead.source, readDetails.readSource);
+					const ownedPageAfterRead = await runCoreCommand(harness, ["get", "url"], shapes.commands.coreSubcommand, managedSessionName);
+					assert.equal(getResultValue(ownedPageAfterRead, ["url", "result"]), contractUrl);
+					assert.equal(getResultValue(await runCoreCommand(harness, ["get", "value", "#name-input"], shapes.commands.coreSubcommand, managedSessionName), ["value"]), "read preserves this page");
 
 					const uploadPath = join(tempDir, "upload-fixture.txt");
 					const screenshotPath = join(tempDir, "contract.png");
