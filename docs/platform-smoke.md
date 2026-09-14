@@ -38,7 +38,7 @@ npm run verify -- platform-smoke run --target ubuntu --suite platform-build
 
 ## Alternate native transports
 
-For the 0.6.12 release, local macOS execution replaces localhost SSH, and the [Native Windows workflow](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/.github/workflows/windows-native.yml) runs the existing Windows suites on a GitHub-hosted Windows runner. These are native platform checks, not Crabbox SSH or Parallels passes. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
+For the 0.6.13 release, local macOS execution replaces localhost SSH, and the [Native Windows workflow](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/.github/workflows/windows-native.yml) runs the existing Windows suites on a GitHub-hosted Windows runner. These are native platform checks, not Crabbox SSH or Parallels passes. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
 
 On macOS, run the unchanged commands returned by `buildPlatformBuildCommand('macos', 'pi-agent-browser-native', 24)` and `buildBrowserDogfoodCommand('macos', '0.37.0', true)` in [`scripts/platform-smoke/targets.mjs`](../scripts/platform-smoke/targets.mjs), serially in a clean private source copy. Use private HOME, npm and Pi settings, and headless browser profiles. No Remote Login or host security change is required.
 

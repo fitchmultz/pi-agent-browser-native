@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.6.13 - 2026-09-14
+
+### Fixed
 
 - Suppress Chrome's extra startup window using stock `--no-startup-window`, preserving headless defaults and composing caller launch arguments. URL-less `open` now uses native lazy URL reads so active pages keep their browser, profile, and URL across direct, batch, and script calls. External engines and attachments remain unchanged.
+
+### Changed
 
 - Give ordinary browser calls a native session and restore key per root Pi session. Parent/descendant groups share one browser without a global queue or child-exit teardown. Scope named Chrome profile bootstrap to automatic roots; preserve explicit browsers, script, and Electron isolation.
 
