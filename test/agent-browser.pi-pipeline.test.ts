@@ -390,6 +390,10 @@ test("Pi pipeline patches persisted QA reclassification failures to isError with
 	const pipeline = await runPipelinePrompt({
 		toolArguments: { qa: { expectedSelector: "main", expectedText: ["Welcome"], url: "https://fail.example.test/" } },
 		fakeScript: `const fs = require("node:fs");
+if (process.argv.slice(-2).join(" ") === "get url") {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://fail.example.test/" } }));
+  process.exit(0);
+}
 const stdin = fs.readFileSync(0, "utf8");
 const steps = JSON.parse(stdin || "[]");
 const results = steps.map((step) => {

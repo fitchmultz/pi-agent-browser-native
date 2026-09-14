@@ -131,6 +131,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
 
 			const firstOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
+				sessionMode: "fresh",
 				args: ["open", "https://dash.cloudflare.com"],
 			});
 			assert.equal(firstOpen.isError, false);
@@ -215,6 +216,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const open = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sessionMode: "fresh",
 				args: ["open", "https://example.com/quit-cleanup"],
 			});
 			assert.equal(open.isError, false, JSON.stringify(open));
@@ -254,7 +256,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/branch-a"] });
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/branch-a"], sessionMode: "fresh" });
 			assert.equal(open.isError, false, JSON.stringify(open));
 			const sessionName = open.details?.sessionName;
 			assert.equal(typeof sessionName, "string");
@@ -516,7 +518,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/first"] });
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/first"], sessionMode: "fresh" });
 			assert.equal(open.isError, false, JSON.stringify(open));
 			const firstSessionName = open.details?.sessionName;
 			assertIsString(firstSessionName);
@@ -530,7 +532,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(followUp.isError, false, JSON.stringify(followUp));
 			const firstFreshSessionName = followUp.details?.sessionName;
 			assertIsString(firstFreshSessionName);
-			assert.match(firstFreshSessionName, new RegExp(`^${firstSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(firstFreshSessionName, new RegExp(`^${firstSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
 
 			const closeFresh = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstFreshSessionName, "close"] });
 			assert.equal(closeFresh.isError, false, JSON.stringify(closeFresh));
@@ -539,7 +541,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
 			const finalFreshSessionName = finalFollowUp.details?.sessionName;
 			assertIsString(finalFreshSessionName);
-			assert.match(finalFreshSessionName, new RegExp(`^${firstSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(finalFreshSessionName, new RegExp(`^${firstSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
 			assert.notEqual(finalFreshSessionName, firstFreshSessionName);
 
 			const invocations = await readInvocationLog(logPath);
@@ -573,7 +575,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"] });
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"], sessionMode: "fresh" });
 			assert.equal(open.isError, false, JSON.stringify(open));
 			const baseSessionName = open.details?.sessionName;
 			assertIsString(baseSessionName);
@@ -590,8 +592,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(followUp.isError, false, JSON.stringify(followUp));
 			const followUpSessionName = followUp.details?.sessionName;
 			assertIsString(followUpSessionName);
-			assert.match(rotatedSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
-			assert.match(followUpSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(rotatedSessionName, new RegExp(`^${baseSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
+			assert.match(followUpSessionName, new RegExp(`^${baseSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
 			assert.notEqual(followUpSessionName, rotatedSessionName);
 
 			const invocations = await readInvocationLog(logPath);
@@ -622,7 +624,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"] });
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"], sessionMode: "fresh" });
 			assert.equal(open.isError, false, JSON.stringify(open));
 			const baseSessionName = open.details?.sessionName;
 			assertIsString(baseSessionName);
@@ -631,7 +633,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(closeBase.isError, false, JSON.stringify(closeBase));
 			const reservedSessionName = (closeBase.details?.managedSessionOutcome as { currentSessionName?: string } | undefined)?.currentSessionName;
 			assertIsString(reservedSessionName);
-			assert.match(reservedSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(reservedSessionName, new RegExp(`^${baseSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
 
 			harness.setBranch([
 				createToolBranchEntry({ details: open.details ?? {}, isError: open.isError }),
@@ -727,7 +729,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const baseOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"] });
+			const baseOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"], sessionMode: "fresh" });
 			assert.equal(baseOpen.isError, false, JSON.stringify(baseOpen));
 			const baseSessionName = baseOpen.details?.sessionName;
 			assertIsString(baseSessionName);
@@ -737,7 +739,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(freshUse.isError, false, JSON.stringify(freshUse));
 			const firstFreshSessionName = freshUse.details?.sessionName;
 			assertIsString(firstFreshSessionName);
-			assert.match(firstFreshSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(firstFreshSessionName, new RegExp(`^${baseSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
 			const closeFresh = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", firstFreshSessionName, "close"] });
 			assert.equal(closeFresh.isError, false, JSON.stringify(closeFresh));
 
@@ -753,7 +755,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(restoredFollowUp.isError, false, JSON.stringify(restoredFollowUp));
 			const restoredGeneratedSessionName = restoredFollowUp.details?.sessionName;
 			assertIsString(restoredGeneratedSessionName);
-			assert.match(restoredGeneratedSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(restoredGeneratedSessionName, new RegExp(`^${baseSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
 			assert.notEqual(restoredGeneratedSessionName, firstFreshSessionName);
 
 			const closeRestoredGenerated = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", restoredGeneratedSessionName, "close"] });
@@ -762,7 +764,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
 			const finalSessionName = finalFollowUp.details?.sessionName;
 			assertIsString(finalSessionName);
-			assert.match(finalSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+			assert.match(finalSessionName, new RegExp(`^${baseSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`));
 			assert.notEqual(finalSessionName, firstFreshSessionName);
 			assert.notEqual(finalSessionName, restoredGeneratedSessionName);
 
@@ -1000,7 +1002,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, AGENT_BROWSER_HEADED: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"] });
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"], sessionMode: "fresh" });
 			assert.equal(open.isError, false, JSON.stringify(open));
 			assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
             assert.deepEqual(open.details?.browserWindow, { mode: "headed", ownership: "wrapper-managed", sessionName: open.details?.sessionName, visibility: "unverified" });
@@ -1062,6 +1064,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { result: "https
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sessionMode: "fresh",
 				args: ["--headed", "batch", "--bail"],
 				stdin: JSON.stringify([["open", "https://example.com/headed-batch"]]),
 			});
@@ -1128,7 +1131,7 @@ if (args.includes("session") && args.includes("info")) {
 		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"] });
+			const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--headed", "open", "https://example.com/headed"], sessionMode: "fresh" });
 			assert.equal(open.isError, false, JSON.stringify(open));
 			assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
 			assert.equal(open.details?.managedSessionHeadedAutosaveInterval, "0");
@@ -1248,6 +1251,7 @@ if (command === "session") {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const headedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sessionMode: "fresh",
 				args: ["--headed", "open", "https://example.com/headed"],
 			});
 			assert.equal(headedOpen.isError, false, JSON.stringify(headedOpen));
@@ -1310,7 +1314,7 @@ if (command === "session") {
 
 test("agentBrowserExtension preserves named older owned dispatch, semantic replanning, and queue ordering after replacement close fails", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "piab-owned-namespace-"));
-	const cwd = join(tempDir, "project");
+	const cwd = join(tempDir, "p");
 	const home = join(tempDir, "home");
 	const logPath = join(tempDir, "invocations.log");
 	const waitGate = join(tempDir, "release-wait");
@@ -1371,7 +1375,7 @@ if (command === "session") {
 			const pending: Array<ReturnType<typeof executeRegisteredTool>> = [];
 			try {
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "Review Space", "open", "https://shop.example.test/"] });
+				const open = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "Review Space", "open", "https://shop.example.test/"], sessionMode: "fresh" });
 				assert.equal(open.isError, false, JSON.stringify(open));
 				assert.equal(open.details?.namespace, "review-space");
 				assert.notEqual(open.details?.managedSessionRestoreDisabled, true);
@@ -1514,7 +1518,7 @@ if (args.includes("session") && args.includes("info")) {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const compatOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://dash.cloudflare.com"] });
+			const compatOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://dash.cloudflare.com"], sessionMode: "fresh" });
 			assert.equal(compatOpen.isError, false, JSON.stringify(compatOpen));
 			assert.equal((compatOpen.details?.compatibilityWorkaround as { id?: string } | undefined)?.id, "cloudflare-headless-user-agent");
 			const compatSessionName = String(compatOpen.details?.sessionName ?? "");
@@ -1582,7 +1586,7 @@ if (args.includes("session") && args.includes("info")) {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const oldOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/old"] });
+			const oldOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/old"], sessionMode: "fresh" });
 			assert.equal(oldOpen.isError, false, JSON.stringify(oldOpen));
 			const oldSessionName = oldOpen.details?.sessionName;
 			assertIsString(oldSessionName);
@@ -1635,6 +1639,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { url: args[args.leng
 			const firstHarness = createExtensionHarness({ cwd: firstDir });
 			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
 			const firstOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
+				sessionMode: "fresh",
 				args: ["open", "https://example.com/first"],
 			});
 			assert.equal(firstOpen.isError, false);
@@ -1695,6 +1700,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 					await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 					const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+						sessionMode: "fresh",
 						args: ["open", "https://example.com"],
 					});
 					assert.equal(firstOpen.isError, false);
@@ -1760,6 +1766,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
 
 			const firstOpen = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, {
+				sessionMode: "fresh",
 				args: ["open", "https://example.com"],
 			});
 			assert.equal(firstOpen.isError, false);
@@ -1978,7 +1985,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"] });
+			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/base"], sessionMode: "fresh" });
 			assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
 			const baseSessionName = firstOpen.details?.sessionName;
 			assert.equal(typeof baseSessionName, "string");
@@ -2570,6 +2577,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sessionMode: "fresh",
 				args: ["open", "https://example.com"],
 			});
 			assert.equal(firstOpen.isError, false);

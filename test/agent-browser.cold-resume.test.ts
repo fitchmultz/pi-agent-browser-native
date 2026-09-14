@@ -80,7 +80,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 				...(options.attached ? [[...prefix, "get", "url"]] : []),
 				[...prefix, "snapshot", "-i"],
 			]) {
-				const result = await executeRegisteredTool(first.tool, first.ctx, { args });
+				const result = await executeRegisteredTool(first.tool, first.ctx, { args, ...(args.includes("open") ? { sessionMode: "fresh" as const } : {}) });
 				assert.equal(result.isError, false, result.content[0]?.text);
 				branch.push(createToolBranchEntry({ details: result.details!, isError: result.isError }));
 			}

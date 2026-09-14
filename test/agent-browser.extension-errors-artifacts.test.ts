@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { withAgentBrowserProcessEnvironment } from "../extensions/agent-browser/lib/process-environment.js";
 import { execFileSync } from "node:child_process";
 import { access, link, mkdir, mkdtemp, readFile, readdir, rm, utimes, watch, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -130,6 +131,7 @@ if (args.includes("screenshot")) {
 			AGENT_BROWSER_ALLOW_FILE_ACCESS: "true",
 			AGENT_BROWSER_ARGS: "--disable-web-security",
 			AGENT_BROWSER_CONFIG: "/tmp/agent-browser.json",
+			PI_AGENT_BROWSER_TEST_PAGE_URL: localUrl,
 			PATH: `${tempDir}:${basePath}`,
 		}, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
@@ -407,7 +409,7 @@ if (args.includes("get") && args.includes("url")) {
 });
 
 test("agentBrowserExtension rejects incompatible launch reuse of an active restore-enabled managed daemon", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-reuse-"));
+	const tempDir = await mkdtemp(join(tmpdir(), "rp-"));
 	initializeGitProject(tempDir);
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -438,6 +440,7 @@ if (args.includes("session") && args.includes("info")) {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sessionMode: "fresh",
 				args: ["--namespace", "Team", "open", "https://dash.cloudflare.com"],
 			});
 			assert.equal(opened.isError, false, JSON.stringify(opened));
@@ -525,13 +528,13 @@ if (args.includes("session") && args.includes("info")) {
 			await writeFile(callerState, "{}");
 			await writeFile(join(tempDir, "daemon-state.json"), JSON.stringify({ active: true, restoreKey }));
 
-			const orphanHarness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(orphanHarness.handlers, "session_start", { reason: "new" }, orphanHarness.ctx);
-			const orphanedDaemonReuse = await executeRegisteredTool(orphanHarness.tool, orphanHarness.ctx, {
+			const restoredHarness = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: opened.details! })] });
+			await runExtensionEvent(restoredHarness.handlers, "session_start", { reason: "new" }, restoredHarness.ctx);
+			const restoredDaemonReuse = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, {
 				args: ["--namespace", "TEAM", "--proxy", "http://127.0.0.1:8080", "open", "https://example.com"],
 			});
-			assert.equal(orphanedDaemonReuse.isError, true);
-			assert.match(String(orphanedDaemonReuse.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+			assert.equal(restoredDaemonReuse.isError, true);
+			assert.match(String(restoredDaemonReuse.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 			assert.equal(await userInvocationCount(), invocationCount);
 
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
@@ -559,7 +562,7 @@ let state = { active: false, restoreKey: null };
 try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
 if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey } : null } }));
-} else if (args.includes("--profile")) {
+} else if (args.includes("--profile") || process.env.AGENT_BROWSER_PROFILE) {
   fs.appendFileSync(${JSON.stringify(mainLogPath)}, "incompatible-main\\n");
   process.stdout.write(JSON.stringify({ success: true, data: { title: "unsafe", url: "https://example.com/unsafe" } }));
 } else if (args.includes("open")) {
@@ -569,14 +572,18 @@ if (args.includes("session") && args.includes("info")) {
   fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({ active: true, restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null }));
   process.stdout.write(JSON.stringify({ success: true, data: { title: "safe", url: "https://example.com/safe" } }));
 } else {
+  fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({ active: true, restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null }));
   process.stdout.write(JSON.stringify({ success: true, data: { title: "safe", url: "https://example.com/safe" } }));
 }`);
 	try {
 		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
 			const first = createExtensionHarness({ cwd: tempDir });
-			const second = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(first.handlers, "session_start", { reason: "new" }, first.ctx);
-			await runExtensionEvent(second.handlers, "session_start", { reason: "new" }, second.ctx);
+			const seeded = await executeRegisteredTool(first.tool, first.ctx, { args: ["get", "url"], sessionMode: "fresh" });
+			assert.equal(seeded.isError, false, JSON.stringify(seeded));
+			const second = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: seeded.details! })] });
+			await runExtensionEvent(second.handlers, "session_start", { reason: "resume" }, second.ctx);
+			await writeFile(statePath, JSON.stringify({ active: false, restoreKey: null }));
 			const compatible = executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com/safe"] });
 			for (let attempt = 0; attempt < 100; attempt += 1) {
 				try { await access(startedPath); break; } catch {
@@ -584,9 +591,9 @@ if (args.includes("session") && args.includes("info")) {
 					await new Promise((resolve) => setTimeout(resolve, 10));
 				}
 			}
-			const incompatible = executeRegisteredTool(second.tool, second.ctx, {
-				args: ["--profile", "Default", "open", "https://example.com/unsafe"],
-			});
+			const incompatible = withAgentBrowserProcessEnvironment({ AGENT_BROWSER_PROFILE: "Default" }, () => executeRegisteredTool(second.tool, second.ctx, {
+				args: ["open", "https://example.com/unsafe"],
+			}));
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			await writeFile(allowPath, "allow");
 			const compatibleResult = await compatible;
@@ -624,7 +631,7 @@ if (args.includes("session") && args.includes("info")) {
 		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const initial = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/safe"] });
+			const initial = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/safe"], sessionMode: "fresh" });
 			assert.equal(initial.isError, false, JSON.stringify(initial));
 			await writeFile(statePath, JSON.stringify({ active: true, restoreKey: null }));
 
@@ -725,7 +732,7 @@ if (args.includes("session") && args.includes("info")) {
 		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const initial = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--proxy", "http://127.0.0.1:8080", "open", "https://example.com/safe"] });
+			const initial = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--proxy", "http://127.0.0.1:8080", "open", "https://example.com/safe"], sessionMode: "fresh" });
 			assert.equal(initial.isError, false, JSON.stringify(initial));
 			assert.equal(initial.details?.managedSessionRestoreDisabled, true);
 			await writeFile(statePath, JSON.stringify({ active: true, restoreKey: `piab-r2-${"c".repeat(32)}` }));
@@ -765,6 +772,7 @@ if (args.includes("session") && args.includes("info")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--proxy", "http://127.0.0.1:8080", "open", "https://example.com/unsafe"],
+				sessionMode: "fresh",
 			});
 			assert.equal(result.isError, true, JSON.stringify(result));
 			assert.match(String(result.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
@@ -808,7 +816,7 @@ if (args.includes("session") && args.includes("info")) {
 		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
 			const first = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(first.handlers, "session_start", { reason: "new" }, first.ctx);
-			const opened = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com"] });
+			const opened = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com"], sessionMode: "fresh" });
 			assert.equal(opened.isError, false, JSON.stringify(opened));
 			const priorKey = (JSON.parse(await readFile(statePath, "utf8")) as { restoreKey: string }).restoreKey;
 			const managedSessionName = String(opened.details?.sessionName);
@@ -818,11 +826,11 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal(sameInstanceBlocked.isError, true);
 			assert.match(String(sameInstanceBlocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 
-			const noIdentityHarness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(noIdentityHarness.handlers, "session_start", { reason: "new" }, noIdentityHarness.ctx);
-			const noIdentityBlocked = await executeRegisteredTool(noIdentityHarness.tool, noIdentityHarness.ctx, { args: ["open", "https://example.com"] });
-			assert.equal(noIdentityBlocked.isError, true);
-			assert.match(String(noIdentityBlocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
+			const resumedWithoutGit = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: opened.details! })] });
+			await runExtensionEvent(resumedWithoutGit.handlers, "session_start", { reason: "new" }, resumedWithoutGit.ctx);
+			const resumedWithoutGitBlocked = await executeRegisteredTool(resumedWithoutGit.tool, resumedWithoutGit.ctx, { args: ["open", "https://example.com"] });
+			assert.equal(resumedWithoutGitBlocked.isError, true);
+			assert.match(String(resumedWithoutGitBlocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 
 			initializeGitProject(tempDir);
 			assert.notEqual(createManagedSessionRestoreKey(tempDir), priorKey);
@@ -830,7 +838,7 @@ if (args.includes("session") && args.includes("info")) {
 			assert.equal(sameInstanceReplacementBlocked.isError, true, JSON.stringify(sameInstanceReplacementBlocked));
 			assert.match(String(sameInstanceReplacementBlocked.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
 
-			const replacementHarness = createExtensionHarness({ cwd: tempDir });
+			const replacementHarness = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: opened.details! })] });
 			await runExtensionEvent(replacementHarness.handlers, "session_start", { reason: "new" }, replacementHarness.ctx);
 			const replacementBlocked = await executeRegisteredTool(replacementHarness.tool, replacementHarness.ctx, { args: ["open", "https://example.com"] });
 			assert.equal(replacementBlocked.isError, true);
@@ -886,6 +894,7 @@ if (args.includes("session") && args.includes("info")) {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+				sessionMode: "fresh",
 				args: ["--restore", "caller-key", "open", "https://example.com"],
 			});
 			assert.equal(opened.isError, false, JSON.stringify(opened));
@@ -962,7 +971,7 @@ if (args.includes("session") && args.includes("info")) {
 			}, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"] });
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"], sessionMode: "fresh" });
 				assert.equal(opened.isError, false, JSON.stringify(opened));
 				assert.equal(opened.details?.managedSessionRestoreDisabled, true);
 				const sessionName = opened.details?.sessionName;
@@ -1022,7 +1031,7 @@ test("agentBrowserExtension does not sticky-disable restore when a suppressed sp
 		}, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const failed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"] });
+			const failed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"], sessionMode: "fresh" });
 			assert.equal(failed.isError, true);
 			assert.notEqual(failed.details?.managedSessionRestoreDisabled, true);
 
@@ -1099,7 +1108,7 @@ setTimeout(() => process.stdout.write(JSON.stringify({ success: true, data: { ok
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "50" }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/", PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "50" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -1230,7 +1239,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: stdin.trim(
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.invalid/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -1361,7 +1370,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "previous", "open", "https://previous.test"] });
+			const firstResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "previous", "open", "https://previous.test"], sessionMode: "fresh" });
 			assert.equal(firstResult.isError, false, JSON.stringify(firstResult));
 			const previousSessionName = firstResult.details?.sessionName as string;
 			assert.ok(previousSessionName);
@@ -1604,13 +1613,14 @@ if (args.includes("batch")) {
 				assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "seed");
 			}
 
-			const beforeProtectedOutput = (await readFile(logPath, "utf8")).trim().split("\n").length;
+			const titleCalls = async () => (await readFile(logPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]).filter((args) => args.slice(-2).join(" ") === "get title").length;
+			const beforeProtectedOutput = await titleCalls();
 			const protectedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["get", "title"],
 				outputPath: ".agent-browser/states/overwrite.json",
 			});
 			assert.equal(protectedOutput.isError, false, JSON.stringify(protectedOutput));
-			assert.equal((await readFile(logPath, "utf8")).trim().split("\n").length, beforeProtectedOutput + 1);
+			assert.equal(await titleCalls(), beforeProtectedOutput + 1);
 			assert.deepEqual(JSON.parse(await readFile(join(tempDir, ".agent-browser/states/overwrite.json"), "utf8")), { result: "Example", title: "Example" });
 
 			await writeFile(join(tempDir, "blocked-output-parent"), "not a directory");
@@ -2092,7 +2102,7 @@ test("agentBrowserExtension forwards wait --download saved-file metadata in deta
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 

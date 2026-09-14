@@ -787,6 +787,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			for (const args of commands) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
 				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.type === "text" ? result.content[0].text : ""}`);
+				if (args[0] === "get" && args[1] === "url") {
+					assert.deepEqual(result.details?.args, ["get", "url"]);
+					assert.equal((result.details?.data as { url?: string })?.url, "https://example.test/current");
+				}
 			}
 
 			const invocations = await readInvocationLog(logPath);
@@ -806,7 +810,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				navigationSummaryTitleObserved = true;
 				return titleProbe ? [normalizedArgs, ["get", "url"], ["get", "title"]] : [normalizedArgs, ["get", "url"]];
 			});
-			assert.deepEqual(commandInvocations, expectedInvocations);
+			// Root-session page checks may add get url; retain exact argv/order for every other command.
+			const withoutUrlChecks = (rows: string[][]) => rows.filter((args) => args.join(" ") !== "get url");
+			assert.deepEqual(withoutUrlChecks(commandInvocations), withoutUrlChecks(expectedInvocations));
 			assert.ok(invocations.every((entry) => entry.args[0] === "--json" && entry.args.includes("--session")));
 		});
 	} finally {
@@ -889,6 +895,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				assert.doesNotMatch(result.content[0]?.text ?? "", /cookie-secret|cookie-get-secret|storage-secret/);
 				assert.doesNotMatch(JSON.stringify(result.details), /cookie-secret|cookie-get-secret|storage-secret/);
 				if (args[0] === "storage" && args[1] === "local" && args[2] === "set") storageSetResult = result;
+				if (args[0] === "get" && args[1] === "url") {
+					assert.deepEqual(result.details?.args, ["get", "url"]);
+					assert.equal((result.details?.data as { url?: string })?.url, "https://example.test/current");
+				}
 			}
 			assert.match(storageSetResult?.content[0]?.text ?? "", /theme: dark/);
 			assert.match(JSON.stringify(storageSetResult?.details), /"value":"dark"/);
@@ -904,7 +914,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				.map((entry) => stripWrapperPrefix(entry.args))
 				.filter((args) => !(args[0] === "tab" && args[1] === "list"))
 				.filter((args) => !(args.includes("cookies") && args.includes("set") && args.includes("json-cookie-secret")));
-			assert.deepEqual(userInvocations, commands.map((args) => [...args]));
+			assert.deepEqual(userInvocations.filter((args) => args.join(" ") !== "get url"), commands.map((args) => [...args]).filter((args) => args.join(" ") !== "get url"));
 			assert.ok(invocations.every((entry) => entry.args.includes("--json")));
 			assert.ok(invocations.every((entry) => {
 				const userArgs = stripWrapperPrefix(entry.args);
@@ -1045,9 +1055,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 			const invocations = await readInvocationLog(logPath);
 			const userInvocations = invocations.map((entry) => stripWrapperPrefix(entry.args));
-			assert.deepEqual(userInvocations, commands.flatMap((args) => args[0] === "diff" && args[1] === "url"
-				? [[...args], ["get", "url"], ["get", "title"]]
-				: [[...args]]));
+			assert.deepEqual(userInvocations.filter((args) => args.join(" ") !== "get url"), commands.flatMap((args) => args[0] === "diff" && args[1] === "url"
+				? [[...args], ["get", "title"]]
+				: [[...args]]).filter((args) => args.join(" ") !== "get url"));
 			assert.ok(invocations.every((entry) => entry.args.includes("--json")));
 			assert.ok(invocations.every((entry) => {
 				const userArgs = stripWrapperPrefix(entry.args);
@@ -1075,7 +1085,7 @@ test("agentBrowserExtension treats stream enable already-enabled as idempotent n
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Enable stream." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["stream", "enable"] });
@@ -1100,7 +1110,7 @@ test("agentBrowserExtension does not mask non-exact stream enable failures", { c
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Enable stream." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["stream", "enable"] });
@@ -1128,7 +1138,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://example.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Mock network route." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const routeResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["network", "route", "**/api/**", "--body", "{}", "--resource-type", "fetch"] });
@@ -1169,7 +1179,7 @@ process.stdin.on("end", () => {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://example.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Mock network route in a batch." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1266,7 +1276,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { path } }));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Save browser state." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const statePath = join(tempDir, "missing", "parents", "fixture-state.json");
@@ -1291,7 +1301,7 @@ test("agentBrowserExtension renders explicit --json tool content as JSON", { con
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Check stream status." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1340,7 +1350,7 @@ process.stdin.on("end", () => {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Take a batch screenshot." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {

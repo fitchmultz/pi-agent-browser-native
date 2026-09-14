@@ -122,7 +122,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			true,
 		);
 		assert.match(guidelineText, /sessionMode=fresh/);
-		assert.match(guidelineText, /honors native shared-session defaults on bare calls/);
+		assert.match(guidelineText, /bare calls share a root Pi browser with descendants/);
 		assert.match(SHARED_BROWSER_PLAYBOOK_GUIDELINES.join("\n"), /copied Chrome profiles may omit encrypted cookies/);
 		assert.match(guidelineText, /exact user paths/);
 		assert.match(guidelineText, /requested\/configured profiles only/);
@@ -216,7 +216,7 @@ test("agentBrowserExtension includes configured browser executable guidance", as
 		const guidelineText = harness.tool.promptGuidelines.join("\n");
 		assert.match(guidelineText, /browser\.executablePath/);
 		assert.match(guidelineText, /--executable-path/);
-		assert.match(guidelineText, /profiles command still lists Chrome profiles only/);
+		assert.match(guidelineText, /profiles lists Chrome profiles only/);
 	});
 });
 
@@ -494,7 +494,7 @@ if (command === "batch") { fs.readFileSync(0, "utf8"); process.stdout.write("[]"
 else process.stdout.write(JSON.stringify({ success: true, data: { waited: true } }));`,
 	);
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			for (const params of [
@@ -673,7 +673,7 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS: "50", PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS: "60" }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/", PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS: "50", PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS: "60" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -734,7 +734,7 @@ process.stdin.on("end", () => {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -783,7 +783,7 @@ process.stdin.on("end", () => {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -833,7 +833,7 @@ process.stdin.on("end", () => {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -884,7 +884,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://dense.example/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -932,7 +932,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://app.example/settings" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -978,7 +978,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://dense.example/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -1022,7 +1022,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://dense.example/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -1464,13 +1464,14 @@ process.stdout.write(JSON.stringify(command === "batch"
 				try {
 					const open = executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...(scenario.named ? ["--namespace", "Review Space"] : []), "open", "https://safe.example/"],
+						sessionMode: scenario.callerOwned ? "auto" : "fresh",
 					});
 					pending.push(open);
 					const openStarted = await Promise.race([
 						waitForEvent("open-start"),
 						open.then(result => assert.fail(`${scenario.label}: open ended before the fixture gate: ${result.content[0]?.text}`)),
 					]);
-					assert.match(openStarted.sessionName, /^piab-/);
+					assert.match(openStarted.sessionName, scenario.callerOwned ? /^pi-root-/ : /^piab-/);
 					assert.equal(openStarted.namespace, scenario.named ? "review-space" : "");
 					const namespace = scenario.override ?? (scenario.named ? "review-space" : "");
 					const matchingPrefix = namespace || scenario.ambient ? ["--namespace", namespace] : [];
@@ -1508,7 +1509,7 @@ process.stdout.write(JSON.stringify(command === "batch"
 					const otherNamespace = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "unrelated", "--session", "other-session", "tab", "list"] });
 					assert.equal(otherNamespace.isError, false, JSON.stringify(otherNamespace));
 					const whileClosed = (await readEvents()).slice(atCloseStart);
-					assert.equal(whileClosed.some((entry) => entry.sessionName === "same-namespace" || entry.sessionName.startsWith("piab-")), false, `${scenario.label}: ${JSON.stringify(whileClosed)}`);
+					assert.equal(whileClosed.some((entry) => entry.sessionName === "same-namespace" || entry.sessionName.startsWith("piab-") || entry.sessionName.startsWith("pi-root-")), false, `${scenario.label}: ${JSON.stringify(whileClosed)}`);
 					await writeFile(closeGate, "go");
 					const [closeResult, callerResult, overlapResult] = await Promise.all([closeAll, overlappingCaller, overlappingManaged]);
 					assert.equal(closeResult.isError, false, JSON.stringify(closeResult));
@@ -1611,6 +1612,7 @@ if (firstCallFailure) process.exit(1);`,
 		await withPatchedEnv({ PATH: `${tempDir}:${missingFfmpegPath}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1" }, async () => {
 			const firstCallHarness = createExtensionHarness({ cwd: tempDir, prompt: "Test failed post-close launch ownership.", sessionFile: join(tempDir, "first-call-session.jsonl") });
 			const failedFirstCall = await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, {
+				sessionMode: "fresh",
 				args: ["batch"],
 				stdin: JSON.stringify([["close"], ["click", "#missing-after-close"]]),
 			});
@@ -1645,7 +1647,7 @@ if (firstCallFailure) process.exit(1);`,
 			assert.match(retainedOtherNamespace.content[0]?.text ?? "", /reserved by an active recording/);
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "other", "close", "--all"] });
 
-			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "--quiet", "start", "demo.webm"] });
+			const missingResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["record", "--quiet", "start", "demo.webm"], sessionMode: "fresh" });
 			assert.equal(missingResult.isError, false);
 			assert.equal(missingResult.details?.successCategory, "artifact-pending");
 			assert.deepEqual(

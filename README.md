@@ -608,32 +608,30 @@ After a successful unnamed fresh launch, later default `sessionMode: "auto"` cal
 
 ### Shared browser defaults
 
-To reuse one signed-in browser across Pi sessions, configure native `agent-browser` defaults in `~/.agent-browser/config.json`:
+Ordinary browser calls use one native named browser per **root Pi session**. A parent and its subagents share that browser; unrelated roots get different names and can browse concurrently. `pi-subagents` supplies `PI_SUBAGENT_ROOT_SESSION_ID` through its existing launch records, including detached runs, delegated forks, grandchildren, and revived children. Ordinary Pi new/fork/clone sessions get their own root identity; resuming the same root or changing its cwd keeps its browser name.
+
+Coordinate multi-call navigation within the group using existing subagent/intercom tools. Native commands are serialized by each browser daemon; wrapper helper queues are process-local. There is no global focus queue. Parent or child exit does not close the group browser. Native idle policy applies; explicitly close only your group's browser when the group is finished.
+
+To bootstrap new root browsers from an authenticated normal Chrome profile, set the existing **Pi package** config in `~/.pi/config/pi-agent-browser-native/config.json`:
 
 ```json
 {
-  "session": "shared-work",
-  "namespace": "",
-  "profile": "/absolute/path/to/persistent-browser-profile",
-  "headed": true
+  "browser": {
+    "defaultProfile": { "name": "Default", "policy": "always" },
+    "executablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  }
 }
 ```
 
-Use a dedicated full profile directory path, not a copied Chrome profile name. Add native `executablePath` if needed. Ordinary `args`, `semanticAction`, `job`, `qa`, and lookup calls then select that same caller-owned browser without repeating flags. This is separate from the advisory Pi package `browser.defaultProfile` setting. Existing native project config, environment and per-call flags keep their precedence; `--config` or `AGENT_BROWSER_CONFIG` replaces user/project config discovery.
+For inactive automatic roots, global/override `always` profile **names** and the configured executable bootstrap native launch through a scoped subprocess environment shared with helpers. Active roots retain native launch settings instead of resending defaults that could replace an explicitly profiled browser; their existing restore key is preserved, including follow-ups naming the same root browser. Native Chrome profile names use independent temporary copies, not the source profile's lock. Profile paths and other profile policies remain advisory; project guidance does not change a root's launch settings when a child changes cwd. Explicit unrelated sessions, native launch/config/environment choices, isolated `script`, and Electron launches do not receive the root bootstrap defaults. Do not set a global native profile merely to enable this feature: it can change the launch configuration of existing unrelated browsers.
 
-Pi quit does not close a caller-owned shared browser or impose its implicit 15-minute idle timeout. Native idle policy applies, including its default headed-browser exemption; explicit `--idle-timeout` applies to every helper in that call too. Keep native idle settings consistent between calls because changing them can restart the daemon. `AGENT_BROWSER_SOCKET_DIR` is honored for caller-owned sessions; the wrapper-specific socket override still takes priority.
+Each automatic root has its own stable native restore key. Native save/restore preserves cookies, localStorage, and sessionStorage across normal close/restart; it does not merge auth between roots or save new IndexedDB-only credentials, service workers, or page-memory grants. Named profile copies can bootstrap existing IndexedDB, but are discarded on close and never write back to the communal profile. Verify the actual application after restart, not just a successful restore receipt. If an application needs unsupported state, use a supported persistent **per-root** profile and collect required sign-ins together; never point concurrent roots at one writable profile directory. Sites can expire sessions or require a fresh human challenge.
 
-A configured native session, like explicit `--session`, takes precedence over `sessionMode: "fresh"`. To select a different browser, override the native session **and** profile/config as appropriate; changing only the name can contend for the same profile. Without a configured session, implicit ownership and fresh rotation are unchanged. `script` remains disposable: its helpers and cleanup use an empty temporary native config, never your user/project profile defaults. Electron launch retains its own isolated app lifecycle and generated session, even with a native session environment default. With a shared native default configured, target Electron's returned `sessionName` explicitly for browser follow-ups.
-
-Use `{ "args": ["session", "info"] }` for one read-only preflight of the selected native session (or add `--namespace` / `--session` explicitly). It separates daemon activity/PID from verified browser liveness, Chrome PID, exact profile, tabs and native launched/attached ownership. Pi cleanup ownership is separate: a caller-owned shared browser is not closed by Pi, while an explicit name can still identify a wrapper-owned browser. Missing native fields remain unknown, never inferred from config or a live daemon.
+Explicit native `session` defaults (config or `AGENT_BROWSER_SESSION`) still override automatic root selection, including `sessionMode: "fresh"`. They intentionally share whichever browser the caller selected. Per-call session/namespace flags retain precedence. Ordinary launch options such as `--profile` or `--executable-path` still use the root-group name. Repeat explicit options when deliberately relaunching a persistent per-root profile after close. Explicit `fresh` and attachment choices retain their existing managed-session lifecycle; later auto calls follow that selected managed session. Use `session info` with the reported `sessionName` for read-only native daemon/browser evidence. Unknown native fields remain unknown.
 
 Policy-required URL reads keep the two-call read → confirm/deny flow. Returned actions name the actual native namespace/session, including `default`; routing survives transcript resume and branch changes. Only explicit-read provenance plus native `capabilities.readRequiresConfirmation: true` permits matching confirm/deny without page helpers. This capability includes native confirmation-ID checking. Legacy prompts retain correct routing but normal page checks; DOM or content-shaped prompts never receive the exemption.
 
 Full live identity, browser-independent native reads/confirmations and detailed recording receipts require the companion upstream fixes; the current recommended release does not yet supply all of them. Older supported versions remain accepted with unavailable evidence marked unknown. The extension does not upgrade or restart your installed browser to obtain these fields.
-
-Coordinate tabs/navigation between agents sharing a browser; the wrapper's per-session queue is local to one Pi process. Persistent profile storage preserves browser data, not a promise of permanent website login: sites can expire or revoke sessions and require a new human challenge. Standing permission avoids repeated permission requests, but cannot change those site policies.
-
-Before enabling global native profile defaults, update and fully restart every participating Pi runtime. Older loaded wrappers can still let disposable `script` launches read HOME config; editing this source or running `/reload` does not replace their cached code. Coordinate the browser cutover too: moving an existing daemon from the old wrapper's explicit 15-minute idle timeout to native idle policy changes its launch fingerprint and can restart it. Do not change that policy while another agent is using the browser.
 
 ### Profile selection
 

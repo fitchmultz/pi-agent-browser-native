@@ -1,5 +1,7 @@
 # Current upstream support matrix
 
+Root browser groups use native named sessions plus per-root restore, with scoped Chrome profile-name bootstrap from existing package config. `test/agent-browser.shared-defaults.test.ts` covers root separation, descendant routing, exact root-name follow-ups, helper launch consistency, explicit overrides, and quit ownership; the companion pi-subagents tests cover foreground/detached launch and saved revive identity. Native JSON restore supports cookies and web storage, not new IndexedDB-only or memory credentials. Real SDK/native-browser restart and concurrency evidence is required for this boundary; a profile metadata match alone is not login proof.
+
 Related docs:
 - [`../README.md`](../README.md)
 - [`../AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md) (rebaselining and verification stack)

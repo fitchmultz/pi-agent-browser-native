@@ -140,7 +140,7 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
 			};
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const opened = await call({ args: [...(options.callerOwned ? [] : ["--namespace", namespace]), "open", rememberedUrl] });
+			const opened = await call({ args: [...(options.callerOwned ? [] : ["--namespace", namespace]), "open", rememberedUrl], sessionMode: "fresh" });
 			assert.equal(opened.isError, false, opened.content[0]?.text);
 			assert.equal(typeof opened.details?.sessionName, "string");
 			const snapshot = await call({ args: ["snapshot", "-i"] });

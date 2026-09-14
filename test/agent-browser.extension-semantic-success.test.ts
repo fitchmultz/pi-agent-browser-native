@@ -70,7 +70,7 @@ if (command === "find") {
 			assert.match(semanticClick.details?.summary as string, /click → Example Domain/);
 			assert.deepEqual(
 				(semanticClick.details?.navigationSummary as { title?: string; url?: string; urlChanged?: boolean } | undefined),
-				{ title: "Example Domain", url: "https://example.test/" },
+				{ title: "Example Domain", url: "https://example.test/", urlChanged: false },
 			);
 			assert.equal(
 				(semanticClick.details?.pageChangeSummary as { command?: string; changeType?: string } | undefined)?.command,

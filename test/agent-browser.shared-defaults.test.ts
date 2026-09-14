@@ -49,7 +49,7 @@ console.log(JSON.stringify({ success: true, data }));
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("unconfigured implicit sessions retain ownership and idle cleanup", async () => {
+test("explicit fresh sessions retain ownership and idle cleanup", async () => {
 	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-owned-"));
 	const log = join(root, "calls.jsonl");
 	await writeFakeAgentBrowserBinary(root, `
@@ -60,9 +60,9 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "abou
 	try {
 		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}`, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
 			const harness = createExtensionHarness({ cwd: root });
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"] });
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" });
 			assert.equal(result.isError, false, result.content[0]?.text);
-			assert.equal(result.details?.usedImplicitSession, true);
+			assert.equal((result.details?.managedSessionOutcome as { activeAfter?: boolean })?.activeAfter, true);
 			const fresh = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" });
 			assert.equal(fresh.isError, false, fresh.content[0]?.text);
 			assert.notEqual(fresh.details?.sessionName, result.details?.sessionName, "fresh still rotates unconfigured implicit sessions");
@@ -72,6 +72,101 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "abou
 			assert.ok(calls.every((call) => call.idleTimeout === "900000"));
 		});
 	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("root defaults isolate roots, share descendants, and keep bootstrap settings on helpers without claiming quit ownership", async () => {
+	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-root-"));
+	const log = join(root, "calls.jsonl");
+	await mkdir(join(root, ".pi", "config", "pi-agent-browser-native"), { recursive: true });
+	await writeFile(join(root, ".pi", "config", "pi-agent-browser-native", "config.json"), JSON.stringify({ browser: { defaultProfile: { name: "Default", policy: "always" } } }));
+	await writeFakeAgentBrowserBinary(root, `
+const args = process.argv.slice(2);
+require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, restore: process.env.AGENT_BROWSER_RESTORE ?? null, profile: process.env.AGENT_BROWSER_PROFILE ?? null }) + "\\n");
+console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "https://fixture.test/" } }));
+`);
+	try {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}`, PI_SUBAGENT_CHILD: undefined, PI_SUBAGENT_ROOT_SESSION_ID: undefined }, async () => {
+			const one = createExtensionHarness({ cwd: root, sessionId: "root-one" });
+			const two = createExtensionHarness({ cwd: root, sessionId: "root-two" });
+			const read = (h: typeof one) => executeRegisteredTool(h.tool, h.ctx, { args: ["get", "title"] });
+			const [a, b] = await Promise.all([read(one), read(two)]);
+			assert.equal(a.isError, false, a.content[0]?.text);
+			assert.equal(b.isError, false, b.content[0]?.text);
+			assert.equal(typeof a.details?.sessionName, "string");
+			assert.notEqual(a.details?.sessionName, b.details?.sessionName);
+			const followup = await executeRegisteredTool(one.tool, one.ctx, { args: ["--session", String(a.details?.sessionName), "get", "title"] });
+			assert.equal(followup.isError, false, followup.content[0]?.text);
+			await withPatchedEnv({ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_ROOT_SESSION_ID: "root-one" }, async () => {
+				const child = createExtensionHarness({ cwd: root, sessionId: "child-id" });
+				assert.equal((await read(child)).details?.sessionName, a.details?.sessionName);
+				await runExtensionEvent(child.handlers, "session_shutdown", { reason: "quit" }, child.ctx);
+			});
+			await mkdir(join(root, "other-cwd"));
+			const resumed = createExtensionHarness({ cwd: join(root, "other-cwd"), sessionId: "root-one" });
+			assert.equal((await read(resumed)).details?.sessionName, a.details?.sessionName);
+			const explicit = await executeRegisteredTool(one.tool, one.ctx, { args: ["--session", "unrelated", "get", "title"] });
+			assert.equal(explicit.details?.sessionName, "unrelated");
+			for (const h of [one, two, resumed]) await runExtensionEvent(h.handlers, "session_shutdown", { reason: "quit" }, h.ctx);
+			const calls = (await readInvocationLog(log)) as Array<{ args: string[]; restore: string | null; profile: string | null }>;
+			assert.ok(calls.some((call) => call.args.includes("url")), "real helper routing is covered");
+			for (const call of calls) {
+				assert.ok(!call.args.includes("close"), "neither parent nor child exit owns group teardown");
+				const name = call.args[call.args.indexOf("--session") + 1];
+				assert.equal(call.restore, name === "unrelated" ? null : name);
+				assert.equal(call.profile, name === "unrelated" ? null : "Default");
+			}
+			const profiled = await executeRegisteredTool(one.tool, one.ctx, { args: ["--profile", "Profile 1", "open", "https://fixture.test/"] });
+			assert.equal(profiled.isError, false, profiled.content[0]?.text);
+			assert.equal(profiled.details?.sessionName, a.details?.sessionName, "profile flags do not split a root group");
+		});
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("real root group retains explicit profile across child helpers and persistent-profile restart", { skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1", timeout: 120_000 }, async () => {
+	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbr-"));
+	const fixture = await startAgentBrowserContractFixtureServer();
+	const profile = join(root, "profile");
+	const configDir = join(root, ".pi", "config", "pi-agent-browser-native");
+	await mkdir(configDir, { recursive: true });
+	await writeFile(join(configDir, "config.json"), JSON.stringify({ browser: { defaultProfile: { name: "Unavailable Fixture Source", policy: "always" } } }));
+	try {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PI_SUBAGENT_CHILD: undefined, PI_SUBAGENT_ROOT_SESSION_ID: undefined }, async () => {
+			const parent = createExtensionHarness({ cwd: root, sessionId: "persistent-root" });
+			try {
+				const opened = await executeRegisteredTool(parent.tool, parent.ctx, { args: ["--profile", profile, "open", fixture.baseUrl] });
+				assert.equal(opened.isError, false, opened.content[0]?.text);
+				const name = opened.details?.sessionName;
+				assert.ok(typeof name === "string" && name.length > 0);
+				const pidPath = join(root, "s", `${name}.pid`);
+				const pid = await readFile(pidPath, "utf8");
+				const marked = await executeRegisteredTool(parent.tool, parent.ctx, { args: ["eval", "--stdin"], stdin: `new Promise((resolve,reject)=>{const r=indexedDB.open('root-profile-marker',1);r.onupgradeneeded=()=>r.result.createObjectStore('auth');r.onsuccess=()=>{const db=r.result;const t=db.transaction('auth','readwrite');t.objectStore('auth').put('kept','marker');t.oncomplete=()=>{db.close();resolve(true)}};r.onerror=()=>reject(r.error)})` });
+				assert.equal(marked.isError, false, marked.content[0]?.text);
+				await withPatchedEnv({ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_ROOT_SESSION_ID: "persistent-root" }, async () => {
+					const child = createExtensionHarness({ cwd: root, sessionId: "child-uuid" });
+					try {
+						const shared = await executeRegisteredTool(child.tool, child.ctx, { args: ["get", "title"] });
+						assert.equal(shared.isError, false, shared.content[0]?.text);
+						assert.equal(shared.details?.sessionName, name);
+						const result = await executeRegisteredTool(child.tool, child.ctx, { args: ["--session", name, "get", "title"] });
+						assert.equal(result.isError, false, result.content[0]?.text);
+						assert.equal(result.details?.sessionName, name);
+						const qa = await executeRegisteredTool(child.tool, child.ctx, { qa: { attached: true, expectedText: "Agent Browser Contract Fixture" } });
+						assert.equal(qa.isError, false, qa.content[0]?.text);
+					} finally { await runExtensionEvent(child.handlers, "session_shutdown", { reason: "quit" }, child.ctx); }
+				});
+				assert.equal(await readFile(pidPath, "utf8"), pid, "child follow-ups neither apply the unavailable default profile nor restart the daemon");
+				await executeRegisteredTool(parent.tool, parent.ctx, { args: ["close"] });
+				const resumed = createExtensionHarness({ cwd: root, sessionId: "persistent-root" });
+				const reopened = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["--profile", profile, "open", fixture.baseUrl] });
+				assert.equal(reopened.isError, false, reopened.content[0]?.text);
+				assert.equal(reopened.details?.sessionName, name);
+				assert.notEqual(await readFile(pidPath, "utf8"), pid);
+				const retained = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["eval", "--stdin"], stdin: `new Promise((resolve,reject)=>{const r=indexedDB.open('root-profile-marker');r.onsuccess=()=>{const db=r.result;const t=db.transaction('auth');const get=t.objectStore('auth').get('marker');get.onsuccess=()=>{db.close();resolve(get.result)}};r.onerror=()=>reject(r.error)})` });
+				assert.equal(retained.isError, false, retained.content[0]?.text);
+				assert.equal((retained.details?.data as { result?: unknown })?.result, "kept");
+			} finally { await executeRegisteredTool(parent.tool, parent.ctx, { args: ["close"] }); }
+		});
+	} finally { await fixture.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("real native config identity follows file, environment and argv precedence", { skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1" }, async () => {

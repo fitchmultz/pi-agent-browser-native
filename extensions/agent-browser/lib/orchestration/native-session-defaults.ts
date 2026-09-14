@@ -1,21 +1,36 @@
+import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { extractExplicitSessionName, scanUpstreamGlobalFlagOccurrences } from "../argv-grammar.js";
 import { isRecord } from "../parsing.js";
+import { parseArgvDescriptor } from "../argv-descriptor.js";
+import { needsManagedSession } from "../command-policy.js";
+import { hasLaunchScopedFlagToken } from "../launch-scoped-flags.js";
 import { getAgentBrowserProcessEnvironment, withAgentBrowserProcessEnvironment } from "../process-environment.js";
 import { runAgentBrowserProcess } from "../process.js";
 import { parseAgentBrowserEnvelope } from "../results/envelope.js";
 import { isPlainTextInspectionArgs } from "../runtime.js";
-import type { ResolvedAgentBrowserValidInput } from "./input-plan.js";
+import { buildValidationFailureResult, type ResolvedAgentBrowserValidInput } from "./input-plan.js";
+import type { AgentBrowserToolResult } from "./browser-run/index.js";
+import { inspectManagedSessionDaemon } from "./browser-run/managed-session-daemon-policy.js";
+import { buildMissingBinaryMessage } from "./browser-run/final-result.js";
+
+interface NativeDefaults { session?: string; namespace?: string; profile?: unknown; executablePath?: unknown; [key: string]: unknown }
+
+function rootBrowserSessionName(rootSessionId: string): string {
+	return `pi-root-${createHash("sha256").update(rootSessionId).digest("hex").slice(0, 24)}`;
+}
 
 // Native `session` reports the resolved name, but not whether it was configured.
-// Read only identity presence/namespace; native validates the rest of its schema.
-async function readNativeIdentity(path: string, cwd: string, signal?: AbortSignal): Promise<{ session?: string; namespace?: string }> {
+// Native validates its schema; retain configured launch defaults so root fallbacks never replace them.
+async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal | undefined, rootFallback: boolean): Promise<NativeDefaults> {
 	let config: unknown;
 	try { config = JSON.parse(await readFile(path, "utf8")); } catch { return {}; }
-	if (!isRecord(config) || (typeof config.session !== "string" && typeof config.namespace !== "string")) return {};
+	if (!isRecord(config)) return {};
+	const rootLaunchConfig = rootFallback && ["restore", "sessionName", "state", "allowedDomains", "profile", "executablePath", "cdp", "autoConnect", "provider"].some((key) => config[key] !== undefined);
+	if (!rootLaunchConfig && typeof config.session !== "string" && typeof config.namespace !== "string") return {};
 	const result = await runAgentBrowserProcess({ args: ["--config", path, "--json", "session"], cwd, signal, timeoutMs: 5_000 });
 	try {
 		if (result.aborted || result.timedOut || result.spawnError) throw new Error("Could not resolve native agent-browser session configuration; the browser command was not run.");
@@ -23,7 +38,9 @@ async function readNativeIdentity(path: string, cwd: string, signal?: AbortSigna
 		const parsed = await parseAgentBrowserEnvelope({ stdout: result.stdout, stdoutPath: result.stdoutSpillPath });
 		const data = parsed.envelope?.data;
 		if (!isRecord(data) || typeof data.session !== "string") throw new Error("Native agent-browser session inspection returned no session name; the browser command was not run.");
+		const { session: _session, namespace: _namespace, ...defaults } = config;
 		return {
+			...defaults,
 			...(typeof config.session === "string" ? { session: data.session } : {}),
 			...(typeof config.namespace === "string" ? { namespace: config.namespace } : {}),
 		};
@@ -32,7 +49,7 @@ async function readNativeIdentity(path: string, cwd: string, signal?: AbortSigna
 	}
 }
 
-export async function withNativeSessionDefaults<T>(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput) => Promise<T>): Promise<T> {
+export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput, withLaunchDefaults?: (browserRun: () => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>, root?: { id: string; profile?: string; executablePath?: string }): Promise<AgentBrowserToolResult> {
 	if (input.kind === "electron" && input.compiledElectron.action === "launch") return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_SESSION: undefined }, () => run(input));
 	if (input.kind === "script" || input.kind === "electron" || isPlainTextInspectionArgs(input.toolArgs)) return run(input);
 	const env = getAgentBrowserProcessEnvironment();
@@ -41,9 +58,22 @@ export async function withNativeSessionDefaults<T>(input: ResolvedAgentBrowserVa
 	const paths = configPath !== undefined
 		? [resolve(cwd, configPath)]
 		: [join(homedir(), ".agent-browser", "config.json"), join(cwd, "agent-browser.json")];
-	let identity: { session?: string; namespace?: string } = {};
-	for (const path of paths) identity = { ...identity, ...await readNativeIdentity(path, cwd, signal) };
-	const session = env.AGENT_BROWSER_SESSION ?? identity.session;
+	const attachment = ["--cdp", "--auto-connect"].some((flag) => hasLaunchScopedFlagToken(input.toolArgs, flag))
+		|| env.AGENT_BROWSER_CDP !== undefined || ["1", "true"].includes(env.AGENT_BROWSER_AUTO_CONNECT ?? "")
+		|| parseArgvDescriptor(input.toolArgs).upstreamCommandTokens[0] === "connect";
+	const rootName = root && rootBrowserSessionName(root.id);
+	const explicitSession = extractExplicitSessionName(input.toolArgs);
+	const rootFallback = root !== undefined && env.AGENT_BROWSER_SESSION === undefined && (explicitSession === undefined || explicitSession === rootName)
+		&& !attachment && needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
+	let identity: NativeDefaults = {};
+	for (const path of paths) identity = { ...identity, ...await readNativeIdentity(path, cwd, signal, rootFallback) };
+	const configuredSession = env.AGENT_BROWSER_SESSION ?? identity.session;
+	const rootDefault = rootName && configuredSession === undefined && rootFallback && identity.cdp === undefined && identity.autoConnect !== true
+		? rootName : undefined;
+	const session = configuredSession ?? rootDefault;
+	const restoreEligible = !["--restore", "--session-name", "--state", "--allowed-domains", "--provider", "-p", "--device"].some((flag) => hasLaunchScopedFlagToken(input.toolArgs, flag))
+		&& !["restore", "sessionName", "state", "allowedDomains", "provider"].some((key) => identity[key] !== undefined)
+		&& !["AGENT_BROWSER_RESTORE", "AGENT_BROWSER_SESSION_NAME", "AGENT_BROWSER_STATE", "AGENT_BROWSER_ALLOWED_DOMAINS", "AGENT_BROWSER_PROVIDER"].some((key) => env[key] !== undefined);
 	const namespace = env.AGENT_BROWSER_NAMESPACE ?? identity.namespace;
 	let args = input.toolArgs;
 	if (session !== undefined && extractExplicitSessionName(args) === undefined) args = ["--session", session, ...args];
@@ -53,5 +83,30 @@ export async function withNativeSessionDefaults<T>(input: ResolvedAgentBrowserVa
 		...(configPath !== undefined ? { AGENT_BROWSER_CONFIG: resolve(cwd, configPath) } : {}),
 		...(session !== undefined ? { AGENT_BROWSER_SESSION: session } : {}),
 		...(namespace !== undefined ? { AGENT_BROWSER_NAMESPACE: namespace } : {}),
-	}, () => run({ ...input, toolArgs: args }));
+	}, () => run({ ...input, toolArgs: args }, !rootDefault ? undefined : async (browserRun) => {
+		const daemon = await inspectManagedSessionDaemon({ cwd, signal, sessionName: rootDefault,
+			namespace: scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value ?? namespace, timeoutMs: 5_000 });
+		if (daemon.status === "missing-binary") return {
+			content: [{ type: "text", text: buildMissingBinaryMessage() }],
+			details: { agentBrowserStarted: false, args: input.redactedArgs, sessionName: rootDefault, resultCategory: "failure", failureCategory: "missing-binary" },
+			isError: true,
+		};
+		if (input.kind === "qa" && input.compiledQaPreset.checks.attached && daemon.status !== "active") {
+			return buildValidationFailureResult({ ...input, attemptedKind: "qa", kind: "invalid", status: "invalid", validationError: "qa.attached requires an active attached session. Open the root browser first, or select an existing native session." });
+		}
+		// An active daemon already owns its launch settings. Re-sending defaults can replace an explicitly profiled browser.
+		const bootstrap = daemon.status === "inactive";
+		let restore: string | undefined;
+		if (restoreEligible && daemon.status === "active") restore = daemon.restoreKey ?? undefined;
+		if (restoreEligible && bootstrap) restore = rootDefault;
+		const profile = scanUpstreamGlobalFlagOccurrences(args, "--profile").at(-1)?.value
+			?? (bootstrap && restoreEligible && identity.profile === undefined && env.AGENT_BROWSER_PROFILE === undefined ? root?.profile : undefined);
+		const executablePath = scanUpstreamGlobalFlagOccurrences(args, "--executable-path").at(-1)?.value
+			?? (bootstrap && identity.executablePath === undefined && env.AGENT_BROWSER_EXECUTABLE_PATH === undefined ? root?.executablePath : undefined);
+		return withAgentBrowserProcessEnvironment({
+			...(restore !== undefined ? { AGENT_BROWSER_RESTORE: restore } : {}),
+			...(profile !== undefined ? { AGENT_BROWSER_PROFILE: profile } : {}),
+			...(executablePath !== undefined ? { AGENT_BROWSER_EXECUTABLE_PATH: executablePath } : {}),
+		}, browserRun);
+	}));
 }

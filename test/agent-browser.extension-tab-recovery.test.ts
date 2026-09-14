@@ -414,7 +414,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const first = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(first.handlers, "session_start", { reason: "new" }, first.ctx);
-			const opened = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com/old"] });
+			const opened = await executeRegisteredTool(first.tool, first.ctx, { args: ["open", "https://example.com/old"], sessionMode: "fresh" });
 			assert.equal(opened.isError, false, JSON.stringify(opened));
 			await rm(statePath);
 			const resumed = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: opened.details!, isError: opened.isError })] });

@@ -665,7 +665,7 @@ test("agentBrowserExtension applies managed restore policy to every current-sess
 		}, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"] });
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/"], sessionMode: "fresh" });
 			assert.equal(opened.isError, false, JSON.stringify(opened));
 			await rm(upstreamLogPath, { force: true });
 
@@ -752,7 +752,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const openResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://fixture.invalid/"] });
+			const openResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://fixture.invalid/"], sessionMode: "fresh" });
 			assert.equal(openResult.isError, false, JSON.stringify(openResult));
 			await rm(logPath, { force: true });
 

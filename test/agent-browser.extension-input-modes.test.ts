@@ -738,7 +738,7 @@ process.stdin.on("end", () => {
 			assert.deepEqual(result.details?.args, ["batch", "--bail"]);
 			const effectiveArgs = result.details?.effectiveArgs as string[] | undefined;
 			assert.deepEqual(effectiveArgs?.slice(0, 2), ["--json", "--session"]);
-			assert.match(effectiveArgs?.[2] ?? "", process.platform === "android" ? /^piab-[a-f0-9]{20}$/ : /^piab-pi-agent-browser-job-/);
+			assert.match(effectiveArgs?.[2] ?? "", /^pi-root-[a-f0-9]{24}$/);
 			assert.equal(effectiveArgs?.[3], "batch");
 			assert.equal(effectiveArgs?.[4], "--bail");
 			const compiledJob = result.details?.compiledJob as { args?: string[]; failFast?: boolean; stdin?: string; steps?: Array<{ action: string; args: string[]; generatedFrom?: string }> } | undefined;
@@ -840,7 +840,7 @@ process.stdin.on("end", () => {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const prior = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://github.com/vercel-labs/agent-browser"] });
+			const prior = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://github.com/vercel-labs/agent-browser"], sessionMode: "fresh" });
 			assert.equal(prior.isError, false);
 
 			const screenshotPath = join(tempDir, "wiki.png");
@@ -903,7 +903,7 @@ function readSessionState() {
 function writeSessionState(nextState) {
   let parsed = {};
   try { parsed = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
-  parsed[getSessionKey()] = nextState;
+  parsed[getSessionKey()] = { ...nextState, restoreKey: process.env.AGENT_BROWSER_RESTORE ?? parsed[getSessionKey()]?.restoreKey ?? null };
   fs.writeFileSync(statePath, JSON.stringify(parsed));
 }
 function findCommandStartIndex(argv) {
@@ -920,11 +920,16 @@ function writeStandaloneResult(data) {
   process.stdout.write(JSON.stringify({ success: true, data }));
 }
 function handleStandaloneCommand() {
-  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
   const commandIndex = findCommandStartIndex(args);
   const command = args[commandIndex];
   const subcommand = args[commandIndex + 1];
   const sessionState = readSessionState();
+  if (command === "session" && subcommand === "info") {
+    const active = sessionState.restoreKey !== undefined;
+    writeStandaloneResult({ active, runtime: active ? { restoreKey: sessionState.restoreKey } : null });
+    return true;
+  }
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
   if (command === "get" && subcommand === "url") {
     if (process.env.QA_ATTACHED_GET_URL_FAIL === "1") {
       process.stderr.write("get url failed");
@@ -995,7 +1000,7 @@ process.stdin.on("end", () => {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			assert.equal(Check(harness.tool.parameters, { qa: { attached: true, expectedText: "Welcome" } }), true);
@@ -1150,7 +1155,7 @@ process.stdin.on("end", () => {
 
 			const managedSessionOutcome = result.details?.managedSessionOutcome as { sessionMode?: string; status?: string; succeeded?: boolean } | undefined;
 			assert.equal(managedSessionOutcome?.sessionMode, "fresh");
-			assert.equal(managedSessionOutcome?.status, "replaced");
+			assert.equal(managedSessionOutcome?.status, "created");
 			assert.equal(managedSessionOutcome?.succeeded, false);
 			assert.match((result.content[0] as { text: string }).text, /Managed session outcome: Fresh launch became current, but this tool call failed after launch\./);
 			assert.match((result.content[0] as { text: string }).text, /failureCategory \/ qaPreset/);

@@ -125,7 +125,7 @@ process.exitCode = failed ? 1 : 0;
 			};
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			for (const args of [[...prefix, ...(options.attached ? ["connect", "9222"] : ["open", url])], ...(options.attached ? [[...prefix, "get", "url"]] : []), [...prefix, "snapshot", "-i"]]) {
-				const result = await call({ args });
+				const result = await call({ args, ...(args.includes("open") ? { sessionMode: "fresh" as const } : {}) });
 				assert.equal(result.isError, false, result.content[0]?.text);
 			}
 			const restore = async (reason: "quit" | "reload") => {

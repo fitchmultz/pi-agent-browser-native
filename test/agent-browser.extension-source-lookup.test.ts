@@ -55,7 +55,7 @@ process.stdin.on("end", () => {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -346,10 +346,13 @@ process.stdin.on("end", () => {
 			assert.deepEqual(defaultNamespaceCompiled?.args, ["--namespace", "", "--session", "named", "batch"]);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(invocations[0]?.args.slice(-1), ["batch"]);
-			assert.deepEqual(invocations[2]?.args.slice(-2), ["get", "url"]);
-			assert.deepEqual(invocations[3]?.args.slice(-5), ["--namespace", "review", "--session", "named", "batch"]);
-			assert.ok(invocations.some((invocation) => JSON.stringify(invocation.args.slice(-5)) === JSON.stringify(["--namespace", "", "--session", "named", "batch"])));
+			assert.deepEqual(invocations.filter((entry) => entry.args.at(-1) === "batch").map((entry) => entry.args.slice(-5)), [
+				["--json", "--session", String(result.details?.sessionName), "batch"],
+				["--json", "--session", String(requestOnlyResult.details?.sessionName), "batch"],
+				["--namespace", "review", "--session", "named", "batch"],
+				["--namespace", "", "--session", "named", "batch"],
+			]);
+			assert.ok(invocations.some((entry) => entry.args.slice(-2).join(" ") === "get url"));
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

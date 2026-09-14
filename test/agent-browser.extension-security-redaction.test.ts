@@ -152,7 +152,7 @@ test("agentBrowserExtension redacts sign-in authorization sessions in content, d
 	await writeFakeAgentBrowserBinary(tempDir, `process.stdout.write(JSON.stringify({ success: true, data: ${JSON.stringify(data)} }));`);
 
 	try {
-		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: origin }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -233,7 +233,7 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin }) + "\\n");
 process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.parse(stdin) } }));`);
 	try {
-		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://example.test/" }, async () => {
 			for (const source of sources) {
 				const expected = source.replace("synthetic-secret", "%5BREDACTED%5D");
 				const stdin = JSON.stringify(source);
@@ -270,7 +270,7 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin }) + "\\n");
 process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.parse(stdin) } }));`);
 	try {
-		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://example.test/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, sessionDir: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin, outputPath: "minified.json" });
@@ -417,7 +417,7 @@ process.exit(1);`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://example.com/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -476,8 +476,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.match((denied.content[0] as { text: string }).text, /Action denied/);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(invocations[0]?.args.slice(-2), ["confirm", "c_demo"]);
-			assert.deepEqual(invocations[1]?.args.slice(-2), ["deny", "c_demo"]);
+			assert.deepEqual(invocations.filter((entry) => ["confirm", "deny"].includes(entry.args.at(-2) ?? "")).map((entry) => entry.args.slice(-2)), [["confirm", "c_demo"], ["deny", "c_demo"]]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

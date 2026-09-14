@@ -612,6 +612,10 @@ if (process.env.PI_AGENT_BROWSER_TEST_CUSTOM_VERSION !== "1" && __piabFakeArgs.i
   process.stdout.write(${JSON.stringify(`${TARGET_AGENT_BROWSER_VERSION_LABEL}\n`)});
   process.exit(0);
 }
+if (process.env.PI_AGENT_BROWSER_TEST_PAGE_URL && __piabFakeArgs.at(-2) === "get" && __piabFakeArgs.at(-1) === "url") {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: process.env.PI_AGENT_BROWSER_TEST_PAGE_URL } }));
+  process.exit(0);
+}
 if (process.env.PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO !== "1" && __piabFakeArgs.includes("session") && __piabFakeArgs.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
   process.exit(0);

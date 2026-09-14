@@ -45,7 +45,7 @@ test("agentBrowserExtension persists compact snapshot spill files for persisted 
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://example.com/persisted-extension" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, sessionDir, sessionFile });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
@@ -109,7 +109,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: String(budgetBytes) }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://example.com/first", PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: String(budgetBytes) }, async () => {
 			const firstHarness = createExtensionHarness({ cwd: tempDir, sessionDir, sessionFile });
 			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
 			const firstResult = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { args: ["snapshot", "-i"] });

@@ -70,7 +70,7 @@ if (mode === 'structured-error') {
   }
 }`);
 		try {
-			await withPatchedEnv({ PATH: mode === "missing-binary" ? root : `${root}:${process.env.PATH ?? ""}` }, async () => {
+			await withPatchedEnv({ PATH: mode === "missing-binary" ? root : `${root}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" }, async () => {
 				if (mode === "missing-binary") await rm(binary);
 				const harness = createExtensionHarness({ cwd: root });
 				const controller = new AbortController();
