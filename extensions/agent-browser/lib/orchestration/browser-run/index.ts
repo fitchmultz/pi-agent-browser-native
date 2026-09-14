@@ -1,4 +1,4 @@
-import { runAgentBrowserProcess, withAttachedBrowserSessionContext } from "../../process.js";
+import { runAgentBrowserProcess, withAttachedBrowserSessionContext, withChromeStartupArgs } from "../../process.js";
 import { isRecord } from "../../parsing.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
@@ -13,7 +13,7 @@ export { getSessionContextKey } from "./session-state.js";
 export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
-	const result = await withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options));
+	const result = await withChromeStartupArgs(options.input.persistentChromeArgs, () => withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options)));
 	const details = isRecord(result.details) ? result.details : undefined;
 	const sessionKey = getSessionContextKey(typeof details?.sessionName === "string" ? details.sessionName : undefined, typeof details?.namespace === "string" ? details.namespace : undefined);
 	const page = options.state.sessionPageState.get(sessionKey);
@@ -35,7 +35,7 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 	return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		try {
 			const artifactRunStartedAtMs = Date.now();
-			const processResult = await runAgentBrowserProcess({
+			const processResult = await withChromeStartupArgs(prepared.chromeStartupArgs, () => runAgentBrowserProcess({
 				args: prepared.processArgs,
 				browserIndependentReadConfirmation: prepared.readConfirmation !== undefined,
 				cwd: options.cwd,
@@ -49,7 +49,7 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 				signal: options.signal,
 				stdin: prepared.processStdin,
 				timeoutMs: prepared.processTimeoutMs,
-			});
+			}));
 
 			const missingBinaryResult = await buildMissingBinaryFailureResult({
 				compatibilityWorkaround: prepared.compatibilityWorkaround,

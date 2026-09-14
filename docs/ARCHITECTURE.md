@@ -209,6 +209,10 @@ This is primarily about ownership clarity and avoiding surprise, not adding a he
 
 ### Launch flags
 
+`native-session-defaults.ts` reads launch-argument/engine fields through its existing native-validated config discovery. Local Chrome composes `--no-startup-window` with the highest-priority caller arguments. Root bootstrap retains its existing helper scope; owned/fresh preparation reuses daemon-policy inspection, while explicit local callers use the same session-info probe. `process.ts` applies the scoped arguments after managed restore-policy checks, composing the existing compatibility user agent without overriding caller Chrome arguments. Configured environment/file arguments remain consistent across helpers; ordinary active calls do not receive a new launch configuration. This adds no browser launcher, profile mutation, tab cleanup, binary distribution, or persistent launch-settings state. Older custom-argument browsers can undergo native's normal hash-change restart on first use of the new default.
+
+Input resolution replaces URL-less `open` with native `get url` before planning, retaining requested argv separately. Effective raw/stdin batch rows use the existing native argument parser and raw-over-stdin precedence; only changed rows are rewritten. Native URL reads provide lazy launch and real lifecycle/URL output without navigating an existing page. Explicit navigation and help/version input are unchanged.
+
 `agent-browser` startup flags are sticky once a session is already running.
 The extension should surface that clearly and avoid hidden restart behavior in v1.
 

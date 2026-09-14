@@ -3,7 +3,9 @@ import { dirname, resolve } from "node:path";
 
 import { extractExplicitSessionName, getBooleanFlagValue, isUpstreamEnvFlagEnabled, projectUpstreamGlobalFlags, resolveAgentBrowserNamespace } from "../../argv-grammar.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
-import { isBrowserIndependentRead } from "../../command-policy.js";
+import { isBrowserIndependentRead, needsManagedSession } from "../../command-policy.js";
+import { parseArgvDescriptor } from "../../argv-descriptor.js";
+import { prepareAgentBrowserSpawnArgs, withChromeStartupArgs } from "../../process.js";
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
@@ -43,7 +45,7 @@ import {
 	getExplicitSessionPageVerificationRequirement,
 	getPageTargetValidationError,
 } from "../../page-target-validation.js";
-import { acquireOwnedManagedSessionDaemonPolicy, getRunningHeadedAutosavePolicyChangeError } from "./managed-session-daemon-policy.js";
+import { acquireOwnedManagedSessionDaemonPolicy, getRunningHeadedAutosavePolicyChangeError, inspectManagedSessionDaemon } from "./managed-session-daemon-policy.js";
 import {
 	buildManagedSessionOutcome,
 	buildSessionDetailFields,
@@ -637,7 +639,15 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			};
 		}
 	}
-		return await withOwnedManagedSessionContext(ownedManagedSession, async () => {
+	let chromeStartupArgs: string | undefined;
+	if (options.input.chromeStartupArgs !== undefined && !options.preserveAttachedBrowserSession && !browserIndependent
+		&& !executionPlan.validationError && !isCloseCommand(executionPlan.commandInfo.command)
+		&& needsManagedSession(parseArgvDescriptor(preparedArgs.args), runtimeToolStdin)) {
+		const inactive = ownedManagedSession ? managedSessionDaemonInactive : options.daemonInactive
+			?? (executionPlan.sessionName !== undefined && (await inspectManagedSessionDaemon({ cwd, signal, sessionName: executionPlan.sessionName, namespace: executionPlan.namespace })).status === "inactive");
+		if (inactive || options.input.configuredChromeLaunch) chromeStartupArgs = options.input.chromeStartupArgs;
+	}
+		return await withChromeStartupArgs(chromeStartupArgs, () => withOwnedManagedSessionContext(ownedManagedSession, async () => {
 		const managedSessionRestoreDisabled = () => state.managedSessionRestoreState.isDisabled(executionPlan.sessionName, executionPlan.namespace);
 		const sessionStateKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 		const priorSessionPageState = sessionPageState.get(sessionStateKey);
@@ -819,7 +829,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			stdin: runtimeToolStdin,
 		});
 
-		const redactedEffectiveArgs = redactInvocationArgs(executionPlan.effectiveArgs);
+		const redactedEffectiveArgs = redactInvocationArgs(prepareAgentBrowserSpawnArgs(executionPlan.effectiveArgs, undefined, options.preserveAttachedBrowserSession, chromeStartupArgs));
 		const redactedRecoveryHint = redactRecoveryHint(executionPlan.recoveryHint);
 		const compatibilityWorkaround: CompatibilityWorkaround | undefined = executionPlan.compatibilityWorkaround;
 		const statePatch: BrowserRunStatePatch = executionPlan.managedSessionName === freshSessionName
@@ -1106,7 +1116,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			} catch {}
 		}
 		const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getCommandAwareProcessTimeoutMs(commandTokens, processStdin, readTimeoutPageUrl);
-		const redactedProcessArgs = redactInvocationArgs(processArgs);
+		const redactedProcessArgs = redactInvocationArgs(prepareAgentBrowserSpawnArgs(processArgs, ownedManagedSession?.compatibilityUserAgent, options.preserveAttachedBrowserSession, chromeStartupArgs));
 		const scrollAmount = Number(commandTokens.find((token) => /^\d+(?:\.\d+)?$/.test(token)));
 		const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0 && (state.managedSessionActive || sessionMode === "fresh") && (!Number.isFinite(scrollAmount) || scrollAmount >= 500);
 		const scrollPositionBefore = shouldProbeScrollNoop
@@ -1129,6 +1139,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		return {
 			kind: "ready",
 			prepared: {
+				chromeStartupArgs,
 				commandTokens,
 				headedLaunch,
 				providerLaunch,
@@ -1177,7 +1188,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				userRequestedJson,
 			},
 		};
-		});
+		}));
 	} finally {
 		if (!managedSessionPolicyLockTransferred) await managedSessionPolicyLock?.release();
 		if (electronLaunch && !electronLaunchTransferred) {

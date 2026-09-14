@@ -457,8 +457,8 @@ if (args.includes("session") && args.includes("info")) {
 			const cloudflareInvocation = afterCloudflareOpen.find((entry) => entry.args.includes("https://dash.cloudflare.com"));
 			assert.ok(cloudflareInvocation?.args.includes("--user-agent"));
 			const cloudflareBrowserArgs = cloudflareInvocation?.args[cloudflareInvocation.args.indexOf("--args") + 1] ?? "";
-			assert.match(cloudflareBrowserArgs, /^--user-agent=.*Chrome\/\d+\.0\.0\.0/);
-			assert.doesNotMatch(cloudflareBrowserArgs, /[,\r\n]/);
+			assert.match(cloudflareBrowserArgs, /^--no-startup-window,--user-agent=.*Chrome\/\d+\.0\.0\.0/);
+			assert.doesNotMatch(cloudflareBrowserArgs.slice("--no-startup-window,".length), /[,\r\n]/);
 			assert.match(String((cloudflareInvocation as { userAgent?: string } | undefined)?.userAgent), /Chrome\/\d+\.0\.0\.0/);
 			assert.equal((cloudflareInvocation as { restore?: string } | undefined)?.restore, createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(sessionName)));
 

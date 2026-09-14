@@ -101,6 +101,7 @@ export interface BrowserRunStatePatch {
 }
 
 export interface BrowserRunOptions {
+	daemonInactive?: boolean;
 	ctx: BrowserRunContext;
 	cwd: string;
 	electronPostCommandStatusSettleMs: number;
@@ -429,6 +430,7 @@ export interface ElectronRefFreshnessDiagnostic {
 }
 
 export interface PreparedBrowserRun {
+	chromeStartupArgs?: string;
 	readConfirmation?: ReadConfirmation;
 	batchScreenshotArtifactRequests?: Array<ScreenshotArtifactRequest | undefined>;
 	headedLaunch: boolean;

@@ -380,9 +380,9 @@ process.exit(1);`,
 			assert.equal(result.isError, true);
 			assert.equal(result.content[0]?.type, "text");
 			const text = (result.content[0] as { text: string }).text;
-			assert.match(text, /^agent-browser --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/m);
+			assert.match(text, /^agent-browser --args --no-startup-window --json --session \S+ open https:\/\/example\.com\/? reported failure \(exit code 1\)\.$/m);
 			assert.match(text, /inspect-page-after-navigation-error/);
-			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(0, 3), ["--json", "--session", result.details?.sessionName]);
+			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(0, 5), ["--args", "--no-startup-window", "--json", "--session", result.details?.sessionName]);
 			assert.deepEqual((result.details?.effectiveArgs as string[] | undefined)?.slice(-2), ["open", "https://example.com"]);
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "upstream-error");
@@ -394,7 +394,7 @@ process.exit(1);`,
 			}));
 			const namedAction = (namedResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined)?.find((action) => action.id === "inspect-page-after-navigation-error");
 			assert.equal(namedResult.details?.namespace, "");
-			assert.deepEqual(namedResult.details?.effectiveArgs, ["--json", "--namespace", "", "--session", "named", "open", "https://example.com"]);
+			assert.deepEqual(namedResult.details?.effectiveArgs, ["--args", "--no-startup-window", "--json", "--namespace", "", "--session", "named", "open", "https://example.com"]);
 			assert.deepEqual(namedAction?.params?.args, ["--namespace", "", "--session", "named", "get", "url"]);
 		});
 	} finally {

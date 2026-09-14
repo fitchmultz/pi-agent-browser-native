@@ -1,4 +1,34 @@
+import { projectUpstreamGlobalFlags } from "../argv-grammar.js";
+
 export type BatchCommandStep = [string, ...string[]];
+
+/** Bare open's native launch action drops prior launch options. URL reads lazily launch without navigating. */
+export function normalizeUrlLessOpen(args: string[], stdin?: string, batchStep = false): { args: string[]; stdin?: string } {
+	const { tokens, indices } = batchStep ? { tokens: args, indices: args.map((_, index) => index) } : projectUpstreamGlobalFlags(args);
+	if (tokens[0] === "open" && !tokens.slice(1).some(token => !token.startsWith("--"))) {
+		const index = indices[0];
+		return { args: [...args.slice(0, index), "get", "url", ...args.slice(index + 1)], stdin };
+	}
+	if (tokens[0] !== "batch") return { args, stdin };
+	const rawSteps = tokens.slice(1).flatMap((token, offset) => {
+		const step = token === "--bail" ? undefined : parseBatchCommandArgument(token).step;
+		return step ? [{ index: indices[offset + 1], step }] : [];
+	});
+	if (tokens.slice(1).some(token => token !== "--bail")) {
+		let normalized = args;
+		for (const { index, step } of rawSteps) {
+			const row = normalizeUrlLessOpen(step, undefined, true).args;
+			if (row === step) continue;
+			if (normalized === args) normalized = [...args];
+			normalized[index] = row.map(token => `'${token.replaceAll("'", "'\\''")}'`).join(" ");
+		}
+		return { args: normalized, stdin };
+	}
+	const steps = parseUserBatchStdin(stdin).steps;
+	if (!steps?.length) return { args, stdin };
+	const normalized = steps.map(step => normalizeUrlLessOpen(step, undefined, true).args);
+	return { args, stdin: normalized.some((step, index) => step !== steps[index]) ? JSON.stringify(normalized) : stdin };
+}
 
 const BATCH_STDIN_EXAMPLE = ' Example: { "args": ["batch"], "stdin": "[[\\"get\\",\\"title\\"],[\\"get\\",\\"url\\"]]" }';
 

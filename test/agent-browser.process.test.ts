@@ -97,9 +97,12 @@ test("prepareAgentBrowserSpawnArgs preserves caller launch controls", () => {
 	assert.deepEqual(prepareAgentBrowserSpawnArgs(["--allow-file-access", "true", "open", "file:///tmp/page.html"]), ["--allow-file-access", "true", "open", "file:///tmp/page.html"]);
 	assert.deepEqual(
 		prepareAgentBrowserSpawnArgs(["open", "about:blank"], "Chrome, not Headless\n"),
-		["--args", "--user-agent=Chrome not Headless", "open", "about:blank"],
+		["--args", "--no-startup-window,--user-agent=Chrome not Headless", "open", "about:blank"],
 	);
 	assert.deepEqual(prepareAgentBrowserSpawnArgs(["--allow-file-access", "true", "get", "url"], undefined, true), ["--allow-file-access", "true", "get", "url"]);
+	const custom = ["--args", "--user-agent=Caller,--disable-gpu", "open", "about:blank"];
+	assert.deepEqual(prepareAgentBrowserSpawnArgs(custom, "Wrapper"), custom);
+	assert.deepEqual(prepareAgentBrowserSpawnArgs(custom, "Wrapper", false, "--no-startup-window,--user-agent=Caller,--disable-gpu"), ["--args", "--no-startup-window,--user-agent=Caller,--disable-gpu", "open", "about:blank"]);
 });
 
 test("runAgentBrowserProcess passes upstream browser configuration and file access through", { concurrency: false }, async () => {

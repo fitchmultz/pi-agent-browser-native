@@ -7,7 +7,7 @@ import { env as processEnv, platform as processPlatform } from "node:process";
 import { spawn as crossSpawn } from "cross-spawn";
 
 import { parseArgvDescriptor } from "./argv-descriptor.js";
-import { extractExplicitSessionName, resolveAgentBrowserNamespace } from "./argv-grammar.js";
+import { extractExplicitSessionName, resolveAgentBrowserNamespace, scanUpstreamGlobalFlagOccurrences } from "./argv-grammar.js";
 import {
 	commitManagedSessionRestoreSuppression,
 	getManagedSessionRestoreEnv,
@@ -42,6 +42,11 @@ const DEFAULT_AGENT_BROWSER_PROCESS_TIMEOUT_MS = 35_000;
 /** Grace period after `exit` before resolving when `close` is delayed by inherited stdio handles. */
 const EXIT_STDIO_GRACE_MS = 100;
 const attachedBrowserSessionContext = new AsyncLocalStorage<boolean>();
+const chromeStartupArgsContext = new AsyncLocalStorage<string | undefined>();
+
+export function withChromeStartupArgs<T>(args: string | undefined, run: () => Promise<T>): Promise<T> {
+	return chromeStartupArgsContext.run(args ?? chromeStartupArgsContext.getStore(), run);
+}
 
 export function withAttachedBrowserSessionContext<T>(preserve: boolean, run: () => Promise<T>): Promise<T> {
 	return attachedBrowserSessionContext.run(preserve || attachedBrowserSessionContext.getStore() === true, run);
@@ -65,9 +70,16 @@ function appendTail(text: string, addition: string, maxChars: number): string {
 	return combined.length <= maxChars ? combined : combined.slice(combined.length - maxChars);
 }
 
-export function prepareAgentBrowserSpawnArgs(args: string[], wrapperCompatibilityUserAgent?: string, preserveAttachedBrowserSession = false): string[] {
-	if (preserveAttachedBrowserSession || !wrapperCompatibilityUserAgent) return args;
-	return ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`, ...args];
+export function prepareAgentBrowserSpawnArgs(args: string[], wrapperCompatibilityUserAgent?: string, preserveAttachedBrowserSession = false, startupArgs?: string): string[] {
+	if (preserveAttachedBrowserSession) return args;
+	const occurrence = scanUpstreamGlobalFlagOccurrences(args, "--args").at(-1);
+	const customArgs = wrapperCompatibilityUserAgent && !occurrence
+		? `${startupArgs ?? "--no-startup-window"},--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}` : startupArgs;
+	if (customArgs === undefined) return args;
+	if (!occurrence) return ["--args", customArgs, ...args];
+	const normalized = [...args];
+	normalized[occurrence.index + 1] = customArgs;
+	return normalized;
 }
 
 function terminateSpawnedChild(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
@@ -551,7 +563,7 @@ export async function runAgentBrowserProcess(options: {
 			return;
 		}
 		const spawnBrowser = processPlatform === "win32" ? crossSpawn : spawn;
-		const child = spawnBrowser("agent-browser", prepareAgentBrowserSpawnArgs(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession), {
+		const child = spawnBrowser("agent-browser", prepareAgentBrowserSpawnArgs(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession, chromeStartupArgsContext.getStore()), {
 			cwd,
 			env: childEnv,
 			stdio: ["pipe", "pipe", "pipe"],

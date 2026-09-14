@@ -1040,6 +1040,8 @@ Browser defaults are scoped: global/override `defaultProfile` with `policy: "alw
 
 ### Browser launch and runtime flags
 
+The extension composes stock `--args --no-startup-window` for local Chrome startup without changing the headless default or external browser engines/attachments. Caller arguments retain native precedence. Plain active follow-ups do not repeat bootstrap settings; older custom-argument sessions can restart once when the new argument changes native launch identity. URL-less `open` runs native `get url` to lazily launch or preserve the active page, including batch/script calls; the result exposes the actual command and URL, not a fabricated launch receipt. See [the startup contract](TOOL_CONTRACT.md#headed-and-local-fixture-limits).
+
 - `--executable-path <path>`: custom Chromium-compatible browser executable, such as Brave/Edge/Arc/Vivaldi when upstream can launch that binary. Environment: `AGENT_BROWSER_EXECUTABLE_PATH`.
 - `--extension <path>`: load browser extensions; repeatable. Environment: `AGENT_BROWSER_EXTENSIONS`.
 - `--args <args>`: browser launch args, comma or newline separated. Chromium switches belong in this value, for example `{ "args": ["--args", "--no-sandbox", "open", "https://example.com"], "sessionMode": "fresh" }`. A bare `--no-sandbox` is diagnosed when it occupies the command slot (unknown command) or an `open` / `goto` / `navigate` option position (ignored by upstream); literal operands in other commands are left alone. For batches, put `--args` before `batch` in top-level `args`, not inside a row. Environment: `AGENT_BROWSER_ARGS`.

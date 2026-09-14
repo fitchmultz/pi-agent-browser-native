@@ -737,10 +737,10 @@ process.stdin.on("end", () => {
 			assert.equal(result.isError, false);
 			assert.deepEqual(result.details?.args, ["batch", "--bail"]);
 			const effectiveArgs = result.details?.effectiveArgs as string[] | undefined;
-			assert.deepEqual(effectiveArgs?.slice(0, 2), ["--json", "--session"]);
-			assert.match(effectiveArgs?.[2] ?? "", /^pi-root-[a-f0-9]{24}$/);
-			assert.equal(effectiveArgs?.[3], "batch");
-			assert.equal(effectiveArgs?.[4], "--bail");
+			assert.deepEqual(effectiveArgs?.slice(0, 4), ["--args", "--no-startup-window", "--json", "--session"]);
+			assert.match(effectiveArgs?.[4] ?? "", /^pi-root-[a-f0-9]{24}$/);
+			assert.equal(effectiveArgs?.[5], "batch");
+			assert.equal(effectiveArgs?.[6], "--bail");
 			const compiledJob = result.details?.compiledJob as { args?: string[]; failFast?: boolean; stdin?: string; steps?: Array<{ action: string; args: string[]; generatedFrom?: string }> } | undefined;
 			assert.deepEqual(compiledJob?.args, ["batch", "--bail"]);
 			assert.equal(compiledJob?.failFast, true);

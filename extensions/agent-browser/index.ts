@@ -1748,7 +1748,7 @@ export default function agentBrowserExtension(
 			const callerOwnedSessionQueueKey = !serializeBrowserCommand && explicitSessionName
 				? getSessionContextKey(explicitSessionName, callerOwnedSessionNamespace) ?? explicitSessionName
 				: undefined;
-			const runBrowserCommand = async () => {
+			const runBrowserCommand = async (daemonInactive?: boolean) => {
 				flushRecordingReservations();
 				const branchRestoreGenerationAtStart = branchRestoreGeneration;
 				const generationAtStart = branchStateGeneration;
@@ -1798,6 +1798,7 @@ export default function agentBrowserExtension(
 						?? getSessionContextKey(browserRunState.managedSessionName, browserRunState.managedSessionNamespace);
 				const attachedSessionKnown = reusableSessionKey !== undefined && attachedSessionKeys.has(reusableSessionKey);
 				let result = await runAgentBrowserTool({
+					daemonInactive,
 					ctx,
 					cwd: ctx.cwd,
 					electronPostCommandStatusSettleMs: ELECTRON_POST_COMMAND_STATUS_SETTLE_MS,

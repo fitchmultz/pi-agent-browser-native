@@ -3,13 +3,14 @@ import { readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { extractExplicitSessionName, scanUpstreamGlobalFlagOccurrences } from "../argv-grammar.js";
+import { extractExplicitSessionName, getBooleanFlagValue, isUpstreamEnvFlagEnabled, scanUpstreamGlobalFlagOccurrences } from "../argv-grammar.js";
 import { isRecord } from "../parsing.js";
 import { parseArgvDescriptor } from "../argv-descriptor.js";
 import { needsManagedSession } from "../command-policy.js";
+import { getUpstreamEffectiveBatchSteps } from "./batch-stdin.js";
 import { hasLaunchScopedFlagToken } from "../launch-scoped-flags.js";
 import { getAgentBrowserProcessEnvironment, withAgentBrowserProcessEnvironment } from "../process-environment.js";
-import { runAgentBrowserProcess } from "../process.js";
+import { runAgentBrowserProcess, withChromeStartupArgs } from "../process.js";
 import { parseAgentBrowserEnvelope } from "../results/envelope.js";
 import { isPlainTextInspectionArgs } from "../runtime.js";
 import { buildValidationFailureResult, type ResolvedAgentBrowserValidInput } from "./input-plan.js";
@@ -19,17 +20,36 @@ import { buildMissingBinaryMessage } from "./browser-run/final-result.js";
 
 interface NativeDefaults { session?: string; namespace?: string; profile?: unknown; executablePath?: unknown; [key: string]: unknown }
 
+// These native defaults already send a local launch command on every call; keep its args stable too.
+const LOCAL_VALUE_DEFAULTS = ["executablePath", "profile", "state", "proxy", "args", "userAgent", "caCert", "colorScheme", "downloadPath", "engine", "allowedDomains"];
+const LOCAL_BOOLEAN_DEFAULTS = ["headed", "allowFileAccess", "webgpu", "noWebmcp"];
+const LOCAL_ARRAY_DEFAULTS = ["extensions", "initScripts", "enable"];
+const nativeEnvName = (key: string) => `AGENT_BROWSER_${key.replace(/[A-Z]/g, letter => `_${letter}`).toUpperCase()}`;
+function hasLocalLaunchDefaults(config: NativeDefaults, env: NodeJS.ProcessEnv): boolean {
+	return LOCAL_VALUE_DEFAULTS.some(key => env[nativeEnvName(key)] !== undefined || config[key] !== undefined)
+		|| LOCAL_BOOLEAN_DEFAULTS.some(key => isUpstreamEnvFlagEnabled(env[nativeEnvName(key)]) || config[key] === true)
+		|| LOCAL_ARRAY_DEFAULTS.some(key => (env[nativeEnvName(key)]?.length ?? 0) > 0 || Array.isArray(config[key]) && config[key].length > 0)
+		|| (env.AGENT_BROWSER_CLEAR_CA_CERT !== undefined ? isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_CLEAR_CA_CERT) : config.clearCaCert === true)
+		|| (env.AGENT_BROWSER_HIDE_SCROLLBARS !== undefined ? !isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_HIDE_SCROLLBARS) : config.hideScrollbars === false)
+		|| ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"].some(key => env[key] !== undefined);
+}
+
+function requestsConnection(tokens: string[], stdin?: string): boolean {
+	return tokens[0] === "connect" || getUpstreamEffectiveBatchSteps(tokens, stdin).some(step => requestsConnection(step));
+}
+
 function rootBrowserSessionName(rootSessionId: string): string {
 	return `pi-root-${createHash("sha256").update(rootSessionId).digest("hex").slice(0, 24)}`;
 }
 
 // Native `session` reports the resolved name, but not whether it was configured.
 // Native validates its schema; retain configured launch defaults so root fallbacks never replace them.
-async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal | undefined, rootFallback: boolean): Promise<NativeDefaults> {
+async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal | undefined, rootFallback: boolean, browserCommand: boolean): Promise<NativeDefaults> {
 	let config: unknown;
 	try { config = JSON.parse(await readFile(path, "utf8")); } catch { return {}; }
 	if (!isRecord(config)) return {};
-	const rootLaunchConfig = rootFallback && ["restore", "sessionName", "state", "allowedDomains", "profile", "executablePath", "cdp", "autoConnect", "provider"].some((key) => config[key] !== undefined);
+	const rootLaunchConfig = browserCommand && (hasLocalLaunchDefaults(config, {}) || ["cdp", "autoConnect", "provider"].some((key) => config[key] !== undefined))
+		|| rootFallback && ["restore", "sessionName", "state", "allowedDomains", "profile", "executablePath"].some((key) => config[key] !== undefined);
 	if (!rootLaunchConfig && typeof config.session !== "string" && typeof config.namespace !== "string") return {};
 	const result = await runAgentBrowserProcess({ args: ["--config", path, "--json", "session"], cwd, signal, timeoutMs: 5_000 });
 	try {
@@ -49,7 +69,7 @@ async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal
 	}
 }
 
-export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput, withLaunchDefaults?: (browserRun: () => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>, root?: { id: string; profile?: string; executablePath?: string }): Promise<AgentBrowserToolResult> {
+export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput, withLaunchDefaults?: (browserRun: (daemonInactive?: boolean) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>, root?: { id: string; profile?: string; executablePath?: string }): Promise<AgentBrowserToolResult> {
 	if (input.kind === "electron" && input.compiledElectron.action === "launch") return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_SESSION: undefined }, () => run(input));
 	if (input.kind === "script" || input.kind === "electron" || isPlainTextInspectionArgs(input.toolArgs)) return run(input);
 	const env = getAgentBrowserProcessEnvironment();
@@ -58,17 +78,34 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 	const paths = configPath !== undefined
 		? [resolve(cwd, configPath)]
 		: [join(homedir(), ".agent-browser", "config.json"), join(cwd, "agent-browser.json")];
-	const attachment = ["--cdp", "--auto-connect"].some((flag) => hasLaunchScopedFlagToken(input.toolArgs, flag))
-		|| env.AGENT_BROWSER_CDP !== undefined || ["1", "true"].includes(env.AGENT_BROWSER_AUTO_CONNECT ?? "")
-		|| parseArgvDescriptor(input.toolArgs).upstreamCommandTokens[0] === "connect";
 	const rootName = root && rootBrowserSessionName(root.id);
 	const explicitSession = extractExplicitSessionName(input.toolArgs);
 	const rootFallback = root !== undefined && env.AGENT_BROWSER_SESSION === undefined && (explicitSession === undefined || explicitSession === rootName)
-		&& !attachment && needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
+		&& needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
 	let identity: NativeDefaults = {};
-	for (const path of paths) identity = { ...identity, ...await readNativeIdentity(path, cwd, signal, rootFallback) };
+	const browserCommand = needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
+	for (const path of paths) identity = { ...identity, ...await readNativeIdentity(path, cwd, signal, rootFallback, browserCommand) };
+	// Native ORs environment/config booleans; only CLI false overrides configured auto-connect.
+	const autoConnect = getBooleanFlagValue(input.toolArgs, "--auto-connect")
+		?? (isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT) || identity.autoConnect === true);
+	const attachment = hasLaunchScopedFlagToken(input.toolArgs, "--cdp")
+		|| env.AGENT_BROWSER_CDP !== undefined || identity.cdp !== undefined || autoConnect
+		|| parseArgvDescriptor(input.toolArgs).upstreamCommandTokens[0] === "connect";
 	const configuredSession = env.AGENT_BROWSER_SESSION ?? identity.session;
-	const rootDefault = rootName && configuredSession === undefined && rootFallback && identity.cdp === undefined && identity.autoConnect !== true
+	const launchArgs = scanUpstreamGlobalFlagOccurrences(input.toolArgs, "--args").at(-1)?.value ?? env.AGENT_BROWSER_ARGS ?? identity.args;
+	const engine = scanUpstreamGlobalFlagOccurrences(input.toolArgs, "--engine").at(-1)?.value ?? env.AGENT_BROWSER_ENGINE ?? identity.engine;
+	const provider = scanUpstreamGlobalFlagOccurrences(input.toolArgs, "--provider").at(-1)?.value ?? scanUpstreamGlobalFlagOccurrences(input.toolArgs, "-p").at(-1)?.value ?? env.AGENT_BROWSER_PROVIDER ?? identity.provider;
+	const tokens = parseArgvDescriptor(input.toolArgs).upstreamCommandTokens;
+	const batchAttaches = requestsConnection(tokens, input.toolStdin);
+	const localChrome = browserCommand && !attachment && !batchAttaches && provider === undefined
+		&& (engine === undefined || engine === "chrome");
+	const chromeStartupArgs = localChrome ? ["--no-startup-window", ...(typeof launchArgs === "string" ? [launchArgs] : [])].join(",") : undefined;
+	const persistentChromeArgs = hasLocalLaunchDefaults(identity, env) ? chromeStartupArgs : undefined;
+	const configuredChromeLaunch = persistentChromeArgs !== undefined || [...LOCAL_VALUE_DEFAULTS, ...LOCAL_BOOLEAN_DEFAULTS, ...LOCAL_ARRAY_DEFAULTS, "hideScrollbars", "clearCaCert"].some(key => {
+		const flag = ({ extensions: "--extension", initScripts: "--init-script", clearCaCert: "--no-ca-cert" } as Record<string, string>)[key] ?? `--${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}`;
+		return scanUpstreamGlobalFlagOccurrences(input.toolArgs, flag).length > 0;
+	});
+	const rootDefault = rootName && configuredSession === undefined && rootFallback && !attachment
 		? rootName : undefined;
 	const session = configuredSession ?? rootDefault;
 	const restoreEligible = !["--restore", "--session-name", "--state", "--allowed-domains", "--provider", "-p", "--device"].some((flag) => hasLaunchScopedFlagToken(input.toolArgs, flag))
@@ -83,7 +120,7 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 		...(configPath !== undefined ? { AGENT_BROWSER_CONFIG: resolve(cwd, configPath) } : {}),
 		...(session !== undefined ? { AGENT_BROWSER_SESSION: session } : {}),
 		...(namespace !== undefined ? { AGENT_BROWSER_NAMESPACE: namespace } : {}),
-	}, () => run({ ...input, toolArgs: args }, !rootDefault ? undefined : async (browserRun) => {
+	}, () => run({ ...input, toolArgs: args, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun) => {
 		const daemon = await inspectManagedSessionDaemon({ cwd, signal, sessionName: rootDefault,
 			namespace: scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value ?? namespace, timeoutMs: 5_000 });
 		if (daemon.status === "missing-binary") return {
@@ -107,6 +144,6 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 			...(restore !== undefined ? { AGENT_BROWSER_RESTORE: restore } : {}),
 			...(profile !== undefined ? { AGENT_BROWSER_PROFILE: profile } : {}),
 			...(executablePath !== undefined ? { AGENT_BROWSER_EXECUTABLE_PATH: executablePath } : {}),
-		}, browserRun);
+		}, () => withChromeStartupArgs(bootstrap || configuredChromeLaunch ? chromeStartupArgs : undefined, () => browserRun(bootstrap)));
 	}));
 }

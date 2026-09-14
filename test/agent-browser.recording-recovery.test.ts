@@ -138,7 +138,7 @@ for (const mode of ["timeout", "no-recording", "no-recording-no-receipt", "old-r
 			if (mode !== "encode-failed") {
 				assert.equal(recovery.healed, healed);
 				const calls = (await readInvocationLog(logPath)).map(row => extractUpstreamCommandTokens(row.args));
-				assert.deepEqual(calls, [["record", "stop"], ["session", "info"]], "one bounded read-only recovery, no page probe or repeated stop");
+				assert.deepEqual(calls, [["session", "info"], ["record", "stop"], ["session", "info"]], "one bootstrap inspection and one bounded receipt recovery, no page probe or repeated stop");
 			}
 			if (healed) {
 				assert.equal(exported.artifactVerification.verified, true);
@@ -233,7 +233,7 @@ for (const mode of ["timeout", "stale-batch"]) {
 			assert.equal(exported.recordingRecovery.expected.absolutePath, path);
 			assert.equal(exported.recordingRecovery.healed, false);
 			assert.equal(exported.artifactVerification.verified, mode === "timeout");
-			assert.equal((await readInvocationLog(logPath)).filter(row => extractUpstreamCommandTokens(row.args)[0] === "session").length, 1);
+			assert.equal((await readInvocationLog(logPath)).filter(row => extractUpstreamCommandTokens(row.args)[0] === "session").length, 2, "bootstrap inspection plus receipt recovery");
 		});
 	});
 }

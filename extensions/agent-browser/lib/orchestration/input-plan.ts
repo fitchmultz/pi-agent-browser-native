@@ -1,5 +1,6 @@
 import { parseArgvDescriptor } from "../argv-descriptor.js";
-import { validateToolArgs, redactInvocationArgs, redactSensitiveText } from "../runtime.js";
+import { normalizeUrlLessOpen } from "./batch-stdin.js";
+import { isPlainTextInspectionArgs, validateToolArgs, redactInvocationArgs, redactSensitiveText } from "../runtime.js";
 import { buildAgentBrowserResultCategoryDetails } from "../results/categories.js";
 import { compileAgentBrowserElectron } from "../input-modes/electron.js";
 import { compileAgentBrowserJob, compileAgentBrowserQaPreset } from "../input-modes/job.js";
@@ -47,6 +48,9 @@ interface ResolvedAgentBrowserInputBase {
 }
 
 interface ResolvedAgentBrowserValidInputBase extends ResolvedAgentBrowserInputBase {
+	chromeStartupArgs?: string;
+	configuredChromeLaunch?: boolean;
+	persistentChromeArgs?: string;
 	status: "valid";
 	validationError?: undefined;
 }
@@ -279,7 +283,8 @@ export function resolveAgentBrowserInput(options: {
 	const redactedCompiledNetworkSourceLookup = redactCompiledNetworkSourceLookup(compiledNetworkSourceLookup);
 	const redactedCompiledQaPreset = compiledQaPreset && redactedCompiledJob ? { ...redactedCompiledJob, checks: compiledQaPreset.checks } : undefined;
 	const redactedCompiledSourceLookup = redactCompiledSourceLookup(compiledSourceLookup);
-	const resolvedBase: ResolvedAgentBrowserInputBase = { redactedArgs, toolArgs, toolStdin };
+	const normalized = validationError || isPlainTextInspectionArgs(toolArgs) ? { args: toolArgs, stdin: toolStdin } : normalizeUrlLessOpen(toolArgs, toolStdin);
+	const resolvedBase: ResolvedAgentBrowserInputBase = { redactedArgs, toolArgs: normalized.args, toolStdin: normalized.stdin };
 	if (validationError) {
 		return {
 			...resolvedBase,

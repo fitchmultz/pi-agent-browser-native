@@ -102,7 +102,7 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`);
 			await writeFile(logPath, "");
 			const bare = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read"] });
 			assert.equal(bare.isError, false, bare.content[0]?.text);
-			assert.deepEqual((await readInvocationLog(logPath)).map((row) => extractUpstreamCommandTokens(row.args)), [["get", "url"], ["read"]]);
+			assert.deepEqual((await readInvocationLog(logPath)).map((row) => extractUpstreamCommandTokens(row.args)), [["session", "info"], ["get", "url"], ["read"]]);
 			await writeFile(logPath, "");
 			const sharedInfo = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["session", "info"] });
 			assert.equal((sharedInfo.details?.data as { piCleanupOwnership: string }).piCleanupOwnership, "caller-owned");

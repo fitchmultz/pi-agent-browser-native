@@ -603,7 +603,7 @@ export async function writeFakeAgentBrowserBinary(
 ): Promise<string> {
 	const defaultSessionInfo = `if (process.env.PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS !== "1") {
   const rawArgsIndex = process.argv.indexOf("--args");
-  if (rawArgsIndex >= 0 && process.argv[rawArgsIndex + 1] === "") process.argv.splice(rawArgsIndex, 2);
+  if (rawArgsIndex >= 0 && ["", "--no-startup-window"].includes(process.argv[rawArgsIndex + 1])) process.argv.splice(rawArgsIndex, 2);
   const fileAccessIndex = process.argv.indexOf("--allow-file-access");
   if (fileAccessIndex >= 0 && process.argv[fileAccessIndex + 1] === "false") process.argv.splice(fileAccessIndex, 2);
 }
