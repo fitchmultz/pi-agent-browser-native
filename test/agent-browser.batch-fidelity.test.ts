@@ -248,7 +248,7 @@ test("real upstream recording FPS preserves destinations and the intended page",
 			const call = (args: string[], stdin?: string, outputPath?: string) => executeRegisteredTool(h.tool, h.ctx, { args, stdin, outputPath });
 			let daemonPid: number | undefined;
 			try {
-				const opened = await call(["open", url]);
+				const opened = await executeRegisteredTool(h.tool, h.ctx, { args: ["open", url], sessionMode: "fresh" });
 				assert.equal(opened.isError, false, opened.content[0]?.text);
 				const sessionName = opened.details?.sessionName;
 				assert.ok(typeof sessionName === "string");

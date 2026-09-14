@@ -113,7 +113,7 @@ Each required target runs `platform-build` and `browser-dogfood-smoke` on one Cr
 ### `browser-dogfood-smoke`
 
 1. Run `npm ci` in the synced checkout if needed.
-2. Run the deterministic model-free browser smoke through `scripts/verify-agent-browser-dogfood.ts`.
+2. Run the deterministic model-free browser smoke through `scripts/verify-agent-browser-dogfood.ts`, starting with `sessionMode: "fresh"` so every browser stays in the test-owned managed lifecycle.
 3. Exercise native wrapper surfaces against the deterministic loopback HTTP fixture from `scripts/verify-agent-browser-dogfood.ts`: top-level `qa`, `semanticAction`, constrained `job`, screenshot artifact verification, and session close.
 4. Persist the dogfood JSON report and stdout/stderr evidence.
 5. Fail on missing browser artifacts, failed tool calls, leaked secrets, or unclosed sessions.

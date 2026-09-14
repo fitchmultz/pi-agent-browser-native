@@ -626,7 +626,7 @@ async function verifyLifecycle(options = {}) {
 		});
 		await sleep(1000);
 		if (verbose) console.log("→ initial managed open");
-		await sendLine(tmuxSession, buildPrompt(["open", EXPECTED_URL]));
+		await sendLine(tmuxSession, buildToolInputPrompt({ args: ["open", EXPECTED_URL], sessionMode: "fresh" }));
 		const openReport = await waitForAgentBrowserResult({
 			describe: "initial managed open result",
 			sessionDir,
@@ -640,7 +640,7 @@ async function verifyLifecycle(options = {}) {
 		await waitForAssistantFinal({ describe: "initial managed open", sessionFile, sinceEntryCount: 0, timeoutMs });
 		const firstSessionName = openReport.result.details?.sessionName;
 		assert(typeof firstSessionName === "string" && firstSessionName.length > 0, "Initial open did not report details.sessionName.");
-		assert(openReport.result.details?.usedImplicitSession === true, "Initial open did not use the implicit managed session.");
+		assert(openReport.result.details?.managedSessionOutcome?.status === "created", "Initial fresh open did not create a managed session.");
 
 		await sendLine(tmuxSession, `/${lifecycleSentinelCommand("v1")}`);
 		await waitForSentinel({ sessionFile, timeoutMs, token: "v1" });
@@ -659,6 +659,7 @@ async function verifyLifecycle(options = {}) {
 			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", EXPECTED_URL),
 		});
 		assert(reloadSnapshot.result.details?.sessionName === firstSessionName, "Post-reload snapshot used a different managed session name.");
+		assert(reloadSnapshot.result.details?.usedImplicitSession === true, "Post-reload snapshot did not reuse the managed session.");
 
 		const largeReport = await runPromptAndWaitForResult({
 			describe: "large eval output spill",
@@ -698,6 +699,7 @@ async function verifyLifecycle(options = {}) {
 			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", EXPECTED_URL),
 		});
 		assert(resumeSnapshot.result.details?.sessionName === firstSessionName, "Post-relaunch snapshot used a different managed session name.");
+		assert(resumeSnapshot.result.details?.usedImplicitSession === true, "Post-relaunch snapshot did not reuse the managed session.");
 		await assertFileExists(firstFullOutputPath, "Previously persisted fullOutputPath after relaunch");
 
 		const qaFailureReport = await runPromptAndWaitForResult({

@@ -10,6 +10,10 @@
 
 - Give ordinary browser calls a native session and restore key per root Pi session. Parent/descendant groups share one browser without a global queue or child-exit teardown. Scope named Chrome profile bootstrap to automatic roots; preserve explicit browsers, script, and Electron isolation.
 
+### Validation
+
+- Start managed-lifecycle release checks explicitly in fresh mode; retain root-session ownership without leaving test browsers open.
+
 ## 0.6.12 - 2026-09-13
 
 ### Fixed

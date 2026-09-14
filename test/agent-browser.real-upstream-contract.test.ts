@@ -146,8 +146,8 @@ async function closeManagedSessionIfPresent(options: { cwd: string; sessionName?
 	}).catch(() => undefined);
 }
 
-async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<void> {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-orphan-daemon-"));
+async function assertRealUpstreamRestoredDaemonReuseFailsClosed(): Promise<void> {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-real-restored-daemon-"));
 	const socketDir = await mkdtemp(join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "ru-"));
 	let sessionName: string | undefined;
 	try {
@@ -163,13 +163,13 @@ async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<voi
 		}, async () => {
 			const firstHarness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(firstHarness.handlers, "session_start", { reason: "new" }, firstHarness.ctx);
-			const opened = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { args: ["open", "about:blank"] });
-			assert.equal(opened.isError, false, `orphan-daemon setup open failed: ${opened.content[0]?.text ?? ""}`);
+			const opened = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" });
+			assert.equal(opened.isError, false, `restored-daemon setup open failed: ${opened.content[0]?.text ?? ""}`);
 			sessionName = typeof opened.details?.sessionName === "string" ? opened.details.sessionName : undefined;
 
-			const emptyTranscriptHarness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(emptyTranscriptHarness.handlers, "session_start", { reason: "new" }, emptyTranscriptHarness.ctx);
-			const blocked = await executeRegisteredTool(emptyTranscriptHarness.tool, emptyTranscriptHarness.ctx, {
+			const restoredHarness = createExtensionHarness({ cwd: tempDir, branch: [createToolBranchEntry({ details: opened.details!, isError: opened.isError })] });
+			await runExtensionEvent(restoredHarness.handlers, "session_start", { reason: "resume" }, restoredHarness.ctx);
+			const blocked = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, {
 				args: ["--proxy", "http://127.0.0.1:8080", "open", "about:blank"],
 			});
 			assert.equal(blocked.isError, true);
@@ -177,7 +177,7 @@ async function assertRealUpstreamUnrecordedDaemonReuseFailsClosed(): Promise<voi
 			assert.equal(blocked.details?.exitCode, undefined);
 
 			const closed = await executeRegisteredTool(firstHarness.tool, firstHarness.ctx, { args: ["close"] });
-			assert.equal(closed.isError, false, `orphan-daemon cleanup close failed: ${closed.content[0]?.text ?? ""}`);
+			assert.equal(closed.isError, false, `restored-daemon cleanup close failed: ${closed.content[0]?.text ?? ""}`);
 			sessionName = undefined;
 		});
 	} finally {
@@ -385,7 +385,7 @@ for (const reconstructed of [false, true]) test(`real upstream agent-browser con
 			try {
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 				const url = `${fixture.baseUrl}/contract`, marker = "unsaved-owned-read";
-				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", url] });
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", url], sessionMode: "fresh" });
 				sessionName = opened.details?.sessionName as string;
 				assert.equal(opened.isError, false, opened.content[0]?.text);
 				branch.push(createToolBranchEntry({ details: opened.details!, isError: opened.isError }));
@@ -551,7 +551,7 @@ test("real upstream agent-browser contract suite matches duplicate-name click mu
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			try {
-				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `${fixture.baseUrl}/duplicate-buttons`] });
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", `${fixture.baseUrl}/duplicate-buttons`], sessionMode: "fresh" });
 				assert.equal(opened.isError, false, opened.content[0]?.text);
 				const sessionName = opened.details?.sessionName as string;
 				const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
@@ -645,7 +645,7 @@ test("real upstream agent-browser contract suite matches cold URL reopen after q
 					};
 					try {
 						await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-						const opened = await run({ args: ["open", url] });
+						const opened = await run({ args: ["open", url], sessionMode: "fresh" });
 						sessionName = opened.details?.sessionName as string | undefined;
 						assert.equal(opened.isError, false, opened.content[0]?.text);
 						assert.equal(opened.details?.managedSessionRestoreDisabled, undefined);
@@ -1228,7 +1228,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await runExtensionEvent(restoredHarness.handlers, "session_start", { reason: "resume" }, restoredHarness.ctx);
 					let restoredValueText: string | undefined;
 					try {
-						const restoredOpen = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, { args: ["open", contractUrl] });
+						const restoredOpen = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, { args: ["open", contractUrl], sessionMode: "fresh" });
 						assertSuccessfulResult(restoredOpen, shapes.commands.open, "open restored managed session");
 						const readRestoreState = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, {
 							args: ["eval", "--stdin"],
@@ -1249,7 +1249,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 					await runExtensionEvent(isolatedHarness.handlers, "session_start", { reason: "new" }, isolatedHarness.ctx);
 					let isolatedValueText: string | undefined;
 					try {
-						const isolatedOpen = await executeRegisteredTool(isolatedHarness.tool, isolatedHarness.ctx, { args: ["open", contractUrl] });
+						const isolatedOpen = await executeRegisteredTool(isolatedHarness.tool, isolatedHarness.ctx, { args: ["open", contractUrl], sessionMode: "fresh" });
 						assertSuccessfulResult(isolatedOpen, shapes.commands.open, "open distinct-transcript managed session");
 						const isolatedState = await executeRegisteredTool(isolatedHarness.tool, isolatedHarness.ctx, {
 							args: ["eval", "--stdin"],
@@ -1317,7 +1317,7 @@ if (!REAL_UPSTREAM_ENABLED) {
 			await rm(socketDir, { force: true, recursive: true });
 		}
 		await assertRealUpstreamLocalDaemonPassesThrough();
-		await assertRealUpstreamUnrecordedDaemonReuseFailsClosed();
+		await assertRealUpstreamRestoredDaemonReuseFailsClosed();
 		await assertRealUpstreamRestoreStorageSymlinkFailsClosed();
 		await assertRealUpstreamNestedRestoreStorageSymlinkFailsClosed();
 		await assertRealUpstreamRelativeHomeFailsClosed();
