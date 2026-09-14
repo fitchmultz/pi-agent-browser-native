@@ -195,6 +195,7 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 			id: "qa-url",
 			textPattern: /Example Domain/,
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
+				sessionMode: "fresh",
 				qa: {
 					checkConsole: false,
 					checkErrors: false,
