@@ -25,7 +25,7 @@ import { buildProcessStartIdentityCommand, buildProcessStartIdentityCommands, no
 import {
 	buildAgentBrowserProcessEnv,
 	buildAgentBrowserSpawnCommand,
-	extractWindowsCmdShimExe,
+	isNativeAgentBrowserWindowsExecutable,
 	ensureAgentBrowserSocketDir,
 	getAgentBrowserProcessTimeoutMs,
 	getAgentBrowserSocketDir,
@@ -260,14 +260,17 @@ test("buildAgentBrowserSpawnCommand falls back to the npm cmd shim via PowerShel
 	);
 });
 
-test("extractWindowsCmdShimExe resolves the quoted native binary target from an npm cmd shim", { skip: process.platform !== "win32" }, () => {
-	const shimDir = "C:\\Users\\test\\npm";
-	assert.equal(
-		extractWindowsCmdShimExe('@ECHO off\n"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe" %*', shimDir, "agent-browser-win32-x64.exe"),
-		"C:\\Users\\test\\npm\\node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe",
-	);
-	assert.equal(extractWindowsCmdShimExe('@ECHO off\n"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe" %*', shimDir, "agent-browser-win32-arm64.exe"), undefined);
-	assert.equal(extractWindowsCmdShimExe("echo not a shim", shimDir, "agent-browser-win32-x64.exe"), undefined);
+test("isNativeAgentBrowserWindowsExecutable accepts only a native agent-browser exe, not a launcher shim", () => {
+	// The direct argv-safe spawn is taken only when the PATH-selected entry is
+	// itself the native executable. A `.cmd`/`.bat` launcher (npm shim, or a
+	// package/version-manager shim that sets up its environment first) is honored
+	// as-is through the PowerShell fallback rather than bypassed.
+	assert.equal(isNativeAgentBrowserWindowsExecutable("C:\\Users\\test\\npm\\node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe"), true);
+	assert.equal(isNativeAgentBrowserWindowsExecutable("C:\\tools\\agent-browser-win32-arm64.exe"), true);
+	assert.equal(isNativeAgentBrowserWindowsExecutable("C:\\tools\\agent-browser.exe"), true);
+	assert.equal(isNativeAgentBrowserWindowsExecutable("C:\\Users\\test\\npm\\agent-browser.cmd"), false);
+	assert.equal(isNativeAgentBrowserWindowsExecutable("C:\\Users\\test\\npm\\agent-browser.bat"), false);
+	assert.equal(isNativeAgentBrowserWindowsExecutable("C:\\Users\\test\\npm\\agent-browser"), false);
 });
 
 test("process start identity commands prefer system paths before PATH and keep native PowerShell on Windows", async () => {

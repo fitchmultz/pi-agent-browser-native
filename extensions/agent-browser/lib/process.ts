@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
 import { lstat, mkdir, readdir, readlink, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { env as processEnv, platform as processPlatform } from "node:process";
@@ -154,47 +153,31 @@ export function prepareAgentBrowserSpawnArgs(args: string[], wrapperCompatibilit
 	return ["--args", `--user-agent=${wrapperCompatibilityUserAgent.replaceAll(/[\r\n,]/g, "")}`, ...args];
 }
 
-/**
- * Resolves the native agent-browser Windows binary, scoped to the PATH the
- * spawned subprocess itself will run with (`pathEnv`) rather than the wrapper's
- * own process PATH, so environment overrides and test harnesses that prepend a
- * fake shim are honored.
- */
-function resolveWindowsAgentBrowserNativeExecutable(pathEnv: string | undefined): string | undefined {
-	const binaryName = `agent-browser-${processPlatform}-${process.arch}.exe`;
-	if (!/^agent-browser-win32-(x64|arm64)\.exe$/i.test(binaryName)) return undefined;
-	const shimPath = resolveExecutableOnPathSync("agent-browser", pathEnv);
-	if (!shimPath) return undefined;
-	const shimDir = dirname(shimPath);
-	if (/\.cmd$/i.test(shimPath)) {
-		try {
-			const nativePath = extractWindowsCmdShimExe(readFileSync(shimPath, "utf8"), shimDir, binaryName);
-			if (nativePath) return nativePath;
-		} catch {
-			// Fall through to the derived npm layout below.
-		}
-	}
-	// Standard npm global layout: the shim lives in the npm bin dir and the native
-	// binary sits in its package next door.
-	const derived = join(shimDir, "node_modules", "agent-browser", "bin", binaryName);
-	try {
-		return statSync(derived).isFile() ? derived : undefined;
-	} catch {
-		return undefined;
-	}
+/** Basename the PATH-selected `agent-browser` must have to qualify for a direct argv-safe spawn. */
+export function isNativeAgentBrowserWindowsExecutable(resolvedPath: string): boolean {
+	const name = basename(resolvedPath).toLowerCase();
+	// Either the platform-suffixed binary the upstream package ships, or a plain
+	// `agent-browser.exe` a version/package manager may expose directly on PATH.
+	return /^agent-browser-win32-(x64|arm64)\.exe$/i.test(name) || name === "agent-browser.exe";
 }
 
-/** Pull the quoted native `.exe` target out of an npm-generated `agent-browser.cmd` shim. */
-export function extractWindowsCmdShimExe(shimText: string, shimDir: string, expectedBinaryName: string): string | undefined {
-	for (const line of shimText.split(/\r?\n/)) {
-		const match = /"([^"]+\.exe)"/i.exec(line);
-		if (!match) continue;
-		let raw = match[1] as string;
-		if (raw.startsWith("%~dp0")) raw = join(shimDir, raw.slice("%~dp0".length));
-		else if (!isAbsolute(raw)) raw = join(shimDir, raw);
-		if (isAbsolute(raw) && basename(raw).toLowerCase() === expectedBinaryName.toLowerCase()) return raw;
-	}
-	return undefined;
+/**
+ * Returns the PATH-selected `agent-browser` entry only when it is *itself* the
+ * native Windows executable, scoped to the PATH the spawned subprocess will run
+ * with (`pathEnv`) rather than the wrapper's own process PATH so environment
+ * overrides and test harnesses that prepend a fake binary are honored.
+ *
+ * When the selected entry is instead a `.cmd`/`.bat` launcher (npm shim, or a
+ * package/version-manager shim that performs setup before invoking the real
+ * binary), this returns `undefined`: the integration contract only guarantees
+ * `agent-browser` on PATH, so the selected launcher is invoked as-is through the
+ * PowerShell fallback rather than reaching past it into a derived inner binary.
+ */
+function resolveWindowsAgentBrowserNativeExecutable(pathEnv: string | undefined): string | undefined {
+	if (processPlatform !== "win32") return undefined;
+	const resolved = resolveExecutableOnPathSync("agent-browser", pathEnv);
+	if (!resolved) return undefined;
+	return isNativeAgentBrowserWindowsExecutable(resolved) ? resolved : undefined;
 }
 
 export interface WindowsNativeSpawnOptions {
@@ -215,9 +198,12 @@ export function buildAgentBrowserSpawnCommand(
 	const pathEnv = options.path ?? process.env.PATH;
 	const nativeBinary = (options.resolveWindowsNativeBinary ?? resolveWindowsAgentBrowserNativeExecutable)(pathEnv);
 	if (nativeBinary) {
-		// Direct native spawn preserves empty argv values (e.g. `--namespace ""`),
-		// which the PowerShell -> .cmd shim route drops and thereby shifts every
-		// following argument. Pass argv through untouched.
+		// The PATH-selected launcher is itself the native executable, so spawning
+		// it directly both honors the operator's selection and preserves empty argv
+		// values (e.g. `--namespace ""`) verbatim -- the PowerShell -> .cmd shim
+		// route drops them and thereby shifts every following argument. When the
+		// selected launcher is a .cmd/.bat shim instead, resolution returns
+		// undefined and the shim is invoked as-is below.
 		return { command: nativeBinary, args };
 	}
 	const invocationArgs = reorderWindowsLeadingGlobalArgs(args).map(quoteWindowsPowerShellArg).join(" ");
