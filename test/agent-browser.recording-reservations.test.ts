@@ -58,6 +58,20 @@ test("recording replay rejects relative storage paths without changing display p
 	assert.equal(restored.terminal.size, 1);
 });
 
+test("contact-sheet reservations survive replay and retire with their video", () => {
+	const reservations = new Map<string, ActiveRecordingReservation>();
+	const video = { ...pendingArtifact("shared", "scope", "capture.webm"), absolutePath: resolve("capture.webm"), cwd: process.cwd() };
+	const sheet = { ...video, kind: "image" as const, absolutePath: resolve("capture.contact-sheet.png"), path: "capture.contact-sheet.png" };
+	const transitions = applyRecordingArtifactsToReservations(reservations, [video, sheet]);
+	assert.equal(transitions[0].reservation.contactSheetPath, sheet.absolutePath);
+	const branch: unknown[] = [];
+	for (const transition of transitions) appendRecordingReservationTransition({ appendEntry: (customType: string, data: unknown) => branch.push({ type: "custom", customType, data }) } as never, transition);
+	const restored = restoreRecordingReservationStateFromBranch(branch).active;
+	assert.equal(restored.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.contactSheetPath, sheet.absolutePath);
+	applyRecordingArtifactsToReservations(restored, [{ ...video, subcommand: "stop", status: "saved", recordingState: undefined }]);
+	assert.equal(restored.size, 0);
+});
+
 test("recording reservations distinguish namespace plus session identity", () => {
 	const reservations = new Map<string, ActiveRecordingReservation>();
 	applyRecordingArtifactsToReservations(reservations, [

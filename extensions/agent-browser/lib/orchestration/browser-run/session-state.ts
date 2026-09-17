@@ -1,5 +1,8 @@
 import { rm } from "node:fs/promises";
 
+import { getScreenshotPositionalIndices } from "./artifact-paths.js";
+import { observeNativeWebMcp } from "../../webmcp-observation.js";
+
 import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { parseArgvDescriptor } from "../../argv-descriptor.js";
 import { isBrowserIndependentRead, needsManagedSession } from "../../command-policy.js";
@@ -351,11 +354,11 @@ function collectRefsFromTokens(tokens: readonly string[]): string[] {
 	if (!isRefGuardedCommand(tokens[0]) || (tokens[0] === "diff" && tokens[1] !== "screenshot")) return [];
 	let selectors: readonly (string | undefined)[];
 	switch (tokens[0]) {
-		case "click": selectors = [tokens.slice(1).find((token) => token !== "--new-tab")]; break;
+		case "click": selectors = [tokens.slice(1).find((token) => token !== "--new-tab" && token !== "--human")]; break;
 		case "drag": selectors = tokens.slice(1, 3); break;
 		case "get": selectors = [!["url", "title", "cdp-url", "count"].includes(tokens[1]) ? tokens[2] : undefined]; break;
 		case "is": selectors = [tokens[2]]; break;
-		case "screenshot": selectors = [tokens.slice(1).find((token) => !["--full", "-f"].includes(token))]; break;
+		case "screenshot": selectors = [tokens[getScreenshotPositionalIndices(tokens)[0]]]; break;
 		case "diff":
 		case "scroll": {
 			let selector: string | undefined;
@@ -594,6 +597,7 @@ export async function runSessionCommandData(options: {
 			if (throwOnFailure) throw new Error(parsed.parseError ? "agent-browser returned invalid structured output" : "agent-browser reported failure");
 			return undefined;
 		}
+		observeNativeWebMcp(parsed.envelope?.data);
 		return parsed.envelope?.data;
 	} finally {
 		if (processResult.stdoutSpillPath) {

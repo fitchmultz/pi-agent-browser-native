@@ -355,6 +355,8 @@ export function getRecordCommandOperands(tokens: readonly string[]): { path?: st
 	for (let index = 2; index < tokens.length && operands.length < 2; index += 1) {
 		// Native validates the range; bare/non-numeric --fps keeps its old literal meaning.
 		if (tokens[index] === "--fps" && /^\+?\d+$/.test(tokens[index + 1] ?? "")) index += 1;
+		else if (tokens[index] === "--cursor" || tokens[index] === "--contact-sheet") continue;
+		else if (tokens[index] === "--contact-sheet-threshold" && tokens[index + 1] !== undefined) index += 1;
 		else operands.push(tokens[index]);
 	}
 	return operands.length > 0 ? { path: operands[0], url: operands[1] } : { path: tokens[2], url: tokens[3] };

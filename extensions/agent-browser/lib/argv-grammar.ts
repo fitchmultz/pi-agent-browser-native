@@ -37,6 +37,7 @@ export const GLOBAL_VALUE_FLAGS = [
 	"--max-output",
 	"--model",
 	"--idle-timeout",
+	"--input-mode",
 ] as const;
 
 export const COMMAND_VALUE_FLAGS = [

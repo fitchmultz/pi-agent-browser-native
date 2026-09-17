@@ -22,6 +22,7 @@ import {
 import { applySnapshotArtifactManifest, writeSnapshotSpillFile, type SnapshotSpillWriteResult } from "./snapshot-spill.js";
 import {
 	enrichSnapshotRefEntries,
+	getFullSnapshotData,
 	getSnapshotRefEntries,
 	type SnapshotRefEntry,
 } from "./snapshot-refs.js";
@@ -38,7 +39,8 @@ const SNAPSHOT_HIGH_VALUE_REF_MAX_LINES = 10;
 const SNAPSHOT_ROLE_COUNT_MAX_ENTRIES = 4;
 const SNAPSHOT_NAME_MAX_CHARS = 96;
 function getSnapshotText(data: Record<string, unknown>): string | undefined {
-	return typeof data.snapshot === "string" ? data.snapshot : undefined;
+	const full = getFullSnapshotData(data);
+	return typeof full?.snapshot === "string" ? full.snapshot : isRecord(data.snapshot) ? JSON.stringify(data.snapshot) : undefined;
 }
 
 function getSnapshotOrigin(data: Record<string, unknown>): string {
@@ -112,14 +114,16 @@ function shouldCompactSnapshot(rawText: string, data: Record<string, unknown>): 
 
 export function formatSnapshotSummary(data: Record<string, unknown>): string {
 	const origin = typeof data.origin === "string" ? data.origin : "page";
-	const refs = isRecord(data.refs) ? Object.keys(data.refs).length : 0;
+	if (isRecord(data.snapshot) && data.snapshot.kind !== "full") return `Snapshot ${data.snapshot.kind}: revision ${data.snapshot.revision} on ${origin}`;
+	const refs = getSnapshotRefEntries(data).length;
 	return `Snapshot: ${refs} refs on ${origin}`;
 }
 
 export function formatRawSnapshotText(data: Record<string, unknown>): string {
 	const origin = getSnapshotOrigin(data);
-	const refs = isRecord(data.refs) ? Object.keys(data.refs).length : 0;
+	const refs = getSnapshotRefEntries(data).length;
 	const snapshot = getSnapshotText(data);
+	if (isRecord(data.snapshot) && data.snapshot.kind !== "full") return `Origin: ${origin}\n${formatSnapshotSummary(data)}\n\n${snapshot}`;
 	if (!snapshot) {
 		return `Origin: ${origin}\nRefs: ${refs}\n\n(no interactive elements)`;
 	}
@@ -133,7 +137,9 @@ export async function buildSnapshotPresentation(
 ): Promise<ToolPresentation> {
 	const summary = formatSnapshotSummary(data);
 	const rawText = formatRawSnapshotText(data);
-	if (!shouldCompactSnapshot(rawText, data)) {
+	// Native partials are already compact patches, not accessibility trees.
+	// The ordinary large-output presenter handles truly oversized patches.
+	if ((isRecord(data.snapshot) && data.snapshot.kind !== "full") || !shouldCompactSnapshot(rawText, data)) {
 		return {
 			content: [{ type: "text", text: rawText }],
 			data,

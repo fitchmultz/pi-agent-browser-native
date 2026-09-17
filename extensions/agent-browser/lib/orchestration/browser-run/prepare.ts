@@ -230,8 +230,9 @@ async function repairScreenshotData(options: {
 	cwd: string;
 	data: Record<string, unknown>;
 	request: ScreenshotPathRequest;
-}): Promise<{ data: Record<string, unknown>; request: ScreenshotArtifactRequest }> {
+}): Promise<{ data: Record<string, unknown>; request?: ScreenshotArtifactRequest }> {
 	const { cwd, data, request } = options;
+	if (data.changed === false) return { data };
 	const reportedPath = typeof data.path === "string" ? data.path : undefined;
 	const reportedAbsolutePath = reportedPath ? resolve(cwd, reportedPath) : undefined;
 	let status: ScreenshotArtifactRequest["status"] = await pathExists(request.absolutePath) ? "saved" : "missing";

@@ -5,7 +5,7 @@ import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCom
 import { isRecord } from "./parsing.js";
 import { findReadConfirmation as findPendingReadConfirmation, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
-import { enrichSnapshotRefEntries, getSnapshotRefEntries } from "./results/snapshot-refs.js";
+import { enrichSnapshotRefEntries, getFullSnapshotData, getSnapshotRefEntries } from "./results/snapshot-refs.js";
 import { parseSnapshotLines } from "./results/snapshot-segments.js";
 
 export interface SessionTabTarget {
@@ -40,6 +40,7 @@ interface OrderedSessionRefSnapshotInvalidation extends SessionRefSnapshotInvali
 
 export interface BatchRefSnapshotState {
 	invalidation?: SessionRefSnapshotInvalidation;
+	refreshArgs?: string[];
 	snapshot?: SessionRefSnapshot;
 }
 
@@ -255,8 +256,9 @@ function extractRefSnapshotRefs(data: unknown): Record<string, { isContentEditab
 	return Object.keys(refs).length > 0 ? refs : undefined;
 }
 
-export function extractRefSnapshotFromData(data: unknown): SessionRefSnapshot | undefined {
-	if (!isRecord(data)) return undefined;
+export function extractRefSnapshotFromData(value: unknown): SessionRefSnapshot | undefined {
+	const data = getFullSnapshotData(value);
+	if (!data) return undefined;
 	const refs = extractRefSnapshotRefs(data);
 	return {
 		refIds: isRecord(data.refs) ? Object.keys(data.refs).filter((refId) => /^e\d+$/.test(refId)) : [],
@@ -327,6 +329,8 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 		const snapshot = extractRefSnapshotFromData(item.result);
 		if (snapshot) {
 			latestState = { snapshot };
+		} else if (isRecord(item.result) && isRecord(item.result.snapshot)) {
+			latestState = { refreshArgs: commandTokens.filter((token) => token !== "--delta" && token !== "--full") };
 		}
 	}
 	return latestState;

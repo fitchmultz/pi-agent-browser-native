@@ -33,7 +33,7 @@ jobs:
           node -p "JSON.stringify({platform:process.platform,arch:process.arch,node:process.version})" | Tee-Object windows-environment.log
           git rev-parse HEAD | Tee-Object windows-environment.log -Append
           if ((git rev-parse HEAD) -ne $env:EXPECTED_HEAD) { throw 'Checkout does not match the requested head' }
-          npm install --global agent-browser@0.37.0 2>&1 | Tee-Object windows-setup.log
+          npm install --global agent-browser@0.38.1 2>&1 | Tee-Object windows-setup.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           agent-browser install 2>&1 | Tee-Object windows-setup.log -Append
           exit $LASTEXITCODE
@@ -45,7 +45,7 @@ jobs:
         run: |
           $env:TEMP = $env:RUNNER_TEMP
           $env:TMP = $env:RUNNER_TEMP
-          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\platform-smoke\browser-dogfood-windows.ps1 -AgentBrowserVersion '0.37.0' -SkipNpmCi 2>&1 | Tee-Object windows-browser-dogfood.log
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\platform-smoke\browser-dogfood-windows.ps1 -AgentBrowserVersion '0.38.1' -SkipNpmCi 2>&1 | Tee-Object windows-browser-dogfood.log
           exit $LASTEXITCODE
       - name: Verify registration and browser evidence
         run: |

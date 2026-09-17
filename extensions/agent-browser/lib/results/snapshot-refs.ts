@@ -19,12 +19,23 @@ export interface SnapshotLineRefInfo {
 	role: string;
 }
 
+/** Project native delta full responses onto the ordinary snapshot shape for local readers. */
+export function getFullSnapshotData(data: unknown): Record<string, unknown> | undefined {
+	if (!isRecord(data)) return undefined;
+	if (!isRecord(data.snapshot)) return data;
+	return data.snapshot.kind === "full"
+		? { ...data, snapshot: data.snapshot.tree, refs: data.snapshot.refs }
+		: undefined;
+}
+
 export function getSnapshotRefRecord(data: unknown): Record<string, unknown> | undefined {
-	return isRecord(data) && isRecord(data.refs) ? data.refs : undefined;
+	const full = getFullSnapshotData(data);
+	return full && isRecord(full.refs) ? full.refs : undefined;
 }
 
 export function getSnapshotLineTextByRef(data: unknown): Map<string, string> {
-	const snapshot = isRecord(data) && typeof data.snapshot === "string" ? data.snapshot : "";
+	const full = getFullSnapshotData(data);
+	const snapshot = typeof full?.snapshot === "string" ? full.snapshot : "";
 	const lineByRef = new Map<string, string>();
 	for (const line of snapshot.split("\n")) {
 		const ref = line.match(/\bref=([^,\]\s]+)/)?.[1];

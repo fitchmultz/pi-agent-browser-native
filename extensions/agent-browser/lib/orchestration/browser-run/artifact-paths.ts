@@ -1,5 +1,5 @@
 import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 import { foldAgentBrowserFilesystemIdentity } from "../../argv-grammar.js";
 import { parseWaitCommandTokens } from "../../argv-descriptor.js";
@@ -13,12 +13,13 @@ function isSingleScreenshotPathToken(token: string): boolean {
 	return explicitlyRelative || token.includes("/") || SCREENSHOT_IMAGE_EXTENSIONS.some((extension) => token.endsWith(extension));
 }
 
-function getScreenshotPositionalIndices(commandTokens: string[]): number[] {
+export function getScreenshotPositionalIndices(commandTokens: readonly string[]): number[] {
 	if (commandTokens[0] !== "screenshot") return [];
 	const positionalIndices: number[] = [];
 	for (let index = 1; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
-		if (token === "--full" || token === "-f") continue;
+		if (token === "--full" || token === "-f" || token === "--if-changed") continue;
+		if (token === "--threshold") { index += 1; continue; }
 		positionalIndices.push(index);
 	}
 
@@ -85,6 +86,13 @@ function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platfor
 
 export function canonicalizeExplicitArtifactDestination(cwd: string, destination: string, platform: NodeJS.Platform = process.platform): string {
 	return canonicalizeArtifactPath(resolve(cwd, destination), platform, new Set());
+}
+
+export function getRecordContactSheetDestination(commandTokens: string[]): string | undefined {
+	const path = getRecordCommandOperands(commandTokens).path;
+	if (!path || !commandTokens.some((token) => token === "--contact-sheet" || token === "--contact-sheet-threshold")) return undefined;
+	const extension = extname(path);
+	return extension ? `${path.slice(0, -extension.length)}.contact-sheet.png` : undefined;
 }
 
 export function getExplicitArtifactDestination(commandTokens: string[]): string | undefined {

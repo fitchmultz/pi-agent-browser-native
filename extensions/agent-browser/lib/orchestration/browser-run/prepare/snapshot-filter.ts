@@ -29,6 +29,8 @@ function parseSnapshotFilterRequest(commandTokens: string[]): SnapshotFilterRequ
 	let search: string | undefined;
 	for (let index = 0; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
+		// Wrapper filters need a full native tree, not a revision-relative patch.
+		if (token === "--delta" || token === "--full") continue;
 		if (token === "--viewport") continue;
 		if (token === "--diff") continue;
 		if (token === "--search") {

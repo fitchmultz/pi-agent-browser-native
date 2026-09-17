@@ -11,6 +11,7 @@ export const RECORDING_RESERVATION_ENTRY_TYPE = "agent-browser-recording-reserva
 
 export interface ActiveRecordingReservation {
 	absolutePath: string;
+	contactSheetPath?: string;
 	cwd: string;
 	namespace?: string;
 	path: string;
@@ -50,6 +51,8 @@ export function applyRecordingArtifactsToReservations(
 	for (const artifact of artifacts) {
 		const reservation = getArtifactReservation(artifact);
 		if (!reservation) continue;
+		const sheet = artifacts.find((candidate) => candidate.command === "record" && candidate.kind === "image" && candidate.session === artifact.session && candidate.namespace === artifact.namespace && isPendingRecordingArtifact(candidate));
+		if (sheet) reservation.contactSheetPath = sheet.absolutePath;
 		const key = getReservationKey(reservation);
 		if (isPendingRecordingArtifact(artifact)) pendingBySession.set(key, reservation);
 		else terminalBySession.set(key, reservation);
@@ -65,7 +68,7 @@ export function applyRecordingArtifactsToReservations(
 	for (const [key, pending] of pendingBySession) {
 		const existing = reservations.get(key);
 		reservations.set(key, pending);
-		if (!existing || existing.absolutePath !== pending.absolutePath || existing.cwd !== pending.cwd || existing.recordingId !== pending.recordingId || existing.startedAtMs !== pending.startedAtMs) {
+		if (!existing || existing.absolutePath !== pending.absolutePath || existing.cwd !== pending.cwd || existing.recordingId !== pending.recordingId || existing.startedAtMs !== pending.startedAtMs || existing.contactSheetPath !== pending.contactSheetPath) {
 			transitions.push({ reservation: pending, state: "active" });
 		}
 	}
@@ -87,6 +90,7 @@ export function appendRecordingReservationTransition(pi: ExtensionAPI, transitio
 	const { reservation, state } = transition;
 	pi.appendEntry(RECORDING_RESERVATION_ENTRY_TYPE, {
 		absolutePath: state === "active" ? reservation.absolutePath : undefined,
+		contactSheetPath: state === "active" ? reservation.contactSheetPath : undefined,
 		cwd: state === "active" ? reservation.cwd : undefined,
 		namespace: reservation.namespace,
 		path: state === "active" ? reservation.path : undefined,
@@ -108,6 +112,7 @@ function parseReservationTransition(data: unknown): RecordingReservationTransiti
 			state: "closed",
 		};
 	}
+	if (data.contactSheetPath !== undefined && (typeof data.contactSheetPath !== "string" || !isAbsolute(data.contactSheetPath))) return undefined;
 	if (data.recordingId !== undefined && (typeof data.recordingId !== "string" || !data.recordingId)) return undefined;
 	if (data.startedAtMs !== undefined && (typeof data.startedAtMs !== "number" || !Number.isFinite(data.startedAtMs))) return undefined;
 	if (typeof data.absolutePath !== "string" || !isAbsolute(data.absolutePath)
@@ -115,6 +120,7 @@ function parseReservationTransition(data: unknown): RecordingReservationTransiti
 	return {
 		reservation: {
 			absolutePath: data.absolutePath,
+			...(typeof data.contactSheetPath === "string" ? { contactSheetPath: data.contactSheetPath } : {}),
 			cwd: data.cwd,
 			namespace: data.namespace,
 			path: data.path,

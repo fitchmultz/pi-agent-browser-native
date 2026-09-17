@@ -15,7 +15,7 @@ import type {
 	ToolPresentation,
 } from "./contracts.js";
 import { buildSnapshotPresentation } from "./snapshot.js";
-import { redactModelFacingText } from "./presentation/common.js";
+import { formatWebMcpCatalogUpdate, redactModelFacingText } from "./presentation/common.js";
 import {
 	applyArtifactManifest,
 	attachInlineImage,
@@ -101,6 +101,7 @@ export async function buildToolPresentation(options: {
 	persistentArtifactStore?: PersistentSessionArtifactStore;
 	piCleanupOwnership?: "caller-owned" | "wrapper-managed";
 	recordingPending?: boolean;
+	previousRecordingContactSheetPath?: string;
 	sessionName?: string;
 }): Promise<ToolPresentation> {
 	const {
@@ -142,7 +143,7 @@ export async function buildToolPresentation(options: {
 	const presentationData = commandInfo.command === "batch" && isAgentBrowserBatchResultArray(data)
 		? redactBatchSpillData(data)
 		: redactPresentationData(commandInfoWithTokens, data);
-	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, namespace, recordingOutcome: recordingCommand ? envelope?.success : undefined, recordingPending: options.recordingPending, sessionName });
+	const artifacts = await extractFileArtifacts({ artifactManifest, artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs, artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs, artifactRequest, commandInfo: presentationCommandInfo, cwd, data, namespace, recordingOutcome: recordingCommand ? envelope?.success : undefined, recordingPending: options.recordingPending, previousRecordingContactSheetPath: options.previousRecordingContactSheetPath, sessionName });
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const artifactSummary = formatArtifactSummary(artifacts);
 	const summary = artifactSummary ?? formatPresentationSummary(commandInfoWithTokens, data, compiledSemanticAction);
@@ -201,6 +202,10 @@ export async function buildToolPresentation(options: {
 		}
 	}
 
+	if (isRecord(presentationData) && isRecord(presentationData.webmcp) && (Array.isArray(presentationData.webmcp.tools) || presentationData.webmcp.status === "unavailable") && presentation.content[0]?.type === "text") {
+		presentation.content[0] = { ...presentation.content[0], text: `${presentation.content[0].text}\n\n${formatWebMcpCatalogUpdate(presentationData.webmcp)}` };
+	}
+
 	if (shouldAddAnnotatedScreenshotGuidance(commandInfo, args) && presentation.content[0]?.type === "text") {
 		const guidance = "Annotated screenshot note: dense pages can produce overlapping labels. If the labels are noisy, capture a scoped element screenshot, take a non-annotated screenshot, or use snapshot -i high-value refs as the machine-readable map.";
 		presentation.content[0] = { ...presentation.content[0], text: `${presentation.content[0].text}\n\n${guidance}` };
@@ -210,7 +215,8 @@ export async function buildToolPresentation(options: {
 		presentation.content[0] = { ...presentation.content[0], text: `${presentation.content[0].text}\n\n${keyboardInsertTextWarning}` };
 	}
 
-	const imagePath = artifactRequest?.absolutePath ?? extractImagePath(commandInfo, cwd, data);
+	const imagePath = artifactRequest?.absolutePath ?? extractImagePath(commandInfo, cwd, data)
+		?? (recordingCommand ? artifacts.find((artifact) => artifact.kind === "image" && artifact.status === "saved")?.absolutePath : undefined);
 	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
 	const compactedPresentation = await compactLargePresentationOutput({
 		artifactManifest,

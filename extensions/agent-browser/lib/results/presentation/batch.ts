@@ -372,14 +372,14 @@ async function buildBatchStepPresentation(options: {
 	};
 }
 
-async function abandonedRecordingArtifact(artifact: FileArtifactMetadata): Promise<FileArtifactMetadata> {
+async function unverifiedRecordingArtifact(artifact: FileArtifactMetadata, subcommand: string): Promise<FileArtifactMetadata> {
 	const { recordingState: _recordingState, willExistOnStop: _willExistOnStop, ...terminal } = artifact;
 	try {
 		const file = await stat(artifact.absolutePath);
-		return { ...terminal, exists: file.isFile(), sizeBytes: file.size, status: file.isFile() ? "unverified" : "missing", subcommand: "close-abandoned" };
+		return { ...terminal, exists: file.isFile(), sizeBytes: file.size, status: file.isFile() ? "unverified" : "missing", subcommand };
 	} catch (error) {
 		const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
-		return { ...terminal, exists: missing ? false : undefined, status: missing ? "missing" : "unverified", subcommand: "close-abandoned" };
+		return { ...terminal, exists: missing ? false : undefined, status: missing ? "missing" : "unverified", subcommand };
 	}
 }
 
@@ -394,7 +394,7 @@ async function coalesceTerminalBatchRecordingArtifacts(
 	for (const step of steps) {
 		for (const artifact of step.presentation.artifacts ?? []) {
 			const index = artifacts.push(artifact) - 1;
-			if (artifact.command !== "record" || artifact.kind !== "video") continue;
+			if (artifact.command !== "record") continue;
 			const session = artifact.session ? getAgentBrowserSessionIdentityKey(artifact.session, artifact.namespace) : "";
 			if (isPendingRecordingArtifact(artifact)) {
 				const pendingIndexes = pendingIndexesBySession.get(session) ?? [];
@@ -402,15 +402,23 @@ async function coalesceTerminalBatchRecordingArtifacts(
 				pendingIndexesBySession.set(session, pendingIndexes);
 				continue;
 			}
-			const pendingIndex = pendingIndexesBySession.get(session)?.pop();
-			if (pendingIndex !== undefined) removedPendingIndexes.add(pendingIndex);
+			const pendingIndexes = pendingIndexesBySession.get(session) ?? [];
+			const matchingIndex = pendingIndexes.map((pendingIndex) => artifacts[pendingIndex].kind).lastIndexOf(artifact.kind);
+			if (matchingIndex !== -1) removedPendingIndexes.add(pendingIndexes.splice(matchingIndex, 1)[0]);
+			if (artifact.kind === "video") {
+				// A terminal video also ends its pending sheet; a reported sheet below
+				// replaces this unverified row, while legacy restart output may omit it.
+				for (const pendingIndex of pendingIndexes) {
+					if (artifacts[pendingIndex].kind === "image" && isPendingRecordingArtifact(artifacts[pendingIndex])) artifacts[pendingIndex] = await unverifiedRecordingArtifact(artifacts[pendingIndex], artifact.subcommand ?? "stop");
+				}
+			}
 		}
 		const command = step.details.command;
 		if (step.details.success !== true || !command || !isCloseCommand(extractUpstreamCommandTokens(command)[0])) continue;
 		const session = sessionName ? getAgentBrowserSessionIdentityKey(sessionName, namespace) : "";
 		for (const pendingIndex of pendingIndexesBySession.get(session) ?? []) {
 			const pending = artifacts[pendingIndex];
-			if (pending && !removedPendingIndexes.has(pendingIndex)) artifacts[pendingIndex] = await abandonedRecordingArtifact(pending);
+			if (pending && isPendingRecordingArtifact(pending) && !removedPendingIndexes.has(pendingIndex)) artifacts[pendingIndex] = await unverifiedRecordingArtifact(pending, "close-abandoned");
 		}
 	}
 	return artifacts.filter((_, index) => !removedPendingIndexes.has(index));

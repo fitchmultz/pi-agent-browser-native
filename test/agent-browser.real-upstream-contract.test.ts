@@ -456,7 +456,13 @@ test("real upstream agent-browser contract suite matches navigation availability
 				assert.equal((plain.details?.data as { webmcp?: unknown }).webmcp, undefined);
 				assert.doesNotMatch(plain.content[0]?.text ?? "", /WebMCP tools are available/);
 				const available = await call(["open", `${fixture.baseUrl}/webmcp`]);
-				assert.deepEqual((available.details?.data as { webmcp: unknown }).webmcp, { experimental: true, available: true, toolCount: 2 });
+				const catalog = (available.details?.data as { webmcp: { experimental: boolean; available: boolean; toolCount: number; status?: string; tools?: Array<{ name: string; inputSchema?: unknown }> } }).webmcp;
+				assert.deepEqual({ experimental: catalog.experimental, available: catalog.available, toolCount: catalog.toolCount }, { experimental: true, available: true, toolCount: 2 });
+				if (Number(version[1]) > 0 || Number(version[2]) >= 38) {
+					assert.equal(catalog.status, "ready");
+					assert.deepEqual(catalog.tools?.map((tool) => tool.name), ["set_message", "wait_for_cancel"]);
+					assert.ok(catalog.tools?.every((tool) => tool.inputSchema === undefined), "automatic discovery omits full schemas");
+				}
 				assert.match(available.content[0]?.text ?? "", /WebMCP tools are available.*webmcp list/);
 				for (const [headers, expected] of [[{ "x-fixture": "batch-fidelity" }, "present"], [{}, "missing"]] as const) {
 					await call(["set", "headers", JSON.stringify(headers)]);
@@ -703,6 +709,92 @@ test("real upstream agent-browser contract suite matches cold URL reopen after q
 			}
 		});
 	}
+});
+
+test("real upstream agent-browser contract suite matches 0.38 observation and recording options", { skip: !REAL_UPSTREAM_ENABLED, timeout: 120_000 }, async (t) => {
+	const version = await assertInstalledAgentBrowserVersion();
+	const [major, minor] = version.split(".").map(Number);
+	if (major === 0 && minor < 38) { t.skip("Observation options require upstream 0.38+"); return; }
+	const dir = await mkdtemp(join(tmpdir(), "piab-038-"));
+	const socketDir = join(dir, "s");
+	await mkdir(socketDir, { mode: 0o700 });
+	const fixture = await startAgentBrowserContractFixtureServer();
+	const session = `rebaseline-${process.pid}`;
+	try {
+		await withPatchedEnv({ HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
+			const h = createExtensionHarness({ cwd: dir });
+			await runExtensionEvent(h.handlers, "session_start", { reason: "new" }, h.ctx);
+			const call = async (args: string[], stdin?: string) => {
+				const result = await executeRegisteredTool(h.tool, h.ctx, { args: ["--session", session, ...args], stdin });
+				assert.equal(result.isError, false, `${args.join(" ")}: ${result.content[0]?.text}`);
+				return result;
+			};
+			const snapshotOf = (result: Awaited<ReturnType<typeof call>>) => getResultValue(result.details ?? {}, ["snapshot"]) as { kind: string; refs: Record<string, { name: string }>; changes: unknown[] };
+			try {
+				await call(["open", `${fixture.baseUrl}/contract`]);
+				const full = await call(["snapshot", "-i", "--delta"]);
+				assert.equal(snapshotOf(full).kind, "full");
+				const ref = Object.entries(snapshotOf(full).refs).find(([, value]) => value.name === "Mark ready")?.[0];
+				assert.ok(ref);
+				const unchanged = await call(["snapshot", "-i", "--delta"]);
+				assert.equal(snapshotOf(unchanged).kind, "unchanged");
+				assert.ok((unchanged.details?.refSnapshot as { refIds: string[] }).refIds.includes(ref));
+				await call(["--input-mode", "smooth", "click", `@${ref}`, "--human"]);
+				assert.equal(getResultValue((await call(["get", "text", "#status"])).details ?? {}, ["text"]), "Clicked");
+				const fresh = await call(["snapshot", "-i", "--delta", "--full"]);
+				assert.equal(snapshotOf(fresh).kind, "full");
+				assert.ok(Object.hasOwn(snapshotOf(fresh).refs, ref), "same DOM node keeps its ref");
+				const batched = await call(["batch", "--bail"], JSON.stringify([["snapshot", "-i", "--delta"], ["get", "url"]]));
+				assert.ok((batched.details?.refSnapshot as { refIds: string[] }).refIds.includes(ref));
+				await call(["get", "text", `@${ref}`]);
+				const filtered = await call(["snapshot", "-i", "--delta", "--search", "Mark ready"]);
+				assert.match(filtered.content[0]?.text ?? "", /Mark ready/);
+
+				await call(["eval", "--stdin"], "for (let i = 0; i < 80; i++) { const b = document.createElement('button'); b.textContent = 'Observation control ' + i; document.body.append(b); }");
+				await call(["snapshot", "-i", "--delta", "--full"]);
+				await call(["eval", "--stdin"], "document.getElementById('mark-ready').textContent = 'Ready again'");
+				const delta = await call(["snapshot", "-i", "--delta"]);
+				assert.equal(snapshotOf(delta).kind, "delta");
+				assert.match(JSON.stringify(snapshotOf(delta).changes), /Ready again/);
+				assert.ok((delta.details?.refSnapshot as { refIds: string[] }).refIds.includes(ref));
+				await call(["get", "text", `@${ref}`]);
+
+				await call(["screenshot", "--if-changed", "shots/first.png"]);
+				const suppressed = await call(["screenshot", "--threshold", "0", "shots/absent.png"]);
+				assert.equal(getResultValue(suppressed.details ?? {}, ["changed"]), false);
+				assert.equal((suppressed.details?.data as { path?: string }).path, undefined);
+				assert.equal(suppressed.content.some((item) => item.type === "image"), false);
+				await assert.rejects(readFile(join(dir, "shots/absent.png")), { code: "ENOENT" });
+				const raw = await call(["batch", "screenshot --if-changed shots/raw-absent.png"]);
+				assert.equal((raw.details?.data as Array<{ result: { changed: boolean } }>)[0].result.changed, false);
+				assert.equal((raw.details?.artifacts as unknown[])?.length ?? 0, 0);
+				await assert.rejects(readFile(join(dir, "shots/raw-absent.png")), { code: "ENOENT" });
+
+				await call(["auth", "save", "fixture", "--url", `${fixture.baseUrl}/contract`, "--username", "demo", "--password", "fixture-only"]);
+				await call(["eval", "--stdin"], "document.body.insertAdjacentHTML('beforeend', '<input id=login-user><input id=login-pass type=password><button id=login-submit type=button>Log in</button>'); document.querySelector('#login-submit').onclick = () => { document.body.dataset.loggedIn = document.querySelector('#login-user').value + ':' + document.querySelector('#login-pass').value; }");
+				await call(["auth", "login", "fixture", "--no-navigate", "--username-selector", "#login-user", "--password-selector", "#login-pass", "--submit-selector", "#login-submit"]);
+				assert.equal(getResultValue((await call(["eval", "--stdin"], "document.body.dataset.loggedIn")).details ?? {}, ["result"]), "demo:fixture-only");
+
+				const collision = await executeRegisteredTool(h.tool, h.ctx, { args: ["--session", session, "batch"], stdin: '[["record","start","collision.webm","--contact-sheet"],["screenshot","collision.contact-sheet.png"]]' });
+				assert.equal(collision.isError, true);
+				assert.match(collision.content[0]?.text ?? "", /already written by step/);
+				await call(["record", "start", "capture.webm", "--cursor", "--contact-sheet-threshold", "0.01"]);
+				const reserved = await executeRegisteredTool(h.tool, h.ctx, { args: ["--session", session, "screenshot", "capture.contact-sheet.png"] });
+				assert.equal(reserved.isError, true);
+				assert.match(reserved.content[0]?.text ?? "", /reserved by an active recording/);
+				await call(["mouse", "move", "200", "250", "--duration", "250", "--steps", "12", "--human", "--seed", "42"]);
+				await call(["eval", "--stdin"], "document.body.style.background = 'lightblue'");
+				await call(["wait", "1500"]);
+				const stopped = await call(["record", "stop"]);
+				const sheet = (stopped.details?.artifacts as Array<{ kind: string; path: string; status: string }>).find((artifact) => artifact.kind === "image");
+				assert.ok(sheet);
+				assert.equal(sheet.status, "saved");
+				assert.equal((await readFile(join(dir, "capture.contact-sheet.png"))).subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+				assert.ok((await readFile(join(dir, "capture.webm"))).length > 0);
+				assert.equal(stopped.content.some((item) => item.type === "image"), true);
+			} finally { await closeManagedSessionIfPresent({ cwd: dir, sessionName: session, socketDir }); }
+		});
+	} finally { await fixture.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
 if (!REAL_UPSTREAM_ENABLED) {

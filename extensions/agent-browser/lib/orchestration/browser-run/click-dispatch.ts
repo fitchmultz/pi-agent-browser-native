@@ -15,7 +15,7 @@ function normalizeAccessibleName(name: string): string {
 
 function getClickDispatchProbeTarget(commandTokens: string[], refSnapshot?: SessionRefSnapshot): ClickDispatchProbeTarget | undefined {
 	if (commandTokens[0] !== "click" || commandTokens.includes("--new-tab")) return undefined;
-	const selector = commandTokens[1];
+	const selector = commandTokens.slice(1).find((token) => token !== "--human");
 	if (!selector || selector.startsWith("-")) return undefined;
 	const refId = parseRefId(selector);
 	if (refId) {

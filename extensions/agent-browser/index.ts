@@ -65,7 +65,7 @@ import {
 	type AgentBrowserScriptRunResult,
 } from "./lib/input-modes/script.js";
 import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
-import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
+import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination, getRecordContactSheetDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
 import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchCommandArgument, parseUserBatchStdin } from "./lib/orchestration/batch-stdin.js";
 import {
@@ -170,6 +170,7 @@ function getArtifactPreflightValidationError(options: {
 	for (const reservation of options.activeRecordingReservations ?? []) {
 		try {
 			activeRecordingDestinations.add(canonicalizeExplicitArtifactDestination(reservation.cwd, reservation.absolutePath));
+			if (reservation.contactSheetPath) activeRecordingDestinations.add(canonicalizeExplicitArtifactDestination(reservation.cwd, reservation.contactSheetPath));
 		} catch (canonicalizationError) {
 			if (!cleanupOnly) return canonicalizationError instanceof Error ? canonicalizationError.message : "An active recording destination could not be resolved safely.";
 		}
@@ -197,8 +198,8 @@ function getArtifactPreflightValidationError(options: {
 			}
 			if (isCloseCommand(commandStep[0])) sawBatchClose = true;
 		}
-		const artifactDestination = getExplicitArtifactDestination(commandStep);
-		if (artifactDestination) {
+		for (const artifactDestination of [getExplicitArtifactDestination(commandStep), getRecordContactSheetDestination(commandStep)]) {
+			if (!artifactDestination) continue;
 			let canonicalDestination: string;
 			try {
 				canonicalDestination = canonicalizeExplicitArtifactDestination(options.cwd, artifactDestination);
@@ -1240,7 +1241,7 @@ export default function agentBrowserExtension(
 		}
 		for (const [key, reservation] of activeRecordingReservations) {
 			const restored = restoredRecordingState.active.get(key);
-			if (restored?.absolutePath !== reservation.absolutePath || restored.cwd !== reservation.cwd || restored.recordingId !== reservation.recordingId || restored.startedAtMs !== reservation.startedAtMs) recordingReservationsDirty = true;
+			if (restored?.absolutePath !== reservation.absolutePath || restored.cwd !== reservation.cwd || restored.recordingId !== reservation.recordingId || restored.startedAtMs !== reservation.startedAtMs || restored.contactSheetPath !== reservation.contactSheetPath) recordingReservationsDirty = true;
 			restoredRecordingState.active.set(key, reservation);
 		}
 		activeRecordingReservations = restoredRecordingState.active;

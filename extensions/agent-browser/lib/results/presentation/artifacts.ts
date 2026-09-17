@@ -93,6 +93,7 @@ export function applyArtifactManifest(presentation: ToolPresentation, baseManife
 }
 
 export function getScreenshotSummary(data: Record<string, unknown>): string | undefined {
+	if (data.changed === false) return "Screenshot unchanged; no image saved.";
 	return typeof data.path === "string" ? `Saved image: ${data.path}` : undefined;
 }
 
@@ -177,6 +178,7 @@ async function buildFileArtifactMetadata(options: {
 	artifactRequest?: ArtifactRequestContext;
 	commandInfo: CommandInfo;
 	cwd: string;
+	kind?: FileArtifactKind;
 	namespace?: string;
 	path: string;
 	recording?: RecordingReceipt;
@@ -184,7 +186,7 @@ async function buildFileArtifactMetadata(options: {
 	recordingPending?: boolean;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata | undefined> {
-	const kind = getArtifactKind(options.commandInfo);
+	const kind = options.kind ?? getArtifactKind(options.commandInfo);
 	if (!kind) {
 		return undefined;
 	}
@@ -308,12 +310,23 @@ export async function extractFileArtifacts(options: {
 	namespace?: string;
 	recordingOutcome?: boolean;
 	recordingPending?: boolean;
+	previousRecordingContactSheetPath?: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata[]> {
 	const candidates = extractPathStrings(options.data);
 	const recording = options.commandInfo.command === "record" ? getRecordingReceipt(options.data, options.commandInfo.subcommand === "stop" ? options.recordingOutcome : undefined) : undefined;
 	const recordingPending = options.recordingPending ?? (recording?.success === null && isRecord(options.data) && isRecord(options.data.capture) && recording.capture.endedAt === null);
 	const currentArtifacts = (await Promise.all(candidates.map((path) => buildFileArtifactMetadata({ ...options, path, recording, recordingPending })))).filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
+	if (options.commandInfo.command === "record" && isRecord(options.data) && typeof options.data.contactSheetPath === "string" && options.data.contactSheetPath.trim() && !isNonFileArtifactPathCandidate(options.data.contactSheetPath)) {
+		const sheet = await buildFileArtifactMetadata({ ...options, artifactRequest: undefined, kind: "image", path: options.data.contactSheetPath, recordingPending: recordingPending || ["start", "restart"].includes(options.commandInfo.subcommand ?? "") });
+		if (sheet) currentArtifacts.push({ ...sheet, requestedPath: undefined });
+	}
+	if (options.commandInfo.command === "record" && options.commandInfo.subcommand === "restart" && options.recordingOutcome === true && options.previousRecordingContactSheetPath) {
+		const previousSheet = await buildFileArtifactMetadata({ ...options, artifactRequest: undefined, commandInfo: { command: "record", subcommand: "restart-previous" }, kind: "image", path: options.previousRecordingContactSheetPath, recordingPending: false });
+		// Native restart omits the previous sheet's terminal receipt. Retain the
+		// known destination and disk evidence without inventing finalization proof.
+		if (previousSheet) currentArtifacts.unshift({ ...previousSheet, status: previousSheet.status === "saved" ? "unverified" : previousSheet.status });
+	}
 	const previousRestartRecordingArtifact = await buildPreviousRestartRecordingArtifact(options);
 	return previousRestartRecordingArtifact ? [previousRestartRecordingArtifact, ...currentArtifacts] : currentArtifacts;
 }

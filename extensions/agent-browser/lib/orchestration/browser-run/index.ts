@@ -1,5 +1,8 @@
 import { runAgentBrowserProcess, withAttachedBrowserSessionContext, withChromeStartupArgs } from "../../process.js";
 import { isRecord } from "../../parsing.js";
+import { collectNativeWebMcp, getNativeWebMcpCatalog } from "../../webmcp-observation.js";
+import { redactSensitiveValue } from "../../runtime.js";
+import { formatWebMcpCatalogUpdate } from "../../results/presentation/common.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch, getSessionContextKey } from "./session-state.js";
@@ -13,8 +16,19 @@ export { getSessionContextKey } from "./session-state.js";
 export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
-	const result = await withChromeStartupArgs(options.input.persistentChromeArgs, () => withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options)));
-	const details = isRecord(result.details) ? result.details : undefined;
+	const observed = await collectNativeWebMcp(() => withChromeStartupArgs(options.input.persistentChromeArgs, () => withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options))));
+	const result = observed.result;
+	let details = isRecord(result.details) ? result.details : undefined;
+	if (observed.catalog) {
+		const catalog = redactSensitiveValue(observed.catalog) as Record<string, unknown>;
+		details = { ...details, webMcpCatalog: catalog };
+		result.details = details;
+		if (!options.input.toolArgs.includes("--json") && JSON.stringify(getNativeWebMcpCatalog(details.data)) !== JSON.stringify(catalog)) {
+			const notice = formatWebMcpCatalogUpdate(catalog);
+			if (result.content[0]?.type === "text") result.content[0] = { ...result.content[0], text: `${result.content[0].text}\n\n${notice}` };
+			else result.content.push({ type: "text", text: notice });
+		}
+	}
 	const sessionKey = getSessionContextKey(typeof details?.sessionName === "string" ? details.sessionName : undefined, typeof details?.namespace === "string" ? details.namespace : undefined);
 	const page = options.state.sessionPageState.get(sessionKey);
 	return page.tabReopenPending === undefined ? result : {

@@ -22,15 +22,36 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
-This reference is baselined to the locally installed `agent-browser 0.37.0` command/help surface, audited against vercel-labs/agent-browser@471ab3852b47b98847f1d9c855c272bb62d0d50b. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.38.1` command/help surface, audited against vercel-labs/agent-browser@aff6125c023b810ea3f2e5deec5379e9a4270bdc. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.38.1 rebaseline
+
+The recommended release keeps the stable 0.35.0 floor. New options require an upstream release that provides them; the wrapper adds no version-specific emulation.
+
+- `snapshot --delta` returns a nested `snapshot` object: `kind: full` includes `tree`, `refs`, and `revision`; `unchanged` includes `baseRevision` and `revision`; `delta` also includes ref `changes` and an exact `treeChange` line splice. `snapshot --delta --full` resets the native baseline. The wrapper preserves this payload and shows revisions rather than reporting an empty page. Partial results trigger a full native snapshot read for wrapper ref checks without advancing the delta baseline; there is no wrapper revision cache. Wrapper-only search/filter/viewport/diff options use a full tree instead of native delta output.
+- Surviving DOM elements retain refs across same-document snapshots. Navigation and replaced page/iframe documents invalidate them. Keep refreshing after page changes; persistent refs do not remove page-target checks or same-batch mutation boundaries.
+- `screenshot --if-changed` suppresses unchanged captures. `screenshot --threshold <0-1>` implies it and tolerates that changed-pixel ratio (default 0). Native `changed: false` omits the path: no new file or inline image is reported, even with an explicit destination. Use an ordinary screenshot when every call must save evidence.
+- `--input-mode <mode>` sets sticky session pointer behavior (`instant`, `smooth`, or `human`) and can change on a live session. `click <sel> --human` and `drag <src> <dst> --human` override an action. `mouse move <x> <y> --duration <ms> --steps <n> --human --seed <n>` controls timed, reproducible paths (1–240 movement events); browser response time can extend the requested duration.
+- `record start` / `record restart` accept `--cursor`, `--contact-sheet`, and `--contact-sheet-threshold <n>` (0–1, default 0.05, implies contact sheet). These options are not path/URL operands. Contact sheets use `<video-stem>.contact-sheet.png`, contain timestamped visual changes, and remain pending until stop; reported sheets join `details.artifacts` as images and are attached after verification. The sheet's destination is reserved alongside its video until stop/close, including transcript replay and same-batch/output-path alias checks. After direct restart, the previous take's known sheet is shown with disk evidence but remains unverified because native restart omits its terminal receipt; use stop then start when both completed artifacts must be verified. The 0.38.1 cursor overlay stays synchronized with drags and timed mouse movement. Screenshots during recording include the overlay; snapshots do not.
+- `auth login <name> --no-navigate` uses the prepared top-level login page, checks its origin against the effective credential URL, and permits submit-triggered navigation. Saved and plugin credentials support the same username/password/submit selector overrides; use native auth rather than implementing a second login flow.
+- Native WebMCP discovery emits bounded catalog updates on discovery/change, including names, descriptions, origin, and frame IDs. The wrapper surfaces these as untrusted page data and keeps `data.webmcp`; `details.webMcpCatalog` also preserves updates consumed by helper reads during that call. It never reuses a prior call's catalog. Request full schemas with `webmcp list [tool] [--frame <frame-id>]`; for one relevant tool, use `webmcp list set_message --frame <frame-id>`. Upstream owns CDP recovery, normalized dropdown labels, recording frame pacing, and 0.37.1 Windows headless desktop isolation.
+
+Examples through `agent_browser`:
+
+```json
+{ "args": ["snapshot", "-i", "--delta"] }
+{ "args": ["screenshot", "--if-changed", "--threshold", "0.01", "shots/current.png"] }
+{ "args": ["--input-mode", "human", "click", "@e4"] }
+{ "args": ["record", "start", "demo.webm", "--cursor", "--contact-sheet"] }
+```
+
 ### Upstream 0.37.0 rebaseline
 
-The recommended release keeps the stable 0.35.0 floor and no upper version cap.
+This release keeps the stable 0.35.0 floor and no upper version cap.
 
 - `record start` / `record restart` accept command-local `--fps <n>` before, between or after path/URL operands (1–60, default 30). WebM uses VP8/libvpx; MP4 uses H.264/libx264. Other extensions are handed to ffmpeg; extensionless paths are rejected. Native startup validates the path, rate and ffmpeg availability.
 - Recording uses the current active page without replacing its DOM/JavaScript state unless a URL is supplied. The wrapper still conservatively requires a fresh snapshot after dispatched starts and URL-bearing restarts to protect older supported natives; this is not evidence that a page changed. FPS alone neither chooses another tab nor makes a restart invalidate refs.
@@ -722,7 +743,7 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 | `screenshot [selector] [path]` | Take a full-page or element-scoped screenshot; a single selector-like argument scopes, while a path-like argument saves to that path. |
 | `screenshot [path]` | Take a screenshot and optionally save it to a path. |
 | `pdf <path>` | Save the page as a PDF. |
-| `snapshot` | Print an accessibility tree with refs for AI interaction. Common options include `snapshot --interactive`, `snapshot --urls`, `snapshot --compact`, `snapshot --depth <n>`, `snapshot --selector <sel>`, and `snapshot --cursor` / `snapshot -C` for cursor/focus context when upstream returns it. |
+| `snapshot` | Print an accessibility tree with refs for AI interaction. Common options include `snapshot --interactive`, `snapshot --urls`, `snapshot --compact`, `snapshot --depth <n>`, `snapshot --selector <sel>`, and native `snapshot --delta` / `snapshot --delta --full`. Cursor-interactive elements are included by default; `snapshot --cursor` / `snapshot -C` are deprecated no-ops. |
 | `eval <js>` | Run JavaScript. Use `eval --stdin` through this wrapper for larger snippets, or `eval -b <base64>` for shell-escaping-safe one-liners. |
 | `connect <port|url>` | Connect to a browser through CDP. |
 | `close [--all]` | Close the current browser or all sessions; `quit` and `exit` are upstream close aliases. |
@@ -835,10 +856,11 @@ With `--pin-tab`, a closed bound tab fails as `tab_gone` (`data.targetId`, optio
 | `snapshot -i` / `snapshot --interactive` | Include only interactive elements. |
 | `snapshot -i --urls` | Include only interactive elements and link hrefs. |
 | `snapshot -u` / `snapshot --urls` | Include href URLs for link elements. |
-| `snapshot -C` / `snapshot --cursor` | Include cursor/focus context when upstream provides it. |
+| `snapshot -C` / `snapshot --cursor` | Deprecated no-ops; cursor-interactive elements are included by default. |
 | `snapshot -c` / `snapshot --compact` | Remove empty structural elements. |
 | `snapshot -d <n>` / `snapshot --depth <n>` | Limit tree depth. |
 | `snapshot -s <sel>` / `snapshot --selector <sel>` | Scope to a CSS selector. |
+| `snapshot --delta` / `snapshot --delta --full` | Native revision-relative observation or a forced full baseline; see [0.38.1](#upstream-0381-rebaseline). |
 
 When a snapshot is too large for inline output, the Pi wrapper renders a compact view before spilling the full redacted snapshot to `details.fullOutputPath`. Compact snapshots are main-content-first, but dense pages and desktop host screens can still hide actionable controls in omitted content; scan `Omitted high-value controls` before opening the spill file. That bounded section favors editable/searchbox/textbox/combobox controls, named tab/surface controls, primary action buttons, and named action links such as row/navigation links and repository-style result links, then includes other useful controls such as checkboxes, radios, options, and menuitems that were not already listed under key refs or other refs. When that section appears, `details.data.highValueControlRefIds` repeats the same visible ref ids for programmatic follow-up alongside fields such as `previewMode`, `previewSections`, and counts on `details.data` (see [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)).
 
@@ -903,7 +925,7 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 | --- | --- |
 | `batch [--bail] ["cmd" ...]` | Execute multiple commands sequentially from args or stdin. |
 | `auth save <name> [opts]` | Save an auth profile. Full credential form: `auth save <name> --url <url> --username <user> --password <pass>`; selector override form: `auth save <name> --username-selector <s> --password-selector <s> --submit-selector <s>`. Prefer `auth save <name> --password-stdin` with the tool `stdin` field; avoid putting passwords in `args`. |
-| `auth login <name>` | Login using saved credentials. |
+| `auth login <name>` | Login using saved credentials; add `--no-navigate` for a prepared, same-origin login page. |
 | `auth list` | List saved auth profiles. |
 | `auth show <name>` | Show auth profile metadata. |
 | `auth delete <name>` | Delete an auth profile; `auth remove <name>` is the upstream alias. |
@@ -1127,14 +1149,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.37.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.38.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `471ab3852b47b98847f1d9c855c272bb62d0d50b`
-- upstream package version: `0.37.0`
+- upstream HEAD: `aff6125c023b810ea3f2e5deec5379e9a4270bdc`
+- upstream package version: `0.38.1`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1163,6 +1185,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/daemon.rs`
 - inspected: `cli/src/native/element.rs`
 - inspected: `cli/src/native/recording.rs`
+- inspected: `cli/src/native/snapshot.rs`
+- inspected: `cli/src/native/interaction.rs`
+- inspected: `cli/src/native/screenshot.rs`
 - inspected: `cli/src/native/stream/cdp_loop.rs`
 - inspected: `cli/src/native/stream/dashboard.rs`
 - inspected: `cli/src/native/test_fixtures/webmcp_frame_probe.html`
@@ -1209,6 +1234,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - get help: `agent-browser get --help`
 - is help: `agent-browser is --help`
 - mouse help: `agent-browser mouse --help`
+- drag help: `agent-browser drag --help`
 - set help: `agent-browser set --help`
 - tab help: `agent-browser tab --help`
 - snapshot help: `agent-browser snapshot --help`
@@ -1252,11 +1278,11 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Inventory sections
 - Built-in skills: 19 human-doc token(s), 24 upstream token(s)
-- Core page, element, navigation, and extraction commands: 82 human-doc token(s), 85 upstream token(s)
+- Core page, element, navigation, and extraction commands: 89 human-doc token(s), 94 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 28 human-doc token(s), 26 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 58 human-doc token(s), 68 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 36 human-doc token(s), 40 upstream token(s)
-- Global flags, config, providers, policy, and environment: 152 human-doc token(s), 119 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 62 human-doc token(s), 71 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 37 human-doc token(s), 41 upstream token(s)
+- Global flags, config, providers, policy, and environment: 153 human-doc token(s), 120 upstream token(s)
 
 #### Human-authored doc tokens required
 ##### Built-in skills
@@ -1327,6 +1353,13 @@ This generated block is review data for maintainers. The human-authored referenc
 - `screenshot [path]`
 - `screenshot --full`
 - `screenshot --annotate`
+- `screenshot --if-changed`
+- `screenshot --threshold <0-1>`
+- `snapshot --delta`
+- `snapshot --delta --full`
+- `click <sel> --human`
+- `drag <src> <dst> --human`
+- `mouse move <x> <y> --duration <ms> --steps <n> --human --seed <n>`
 - `pdf <path>`
 - `snapshot`
 - `snapshot --cursor`
@@ -1410,6 +1443,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `cookies set --curl <file>`
 - `storage <local|session>`
 - `webmcp list`
+- `webmcp list [tool] [--frame <frame-id>]`
 - `webmcp invoke <tool>`
 - `webmcp invoke <tool> --params <json|@file>`
 - `webmcp invoke <tool> --frame <frame-id>`
@@ -1429,6 +1463,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `record start <path> [url]`
 - `record restart <path> [url]`
 - `--fps <n>`
+- `--cursor`
+- `--contact-sheet`
+- `--contact-sheet-threshold <n>`
 - `record stop`
 - `console [--clear]`
 - `errors [--clear]`
@@ -1461,6 +1498,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `auth save <name> --username-selector <s> --password-selector <s> --submit-selector <s>`
 - `auth save <name> --password-stdin`
 - `auth login <name>`
+- `auth login <name> --no-navigate`
 - `auth list`
 - `auth show <name>`
 - `auth delete <name>`
@@ -1564,6 +1602,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_DOWNLOAD_PATH`
 - `--engine <name>`
 - `AGENT_BROWSER_ENGINE`
+- `--input-mode <mode>`
 - `--no-auto-dialog`
 - `AGENT_BROWSER_NO_AUTO_DIALOG`
 - `--json`
@@ -1755,6 +1794,15 @@ This generated block is review data for maintainers. The human-authored referenc
 - keyboard help: `inserttext <text>`
 - screenshot help: `--full, -f`
 - screenshot help: `--annotate`
+- screenshot help: `--if-changed`
+- screenshot help: `--threshold <0-1>`
+- snapshot help: `--delta`
+- snapshot help: `--full`
+- click help: `--human`
+- drag help: `--human`
+- mouse help: `--duration <ms>`
+- mouse help: `--steps <n>`
+- mouse help: `--seed <n>`
 - find help: `role <role>`
 - find help: `testid <id>`
 - tap help: `tap <selector>`
@@ -1799,7 +1847,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `cookies [get|set|clear]`
 - root help: `cookies set --curl <file>`
 - root help: `storage <local|session>`
-- root help: `webmcp list`
+- root help: `webmcp list [tool]`
 - root help: `webmcp invoke <tool>`
 - root help: `--params <json|@file>`
 - root help: `--frame <frame-id>`
@@ -1855,6 +1903,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - profiler help: `--categories <list>`
 - record help: `record restart <path.webm|path.mp4> [url] [--fps <n>]`
 - record help: `--fps <n>`
+- record help: `--cursor`
+- record help: `--contact-sheet`
+- record help: `--contact-sheet-threshold <n>`
 - console help: `--clear`
 - errors help: `--clear`
 
@@ -1895,6 +1946,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `plugin show <name>`
 - root help: `plugin run <name> <type>`
 - auth help: `--credential-provider <p>`
+- auth help: `--no-navigate`
 - mcp help: `agent_browser_open`
 - mcp help: `--tools`
 - plugin help: `Add a plugin from npm or GitHub`
@@ -1968,6 +2020,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_DOWNLOAD_PATH`
 - root help: `--engine <name>`
 - root help: `AGENT_BROWSER_ENGINE`
+- root help: `--input-mode <mode>`
 - root help: `--no-auto-dialog`
 - root help: `AGENT_BROWSER_NO_AUTO_DIALOG`
 - root help: `--json`

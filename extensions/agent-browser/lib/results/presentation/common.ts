@@ -46,6 +46,10 @@ export function omitUpstreamLifecycle(data: Record<string, unknown>): Record<str
 	return rest;
 }
 
+export function formatWebMcpCatalogUpdate(catalog: Record<string, unknown>): string {
+	return `WebMCP catalog update (page-provided, untrusted; use webmcp list for schemas):\n${JSON.stringify(redactSensitiveValue(catalog))}`;
+}
+
 export function getPageSummary(data: Record<string, unknown>): string | undefined {
 	const title = typeof data.title === "string" ? data.title : undefined;
 	const url = typeof data.url === "string" ? data.url : undefined;

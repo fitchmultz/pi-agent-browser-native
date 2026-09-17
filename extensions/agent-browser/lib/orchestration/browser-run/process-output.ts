@@ -1,4 +1,5 @@
 import { rm } from "node:fs/promises";
+import { observeNativeWebMcp } from "../../webmcp-observation.js";
 
 import { parseArgvDescriptor } from "../../argv-descriptor.js";
 import { isBrowserIndependentRead, needsManagedSession } from "../../command-policy.js";
@@ -61,6 +62,7 @@ import {
 	getSessionContextKey,
 	getStaleRefArgs,
 	mergeNavigationSummaryIntoData,
+	runSessionCommandData,
 	shouldCaptureNavigationSummary,
 	shouldCorrectSessionTabAfterCommand,
 	shouldInspectElectronPostCommandHealth,
@@ -239,6 +241,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		// Native upgrade prints text even with --json; all other command shapes keep strict JSON parsing.
 		const plainTextUpgrade = !prepared.executionPlan.plainTextInspection && prepared.executionPlan.commandInfo.command === "upgrade" && !needsManagedSession(parseArgvDescriptor(prepared.runtimeToolArgs));
 		const parsed = await parseAgentBrowserEnvelope({ stdout: processResult.stdout, stdoutPath: processResult.stdoutSpillPath, plainText: plainTextUpgrade });
+		observeNativeWebMcp(parsed.envelope?.data);
 		let parseError = parsed.parseError;
 		const recordingStopRecovery = await recoverRecordingStop({
 			artifactManifest, artifactRunStartedAtMs: input.artifactRunStartedAtMs, commandTokens: prepared.commandTokens, cwd,
@@ -526,13 +529,21 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				} else if (processResult.agentBrowserStarted && (resultingPageState.pageUrlUnknown || resultingPageState.pageTargetMayHaveChanged) && !(prepared.commandTokens[0] === "session" && prepared.commandTokens[1] === "info")) {
 					sessionPageState.markTabTargetUnknown({ sessionName: sessionStateKey, update: sessionPageStateUpdate });
 				}
-				const refSnapshot = unsettledWebMcpMutation
+				let refSnapshot = unsettledWebMcpMutation
 					? undefined
 					: prepared.executionPlan.commandInfo.command === "batch"
 						? batchRefSnapshotState?.snapshot
 						: succeeded
 							? prepared.executionPlan.commandInfo.command === "snapshot" ? extractRefSnapshotFromData(presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot
 							: undefined;
+				const refreshArgs = batchRefSnapshotState?.refreshArgs ?? (succeeded && prepared.commandTokens[0] === "snapshot" && isRecord(presentationEnvelope?.data) && isRecord(presentationEnvelope.data.snapshot) && !refSnapshot
+					? prepared.commandTokens.filter((token) => token !== "--delta" && token !== "--full") : undefined);
+				// Native owns delta baselines. Read complete refs without advancing that baseline
+				// rather than maintaining a second revision/tree cache in the wrapper.
+				if (refreshArgs && !unsettledWebMcpMutation) {
+					refSnapshot = extractRefSnapshotFromData(await runSessionCommandData({ args: refreshArgs, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal }));
+					if (!refSnapshot) sessionPageState.applyRefSnapshotInvalidation({ invalidation: buildPageTransitionRefSnapshotInvalidation("The native snapshot delta did not include complete refs and the full ref read failed. Run snapshot -i before using refs."), sessionName: sessionStateKey, update: sessionPageStateUpdate });
+				}
 				if (refSnapshot) {
 					const refUpdate = sessionPageState.applyRefSnapshot({ fallbackTarget: currentSessionTabTarget, sessionName: sessionStateKey, snapshot: refSnapshot, update: sessionPageStateUpdate });
 					currentRefSnapshot = refUpdate.refSnapshot;
@@ -728,7 +739,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (presentationEnvelope?.error !== undefined) presentationEnvelope = { ...presentationEnvelope, error: redactClipboardPermissionErrorValue(prepared.executionPlan.commandInfo, presentationEnvelope.error, clipboardWritePayloadCandidates) };
 		}
 		if (plainTextUpgrade && errorText) presentationEnvelope = { ...presentationEnvelope, success: false, error: errorText };
-		let presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : recordingStopRecovery && !recordingStopRecovery.batch ? recordingStopRecovery.presentation : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactMaxUpdatedAtMs: Date.now(), artifactMinUpdatedAtMs: input.artifactRunStartedAtMs, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, namespace: prepared.executionPlan.namespace, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, piCleanupOwnership: sessionStateKey && (state.ownedManagedSessions.has(sessionStateKey) || prepared.executionPlan.managedSessionName !== undefined) ? "wrapper-managed" : "caller-owned", sessionName: prepared.executionPlan.sessionName });
+		let presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : recordingStopRecovery && !recordingStopRecovery.batch ? recordingStopRecovery.presentation : await buildToolPresentation({ args: prepared.redactedProcessArgs, artifactManifest, artifactMaxUpdatedAtMs: Date.now(), artifactMinUpdatedAtMs: input.artifactRunStartedAtMs, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: prepared.executionPlan.commandInfo, compiledSemanticAction: prepared.compiledSemanticAction, cwd, envelope: presentationEnvelope, errorText, namespace: prepared.executionPlan.namespace, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, previousRecordingContactSheetPath: sessionStateKey ? state.activeRecordingReservations?.get(sessionStateKey)?.contactSheetPath : undefined, piCleanupOwnership: sessionStateKey && (state.ownedManagedSessions.has(sessionStateKey) || prepared.executionPlan.managedSessionName !== undefined) ? "wrapper-managed" : "caller-owned", sessionName: prepared.executionPlan.sessionName });
 		if (recordingStopRecovery) presentation = mergeRecordingRecoveryPresentation(presentation, recordingStopRecovery);
 		const confirmation = readConfirmationEvent ?? prepared.readConfirmation;
 		if (confirmation) {

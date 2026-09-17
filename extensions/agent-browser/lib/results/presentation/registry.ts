@@ -151,7 +151,7 @@ const COMMAND_PRESENTERS: Record<string, CommandPresenter> = {
 		text: (_commandInfo, data) => isRecord(data) && typeof data.content === "string" ? redactModelFacingText(data.content) : undefined,
 	},
 	screenshot: {
-		summary: (_commandInfo, data) => isRecord(data) && typeof data.path === "string" ? `Screenshot saved: ${data.path}` : undefined,
+		summary: (_commandInfo, data) => isRecord(data) && data.changed === false ? getScreenshotSummary(data) : isRecord(data) && typeof data.path === "string" ? `Screenshot saved: ${data.path}` : undefined,
 		text: (_commandInfo, data) => isRecord(data) ? getScreenshotSummary(data) : undefined,
 	},
 	skills: {
