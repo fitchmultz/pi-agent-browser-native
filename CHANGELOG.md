@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.14 - 2026-09-17
+
 - Recommend `agent-browser` 0.38.1 while retaining the stable 0.35.0 minimum and separate upstream installation.
 - Support native delta snapshots and persistent refs without treating partial revisions as empty pages; keep native delta baselines upstream-owned.
 - Preserve conditional screenshot options and skipped-image results without inventing files or attaching old images.
