@@ -4,10 +4,16 @@
 
 ## 0.6.14 - 2026-09-17
 
+### Changed
+
 - Recommend `agent-browser` 0.38.1 while retaining the stable 0.35.0 minimum and separate upstream installation.
 - Support native delta snapshots and persistent refs without treating partial revisions as empty pages; keep native delta baselines upstream-owned.
 - Preserve conditional screenshot options and skipped-image results without inventing files or attaching old images.
 - Parse session pointer modes and recording cursor/contact-sheet options, verify contact-sheet images, and surface native WebMCP catalog updates. Document stateful auth login and native recording timing fixes.
+
+### Fixed
+
+- Give automatic managed-session cleanup the normal 35-second command budget, rather than aborting during native Chrome's five-second shutdown grace. Explicit cleanup-timeout overrides remain supported. Report cleanup deadlines with the phase and elapsed time instead of incorrectly reporting caller cancellation.
 
 ## 0.6.13 - 2026-09-14
 

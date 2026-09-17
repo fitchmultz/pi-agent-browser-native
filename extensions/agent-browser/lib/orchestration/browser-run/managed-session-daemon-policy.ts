@@ -217,6 +217,7 @@ export async function closeManagedSession(options: {
 			preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
 			signal: controller.signal,
 		});
+		clearTimeout(timer);
 		stdoutSpillPath = processResult.stdoutSpillPath;
 		if (!processResult.aborted && !processResult.spawnError && processResult.exitCode === 0) {
 			const parsed = await parseAgentBrowserEnvelope({ stdout: processResult.stdout, stdoutPath: processResult.stdoutSpillPath });
