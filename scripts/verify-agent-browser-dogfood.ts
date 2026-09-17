@@ -222,7 +222,7 @@ for (const url of ${JSON.stringify([`${fixture.origin}script-a`, `${fixture.orig
 emit(values);`,
 		});
 		assert.deepEqual(scriptResult.details?.data, ["a1", "a2", "b1", "b2"]);
-		assert.equal((scriptResult.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed");
+		assert.equal((scriptResult.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed", `script cleanup should succeed: ${JSON.stringify(scriptResult.details)}`);
 		reports.push(await assertSuccessfulStep({ id: "script-branch-and-aggregate", result: scriptResult, textPattern: /a1/ }));
 
 		reports.push(await assertSuccessfulStep({
