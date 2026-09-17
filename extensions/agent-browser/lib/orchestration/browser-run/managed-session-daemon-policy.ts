@@ -171,7 +171,13 @@ export async function closeManagedSession(options: {
 	timeoutMs: number;
 }): Promise<string | undefined> {
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+	let phase = "policy coordination";
+	let phaseStartedAt = Date.now();
+	let timeoutError: string | undefined;
+	const timer = setTimeout(() => {
+		timeoutError = `Managed-session cleanup timed out after ${options.timeoutMs} ms during ${phase} (${Date.now() - phaseStartedAt} ms in this phase).`;
+		controller.abort();
+	}, options.timeoutMs);
 	let stdoutSpillPath: string | undefined;
 	const closeArgs = [...(options.namespace !== undefined ? ["--namespace", options.namespace] : []), "--session", options.sessionName, "close"];
 	const policyLock = options.policyLock ?? await acquireManagedSessionPolicyLock({
@@ -182,9 +188,11 @@ export async function closeManagedSession(options: {
 	});
 	if (!policyLock) {
 		clearTimeout(timer);
-		return "Managed-session policy coordination is unavailable or busy; cleanup did not run. Retry after the current operation finishes or repair the private policy-lock directory.";
+		return timeoutError ?? "Managed-session policy coordination is unavailable or busy; cleanup did not run. Retry after the current operation finishes or repair the private policy-lock directory.";
 	}
 	try {
+		phase = "daemon inspection";
+		phaseStartedAt = Date.now();
 		const daemon = await inspectManagedSessionDaemon({
 			cwd: options.cwd,
 			headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
@@ -198,6 +206,8 @@ export async function closeManagedSession(options: {
 		const daemonRestoreKey = options.restoreState.getDaemonRestoreKey(options.sessionName, options.namespace);
 		const ownedRestoreKey = !options.restoreState.isDisabled(options.sessionName, options.namespace)
 			&& isManagedSessionRestoreKey(daemonRestoreKey) ? daemonRestoreKey : null;
+		phase = "native close";
+		phaseStartedAt = Date.now();
 		const processResult = await runAgentBrowserProcess({
 			args: closeArgs,
 			cwd: options.cwd,
@@ -219,7 +229,7 @@ export async function closeManagedSession(options: {
 				statePath: typeof data?.statePath === "string" ? data.statePath : undefined,
 			});
 		}
-		return getAgentBrowserErrorText({
+		return timeoutError ?? getAgentBrowserErrorText({
 			aborted: processResult.aborted,
 			command: "close",
 			effectiveArgs: redactInvocationArgs(closeArgs),
@@ -231,7 +241,7 @@ export async function closeManagedSession(options: {
 			timeoutMs: processResult.timeoutMs,
 		});
 	} catch (error) {
-		return error instanceof Error ? error.message : String(error);
+		return timeoutError ?? (error instanceof Error ? error.message : String(error));
 	} finally {
 		clearTimeout(timer);
 		if (stdoutSpillPath) await rm(stdoutSpillPath, { force: true }).catch(() => undefined);
