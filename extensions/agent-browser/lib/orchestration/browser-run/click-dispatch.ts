@@ -33,6 +33,10 @@ function getEvalResultRecord(data: unknown): Record<string, unknown> | undefined
 	return isRecord(data) && isRecord(data.result) ? data.result : undefined;
 }
 
+function getClickDispatchIdentityAttribute(probe: ClickDispatchProbe): string {
+	return `data-pi-click-dispatch-${probe.marker.toLowerCase()}`;
+}
+
 function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string {
 	const target = probe.target;
 	const resolveTarget = target.kind === "selector"
@@ -126,8 +130,14 @@ const listeners = eventTypes.map((type) => {
   document.addEventListener(type, listener, true);
   return [type, listener];
 });
-state.cleanup = () => listeners.forEach(([type, listener]) => document.removeEventListener(type, listener, true));
+const identityAttribute = ${JSON.stringify(getClickDispatchIdentityAttribute(probe))};
+state.removeIdentityMarker = () => element.removeAttribute(identityAttribute);
+state.cleanup = () => {
+  state.removeIdentityMarker();
+  listeners.forEach(([type, listener]) => document.removeEventListener(type, listener, true));
+};
 window[marker] = state;
+element.setAttribute(identityAttribute, marker);
 return { status: "installed", marker, target: state.target };
 })()`;
 }
@@ -206,9 +216,28 @@ export async function prepareClickDispatchProbe(options: { commandTokens: string
 	const target = getClickDispatchProbeTarget(options.commandTokens, options.refSnapshot);
 	if (!target) return undefined;
 	const probe: ClickDispatchProbe = { marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`, target };
-	const installData = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeInstallScript(probe) });
-	const installResult = getEvalResultRecord(installData);
-	return installResult?.status === "installed" ? probe : undefined;
+	let prepared = false;
+	try {
+		const installData = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeInstallScript(probe) });
+		if (getEvalResultRecord(installData)?.status !== "installed") return undefined;
+		// Name matching and in-page XPath only find candidates. Native resolution
+		// must prove identity, including frame scope, before missing events mean failure.
+		const selector = target.kind === "accessible" ? `@${target.refId}` : target.kind === "xpath" ? `xpath=${target.selector}` : target.selector;
+		const identity = await runSessionCommandData({ args: ["get", "attr", selector, getClickDispatchIdentityAttribute(probe)], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
+		if (!isRecord(identity) || identity.value !== probe.marker) return undefined;
+		const removed = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: `(() => {
+const state = window[${JSON.stringify(probe.marker)}];
+if (!state || typeof state.removeIdentityMarker !== "function") return { status: "probe-missing" };
+state.removeIdentityMarker();
+return { status: "identity-marker-removed" };
+})()` });
+		if (getEvalResultRecord(removed)?.status !== "identity-marker-removed") return undefined;
+		prepared = !options.signal?.aborted;
+		return prepared ? probe : undefined;
+	} finally {
+		// Even a lost/aborted install response may have left listeners in-page.
+		if (!prepared) await cleanupClickDispatchProbe({ ...options, probe });
+	}
 }
 
 function getClickDispatchScrollContainerDiagnostic(result: Record<string, unknown>): ClickDispatchDiagnostic["scrollContainer"] {

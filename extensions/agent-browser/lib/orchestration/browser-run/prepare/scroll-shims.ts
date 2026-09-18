@@ -39,8 +39,7 @@ function buildContainerScrollScript(request: { amount?: string; direction: strin
     return Number.isFinite(pixels) && pixels > 0 ? Math.floor(pixels) : Math.max(1, Math.floor(extent * 0.8));
   };
   const delta = parseAmount() * (direction === "up" || direction === "left" ? -1 : 1);
-  if (axis === "x") element.scrollLeft += delta;
-  else element.scrollTop += delta;
+  element.scrollBy({ [axis === "x" ? "left" : "top"]: delta, behavior: "instant" });
   const after = { scrollLeft: element.scrollLeft, scrollTop: element.scrollTop, scrollHeight: element.scrollHeight, scrollWidth: element.scrollWidth, clientHeight: element.clientHeight, clientWidth: element.clientWidth };
   const moved = before.scrollLeft !== after.scrollLeft || before.scrollTop !== after.scrollTop;
   return { status: moved ? "scrolled" : "no-movement", selector, direction, amount: amountToken || undefined, before, after };

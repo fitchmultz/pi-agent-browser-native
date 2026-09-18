@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -108,7 +108,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 				`missing concise runtime guideline: ${guideline}`,
 			);
 		}
-		assert.match(guidelineText, /Use agent_browser with one input mode/);
+		assert.match(guidelineText, /agent_browser: one input mode/);
 		assert.match(guidelineText, /For agent_browser, use open → snapshot -i/);
 		assert.match(guidelineText, /ordinary requested non-destructive submissions may proceed/);
 		assert.match(guidelineText, /require explicit authorization for purchases, production-control, destructive\/irreversible, or account\/security\/privacy changes/);
@@ -131,7 +131,8 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.match(guidelineText, /get text\/html\/value\/count <selector>/);
 		assert.match(guidelineText, /get attr <selector> <name>/);
 		assert.doesNotMatch(guidelineText, /get title\/url\/text\/html\/value\/attr\/count/);
-		assert.match(guidelineText, /never pass --json/);
+		assert.match(guidelineText, /Use --json for JSON text/);
+		assert.doesNotMatch(guidelineText, /never pass --json/);
 		assert.match(harness.tool.description, /Input choice:/);
 		assert.match(guidelineText, /ffmpeg before recording/);
 		assert.match(guidelineText, /Dashboards: verify scroll/);
@@ -896,6 +897,13 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 			assert.equal((result.details?.snapshotFilter as { search?: string; matchedRefs?: number } | undefined)?.search, "checkout");
 			assert.equal((result.details?.snapshotFilter as { matchedRefs?: number } | undefined)?.matchedRefs, 1);
 			assert.deepEqual((result.details?.refSnapshot as { refIds?: string[] } | undefined)?.refIds, ["e1", "e2", "e3"]);
+			const jsonResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--json", "snapshot", "-i", "--filter", "role=button"], outputPath: join(tempDir, "filtered.json") });
+			assert.equal(jsonResult.isError, false);
+			const envelope = JSON.parse(jsonResult.content[0]?.text ?? "");
+			assert.equal(envelope.success, true);
+			assert.deepEqual(envelope.data, jsonResult.details?.data);
+			assert.deepEqual(envelope.data.refs, { e2: { role: "button", name: "Checkout" } });
+			assert.deepEqual(JSON.parse(await readFile(join(tempDir, "filtered.json"), "utf8")), envelope.data);
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.some((entry) => entry.args.includes("--search")), false);
 			assert.ok(invocations.some((entry) => entry.args.includes("snapshot") && entry.args.includes("-i")));
@@ -1058,9 +1066,9 @@ if (args.includes("get") && args.includes("url")) {
 }
 if (args.includes("network") && args.includes("requests")) {
   process.stdout.write(JSON.stringify({ success: true, data: { requests: [
-    { id: "1", method: "GET", status: 200, url: "https://shop.example/app.js" },
+    { id: "1", method: "GET", status: 200, url: "https://shop.example/app.js", headers: { Authorization: "Bearer filter-header-secret" } },
     { id: "2", method: "GET", status: 200, url: "https://cdn.example/lib.js" },
-    { id: "3", method: "POST", status: 500, url: "https://shop.example/api/cart" }
+    { id: "3", method: "POST", status: 500, url: "https://shop.example/api/cart?access_token=filter-url-secret" }
   ] } }));
   return;
 }
@@ -1082,11 +1090,20 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));`,
 			assert.equal(filter?.matchedRows, 2);
 			assert.equal(filter?.totalRows, 3);
 			const data = result.details?.data as { requests?: Array<{ url?: string }> } | undefined;
-			assert.deepEqual(data?.requests?.map((request) => request.url), ["https://shop.example/app.js", "https://shop.example/api/cart"]);
+			assert.deepEqual(data?.requests?.map((request) => request.url), ["https://shop.example/app.js", "https://shop.example/api/cart?access_token=%5BREDACTED%5D"]);
+			assert.doesNotMatch(JSON.stringify(result), /filter-header-secret|filter-url-secret/);
+			const path = join(tempDir, "filtered-network.json");
+			const jsonResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--json", "--namespace", "review", "network", "requests", "--current-page", "--filter", "https://shop.example/api/cart?access_token=filter-url-secret"], outputPath: path });
+			assert.equal(jsonResult.isError, false);
+			assert.doesNotMatch(JSON.stringify(jsonResult), /filter-header-secret|filter-url-secret/);
+			const exported = await readFile(path, "utf8");
+			assert.doesNotMatch(exported, /filter-header-secret|filter-url-secret/);
+			assert.deepEqual(JSON.parse(exported), result.details?.data);
+			assert.deepEqual(JSON.parse(jsonResult.content[0]?.text ?? "").data, result.details?.data);
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.some((entry) => entry.args.includes("--current-page")), false);
 			assert.ok(invocations.every((entry) => entry.args.includes("--namespace") && entry.args.includes("review")));
-			assert.ok(invocations.some((entry) => entry.args.includes("network") && entry.args.includes("requests")));
+			assert.ok(invocations.some((entry) => entry.args.includes("network") && entry.args.includes("requests") && entry.args.includes("https://shop.example/api/cart?access_token=filter-url-secret")), "redact presentation only; native filters must retain their literal value");
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

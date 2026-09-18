@@ -97,6 +97,41 @@ export async function startAgentBrowserContractFixtureServer(): Promise<FixtureS
 			return;
 		}
 
+		if (url.pathname === "/browser-regressions") {
+			sendFixtureHtml(response, `<!doctype html><title>Browser regression fixture</title>
+				<style>#panel { width:400px; height:200px; overflow:auto; scroll-behavior:smooth } #rows { height:2000px }</style>
+				<a id="export" href="#" download="report.csv">Export report</a>
+				<a id="static-download" href="/download-file" download="static.txt">Static report</a>
+				<a id="redirect-download" href="/browser-download-redirect" download="redirect.txt">Redirected report</a>
+				<button id="save" title="Save changes" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1); this.dataset.trusted=String(event.isTrusted)">Save</button>
+				<button id="copy" aria-labelledby="copy-label" onclick="this.dataset.clicks=String(Number(this.dataset.clicks||0)+1)">Save</button><span id="copy-label">Save a copy</span>
+				<button id="observe">Observe</button>
+				<button id="frame-button">Main frame button</button>
+				<iframe id="child-frame" src="/frame-child" title="Child frame"></iframe>
+				<div id="panel"><div id="rows">Report table</div></div>
+				<script>
+					document.querySelector('#export').addEventListener('click', event => {
+						event.preventDefault(); window.exportClicks=(window.exportClicks||0)+1;
+						const a=document.createElement('a');
+						a.href=URL.createObjectURL(new Blob(['name,total\\nAlice,42\\n'], {type:'text/csv'}));
+						a.download='report.csv'; a.click();
+					});
+					fetch('/browser-regression-api?access_token=fixture-url-secret', {headers:{Authorization:'Bearer fixture-header-secret'}})
+						.then(r=>r.json()).then(()=>document.body.dataset.ready='yes');
+				</script>`);
+			return;
+		}
+		if (url.pathname === "/browser-download-redirect") {
+			response.writeHead(302, { location: "/download-file" });
+			response.end();
+			return;
+		}
+		if (url.pathname === "/browser-regression-api") {
+			response.writeHead(200, { "content-type": "application/json" });
+			response.end('{"ok":true}');
+			return;
+		}
+
 		if (url.pathname === "/qa-error-residue") {
 			sendFixtureHtml(response, `<!doctype html><title>Repeated error fixture</title>
 				<h1>Repeated error fixture</h1><script>

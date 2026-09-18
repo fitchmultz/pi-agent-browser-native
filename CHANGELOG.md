@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.6.15 - 2026-09-18
+
+### Fixed
+
+- Apply ordinary credential redaction to page/origin/URL-filtered network results before structured details and `outputPath` exports.
+- Leave every download's click and file transfer to native download, including loopback links, generated Blob exports, and redirects; remove the anchor-fetch shortcut that could save page HTML as an export.
+- Verify click-probe candidate identity with native selector/ref attribute readback, including XPath scope; clean up and abstain when identity is unproven instead of falsely failing a completed click or recommending a duplicate action.
+- Scroll CSS containers instantly before measuring movement so smooth-scroll styles cannot cause false no-movement failures.
+- Preserve explicitly requested JSON for early snapshot/network filters, scroll results, and preparation failures, retaining metadata in `details` without output-file prose; help/version remains native text.
+
+### Tests
+
+- Add native browser regressions for filtered credential redaction, generated Blob download bytes, accessible-name click identity, smooth container movement, and filtered snapshot JSON, alongside deterministic cleanup and early-result output checks.
+
 ## 0.6.14 - 2026-09-17
 
 ### Changed

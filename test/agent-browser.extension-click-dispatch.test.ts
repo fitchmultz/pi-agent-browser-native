@@ -9,6 +9,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+
+import { cleanupClickDispatchProbe, collectClickDispatchDiagnostic, prepareClickDispatchProbe } from "../extensions/agent-browser/lib/orchestration/browser-run/click-dispatch.js";
 
 import {
 	createExtensionHarness,
@@ -18,6 +21,144 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+// Native get attr resolves the real ref, not the probe's guessed name.
+const fakeClickIdentityCommands = `
+if (args.includes("get") && args.includes("attr")) {
+  const installed = fs.readFileSync(LOG_PATH, "utf8").trim().split("\\n").map(JSON.parse).find((row) => (row.stdin || "").includes("window[marker] = state"));
+  const marker = JSON.parse(installed.stdin.match(/const marker = ("[^"]+");/)[1]);
+  process.stdout.write(JSON.stringify({ success: true, data: { value: marker } }));
+  process.exit(0);
+}
+if (stdin.includes('status: "identity-marker-removed"')) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "identity-marker-removed" } } }));
+  process.exit(0);
+}
+`;
+
+function fakeIdentityCommands(logPath: string): string {
+	return fakeClickIdentityCommands.replace("LOG_PATH", JSON.stringify(logPath));
+}
+
+for (const mode of ["match", "mismatch", "lookup-failure", "install-failure", "removal-failure", "abort"] as const) {
+	test(`click dispatch identity ${mode} cleans up the exact candidate`, { concurrency: false }, async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-identity-"));
+		const logPath = join(tempDir, "invocations.log");
+		const controller = new AbortController();
+		await writeFakeAgentBrowserBinary(tempDir, `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+const mode = ${JSON.stringify(mode)};
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+const reply = (data) => process.stdout.write(JSON.stringify({ success: true, data }));
+if (args.includes("attr") && mode === "abort") {
+  setTimeout(() => {}, 30000);
+} else if (args.includes("attr") && mode === "mismatch") {
+  reply({ value: null });
+} else if ((args.includes("attr") && mode === "lookup-failure") ||
+           (stdin.includes("window[marker] = state") && mode === "install-failure") ||
+           (stdin.includes('status: "identity-marker-removed"') && mode === "removal-failure")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "lost probe response" }));
+} else {
+  ${fakeIdentityCommands(logPath)}
+  if (stdin.includes("window[marker] = state")) reply({ result: { status: "installed" } });
+  else if (stdin.includes("no-native-event-observed")) reply({ result: { status: "no-native-event-observed", nativeEventCount: 0 } });
+  else reply({ result: { status: "cleaned-up" } });
+}
+`);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+				const options = {
+					commandTokens: ["click", "ref=e1"], cwd: tempDir, namespace: "identity-fixture", sessionName: "click-fixture", signal: controller.signal,
+					refSnapshot: { refIds: ["e1"], refs: { e1: { role: "button", name: "Save" } } },
+				};
+				const pending = prepareClickDispatchProbe(options);
+				if (mode === "abort") {
+					try {
+						const deadline = Date.now() + 5000;
+						while (!(await readInvocationLog(logPath)).some((entry) => entry.args.includes("attr"))) {
+							assert.ok(Date.now() < deadline, "identity lookup must start before abort");
+							await new Promise((resolve) => setTimeout(resolve, 10));
+						}
+					} finally {
+						controller.abort();
+					}
+				}
+				const probe = await pending;
+				if (mode === "match") {
+					assert.ok(probe);
+					const diagnostic = await collectClickDispatchDiagnostic({ ...options, probe });
+					assert.equal(diagnostic?.status, "no-native-event-observed", "confirmed refs retain true no-dispatch detection");
+					await cleanupClickDispatchProbe({ ...options, probe });
+				} else {
+					assert.equal(probe, undefined, "unconfirmed candidates cannot diagnose a click failure");
+				}
+				const invocations = await readInvocationLog(logPath);
+				const identityCall = invocations.find((entry) => entry.args.includes("attr"));
+				if (mode !== "install-failure") {
+					assert.ok(identityCall);
+					assert.deepEqual(identityCall.args.slice(-4, -1), ["get", "attr", "@e1"]);
+					assert.ok(identityCall.args.includes("identity-fixture"));
+					assert.ok(identityCall.args.includes("click-fixture"));
+				}
+				const scripts = invocations.filter((entry) => entry.args.includes("eval")).map((entry) => entry.stdin ?? "");
+				assert.equal(scripts.some((script) => script.includes("cleaned-up")), mode !== "match");
+				assert.equal(scripts.some((script) => script.includes("no-native-event-observed")), mode === "match");
+
+				// Execute the emitted scripts, not just their fake receipts. The collision
+				// intentionally picks Copy; cleanup must retain that exact node even detached.
+				class FixtureElement {
+					tagName = "BUTTON";
+					textContent = "Save";
+					parentElement = null;
+					attributes = new Map<string, string>();
+					getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+					hasAttribute(name: string) { return this.attributes.has(name); }
+					setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+					removeAttribute(name: string) { this.attributes.delete(name); }
+					getClientRects() { return [this.getBoundingClientRect()]; }
+					getBoundingClientRect() { return { bottom: 20, left: 0, right: 80, top: 0 }; }
+				}
+				const save = new FixtureElement();
+				save.setAttribute("title", "Save changes");
+				const copy = new FixtureElement();
+				copy.setAttribute("aria-labelledby", "copy-label");
+				let candidates = mode === "mismatch" ? [save, copy] : [copy];
+				const listeners = new Map<string, unknown>();
+				const window: Record<string, unknown> = { innerHeight: 100, innerWidth: 100, getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }) };
+				const context = { window, Element: FixtureElement, Node: FixtureElement, document: {
+					querySelectorAll: () => candidates,
+					addEventListener: (type: string, listener: unknown) => listeners.set(type, listener),
+					removeEventListener: (type: string) => listeners.delete(type),
+				} };
+				const installed = runInNewContext(scripts[0], context);
+				assert.equal(installed.status, "installed");
+				const attribute = [...copy.attributes.keys()].find((key) => key.startsWith("data-pi-click-dispatch-"));
+				assert.ok(attribute);
+				assert.equal(copy.getAttribute(attribute), installed.marker);
+				if (identityCall) assert.equal(identityCall.args.at(-1), attribute);
+				assert.equal(save.getAttribute(attribute), null);
+				assert.equal(listeners.size, 5);
+				candidates = []; // Detached nodes still need their marker removed.
+				for (const script of scripts.slice(1)) {
+					runInNewContext(script, context);
+					if (script.includes('status: "identity-marker-removed"')) {
+						assert.equal(copy.getAttribute(attribute), null, "marker is removed before the click");
+						assert.equal(listeners.size, 5, "identity confirmation retains event monitoring");
+					}
+				}
+				assert.equal(copy.getAttribute(attribute), null);
+				assert.equal(copy.getAttribute("aria-labelledby"), "copy-label");
+				assert.equal(window[installed.marker], undefined);
+				assert.equal(listeners.size, 0);
+			});
+		} finally {
+			controller.abort();
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	});
+}
 
 test("agentBrowserExtension cleans up click dispatch probes after failed clicks", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-failure-"));
@@ -29,6 +170,7 @@ test("agentBrowserExtension cleans up click dispatch probes after failed clicks"
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+${fakeIdentityCommands(logPath)}
 if (args.includes("eval")) {
   if (stdin.includes("window[marker] = state")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
@@ -79,6 +221,7 @@ test("agentBrowserExtension cleans up click dispatch probes during successful di
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+${fakeIdentityCommands(logPath)}
 if (args.includes("eval")) {
   if (stdin.includes("window[marker] = state")) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: { status: "installed" } } }));
@@ -111,7 +254,7 @@ if (args.includes("eval")) {
 			const invocations = await readInvocationLog(logPath);
 			const evalInvocations = invocations.filter((entry) => entry.args.includes("eval"));
 			const checkInvocation = evalInvocations.find((entry) => (entry.stdin ?? "").includes("native-event-observed"));
-			assert.equal(evalInvocations.length, 2, "successful dispatch should not run a redundant cleanup eval");
+			assert.equal(evalInvocations.length, 3, "install, identity-marker removal, and check need no redundant cleanup eval");
 			assert.equal(evalInvocations.some((entry) => (entry.stdin ?? "").includes("cleaned-up")), false);
 			assert.ok(checkInvocation, "expected a click dispatch check eval");
 			assert.ok((checkInvocation.stdin ?? "").includes("state.cleanup"));
@@ -132,6 +275,7 @@ test("agentBrowserExtension probes ref clicks with current snapshot accessibilit
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+${fakeIdentityCommands(logPath)}
 if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://fixture.invalid/",
@@ -279,6 +423,7 @@ test("agentBrowserExtension reports click dispatch diagnostic when upstream repo
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+${fakeIdentityCommands(logPath)}
 if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://shop.example/inventory",
@@ -327,6 +472,7 @@ if (args.includes("snapshot")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+			assert.ok(invocations.some((entry) => entry.args.includes("attr") && entry.args.includes("xpath=//*[@id='add-to-cart']")), "native XPath must confirm the same frame-scoped candidate");
 			assert.ok(invocations.some((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("window[marker] = state")));
 			const checkInvocation = invocations.find((entry) => entry.args.includes("eval") && (entry.stdin ?? "").includes("no-native-event-observed"));
 			assert.ok(checkInvocation, "expected a click dispatch check eval");

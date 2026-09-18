@@ -1,12 +1,12 @@
 import { runAgentBrowserProcess, withAttachedBrowserSessionContext, withChromeStartupArgs } from "../../process.js";
 import { isRecord } from "../../parsing.js";
 import { collectNativeWebMcp, getNativeWebMcpCatalog } from "../../webmcp-observation.js";
-import { redactSensitiveValue } from "../../runtime.js";
+import { isPlainTextInspectionArgs, redactSensitiveValue } from "../../runtime.js";
 import { formatWebMcpCatalogUpdate } from "../../results/presentation/common.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
 import { applyBrowserRunStatePatch, getSessionContextKey } from "./session-state.js";
-import { buildMissingBinaryFailureResult } from "./final-result.js";
+import { buildJsonVisibleContent, buildMissingBinaryFailureResult } from "./final-result.js";
 import { prepareBrowserRun } from "./prepare.js";
 import { processBrowserOutput } from "./process-output.js";
 import type { AgentBrowserToolResult, BrowserRunOptions } from "./types.js";
@@ -41,7 +41,17 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 	const preparedResult = await prepareBrowserRun(options);
 	applyBrowserRunStatePatch(options.state, preparedResult.kind === "ready" ? preparedResult.prepared.statePatch : preparedResult.statePatch);
 	if (preparedResult.kind === "early-result") {
-		return preparedResult.result;
+		const result = preparedResult.result;
+		if (options.input.toolArgs.includes("--json") && !isPlainTextInspectionArgs(options.input.toolArgs)) {
+			const details = isRecord(result.details) ? result.details : {};
+			const summary = result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
+			result.content = buildJsonVisibleContent({
+				error: result.isError ? details.validationError ?? summary : null,
+				presentation: { content: result.content, data: details.data, summary },
+				succeeded: result.isError !== true,
+			});
+		}
+		return result;
 	}
 
 	const { prepared } = preparedResult;

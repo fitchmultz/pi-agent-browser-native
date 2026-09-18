@@ -23,6 +23,7 @@ import { MINIMUM_AGENT_BROWSER_VERSION, isSupportedAgentBrowserVersion } from ".
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
+	DOWNLOAD_FIXTURE_CONTENT,
 	executeRegisteredTool,
 	runExtensionEvent,
 	startAgentBrowserContractFixtureServer,
@@ -541,6 +542,108 @@ test("real upstream agent-browser contract suite matches QA non-pass after same-
 	} finally {
 		await fixture.close();
 		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("real upstream agent-browser contract suite matches reported browser regressions", { skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 }, async (t) => {
+	await assertInstalledAgentBrowserVersion();
+	const dir = await mkdtemp(join(tmpdir(), "br-"));
+	const socketDir = await mkdtemp(join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "br-"));
+	const fixture = await startAgentBrowserContractFixtureServer();
+	try {
+		await withPatchedEnv({
+			...Object.fromEntries(Object.keys(process.env).filter(name => /^(?:PI_)?AGENT_BROWSER_/.test(name)).map(name => [name, undefined])),
+			HOME: dir, USERPROFILE: dir, PI_CODING_AGENT_DIR: join(dir, "pi"),
+			PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir,
+			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0",
+		}, async () => {
+			const h = createExtensionHarness({ cwd: dir });
+			const call = async (params: unknown) => {
+				const result = await executeRegisteredTool(h.tool, h.ctx, params);
+				assert.equal(result.isError, false, result.content[0]?.text);
+				return result;
+			};
+			try {
+				const opened = await call({ args: ["open", `${fixture.baseUrl}/browser-regressions`], sessionMode: "fresh" });
+				const sessionName = String(opened.details?.sessionName);
+				await call({ args: ["wait", "--fn", "document.body.dataset.ready === 'yes'"] });
+				await t.test("filtered network details and exports redact the same credentials as ordinary results", async () => {
+					const ordinary = await call({ args: ["network", "requests"] });
+					assert.doesNotMatch(JSON.stringify(ordinary), /fixture-url-secret|fixture-header-secret/);
+					const outputPath = join(dir, "network.json");
+					const filtered = await call({ args: ["network", "requests", "--current-page"], outputPath });
+					assert.match(JSON.stringify(filtered.details?.data), /browser-regression-api/, "the credential-bearing request must actually be present");
+					assert.doesNotMatch(JSON.stringify(filtered), /fixture-url-secret|fixture-header-secret/);
+					assert.doesNotMatch(await readFile(outputPath, "utf8"), /fixture-url-secret|fixture-header-secret/);
+				});
+				await t.test("download runs the export handler and saves its generated CSV", async () => {
+					const path = join(dir, "report.csv");
+					const result = await call({ args: ["download", "#export", path] });
+					assert.equal(await readFile(path, "utf8"), "name,total\nAlice,42\n");
+					assert.equal((result.details?.artifactVerification as { verified: boolean }).verified, true);
+					assert.equal(getResultValue((await call({ args: ["eval", "window.exportClicks || 0"] })).details!, ["result"]), 1);
+					for (const selector of ["#static-download", "#redirect-download"]) {
+						const savedPath = join(dir, `${selector.slice(1)}.txt`);
+						await call({ args: ["download", selector, savedPath] });
+						assert.equal(await readFile(savedPath, "utf8"), DOWNLOAD_FIXTURE_CONTENT);
+					}
+				});
+				await t.test("accessible-name collisions cannot turn a trusted ref click into a failure", async () => {
+					const snapshot = await call({ args: ["snapshot", "-i"] });
+					const refSnapshot = snapshot.details?.refSnapshot as import("../extensions/agent-browser/lib/session-page-state.js").SessionRefSnapshot;
+					const ref = Object.entries(refSnapshot.refs!).find(([, value]) => value.role === "button" && value.name === "Save")?.[0];
+					assert.ok(ref);
+					const clicked = await call({ args: ["click", `@${ref}`] });
+					assert.equal(clicked.details?.clickDispatch, undefined);
+					assert.doesNotMatch(JSON.stringify(clicked.details?.nextActions), /retry-click-after-dispatch-miss/);
+					const state = await call({ args: ["eval", "--stdin"], stdin: "({save:Number(document.querySelector('#save').dataset.clicks||0),copy:Number(document.querySelector('#copy').dataset.clicks||0),trusted:document.querySelector('#save').dataset.trusted})" });
+					assert.deepEqual(getResultValue(state.details!, ["result"]), { save: 1, copy: 0, trusted: "true" });
+					const observe = Object.entries(refSnapshot.refs!).find(([, value]) => value.name === "Observe")?.[0];
+					assert.ok(observe);
+					await withOwnedManagedSessionContext({ cwd: dir, sessionName, restoreState: new ManagedSessionRestoreState() }, async () => {
+						const options = { commandTokens: ["click", `@${observe}`], cwd: dir, sessionName, refSnapshot };
+						const probe = await prepareClickDispatchProbe(options);
+						assert.ok(probe, "correctly identified ref targets must retain no-dispatch detection");
+						assert.equal((await collectClickDispatchDiagnostic({ ...options, probe }))?.status, "no-native-event-observed");
+					});
+				});
+				await t.test("XPath probes cannot mistake a main-frame element for the selected child frame", async () => {
+					await call({ args: ["frame", "#child-frame"] });
+					try {
+						await call({ args: ["click", "xpath=//*[@id='frame-button']"] });
+						const status = await call({ args: ["get", "text", "#frame-status"] });
+						assert.equal(getResultValue(status.details!, ["text"]), "Frame clicked");
+					} finally { await call({ args: ["frame", "main"] }); }
+					const residue = await call({ args: ["eval", "--stdin"], stdin: "({ markers: Object.keys(window).filter(key => key.startsWith('__piAgentBrowserClickDispatchProbe_')), attributes: [...document.querySelectorAll('*')].flatMap(el => el.getAttributeNames()).filter(name => name.startsWith('data-pi-click-dispatch-')) })" });
+					assert.deepEqual(getResultValue(residue.details!, ["result"]), { markers: [], attributes: [] });
+				});
+				await t.test("smooth-scroll containers report success after moving", async () => {
+					await call({ args: ["scroll", "#panel", "down", "300"] });
+					const position = await call({ args: ["eval", "document.querySelector('#panel').scrollTop"] });
+					assert.equal(getResultValue(position.details!, ["result"]), 300);
+				});
+				await t.test("wrapper-filtered snapshots preserve explicit JSON and complete refs", async () => {
+					const control = await call({ args: ["--json", "snapshot", "-i"] });
+					assert.equal(JSON.parse(control.content[0]?.text ?? "").success, true);
+					const result = await call({ args: ["--json", "snapshot", "-i", "--filter", "role=button"] });
+					const envelope = JSON.parse(result.content[0]?.text ?? "");
+					assert.equal(envelope.success, true);
+					assert.deepEqual(envelope.data, result.details?.data);
+					assert.ok(Object.values(envelope.data.refs).every((ref) => (ref as { role: string }).role === "button"));
+					assert.ok(Object.values((result.details?.refSnapshot as { refs: Record<string, { role: string }> }).refs).some(ref => ref.role === "link"));
+					const failure = await executeRegisteredTool(h.tool, h.ctx, { args: ["--json", "scroll", "#missing-panel", "down", "300"] });
+					assert.equal(failure.isError, true);
+					assert.equal(JSON.parse(failure.content[0]?.text ?? "").success, false);
+				});
+			} finally {
+				await call({ args: ["close"] });
+				await runExtensionEvent(h.handlers, "session_shutdown", { reason: "quit" }, h.ctx);
+			}
+		});
+	} finally {
+		await fixture.close();
+		await rm(dir, { recursive: true, force: true });
+		await rm(socketDir, { recursive: true, force: true });
 	}
 });
 

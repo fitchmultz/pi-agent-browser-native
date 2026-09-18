@@ -1,6 +1,7 @@
 import { isRecord } from "../../../parsing.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../../results/categories.js";
-import { redactSensitiveText, type CompatibilityWorkaround } from "../../../runtime.js";
+import { redactPresentationData } from "../../../results/presentation/diagnostics.js";
+import { redactInvocationArgs, redactSensitiveText, type CompatibilityWorkaround } from "../../../runtime.js";
 import { buildSessionDetailFields, runSessionCommandData } from "../session-state.js";
 
 import type { AgentBrowserToolResult } from "../types.js";
@@ -105,9 +106,9 @@ export async function tryNetworkRequestsPageFilter(options: {
 			args: options.redactedArgs,
 			command: "network",
 			compatibilityWorkaround: options.compatibilityWorkaround,
-			data: filtered.data,
+			data: redactPresentationData({ command: "network", subcommand: "requests" }, filtered.data),
 			effectiveArgs: options.effectiveArgs,
-			networkRequestsPageFilter: { cleanArgs: request.cleanArgs, currentUrl: redactSensitiveText(currentUrl), matchedRows: filtered.matchedRows, mode: request.mode, totalRows: filtered.totalRows },
+			networkRequestsPageFilter: { cleanArgs: redactInvocationArgs(request.cleanArgs), currentUrl: redactSensitiveText(currentUrl), matchedRows: filtered.matchedRows, mode: request.mode, totalRows: filtered.totalRows },
 			sessionMode: options.sessionMode,
 			...buildAgentBrowserResultCategoryDetails({ args: options.effectiveArgs, command: "network", succeeded: true }),
 			...buildSessionDetailFields(options.sessionName, options.usedImplicitSession, options.namespace, options.managedSessionRestoreDisabled()),

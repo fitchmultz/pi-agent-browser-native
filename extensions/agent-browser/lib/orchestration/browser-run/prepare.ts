@@ -11,7 +11,6 @@ import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/la
 import { pathExists } from "../../fs-utils.js";
 import { getCompiledSemanticActionSessionPrefix } from "../../input-modes/semantic-action.js";
 import { type CompiledAgentBrowserSemanticAction } from "../../input-modes/types.js";
-import { tryDirectAnchorDownload } from "./prepare/direct-anchor-download.js";
 import { tryNetworkRequestsPageFilter } from "./prepare/network-page-filter.js";
 import { tryContainerScroll, tryPageScrollTo } from "./prepare/scroll-shims.js";
 import { trySnapshotFilter } from "./prepare/snapshot-filter.js";
@@ -1087,22 +1086,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			});
 			if (pageScrollTo) return { kind: "early-result", statePatch, result: pageScrollTo };
 		}
-
-		const directAnchorDownload = await tryDirectAnchorDownload({
-			artifactManifest: state.artifactManifest,
-			commandTokens,
-			compatibilityWorkaround,
-			cwd,
-			effectiveArgs: redactedEffectiveArgs,
-			managedSessionRestoreDisabled,
-			redactedArgs,
-			sessionMode,
-			namespace: executionPlan.namespace,
-			sessionName: executionPlan.sessionName,
-			signal,
-			usedImplicitSession: executionPlan.usedImplicitSession,
-		});
-		if (directAnchorDownload) return { kind: "early-result", statePatch: { ...statePatch, artifactManifest: directAnchorDownload.artifactManifest ?? statePatch.artifactManifest }, result: directAnchorDownload.result };
 
 		const processArgs = executionPlan.effectiveArgs;
 		const processStdin = preparedArgs.stdin ?? runtimeToolStdin;
