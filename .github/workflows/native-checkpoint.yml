@@ -53,6 +53,27 @@ jobs:
           env -i HOME="$CI_ROOT/home" TMPDIR=/tmp \
             PATH="$CI_NODE_BIN:/usr/local/bin:/usr/bin:/bin" \
             bash "$CI_ROOT/extension/scripts/ci-native-checkpoint.sh" setup "$CI_ROOT"
+      - name: Allow the fixture Chrome to create its sandbox
+        run: |
+          # Chromium's documented Ubuntu 23.10+ filepath exception (option 2):
+          # https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
+          # The native fixture copies the download into /tmp/piab-cp-*/home.
+          # Keep that short socket root and Chrome's sandbox; do not relax userns globally.
+          {
+            apparmor_parser --version
+            sysctl kernel.apparmor_restrict_unprivileged_userns
+            chrome=("$CI_ROOT/home/.agent-browser/browsers"/chrome-*/chrome)
+            [[ ${#chrome[@]} == 1 && -x ${chrome[0]} ]]
+            sudo tee "$CI_ROOT/logs/chrome.apparmor" <<EOF
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile $(basename "$CI_ROOT")-chrome /tmp/piab-cp-*/home/.agent-browser/browsers/chrome-*/chrome flags=(unconfined) {
+            userns,
+          }
+          EOF
+            # Load only our ephemeral profile, without reloading host policy or caching it.
+            sudo apparmor_parser --add --skip-cache "$CI_ROOT/logs/chrome.apparmor"
+          } 2>&1 | tee "$CI_ROOT/logs/sandbox-setup.log"
       - name: Default verification and all native checkpoints (no external network)
         run: |
           # Root only creates a loopback-only namespace, then drops all privileges.
@@ -70,6 +91,12 @@ jobs:
           path: ${{ env.CI_ROOT }}/logs/*
           if-no-files-found: error
           retention-days: 7
+      - name: Remove only the fixture AppArmor profile
+        if: always() && env.CI_ROOT != ''
+        run: |
+          if [[ -f "$CI_ROOT/logs/chrome.apparmor" ]]; then
+            sudo apparmor_parser --remove --skip-cache "$CI_ROOT/logs/chrome.apparmor"
+          fi
       - name: Remove isolated sources and fixtures
         if: always() && env.CI_ROOT != ''
         run: rm -rf -- "$CI_ROOT"
