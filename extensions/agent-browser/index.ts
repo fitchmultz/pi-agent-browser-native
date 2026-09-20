@@ -693,7 +693,7 @@ function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedRes
 			const replacedSessionNamespace = typeof outcome.replacedSessionNamespace === "string" ? outcome.replacedSessionNamespace : namespace;
 			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(typeof outcome.replacedSessionName === "string" ? outcome.replacedSessionName : undefined, replacedSessionNamespace), eventRank);
 		}
-		if (succeeded && !isCloseCommand(command) && sessionName && (usedImplicitSession || sessionMode === "fresh" || details.managedSessionHeadedAutosaveDisabled === true || typeof details.managedSessionHeadedAutosaveInterval === "string")) {
+		if (succeeded && !isCloseCommand(command) && sessionName && ((!explicitSessionName && (usedImplicitSession || sessionMode === "fresh")) || details.managedSessionHeadedAutosaveDisabled === true || typeof details.managedSessionHeadedAutosaveInterval === "string")) {
 			setBranchManagedSessionActive(events, sessionName, namespace, eventRank);
 		}
 		if (succeeded && isCloseCommand(command)) {
@@ -1384,6 +1384,7 @@ export default function agentBrowserExtension(
 
 		// Include off-branch and caller-owned/root identities, without acquiring
 		// cleanup ownership. Transcript page/ref details do not serialize a browser.
+		const historicalResources = collectBranchManagedResourceEvents(entries);
 		const sessions = new Map(ownedManagedSessions);
 		if (managedSessionActive) trackOwnedManagedSession(sessions, managedSessionName, managedSessionCwd, { namespace: managedSessionNamespace });
 		for (const entry of entries) {
@@ -1400,13 +1401,16 @@ export default function agentBrowserExtension(
 		}
 		for (const [key, owner] of sessions) {
 			event.signal.throwIfAborted();
-			// Inspection runs outside tool execution: restore routing only for known
-			// owned identities, never for names merely observed in the transcript.
+			// An abnormal restart can leave a wrapper-created browser only off-branch.
+			// Reuse native ownership events for inspection, never cleanup ownership.
+			const historicalIdentity = historicalResources.managedSessionActiveIdentities.get(key);
+			const historicallyOwned = historicalIdentity && isRestorableManagedSessionName(historicalIdentity.sessionName, managedSessionBaseName)
+				&& (historicalResources.managedSessionActiveRanks.get(key) ?? 0) > (historicalResources.managedSessionCloseRanks.get(key) ?? 0);
 			const context = resolveOwnedManagedSessionContext({
 				...owner,
 				currentManagedSessionName: managedSessionActive ? managedSessionName : undefined,
 				currentManagedSessionNamespace: managedSessionNamespace,
-				recordedOwnedSession: ownedManagedSessions.get(key),
+				recordedOwnedSession: ownedManagedSessions.get(key) ?? (historicallyOwned ? { ...historicalIdentity, cwd: ctx.cwd } : undefined),
 				restoreState: managedSessionRestoreState,
 			});
 			const daemon = await withOwnedManagedSessionContext(context ? { ...context, reuseOnly: true } : undefined,

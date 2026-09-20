@@ -62,7 +62,7 @@ case "$mode" in
       node --test --test-reporter=tap test/agent-browser.checkpoint-native.test.mjs \
       > "$root/logs/native-checkpoint.tap" 2>&1 || status=1
     # No baseline-only run, missing prerequisite, filtered case or skip may pass CI.
-    for summary in 'tests 12' 'pass 12' 'fail 0' 'cancelled 0' 'skipped 0' 'todo 0'; do
+    for summary in 'tests 13' 'pass 13' 'fail 0' 'cancelled 0' 'skipped 0' 'todo 0'; do
       grep -qx "# $summary" "$root/logs/native-checkpoint.tap" || status=1
     done
     # Bounded evidence AFTER both ordinary gates; never warm their first budget run.

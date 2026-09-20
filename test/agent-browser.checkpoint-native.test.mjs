@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { qualifyOffbranchRouting } from "./helpers/checkpoint-offbranch-native.mjs";
 
 const sdkPath = process.env.PI_CHECKPOINT_TEST_SDK;
 const required = process.env.PI_CHECKPOINT_TEST_REQUIRED === "1";
@@ -400,6 +401,9 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
     delete process.env.AGENT_BROWSER_SOCKET_DIR;
     process.env.PI_AGENT_BROWSER_SOCKET_DIR = piSockets;
    }
+  });
+  if (!baselineRestore) await t.test("historical owned inspection survives a real abnormal restart without acquiring cleanup ownership", async () => {
+   await qualifyOffbranchRouting({ root, cwd, agentDir, sdkPath, extensionPath, receipts });
   });
  } finally {
   await chmod(sm.getSessionFile(), 0o600).catch(() => {});
