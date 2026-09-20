@@ -38,7 +38,7 @@ import {
 import { deleteIdentityKeysInNamespace, extractExplicitNamespace, extractExplicitSessionName, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace } from "./lib/argv-grammar.js";
 import { parseArgvDescriptor } from "./lib/argv-descriptor.js";
 import { needsManagedSession } from "./lib/command-policy.js";
-import { ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
+import { ManagedSessionRestoreState, resolveOwnedManagedSessionContext, withOwnedManagedSessionContext } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
 import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
@@ -1398,9 +1398,19 @@ export default function agentBrowserExtension(
 			const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
 			if (!sessions.has(key)) trackOwnedManagedSession(sessions, sessionName, ctx.cwd, { namespace });
 		}
-		for (const owner of sessions.values()) {
+		for (const [key, owner] of sessions) {
 			event.signal.throwIfAborted();
-			const daemon = await inspectManagedSessionDaemon({ ...owner, signal: event.signal, timeoutMs: 2_000 });
+			// Inspection runs outside tool execution: restore routing only for known
+			// owned identities, never for names merely observed in the transcript.
+			const context = resolveOwnedManagedSessionContext({
+				...owner,
+				currentManagedSessionName: managedSessionActive ? managedSessionName : undefined,
+				currentManagedSessionNamespace: managedSessionNamespace,
+				recordedOwnedSession: ownedManagedSessions.get(key),
+				restoreState: managedSessionRestoreState,
+			});
+			const daemon = await withOwnedManagedSessionContext(context ? { ...context, reuseOnly: true } : undefined,
+				() => inspectManagedSessionDaemon({ ...owner, signal: event.signal, timeoutMs: 2_000 }));
 			if (daemon.status !== "inactive") return blocked("Browser daemon is live or unverified; finish browser work explicitly before sleep");
 		}
 		// No detached writer remains to pause/resume. Native ingress stays held;

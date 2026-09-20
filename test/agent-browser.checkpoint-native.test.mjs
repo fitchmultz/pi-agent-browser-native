@@ -332,6 +332,75 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
    await ok({ args: ["close"] });
    await checkpoint("final idle", true);
   });
+  if (!baselineRestore) await t.test("stable ambient sockets preserve owned and caller-owned checkpoint routing", async () => {
+   const piSockets = process.env.PI_AGENT_BROWSER_SOCKET_DIR;
+   const ambient = join(root, "ambient");
+   const ownedSockets = `${process.platform === "darwin" ? "/private/tmp" : "/tmp"}/piab-${process.getuid()}`;
+   await mkdir(ambient, { mode: 0o700 });
+   delete process.env.PI_AGENT_BROWSER_SOCKET_DIR;
+   process.env.AGENT_BROWSER_SOCKET_DIR = ambient;
+   const status = (name, socketDir, namespace = "") => JSON.parse(execFileSync("agent-browser", ["--json", "--namespace", namespace, "--session", name, "session", "info"], {
+    encoding: "utf8", timeout: 5000, env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: socketDir },
+   })).data;
+   const close = async (name, socketDir, namespace = "") => {
+    const closed = await call({ args: ["--namespace", namespace, "--session", name, "close"] });
+    assert.notEqual(closed.isError, true, JSON.stringify(closed));
+    for (let i = 0; i < 100 && status(name, socketDir, namespace).active; i++) await delay(50);
+    assert.equal(status(name, socketDir, namespace).active, false);
+   };
+   let fresh;
+   const caller = "piab-caller-fixture"; // A name prefix is not cleanup ownership.
+   try {
+    const openedRoot = await ok({ args: ["open", url] });
+    assert.equal(openedRoot.details.sessionName, rootName);
+    const rootStatus = status(rootName, ambient);
+    assert.equal(rootStatus.active, true);
+    assert.equal(status(rootName, ownedSockets).active, false);
+    await checkpoint("ambient caller-owned root", false, /daemon/);
+    await session.reload();
+    assert.equal(status(rootName, ambient).pid, rootStatus.pid);
+    await checkpoint("ambient root survives reload without cleanup ownership", false, /daemon/);
+    await close(rootName, ambient);
+    await checkpoint("ambient root explicitly closed", true);
+
+    const opened = await ok({ args: ["open", url], sessionMode: "fresh" });
+    fresh = opened.details.sessionName;
+    assert.match(fresh, /^piab-/);
+    const live = status(fresh, ownedSockets);
+    assert.equal(live.active, true);
+    assert.equal(live.runtime.browserLaunched, true);
+    assert.equal(live.runtime.pageCount, 1);
+    assert.equal(status(fresh, ambient).active, false);
+    receipts.push({ label: "distinct stable socket roots", sessionName: fresh, owned: live, ambient: status(fresh, ambient) });
+    await checkpoint("ambient override must not hide live owned daemon", false, /daemon/);
+    assert.equal(status(fresh, ownedSockets).pid, live.pid);
+    await session.reload();
+    await checkpoint("ambient override with restored owned identity", false, /daemon/);
+    assert.equal(status(fresh, ownedSockets).pid, live.pid);
+    await close(fresh, ownedSockets);
+    fresh = undefined;
+    await checkpoint("owned daemon explicitly closed with ambient override", true);
+
+    await ok({ args: ["--namespace", "caller", "--session", caller, "open", url] });
+    const callerStatus = status(caller, ambient, "caller");
+    assert.equal(callerStatus.active, true);
+    assert.equal(status(caller, ownedSockets, "caller").active, false);
+    await checkpoint("ambient explicit namespaced caller", false, /daemon/);
+    await session.reload();
+    assert.equal(status(caller, ambient, "caller").pid, callerStatus.pid);
+    await checkpoint("ambient explicit caller survives reload", false, /daemon/);
+    await close(caller, ambient, "caller");
+    await checkpoint("ambient caller explicitly closed", true);
+    assert.equal(process.env.PI_AGENT_BROWSER_SOCKET_DIR, undefined);
+    assert.equal(process.env.AGENT_BROWSER_SOCKET_DIR, ambient);
+   } finally {
+    if (fresh) await close(fresh, ownedSockets);
+    await close(caller, ambient, "caller");
+    await close(rootName, ambient);
+    delete process.env.AGENT_BROWSER_SOCKET_DIR;
+    process.env.PI_AGENT_BROWSER_SOCKET_DIR = piSockets;
+   }
+  });
  } finally {
   await chmod(sm.getSessionFile(), 0o600).catch(() => {});
   beforeResult = undefined; callController?.abort();
