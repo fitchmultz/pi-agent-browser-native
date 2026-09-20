@@ -1403,9 +1403,9 @@ export default function agentBrowserExtension(
 			event.signal.throwIfAborted();
 			// An abnormal restart can leave a wrapper-created browser only off-branch.
 			// Reuse native ownership events for inspection, never cleanup ownership.
+			// A later close can refer to the same identity in a different socket root.
 			const historicalIdentity = historicalResources.managedSessionActiveIdentities.get(key);
-			const historicallyOwned = historicalIdentity && isRestorableManagedSessionName(historicalIdentity.sessionName, managedSessionBaseName)
-				&& (historicalResources.managedSessionActiveRanks.get(key) ?? 0) > (historicalResources.managedSessionCloseRanks.get(key) ?? 0);
+			const historicallyOwned = historicalIdentity && isRestorableManagedSessionName(historicalIdentity.sessionName, managedSessionBaseName);
 			const context = resolveOwnedManagedSessionContext({
 				...owner,
 				currentManagedSessionName: managedSessionActive ? managedSessionName : undefined,
@@ -1413,9 +1413,12 @@ export default function agentBrowserExtension(
 				recordedOwnedSession: ownedManagedSessions.get(key) ?? (historicallyOwned ? { ...historicalIdentity, cwd: ctx.cwd } : undefined),
 				restoreState: managedSessionRestoreState,
 			});
-			const daemon = await withOwnedManagedSessionContext(context ? { ...context, reuseOnly: true } : undefined,
-				() => inspectManagedSessionDaemon({ ...owner, signal: event.signal, timeoutMs: 2_000 }));
-			if (daemon.status !== "inactive") return blocked("Browser daemon is live or unverified; finish browser work explicitly before sleep");
+			// Owned routing must not mask an explicit caller's same-name ambient daemon.
+			for (const inspectionContext of context ? [{ ...context, reuseOnly: true }, undefined] : [undefined]) {
+				const daemon = await withOwnedManagedSessionContext(inspectionContext,
+					() => inspectManagedSessionDaemon({ ...owner, signal: event.signal, timeoutMs: 2_000 }));
+				if (daemon.status !== "inactive") return blocked("Browser daemon is live or unverified; finish browser work explicitly before sleep");
+			}
 		}
 		// No detached writer remains to pause/resume. Native ingress stays held;
 		// checkpoint never closes a browser or changes ordinary shutdown ownership.

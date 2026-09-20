@@ -112,20 +112,41 @@ export async function qualifyOffbranchRouting(options) {
   await request(second.child, "reload");
   assert.equal(status(fresh).pid, live.pid, "inspection must not acquire off-branch cleanup ownership");
   await checkpoint(second.child, "historical browser survives ordinary reload", false);
+
+  // One namespace/name can identify two native daemons in different socket roots.
+  const sameCaller = { ...fresh, socketDir: ambient };
+  identities.push(sameCaller);
+  const sameArgs = ["--namespace", "", "--session", fresh.name];
+  const sameOpened = await call(second.child, { args: [...sameArgs, "open", "about:blank"], sessionMode: "fresh" });
+  const sameLive = status(sameCaller);
+  assert.equal(sameLive.active, true); assert.notEqual(sameLive.pid, live.pid);
+  assert.equal(status(fresh).pid, live.pid);
+  options.receipts.push({ label: "same identity both roots live", owned: status(fresh), ambient: sameLive, callerLeaf: sameOpened.leaf, actualCallerDetails: sameOpened.result.details });
+  await checkpoint(second.child, "same identity both roots block", false);
+  await request(second.child, "reload");
+  assert.equal(status(fresh).pid, live.pid);
+  assert.equal(status(sameCaller).pid, sameLive.pid, "inspection must not acquire caller cleanup ownership");
+  await call(second.child, { args: [...sameArgs, "close"] });
+  await close(sameCaller);
+  assert.equal(status(fresh).pid, live.pid);
+  options.receipts.push({ label: "same identity caller closed only", owned: status(fresh), ambient: status(sameCaller) });
+  await checkpoint(second.child, "caller close must not hide historical owned daemon", false);
   await close(fresh);
   await checkpoint(second.child, "historical daemon explicitly closed", true);
 
   // Exact wrapper base/fresh pattern is not provenance. Explicit fresh is still caller-owned.
-  // Reusing the real historical name in another namespace must not inherit its routing either.
+  // The exact historical identity and another namespace must retain ambient routing too.
   for (const identity of [
+   { name: fresh.name, socketDir: ambient },
    { name: fresh.name.replace(/fresh-.+$/, "fresh-caller"), socketDir: ambient },
    { name: fresh.name, namespace: "c", socketDir: ambient },
   ]) {
    identities.push(identity);
    const args = ["--namespace", identity.namespace ?? "", "--session", identity.name];
-   await call(second.child, { args: [...args, "open", "about:blank"], sessionMode: "fresh" });
+   const callerOpened = await call(second.child, { args: [...args, "open", "about:blank"], sessionMode: "fresh" });
    const caller = status(identity); assert.equal(caller.active, true);
    assert.equal(status({ ...identity, socketDir: owned }).active, false);
+   options.receipts.push({ label: "explicit caller provenance", ambient: caller, owned: status({ ...identity, socketDir: owned }), callerLeaf: callerOpened.leaf, actualCallerDetails: callerOpened.result.details });
    await checkpoint(second.child, "explicit managed-looking caller retains ambient routing", false);
    await request(second.child, "reload");
    assert.equal(status(identity).pid, caller.pid);
