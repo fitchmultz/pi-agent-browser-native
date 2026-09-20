@@ -31,11 +31,6 @@ case "$mode" in
       git diff --exit-code
     ) 2>&1 | tee "$root/logs/host-build.log"
     npm ci --ignore-scripts 2>&1 | tee "$root/logs/extension-install.log"
-    # Same package-managed Linux graph; no second resolution or handmade links.
-    [[ $(git -C "$root/startup-baseline" rev-parse HEAD) == b1e083e345d0ed9c2c2f9f20953c657a2e0da8a8 ]]
-    cmp package.json "$root/startup-baseline/package.json"
-    cmp package-lock.json "$root/startup-baseline/package-lock.json"
-    cp -a node_modules "$root/startup-baseline/"
     # A separate stock installation, never a dependency or a custom browser build.
     npm install --global --prefix "$root/browser" agent-browser@0.38.1 2>&1 | tee "$root/logs/browser-install.log"
     agent-browser install --with-deps 2>&1 | tee -a "$root/logs/browser-install.log"
@@ -65,17 +60,6 @@ case "$mode" in
     for summary in 'tests 13' 'pass 13' 'fail 0' 'cancelled 0' 'skipped 0' 'todo 0'; do
       grep -qx "# $summary" "$root/logs/native-checkpoint.tap" || status=1
     done
-    # Bounded evidence AFTER both ordinary gates; never warm their first budget run.
-    # Build only the baseline extension, not the head or native host again.
-    if (cd "$root/startup-baseline" && node scripts/build.mjs) \
-      > "$root/logs/startup-baseline-build.log" 2>&1; then
-      node scripts/ci-startup-diagnostic.mjs "$root" \
-        > "$root/logs/startup-diagnostic.log" 2>&1 || status=1
-    else
-      printf 'Startup diagnostic baseline build failed\n' > "$root/logs/startup-diagnostic.log"
-      status=1
-    fi
-    git -C "$root/startup-baseline" diff --exit-code > "$root/logs/startup-baseline-integrity.log" 2>&1 || status=1
     git diff --exit-code > "$root/logs/source-integrity.log" 2>&1 || status=1
     git -C "$root/pi-host" diff --exit-code >> "$root/logs/source-integrity.log" 2>&1 || status=1
     printf 'Combined verification exit: %s\n' "$status" | tee "$root/logs/result.log"

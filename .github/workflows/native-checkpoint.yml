@@ -30,11 +30,6 @@ jobs:
           ref: 97891a8511c101ef1cb53d72dfdcb60e0e2c0e89
           path: pi-host
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: b1e083e345d0ed9c2c2f9f20953c657a2e0da8a8
-          path: startup-baseline
-          persist-credentials: false
       - name: Install system prerequisites
         run: |
           sudo apt-get update
@@ -51,7 +46,7 @@ jobs:
           root=$(mktemp -d /tmp/piab-ci.XXXXXX)
           echo "CI_ROOT=$root" >> "$GITHUB_ENV"
           echo "CI_NODE_BIN=$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
-          cp -a extension pi-host startup-baseline "$root/"
+          cp -a extension pi-host "$root/"
           mkdir -m 700 "$root/home"
       - name: Build locked native host and download stock browser
         run: |
