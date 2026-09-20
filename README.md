@@ -641,7 +641,7 @@ Full live identity, browser-independent native reads/confirmations and detailed 
 
 ### Native working-session checkpoints
 
-On Pi hosts with `session_checkpoint`, an unused or cleanly closed browser integration can qualify for sleep. Live browsers, attachments, scripts, unfinished recordings/cleanup leases, and uncertain journal persistence keep compute alive. Checkpointing never closes browsers or changes cleanup ownership. Native save-on-close and per-root restore remain the persistence path; page JavaScript, unsaved forms, and live recordings are not serialized. See [checkpoint boundaries](docs/ARCHITECTURE.md#native-checkpoint-boundary).
+On Pi hosts with `session_checkpoint`, an unused or cleanly closed browser integration can qualify for sleep. Live browsers, attachments, scripts, unfinished recordings/cleanup leases, and dirty recording persistence keep compute alive. Pi core owns native journal flush/repair and strict restore; an ongoing journal I/O failure rejects checkpoint acquisition. Checkpointing never closes browsers or changes cleanup ownership. Native save-on-close and per-root restore remain the persistence path; page JavaScript, unsaved forms, and live recordings are not serialized. See [checkpoint boundaries](docs/ARCHITECTURE.md#native-checkpoint-boundary).
 
 ### Profile selection
 

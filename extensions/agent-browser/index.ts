@@ -1403,20 +1403,6 @@ export default function agentBrowserExtension(
 			const daemon = await inspectManagedSessionDaemon({ ...owner, signal: event.signal, timeoutMs: 2_000 });
 			if (daemon.status !== "inactive") return blocked("Browser daemon is live or unverified; finish browser work explicitly before sleep");
 		}
-		// A failed native append can enter branch memory before the write throws.
-		// Retrying reservation rows repairs their semantics, not that missing native
-		// entry. Do not authorize a cut that native checkpoint restore would reject.
-		const sessionFile = ctx.sessionManager.getSessionFile();
-		if (sessionFile) {
-			try {
-				const text = readFileSync(sessionFile, "utf8").trim();
-				const journal = text ? text.split("\n").map(line => JSON.parse(line)) : [];
-				if (JSON.stringify(journal) !== JSON.stringify([ctx.sessionManager.getHeader(), ...entries])) return blocked("Browser session journal differs from native memory after persistence failure");
-			} catch (error) {
-				// Native checkpoint restore materializes a not-yet-created journal.
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT") return blocked("Browser session journal persistence could not be verified");
-			}
-		}
 		// No detached writer remains to pause/resume. Native ingress stays held;
 		// checkpoint never closes a browser or changes ordinary shutdown ownership.
 		return { sleepReady: true };

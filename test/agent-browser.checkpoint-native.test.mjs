@@ -64,7 +64,26 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
  sm.appendMessage({ role: "assistant", content: [{ type: "text", text: "Synthetic checkpoint fixture." }], api: "openai-completions", provider: "fixture", model: "fixture", stopReason: "stop", timestamp: Date.now(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
  const receipts = [];
  const call = async params => { await session.prompt(`/checkpoint-browser-test ${JSON.stringify(params)}`); return result; };
- const ok = async params => { const value = await call(params); assert.notEqual(value.isError, true, JSON.stringify(value)); return value; };
+ const ok = async params => {
+  const value = await call(params);
+  assert.notEqual(value.isError, true, JSON.stringify(value));
+  // Native close can acknowledge before its daemon finishes exiting (macOS).
+  // Observe that exit independently; never weaken the checkpoint's live blocker.
+  if (params.args?.at(-1) === "close") {
+   const name = value.details.sessionName;
+   assert.ok(name);
+   let status;
+   for (let i = 0; i < 100; i++) {
+    status = JSON.parse(execFileSync("agent-browser", ["--json", "--namespace", "", "--session", name, "session", "info"], {
+     encoding: "utf8", timeout: 5000, env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR },
+    }));
+    if (status.data.active === false) break;
+    await delay(50);
+   }
+   assert.equal(status.data.active, false, JSON.stringify(status));
+  }
+  return value;
+ };
  const checkpoint = async (label, ready, reason) => {
   let released = 0;
   const hold = await session.acquireCheckpoint({ signal: AbortSignal.timeout(10_000), quiesce: () => () => released++ });
@@ -87,6 +106,62 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
    await checkpoint("inspection only", true);
    await session.reload();
    await checkpoint("idle after native reload", true);
+  });
+  await t.test("native journal repair owns capture and strict cold restore", async () => {
+   const journal = sm.getSessionFile();
+   const before = await readFile(journal);
+   const leaf = sm.getLeafId();
+   await chmod(journal, 0o400);
+   try {
+    assert.throws(() => sm.appendLabelChange(leaf, "accepted despite EACCES"), { code: "EACCES" });
+    const accepted = sm.getEntries();
+    let released = 0;
+    await assert.rejects(session.acquireCheckpoint({ signal: AbortSignal.timeout(10_000), quiesce: () => () => released++ }), { code: "EACCES" });
+    assert.equal(released, 1);
+    assert.equal(session.isCheckpointHeld, false);
+    assert.deepEqual(await readFile(journal), before);
+    assert.deepEqual(sm.getEntries(), accepted);
+    receipts.push({ label: "ongoing native journal failure", acquisition: "EACCES", priorBytesPreserved: true, acceptedEntriesPreserved: true });
+   } finally { await chmod(journal, 0o600); }
+   // No repeat append or extension reload: core flush runs AFTER the browser hook.
+   sm.branch(leaf);
+   const accepted = sm.getEntries();
+   const revision = sm.getEntriesRevision();
+   const hold = await session.acquireCheckpoint({ signal: AbortSignal.timeout(10_000), quiesce: () => () => {} });
+   try {
+    assert.deepEqual(sm.getEntries(), accepted);
+    assert.equal(sm.getEntriesRevision(), revision);
+    assert.equal(sm.getLeafId(), leaf);
+    assert.deepEqual((await readFile(journal, "utf8")).trim().split("\n").map(JSON.parse), [hold.checkpoint.header, ...hold.checkpoint.entries]);
+    assert.equal(JSON.stringify(sdk.openSessionCheckpoint(hold.checkpoint).getEntries()), JSON.stringify(accepted));
+    receipts.push({ label: "native repair before receipt", sleepReady: hold.sleepReady, sleepBlockers: hold.sleepBlockers, journalMatches: true, strictRestore: true });
+    assert.equal(hold.sleepReady, true, JSON.stringify(receipts.at(-1)));
+    const savedPath = join(root, "repaired-checkpoint.json");
+    sdk.writeSessionCheckpoint(savedPath, hold.checkpoint);
+    const cold = execFileSync(process.execPath, ["--input-type=module", "--eval", `
+     import assert from "node:assert/strict";
+     const sdk = await import(${JSON.stringify(pathToFileURL(sdkPath).href)});
+     const saved = sdk.readSessionCheckpoint(${JSON.stringify(savedPath)});
+     const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false } });
+     const modelRuntime = await sdk.ModelRuntime.create({ allowModelNetwork: false, authPath: ${JSON.stringify(join(agentDir, "auth.json"))}, modelsPath: null });
+     const resourceLoader = new sdk.DefaultResourceLoader({ cwd: saved.selection.cwd, agentDir: ${JSON.stringify(agentDir)}, settingsManager, noExtensions: true, noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true, additionalExtensionPaths: [${JSON.stringify(extensionPath)}] });
+     await resourceLoader.reload();
+     const { session } = await sdk.createAgentSession({ checkpoint: saved, modelRuntime, resourceLoader, settingsManager });
+     await session.bindExtensions({});
+     assert.equal(session.sessionId, saved.selection.sessionId);
+     assert.equal(session.sessionManager.getLeafId(), saved.selection.leafId);
+     assert.deepEqual(session.sessionManager.getEntries(), saved.entries);
+     assert.deepEqual(session.getActiveToolNames(), saved.selection.activeTools);
+     assert.equal(session.model, undefined);
+     session.dispose();
+     console.log("strict cold restore passed");
+    `], { encoding: "utf8", timeout: 30_000, env: process.env });
+    assert.match(cold, /strict cold restore passed/);
+    const mismatched = structuredClone(hold.checkpoint);
+    mismatched.entries.at(-1).label = "not the saved label";
+    assert.throws(() => sdk.openSessionCheckpoint(mismatched), /journal differs/);
+    receipts.push({ label: "repaired journal separate-process restore", exactSelectionAndEntries: true, mismatchedArtifactRejected: true });
+   } finally { hold.release(); }
   });
   await t.test("detached SDK script execution has an explicit extension blocker", async () => {
    const controller = new AbortController();
@@ -171,11 +246,16 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
    beforeResult = undefined;
    assert.ok(stopped.details.recordingPersistenceWarning, "failed append must retain dirty state");
    await chmod(sm.getSessionFile(), 0o400);
-   await checkpoint("failed recording journal retry", false, /persistence is dirty/);
+   const beforeRetry = await readFile(sm.getSessionFile());
+   await assert.rejects(session.acquireCheckpoint({ signal: AbortSignal.timeout(10_000), quiesce: () => () => {} }), { code: "EACCES" });
+   assert.equal(session.isCheckpointHeld, false);
+   assert.deepEqual(await readFile(sm.getSessionFile()), beforeRetry);
+   receipts.push({ label: "failed recording journal retry", acquisition: "EACCES", priorBytesPreserved: true });
    await chmod(sm.getSessionFile(), 0o600);
    await checkpoint("journal repaired but browser live", false, /daemon/);
    await ok({ args: ["close"] });
-   await checkpoint("recording retired; missing native append still blocks", false, /journal differs/);
+   const repaired = await checkpoint("recording retired after native journal repair", true);
+   assert.equal(JSON.stringify(sdk.openSessionCheckpoint(repaired).getEntries()), JSON.stringify(sm.getEntries()));
   });
   await t.test("native ownership waits for script; failed cleanup lease is retained", async () => {
    callController = new AbortController();
@@ -191,12 +271,12 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
    assert.equal(result.details.failureCategory, "cleanup-failed", JSON.stringify(result));
    await checkpoint("failed script cleanup lease", false, /lease/);
    await session.reload();
-   await checkpoint("startup lease recovery does not hide failed native appends", false, /journal differs/);
+   const repaired = await checkpoint("startup lease recovery after native journal repair", true);
+   assert.equal(JSON.stringify(sdk.openSessionCheckpoint(repaired).getEntries()), JSON.stringify(sm.getEntries()));
   });
   }
   await t.test("native root restore survives fresh checkout and state-directory inodes", async () => {
-   // Fault injection deliberately left a divergent native journal. Do not repair
-   // or overwrite it: qualify ordinary restore with a separate clean native session.
+   // Independently qualify root save/reopen with a fresh native session.
    session.dispose();
    loader = createLoader(); await loader.reload();
    sm = sdk.SessionManager.create(cwd, join(root, "restore-sessions"));
