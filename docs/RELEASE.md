@@ -290,12 +290,23 @@ Run as a non-root user in an isolated environment with stock `agent-browser`, Ch
 
 ```bash
 npm run build
+PI_CHECKPOINT_TEST_REQUIRED=1 \
 PI_CHECKPOINT_TEST_SDK=/path/to/native/pi-coding-agent/dist/index.js \
 PI_CHECKPOINT_TEST_BROWSER_DIR=/path/to/browsers/chrome-<version> \
 node --test test/agent-browser.checkpoint-native.test.mjs
 ```
 
 `PI_CHECKPOINT_TEST_EXTENSION` can select a separate baseline checkout. With `PI_CHECKPOINT_TEST_BASELINE_RESTORE=1`, only its existing root-restore path runs and every receipt must retain the old shutdown blocker; this is not positive sleep qualification. The SDK selector is test-only; it does not change package peers or activate an extension. This gate is separate from the default 0.84 unit fixtures and release/platform/model-based gates. Qualification is for ordinary native save-on-close and explicit URL reopen, not a live browser snapshot. Journal fault injection checks that ongoing native I/O errors reject acquisition and preserve prior bytes/accepted entries. Permission repair must recover through core capture without repeating the failed append; recording retry and cleanup leases remain extension-owned. The test also checks exact repaired entries/selection in a separate-process strict cold restore and rejection of a mismatched artifact. After explicit close it observes native daemon exit before asserting idle readiness; an acknowledgement alone is not proof of inactivity.
+
+#### Required Linux PR gate
+
+[`.github/workflows/native-checkpoint.yml`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/.github/workflows/native-checkpoint.yml) runs **Native checkpoint Linux** on every PR to `main`, pushes to `main`, and manual dispatch. Require this check in branch protection before merging checkpoint changes (repository settings are separate from the workflow). It does not replace release/manual-publication gates or full Linux personal-workspace sleep/resume qualification.
+
+The CI-only recipe in [`scripts/ci-native-checkpoint.sh`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/scripts/ci-native-checkpoint.sh) builds public `fitchmultz/pi@8391f1be9a98553dbfae923c31a2d6ddd1733cf1` using its lockfile and documented `npm ci --ignore-scripts`, `hydrate:model-data`, `build:offline` sequence. It uses explicit Node **26.9.0**, the extension's unchanged lockfile, stock **agent-browser 0.38.1**, a fresh stock Chrome-for-Testing download, and Ubuntu ffmpeg. No browser fork, personal profile, credentials, or model calls are involved.
+
+Sources live under a private `/tmp` root, outside HOME ancestry. Setup and tests use `env -i`; verification runs non-root in a loopback-only network namespace after downloads finish. The ordinary **`npm run verify`** runs unchanged, including its documented opt-in skips and live command-reference sampling. The separate native gate requires **11 passed, zero failed/cancelled/skipped/todo** in its TAP output. `PI_CHECKPOINT_TEST_REQUIRED=1` turns a missing SDK into a failure and rejects root/baseline-only runs; missing browser parameters, binaries, or checkpoint APIs fail normally. Without the flag or SDK, direct local invocation remains opt-in and skips.
+
+CI uploads raw setup/build/provenance logs, default verification output and native TAP (including receipts), even on failure. Chrome is downloaded through the pinned stock installer, not separately version-pinned; the actual browser version is logged. These checks prove synthetic native behavior on that runner and sourcehost, not real-site authentication, Electron-app behavior, managed-key cold portability, or complete personal qualification. Parent delivery still owns reviews, the remote run, branch protection and full acceptance.
 
 ### Native Linux socket-root regression
 

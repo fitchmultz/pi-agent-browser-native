@@ -1,0 +1,75 @@
+name: Native checkpoint
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-checkpoint-linux:
+    name: Native checkpoint Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: fitchmultz/pi
+          ref: 8391f1be9a98553dbfae923c31a2d6ddd1733cf1
+          path: pi-host
+          persist-credentials: false
+      - name: Install system prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libatomic1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '26.9.0'
+          package-manager-cache: false
+      - name: Prepare isolated sources and prerequisites
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git -C extension rev-parse HEAD)" = "$EXPECTED_HEAD"
+          root=$(mktemp -d /tmp/piab-ci.XXXXXX)
+          echo "CI_ROOT=$root" >> "$GITHUB_ENV"
+          echo "CI_NODE_BIN=$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
+          cp -a extension pi-host "$root/"
+          mkdir -m 700 "$root/home"
+      - name: Build locked native host and download stock browser
+        run: |
+          env -i HOME="$CI_ROOT/home" TMPDIR=/tmp \
+            PATH="$CI_NODE_BIN:/usr/local/bin:/usr/bin:/bin" \
+            bash "$CI_ROOT/extension/scripts/ci-native-checkpoint.sh" setup "$CI_ROOT"
+      - name: Default verification and all native checkpoints (no external network)
+        run: |
+          # Root only creates a loopback-only namespace, then drops all privileges.
+          sudo unshare --net -- bash -c '
+            set -euo pipefail
+            ip link set lo up
+            exec setpriv --reuid="$1" --regid="$2" --clear-groups \
+              env -i HOME="$3/home" TMPDIR=/tmp PATH="$4:/usr/local/bin:/usr/bin:/bin" \
+              bash "$3/extension/scripts/ci-native-checkpoint.sh" verify "$3"
+          ' -- "$(id -u)" "$(id -g)" "$CI_ROOT" "$CI_NODE_BIN"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always() && env.CI_ROOT != ''
+        with:
+          name: native-checkpoint-linux-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ env.CI_ROOT }}/logs/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove isolated sources and fixtures
+        if: always() && env.CI_ROOT != ''
+        run: rm -rf -- "$CI_ROOT"

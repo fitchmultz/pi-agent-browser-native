@@ -11,11 +11,17 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 const sdkPath = process.env.PI_CHECKPOINT_TEST_SDK;
+const required = process.env.PI_CHECKPOINT_TEST_REQUIRED === "1";
 const extensionPath = resolve(process.env.PI_CHECKPOINT_TEST_EXTENSION ?? ".");
 // Repeat the unchanged extension's root-restore path without asserting new hooks.
 const baselineRestore = process.env.PI_CHECKPOINT_TEST_BASELINE_RESTORE === "1";
 
-test("native idle checkpoint, active controls, and stable root restore", { skip: !sdkPath, timeout: 240_000 }, async (t) => {
+test("native idle checkpoint, active controls, and stable root restore", { skip: !sdkPath && !required, timeout: 240_000 }, async (t) => {
+ if (required) {
+  assert.ok(sdkPath, "PI_CHECKPOINT_TEST_REQUIRED=1 requires PI_CHECKPOINT_TEST_SDK");
+  assert.equal(baselineRestore, false, "Required qualification cannot use baseline-only restore");
+  assert.notEqual(process.getuid?.(), 0, "Required qualification must run non-root for EACCES fault injection");
+ }
  const sdk = await import(pathToFileURL(sdkPath).href);
  assert.equal(typeof sdk.createAgentSession, "function");
  assert.ok(process.env.PI_CHECKPOINT_TEST_BROWSER_DIR, "Supply an installed stock Chrome-for-Testing directory (binaries only)");
