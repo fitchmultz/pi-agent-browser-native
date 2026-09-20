@@ -19,22 +19,22 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: extension
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/pi
-          ref: 8391f1be9a98553dbfae923c31a2d6ddd1733cf1
+          ref: 97891a8511c101ef1cb53d72dfdcb60e0e2c0e89
           path: pi-host
           persist-credentials: false
       - name: Install system prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg libatomic1
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '26.9.0'
           package-manager-cache: false
@@ -63,7 +63,7 @@ jobs:
               env -i HOME="$3/home" TMPDIR=/tmp PATH="$4:/usr/local/bin:/usr/bin:/bin" \
               bash "$3/extension/scripts/ci-native-checkpoint.sh" verify "$3"
           ' -- "$(id -u)" "$(id -g)" "$CI_ROOT" "$CI_NODE_BIN"
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && env.CI_ROOT != ''
         with:
           name: native-checkpoint-linux-${{ github.event.pull_request.head.sha || github.sha }}

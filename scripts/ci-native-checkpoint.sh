@@ -20,7 +20,7 @@ case "$mode" in
       npm --version
       git rev-parse HEAD
       git -C "$root/pi-host" rev-parse HEAD
-      [[ $(git -C "$root/pi-host" rev-parse HEAD) == 8391f1be9a98553dbfae923c31a2d6ddd1733cf1 ]]
+      [[ $(git -C "$root/pi-host" rev-parse HEAD) == 97891a8511c101ef1cb53d72dfdcb60e0e2c0e89 ]]
       sha256sum package-lock.json "$root/pi-host/package-lock.json"
     } 2>&1 | tee "$root/logs/provenance.log"
     (
