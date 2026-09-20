@@ -639,6 +639,10 @@ Policy-required URL reads keep the two-call read → confirm/deny flow. Returned
 
 Full live identity, browser-independent native reads/confirmations and detailed recording receipts require the companion upstream fixes; the current recommended release does not yet supply all of them. Older supported versions remain accepted with unavailable evidence marked unknown. The extension does not upgrade or restart your installed browser to obtain these fields.
 
+### Native working-session checkpoints
+
+On Pi hosts with `session_checkpoint`, an unused or cleanly closed browser integration can qualify for sleep. Live browsers, attachments, scripts, unfinished recordings/cleanup leases, and uncertain journal persistence keep compute alive. Checkpointing never closes browsers or changes cleanup ownership. Native save-on-close and per-root restore remain the persistence path; page JavaScript, unsaved forms, and live recordings are not serialized. See [checkpoint boundaries](docs/ARCHITECTURE.md#native-checkpoint-boundary).
+
 ### Profile selection
 
 The wrapper does not clone profiles or hide what upstream Chrome/Chromium profile or executable you chose. Passing `--profile` or `--executable-path` is an explicit upstream `agent-browser` choice. Visible page content from real profiles is model-visible and may persist in transcripts or saved artifacts; redaction protects credential-like cookie/storage/auth values, not ordinary page text you asked the browser to read. Redactions use `[REDACTED]` (URL-encoded in parsed URLs); ordinary technical phrases such as `bearer token` stay intact. URL redaction includes `code`, `authorization_session_id`, and auth-context `state` / `nonce` across visible text, details, spills, and `outputPath` exports. URLs needing no redaction keep their original spelling.

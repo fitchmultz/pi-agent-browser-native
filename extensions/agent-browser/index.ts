@@ -43,6 +43,7 @@ import { isRecord } from "./lib/parsing.js";
 import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
 import { withNativeSessionDefaults } from "./lib/orchestration/native-session-defaults.js";
+import { inspectManagedSessionDaemon } from "./lib/orchestration/browser-run/managed-session-daemon-policy.js";
 import {
 	MINIMUM_AGENT_BROWSER_VERSION,
 	SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
@@ -1357,6 +1358,68 @@ export default function agentBrowserExtension(
 			flushRecordingReservations();
 			notifyRecordingPersistence(ctx);
 		}));
+	});
+
+	// Additive native checkpoint event; the package's 0.84 validation types predate it.
+	// Pi owns awaited tools/events (including their execution queues). Only script
+	// children and retained browser/recording resources need extension-side checks.
+	const checkpointPi = pi as ExtensionAPI & { on(event: "session_checkpoint", handler: (event: { signal: AbortSignal }, ctx: ExtensionContext) => Promise<{ sleepReady: boolean; reason?: string }>): void };
+	checkpointPi.on("session_checkpoint", async (event, ctx) => {
+		const blocked = (reason: string) => ({ sleepReady: false, reason });
+		if (activeScriptControllers.size || activeScriptExecutions.size) return blocked("Browser script execution or cleanup is pending");
+		flushRecordingReservations();
+		if (recordingReservationsDirty) return blocked("Browser recording journal persistence is dirty");
+		if (activeRecordingReservations.size) return blocked("Browser recording is pending; finish it explicitly before sleep");
+		const entries = ctx.sessionManager.getEntries();
+		if ([...getScriptSessionLeasesFromBranch(entries).values()].some(lease => lease.cleanup !== "closed")
+			|| [...ownedManagedSessions.values()].some(owner => isAgentBrowserScriptSessionName(owner.sessionName))) {
+			return blocked("Browser script cleanup lease is unresolved");
+		}
+		if (getActiveElectronRecords(ownedElectronLaunchRecords).length || getActiveElectronRecords(electronLaunchRecords).length
+			|| [...electronChildProcesses.values()].some(child => child.exitCode === null && child.signalCode === null)) {
+			return blocked("Electron launch is still active");
+		}
+		if (attachedSessionKeys.size || restoreAttachedSessionKeysFromBranch(entries).size) return blocked("Attached browser state is caller-owned and not checkpointed");
+		if (traceOwners.size || [...networkRoutesBySession.values()].some(routes => routes.length)) return blocked("Browser trace or network routes are still active");
+
+		// Include off-branch and caller-owned/root identities, without acquiring
+		// cleanup ownership. Transcript page/ref details do not serialize a browser.
+		const sessions = new Map(ownedManagedSessions);
+		if (managedSessionActive) trackOwnedManagedSession(sessions, managedSessionName, managedSessionCwd, { namespace: managedSessionNamespace });
+		for (const entry of entries) {
+			if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "agent_browser") continue;
+			const details = isRecord(entry.message.details) ? entry.message.details : undefined;
+			// Helpers can launch before a main-process failure. Conversely, native
+			// launch flags on sessionless reads can open the unnamed default browser.
+			const sessionName = typeof details?.sessionName === "string" ? details.sessionName
+				: details?.agentBrowserStarted === true ? "default" : undefined;
+			if (!sessionName) continue;
+			const namespace = typeof details?.namespace === "string" ? details.namespace : undefined;
+			const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
+			if (!sessions.has(key)) trackOwnedManagedSession(sessions, sessionName, ctx.cwd, { namespace });
+		}
+		for (const owner of sessions.values()) {
+			event.signal.throwIfAborted();
+			const daemon = await inspectManagedSessionDaemon({ ...owner, signal: event.signal, timeoutMs: 2_000 });
+			if (daemon.status !== "inactive") return blocked("Browser daemon is live or unverified; finish browser work explicitly before sleep");
+		}
+		// A failed native append can enter branch memory before the write throws.
+		// Retrying reservation rows repairs their semantics, not that missing native
+		// entry. Do not authorize a cut that native checkpoint restore would reject.
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (sessionFile) {
+			try {
+				const text = readFileSync(sessionFile, "utf8").trim();
+				const journal = text ? text.split("\n").map(line => JSON.parse(line)) : [];
+				if (JSON.stringify(journal) !== JSON.stringify([ctx.sessionManager.getHeader(), ...entries])) return blocked("Browser session journal differs from native memory after persistence failure");
+			} catch (error) {
+				// Native checkpoint restore materializes a not-yet-created journal.
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") return blocked("Browser session journal persistence could not be verified");
+			}
+		}
+		// No detached writer remains to pause/resume. Native ingress stays held;
+		// checkpoint never closes a browser or changes ordinary shutdown ownership.
+		return { sleepReady: true };
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {

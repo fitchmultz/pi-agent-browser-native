@@ -66,7 +66,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-guidance-test-"));
 	await withPatchedEnv({ BRAVE_API_KEY: "demo-key", EXA_API_KEY: undefined, HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
 		const harness = createExtensionHarness({ cwd: process.cwd() });
-		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_shutdown", "session_start", "session_tree", "tool_call", "tool_result"]);
+		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_checkpoint", "session_shutdown", "session_start", "session_tree", "tool_call", "tool_result"]);
 		assert.equal(harness.tool.name, "agent_browser");
 		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
 		assert.match(harness.tool.promptSnippet, /real web workflows/);
