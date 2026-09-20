@@ -43,7 +43,7 @@ import { isRecord } from "./lib/parsing.js";
 import { runAgentBrowserProcess } from "./lib/process.js";
 import { getAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
 import { withNativeSessionDefaults } from "./lib/orchestration/native-session-defaults.js";
-import { inspectManagedSessionDaemon } from "./lib/orchestration/browser-run/managed-session-daemon-policy.js";
+import { closeManagedSession, inspectManagedSessionDaemon } from "./lib/orchestration/browser-run/managed-session-daemon-policy.js";
 import {
 	MINIMUM_AGENT_BROWSER_VERSION,
 	SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
@@ -65,9 +65,9 @@ import {
 	runAgentBrowserScript,
 	type AgentBrowserScriptRunResult,
 } from "./lib/input-modes/script.js";
-import { closeManagedSession, getSessionContextKey, runAgentBrowserTool, type AgentBrowserToolResult, type BrowserRunState, type TraceOwner } from "./lib/orchestration/browser-run/index.js";
+import type { AgentBrowserToolResult, BrowserRunState, TraceOwner } from "./lib/orchestration/browser-run/types.js";
 import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination, getRecordContactSheetDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
-import { findElectronLaunchRecordForSession, getActiveElectronRecords } from "./lib/orchestration/browser-run/session-state.js";
+import { findElectronLaunchRecordForSession, getActiveElectronRecords, getSessionContextKey } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchCommandArgument, parseUserBatchStdin } from "./lib/orchestration/batch-stdin.js";
 import {
 	ELECTRON_POST_COMMAND_STATUS_SETTLE_MS,
@@ -1816,6 +1816,9 @@ export default function agentBrowserExtension(
 				? getSessionContextKey(explicitSessionName, callerOwnedSessionNamespace) ?? explicitSessionName
 				: undefined;
 			const runBrowserCommand = async (daemonInactive?: boolean) => {
+				// Load execution-only preparation/output code inside the existing session queue,
+				// before capturing state. Registration, rendering, and restore stay synchronous/eager.
+				const { runAgentBrowserTool } = await import("./lib/orchestration/browser-run/index.js");
 				flushRecordingReservations();
 				const branchRestoreGenerationAtStart = branchRestoreGeneration;
 				const generationAtStart = branchStateGeneration;
