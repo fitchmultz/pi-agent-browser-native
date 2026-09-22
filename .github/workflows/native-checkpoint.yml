@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PI_AUTOMATION_REF: fe049ea97a8c91d1a4c3a0958a85b37c7759dcc6 # v1.0.0
+  PI_AUTOMATION_REF: 117b227140265329055bcda5927ac170c6301d75 # v1.0.0
 
 jobs:
   native-checkpoint-linux:

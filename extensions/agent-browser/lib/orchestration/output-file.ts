@@ -156,7 +156,7 @@ export async function applyAgentBrowserOutputPath(options: {
 		return {
 			...options.result,
 			content: appendOutputFileNotice(options.result, `Output file rejected: ${message}`, true),
-			details: { ...details, failureCategory: "validation-error", outputFile, resultCategory: "failure" },
+			details: { ...details, error: message, summary: "Output file rejected.", failureCategory: "validation-error", outputFile, resultCategory: "failure" },
 			isError: true,
 		};
 	}
@@ -180,9 +180,9 @@ export async function applyAgentBrowserOutputPath(options: {
 			? (() => {
 				const rest = { ...options.result.details };
 				delete rest.successCategory;
-				return { ...rest, failureCategory: rest.failureCategory ?? "upstream-error", outputFile, resultCategory: "failure" };
+				return { ...rest, error: message, summary: "Output file failed.", failureCategory: rest.failureCategory ?? "upstream-error", outputFile, resultCategory: "failure" };
 			})()
-			: { failureCategory: "upstream-error", outputFile, resultCategory: "failure" };
+			: { error: message, summary: "Output file failed.", failureCategory: "upstream-error", outputFile, resultCategory: "failure" };
 		return {
 			...options.result,
 			content: appendOutputFileNotice(options.result, `Output file failed: ${requestedPath} (${message}).`, true),

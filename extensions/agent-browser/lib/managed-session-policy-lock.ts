@@ -155,8 +155,9 @@ function scopeCovers(outer: ExecutionClaimIdentity[], inner: ExecutionClaimIdent
 export async function withBrowserExecutionLocks<T>(options: {
 	identities: readonly BrowserExecutionIdentity[];
 	signal?: AbortSignal;
-	/** Absolute epoch-ms deadline for waiting AND execution. */
+	/** Absolute epoch-ms deadline; native direct calls retain their own execution watchdogs. */
 	deadline: number;
+	waitOnly?: boolean;
 }, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
 	if (!Number.isFinite(options.deadline)) throw new Error("Browser execution coordination requires a finite deadline.");
 	const identities = groupExecutionIdentities(options.identities);
@@ -186,6 +187,7 @@ export async function withBrowserExecutionLocks<T>(options: {
 		}
 		const execute = async () => {
 			checkBudget();
+			if (options.waitOnly) clearTimeout(timer);
 			const scope: ExecutionScope = { identities: parent?.identities ?? identities, active: true, signal, children: Promise.resolve() };
 			try { return await executionScope.run(scope, () => run(signal)); }
 			finally { scope.active = false; await scope.children; }
@@ -204,8 +206,9 @@ export function withBrowserExecutionLock<T>(options: {
 	identity: BrowserExecutionIdentity;
 	signal?: AbortSignal;
 	deadline: number;
+	waitOnly?: boolean;
 }, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-	return withBrowserExecutionLocks({ identities: [options.identity], signal: options.signal, deadline: options.deadline }, run);
+	return withBrowserExecutionLocks({ identities: [options.identity], signal: options.signal, deadline: options.deadline, waitOnly: options.waitOnly }, run);
 }
 
 function parseOwner(content: string): PolicyLockOwner | undefined {
@@ -381,7 +384,7 @@ export async function acquireManagedSessionPolicyLock(options: {
 	catch { return undefined; }
 	const scope = executionScope.getStore();
 	if (scope) {
-		if (!scope.active || scope.signal.aborted || !scopeCovers(scope.identities, groupExecutionIdentities([identity]))) return undefined;
+		if (!scope.active || !scopeCovers(scope.identities, groupExecutionIdentities([identity]))) return undefined;
 		return { release: async () => undefined };
 	}
 	return acquireExecutionClaim({ identity: groupExecutionIdentities([identity])[0]!, signal: options.signal, timeoutMs: options.timeoutMs });

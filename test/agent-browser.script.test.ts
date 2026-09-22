@@ -11,7 +11,7 @@ import {
 	AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES,
 	AGENT_BROWSER_SCRIPT_MAX_CALLS,
 	bindBrowserCodeCall,
-	compileAgentBrowserScript,
+	validateAgentBrowserScriptSource,
 	runAgentBrowserScript,
 	validateAgentBrowserScriptBrowserParams,
 	type AgentBrowserScriptBrowserEnvelope,
@@ -55,7 +55,7 @@ test("code validates JSON calls without restricting native commands or local aut
 		assert.deepEqual(validateAgentBrowserScriptBrowserParams({ args }).params?.args, args);
 	}
 	assert.match(validateAgentBrowserScriptBrowserParams({ args: ["get", "title"], job: {} }).error ?? "", /does not support job/);
-	assert.match(compileAgentBrowserScript("💥".repeat(AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES / 2)).error ?? "", /65536 bytes or less/);
+	assert.match(validateAgentBrowserScriptSource("💥".repeat(AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES / 2)).error ?? "", /65536 bytes or less/);
 	assert.deepEqual(bindBrowserCodeCall({ args: ["--namespace", "", "--session", "chosen", "get", "url"] }, { sessionName: "chosen" }).args, ["--namespace", "", "--session", "chosen", "get", "url"]);
 	assert.throws(() => bindBrowserCodeCall({ args: ["batch", "close --all"] }, { sessionName: "chosen" }), /namespace-wide close/);
 });
@@ -234,6 +234,49 @@ test("code cannot silently switch its leased identity or close another session",
 		assert.equal((await readInvocationLog(logPath)).some(call => call.args.includes("other") || call.args.includes("close")), false);
 		const recovery = JSON.parse(result.content.find(item => item.type === "text")?.text ?? "{}");
 		assert.equal(recovery.failures.length, 2, "unemitted errors must still be visible");
+	});
+});
+
+test("a code deadline expires while waiting behind another local code cell", { concurrency: false, timeout: 10_000 }, async () => {
+	await withCodeHarness(async (harness, logPath) => {
+		const tool = harness.getTool("agent_browser_code")!;
+		const first = executeRegisteredTool(tool, harness.ctx, { code: 'await browser({args:["get","url"]}); const end=Date.now()+1500; while(Date.now()<end) {} emit("first");' });
+		while (!(await readInvocationLog(logPath)).some(call => call.args.includes("get"))) await delay(10);
+		const second = executeRegisteredTool(tool, harness.ctx, { code: 'emit("second");', timeoutMs: 50 });
+		try {
+			const result = await Promise.race([second, delay(500).then(() => undefined)]);
+			assert.ok(result, "queued code must time out without waiting for the first cell to finish");
+			assert.equal(result.isError, true);
+			assert.equal(result.details?.failureCategory, "timeout");
+		} finally { await Promise.all([first, second]); }
+	});
+});
+
+test("code export failures preserve partial data and render one truthful observation", { concurrency: false }, async () => {
+	await withCodeHarness(async (harness, _log, dir) => {
+		await writeFile(join(dir, "blocked"), "existing file");
+		const result = await executeRegisteredTool(harness.getTool("agent_browser_code")!, harness.ctx, { code: 'emit({done:true});', outputPath: join(dir, "blocked", "out.json") });
+		const observation = JSON.parse(result.content.find(item => item.type === "text")?.text ?? "{}");
+		assert.equal(result.isError, true);
+		assert.equal(observation.success, false);
+		assert.equal(observation.resultCategory, "failure");
+		assert.equal(observation.failureCategory, "upstream-error");
+		assert.match(observation.error, /ENOTDIR|EEXIST/);
+		assert.deepEqual(observation.data, { done: true });
+		assert.doesNotMatch(observation.summary, /completed/);
+	});
+});
+
+test("raw batch credentials are absent from code intent and completion journals", { concurrency: false }, async () => {
+	await withCodeHarness(async (harness, logPath) => {
+		const rows = ['cookies set session synthetic-cookie-value', 'storage local set token synthetic-storage-value', 'clipboard write synthetic-clipboard-value'];
+		const result = await executeRegisteredTool(harness.getTool("agent_browser_code")!, harness.ctx, { code: `await browser({args:["batch","--bail",...${JSON.stringify(rows)}]}); emit("done");` });
+		assert.equal(result.isError, false, JSON.stringify(result));
+		const journal = JSON.stringify(harness.appendedEntries.filter(entry => entry.customType === BROWSER_TRANSITION_ENTRY));
+		assert.doesNotMatch(journal, /synthetic-(?:cookie|storage|clipboard)-value/);
+		assert.match(journal, /REDACTED/);
+		const invocation = (await readInvocationLog(logPath)).find(call => call.args.includes("batch"));
+		assert.deepEqual(invocation?.args.slice(-3), rows, "execution argv remains unchanged");
 	});
 });
 

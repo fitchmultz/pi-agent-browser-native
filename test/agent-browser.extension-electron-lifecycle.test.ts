@@ -1061,9 +1061,9 @@ setTimeout(() => {
 			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
 			assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
 			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
-			assert.equal(probeResult.details?.failureCategory, "timeout", JSON.stringify(probeResult));
+			assert.equal(probeResult.details?.failureCategory, "upstream-error", JSON.stringify(probeResult));
 			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "failed");
-			assert.match(probeResult.content[0]?.text ?? "", /deadline exceeded/);
+			assert.match(probeResult.content[0]?.text ?? "", /Electron probe failed/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

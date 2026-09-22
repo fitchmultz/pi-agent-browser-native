@@ -21,11 +21,13 @@ import {
 	isAgentBrowserSessionIdentityKeyInNamespace,
 	isUpstreamEnvFlagEnabled,
 	PREVALIDATED_VALUE_FLAGS,
+	projectUpstreamGlobalFlags,
 	resolveAgentBrowserNamespace,
 	scanUpstreamGlobalFlagOccurrences,
 	stripUpstreamGlobalFlags,
 } from "./argv-grammar.js";
 import { needsManagedSession } from "./command-policy.js";
+import { parseBatchCommandArgument } from "./orchestration/batch-stdin.js";
 import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand } from "./command-taxonomy.js";
 import {
 	hasLaunchScopedFlagToken,
@@ -460,6 +462,16 @@ export function redactInvocationArgs(args: string[]): string[] {
 		}
 	}
 
+	const batch = projectUpstreamGlobalFlags(args);
+	if (batch.tokens[0] === "batch") {
+		for (let index = 1; index < batch.tokens.length; index++) {
+			if (batch.tokens[index] === "--bail") continue;
+			const step = parseBatchCommandArgument(batch.tokens[index]).step;
+			if (!step) continue;
+			const safe = redactInvocationArgs(step);
+			if (safe.some((token, offset) => token !== step[offset])) redacted[batch.indices[index]] = safe.map(token => `'${token.replaceAll("'", "'\\''")}'`).join(" ");
+		}
+	}
 	return redacted;
 }
 

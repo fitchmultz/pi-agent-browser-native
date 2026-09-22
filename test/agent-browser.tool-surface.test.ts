@@ -21,6 +21,7 @@ async function withSurface(
 		all: () => string[];
 		calls: AgentBrowserExecuteParams[];
 		codeCalls: unknown[];
+		reload: () => Promise<void>;
 	}) => Promise<void>,
 	options: { tools?: string[]; sessionManager?: SessionManager } = {},
 ) {
@@ -65,6 +66,7 @@ async function withSurface(
 				active: () => session.getActiveToolNames(),
 				all: () => session.getAllTools().map(({ name }) => name),
 				calls, codeCalls,
+				reload: () => session.reload(),
 			});
 		} finally {
 			session.dispose();
@@ -126,6 +128,19 @@ test("startup preserves native transcript activation and honors native removals"
 	}, { sessionManager: manager });
 });
 
+for (const restoredQa of [false, true]) {
+	test(`native reload preserves compact activation (restored QA: ${restoredQa})`, async () => {
+		const manager = SessionManager.inMemory();
+		if (restoredQa) manager.appendMessage({ role: "system", content: "", timestamp: 1, toolsAdded: [{ name: "agent_browser_qa", description: "QA", parameters: AGENT_BROWSER_QA_PARAMS }] });
+		await withSurface(async ({ active, reload }) => {
+			const expected = [...baseTools, ...(restoredQa ? ["agent_browser_qa"] : [])].sort();
+			assert.deepEqual(active().sort(), expected);
+			await reload();
+			assert.deepEqual(active().sort(), expected);
+		}, { sessionManager: manager });
+	});
+}
+
 test("explicit native CLI tool selection stays active and the loader cannot override unavailable tools", async () => {
 	const original = process.argv;
 	try {
@@ -140,11 +155,11 @@ test("explicit native CLI tool selection stays active and the loader cannot over
 	} finally { process.argv = original; }
 });
 
-test("SDK-selected advanced tools stay reachable when the loader is not selected", async () => {
-	await withSurface(async ({ active }) => {
-		assert.deepEqual(active(), ["agent_browser_qa"]);
-	}, { tools: ["agent_browser_qa"] });
-});
+for (const tools of [["agent_browser_qa"], ["agent_browser_qa", "agent_browser_tools"]]) {
+	test(`SDK-selected advanced tools stay active with selection ${tools.join(",")}`, async () => {
+		await withSurface(async ({ active }) => { assert.deepEqual(active().sort(), [...tools].sort()); }, { tools });
+	});
+}
 
 test("internal input normalization preserves QA semantics without public job/script routes", () => {
 	for (const params of [{ script: "emit(1)" }, { job: { steps: [{ action: "snapshot" }] } }]) {

@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { getBrowserExecutionLockPath, resolveBrowserExecutionIdentity, withBrowserExecutionLock } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
+import { acquireManagedSessionPolicyLock, getBrowserExecutionLockPath, resolveBrowserExecutionIdentity, withBrowserExecutionLock } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
 import { resolveAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import { withAgentBrowserProcessEnvironment } from "../extensions/agent-browser/lib/process-environment.js";
 
@@ -72,6 +72,31 @@ async function fixture(t: TestContext) {
 	};
 	return { root, namespace, identity, claims, published, options: { socketDir: root, namespace, sessionName: "one", mode: "hold" } };
 }
+
+test("direct-call lock waiting leaves execution to native watchdogs", async t => {
+	const f = await fixture(t);
+	await withBrowserExecutionLock({ identity: f.identity, deadline: Date.now() + 1_000, waitOnly: true }, async signal => {
+		await delay(1_100);
+		assert.equal(signal.aborted, false, "the queue deadline must not truncate a native command budget");
+	});
+	assert.deepEqual(await f.claims(), []);
+});
+
+test("cancelled execution can lend an already-held claim to independently bounded cleanup", async t => {
+	const f = await fixture(t);
+	const controller = new AbortController();
+	await withAgentBrowserProcessEnvironment({ PI_AGENT_BROWSER_SOCKET_DIR: f.root, AGENT_BROWSER_SOCKET_DIR: f.root }, () =>
+		withBrowserExecutionLock({ identity: f.identity, signal: controller.signal, deadline: Date.now() + 5_000 }, async signal => {
+			controller.abort();
+			assert.equal(signal.aborted, true);
+			const cleanup = await acquireManagedSessionPolicyLock({ sessionName: "one", namespace: f.namespace, signal: new AbortController().signal });
+			assert.ok(cleanup, "cleanup borrows the covered claim until the callback drains");
+			assert.equal(await acquireManagedSessionPolicyLock({ sessionName: "other", namespace: f.namespace }), undefined, "cleanup cannot upgrade identity");
+			await cleanup.release();
+			assert.equal((await f.claims()).length, 1, "borrowing does not release the outer claim");
+		}));
+	assert.deepEqual(await f.claims(), []);
+});
 
 for (const ablate of [true, false]) {
 	test(`two processes ${ablate ? "reproduce the uncoordinated" : "prevent the"} verify-then-action race`, { timeout: 30_000 }, async t => {

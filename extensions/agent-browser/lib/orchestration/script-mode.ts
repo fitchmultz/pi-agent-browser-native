@@ -14,8 +14,6 @@ import type { AgentBrowserObservation, ArtifactVerificationSummary, FileArtifact
 import { attachInlineImage } from "../results/presentation/artifacts.js";
 import { projectAgentBrowserObservation } from "../results/presentation/content.js";
 import { redactPresentationData } from "../results/presentation/diagnostics.js";
-import { renderAgentBrowserObservation } from "../results/presentation/large-output.js";
-import type { PersistentSessionArtifactStore } from "../temp.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
 
 const SCRIPT_SESSION_ENTRY_TYPE = "agent-browser-script-session";
@@ -86,7 +84,7 @@ export function createBrowserCodeOutput() {
 			selected.set(id, presentation.content.filter(item => item.type === "image"));
 			selectedBytes += file.size;
 		},
-		async finish(run: AgentBrowserScriptRunResult, sessionName: string, namespace?: string, persistentArtifactStore?: PersistentSessionArtifactStore): Promise<AgentBrowserToolResult> {
+		async finish(run: AgentBrowserScriptRunResult, sessionName: string, namespace?: string): Promise<AgentBrowserToolResult> {
 			let data: unknown;
 			let outputError: string | undefined;
 			try {
@@ -113,10 +111,9 @@ export function createBrowserCodeOutput() {
 				imageObservations: [...selected.keys()].map(id => ({ ...images.get(id)!.observation, id })),
 			};
 			const summary = success ? `Browser code completed (${run.callCount} calls).` : "Browser code failed.";
-			const rendered = await renderAgentBrowserObservation({ content: [...selected.values()].flat(), details: { ...observation, summary }, json: true, succeeded: success, persistentArtifactStore });
 			return {
-				content: rendered.content,
-				details: { ...observation, artifactManifest: rendered.artifactManifest, codeSteps: run.steps, summary },
+				content: [...selected.values()].flat(),
+				details: { ...observation, codeSteps: run.steps, summary },
 				isError: !success,
 			};
 		},

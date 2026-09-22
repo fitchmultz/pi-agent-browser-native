@@ -143,19 +143,18 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		},
 	});
 
-	pi.on("session_start", async (event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		// Pi owns selected tools and their durable system-message history; keep no parallel registry.
-		if (event.reason === "reload") return;
 		const argv = process.argv.slice(2);
 		const delimiter = argv.indexOf("--");
 		if ((delimiter < 0 ? argv : argv.slice(0, delimiter)).some((arg) => arg === "--tools" || arg === "-t")) return;
-		// Without the loader, hiding explicitly selected SDK capabilities makes them unreachable.
-		if (!pi.getAllTools().some(tool => tool.name === "agent_browser_tools")) return;
+		// A host-filtered catalog is an explicit selection, not our default surface.
+		const available = new Set(pi.getAllTools().map(({ name }) => name));
+		if (!["agent_browser", "agent_browser_code", "agent_browser_tools", ...advancedNames].every(name => available.has(name))) return;
 		const { getCurrentSystemMessage } = await import("@earendil-works/pi-ai");
 		const current = getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
 		const restored = new Set(current?.toolsAdded?.map(({ name }) => name));
 		const active = pi.getActiveTools().filter((name) => !advancedNames.has(name) || restored.has(name));
-		const available = new Set(pi.getAllTools().map(({ name }) => name));
 		pi.setActiveTools([...new Set([...active, ...[...restored].filter((name) => advancedNames.has(name) && available.has(name))])]);
 	});
 }

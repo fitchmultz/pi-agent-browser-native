@@ -720,8 +720,9 @@ async function verifyLifecycle(options = {}) {
 			verbose,
 			predicate: (result) => result?.details?.failureCategory === "qa-failure" && result?.details?.resultCategory === "failure" && result?.isError === true,
 		});
-		const qaObservation = JSON.parse(resultText(qaFailureReport.result));
-		assert(qaObservation.success === false && qaObservation.failureCategory === "qa-failure", "QA failure was not visible in the canonical JSON observation.");
+		const qaText = resultText(qaFailureReport.result);
+		assert(qaText.includes('"success":false') && qaText.includes('"failureCategory":"qa-failure"'), "QA failure was not visible in the canonical observation.");
+		assert(qaText.includes("Result category: failure; failureCategory: qa-failure; Pi tool isError: true."), "QA failure transcript row did not include the Pi isError patch notice.");
 
 		await capturePane(tmuxSession, join(artifactsDir, "success-pane.txt"));
 		return {

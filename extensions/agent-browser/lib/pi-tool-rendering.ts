@@ -1,6 +1,7 @@
 import type { AgentToolResult, Theme, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
+import { BROWSER_RESULT_TOOLS } from "./browser-transcript.js";
 import { compileAgentBrowserElectron } from "./input-modes/electron.js";
 import { compileAgentBrowserQaPreset } from "./input-modes/job.js";
 import { compileAgentBrowserNetworkSourceLookup, compileAgentBrowserSourceLookup } from "./input-modes/lookups.js";
@@ -235,7 +236,7 @@ function appendModelVisibleFailureCategoryNotice(content: AgentBrowserToolConten
 }
 
 export function buildAgentBrowserToolResultPatch(event: ToolResultEvent): AgentBrowserToolResultPatch | undefined {
-	if (event.toolName !== "agent_browser" && !event.toolName.startsWith("agent_browser_")) return undefined;
+	if (!BROWSER_RESULT_TOOLS.has(event.toolName)) return undefined;
 	const preservesParseableJson = (event.toolName === "agent_browser_code" || agentBrowserToolResultRequestedJson(event)) && agentBrowserToolResultHasParseableJsonContent(event.content);
 	const notice = preservesParseableJson ? undefined : formatModelVisibleFailureCategoryNotice(event.details);
 	const content = notice ? appendModelVisibleFailureCategoryNotice(event.content, notice) : undefined;

@@ -39,10 +39,6 @@ function resolveScriptWorkerPath(): string {
 const SCRIPT_SESSION_NAME_PATTERN = /^piab-script-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 
-export interface CompiledAgentBrowserScript {
-	code: string;
-}
-
 export interface AgentBrowserScriptBrowserParams {
 	args: string[];
 	stdin?: string;
@@ -93,12 +89,12 @@ type ScriptParentMessage =
 	| { code: string; type: "start" }
 	| { envelope: AgentBrowserScriptBrowserEnvelope; id: number; type: "response" };
 
-export function compileAgentBrowserScript(input: unknown): { compiled?: CompiledAgentBrowserScript; error?: string } {
+export function validateAgentBrowserScriptSource(input: unknown): { error?: string } {
 	if (typeof input !== "string") return { error: "script must be a string." };
 	const bytes = Buffer.byteLength(input, "utf8");
 	return bytes > AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES
 		? { error: `script must be ${AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES} bytes or less.` }
-		: { compiled: { code: input } };
+		: {};
 }
 
 export function createAgentBrowserScriptCloseArgs(sessionName: string): string[] {
@@ -111,7 +107,7 @@ export function isAgentBrowserScriptSessionName(value: unknown): value is string
 
 
 
-export function validateAgentBrowserScriptBrowserParams(input: unknown): { params?: AgentBrowserScriptBrowserParams; error?: string; policyBlocked?: boolean } {
+export function validateAgentBrowserScriptBrowserParams(input: unknown): { params?: AgentBrowserScriptBrowserParams; error?: string } {
 	if (!isRecord(input)) return { error: "script browser(params) requires an object." };
 	const unsupportedField = Object.keys(input).find((field) => !["args", "stdin", "timeoutMs"].includes(field));
 	if (unsupportedField) return { error: `script browser(params) does not support ${unsupportedField}; use only args, stdin, and timeoutMs.` };
@@ -152,11 +148,11 @@ export function bindBrowserCodeCall(params: AgentBrowserScriptBrowserParams, ide
 	] };
 }
 
-function buildRejectedCallEnvelope(error: string, policyBlocked: boolean): AgentBrowserScriptBrowserEnvelope {
+function buildRejectedCallEnvelope(error: string): AgentBrowserScriptBrowserEnvelope {
 	return {
 		data: null,
 		error,
-		failureCategory: policyBlocked ? "policy-blocked" : "validation-error",
+		failureCategory: "validation-error",
 		success: false,
 		resultCategory: "failure",
 		summary: error,
@@ -165,7 +161,7 @@ function buildRejectedCallEnvelope(error: string, policyBlocked: boolean): Agent
 
 function normalizeBrowserEnvelope(value: AgentBrowserScriptBrowserEnvelope): AgentBrowserScriptBrowserEnvelope {
 	if (!isRecord(value) || typeof value.success !== "boolean" || (value.resultCategory !== "success" && value.resultCategory !== "failure")) {
-		return buildRejectedCallEnvelope("The browser executor returned an invalid code observation.", false);
+		return buildRejectedCallEnvelope("The browser executor returned an invalid code observation.");
 	}
 	return value;
 }
@@ -245,7 +241,7 @@ function serializeFinalOutput(value: unknown): string | undefined {
 }
 
 export async function runAgentBrowserScript(options: RunAgentBrowserScriptOptions): Promise<AgentBrowserScriptRunResult> {
-	const compiled = compileAgentBrowserScript(options.code);
+	const compiled = validateAgentBrowserScriptSource(options.code);
 	if (compiled.error) {
 		return buildFailedRun({ callCount: 0, emitCount: 0, error: compiled.error, failureCategory: "validation-error", rejectedCallCount: 0, steps: [] });
 	}
@@ -419,13 +415,13 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 				let envelope: AgentBrowserScriptBrowserEnvelope;
 				if (!validated.params) {
 					rejectedCallCount += 1;
-					envelope = buildRejectedCallEnvelope(validated.error ?? "Invalid script browser call.", validated.policyBlocked === true);
+					envelope = buildRejectedCallEnvelope(validated.error ?? "Invalid script browser call.");
 				} else {
 					activeCallController = new AbortController();
 					try {
 						envelope = normalizeBrowserEnvelope(await options.dispatch(validated.params, activeCallController.signal));
 					} catch (error) {
-						envelope = buildRejectedCallEnvelope(redactSensitiveText(error instanceof Error ? error.message : "The browser executor failed while dispatching this call."), false);
+						envelope = buildRejectedCallEnvelope(redactSensitiveText(error instanceof Error ? error.message : "The browser executor failed while dispatching this call."));
 					} finally {
 						activeCallController = undefined;
 					}

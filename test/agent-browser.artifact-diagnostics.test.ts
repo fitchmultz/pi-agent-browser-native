@@ -116,7 +116,10 @@ test("cancelled artifact preparation does not become a validation failure", { co
 		const controller = new AbortController();
 		const reason = new Error("Cancelled artifact request");
 		controller.abort(reason);
-		await assert.rejects(executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "blocked/out.png"] }, controller.signal), (error) => error === reason);
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["screenshot", "blocked/out.png"] }, controller.signal);
+		assert.equal(result.isError, true);
+		assert.equal(result.details?.failureCategory, "aborted");
+		assert.match(result.content[0]?.text ?? "", /Cancelled artifact request/);
 		assert.deepEqual(await readInvocationLog(log), []);
 	});
 });

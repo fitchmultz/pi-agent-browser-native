@@ -4,7 +4,7 @@ import { isRecord } from "./parsing.js";
 
 export const BROWSER_TRANSITION_ENTRY = "agent-browser-transition";
 
-const BROWSER_RESULT_TOOLS = new Set([
+export const BROWSER_RESULT_TOOLS = new Set([
 	"agent_browser", "agent_browser_code", "agent_browser_action", "agent_browser_qa", "agent_browser_electron",
 	"agent_browser_source", "agent_browser_network_source",
 ]);

@@ -43,7 +43,8 @@ import { parseArgvDescriptor } from "./lib/argv-descriptor.js";
 import { needsManagedSession } from "./lib/command-policy.js";
 import { ManagedSessionRestoreState, resolveOwnedManagedSessionContext, withOwnedManagedSessionContext } from "./lib/managed-session-restore.js";
 import { isRecord } from "./lib/parsing.js";
-import { runAgentBrowserProcess } from "./lib/process.js";
+import { getAgentBrowserProcessTimeoutMs, runAgentBrowserProcess } from "./lib/process.js";
+import { getCommandAwareProcessTimeoutMs } from "./lib/orchestration/browser-run/prepare/wait-timeouts.js";
 import { getAgentBrowserProcessEnvironment, withAgentBrowserProcessEnvironment, withIsolatedAgentBrowserEnvironment } from "./lib/process-environment.js";
 import { withNativeSessionDefaults } from "./lib/orchestration/native-session-defaults.js";
 import { getBrowserCwdError, resolveExecutionCwd, restoreManagedSessionCwd } from "./lib/execution-cwd.js";
@@ -1603,7 +1604,7 @@ export default function agentBrowserExtension(
 				const bound = resolveOperationPaths(resolvedInput.toolArgs, resolvedInput.toolStdin, operationCwd);
 				resolvedInput = { ...resolvedInput, toolArgs: bound.args, toolStdin: bound.stdin };
 			}
-			const executionDeadline = startedAt + ((resolvedInput.kind === "electron" && "timeoutMs" in resolvedInput.compiledElectron ? resolvedInput.compiledElectron.timeoutMs : undefined) ?? params.timeoutMs ?? AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS);
+			const executionDeadline = startedAt + ((resolvedInput.kind === "electron" && "timeoutMs" in resolvedInput.compiledElectron ? resolvedInput.compiledElectron.timeoutMs : undefined) ?? params.timeoutMs ?? getCommandAwareProcessTimeoutMs(extractUpstreamCommandTokens(resolvedInput.toolArgs), resolvedInput.toolStdin) ?? getAgentBrowserProcessTimeoutMs());
 			await beforeExecute?.(nativeToolCallId, { ...ctx, signal });
 			const runtimeBrowserConfig = loadAgentBrowserConfigSync({ cwd: ctx.cwd, includeProjectConfig: shouldIncludeProjectConfig(ctx) });
 			const rootProfile = runtimeBrowserConfig.trustedBrowserDefaultProfile;
@@ -1735,7 +1736,7 @@ export default function agentBrowserExtension(
 				if (sessions.length === 0) return execute();
 				try {
 					const identities = await Promise.all(sessions.map(session => resolveBrowserExecutionIdentity({ ...session, ownedManagedSession: true })));
-					return await withBrowserExecutionLocks({ identities, signal, deadline: executionDeadline }, execute);
+					return await withBrowserExecutionLocks({ identities, signal, deadline: executionDeadline, waitOnly: true }, execute);
 				} catch (error) { return browserExecutionFailure(error, signal); }
 			};
 			const electronHostResult = await (shouldSerializeElectronHostInput(compiledElectron)
@@ -1952,7 +1953,9 @@ export default function agentBrowserExtension(
 					if (managedSessionActive && (params.sessionMode === "fresh" || compiledElectron?.action === "launch") && !explicitSessionName) {
 						identities.push(await resolveBrowserExecutionIdentity({ namespace: managedSessionNamespace, ownedManagedSession: true, sessionName: managedSessionName }));
 					}
-					return await withBrowserExecutionLocks({ identities, signal, deadline: executionDeadline }, run);
+					const activePageUrl = sessionPageState.get(getAgentBrowserSessionIdentityKey(plan.sessionName ?? "default", plan.namespace)).tabTarget?.url;
+					const deadline = startedAt + (params.timeoutMs ?? getCommandAwareProcessTimeoutMs(extractUpstreamCommandTokens(toolArgs), resolvedInput.toolStdin, activePageUrl) ?? getAgentBrowserProcessTimeoutMs());
+					return await withBrowserExecutionLocks({ identities, signal, deadline, waitOnly: true }, run);
 				} catch (error) {
 					return browserExecutionFailure(error, signal);
 				}
@@ -2000,6 +2003,7 @@ export default function agentBrowserExtension(
 		const execution = new Promise<void>(resolve => { finish = resolve; });
 		activeScriptExecutions.add(execution);
 		const deadline = Date.now() + (params.timeoutMs ?? AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS);
+		const deadlineTimer = setTimeout(() => controller.abort(new DOMException("Browser code deadline exceeded.", "TimeoutError")), Math.max(0, deadline - Date.now()));
 		const generation = branchRestoreGeneration;
 		const output = createBrowserCodeOutput();
 		const nativeEnvironment = getAgentBrowserProcessEnvironment();
@@ -2016,21 +2020,20 @@ export default function agentBrowserExtension(
 			const rootId = process.env.PI_SUBAGENT_CHILD === "1" && process.env.PI_SUBAGENT_ROOT_SESSION_ID
 				? process.env.PI_SUBAGENT_ROOT_SESSION_ID : ctx.sessionManager.getSessionId();
 			const runAdmitted = async () => {
-			const owner = params.session ? ownedManagedSessions.get(getAgentBrowserSessionIdentityKey(params.session, params.namespace ?? nativeEnvironment.AGENT_BROWSER_NAMESPACE)) : undefined;
-			const browserCwd = nativeEnvironment.AGENT_BROWSER_CONFIG !== undefined ? operationCwd
-				: params.session ? owner?.cwd ?? ctx.cwd : managedSessionActive ? managedSessionCwd : ctx.cwd;
-			const cwdError = getBrowserCwdError(browserCwd);
-			if (cwdError) return browserExecutionFailure(new Error(cwdError), controller.signal, "validation-error");
-			return withNativeSessionDefaults(input, browserCwd, controller.signal, async (input) => {
-				const plan = buildExecutionPlan(input.toolArgs, { freshSessionName: managedSessionName, managedSessionActive, managedSessionName, managedSessionNamespace, sessionMode: "auto" });
-				const sessionName = plan.sessionName ?? "default";
-				const namespace = plan.namespace || undefined;
-				const key = getAgentBrowserSessionIdentityKey(sessionName, namespace);
-				const owned = plan.managedSessionName !== undefined || ownedManagedSessions.has(key);
-				const run = async () => {
-					const identity = await resolveBrowserExecutionIdentity({ sessionName, namespace, ownedManagedSession: owned });
-					return withBrowserExecutionLock({ identity, deadline, signal: controller.signal }, async executionSignal => {
-						const runCode = async () => {
+				const owner = params.session ? ownedManagedSessions.get(getAgentBrowserSessionIdentityKey(params.session, params.namespace ?? nativeEnvironment.AGENT_BROWSER_NAMESPACE)) : undefined;
+				const browserCwd = nativeEnvironment.AGENT_BROWSER_CONFIG !== undefined ? operationCwd
+					: params.session ? owner?.cwd ?? ctx.cwd : managedSessionActive ? managedSessionCwd : ctx.cwd;
+				const cwdError = getBrowserCwdError(browserCwd);
+				if (cwdError) return browserExecutionFailure(new Error(cwdError), controller.signal, "validation-error");
+				return withNativeSessionDefaults(input, browserCwd, controller.signal, async (input) => {
+					const plan = buildExecutionPlan(input.toolArgs, { freshSessionName: managedSessionName, managedSessionActive, managedSessionName, managedSessionNamespace, sessionMode: "auto" });
+					const sessionName = plan.sessionName ?? "default";
+					const namespace = plan.namespace || undefined;
+					const key = getAgentBrowserSessionIdentityKey(sessionName, namespace);
+					const owned = plan.managedSessionName !== undefined || ownedManagedSessions.has(key);
+					const run = async () => {
+						const identity = await resolveBrowserExecutionIdentity({ sessionName, namespace, ownedManagedSession: owned });
+						return withBrowserExecutionLock({ identity, deadline, signal: controller.signal }, async executionSignal => {
 							let journalFailed = false;
 							const run = await runAgentBrowserScript({
 								code: params.code, signal: executionSignal, timeoutMs: Math.max(1, deadline - Date.now()),
@@ -2053,29 +2056,30 @@ export default function agentBrowserExtension(
 									return output.observe(result);
 								},
 							});
-							const result = await output.finish(run, sessionName, namespace, getPersistentSessionArtifactStore(ctx));
-							if (isRecord(result.details) && isSessionArtifactManifest(result.details.artifactManifest)) artifactManifest = mergeBrowserRunArtifactManifest(artifactManifest, undefined, result.details.artifactManifest);
+							const result = await output.finish(run, sessionName, namespace);
 							if (artifactManifest && isRecord(result.details)) result.details.artifactManifest = redactSensitiveValue(artifactManifest);
 							if (!params.outputPath) return result;
 							return artifactExecutionQueue.run(async () => {
 								const error = getArtifactPreflightValidationError({ args: [], cwd: operationCwd, outputPath: params.outputPath, activeRecordingReservations: activeRecordingReservations.values() });
-								if (error) return browserExecutionFailure(new Error(error), undefined, "validation-error");
+								if (error) {
+									const failure = browserExecutionFailure(new Error(error), undefined, "validation-error");
+									return { ...result, isError: true, content: [...failure.content, ...result.content], details: { ...(isRecord(result.details) ? result.details : {}), ...(isRecord(failure.details) ? failure.details : {}) } };
+								}
 								return applyAgentBrowserOutputPath({ cwd: operationCwd, outputPath: params.outputPath, preserveTextContent: true, result });
 							});
-						};
-						return runCode();
-					});
-				};
-				return shouldSerializeBrowserCommand({ namespace, explicitSessionName: sessionName, managedSessionName, ownedElectronLaunchRecords, ownedManagedSessions })
-					? managedSessionExecutionQueue.run(run, controller.signal)
-					: callerOwnedSessionExecutionQueues.run(key, namespace, run, controller.signal);
-			}, managedSessionActive || freshSessionOrdinal > 0 ? undefined : { id: rootId, profile: profile?.policy === "always" && !/[\\/~]/.test(profile.name) ? profile.name : undefined, executablePath: config.trustedBrowserExecutablePath });
+						});
+					};
+					return shouldSerializeBrowserCommand({ namespace, explicitSessionName: sessionName, managedSessionName, ownedElectronLaunchRecords, ownedManagedSessions })
+						? managedSessionExecutionQueue.run(run, controller.signal)
+						: callerOwnedSessionExecutionQueues.run(key, namespace, run, controller.signal);
+				}, managedSessionActive || freshSessionOrdinal > 0 ? undefined : { id: rootId, profile: profile?.policy === "always" && !/[\\/~]/.test(profile.name) ? profile.name : undefined, executablePath: config.trustedBrowserExecutablePath });
 			};
 			return await (!params.session && nativeEnvironment.AGENT_BROWSER_CONFIG === undefined
 				? managedSessionExecutionQueue.run(runAdmitted, controller.signal) : runAdmitted());
 		} catch (error) {
 			return browserExecutionFailure(error, controller.signal);
 		} finally {
+			clearTimeout(deadlineTimer);
 			activeScriptControllers.delete(controller);
 			signal?.removeEventListener("abort", abort);
 			activeScriptExecutions.delete(execution);
@@ -2101,7 +2105,7 @@ export default function agentBrowserExtension(
 		},
 		async executeCode(id, params, signal, onUpdate, ctx) {
 			const result = await executeCode(id, params, signal, onUpdate, ctx);
-			return isRecord(result.details) && result.details.codeRun ? result : finalizeObservation(result, params, ctx);
+			return finalizeObservation(result, params, ctx);
 		},
 		executionMode: beforeExecute ? "sequential" : undefined,
 		renderCodeCall(args, theme, context) {
