@@ -2107,11 +2107,6 @@ export default function agentBrowserExtension(
 			return finalizeObservation(result, params, ctx);
 		},
 		executionMode: beforeExecute ? "sequential" : undefined,
-		renderCodeCall(args, theme, context) {
-			const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-			text.setText(formatAgentBrowserRenderCall(args, theme, context.expanded));
-			return text;
-		},
 		promptGuidelines: toolPromptGuidelines,
 		renderCall: agentBrowserTool.renderCall, renderResult: agentBrowserTool.renderResult,
 	});

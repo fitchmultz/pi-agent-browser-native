@@ -9,7 +9,7 @@ import { resolveExecutionCwd } from "../extensions/agent-browser/lib/execution-c
 const ctx = { cwd: process.cwd(), sessionManager: {} } as Pick<ExtensionContext, "cwd" | "sessionManager">;
 const api = (emit: ExtensionAPI["events"]["emit"] = () => {}, sources: { tools?: SourceInfo[]; commands?: SourceInfo[] } = {}) => ({
 	events: { emit, on: () => () => {} },
-	getAllTools: () => (sources.tools ?? []).map(sourceInfo => ({ name: "change_dir", description: "Fixture", parameters: {}, promptGuidelines: [], sourceInfo })),
+	getAllTools: () => (sources.tools ?? []).map(sourceInfo => ({ id: "change_dir", name: "change_dir", description: "Fixture", parameters: {}, promptGuidelines: [], sourceInfo })),
 	getCommands: () => (sources.commands ?? []).map(sourceInfo => ({ name: "cwd:1", source: "extension" as const, sourceInfo })),
 });
 
@@ -42,7 +42,7 @@ test("legacy owner detection checks package provenance for excluded tools and di
 		assert.equal(resolveExecutionCwd(responding, ctx), owner, "active protocol takes precedence over legacy detection");
 		const otherSurfaces = api(undefined, { tools: [source(owner, true)], commands: [source(owner, false)] });
 		const tools = otherSurfaces.getAllTools(), commands = otherSurfaces.getCommands();
-		otherSurfaces.getAllTools = () => tools.map(tool => ({ ...tool, name: "cwd_helper" }));
+		otherSurfaces.getAllTools = () => tools.map(tool => ({ ...tool, id: "cwd_helper", name: "cwd_helper" }));
 		otherSurfaces.getCommands = () => commands.map(command => ({ ...command, name: "cwd-status" }));
 		assert.equal(resolveExecutionCwd(otherSurfaces, ctx), ctx.cwd, "unrelated surfaces from the same package do not identify an active directory owner");
 	} finally { rmSync(root, { recursive: true, force: true }); }

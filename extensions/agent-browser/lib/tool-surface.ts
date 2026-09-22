@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
+import { formatAgentBrowserRenderCall } from "./pi-tool-rendering.js";
 import type { TUnsafe } from "./json-schema.js";
 import {
 	AGENT_BROWSER_PARAMS,
@@ -24,7 +25,6 @@ export interface AgentBrowserToolSurfaceOptions {
 	executeCode: AgentBrowserCodeExecutor;
 	promptGuidelines?: string[];
 	executionMode?: ToolDefinition["executionMode"];
-	renderCodeCall?: ToolDefinition<typeof AGENT_BROWSER_CODE_PARAMS>["renderCall"];
 	renderCall?: ToolDefinition<typeof AGENT_BROWSER_PARAMS>["renderCall"];
 	renderResult?: ToolDefinition<TUnsafe<unknown>>["renderResult"];
 }
@@ -62,7 +62,11 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		execute: options.executeCode,
 		executionMode: options.executionMode,
-		renderCall: options.renderCodeCall,
+		renderCall(args, theme, context) {
+			const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
+			text.setText(formatAgentBrowserRenderCall(args, theme, context.expanded));
+			return text;
+		},
 		renderResult: options.renderResult,
 	});
 
@@ -152,6 +156,8 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		// A host-filtered catalog is an explicit selection, not our default surface.
 		const available = new Set(pi.getAllTools().map(({ name }) => name));
 		if (!["agent_browser", "agent_browser_code", "agent_browser_tools", ...advancedNames].every(name => available.has(name))) return;
+		// Keep Pi's replay helper behind the awaited restoration boundary, not factory registration.
+		const { getCurrentSystemMessage } = await import("@earendil-works/pi-ai");
 		const current = getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
 		const restored = new Set(current?.toolsAdded?.map(({ name }) => name));
 		const active = pi.getActiveTools().filter((name) => !advancedNames.has(name) || restored.has(name));

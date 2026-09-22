@@ -496,7 +496,7 @@ export function createExtensionHarness(options: {
 		},
 		getCommands: () => [],
 		getActiveTools() { return [...activeTools]; },
-		getAllTools() { return [...registeredTools.values()].map(tool => ({ ...tool, sourceInfo: { path: "test", source: "test", scope: "temporary" as const, origin: "top-level" as const } })); },
+		getAllTools() { return [...registeredTools.values()].map(tool => ({ ...tool, id: tool.name, sourceInfo: { path: "test", source: "test", scope: "temporary" as const, origin: "top-level" as const } })); },
 		setActiveTools(names) { activeTools = [...names]; },
 		appendEntry(customType, data) {
 			appendedEntries.push({ customType, data });
