@@ -101,6 +101,7 @@ export interface BrowserRunStatePatch {
 }
 
 export interface BrowserRunOptions {
+	operationCwd?: string;
 	daemonInactive?: boolean;
 	ctx: BrowserRunContext;
 	cwd: string;

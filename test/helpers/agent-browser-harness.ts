@@ -9,7 +9,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -18,6 +18,7 @@ import { execPath as nodeExecPath, platform as processPlatform } from "node:proc
 
 import type {
 	AgentToolResult,
+	ExtensionAPI,
 	Theme,
 	ToolDefinition,
 	ToolRenderResultOptions,
@@ -474,6 +475,9 @@ function adaptRegisteredTool<TParams extends TSchema, TDetails, TState>(
 export function createExtensionHarness(options: {
 	branch?: unknown[];
 	cwd: string;
+	onBusEvent?: (channel: string, request: unknown) => void;
+	getAllTools?: ExtensionAPI["getAllTools"];
+	getCommands?: ExtensionAPI["getCommands"];
 	onAppendEntry?: (customType: string, data: unknown) => void;
 	projectTrusted?: boolean;
 	prompt?: string;
@@ -484,8 +488,15 @@ export function createExtensionHarness(options: {
 	const handlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 	const registeredTools = new Map<string, RegisteredTool>();
 	const appendedEntries: Array<{ customType: string; data: unknown }> = [];
+	const events = new EventEmitter();
 
-	agentBrowserExtension({
+	const api: Partial<ExtensionAPI> = {
+		events: {
+			emit(channel, request) { options.onBusEvent?.(channel, request); events.emit(channel, request); },
+			on(channel, handler) { events.on(channel, handler); return () => { events.off(channel, handler); }; },
+		},
+		getAllTools: options.getAllTools ?? (() => []),
+		getCommands: options.getCommands ?? (() => []),
 		appendEntry(customType, data) {
 			appendedEntries.push({ customType, data });
 			branch.push({ type: "custom", customType, data });
@@ -495,12 +506,14 @@ export function createExtensionHarness(options: {
 			const existingHandlers = handlers.get(event) ?? [];
 			existingHandlers.push(handler as (...args: unknown[]) => unknown);
 			handlers.set(event, existingHandlers);
+			return () => { handlers.set(event, existingHandlers.filter(item => item !== handler)); };
 		},
 		registerTool(tool) {
 			const registeredTool = adaptRegisteredTool(tool);
 			registeredTools.set(registeredTool.name, registeredTool);
 		},
-	} as Parameters<typeof agentBrowserExtension>[0]);
+	};
+	agentBrowserExtension(api as ExtensionAPI);
 
 	const registeredTool = registeredTools.get("agent_browser");
 	assert.ok(registeredTool, "expected the extension to register the agent_browser tool");
