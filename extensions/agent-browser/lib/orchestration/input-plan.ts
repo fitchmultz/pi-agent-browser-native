@@ -3,19 +3,16 @@ import { normalizeUrlLessOpen } from "./batch-stdin.js";
 import { isPlainTextInspectionArgs, validateToolArgs, redactInvocationArgs, redactSensitiveText } from "../runtime.js";
 import { buildAgentBrowserResultCategoryDetails } from "../results/categories.js";
 import { compileAgentBrowserElectron } from "../input-modes/electron.js";
-import { compileAgentBrowserJob, compileAgentBrowserQaPreset } from "../input-modes/job.js";
+import { compileAgentBrowserQaPreset } from "../input-modes/job.js";
 import { compileAgentBrowserNetworkSourceLookup, compileAgentBrowserSourceLookup, redactNetworkSourceLookupArgs, redactNetworkSourceLookupUrl } from "../input-modes/lookups.js";
 import { compileAgentBrowserSemanticAction } from "../input-modes/semantic-action.js";
-import { AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS, compileAgentBrowserScript, type CompiledAgentBrowserScript } from "../input-modes/script.js";
 import { type CompiledAgentBrowserElectron, type CompiledAgentBrowserJob, type CompiledAgentBrowserNetworkSourceLookup, type CompiledAgentBrowserQaPreset, type CompiledAgentBrowserSemanticAction, type CompiledAgentBrowserSourceLookup } from "../input-modes/types.js";
 export interface AgentBrowserExecuteParams {
 	args?: string[];
 	electron?: unknown;
-	job?: unknown;
 	networkSourceLookup?: unknown;
 	outputPath?: string;
 	qa?: unknown;
-	script?: unknown;
 	semanticAction?: unknown;
 	sessionMode?: "auto" | "fresh";
 	sourceLookup?: unknown;
@@ -23,7 +20,7 @@ export interface AgentBrowserExecuteParams {
 	timeoutMs?: number;
 }
 
-export type ResolvedAgentBrowserInputKind = "args" | "electron" | "job" | "networkSourceLookup" | "qa" | "script" | "semanticAction" | "sourceLookup";
+export type ResolvedAgentBrowserInputKind = "args" | "electron" | "networkSourceLookup" | "qa" | "semanticAction" | "sourceLookup";
 
 type ResolvedAgentBrowserInputModeFields = {
 	compiledElectron?: CompiledAgentBrowserElectron;
@@ -72,12 +69,6 @@ export type ResolvedAgentBrowserValidInput =
 		redactedCompiledElectron: CompiledAgentBrowserElectron;
 	})
 	| (ResolvedAgentBrowserValidInputBase & {
-		compiledGeneratedBatch: CompiledAgentBrowserJob;
-		compiledJob: CompiledAgentBrowserJob;
-		kind: "job";
-		redactedCompiledJob: CompiledAgentBrowserJob;
-	})
-	| (ResolvedAgentBrowserValidInputBase & {
 		compiledGeneratedBatch: CompiledAgentBrowserNetworkSourceLookup;
 		compiledNetworkSourceLookup: CompiledAgentBrowserNetworkSourceLookup;
 		kind: "networkSourceLookup";
@@ -90,10 +81,6 @@ export type ResolvedAgentBrowserValidInput =
 		kind: "qa";
 		redactedCompiledJob: CompiledAgentBrowserJob;
 		redactedCompiledQaPreset: CompiledAgentBrowserQaPreset;
-	})
-	| (ResolvedAgentBrowserValidInputBase & {
-		compiledScript: CompiledAgentBrowserScript;
-		kind: "script";
 	})
 	| (ResolvedAgentBrowserValidInputBase & {
 		compiledSemanticAction: CompiledAgentBrowserSemanticAction;
@@ -180,26 +167,22 @@ export function resolveAgentBrowserInput(options: {
 }): ResolvedAgentBrowserInput {
 	const { getBatchPreflightValidationError, params } = options;
 	const semanticActionResult = params.semanticAction === undefined ? {} : compileAgentBrowserSemanticAction(params.semanticAction);
-	const jobResult = params.job === undefined ? {} : compileAgentBrowserJob(params.job);
 	const qaResult = params.qa === undefined ? {} : compileAgentBrowserQaPreset(params.qa);
 	const sourceLookupResult = params.sourceLookup === undefined ? {} : compileAgentBrowserSourceLookup(params.sourceLookup);
 	const networkSourceLookupResult = params.networkSourceLookup === undefined ? {} : compileAgentBrowserNetworkSourceLookup(params.networkSourceLookup);
 	const electronResult = params.electron === undefined ? {} : compileAgentBrowserElectron(params.electron);
-	const scriptResult = params.script === undefined ? {} : compileAgentBrowserScript(params.script);
 
 	const hasExplicitArgs = Array.isArray(params.args);
 	const explicitInputModes = [
 		hasExplicitArgs,
 		Boolean(semanticActionResult.compiled),
-		Boolean(jobResult.compiled),
 		Boolean(qaResult.compiled),
 		Boolean(sourceLookupResult.compiled),
 		Boolean(networkSourceLookupResult.compiled),
 		Boolean(electronResult.compiled),
-		Boolean(scriptResult.compiled),
 	].filter(Boolean).length;
 	const inputModeError = explicitInputModes !== 1
-		? "Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron."
+		? "Provide exactly one of args, semanticAction, qa, sourceLookup, networkSourceLookup, or electron."
 		: undefined;
 
 	const compiledSemanticAction = semanticActionResult.compiled;
@@ -207,21 +190,18 @@ export function resolveAgentBrowserInput(options: {
 	const compiledSourceLookup = sourceLookupResult.compiled;
 	const compiledNetworkSourceLookup = networkSourceLookupResult.compiled;
 	const compiledElectron = electronResult.compiled;
-	const compiledScript = scriptResult.compiled;
-	const compiledJob = jobResult.compiled ?? compiledQaPreset;
+	const compiledJob = compiledQaPreset;
 	const compiledGeneratedBatch = compiledNetworkSourceLookup ?? compiledSourceLookup ?? compiledJob;
 	const normalizedExplicitArgs = normalizeExplicitEvalStdinArgs(params.args ?? [], params.stdin);
-	const toolArgs = compiledElectron || compiledScript ? [] : compiledSemanticAction?.args ?? compiledGeneratedBatch?.args ?? normalizedExplicitArgs.args;
+	const toolArgs = compiledElectron ? [] : compiledSemanticAction?.args ?? compiledGeneratedBatch?.args ?? normalizedExplicitArgs.args;
 	const toolStdin = compiledGeneratedBatch?.stdin ?? normalizedExplicitArgs.stdin;
 	const redactedArgs = redactInvocationArgs(toolArgs);
 	const generatedStdinError = params.stdin !== undefined
 		? compiledGeneratedBatch
-			? "Do not provide stdin with job, qa, sourceLookup, or networkSourceLookup; those modes generate their own batch stdin."
+			? "Do not provide stdin with qa, sourceLookup, or networkSourceLookup; those modes generate their own batch stdin."
 			: compiledElectron
 				? "Do not provide stdin with electron; electron mode is host-only or manages its own input."
-				: compiledScript
-					? "Do not provide stdin with script; browser call stdin belongs inside browser({ args, stdin })."
-					: undefined
+				: undefined
 		: undefined;
 	const outputPathError = params.outputPath !== undefined && (typeof params.outputPath !== "string" || params.outputPath.trim().length === 0)
 		? "outputPath must be a non-empty string when provided."
@@ -232,52 +212,40 @@ export function resolveAgentBrowserInput(options: {
 			? compiledElectron.action === "list"
 				? "electron.list has no configurable timeout; remove top-level timeoutMs."
 				: "Use electron.timeoutMs for this action; top-level timeoutMs applies only to browser CLI subprocess calls."
-			: compiledScript && params.timeoutMs !== undefined && params.timeoutMs > AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS
-				? `script timeoutMs must be ${AGENT_BROWSER_SCRIPT_MAX_TIMEOUT_MS} or less.`
-				: undefined;
-	const scriptSessionModeError = compiledScript && params.sessionMode !== undefined
-		? "Do not provide sessionMode with script; script always uses its own isolated session."
-		: undefined;
+			: undefined;
 	const attachedQaSessionError = compiledQaPreset?.checks.attached
 		? params.sessionMode === "fresh"
 			? "qa.attached cannot be used with sessionMode=fresh; attach or launch a session first, then run qa.attached with the current session."
 			: undefined
 		: undefined;
 	const validationError = semanticActionResult.error
-		?? jobResult.error
 		?? qaResult.error
 		?? sourceLookupResult.error
 		?? networkSourceLookupResult.error
 		?? electronResult.error
-		?? scriptResult.error
 		?? inputModeError
 		?? generatedStdinError
 		?? outputPathError
 		?? timeoutMsError
-		?? scriptSessionModeError
 		?? attachedQaSessionError
-		?? (compiledElectron || compiledScript ? undefined : validateToolArgs(toolArgs) ?? getBatchPreflightValidationError(toolArgs, toolStdin));
+		?? (compiledElectron ? undefined : validateToolArgs(toolArgs) ?? getBatchPreflightValidationError(toolArgs, toolStdin));
 	const redactedCompiledJob = redactCompiledJob(compiledJob);
 	const redactedCompiledSemanticAction = compiledSemanticAction
 		? { ...compiledSemanticAction, args: redactInvocationArgs(compiledSemanticAction.args) }
 		: undefined;
 	const attemptedKind: ResolvedAgentBrowserInputKind | undefined = compiledElectron
 		? "electron"
-		: compiledScript
-			? "script"
-			: compiledNetworkSourceLookup
+		: compiledNetworkSourceLookup
 			? "networkSourceLookup"
 			: compiledSourceLookup
 				? "sourceLookup"
 				: compiledQaPreset
 					? "qa"
-					: jobResult.compiled
-						? "job"
-						: compiledSemanticAction
-							? "semanticAction"
-							: hasExplicitArgs
-								? "args"
-								: undefined;
+					: compiledSemanticAction
+						? "semanticAction"
+						: hasExplicitArgs
+							? "args"
+							: undefined;
 
 	const redactedCompiledElectron = redactCompiledElectron(compiledElectron);
 	const redactedCompiledNetworkSourceLookup = redactCompiledNetworkSourceLookup(compiledNetworkSourceLookup);
@@ -310,9 +278,6 @@ export function resolveAgentBrowserInput(options: {
 	if (compiledElectron && redactedCompiledElectron) {
 		return { ...resolvedBase, compiledElectron, kind: "electron", redactedCompiledElectron, status: "valid" };
 	}
-	if (compiledScript) {
-		return { ...resolvedBase, compiledScript, kind: "script", status: "valid" };
-	}
 	if (compiledNetworkSourceLookup && redactedCompiledNetworkSourceLookup) {
 		return {
 			...resolvedBase,
@@ -342,16 +307,6 @@ export function resolveAgentBrowserInput(options: {
 			kind: "qa",
 			redactedCompiledJob,
 			redactedCompiledQaPreset,
-			status: "valid",
-		};
-	}
-	if (jobResult.compiled && redactedCompiledJob) {
-		return {
-			...resolvedBase,
-			compiledGeneratedBatch: jobResult.compiled,
-			compiledJob: jobResult.compiled,
-			kind: "job",
-			redactedCompiledJob,
 			status: "valid",
 		};
 	}

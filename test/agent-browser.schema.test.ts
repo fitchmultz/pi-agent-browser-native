@@ -13,7 +13,11 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 
-import { createAgentBrowserParamsSchema } from "../extensions/agent-browser/lib/input-modes/params.js";
+import {
+	createAgentBrowserParamsSchema, createAgentBrowserCodeParamsSchema, createAgentBrowserActionParamsSchema,
+	createAgentBrowserQaParamsSchema, createAgentBrowserElectronParamsSchema, createAgentBrowserSourceParamsSchema,
+	createAgentBrowserNetworkSourceParamsSchema, createAgentBrowserToolsParamsSchema,
+} from "../extensions/agent-browser/lib/input-modes/params.js";
 import { compileAgentBrowserSemanticAction } from "../extensions/agent-browser/lib/input-modes/semantic-action.js";
 import { AGENT_BROWSER_SEMANTIC_LOCATORS } from "../extensions/agent-browser/lib/input-modes/types.js";
 import type { JsonSchemaBuilder } from "../extensions/agent-browser/lib/json-schema.js";
@@ -27,18 +31,38 @@ function stableJson(value: unknown): string {
 	});
 }
 
-test("agent_browser keeps every input mode in a compact model-facing schema", () => {
-	const schema = createAgentBrowserParamsSchema() as { properties?: Record<string, unknown> };
-	for (const mode of ["script", "args", "semanticAction", "job", "qa", "sourceLookup", "networkSourceLookup", "electron"]) {
-		assert.ok(schema.properties?.[mode], `missing ${mode} input mode`);
+test("agent_browser exposes only compact native command input", () => {
+	const schema = createAgentBrowserParamsSchema();
+	const properties = (schema as { properties?: Record<string, unknown> }).properties;
+	assert.ok(properties);
+	assert.deepEqual(Object.keys(properties).sort(), ["args", "outputPath", "sessionMode", "stdin", "timeoutMs"]);
+	assert.equal(Check(schema, { args: ["batch", "--bail"], stdin: '[["get","title"]]' }), true);
+	assert.equal(Check(schema, {}), false);
+	for (const mode of ["script", "job", "semanticAction", "qa", "electron", "sourceLookup", "networkSourceLookup"]) {
+		assert.equal(Check(schema, { args: ["get", "url"], [mode]: {} }), false, mode);
 	}
-	const bytes = Buffer.byteLength(JSON.stringify(schema));
-	assert.ok(bytes <= 10 * 1024, `agent_browser parameter schema is ${bytes} bytes; budget is 10 KiB`);
+	assert.ok(Buffer.byteLength(JSON.stringify(schema)) < 1400);
+});
+
+test("agent_browser_code has strict portable JSON input with explicit browser identity", () => {
+	const schema = createAgentBrowserCodeParamsSchema();
+	const tool = { name: "agent_browser_code", description: "Browser code", parameters: schema, constrainedSampling: { type: "json_schema", strict: "prefer" } as const };
+	const properties = (schema as { properties?: Record<string, unknown> }).properties;
+	assert.ok(properties);
+	assert.deepEqual(Object.keys(properties).sort(), ["code", "namespace", "outputPath", "session", "timeoutMs"]);
+	assert.equal(Check(schema, { code: "emit(1)", namespace: "", session: "example", timeoutMs: 300000 }), true);
+	for (const input of [{ code: "" }, { code: "emit(1)", session: "" }, { code: "emit(1)", timeoutMs: 300001 }, { code: "emit(1)", timeoutMs: 1.5 }, { code: "emit(1)", args: [] }, { script: "emit(1)" }]) {
+		assert.equal(Check(schema, input), false, JSON.stringify(input));
+	}
+	const [providerTool] = convertResponsesTools([tool], { supportsStrictMode: true });
+	assert.equal(providerTool.type, "function");
+	assert.equal(providerTool.strict, true);
+	assert.deepEqual(validateToolArguments(tool, { type: "toolCall", id: "code", name: tool.name, arguments: { code: "emit(1)", session: null, namespace: "", timeoutMs: null, outputPath: null } }), { code: "emit(1)", namespace: "" });
+	assert.ok(Buffer.byteLength(JSON.stringify(schema)) < 1400);
 });
 
 test("semantic schema keeps optional properties visible to Pi null normalization", () => {
-	const schema = createAgentBrowserParamsSchema() as { properties: { semanticAction: { properties?: Record<string, unknown>; required?: string[] } } };
-	const semantic = schema.properties.semanticAction;
+	const semantic = createAgentBrowserActionParamsSchema() as { properties?: Record<string, unknown>; required?: string[] };
 	for (const field of ["locator", "value", "values", "selector", "text", "role", "name", "session"]) {
 		assert.ok(semantic.properties?.[field], `${field} must remain visible to Pi's optional-null normalization`);
 		assert.equal(semantic.required?.includes(field) ?? false, false);
@@ -46,20 +70,20 @@ test("semantic schema keeps optional properties visible to Pi null normalization
 });
 
 test("semantic schema rejects non-select values and select text like the compiler", () => {
-	const schema = createAgentBrowserParamsSchema();
+	const schema = createAgentBrowserActionParamsSchema();
 	for (const action of ["check", "click", "fill"]) {
 		const semanticAction = { action, selector: "#target", values: ["nope"], ...(action === "fill" ? { text: "query" } : {}) };
 		assert.match(compileAgentBrowserSemanticAction(semanticAction).error ?? "", /values is only supported for select/);
-		assert.equal(Check(schema, { semanticAction }), false, JSON.stringify(semanticAction));
+		assert.equal(Check(schema, semanticAction), false, JSON.stringify(semanticAction));
 	}
 	const semanticAction = { action: "select", selector: "#flavor", value: "chocolate", text: "ignored" };
 	assert.match(compileAgentBrowserSemanticAction(semanticAction).error ?? "", /text is not supported for select/);
-	assert.equal(Check(schema, { semanticAction }), false);
+	assert.equal(Check(schema, semanticAction), false);
 });
 
 test("semantic schema keeps supported locators, role aliases, selectors and select options", () => {
-	const schema = createAgentBrowserParamsSchema();
-	const tool = { name: "agent_browser", description: "Browser", parameters: schema };
+	const schema = createAgentBrowserActionParamsSchema();
+	const tool = { name: "agent_browser_action", description: "Browser", parameters: schema };
 	const [providerTool] = convertResponsesTools([tool]);
 	assert.equal(providerTool.type, "function");
 	assert.equal(providerTool.strict, false);
@@ -67,10 +91,10 @@ test("semantic schema keeps supported locators, role aliases, selectors and sele
 	function accepts(semanticAction: Record<string, unknown>, args: string[]) {
 		for (const session of [undefined, "schema-session"]) {
 			const input = { ...semanticAction, ...(session ? { session } : {}) };
-			assert.equal(Check(schema, { semanticAction: input }), true, JSON.stringify(input));
-			const validated = validateToolArguments(tool, { type: "toolCall", id: "schema", name: tool.name, arguments: { semanticAction: input } });
-			assert.deepEqual(validated, { semanticAction: input });
-			const result = compileAgentBrowserSemanticAction(validated.semanticAction);
+			assert.equal(Check(schema, input), true, JSON.stringify(input));
+			const validated = validateToolArguments(tool, { type: "toolCall", id: "schema", name: tool.name, arguments: input });
+			assert.deepEqual(validated, input);
+			const result = compileAgentBrowserSemanticAction(validated);
 			assert.equal(result.error, undefined, JSON.stringify(input));
 			assert.deepEqual(result.compiled?.args, [...(session ? ["--session", session] : []), ...args]);
 		}
@@ -101,13 +125,41 @@ test("semantic schema keeps supported locators, role aliases, selectors and sele
 	}
 });
 
+test("flat QA input preserves attached restrictions and optional-null normalization", () => {
+	const schema = createAgentBrowserQaParamsSchema();
+	const tool = { name: "agent_browser_qa", description: "QA", parameters: schema };
+	assert.equal(Check(schema, { attached: true, sessionMode: "auto", expectedText: ["Ready"], checkErrors: true }), true);
+	assert.equal(Check(schema, { url: "https://example.com", sessionMode: "fresh" }), true);
+	for (const input of [{}, { attached: false }, { attached: true, sessionMode: "fresh" }, { attached: true, url: "https://example.com" }]) {
+		assert.equal(Check(schema, input), false, JSON.stringify(input));
+	}
+	assert.deepEqual(validateToolArguments(tool, { type: "toolCall", id: "qa", name: tool.name, arguments: { attached: true, url: null, sessionMode: null, checkNetwork: null } }), { attached: true });
+});
+
+test("advanced schemas keep host timeouts and bounded scanner controls", () => {
+	const electron = createAgentBrowserElectronParamsSchema();
+	assert.equal(Check(electron, { action: "list", outputPath: "apps.json" }), true);
+	assert.equal(Check(electron, { action: "list", timeoutMs: 1000 }), false);
+	assert.equal(Check(electron, { action: "launch", appName: "Editor", timeoutMs: 1000, outputPath: "launch.json" }), true);
+	assert.equal(Check(electron, { action: "cleanup", all: true, launchId: "one" }), false);
+	for (const createSchema of [createAgentBrowserSourceParamsSchema, createAgentBrowserNetworkSourceParamsSchema]) {
+		assert.equal(Check(createSchema(), { maxWorkspaceFiles: 5000, outputPath: "hints.json", timeoutMs: 1000 }), true);
+		assert.equal(Check(createSchema(), { maxWorkspaceFiles: 5001 }), false);
+	}
+	const loader = createAgentBrowserToolsParamsSchema();
+	assert.equal(Check(loader, {}), true);
+	assert.equal(Check(loader, { enable: ["action", "qa", "electron", "source", "network"] }), true);
+	assert.equal(Check(loader, { enable: ["script"] }), false);
+	assert.equal(Check(loader, { disable: ["qa"] }), false);
+});
+
 test("production JSON-schema builder matches TypeBox shape for public tool schemas", () => {
 	const typeBox = Type as unknown as JsonSchemaBuilder;
 	const typeBoxStringEnum = StringEnum as unknown as StringEnumBuilder;
-	assert.equal(
-		stableJson(createAgentBrowserParamsSchema()),
-		stableJson(createAgentBrowserParamsSchema(typeBox, typeBoxStringEnum)),
-	);
+	for (const createSchema of [createAgentBrowserParamsSchema, createAgentBrowserActionParamsSchema, createAgentBrowserQaParamsSchema, createAgentBrowserElectronParamsSchema, createAgentBrowserSourceParamsSchema, createAgentBrowserNetworkSourceParamsSchema, createAgentBrowserToolsParamsSchema]) {
+		assert.equal(stableJson(createSchema()), stableJson(createSchema(typeBox, typeBoxStringEnum)), createSchema.name);
+	}
+	assert.equal(stableJson(createAgentBrowserCodeParamsSchema()), stableJson(createAgentBrowserCodeParamsSchema(typeBox)));
 	assert.equal(
 		stableJson(createAgentBrowserWebSearchParamsSchema()),
 		stableJson(createAgentBrowserWebSearchParamsSchema(typeBox, typeBoxStringEnum)),
