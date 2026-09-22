@@ -3,7 +3,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 
 import { foldAgentBrowserFilesystemIdentity } from "../../argv-grammar.js";
 import { parseWaitCommandTokens } from "../../argv-descriptor.js";
-import { getRecordCommandOperands } from "../../command-taxonomy.js";
+import { getRecordCommandOperandIndices, getRecordCommandOperands } from "../../command-taxonomy.js";
 
 const SCREENSHOT_IMAGE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".webp"];
 
@@ -39,17 +39,20 @@ export function getScreenshotPathTokenIndex(commandTokens: string[]): number | u
 
 const DIFF_SCREENSHOT_VALUE_FLAGS = new Set(["-b", "--baseline", "-o", "--output", "-s", "--selector", "-t", "--threshold"]);
 
-function getDiffScreenshotOutputPath(commandTokens: string[]): string | undefined {
-	let outputPath: string | undefined;
+export function getDiffFilePathIndices(commandTokens: string[]): { baseline?: number; output?: number } {
+	if (commandTokens[0] !== "diff" || !["snapshot", "screenshot"].includes(commandTokens[1])) return {};
+	const valueFlags = commandTokens[1] === "screenshot" ? DIFF_SCREENSHOT_VALUE_FLAGS : new Set(["-b", "--baseline", "-s", "--selector", "-d", "--depth"]);
+	const paths: { baseline?: number; output?: number } = {};
 	for (let index = 2; index < commandTokens.length; index += 1) {
 		const token = commandTokens[index];
-		if (!DIFF_SCREENSHOT_VALUE_FLAGS.has(token)) continue;
+		if (!valueFlags.has(token)) continue;
 		const value = commandTokens[index + 1];
-		if (value === undefined) return undefined;
-		if (token === "-o" || token === "--output") outputPath = value;
+		if (value === undefined) return {};
+		if (token === "-o" || token === "--output") paths.output = index + 1;
+		if (token === "-b" || token === "--baseline") paths.baseline = index + 1;
 		index += 1;
 	}
-	return outputPath;
+	return paths;
 }
 
 function canonicalizeArtifactPath(absolutePath: string, platform: NodeJS.Platform, seenSymlinks: Set<string>): string {
@@ -95,20 +98,22 @@ export function getRecordContactSheetDestination(commandTokens: string[]): strin
 	return extension ? `${path.slice(0, -extension.length)}.contact-sheet.png` : undefined;
 }
 
-export function getExplicitArtifactDestination(commandTokens: string[]): string | undefined {
+export function getExplicitArtifactDestinationIndex(commandTokens: string[]): number | undefined {
 	const command = commandTokens[0];
 	const subcommand = commandTokens[1];
-	if (command === "screenshot") {
-		const index = getScreenshotPathTokenIndex(commandTokens);
-		return index === undefined ? undefined : commandTokens[index];
-	}
-	if (command === "download") return commandTokens[2];
-	if (command === "pdf") return commandTokens[1];
-	if (command === "wait") return parseWaitCommandTokens(commandTokens).downloadPath;
-	if (command === "state" && subcommand === "save") return commandTokens[2];
-	if (command === "diff" && subcommand === "screenshot") return getDiffScreenshotOutputPath(commandTokens);
-	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return commandTokens[3];
-	if ((command === "trace" || command === "profiler") && subcommand === "stop") return commandTokens[2];
-	if (command === "record") return getRecordCommandOperands(commandTokens).path;
+	if (command === "screenshot") return getScreenshotPathTokenIndex(commandTokens);
+	if (command === "download") return 2;
+	if (command === "pdf") return 1;
+	if (command === "wait") return parseWaitCommandTokens(commandTokens).downloadPathIndex;
+	if (command === "state" && subcommand === "save") return 2;
+	if (command === "diff" && subcommand === "screenshot") return getDiffFilePathIndices(commandTokens).output;
+	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") return 3;
+	if ((command === "trace" || command === "profiler") && subcommand === "stop") return 2;
+	if (command === "record") return getRecordCommandOperandIndices(commandTokens)[0];
 	return undefined;
+}
+
+export function getExplicitArtifactDestination(commandTokens: string[]): string | undefined {
+	const index = getExplicitArtifactDestinationIndex(commandTokens);
+	return index === undefined ? undefined : commandTokens[index];
 }

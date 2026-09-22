@@ -177,7 +177,7 @@ process.stdin.on("end", () => {
 				sessionName: launch.sessionName,
 				url: "app://packaged",
 			});
-			assert.ok(sourceLookup?.limitations?.some((item) => item.includes("Pi tool session cwd")));
+			assert.ok(sourceLookup?.limitations?.some((item) => item.includes("captured execution directory")));
 			assert.ok(sourceLookup?.limitations?.some((item) => item.includes("app.asar")));
 			const nextActions = lookupResult.details?.nextActions as Array<{ id: string; params?: { args?: string[]; electron?: { action?: string; launchId?: string } } }> | undefined;
 			const actionIds = new Set(nextActions?.map((action) => action.id));

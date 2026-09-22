@@ -250,7 +250,7 @@ export async function analyzeSourceLookupResults(
 	const workspaceRoot = context?.workspaceRoot ?? cwd;
 	if (electronContext) {
 		limitations.push(
-			`Workspace source scan is limited to the Pi tool session cwd: ${workspaceRoot}.`,
+			`Workspace source scan is limited to the captured execution directory: ${workspaceRoot}.`,
 			"Packaged Electron app code may live inside installed app resources or app.asar outside the workspace; the wrapper does not unpack asar files or scan app bundle resources.",
 		);
 	}

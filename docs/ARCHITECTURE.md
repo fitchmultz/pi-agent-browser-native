@@ -140,6 +140,8 @@ The default extension factory optionally accepts `{ beforeExecute }`. `index.ts`
 
 ## Session model
 
+The optional `pi-change-working-dir` event protocol supplies one invocation execution cwd for file operands and workspace scans. It never mutates native `ctx.cwd`. Native config/CLI cwd stays at the project or managed launch anchor; explicit fresh/config choices use the invocation root. Managed launch roots persist in `details.managedSessionCwd`; selection runs inside the existing managed queue so an earlier fresh launch determines the next browser target without changing admitted file paths. Script children retain the outer snapshot. Existing recordings and cached artifact stores keep their original ownership. If a launch root is deleted, validation reports that boundary rather than spawning under another project's config. Public tool/command source manifests identify legacy owners; no private directory journal or process-global cwd is involved.
+
 ### Default
 
 An explicit native `session` default (user/project JSON or `AGENT_BROWSER_SESSION`) selects a caller-owned browser across Pi sessions. Per-call session/namespace flags win. `lib/orchestration/native-session-defaults.ts` reads session/namespace and contributing launch defaults from native config paths and uses sessionless native `--config <path> --json session` to validate each contributing file and resolve its session. Native config continues to own launch/profile/storage settings; the adapter does not duplicate its schema. Explicit config and per-call idle settings are scoped to helpers through `lib/process-environment.ts`. No startup probe, persistent config cache, or new lifecycle service is added.

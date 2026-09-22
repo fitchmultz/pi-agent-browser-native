@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.6.17 - 2026-09-22
+
+### Fixed
+
+- Follow `pi-change-working-dir` for new browser file paths and source scans using one invocation snapshot, while retaining browser/config/restore/recording ownership. Explicit fresh/config launches honor the selected directory; an unavailable original launch directory returns clear recovery guidance without silently switching project config.
 
 ## 0.6.16 - 2026-09-21
 

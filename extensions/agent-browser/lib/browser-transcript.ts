@@ -26,7 +26,7 @@ const TRANSITION_FIELDS = [
 	"agentBrowserStarted", "resultCategory", "exitCode", "closeAllApplied", "attachedBrowserSession",
 	"sessionTabTarget", "sessionTabTargetUnknown", "sessionTabReopenPending", "refSnapshot", "refSnapshotInvalidation",
 	"readConfirmation", "compatibilityWorkaround", "managedSessionHeadedAutosaveDisabled", "managedSessionHeadedAutosaveInterval",
-	"managedSessionOutcome", "managedSessionRestoreDisabled", "artifactManifest", "electron", "compiledNetworkSourceLookup",
+	"managedSessionOutcome", "managedSessionCwd", "managedSessionRestoreDisabled", "artifactManifest", "electron", "compiledNetworkSourceLookup",
 ] as const;
 
 export function appendBrowserTransition(pi: ExtensionAPI, toolCallId: string, details: Record<string, unknown>, isError: boolean): void {

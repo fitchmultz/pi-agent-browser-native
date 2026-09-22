@@ -9,7 +9,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -18,6 +18,7 @@ import { execPath as nodeExecPath, platform as processPlatform } from "node:proc
 
 import type {
 	AgentToolResult,
+	ExtensionAPI,
 	Theme,
 	ToolDefinition,
 	ToolRenderResultOptions,
@@ -474,6 +475,7 @@ function adaptRegisteredTool<TParams extends TSchema, TDetails, TState>(
 export function createExtensionHarness(options: {
 	branch?: unknown[];
 	cwd: string;
+	onBusEvent?: (channel: string, request: unknown) => void;
 	onAppendEntry?: (customType: string, data: unknown) => void;
 	projectTrusted?: boolean;
 	prompt?: string;
@@ -485,8 +487,14 @@ export function createExtensionHarness(options: {
 	const registeredTools = new Map<string, RegisteredTool>();
 	let activeTools: string[] = ["read", "bash"];
 	const appendedEntries: Array<{ customType: string; data: unknown }> = [];
+	const events = new EventEmitter();
 
-	const pi: Pick<Parameters<typeof agentBrowserExtension>[0], "appendEntry" | "getActiveTools" | "getAllTools" | "on" | "registerTool" | "setActiveTools"> = {
+	const pi: Pick<Parameters<typeof agentBrowserExtension>[0], "events" | "appendEntry" | "getActiveTools" | "getAllTools" | "getCommands" | "on" | "registerTool" | "setActiveTools"> = {
+		events: {
+			emit(channel, request) { options.onBusEvent?.(channel, request); events.emit(channel, request); },
+			on(channel, handler) { events.on(channel, handler); return () => { events.off(channel, handler); }; },
+		},
+		getCommands: () => [],
 		getActiveTools() { return [...activeTools]; },
 		getAllTools() { return [...registeredTools.values()].map(tool => ({ ...tool, sourceInfo: { path: "test", source: "test", scope: "temporary" as const, origin: "top-level" as const } })); },
 		setActiveTools(names) { activeTools = [...names]; },
@@ -507,7 +515,7 @@ export function createExtensionHarness(options: {
 			activeTools.push(registeredTool.name);
 		},
 	};
-	agentBrowserExtension(pi as Parameters<typeof agentBrowserExtension>[0]);
+	agentBrowserExtension(pi as ExtensionAPI);
 
 	const registeredTool = registeredTools.get("agent_browser");
 	assert.ok(registeredTool, "expected the extension to register the agent_browser tool");

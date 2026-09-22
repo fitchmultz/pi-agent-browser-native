@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -253,6 +253,45 @@ async function runPipelinePrompt(options: {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 }
+
+test("Pi pipeline captures the owner cwd before an awaited browser policy without moving native ctx", async () => {
+	let selected = "";
+	let resolutions = 0;
+	const pipeline = await runPipelinePrompt({
+		toolArguments: { args: ["download", "#export", "report.txt"], outputPath: "receipt.json" },
+		extensionFactory(pi) {
+			pi.on("before_agent_start", async (_event, ctx) => {
+				selected = join(ctx.cwd, "operation");
+				await mkdir(selected);
+			});
+			pi.events.on("pi-change-working-dir:resolve-execution-cwd", request => {
+				resolutions++;
+				Object.assign(request as object, { result: { cwd: selected } });
+			});
+			agentBrowserExtension(pi, {
+				async beforeExecute(_id, ctx) {
+					assert.notEqual(ctx.cwd, selected, "Pi's project context is unchanged");
+					await delay(25);
+					selected = ctx.cwd;
+				},
+			});
+		},
+		fakeScript: `const fs = require("node:fs"), path = require("node:path"), args = process.argv.slice(2);
+const index = args.indexOf("download");
+let data = { title: "Fixture", url: "https://fixture.example.test/" };
+if (index >= 0) {
+  const target = args[index + 2];
+  if (fs.realpathSync(path.dirname(target)) !== fs.realpathSync(path.join(process.cwd(), "operation"))) throw Error("Operation root moved across policy await");
+  fs.writeFileSync(target, "captured B");
+  data = { path: target };
+}
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+	});
+	assert.equal(resolutions, 1);
+	assert.equal(pipeline.persistedResult.isError, false, JSON.stringify(pipeline.persistedResult.content));
+	const details = pipeline.persistedResult.details as { outputFile: { absolutePath: string } };
+	assert.ok(details.outputFile.absolutePath.endsWith(join("operation", "receipt.json")));
+});
 
 test("Pi pipeline awaits beforeExecute after earlier sibling writes and before browser effects", async () => {
 	const capturedIds: string[] = [];

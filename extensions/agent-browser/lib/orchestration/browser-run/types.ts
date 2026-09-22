@@ -102,6 +102,7 @@ export interface BrowserRunStatePatch {
 
 export interface BrowserRunOptions {
 	modelVisible?: boolean;
+	operationCwd?: string;
 	daemonInactive?: boolean;
 	ctx: BrowserRunContext;
 	cwd: string;
