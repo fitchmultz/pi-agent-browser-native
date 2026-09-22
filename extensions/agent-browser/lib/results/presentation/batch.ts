@@ -31,6 +31,7 @@ import { buildPageChangeSummary } from "./navigation.js";
 import { appendSelectorRecoveryHint, getClipboardWritePayloadCandidates, isOverlayBlockedClickError, redactClipboardPermissionErrorValue } from "./errors.js";
 
 export interface BuildNestedToolPresentationOptions {
+	modelVisible?: boolean;
 	artifactManifest?: SessionArtifactManifest;
 	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
@@ -218,6 +219,7 @@ function formatBatchStepsText(steps: Array<{ details: BatchStepPresentationDetai
 }
 
 async function buildBatchStepPresentation(options: {
+	modelVisible?: boolean;
 	artifactManifest?: SessionArtifactManifest;
 	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
@@ -293,6 +295,7 @@ async function buildBatchStepPresentation(options: {
 		? buildNetworkRouteDiagnostics(item.result, networkRoutes)
 		: undefined;
 	const presentation = await buildNestedToolPresentation({
+		modelVisible: options.modelVisible,
 		artifactManifest,
 		artifactMaxUpdatedAtMs,
 		artifactMinUpdatedAtMs,
@@ -355,6 +358,7 @@ async function buildBatchStepPresentation(options: {
 			fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
 			imagePath: imagePaths[0],
 			imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+			imageObservations: presentation.imageObservations,
 			index,
 			lifecycle,
 			networkRouteDiagnostics: presentation.networkRouteDiagnostics,
@@ -425,6 +429,7 @@ async function coalesceTerminalBatchRecordingArtifacts(
 }
 
 export async function buildBatchPresentation(options: {
+	modelVisible?: boolean;
 	artifactManifest?: SessionArtifactManifest;
 	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
@@ -446,6 +451,7 @@ export async function buildBatchPresentation(options: {
 	let currentNetworkRoutes = networkRoutes;
 	for (const [index, item] of data.entries()) {
 		const step = await buildBatchStepPresentation({
+			modelVisible: options.modelVisible,
 			artifactManifest: currentArtifactManifest,
 			artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs,
 			artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,
@@ -492,7 +498,7 @@ export async function buildBatchPresentation(options: {
 	const mutationEvidenceText = unverifiedMutationCount > 0
 		? `Mutation evidence: ${unverifiedMutationCount} action result${unverifiedMutationCount === 1 ? " proves" : "s prove"} dispatch only, not application state change. Use explicit later assertions or external receipts as postconditions; fixed waits are not postconditions.`
 		: undefined;
-	const stepText = formatBatchStepsText(steps);
+	const stepText = options.modelVisible === false ? "" : formatBatchStepsText(steps);
 	const batchSummary = batchFailure === undefined
 		? summary
 		: `Batch failed: ${batchFailure.successCount}/${batchFailure.totalCount} succeeded`;
@@ -544,13 +550,14 @@ export async function buildBatchPresentation(options: {
 		artifacts: artifacts.length > 0 ? artifacts : undefined,
 		batchFailure,
 		batchSteps: steps.map((step) => step.details),
-		content: [{ type: "text", text: contentText }, ...images],
+		content: options.modelVisible === false ? [] : [{ type: "text", text: contentText }, ...images],
 		failureCategory: batchFailure?.failedStep.failureCategory,
 		data: redactedBatchData,
 		fullOutputPath: fullOutputPaths[0],
 		fullOutputPaths: fullOutputPaths.length > 0 ? fullOutputPaths : undefined,
 		imagePath: imagePaths[0],
 		imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+		imageObservations: steps.flatMap(step => step.presentation.imageObservations ?? []),
 		nextActions,
 		pageChangeSummary,
 		resultCategory: batchFailure ? "failure" : "success",

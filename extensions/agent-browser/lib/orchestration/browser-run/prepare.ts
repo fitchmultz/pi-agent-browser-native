@@ -1021,6 +1021,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 
 		const persistentArtifactStore = getPersistentSessionArtifactStore(options.ctx);
 		const snapshotFilter = await trySnapshotFilter({
+			modelVisible: options.modelVisible,
 			artifactManifest: state.artifactManifest,
 			commandTokens,
 			compatibilityWorkaround,

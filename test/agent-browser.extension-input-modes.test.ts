@@ -1098,7 +1098,7 @@ process.stdin.on("end", () => {
 			});
 			assert.equal(missingQaScreenshotResult.isError, true);
 			assert.equal(missingQaScreenshotResult.details?.failureCategory, "artifact-missing");
-			assert.equal((missingQaScreenshotResult.details?.qaPreset as { passed?: boolean } | undefined)?.passed, true);
+			assert.equal((missingQaScreenshotResult.details?.qaPreset as { passed?: boolean } | undefined)?.passed, false);
 			assert.match((missingQaScreenshotResult.content[0] as { text: string }).text, /Artifact verification failed/);
 			assert.doesNotMatch((missingQaScreenshotResult.content[0] as { text: string }).text, /QA preset passed/);
 			delete process.env.AGENT_BROWSER_FAKE_QA_MODE;

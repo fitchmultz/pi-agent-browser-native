@@ -2,10 +2,10 @@ import { isRecord } from "../../../parsing.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../../results/categories.js";
 import { buildSnapshotPresentation } from "../../../results/snapshot.js";
 import { extractRefSnapshotFromData, type SessionRefSnapshot } from "../../../session-page-state.js";
-import { redactSensitiveText, type CompatibilityWorkaround } from "../../../runtime.js";
+import { redactSensitiveText, redactSensitiveValue, type CompatibilityWorkaround } from "../../../runtime.js";
 import { collectScrollPositionSnapshot } from "../diagnostics.js";
 import { buildSessionDetailFields, runSessionCommandData } from "../session-state.js";
-import type { SessionArtifactManifest } from "../../../results/contracts.js";
+import type { SessionArtifactManifest, ToolPresentation } from "../../../results/contracts.js";
 import type { PersistentSessionArtifactStore } from "../../../temp.js";
 import type { AgentBrowserToolResult, BrowserRunOptions } from "../types.js";
 
@@ -246,6 +246,7 @@ function filterSnapshotData(data: unknown, request: SnapshotFilterRequest): { da
 }
 
 export async function trySnapshotFilter(options: {
+	modelVisible?: boolean;
 	artifactManifest?: SessionArtifactManifest;
 	commandTokens: string[];
 	compatibilityWorkaround?: CompatibilityWorkaround;
@@ -277,7 +278,9 @@ export async function trySnapshotFilter(options: {
 	const fullSnapshot = extractRefSnapshotFromData(snapshotData);
 	const diff = request.diff ? buildSnapshotDiff(options.previousRefSnapshot, fullSnapshot) : undefined;
 	if (fullSnapshot) options.sessionPageState.applyRefSnapshot({ sessionName: options.sessionStateKey ?? options.sessionName, snapshot: fullSnapshot, update: options.sessionPageStateUpdate });
-	const presentation = await buildSnapshotPresentation(filtered.data, options.persistentArtifactStore, options.artifactManifest);
+	const presentation: ToolPresentation = options.modelVisible === false
+		? { content: [], data: redactSensitiveValue(filtered.data), summary: "Snapshot" }
+		: await buildSnapshotPresentation(filtered.data, options.persistentArtifactStore, options.artifactManifest);
 	const summary = request.role || request.search
 		? `Snapshot filter: ${filtered.matchedRefs}/${filtered.totalRefs} direct refs matched${request.role ? ` role=${request.role}` : ""}${request.search ? ` search ${JSON.stringify(request.search)}` : ""}; ${filtered.visibleLines} surrounding snapshot line${filtered.visibleLines === 1 ? "" : "s"} shown.`
 		: request.diff

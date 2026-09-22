@@ -1893,9 +1893,10 @@ if (firstCallFailure) process.exit(1);`,
 			});
 			assert.equal(orderedBatchRestart.isError, true);
 			assert.equal((orderedBatchRestart.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "stop-pending-recording"), true);
-			const orderedManifest = orderedBatchRestart.details?.artifactManifest as { entries?: Array<{ path?: string; subcommand?: string }> } | undefined;
-			assert.equal(orderedManifest?.entries?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "start"), true);
-			assert.equal(orderedManifest?.entries?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "close-abandoned"), false);
+			// A final observation spill can occupy the one-row manifest; current artifacts and reservations must survive.
+			const orderedArtifacts = orderedBatchRestart.details?.artifacts as Array<{ path?: string; subcommand?: string }> | undefined;
+			assert.equal(orderedArtifacts?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "start"), true);
+			assert.equal(orderedArtifacts?.some((entry) => entry.path === "ordered-new.webm" && entry.subcommand === "close-abandoned"), false);
 			await rm(noRecordingMarker, { force: true });
 			const releasedOrderedOld = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["pdf", "ordered-old.webm"] });
 			assert.doesNotMatch(releasedOrderedOld.content[0]?.text ?? "", /reserved by an active recording/);

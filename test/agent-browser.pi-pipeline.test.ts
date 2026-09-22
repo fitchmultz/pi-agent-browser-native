@@ -452,7 +452,7 @@ if (args.includes("click") || args.includes("find")) {
 			assert.deepEqual(details.nextActions?.map((action) => action.id), ["inspect-overlay-state"]);
 			assert.deepEqual(details.nextActions?.[0]?.params?.args, ["--namespace", "", "--session", "overlay-recovery", "snapshot", "-i"]);
 			const text = result.content.find((item) => item.type === "text")?.text ?? "";
-			if (json) assert.deepEqual(JSON.parse(text), { success: false, error });
+			if (json) assert.deepEqual(JSON.parse(text), { success: false, resultCategory: "failure", failureCategory: "upstream-error", summary: error, error, data: { error }, nextActions: details.nextActions });
 			else assert.match(text, /inspect-overlay-state/);
 			assert.match(details.nextActions?.[0]?.safety ?? "", /do not blindly retry/i);
 		}
@@ -485,6 +485,6 @@ test("Pi pipeline preserves persisted parseable JSON content while patching isEr
 		assert.equal((result.details as { resultCategory?: string } | undefined)?.resultCategory, "failure");
 		const text = result.content.find((item) => item.type === "text")?.text ?? "";
 		assert.doesNotMatch(text, /Pi tool isError/);
-		assert.deepEqual(JSON.parse(text), { error: "json boom", success: false });
+		assert.deepEqual(JSON.parse(text), { error: "json boom", data: { code: "boom" }, success: false, resultCategory: "failure", failureCategory: "upstream-error", summary: "json boom" });
 	}
 });

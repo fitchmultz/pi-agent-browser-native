@@ -9,7 +9,7 @@ import { buildEvictedSessionArtifactEntries } from "../artifact-manifest.js";
 import type { ArtifactStorageScope, SessionArtifactManifest, SessionArtifactManifestEntry, ToolPresentation } from "../contracts.js";
 import { countLines, truncateText } from "../text.js";
 import { applyArtifactManifest } from "./artifacts.js";
-import { getPresentationText } from "./content.js";
+import { getPresentationText, projectAgentBrowserObservation } from "./content.js";
 import { redactModelFacingText, stringifyModelFacing } from "./common.js";
 
 const LARGE_OUTPUT_INLINE_MAX_CHARS = 8_000;
@@ -118,6 +118,51 @@ function buildSpillArtifactEntries(options: {
 		},
 		...buildEvictedSessionArtifactEntries(options.evictedArtifacts, nowMs),
 	];
+}
+
+export const OBSERVATION_INLINE_MAX_CHARS = 16_000;
+
+/** Bound the final model-visible result, after recovery/diagnostic assembly. Never truncate executable actions. */
+export async function renderAgentBrowserObservation(options: {
+	content: ToolPresentation["content"];
+	details: Record<string, unknown>;
+	json: boolean;
+	succeeded: boolean;
+	persistentArtifactStore?: PersistentSessionArtifactStore;
+}): Promise<{ content: ToolPresentation["content"]; artifactManifest?: SessionArtifactManifest }> {
+	const observation = projectAgentBrowserObservation(options.details, options.succeeded);
+	const images = options.content.filter(part => part.type === "image");
+	const prose = options.content.filter(part => part.type === "text").map(part => part.text).join("\n\n");
+	const { data: _data, error: _error, summary: _summary, ...metadata } = observation;
+	let text = options.json ? JSON.stringify(observation, null, 2) : `${prose}\n\nObservation: ${JSON.stringify(metadata)}`;
+	let artifactManifest = options.details.artifactManifest as SessionArtifactManifest | undefined;
+	if (text.length > OBSERVATION_INLINE_MAX_CHARS) {
+		let spill: LargeOutputSpillWriteResult | undefined;
+		let spillError: string | undefined;
+		try {
+			spill = await writeLargeOutputSpillFile({ data: { ...observation, ...(!options.json ? { text: prose } : {}) }, persistentArtifactStore: options.persistentArtifactStore, text });
+			artifactManifest = applyArtifactManifest({ content: [], summary: "" }, artifactManifest, buildSpillArtifactEntries({
+				commandInfo: { command: typeof options.details.command === "string" ? options.details.command : undefined },
+				evictedArtifacts: spill.evictedArtifacts, path: spill.path, storageScope: spill.storageScope,
+			})).artifactManifest;
+		} catch (error) {
+			spillError = error instanceof Error ? error.message : String(error);
+		}
+		const compact: Record<string, unknown> = {
+			success: options.succeeded, resultCategory: observation.resultCategory,
+			failureCategory: observation.failureCategory, successCategory: observation.successCategory,
+			summary: typeof observation.summary === "string" ? truncateText(observation.summary, 700) : undefined,
+			compacted: true,
+			...(spill ? { observationPath: spill.path, retrieve: "Read observationPath for the complete redacted observation, including exact recovery actions and requested data." }
+				: { observationUnavailable: truncateText(redactModelFacingText(spillError ?? "Spill could not be written; request a smaller result."), 1_000) }),
+		};
+		for (const key of ["sessionName", "namespace", "codeRun", "error", "failures", "nextActions", "artifactVerification", "imageObservations", "data", "fullOutputPath", "fullOutputPaths"]) {
+			if (observation[key] !== undefined && JSON.stringify({ ...compact, [key]: observation[key] }, null, 2).length <= OBSERVATION_INLINE_MAX_CHARS - 500) compact[key] = observation[key];
+		}
+		text = JSON.stringify(compact, null, 2);
+		if (!options.json) text = `Browser observation compacted.\n${text}`;
+	}
+	return { content: [{ type: "text", text }, ...images], artifactManifest };
 }
 
 export async function compactLargePresentationOutput(options: {

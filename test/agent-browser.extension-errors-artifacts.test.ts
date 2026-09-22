@@ -145,7 +145,9 @@ if (args.includes("screenshot")) {
 				assert.equal(result.isError, false, JSON.stringify(result));
 			}
 			const invocations = await readInvocationLog(logPath) as Array<{ allowFileAccess?: string; args: string[]; config?: string; rawArgs?: string }>;
-			assert.equal(invocations.length, 3);
+			assert.equal(invocations.filter(entry => !entry.args.includes("eval")).length, 3);
+			assert.equal(invocations.filter(entry => entry.args.includes("eval")).length, 2, "screenshot geometry uses the same invocation environment");
+			assert.ok(invocations.every(entry => entry.allowFileAccess === "true" && entry.rawArgs === "--disable-web-security"));
 			assert.equal(invocations[0]?.allowFileAccess, "true");
 			assert.equal(invocations[0]?.rawArgs, "--disable-web-security");
 			assert.equal(invocations[0]?.config, join(tempDir, "agent-browser.json"));
@@ -1079,11 +1081,12 @@ test("agentBrowserExtension rejects malformed JSON envelopes that omit success",
 
 			assert.equal(result.isError, true);
 			assert.equal(result.content[0]?.type, "text");
-			assert.equal((result.content[0] as { text: string }).text, MISSING_SUCCESS_PARSE_ERROR);
+			assert.equal((result.content[0] as { text: string }).text.split("\n")[0], MISSING_SUCCESS_PARSE_ERROR);
+			assert.match((result.content[0] as { text: string }).text, /"failureCategory":"parse-failure"/);
 			assert.equal(result.details?.parseError, MISSING_SUCCESS_PARSE_ERROR);
 			assert.equal(result.details?.summary, MISSING_SUCCESS_PARSE_ERROR);
 			assert.doesNotMatch(String(result.details?.summary ?? ""), /^open completed$/i);
-			assert.equal(result.details?.error, undefined);
+			assert.equal(result.details?.error, MISSING_SUCCESS_PARSE_ERROR);
 			assert.equal(result.details?.resultCategory, "failure");
 			assert.equal(result.details?.failureCategory, "parse-failure");
 		});
@@ -1207,10 +1210,12 @@ if (args.includes("get") && args.includes("url")) {
 			assert.equal(jsonFunctionResult.isError, false);
 			const jsonFunctionText = (jsonFunctionResult.content[0] as { text: string }).text;
 			assert.doesNotMatch(jsonFunctionText, /Eval stdin hint:/);
-			assert.deepEqual(JSON.parse(jsonFunctionText), {
-				data: { origin: "https://example.com/", result: {} },
-				success: true,
-			});
+			const jsonFunctionObservation = JSON.parse(jsonFunctionText);
+			assert.deepEqual(jsonFunctionObservation.data, { origin: "https://example.com/", result: {} });
+			assert.equal(jsonFunctionObservation.success, true);
+			assert.equal(jsonFunctionObservation.resultCategory, "success");
+			assert.deepEqual(jsonFunctionObservation.evalStdinHint, functionResult.details?.evalStdinHint);
+			assert.deepEqual(jsonFunctionObservation.nextActions, jsonFunctionResult.details?.nextActions);
 			assert.deepEqual(jsonFunctionResult.details?.evalStdinHint, functionResult.details?.evalStdinHint);
 
 			const emptyArrayIifeResult = await executeRegisteredTool(harness.tool, harness.ctx, {

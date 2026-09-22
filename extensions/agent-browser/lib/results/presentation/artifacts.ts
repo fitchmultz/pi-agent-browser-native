@@ -1,5 +1,6 @@
 import { open, readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
+import { getImageDimensions } from "@earendil-works/pi-tui";
 
 import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { getExplicitArtifactDestination } from "../../orchestration/browser-run/artifact-paths.js";
@@ -313,6 +314,7 @@ export async function extractFileArtifacts(options: {
 	previousRecordingContactSheetPath?: string;
 	sessionName?: string;
 }): Promise<FileArtifactMetadata[]> {
+	if (options.commandInfo.command === "screenshot" && isRecord(options.data) && options.data.changed === false) return [];
 	const candidates = extractPathStrings(options.data);
 	const recording = options.commandInfo.command === "record" ? getRecordingReceipt(options.data, options.commandInfo.subcommand === "stop" ? options.recordingOutcome : undefined) : undefined;
 	const recordingPending = options.recordingPending ?? (recording?.success === null && isRecord(options.data) && isRecord(options.data.capture) && recording.capture.endedAt === null);
@@ -635,9 +637,25 @@ export function extractImagePath(commandInfo: CommandInfo, cwd: string, data: un
 	return path?.trim() && !isNonFileArtifactPathCandidate(path) ? resolve(cwd, path) : undefined;
 }
 
-export async function attachInlineImage(presentation: ToolPresentation, imagePath: string): Promise<ToolPresentation> {
+export async function attachInlineImage(presentation: ToolPresentation, imagePath: string, modelVisible = true): Promise<ToolPresentation> {
 	try {
 		const fileStats = await stat(imagePath);
+		const handle = await open(imagePath, "r");
+		let header: Buffer;
+		try {
+			// Pi's dimension API accepts base64. Encode only a bounded header, never the whole code-mode image.
+			const bytes = Buffer.alloc(64 * 1024);
+			const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+			header = bytes.subarray(0, bytesRead);
+		} finally { await handle.close(); }
+		const mimeType = getImageMimeType(header);
+		if (!mimeType) return presentation;
+		const dimensions = getImageDimensions(header.toString("base64"), mimeType);
+		presentation.imagePath = imagePath;
+		presentation.imageObservations = [{ path: imagePath, mimeType,
+			pixels: dimensions ? { width: dimensions.widthPx, height: dimensions.heightPx } : undefined,
+			capture: "unknown", geometry: { status: "unknown", reason: dimensions ? "Capture geometry was not observed." : "Image dimensions could not be read from the bounded header." } }];
+		if (!modelVisible) return presentation;
 		const inlineImageMaxBytes = getInlineImageMaxBytes();
 		if (fileStats.size > inlineImageMaxBytes) {
 			appendPresentationNotice(
@@ -649,8 +667,6 @@ export async function attachInlineImage(presentation: ToolPresentation, imagePat
 		}
 
 		const file = await readFile(imagePath);
-		const mimeType = getImageMimeType(file);
-		if (!mimeType) return presentation;
 		presentation.content.push({ type: "image", data: file.toString("base64"), mimeType });
 		presentation.imagePath = imagePath;
 		return presentation;

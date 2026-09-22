@@ -48,6 +48,22 @@ export interface AgentBrowserResultCategoryDetails {
 	successCategory?: AgentBrowserSuccessCategory;
 }
 
+export interface AgentBrowserObservation extends AgentBrowserResultCategoryDetails {
+	[key: string]: unknown;
+	success: boolean;
+	data?: unknown;
+	error?: unknown;
+	summary?: string;
+	sessionName?: string;
+	namespace?: string;
+	failures?: AgentBrowserObservation[];
+	nextActions?: AgentBrowserNextAction[];
+	artifacts?: FileArtifactMetadata[];
+	artifactVerification?: ArtifactVerificationSummary;
+	imageObservations?: ImageObservation[];
+	batchSteps?: Array<AgentBrowserObservation & { index: number; command?: string[] }>;
+}
+
 export interface AgentBrowserPageChangeSummary {
 	artifactCount?: number;
 	changeType: "artifact" | "confirmation" | "mutation" | "navigation";
@@ -175,6 +191,35 @@ export interface AgentBrowserWindow {
 	visibility: "unverified";
 }
 
+export interface ScreenshotSample {
+	url: string;
+	frame: "main" | "child";
+	childFrameCount: number;
+	viewport: { width: number; height: number };
+	document: { width: number; height: number };
+	scroll: { x: number; y: number };
+	dpr: number;
+	visualViewport: { x: number; y: number; scale: number };
+	element?: { x: number; y: number; width: number; height: number };
+}
+
+export interface ImageObservation {
+	id?: string;
+	path: string;
+	mimeType: string;
+	pixels?: { width: number; height: number };
+	capture: "viewport" | "full-page" | "element" | "unknown";
+	geometry: {
+		status: "measured" | "unknown";
+		reason: string;
+		before?: ScreenshotSample;
+		after?: ScreenshotSample;
+		/** CSS document coordinates of the captured rectangle, not mouse coordinates. */
+		crop?: { x: number; y: number; width: number; height: number };
+		pixelsPerCssPixel?: { x: number; y: number };
+	};
+}
+
 export interface BatchStepPresentationDetails {
 	artifactVerification?: ArtifactVerificationSummary;
 	artifacts?: FileArtifactMetadata[];
@@ -186,6 +231,7 @@ export interface BatchStepPresentationDetails {
 	fullOutputPaths?: string[];
 	imagePath?: string;
 	imagePaths?: string[];
+	imageObservations?: ImageObservation[];
 	index: number;
 	lifecycle?: AgentBrowserLifecycle;
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
@@ -223,6 +269,7 @@ export interface ToolPresentation {
 	fullOutputPaths?: string[];
 	imagePath?: string;
 	imagePaths?: string[];
+	imageObservations?: ImageObservation[];
 	networkRouteDiagnostics?: NetworkRouteDiagnostic[];
 	nextActions?: AgentBrowserNextAction[];
 	pageChangeSummary?: AgentBrowserPageChangeSummary;

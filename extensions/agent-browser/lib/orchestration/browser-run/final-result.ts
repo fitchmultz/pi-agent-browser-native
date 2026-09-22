@@ -7,6 +7,7 @@ import { buildAgentBrowserNextActions } from "../../results/action-recommendatio
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { type AgentBrowserEnvelope, type AgentBrowserLifecycle, type AgentBrowserNextAction, type AgentBrowserWindow } from "../../results/contracts.js";
 import { extractAgentBrowserLifecycle } from "../../results/presentation/common.js";
+import { projectAgentBrowserObservation } from "../../results/presentation/content.js";
 import { formatSessionArtifactRetentionSummary } from "../../results/artifact-manifest.js";
 import {
 	alignPageChangeSummaryNextActionIds,
@@ -154,13 +155,13 @@ export function redactRecoveryHint(recoveryHint: AgentBrowserExecutionPlan["reco
 
 export function buildJsonVisibleContent(options: {
 	error: unknown;
+	details?: Record<string, unknown>;
 	presentation: AgentBrowserToolPresentation;
 	succeeded: boolean;
 	warnings?: string[];
 }): AgentBrowserToolResult["content"] {
 	const { error, presentation, succeeded, warnings } = options;
-	const payload = redactSensitiveValue({ artifacts: presentation.artifacts, data: presentation.data, error, recordingRecovery: presentation.recordingRecovery, readConfirmation: presentation.readConfirmation, success: succeeded, warnings: warnings && warnings.length > 0 ? warnings : undefined });
-	if (isRecord(payload) && isRecord(payload.data) && isRecord(presentation.data) && typeof presentation.data.wsUrl === "string") payload.data.wsUrl = presentation.data.wsUrl;
+	const payload = projectAgentBrowserObservation({ ...presentation, ...options.details, error, warnings: warnings && warnings.length > 0 ? warnings : undefined }, succeeded);
 	const images = presentation.content.filter((item): item is { data: string; mimeType: string; type: "image" } => item.type === "image");
 	return [{ type: "text", text: JSON.stringify(payload, null, 2) }, ...images];
 }
@@ -241,8 +242,8 @@ export function buildRedactedPresentationContent(options: { exactSensitiveValues
 	}
 	return contentWithSessionWarnings.map((item) => {
 		if (item.type !== "text") return item;
-		const exactRedactedText = redactExactSensitiveText(item.text, exactSensitiveValues);
-		return userRequestedJson && !plainTextInspection ? { ...item, text: exactRedactedText } : { ...item, text: redactSensitiveText(exactRedactedText) };
+		if (userRequestedJson && !plainTextInspection) return { ...item, text: JSON.stringify(redactExactSensitiveValue(JSON.parse(item.text), exactSensitiveValues), null, 2) };
+		return { ...item, text: redactSensitiveText(redactExactSensitiveText(item.text, exactSensitiveValues)) };
 	}) as AgentBrowserToolResult["content"];
 }
 
@@ -400,6 +401,10 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 	if (options.scrollNoopDiagnostic) append(buildScrollNoopNextActions(options.executionPlan.sessionName));
 	if (options.comboboxFocusDiagnostic) append(buildComboboxFocusNextActions(options.executionPlan.sessionName));
 	if (options.managedSessionOutcome) appendUnique(buildManagedSessionFreshFailureNextActions(options.managedSessionOutcome));
+	if (options.currentSessionTabTargetUnknown && ["aborted", "parse-failure"].includes(options.categoryDetails.failureCategory ?? "")) {
+		nextActions = nextActions.filter(action => !isStandaloneSnapshotNextAction(action));
+		appendUnique([{ id: "verify-page-target-after-interruption", tool: "agent_browser", params: { args: withOptionalSessionArgs(options.executionPlan.sessionName, ["batch", "--bail"]), stdin: JSON.stringify([["get", "url"], ["snapshot", "-i"]]) }, reason: "Verify the current URL and inspect the page after an interrupted operation.", safety: "Read-only recovery. The mutation may already have happened; inspect before deciding whether to retry." }]);
+	}
 	if (options.categoryDetails.failureCategory === "timeout" && options.processResult.timedOut) {
 		if (options.currentSessionTabTargetUnknown) nextActions = nextActions.filter((action) => !isStandaloneSnapshotNextAction(action));
 		appendUnique(buildTimeoutPartialProgressNextActions(options));
@@ -412,14 +417,11 @@ function buildResultNextActions(options: FinalResultInput): AgentBrowserNextActi
 
 export function formatAgentBrowserNextActionsText(nextActions: AgentBrowserNextAction[] | undefined): string | undefined {
 	if (!nextActions || nextActions.length === 0) return undefined;
-	const lines = nextActions.slice(0, 6).map((action) => {
-		const params = action.params
-			? { ...action.params, ...(action.params.stdin !== undefined && action.params.stdin.length > 500 ? { stdin: "[omitted; use details.nextActions]" } : {}) }
-			: undefined;
-		const payload = action.artifactPath ? { artifactPath: action.artifactPath } : params;
+	const lines = nextActions.map((action) => {
+		const payload = action.artifactPath ? { artifactPath: action.artifactPath } : action.params;
 		return `- ${action.id}${payload ? ` ${redactSensitiveText(JSON.stringify(payload))}` : ""}: ${redactSensitiveText(action.reason)}`;
 	});
-	return ["Next actions:", ...lines, "The same redacted payloads are available in details.nextActions."].join("\n");
+	return ["Next actions:", ...lines].join("\n");
 }
 
 function formatFailureNextActionsText(options: FinalResultInput, nextActions: AgentBrowserNextAction[] | undefined): string | undefined {
@@ -499,6 +501,7 @@ function buildAgentBrowserResultDetails(options: FinalResultInput, nextActions: 
 		managedSessionOutcome: options.managedSessionOutcome,
 		imagePath: options.presentation.imagePath,
 		imagePaths: options.presentation.imagePaths,
+		imageObservations: options.presentation.imageObservations,
 		nextActions,
 		pageChangeSummary,
 		clickDispatch: options.clickDispatchDiagnostic,
@@ -547,6 +550,10 @@ export function buildFinalAgentBrowserToolResult(options: FinalResultInput): Age
 	const lifecycle = extractAgentBrowserLifecycle(options.presentationEnvelope?.data);
 	const browserWindow = buildBrowserWindowStatus(options, lifecycle);
 	const details = buildAgentBrowserResultDetails(options, nextActions);
+	if (options.modelVisible === false) {
+		const result = { content: [], details: redactToolDetails(details, options.exactSensitiveValues), isError: !options.succeeded };
+		return options.compiledNetworkSourceLookup ? redactNetworkSourceLookupSurface(result) as typeof result : result;
+	}
 	const visibleRefFallbackText = formatVisibleRefFallbackText(options.visibleRefFallbackDiagnostic);
 	const richInputRecoveryText = formatRichInputRecoveryText(options.richInputRecoveryDiagnostic);
 	const semanticActionCandidateText = nextActions ? formatSemanticActionCandidateText(nextActions) : undefined;
@@ -571,10 +578,16 @@ export function buildFinalAgentBrowserToolResult(options: FinalResultInput): Age
 	const appendedDiagnosticText = redactSensitiveText(redactExactSensitiveText(rawAppendedDiagnosticText, options.exactSensitiveValues));
 	const shouldAppendDiagnosticText = appendedDiagnosticText.length > 0 && (!options.userRequestedJson || options.plainTextInspection);
 	let content = shouldAppendDiagnosticText && options.redactedContent[0]?.type === "text" ? [{ ...options.redactedContent[0], text: `${options.redactedContent[0].text}\n\n${appendedDiagnosticText}` }, ...options.redactedContent.slice(1)] : options.redactedContent;
-	if (options.electronLaunchRecord && options.succeeded && content[0]?.type === "text") {
+	if (options.electronLaunchRecord && options.succeeded && !options.userRequestedJson && content[0]?.type === "text") {
 		content = [{ ...content[0], text: redactSensitiveText(formatElectronLaunchText({ handoff: options.electronHandoff, record: options.electronLaunchRecord, targets: options.electronLaunch?.targets ?? [], upstreamText: content[0].text })) }, ...content.slice(1)];
 	}
-	const result = { content, details: redactToolDetails(details, options.exactSensitiveValues), isError: !options.succeeded };
+	const redactedDetails = redactToolDetails(details, options.exactSensitiveValues);
+	if (options.userRequestedJson && !options.plainTextInspection) {
+		const prior = options.redactedContent[0]?.type === "text" ? JSON.parse(options.redactedContent[0].text) : undefined;
+		if (Array.isArray(prior?.warnings)) redactedDetails.warnings = prior.warnings;
+		content = buildJsonVisibleContent({ error: redactedDetails.error, details: redactedDetails, presentation: options.presentation, succeeded: options.succeeded, warnings: prior?.warnings });
+	}
+	const result = { content, details: redactedDetails, isError: !options.succeeded };
 	return options.compiledNetworkSourceLookup ? redactNetworkSourceLookupSurface(result) as typeof result : result;
 }
 

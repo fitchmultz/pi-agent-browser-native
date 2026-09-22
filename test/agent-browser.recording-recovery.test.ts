@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 
+import { recoverRecordingStop } from "../extensions/agent-browser/lib/orchestration/browser-run/recording-recovery.js";
+import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import { createExtensionHarness, createToolBranchEntry, executeRegisteredTool, readInvocationLog, runExtensionEvent, withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
@@ -98,6 +100,21 @@ if (output !== undefined && (tokens[0] !== 'batch' || mode === 'mixed-failure'))
 		});
 	} finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test("code-mode recording recovery retains receipt data without rendering", async () => {
+	await withRecorder("no-recording", async ({ root, harness, prefix }) => {
+		const path = join(root, "code.webm");
+		const started = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "record", "start", path] });
+		assert.equal(started.isError, false);
+		const processResult = await runAgentBrowserProcess({ args: ["--json", ...prefix, "record", "stop"], cwd: root });
+		const result = await recoverRecordingStop({ modelVisible: false, artifactRunStartedAtMs: Date.now() - 1000, commandTokens: ["record", "stop"], cwd: root, namespace: "scope", sessionName: "recorder", processResult,
+			envelope: { success: false, error: "No recording in progress" }, reservation: { absolutePath: path, cwd: root, path, namespace: "scope", sessionName: "recorder", recordingId: "new-take" } });
+		assert.equal(result?.recovery.healed, true);
+		assert.deepEqual(result.presentation.content, []);
+		assert.equal(result.presentation.fullOutputPath, undefined);
+		assert.equal((result.presentation.data as { recordingId: string }).recordingId, "new-take");
+	});
+});
 
 for (const outputPrefix of ["", "@"]) {
 	test(`record stop rejects recording outputPath alias: ${outputPrefix || "exact"}`, { concurrency: false }, async () => {

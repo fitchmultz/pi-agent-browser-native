@@ -903,6 +903,16 @@ function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
 	}
 }
 
+export function redactTimeoutPartialProgress(progress: TimeoutPartialProgress): TimeoutPartialProgress {
+	const redact = (value: unknown): unknown => {
+		if (typeof value === "string") return /^https?:\/\//i.test(value) ? sanitizeCurrentPageUrlForTimeoutDiagnostic(value) : redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(value));
+		if (Array.isArray(value)) return value.map(redact);
+		if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redact(item)]));
+		return value;
+	};
+	return redact(progress) as TimeoutPartialProgress;
+}
+
 export function formatTimeoutPartialProgressText(progress: TimeoutPartialProgress, pageTargetUnknown = false): string {
 	const lines = [`Timeout partial progress: ${progress.summary}`];
 	const currentPageTitle = progress.currentPage?.title ? redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(progress.currentPage.title)) : undefined;

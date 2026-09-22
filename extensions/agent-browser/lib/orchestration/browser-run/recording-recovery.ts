@@ -48,6 +48,7 @@ function receiptMatches(receipt: RecordingReceipt, expected: ActiveRecordingRese
 }
 
 export async function recoverRecordingStop(options: {
+	modelVisible?: boolean;
 	artifactManifest?: SessionArtifactManifest;
 	artifactRunStartedAtMs: number;
 	commandTokens: string[];
@@ -124,6 +125,7 @@ export async function recoverRecordingStop(options: {
 		&& !currentUsesSamePath;
 	const data = matchedData ?? (expected ? { path: expected.absolutePath, recordingId: expected.recordingId, success: null } : undefined);
 	const presentation = await buildToolPresentation({
+		modelVisible: options.modelVisible,
 		artifactManifest: options.artifactManifest, artifactMinUpdatedAtMs: expected?.startedAtMs ?? options.artifactRunStartedAtMs, artifactMaxUpdatedAtMs: Date.now(),
 		artifactRequest: expected ? { path: expected.path, absolutePath: expected.absolutePath, status: terminalMeasurements ? undefined : "unverified" } : undefined,
 		commandInfo: { command: "record", subcommand: "stop" }, cwd: expected?.cwd ?? options.cwd,
@@ -166,7 +168,7 @@ export async function recoverRecordingStop(options: {
 	presentation.nextActions = followups;
 	presentation.recordingRecovery = recovery;
 	const text = `Recording receipt recovery (${recovery.status}): ${recovery.reason}\nOriginal attempt: ${attemptError}`;
-	presentation.content.unshift({ type: "text", text });
+	if (options.modelVisible !== false) presentation.content.unshift({ type: "text", text });
 	return { batch, envelope, partialBatch: batch && !rows, stopIndex, presentation, recovery };
 }
 

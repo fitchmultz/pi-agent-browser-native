@@ -1,3 +1,4 @@
+import { getScreenshotCapture } from "../orchestration/browser-run/screenshot-observation.js";
 import type { CompiledAgentBrowserSemanticAction } from "../input-modes/types.js";
 import { isRecord } from "../parsing.js";
 import { buildReadConfirmationNextActions, nextReadConfirmation } from "../read-confirmation.js";
@@ -84,6 +85,7 @@ function redactBatchSpillData(data: AgentBrowserBatchResult[]): AgentBrowserBatc
 }
 
 export async function buildToolPresentation(options: {
+	modelVisible?: boolean;
 	artifactManifest?: SessionArtifactManifest;
 	artifactMaxUpdatedAtMs?: number;
 	artifactMinUpdatedAtMs?: number;
@@ -126,13 +128,9 @@ export async function buildToolPresentation(options: {
 	const recordingBatch = commandInfo.command === "batch" && isAgentBrowserBatchResultArray(envelope?.data)
 		&& envelope.data.some((row) => row.command?.[0] === "record");
 	if (errorText && !recordingCommand && !recordingBatch) {
-		return buildErrorPresentation({
-			args,
-			commandInfo,
-			errorText,
-			presentationCommand: presentationCommandInfo.command,
-			sessionName,
-		});
+		return { ...buildErrorPresentation({ args, commandInfo, errorText, presentationCommand: presentationCommandInfo.command, sessionName }),
+			data: redactPresentationData(commandInfoWithTokens, envelope?.data),
+		};
 	}
 
 	let data = enrichStreamStatusData(commandInfoWithTokens, envelope?.data);
@@ -157,6 +155,7 @@ export async function buildToolPresentation(options: {
 			artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,
 			artifactRequests: options.batchArtifactRequests,
 			buildNestedToolPresentation: buildToolPresentation,
+			modelVisible: options.modelVisible,
 			cwd,
 			data,
 			namespace,
@@ -166,13 +165,13 @@ export async function buildToolPresentation(options: {
 			sessionName,
 			summary,
 		});
-	} else if (commandInfo.command === "snapshot" && isRecord(data)) {
+	} else if (options.modelVisible !== false && commandInfo.command === "snapshot" && isRecord(data)) {
 		presentation = await buildSnapshotPresentation(data, persistentArtifactStore, artifactManifest);
 	} else {
 		presentation = {
 			artifactVerification,
 			artifacts: artifacts.length > 0 ? artifacts : undefined,
-			content: [{ type: "text", text: artifactText ?? formatPresentationContentText(commandInfoWithTokens, data, compiledSemanticAction) }],
+			content: options.modelVisible === false ? [] : [{ type: "text", text: artifactText ?? formatPresentationContentText(commandInfoWithTokens, data, compiledSemanticAction) }],
 			data: presentationData,
 			summary,
 		};
@@ -217,8 +216,12 @@ export async function buildToolPresentation(options: {
 
 	const imagePath = artifactRequest?.absolutePath ?? extractImagePath(commandInfo, cwd, data)
 		?? (recordingCommand ? artifacts.find((artifact) => artifact.kind === "image" && artifact.status === "saved")?.absolutePath : undefined);
-	const presentationWithImage = imagePath ? await attachInlineImage(presentation, imagePath) : presentation;
-	const compactedPresentation = await compactLargePresentationOutput({
+	const attachImage = imagePath && !(isRecord(data) && data.changed === false) && !artifacts.some(artifact => artifact.absolutePath === imagePath && ["missing", "stale", "failed"].includes(artifact.status ?? ""));
+	const presentationWithImage = attachImage ? await attachInlineImage(presentation, imagePath, options.modelVisible) : presentation;
+	if (commandInfo.command === "screenshot" && presentationWithImage.imageObservations) {
+		for (const image of presentationWithImage.imageObservations) image.capture = getScreenshotCapture(commandInfoWithTokens.commandTokens ?? []).kind;
+	}
+	const compactedPresentation = options.modelVisible === false ? presentationWithImage : await compactLargePresentationOutput({
 		artifactManifest,
 		commandInfo,
 		data: presentationData,
@@ -332,5 +335,6 @@ export async function buildToolPresentation(options: {
 	if (presentationWithManifest.pageChangeSummary?.observed === false && presentationCommandInfo.command !== "batch" && presentationWithManifest.content[0]?.type === "text") {
 		presentationWithManifest.content[0] = { ...presentationWithManifest.content[0], text: `${presentationWithManifest.content[0].text}\n\nAction dispatched; application change unverified. Verify the expected URL, text, state, or external receipt before relying on it.` };
 	}
+	if (options.modelVisible === false) presentationWithManifest.content = [];
 	return sanitizeModelFacingPresentation(presentationWithManifest);
 }
