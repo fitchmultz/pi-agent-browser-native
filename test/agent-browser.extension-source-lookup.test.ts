@@ -179,12 +179,12 @@ process.stdin.on("end", () => {
 			});
 			assert.ok(sourceLookup?.limitations?.some((item) => item.includes("captured execution directory")));
 			assert.ok(sourceLookup?.limitations?.some((item) => item.includes("app.asar")));
-			const nextActions = lookupResult.details?.nextActions as Array<{ id: string; params?: { args?: string[]; electron?: { action?: string; launchId?: string } } }> | undefined;
+			const nextActions = lookupResult.details?.nextActions as Array<{ id: string; params?: { args?: string[]; action?: string; launchId?: string } }> | undefined;
 			const actionIds = new Set(nextActions?.map((action) => action.id));
 			assert.equal(actionIds.has("snapshot-electron-session"), true);
 			assert.equal(actionIds.has("probe-electron-launch"), true);
 			assert.equal(actionIds.has("list-electron-tabs"), true);
-			assert.ok(nextActions?.some((action) => action.id === "probe-electron-launch" && action.params?.electron?.launchId === launch.launchId));
+			assert.ok(nextActions?.some((action) => action.id === "probe-electron-launch" && action.params?.launchId === launch.launchId));
 			assert.ok(nextActions?.some((action) => action.id === "snapshot-electron-session" && action.params?.args?.includes(launch.sessionName)));
 
 			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: launch.launchId } });

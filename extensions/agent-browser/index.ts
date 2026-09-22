@@ -1711,6 +1711,10 @@ export default function agentBrowserExtension(
 						};
 					}
 				}
+				if (electronHostResult && executionSignal?.aborted) {
+					const failure = browserExecutionFailure(executionSignal.reason, executionSignal);
+					return { ...electronHostResult, ...failure, details: { ...(isRecord(electronHostResult.details) ? electronHostResult.details : {}), ...(isRecord(failure.details) ? failure.details : {}) } };
+				}
 				return electronHostResult;
 			};
 			const runCoordinatedElectronHostInput = async () => {

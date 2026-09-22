@@ -10,9 +10,9 @@ Related docs:
 
 ## Purpose
 
-This guide is the entry point for using `pi-agent-browser-native` against desktop **Electron** applications. The wrapper exposes a top-level `electron` shorthand that owns the awkward discover → launch → attach → probe → cleanup sequence so agents do not hand-build `--remote-debugging-port` argv, poll `DevToolsActivePort`, and `kill` profile directories. After attach, the rest of the native `agent_browser` surface (`snapshot`, `find`, `click`, `fill`, `get`, `eval --stdin`, `batch`, `qa.attached`, and similar) works the same way it does against a web page.
+This guide is the entry point for using `pi-agent-browser-native` against desktop **Electron** applications. The wrapper exposes `agent_browser_electron` with flat action fields that owns the awkward discover → launch → attach → probe → cleanup sequence so agents do not hand-build `--remote-debugging-port` argv, poll `DevToolsActivePort`, and `kill` profile directories. After attach, the rest of the native `agent_browser` surface (`snapshot`, `find`, `click`, `fill`, `get`, `eval --stdin`, `batch`, persistent browser code, and advanced attached QA) works the same way it does against a web page.
 
-This document is structured for users, not implementers. Field-level rules live in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron); this guide focuses on **when** and **how** to use them, and on the safety and ownership boundary the wrapper enforces.
+This document is structured for users, not implementers. Field-level rules live in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#agent_browser_electron); this guide focuses on **when** and **how** to use them, and on the safety and ownership boundary the wrapper enforces.
 
 ## Who this is for
 
@@ -20,9 +20,11 @@ This document is structured for users, not implementers. Field-level rules live 
 - **Coding agents** that need a low-context lifecycle for desktop apps such as VS Code, Cursor, Obsidian, Slack, or any app built on Electron, without re-implementing the CDP attach dance every session.
 - **Maintainers and reviewers** validating the wrapper's Electron behavior before release; verification evidence lives under `RQ-0096` in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md).
 
-It is **not** an upstream `agent-browser` reference and it does **not** replace the canonical [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#electron) for exact field semantics, validation rules, or failure categories.
+It is **not** an upstream `agent-browser` reference and it does **not** replace the canonical [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#agent_browser_electron) for exact field semantics, validation rules, or failure categories.
 
 ## Mental model
+
+Enable the tools with `agent_browser_tools { "enable": ["electron", "qa"] }`. Below, `electron.launch` and similar labels mean `agent_browser_electron { "action": "launch", ... }`; `qa.attached` means `agent_browser_qa { "attached": true, ... }`. These are separate tools, not nested inputs on `agent_browser`.
 
 ```
 electron.list       → discover Electron apps (host-only; no upstream spawn)
@@ -42,14 +44,14 @@ Choosing between the two is a real decision, not a stylistic one. See [Wrapper-o
 
 ## Quick start
 
-Discover the app, launch with the default snapshot handoff, work with current refs, then clean up:
+Use `agent_browser_electron` for the lifecycle rows below and `agent_browser` for the native snapshot: discover, launch with the default snapshot handoff, inspect, then clean up.
 
 ```json
-{ "electron": { "action": "list", "query": "code" } }
-{ "electron": { "action": "launch", "appName": "Visual Studio Code", "handoff": "snapshot" } }
+{ "action": "list", "query": "code" }
+{ "action": "launch", "appName": "Visual Studio Code", "handoff": "snapshot" }
 { "args": ["snapshot", "-i"] }
-{ "electron": { "action": "probe", "timeoutMs": 5000 } }
-{ "electron": { "action": "cleanup", "launchId": "electron-…" } }
+{ "action": "probe", "timeoutMs": 5000 }
+{ "action": "cleanup", "launchId": "electron-…" }
 ```
 
 The launch result carries both a `launchId` (used by `status`/`probe`/`cleanup`) and an attached `sessionName` (used by browser-style `snapshot`/`tab`/`click`/`find` calls). Read both from `details.electron.launch` and `details.electron.identifiers`. With default implicit session reuse, the quick-start `args: ["snapshot", "-i"]` line uses that attached session without an extra `--session` argument; pass `--session` explicitly when you target a named upstream session instead.
@@ -57,7 +59,7 @@ The launch result carries both a `launchId` (used by `status`/`probe`/`cleanup`)
 For a quick "is the app actually showing what we expect?" smoke check after attach:
 
 ```json
-{ "qa": { "attached": true, "expectedText": "Explorer", "screenshotPath": ".dogfood/electron.png" } }
+{ "attached": true, "expectedText": "Explorer", "screenshotPath": ".dogfood/electron.png" }
 ```
 
 `qa.attached` runs against the **current managed session** without opening a URL, so it works for any attached app — wrapper-owned or manually launched.
@@ -92,7 +94,7 @@ Then attach and choose a ready target before using refs:
 { "args": ["tab", "list"] }
 { "args": ["tab", "t2"] }
 { "args": ["snapshot", "-i"] }
-{ "qa": { "attached": true, "expectedText": "Channels" } }
+{ "attached": true, "expectedText": "Channels" }
 ```
 
 A successful `connect` means the CDP endpoint accepted the session; it does **not** prove the app has an active rendered page yet. Prefer `details.nextActions` when present: `verify-connected-session-url` performs the only page read allowed while the attached target is unverified, and `list-connected-session-tabs` inspects attached targets. A verified target clears the guard; otherwise navigate explicitly or select the intended tab. After the read-only list, select or confirm a stable `t<N>` target, verify it with `get url`, and run `snapshot -i` explicitly before trusting refs. If the first `snapshot -i` says `No active page`, follow `list-tabs-after-no-active-page`. If it returns no useful refs without that error, manually run `tab list`, select a stable `t<N>` id for the app surface, then retry a condition wait or `snapshot -i` on that selected target.
@@ -114,14 +116,14 @@ This project is not adding a first-class host-idle primitive yet. Revisit that o
 
 ## Action reference
 
-The exact field schemas, validation rules, and `details.*` payload shapes live in [`TOOL_CONTRACT.md#electron`](TOOL_CONTRACT.md#electron). This section is a usage-oriented overview.
+The exact field schemas, validation rules, and `details.*` payload shapes live in [`TOOL_CONTRACT.md#agent_browser_electron`](TOOL_CONTRACT.md#agent_browser_electron). This section is a usage-oriented overview.
 
 ### `electron.list` — discover apps
 
 Host-only scan; does not spawn upstream `agent-browser`. macOS (`/Applications/*.app`, `~/Applications/*.app`) and Linux (`.desktop` launchers under standard XDG, Flatpak, and Snap locations) are supported in v1. On Windows (and any non-macOS/non-Linux host), `list` returns `details.electron.platform: "unsupported"` with an empty `apps` array—use `executablePath` (or a host `appPath` that resolves to a verifiable Electron binary) for `launch` instead; `inspectElectronExecutablePath` in `extensions/agent-browser/lib/electron/discovery.ts` still gates Windows executables before spawn.
 
 ```json
-{ "electron": { "action": "list", "query": "code", "maxResults": 25 } }
+{ "action": "list", "query": "code", "maxResults": 25 }
 ```
 
 Returns app metadata under `details.electron.apps`: `name`, optional `bundleId`/`desktopId`, `appPath`, `executablePath`, `platform`, and optional non-blocking `sensitivity` annotations. Apps flagged as likely sensitive (categories such as `notes`, `chat`, `mail`, `developer-workspace`, or `passwords-auth`) are printed with `[likely sensitive: …]`. These are **advisory hints**, not enforcement; see [Safety and ownership](#safety-and-ownership) for the policy boundary.
@@ -132,14 +134,12 @@ Pass **exactly one** target: `appPath`, `appName`, `bundleId`, or `executablePat
 
 ```json
 {
-  "electron": {
-    "action": "launch",
-    "appName": "Visual Studio Code",
-    "handoff": "snapshot",
-    "targetType": "page",
-    "timeoutMs": 30000,
-    "appArgs": ["--disable-telemetry"]
-  }
+  "action": "launch",
+  "appName": "Visual Studio Code",
+  "handoff": "snapshot",
+  "targetType": "page",
+  "timeoutMs": 30000,
+  "appArgs": ["--disable-telemetry"]
 }
 ```
 
@@ -162,9 +162,9 @@ Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen 
 Read-only inspection of one or more tracked launches. Without `launchId` or `all`, it selects the single active wrapper launch when unambiguous.
 
 ```json
-{ "electron": { "action": "status" } }
-{ "electron": { "action": "status", "launchId": "electron-…" } }
-{ "electron": { "action": "status", "all": true } }
+{ "action": "status" }
+{ "action": "status", "launchId": "electron-…" }
+{ "action": "status", "all": true }
 ```
 
 Reports `cleanupState`, current debug-port and PID liveness, bounded CDP targets, and freshly measured `userDataDirState` under `details.electron.statuses`. An explicit `launchId` can inspect a **historical cleaned launch record**; default and `all: true` selection exclude cleaned records. Cleanup history does not determine current liveness. The tracked profile path is `present`, `absent` (only native `lstat` ENOENT), or `unknown` (other filesystem errors); a dangling symlink is present. This measures that path only, not all app residue, and is not stored in the launch record. Its managed-session title/URL reads hold the normal daemon-policy lock and owned restore context. Mismatch fields surface when the current managed session or tab no longer matches a live wrapper launch target — typically the cue to follow `reattach-electron-launch` before trusting old refs.
@@ -174,8 +174,8 @@ Reports `cleanupState`, current debug-port and PID liveness, bounded CDP targets
 `probe` collapses what would otherwise be separate `get url` / `get title` / focused-element `eval` / `tab list` / `snapshot -i` calls into one bounded result. Use it instead of chaining those reads when you just need a quick "where are we?" check. The wrapper holds the managed-session daemon-policy lock for the probe and runs every underlying read with the session's owned restore decision, so probing cannot restart the daemon under a different restore key.
 
 ```json
-{ "electron": { "action": "probe" } }
-{ "electron": { "action": "probe", "launchId": "electron-…", "timeoutMs": 5000 } }
+{ "action": "probe" }
+{ "action": "probe", "launchId": "electron-…", "timeoutMs": 5000 }
 ```
 
 Output appears under `details.electron.probe`: `title`, `url`, `focusedElement`, `activeTab`, `tabs`, compact `snapshot` metadata (`refCount`, `refIds`, optional text preview and omission counts), and `errors`. If every underlying read fails, the tool fails with `failureCategory: "upstream-error"`; it does not report a successful empty partial probe. Probes reject an unverified target before helper reads, then verify the live URL again before title, eval, tab, or snapshot helpers so external target drift cannot expose the wrong page. A current-managed probe also persists top-level `details.namespace`, `sessionTabTarget`, and `refSnapshot` so Pi reload/branch replay keeps the same namespaced page identity; unverified transitions persist as `details.sessionTabTargetUnknown: true` until `get url` or explicit navigation establishes a trustworthy target. When `launchId` is given, the probe is tied to that tracked launch and will surface mismatch guidance if the wrapper sees a session or target drift; visible output also includes debug-port/pid liveness so a stale `about:blank` against a dead launch is unmistakable.
@@ -189,8 +189,8 @@ Closes the tracked managed session, stops only the wrapper-tracked process, veri
 Cleanup partial failures fail the tool result with `failureCategory: "cleanup-failed"` and the `retry-electron-cleanup` next action references the same `launchId` so retries are bounded.
 
 ```json
-{ "electron": { "action": "cleanup", "launchId": "electron-…" } }
-{ "electron": { "action": "cleanup", "all": true } }
+{ "action": "cleanup", "launchId": "electron-…" }
+{ "action": "cleanup", "all": true }
 ```
 
 `electron.cleanup` **never** targets:
@@ -206,7 +206,7 @@ On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On
 
 ### `timeoutMs` by action (quick reference)
 
-`electron.list` has no configurable timeout: neither top-level `timeoutMs` nor nested `electron.timeoutMs` is accepted for its host scan. For every other action, nested `timeoutMs` applies to **different surfaces**, not an end-to-end action deadline. Authoritative rules and env overrides live under **Validation and defaults** in [`TOOL_CONTRACT.md#electron`](TOOL_CONTRACT.md#electron).
+`agent_browser_electron` with `action: "list"` has no `timeoutMs` field. For every other action, flat `timeoutMs` applies to **different surfaces**, not an end-to-end action deadline. Authoritative rules and env overrides live in the Electron contract in [`TOOL_CONTRACT.md#agent_browser_electron`](TOOL_CONTRACT.md#agent_browser_electron).
 
 | Action | What `timeoutMs` covers when set | Typical default when omitted |
 | --- | --- | --- |
@@ -217,28 +217,26 @@ On Pi `quit`, active wrapper-owned Electron launches are best-effort cleaned. On
 
 ## `qa.attached` — current-session smoke check
 
-`qa` has two forms: the URL form (`qa: { url, … }`) and the attached form (`qa: { attached: true, … }`). The attached form is the right tool for Electron smoke checks after either launch path because it does not open a URL and runs all checks against the current managed session.
+`agent_browser_qa` has two flat forms: `{ url, … }` and `{ attached: true, … }`. The attached form is the right tool for Electron smoke checks after either launch path because it does not open a URL and runs all checks against the current managed session.
 
 ```json
 {
-  "qa": {
-    "attached": true,
-    "expectedText": "Explorer",
-    "expectedSelector": "@e1",
-    "checkConsole": true,
-    "checkErrors": true,
-    "screenshotPath": ".dogfood/electron.png"
-  }
+  "attached": true,
+  "expectedText": "Explorer",
+  "expectedSelector": "@e1",
+  "checkConsole": true,
+  "checkErrors": true,
+  "screenshotPath": ".dogfood/electron.png"
 }
 ```
 
-`qa.attached` rejects `url` and is incompatible with `sessionMode: "fresh"` — attach first with `electron.launch` or raw `connect`, then run `qa.attached`. Preserved-buffer diagnostics (`checkConsole`, `checkErrors`, `checkNetwork`) default to `false` for attached QA; opt into them when you want historical session buffers to fail the smoke. The full field rules and pass/fail classification live in [`TOOL_CONTRACT.md#qa`](TOOL_CONTRACT.md#qa).
+`qa.attached` rejects `url` and is incompatible with `sessionMode: "fresh"` — attach first with `electron.launch` or raw `connect`, then run `qa.attached`. Preserved-buffer diagnostics (`checkConsole`, `checkErrors`, `checkNetwork`) default to `false` for attached QA; opt into them when you want historical session buffers to fail the smoke. The full field rules and pass/fail classification live in [`TOOL_CONTRACT.md#agent_browser_qa`](TOOL_CONTRACT.md#agent_browser_qa).
 
 In attached Electron sessions, broad selectors such as `body`, `html`, `main`, or `[role=application]` can read the entire app shell. When `get text <selector>` looks too broad, the wrapper may attach `details.electronGetTextScopeWarning` and a `snapshot-for-electron-text-scope` next action; prefer a fresh `snapshot -i`, a current `@ref`, or a narrower panel selector.
 
-## `sourceLookup` against packaged Electron apps
+## Source lookup against packaged Electron apps
 
-`sourceLookup` is an experiment for hinting at the source file/component behind a visible element. It is **opt-in** and **evidence-based**: it reports confidence and evidence rather than claiming a guaranteed mapping. The same experimental helper works against packaged Electron apps, but with two important boundaries:
+Enable `source` and use `agent_browser_source` for experimental hints about the source file/component behind a visible element. It is **opt-in** and **evidence-based**: it reports confidence and evidence rather than claiming a guaranteed mapping. The same experimental helper works against packaged Electron apps, but with two important boundaries:
 
 1. **Scope of the workspace scan.** `sourceLookup` walks the Pi session **cwd** (default `maxWorkspaceFiles: 2000`, hard cap 5000). It does **not** unpack `app.asar` or installed app resources. For packaged apps where the source lives inside `Contents/Resources/app.asar`, the workspace-search lane will commonly return no candidates.
 2. **React DevTools requirement.** `react inspect <id>` requires the session to have been launched with `--enable react-devtools` before first navigation. For Electron, the wrapper's `electron.launch` path does **not** inject `--enable react-devtools` into the Electron process; that flag belongs to upstream `agent-browser` Chromium launches. If the Electron app does not already expose a React DevTools backend, expect `react inspect` to fail; DOM-attribute and workspace-search candidates may still surface.
@@ -246,10 +244,10 @@ In attached Electron sessions, broad selectors such as `body`, `html`, `main`, o
 For wrapper-tracked packaged Electron sessions where `status` is `no-candidates`, the wrapper attaches `workspaceRoot` plus optional `electronContext` (`launchId?`, `appName?`, `appPath?`, `executablePath?`, `sessionName?`, `url?`) and limitations explaining the bundle/asar boundary, plus `snapshot-electron-session`, `probe-electron-launch`, and `list-electron-tabs` next actions so you can inspect the live app and decide whether to widen the workspace or pull source out-of-band before re-running the lookup.
 
 ```json
-{ "sourceLookup": { "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" } }
+{ "selector": "#save", "reactFiberId": "2", "componentName": "SaveButton" }
 ```
 
-Treat `sourceLookup` output as a starting point for navigation, not a substitute for reading code. Full contract: [`TOOL_CONTRACT.md#sourcelookup`](TOOL_CONTRACT.md#sourcelookup).
+Treat `sourceLookup` output as a starting point for navigation, not a substitute for reading code. Full contract: [`TOOL_CONTRACT.md#agent_browser_source`](TOOL_CONTRACT.md#agent_browser_source).
 
 ## Safety and ownership
 
@@ -277,12 +275,10 @@ Both lists match `appName`, `bundleId`, `desktopId`, `appPath`, or `executablePa
 
 ```json
 {
-  "electron": {
-    "action": "launch",
-    "appName": "Slack",
-    "allow": ["Slack"],
-    "deny": ["1Password", "Bitwarden"]
-  }
+  "action": "launch",
+  "appName": "Slack",
+  "allow": ["Slack"],
+  "deny": ["1Password", "Bitwarden"]
 }
 ```
 
@@ -353,6 +349,12 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 ### Mismatch between `status` and the active session
 - `electron.status` may report a live wrapper launch while the managed session has drifted to `about:blank`. Follow `reattach-electron-launch`, then refresh refs before reusing old `@e…` handles. For non-wrapper tab drift where `details.nextActions` names `select-intended-tab-after-drift`, use that stable `t<N>` action plus `snapshot-after-tab-recovery` before continuing.
 
+## Code and shared-session coordination
+
+`agent_browser_code` can inspect/interact with the attached browser by selecting its returned `sessionName` (and namespace when present). The browser survives the cell; variables reset. Electron host discovery/launch/cleanup stays on `agent_browser_electron`. Updated cooperating Pi processes order helpers and actions with the shared socket/namespace/session lock; a whole code cell holds that boundary. Multiple named native sessions attached to the same external app are not a universal app lock. Humans and external clients can still change the app.
+
+Recovery actions now name `agent_browser_electron` with flat parameters, or `agent_browser` for native operations. Enable `electron` through the loader if a returned lifecycle action is not active. See [0.7 migration](TOOL_CONTRACT.md#07-migration).
+
 ## Cleanup checklist
 
 Before ending the task:
@@ -371,7 +373,7 @@ If `cleanup` returns `failureCategory: "cleanup-failed"`, inspect `details.elect
 
 ## Where to go next
 
-- For exact field semantics, schemas, and `details.*` payloads: [`TOOL_CONTRACT.md#electron`](TOOL_CONTRACT.md#electron) and [`TOOL_CONTRACT.md#qa`](TOOL_CONTRACT.md#qa).
+- For exact field semantics, schemas, and `details.*` payloads: [`TOOL_CONTRACT.md#agent_browser_electron`](TOOL_CONTRACT.md#agent_browser_electron) and [`TOOL_CONTRACT.md#agent_browser_qa`](TOOL_CONTRACT.md#agent_browser_qa).
 - For workflow examples woven into the broader command surface: [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md#electron-desktop-apps).
 - For the closed `RQ-0068` recipe-layer decision that bounds why Electron support is a typed shorthand and not a generic recipe runtime: [`ARCHITECTURE.md`](ARCHITECTURE.md#no-reusable-recipe-layer-yet).
 - For the full release-readiness audit and the `RQ-0096` evidence row: [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md).

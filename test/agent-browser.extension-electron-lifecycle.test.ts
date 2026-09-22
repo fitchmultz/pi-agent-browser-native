@@ -73,42 +73,32 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	try {
 		await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "list" } }), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: 10, query: "code" } }), true);
-			assert.equal(Check(harness.tool.parameters, {
-				electron: {
-					action: "launch",
-					allow: ["Code"],
-					appArgs: ["--safe-mode"],
-					appName: "Code",
-					deny: ["Slack"],
-					handoff: "tabs",
-					targetType: "webview",
-					timeoutMs: 1_000,
-				},
-			}), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", launchId: "launch-1", timeoutMs: 1_000 } }), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", timeoutMs: 1_000 } }), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: true, timeoutMs: 1_000 } }), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", all: true, launchId: "launch-1" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: true, launchId: "launch-1" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", all: false } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", all: false } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: {} }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe" } }), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe", launchId: "launch-1", timeoutMs: 1_000 } }), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe", timeoutMs: 0 } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "probe", handoff: "tabs" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "status", handoff: "tabs" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "cleanup", handoff: "tabs" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", launchId: "launch-1" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", query: 42 } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", query: "" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: "10" } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "list", maxResults: 1.5 } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", allow: [""] } }), false);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" } }), true);
-			assert.equal(Check(harness.tool.parameters, { electron: { action: "launch", appName: "Code", launchId: "launch-1" } }), false);
+			const schema = harness.getTool("agent_browser_electron")!.parameters;
+			assert.equal(Check(schema, { action: "list" }), true);
+			assert.equal(Check(schema, { action: "list", maxResults: 10, query: "code" }), true);
+			assert.equal(Check(schema, { action: "launch", allow: ["Code"], appArgs: ["--safe-mode"], appName: "Code", deny: ["Slack"], handoff: "tabs", targetType: "webview", timeoutMs: 1_000 }), true);
+			assert.equal(Check(schema, { action: "status", launchId: "launch-1", timeoutMs: 1_000 }), true);
+			assert.equal(Check(schema, { action: "status", timeoutMs: 1_000 }), true);
+			assert.equal(Check(schema, { action: "cleanup", all: true, timeoutMs: 1_000 }), true);
+			assert.equal(Check(schema, { action: "status", all: true, launchId: "launch-1" }), false);
+			assert.equal(Check(schema, { action: "cleanup", all: true, launchId: "launch-1" }), false);
+			assert.equal(Check(schema, { action: "status", all: false }), false);
+			assert.equal(Check(schema, { action: "cleanup", all: false }), false);
+			assert.equal(Check(schema, {}), false);
+			assert.equal(Check(schema, { action: "probe" }), true);
+			assert.equal(Check(schema, { action: "probe", launchId: "launch-1", timeoutMs: 1_000 }), true);
+			assert.equal(Check(schema, { action: "probe", timeoutMs: 0 }), false);
+			assert.equal(Check(schema, { action: "probe", handoff: "tabs" }), false);
+			assert.equal(Check(schema, { action: "status", handoff: "tabs" }), false);
+			assert.equal(Check(schema, { action: "cleanup", handoff: "tabs" }), false);
+			assert.equal(Check(schema, { action: "list", launchId: "launch-1" }), false);
+			assert.equal(Check(schema, { action: "list", query: 42 }), false);
+			assert.equal(Check(schema, { action: "list", query: "" }), false);
+			assert.equal(Check(schema, { action: "list", maxResults: "10" }), false);
+			assert.equal(Check(schema, { action: "list", maxResults: 1.5 }), false);
+			assert.equal(Check(schema, { action: "launch", allow: [""] }), false);
+			assert.equal(Check(schema, { action: "launch", appName: "Code", appPath: "/Applications/Visual Studio Code.app" }), true);
+			assert.equal(Check(schema, { action: "launch", appName: "Code", launchId: "launch-1" }), false);
 
 			const listResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				electron: { action: "list", maxResults: 1, query: "__piab_no_matching_electron_app__" },
@@ -194,21 +184,20 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	}
 });
 
-test("Electron timeout schema keeps list unconfigurable and other nested timeouts accepted", () => {
+test("Electron timeout schema keeps list unconfigurable and other action timeouts accepted", () => {
 	const harness = createExtensionHarness({ cwd: process.cwd() });
-	assert.equal(Check(harness.tool.parameters, { electron: { action: "list", timeoutMs: 1_000 } }), false);
+	const schema = harness.getTool("agent_browser_electron")!.parameters;
+	assert.equal(Check(schema, { action: "list", timeoutMs: 1_000 }), false);
 	assert.match(compileAgentBrowserElectron({ action: "list", timeoutMs: 1_000 }).error ?? "", /list only supports query and maxResults; remove electron\.timeoutMs/);
 	for (const action of ["launch", "status", "cleanup", "probe"] as const) {
 		const electron = { action, timeoutMs: 1_000, ...(action === "launch" ? { appName: "Demo" } : {}) };
-		assert.equal(Check(harness.tool.parameters, { electron }), true, action);
+		assert.equal(Check(schema, electron), true, action);
 		const result = compileAgentBrowserElectron(electron);
 		assert.equal(result.error, undefined, action);
 		assert.ok(result.compiled && result.compiled.action !== "list");
 		assert.equal(result.compiled.timeoutMs, 1_000, action);
 	}
-	const schema = harness.tool.parameters as { properties: { timeoutMs: { description: string } } };
-	assert.match(schema.properties.timeoutMs.description, /electron\.list has no configurable timeout/);
-	assert.match(schema.properties.timeoutMs.description, /other Electron actions use electron\.timeoutMs/);
+
 });
 
 test("Electron list timeout guidance never recommends an unsupported nested timeout", async () => {
@@ -447,7 +436,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			const launchDetails = launchResult.details as {
 				effectiveArgs: string[];
 				electron: { handoff?: { refSnapshot?: { refIds: string[] } }; identifiers?: { appName?: string; launchId?: string; sessionName?: string }; launch: { launchId: string; port: number; sessionName: string; userDataDir: string }; profileIsolation?: { reusesExistingSignedInProfile?: boolean; attachesToAlreadyRunningApp?: boolean; hostDebugLaunchExample?: string } };
-				nextActions: Array<{ id: string; params?: { args?: string[]; electron?: { action: string; launchId?: string } } }>;
+				nextActions: Array<{ id: string; params?: { args?: string[]; action?: string; launchId?: string } }>;
 				refSnapshot: { refIds: string[] };
 				sessionMode: string;
 			};
@@ -460,7 +449,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.match(launchDetails.effectiveArgs.at(-1) ?? "", /\/devtools\/page\/page-1$/);
 			assert.deepEqual(launchDetails.refSnapshot.refIds, ["e1"]);
 			assert.deepEqual(launchDetails.electron.handoff?.refSnapshot?.refIds, ["e1"]);
-			assert.ok(launchDetails.nextActions.some((action) => action.id === "cleanup-electron-launch" && action.params?.electron?.launchId === launchDetails.electron.launch.launchId));
+			assert.ok(launchDetails.nextActions.some((action) => action.id === "cleanup-electron-launch" && action.params?.launchId === launchDetails.electron.launch.launchId));
 			assert.ok(launchDetails.nextActions.some((action) => action.id === "snapshot-electron-session" && action.params?.args?.includes("snapshot")));
 
 			const launchLog = (await readFile(launchLogPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { args: string[]; userDataDir: string });
@@ -837,7 +826,7 @@ test("agentBrowserExtension reports Electron session mismatch and launchId-aware
 			assert.match(currentUrlResult.content[0]?.text ?? "", /Electron session mismatch: managed session .* is on about:blank, but launch .* still has live target Demo Electron/);
 			const currentUrlDetails = currentUrlResult.details as {
 				electronSessionMismatch?: { launchId?: string; reason?: string; managedSession?: { url?: string }; liveTarget?: { url?: string } };
-				nextActions?: Array<{ id: string; params?: { args?: string[]; electron?: { action?: string; launchId?: string }; sessionMode?: string } }>;
+				nextActions?: Array<{ id: string; params?: { args?: string[]; action?: string; launchId?: string; sessionMode?: string } }>;
 			};
 			assert.equal(currentUrlDetails.electronSessionMismatch?.launchId, launchId);
 			assert.equal(currentUrlDetails.electronSessionMismatch?.reason, "managed-session-about-blank-while-launch-target-live");
@@ -854,12 +843,12 @@ test("agentBrowserExtension reports Electron session mismatch and launchId-aware
 			assert.match(statusResult.content[0]?.text ?? "", /Electron session mismatch: managed session .* is on about:blank, but launch .* still has live target Demo Electron/);
 			const statusDetails = statusResult.details as {
 				electron?: { managedSession?: { url?: string }; sessionMismatch?: { reason?: string; liveTarget?: { url?: string } } };
-				nextActions?: Array<{ id: string; params?: { electron?: { action?: string; launchId?: string } } }>;
+				nextActions?: Array<{ id: string; params?: { action?: string; launchId?: string } }>;
 			};
 			assert.equal(statusDetails.electron?.managedSession?.url, "about:blank");
 			assert.equal(statusDetails.electron?.sessionMismatch?.reason, "managed-session-about-blank-while-launch-target-live");
 			assert.equal(statusDetails.electron?.sessionMismatch?.liveTarget?.url, "app://demo");
-			assert.ok(statusDetails.nextActions?.some((action) => action.id === "probe-electron-launch" && action.params?.electron?.launchId === launchId));
+			assert.ok(statusDetails.nextActions?.some((action) => action.id === "probe-electron-launch" && action.params?.launchId === launchId));
 			assert.ok(statusDetails.nextActions?.some((action) => action.id === "reattach-electron-launch"));
 			const statusActionIds = statusDetails.nextActions?.map((action) => action.id) ?? [];
 			assert.deepEqual(statusActionIds.slice(0, 3), ["status-electron-launch", "probe-electron-launch", "reattach-electron-launch"]);
@@ -1000,14 +989,14 @@ else write({ ok: true, title: currentPage().title, url: currentPage().url });`,
 			assert.match(clickResult.content[0]?.text ?? "", /debug port dead, pid dead/);
 			const clickDetails = clickResult.details as {
 				electronPostCommandHealth?: { launchId?: string; reason?: string; status?: { pidAlive?: boolean; portAlive?: boolean } };
-				nextActions?: Array<{ id: string; params?: { electron?: { action?: string; launchId?: string } } }>;
+				nextActions?: Array<{ id: string; params?: { action?: string; launchId?: string } }>;
 			};
 			assert.equal(clickDetails.electronPostCommandHealth?.launchId, launch.launchId);
 			assert.equal(clickDetails.electronPostCommandHealth?.reason, "process-dead");
 			assert.equal(clickDetails.electronPostCommandHealth?.status?.pidAlive, false);
 			assert.equal(clickDetails.electronPostCommandHealth?.status?.portAlive, false);
-			assert.ok(clickDetails.nextActions?.some((action) => action.id === "status-electron-launch" && action.params?.electron?.launchId === launch.launchId));
-			assert.ok(clickDetails.nextActions?.some((action) => action.id === "cleanup-electron-launch" && action.params?.electron?.launchId === launch.launchId));
+			assert.ok(clickDetails.nextActions?.some((action) => action.id === "status-electron-launch" && action.params?.launchId === launch.launchId));
+			assert.ok(clickDetails.nextActions?.some((action) => action.id === "cleanup-electron-launch" && action.params?.launchId === launch.launchId));
 
 			const cleanupResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId: launch.launchId } });
 			assert.equal(cleanupResult.isError, false);
@@ -1072,9 +1061,9 @@ setTimeout(() => {
 			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
 			assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
 			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
-			assert.equal(probeResult.details?.failureCategory, "upstream-error");
+			assert.equal(probeResult.details?.failureCategory, "timeout", JSON.stringify(probeResult));
 			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "failed");
-			assert.match(probeResult.content[0]?.text ?? "", /Electron probe failed/);
+			assert.match(probeResult.content[0]?.text ?? "", /deadline exceeded/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0 - 2026-09-22
+
+### Changed
+
+- Keep `agent_browser` focused on native commands and batches. Replace its `script` input with `agent_browser_code`, whose fresh JavaScript context controls the same persistent browser and authentication as direct calls.
+- Replace the `job` DSL with native batch/code. Move actions, QA, Electron, and source lookups to five flat tools discovered through `agent_browser_tools`; activation uses Pi's native additive tool history.
+- Return bounded browser observations with exact recovery actions and explicit JSON/image selection from code. Report measured screenshot pixel/CSS geometry and unknown mappings without guessing coordinates.
+- Coordinate cooperating Pi processes across complete helper/action operations and whole code calls. Persist ordered browser-state transitions so interrupted code and branch replay retain truthful page/ref state.
+- Preserve the captured execution directory across queued direct/code calls while browser/configuration and recording ownership remain anchored.
+- Require Pi 0.87.0 and compose browser guidance through native prompt sections. Keep upstream `agent-browser` separately installed.
+
+See the [migration guide](docs/TOOL_CONTRACT.md#07-migration). Restart participating Pi processes after upgrading; mixed package versions do not share the new coordination guarantee.
+
 ## 0.6.17 - 2026-09-22
 
 ### Fixed
