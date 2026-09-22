@@ -3,7 +3,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { MINIMUM_PI_VERSION } from "./doctor.mjs";
@@ -27,7 +26,7 @@ const automation = resolve(automationPath);
 const { isolatedEnvironment } = await import(pathToFileURL(join(automation, "scripts/common.mjs")));
 const { prepareHost, selectDevelopmentHost } = await import(pathToFileURL(join(automation, "scripts/hosts.mjs")));
 // Nested test sockets need the same short temporary root as the pinned qualifier.
-const root = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "pc-"));
+const root = mkdtempSync("/tmp/pc-");
 const env = isolatedEnvironment(root);
 
 function execute(command, args) {

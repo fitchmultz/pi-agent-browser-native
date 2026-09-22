@@ -72,21 +72,19 @@ jobs:
           # https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
           # The native fixture copies the download into /tmp/piab-cp-*/home.
           # Keep that short socket root and Chrome's sandbox; do not relax userns globally.
-          {
-            apparmor_parser --version
-            sysctl kernel.apparmor_restrict_unprivileged_userns
-            chrome=("$CI_ROOT/home/.agent-browser/browsers"/chrome-*/chrome)
-            [[ ${#chrome[@]} == 1 && -x ${chrome[0]} ]]
-            sudo tee "$CI_ROOT/logs/chrome.apparmor" <<EOF
+          apparmor_parser --version
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          chrome=("$CI_ROOT/home/.agent-browser/browsers"/chrome-*/chrome)
+          [[ ${#chrome[@]} == 1 && -x ${chrome[0]} ]]
+          sudo tee "$CI_ROOT/logs/chrome.apparmor" <<EOF
           abi <abi/4.0>,
           include <tunables/global>
           profile $(basename "$CI_ROOT")-chrome /tmp/piab-cp-*/home/.agent-browser/browsers/chrome-*/chrome flags=(unconfined) {
             userns,
           }
           EOF
-            # Load only our ephemeral profile, without reloading host policy or caching it.
-            sudo apparmor_parser --add --skip-cache "$CI_ROOT/logs/chrome.apparmor"
-          } 2>&1 | tee "$CI_ROOT/logs/sandbox-setup.log"
+          # Load only our ephemeral profile, without reloading host policy or caching it.
+          sudo apparmor_parser --add --skip-cache "$CI_ROOT/logs/chrome.apparmor"
       - name: Documentation drift and all 13 native browser checkpoints (loopback only)
         run: |
           # Root only creates a loopback-only namespace, then drops all privileges.
