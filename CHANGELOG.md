@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1 - 2026-09-22
+
+### Fixed
+
+- Defer the native replay helper import until awaited session restoration, preserving fast package registration and the complete restored tool surface. Public browser commands and saved-session behavior remain unchanged.
+
 ## 0.7.0 - 2026-09-22
 
 ### Changed
