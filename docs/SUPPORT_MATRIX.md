@@ -42,7 +42,7 @@ The compact direct/code/loader surface replaces public multimode inputs while re
 | Observation and geometry | Canonical bounded JSON/prose/code observations expose exact recovery and receipts; complete observation spills preserve large output. Image dimensions/CSS viewport/DPR/crop/scroll/frame evidence is measured or explicitly unknown; no viewport-coordinate assumptions for full-page/element images. |
 | Pi integration | Native additive activation/history and prompt sections on independently qualified official Pi 0.87 and fork; optional checkpoint hooks, no provider payload/image-detail overrides. |
 
-See [migration](TOOL_CONTRACT.md#07-migration), [canonical observations](TOOL_CONTRACT.md#canonical-observation), and [release qualification/rollback](RELEASE.md#07-upgrade-and-rollback). Current owner instructions keep GitHub Actions disabled and Windows qualification waived; local evidence and review must be reported separately from unrun CI or platform checks.
+See [migration](TOOL_CONTRACT.md#07-migration), [canonical observations](TOOL_CONTRACT.md#canonical-observation), and [release qualification/rollback](RELEASE.md#07-upgrade-and-rollback). Routine GitHub Actions runs official/fork Linux compatibility, a macOS packed-Pi smoke, and native Linux checkpoints on PRs to `main`; Windows CI is excluded. Release/platform evidence and review remain separate from these focused checks.
 
 ## Audit result
 
@@ -123,7 +123,7 @@ At runtime source `3a9adf490883149e7f79ee070d1900877e17b891`, PR compatibility p
 
 Fresh precommit evidence for that runtime passed real Pi checkout/live-site and supported disposable Electron smoke, configured-source lifecycle, packaged runtime-only SDK/CLI loading, real-upstream checks, native macOS and the canonical named Ubuntu target (Debian 12). Local macOS is the documented alternate, not an SSH pass. Docs/workflow-only delivery may reuse this runtime evidence only after all 104 rebuilt runtime files match the checked artifact; changed published docs require a newly checked retained tarball. No additional paid/live gate is implied by an otherwise byte-identical runtime.
 
-Linux/macOS, declared Node floors, official/fork host identities, required consumer artifacts and Native checkpoint Linux remain required. Required checks follow current explicit owner instructions, including disabled Actions; retain all three final reviewer approvals before merge/release/activation. The unchanged composed `release`/`prepublishOnly` command still includes Windows and is not reported as passed under this waiver; see [release guidance](RELEASE.md#current-0616-rollout-waiver).
+Linux/macOS, declared Node floors, official/fork host identities, required consumer artifacts and Native checkpoint Linux remain required. Routine GitHub Actions is enabled for PRs to `main` and manual dispatch; its focused results do not substitute for the release and platform gates. Retain all three final reviewer approvals before merge/release/activation. The unchanged composed `release`/`prepublishOnly` command still includes Windows and is not reported as passed under this waiver; see [release guidance](RELEASE.md#current-0616-rollout-waiver).
 
 ## Verification evidence
 

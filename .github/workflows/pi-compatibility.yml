@@ -1,9 +1,8 @@
 name: Pi compatibility
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,8 +12,111 @@ concurrency:
   group: pi-compatibility-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PI_AUTOMATION_REF: 117b227140265329055bcda5927ac170c6301d75 # v1.0.0
+
 jobs:
-  compatibility:
-    uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@117b227140265329055bcda5927ac170c6301d75 # v1.0.0
-    with:
-      automation-ref: 117b227140265329055bcda5927ac170c6301d75 # v1.0.0
+  official:
+    name: Official Pi / Node 22
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.19.0'
+          package-manager-cache: false
+      - name: Use the proven npm version
+        run: npm install --global "$(node -p 'require("./automation/package.json").packageManager')"
+      - name: Qualify the locked official graph
+        working-directory: extension
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node scripts/ci-host-compat.mjs locked full "$GITHUB_WORKSPACE/automation"
+          git diff --exit-code
+
+  fork:
+    name: Fork Pi / Node 24
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - name: Select the reviewed fork target
+        run: echo "PI_FORK_REF=$(node -p 'require("./automation/host-targets.json").forkRef')" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/pi
+          ref: ${{ env.PI_FORK_REF }}
+          path: pi-host
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Use the proven npm version
+        run: npm install --global "$(node -p 'require("./automation/package.json").packageManager')"
+      - name: Build the pinned fork packages
+        working-directory: pi-host
+        run: |
+          test "$(git rev-parse HEAD)" = "$PI_FORK_REF"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run hydrate:model-data
+          PI_OFFLINE=1 PI_TELEMETRY=0 npm run build:offline
+          node ../automation/scripts/pack-fork.mjs . "$RUNNER_TEMP/fork-package" "$PI_FORK_REF"
+          git diff --exit-code
+      - name: Qualify the installed fork graph
+        working-directory: extension
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node scripts/ci-host-compat.mjs fork full "$GITHUB_WORKSPACE/automation" "$RUNNER_TEMP/fork-package"
+          git diff --exit-code
+
+  macos:
+    name: macOS package smoke
+    runs-on: macos-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Use the proven npm version
+        run: npm install --global "$(node -p 'require("./automation/package.json").packageManager')"
+      - name: Load the packed package in Pi
+        working-directory: extension
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node scripts/ci-host-compat.mjs locked smoke "$GITHUB_WORKSPACE/automation"
+          node scripts/ci-host-compat.mjs floor smoke "$GITHUB_WORKSPACE/automation"
+          git diff --exit-code

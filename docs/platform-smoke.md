@@ -40,11 +40,11 @@ npm run verify -- platform-smoke run --target ubuntu --suite platform-build
 
 ## Alternate native transports
 
-With maintainer approval, local macOS execution can replace localhost SSH, and the [Native Windows workflow](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/.github/workflows/windows-native.yml) runs the existing Windows suites on a GitHub-hosted Windows runner. Record these as native platform checks, separately from Crabbox SSH or Parallels results. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
+With maintainer approval, local macOS execution can replace localhost SSH. Routine GitHub Actions has no Windows job; the separate Crabbox/Parallels release target remains as documented above. Record alternate native checks separately from Crabbox SSH or Parallels results. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
 
 On macOS, run the unchanged commands returned by `buildPlatformBuildCommand('macos', 'pi-agent-browser-native', 24)` and `buildBrowserDogfoodCommand('macos', '0.38.1', true)` in [`scripts/platform-smoke/targets.mjs`](../scripts/platform-smoke/targets.mjs), serially in a clean private source copy. Use private HOME, npm and Pi settings, and headless browser profiles. No Remote Login or host security change is required.
 
-Retain the exact source head/tree, package and tool versions, native OS/architecture, generated commands, stdout/stderr, every `PLATFORM_*` exit marker, actual Pi registration output, dogfood JSON and verified screenshot. Check the suite assertions below and clean up only the run's processes and temporary files. Hosted Windows uploads this evidence from one bounded job; it does not upload installed projects, dependencies or browser profiles. These alternatives do not waive Ubuntu or any non-platform release check.
+Retain the exact source head/tree, package and tool versions, native OS/architecture, generated commands, stdout/stderr, every `PLATFORM_*` exit marker, actual Pi registration output, dogfood JSON and verified screenshot. Check the suite assertions below and clean up only the run's processes and temporary files. These alternatives do not waive Ubuntu or any non-platform release check.
 
 ## Required environment
 
