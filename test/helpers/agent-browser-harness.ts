@@ -476,8 +476,6 @@ export function createExtensionHarness(options: {
 	branch?: unknown[];
 	cwd: string;
 	onBusEvent?: (channel: string, request: unknown) => void;
-	getAllTools?: ExtensionAPI["getAllTools"];
-	getCommands?: ExtensionAPI["getCommands"];
 	onAppendEntry?: (customType: string, data: unknown) => void;
 	projectTrusted?: boolean;
 	prompt?: string;
@@ -495,8 +493,8 @@ export function createExtensionHarness(options: {
 			emit(channel, request) { options.onBusEvent?.(channel, request); events.emit(channel, request); },
 			on(channel, handler) { events.on(channel, handler); return () => { events.off(channel, handler); }; },
 		},
-		getAllTools: options.getAllTools ?? (() => []),
-		getCommands: options.getCommands ?? (() => []),
+		getAllTools: () => [],
+		getCommands: () => [],
 		appendEntry(customType, data) {
 			appendedEntries.push({ customType, data });
 			branch.push({ type: "custom", customType, data });

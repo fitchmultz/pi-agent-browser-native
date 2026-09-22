@@ -165,6 +165,41 @@ console.log(JSON.stringify({ success: true, data }));
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("initial fresh launch captures B before queued default browser selection and file output", async () => {
+	const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "bcwf-")));
+	const a = join(root, "a"), b = join(root, "b");
+	await Promise.all([mkdir(a), mkdir(b)]);
+	for (const cwd of [a, b]) execFileSync("git", ["init", "-q", cwd]);
+	await writeFakeAgentBrowserBinary(root, `
+const args = process.argv.slice(2);
+const data = args.includes("tab") ? { tabs: [{ tabId: "t1", active: true, url: "https://fixture.test/", title: "Fixture" }] } : { url: "https://fixture.test/", title: "Fixture" };
+console.log(JSON.stringify({ success: true, data }));
+`);
+	try {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}` }, async () => {
+			let selected = b;
+			const harness = createExtensionHarness({ cwd: a, onBusEvent(channel, request) {
+				if (channel === "pi-change-working-dir:resolve-execution-cwd") Object.assign(request as object, { result: { cwd: selected } });
+			} });
+			await runExtensionEvent(harness.handlers, "session_start", {}, harness.ctx);
+			try {
+				const first = executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://fixture.test/"], sessionMode: "fresh" });
+				const queued = executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"], outputPath: "queued.json" });
+				selected = a;
+				const [fresh, followup] = await Promise.all([first, queued]);
+				assert.equal(fresh.isError, false, fresh.content[0]?.text);
+				assert.equal(followup.isError, false, followup.content[0]?.text);
+				assert.equal(followup.details?.sessionName, fresh.details?.sessionName, "queued default must follow the first fresh browser, not allocate a root browser");
+				assert.equal(fresh.details?.managedSessionCwd, b);
+				assert.equal(followup.details?.managedSessionCwd, b);
+				assert.equal((followup.details?.outputFile as { absolutePath: string }).absolutePath, join(b, "queued.json"));
+				assert.ok((await readFile(join(b, "queued.json"))).length > 0);
+				await assert.rejects(readFile(join(a, "queued.json")), { code: "ENOENT" });
+			} finally { await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx); }
+		});
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("managed launch and restore roots survive directory changes, fresh replacement and branch replay", async () => {
 	const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "bcwm-")));
 	const a = join(root, "a"), b = join(root, "b"), log = join(root, "calls.jsonl");

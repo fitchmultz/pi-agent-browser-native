@@ -1576,7 +1576,7 @@ export default function agentBrowserExtension(
 			const explicitConfig = scanUpstreamGlobalFlagOccurrences(admittedInput.toolArgs, "--config").length > 0 || getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIG !== undefined;
 			// Managed selection must follow earlier queued fresh launches, while file paths keep their admission snapshot.
 			const managedAtAdmission = admittedInput.kind !== "script" && admittedInput.kind !== "electron"
-				&& managedSessionActive && !extractExplicitSessionName(admittedInput.toolArgs) && !explicitConfig;
+				&& !extractExplicitSessionName(admittedInput.toolArgs) && !explicitConfig;
 			const artifactsAtAdmission = managedAtAdmission && commandTouchesArtifactLifecycle(admittedInput.toolArgs, admittedInput.toolStdin, outputPath);
 			const withManagedQueue = <T,>(run: () => Promise<T>) => managedAtAdmission ? run() : managedSessionExecutionQueue.run(run);
 			const withArtifactQueue = <T,>(run: () => Promise<T>) => artifactsAtAdmission ? run() : artifactExecutionQueue.run(run);
