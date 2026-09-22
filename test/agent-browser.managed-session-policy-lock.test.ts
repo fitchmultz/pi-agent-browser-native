@@ -12,15 +12,25 @@ import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { chmod, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
 import {
 	acquireManagedSessionPolicyLock,
-	getManagedSessionPolicyLockPath,
+	getBrowserExecutionLockPath,
+	resolveBrowserExecutionIdentity,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
 
 const sessionName = `piab-policy-lock-${process.pid}`;
-const lockBasePath = getManagedSessionPolicyLockPath(sessionName);
+const originalSocketDir = process.env.PI_AGENT_BROWSER_SOCKET_DIR;
+const socketDir = await fs.mkdtemp(join(tmpdir(), "piab-policy-"));
+process.env.PI_AGENT_BROWSER_SOCKET_DIR = socketDir;
+const lockBasePath = getBrowserExecutionLockPath(await resolveBrowserExecutionIdentity({ sessionName, ownedManagedSession: true }));
+test.after(async () => {
+	if (originalSocketDir === undefined) delete process.env.PI_AGENT_BROWSER_SOCKET_DIR;
+	else process.env.PI_AGENT_BROWSER_SOCKET_DIR = originalSocketDir;
+	await rm(socketDir, { recursive: true, force: true });
+});
 const claimPrefix = `${basename(lockBasePath)}.claim-`;
 const testOrphanPath = join(dirname(lockBasePath), `.pi-agent-browser-policy-remove-test-${process.pid}`);
 
@@ -71,7 +81,7 @@ test("managed session policy lock waits asynchronously and releases only its imm
 
 test("managed session policy lock cleans dead removal artifacts", async () => {
 	await mkdir(testOrphanPath, { mode: 0o700 });
-	await writeFile(join(testOrphanPath, "owner.json"), JSON.stringify({ pid: 2_147_483_647, startIdentity: "dead", token: "orphan", version: 3 }), { mode: 0o600 });
+	await writeFile(join(testOrphanPath, "owner.json"), JSON.stringify({ pid: 2_147_483_647, startIdentity: "dead", token: "orphan", sessionNames: null, version: 4 }), { mode: 0o600 });
 	const lock = await acquireManagedSessionPolicyLock({ sessionName });
 	assert.ok(lock);
 	await assert.rejects(stat(testOrphanPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
@@ -142,7 +152,7 @@ for (const publicationRead of [1, 2]) {
 					missingReads += 1;
 					if (missingReads === publicationRead) {
 						const candidate = join(choosingPath, ".ticket.tmp");
-						await writeFile(candidate, JSON.stringify({ ticket: 2, token: owner.token, version: 3 }), { mode: 0o600 });
+						await writeFile(candidate, JSON.stringify({ ticket: 2, token: owner.token, version: 4 }), { mode: 0o600 });
 						await nativeRename(candidate, ticketPath);
 					}
 				}

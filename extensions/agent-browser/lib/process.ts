@@ -221,6 +221,16 @@ export function getAgentBrowserSocketDir(
 	return `${prefix}${!termuxAppRoot && typeof uid === "number" ? `-${uid}` : ""}`;
 }
 
+export function resolveAgentBrowserSocketDir(options: {
+	env?: NodeJS.ProcessEnv;
+	ownedManagedSession?: boolean;
+	parentEnv?: NodeJS.ProcessEnv;
+} = {}): string | undefined {
+	const parentEnv = options.parentEnv ?? getAgentBrowserProcessEnvironment();
+	return options.env?.[AGENT_BROWSER_SOCKET_DIR_ENV] ?? parentEnv[PI_AGENT_BROWSER_SOCKET_DIR_ENV]
+		?? (!options.ownedManagedSession ? parentEnv[AGENT_BROWSER_SOCKET_DIR_ENV] : undefined) ?? getAgentBrowserSocketDir();
+}
+
 export function isTrustedAndroidAppDataRoot(
 	path: string,
 	metadata: { isDirectory(): boolean; isSymbolicLink(): boolean; mode: number; uid: number },
@@ -453,8 +463,7 @@ export async function runAgentBrowserProcess(options: {
 	};
 	const explicitSocketDir = processOverrides[AGENT_BROWSER_SOCKET_DIR_ENV];
 	let effectiveEnv = explicitSocketDir === undefined ? { ...processOverrides, [AGENT_BROWSER_SOCKET_DIR_ENV]: undefined } : processOverrides;
-	const requestedSocketDir = explicitSocketDir ?? parentEnv[PI_AGENT_BROWSER_SOCKET_DIR_ENV]
-		?? (!ownedManagedSession ? parentEnv[AGENT_BROWSER_SOCKET_DIR_ENV] : undefined) ?? getAgentBrowserSocketDir();
+	const requestedSocketDir = resolveAgentBrowserSocketDir({ env: processOverrides, ownedManagedSession, parentEnv });
 	if (requestedSocketDir !== undefined) {
 		const socketDirError = requestedSocketDir.length > 0
 			? await getAgentBrowserSocketDirValidationError(requestedSocketDir)
