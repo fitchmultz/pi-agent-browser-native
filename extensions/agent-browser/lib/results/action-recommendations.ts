@@ -42,10 +42,10 @@ function buildElectronToolAction(options: {
 }): AgentBrowserNextAction {
 	return {
 		id: options.id,
-		params: { electron: { action: options.action, launchId: options.launchId } },
+		params: { action: options.action, launchId: options.launchId },
 		reason: options.reason,
 		...(options.safety ? { safety: options.safety } : {}),
-		tool: "agent_browser",
+		tool: "agent_browser_electron",
 	};
 }
 

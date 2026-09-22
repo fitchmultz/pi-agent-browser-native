@@ -99,20 +99,20 @@ test("rich input recovery nextAction id helpers lock exact ids", () => {
 test("applyNamespaceToNextActions preserves namespaced follow-up context", () => {
 	const namespaced = applyNamespaceToNextActions([
 		{ id: "snapshot", params: { args: ["--session", "work", "snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
-		{ id: "network-source", params: { networkSourceLookup: { requestId: "req-1", session: "work" } }, reason: "r", tool: "agent_browser" },
-		{ id: "status", params: { electron: { action: "status", launchId: "l1" } }, reason: "r", tool: "agent_browser" },
+		{ id: "network-source", params: { requestId: "req-1", session: "work" }, reason: "r", tool: "agent_browser_network_source" },
+		{ id: "status", params: { action: "status", launchId: "l1" }, reason: "r", tool: "agent_browser_electron" },
 	], "review");
 	assert.deepEqual(namespaced?.[0]?.params?.args, ["--namespace", "review", "--session", "work", "snapshot", "-i"]);
-	assert.deepEqual(namespaced?.[1]?.params?.networkSourceLookup, { namespace: "review", requestId: "req-1", session: "work" });
-	assert.deepEqual(namespaced?.[2]?.params, { electron: { action: "status", launchId: "l1" } });
+	assert.deepEqual(namespaced?.[1]?.params, { namespace: "review", requestId: "req-1", session: "work" });
+	assert.deepEqual(namespaced?.[2]?.params, { action: "status", launchId: "l1" });
 	assert.deepEqual(applyNamespaceToNextActions(namespaced, "review")?.[0]?.params?.args, namespaced?.[0]?.params?.args);
 
 	const defaultNamespaced = applyNamespaceToNextActions([
 		{ id: "snapshot", params: { args: ["--session", "work", "snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
-		{ id: "network-source", params: { networkSourceLookup: { requestId: "req-1", session: "work" } }, reason: "r", tool: "agent_browser" },
+		{ id: "network-source", params: { requestId: "req-1", session: "work" }, reason: "r", tool: "agent_browser_network_source" },
 	], "");
 	assert.deepEqual(defaultNamespaced?.[0]?.params?.args, ["--namespace", "", "--session", "work", "snapshot", "-i"]);
-	assert.deepEqual(defaultNamespaced?.[1]?.params?.networkSourceLookup, { namespace: "", requestId: "req-1", session: "work" });
+	assert.deepEqual(defaultNamespaced?.[1]?.params, { namespace: "", requestId: "req-1", session: "work" });
 	assert.deepEqual(applyNamespaceToNextActions(defaultNamespaced, "")?.[0]?.params?.args, defaultNamespaced?.[0]?.params?.args);
 });
 
@@ -120,13 +120,13 @@ test("applySessionToNextActions preserves session-scoped follow-up context", () 
 	const sessionScoped = applySessionToNextActions([
 		{ id: "snapshot", params: { args: ["snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
 		{ id: "namespaced", params: { args: ["--namespace", "review", "snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
-		{ id: "network-source", params: { networkSourceLookup: { requestId: "req-1" } }, reason: "r", tool: "agent_browser" },
-		{ id: "status", params: { electron: { action: "status", launchId: "l1" } }, reason: "r", tool: "agent_browser" },
+		{ id: "network-source", params: { requestId: "req-1" }, reason: "r", tool: "agent_browser_network_source" },
+		{ id: "status", params: { action: "status", launchId: "l1" }, reason: "r", tool: "agent_browser_electron" },
 	], "work");
 	assert.deepEqual(sessionScoped?.[0]?.params?.args, ["--session", "work", "snapshot", "-i"]);
 	assert.deepEqual(sessionScoped?.[1]?.params?.args, ["--namespace", "review", "--session", "work", "snapshot", "-i"]);
-	assert.deepEqual(sessionScoped?.[2]?.params?.networkSourceLookup, { requestId: "req-1" });
-	assert.deepEqual(sessionScoped?.[3]?.params, { electron: { action: "status", launchId: "l1" } });
+	assert.deepEqual(sessionScoped?.[2]?.params, { requestId: "req-1" });
+	assert.deepEqual(sessionScoped?.[3]?.params, { action: "status", launchId: "l1" });
 	const repeated = applySessionToNextActions(sessionScoped, "work");
 	assert.deepEqual(repeated?.[0]?.params?.args, sessionScoped?.[0]?.params?.args);
 	assert.deepEqual(repeated?.[1]?.params?.args, sessionScoped?.[1]?.params?.args);
@@ -423,9 +423,9 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 			successCategory: "completed",
 		})?.map((action) => ({ id: action.id, params: action.params })),
 		[
-			{ id: "status-electron-launch", params: { electron: { action: "status", launchId: "el_123" } } },
-			{ id: "probe-electron-launch", params: { electron: { action: "probe", launchId: "el_123" } } },
-			{ id: "cleanup-electron-launch", params: { electron: { action: "cleanup", launchId: "el_123" } } },
+			{ id: "status-electron-launch", params: { action: "status", launchId: "el_123" } },
+			{ id: "probe-electron-launch", params: { action: "probe", launchId: "el_123" } },
+			{ id: "cleanup-electron-launch", params: { action: "cleanup", launchId: "el_123" } },
 			{ id: "list-electron-tabs", params: { args: ["--session", "pi-agent-browser-electron-el_123", "tab", "list"] } },
 			{ id: "snapshot-electron-session", params: { args: ["--session", "pi-agent-browser-electron-el_123", "snapshot", "-i"] } },
 		],
@@ -437,8 +437,8 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 			resultCategory: "failure",
 		})?.map((action) => ({ id: action.id, params: action.params })),
 		[
-			{ id: "status-electron-launch", params: { electron: { action: "status", launchId: "el_456" } } },
-			{ id: "retry-electron-cleanup", params: { electron: { action: "cleanup", launchId: "el_456" } } },
+			{ id: "status-electron-launch", params: { action: "status", launchId: "el_456" } },
+			{ id: "retry-electron-cleanup", params: { action: "cleanup", launchId: "el_456" } },
 		],
 	);
 	assert.equal(buildAgentBrowserNextActions({ resultCategory: "success", successCategory: "completed" }), undefined);

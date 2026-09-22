@@ -176,10 +176,11 @@ for (const mode of ["root", "explicit", "fresh", "config", "env", "initial", "he
 				assert.equal((await pages()).length, 1);
 				assert.equal((await cdp(endpoint, "SystemInfo.getProcessInfo")).processInfo.find((entry: { type: string }) => entry.type === "browser").id, pid);
 				if (mode === "headless") {
-					const script = await executeRegisteredTool(harness.tool, harness.ctx, { script: `await browser({args:["open"]}); await browser({args:["open",${JSON.stringify(fixture.baseUrl)}]}); emit((await browser({args:["open"]})).data.url);` });
+					const script = await executeRegisteredTool(harness.getTool("agent_browser_code")!, harness.ctx, { code: `await browser({args:["open"]}); await browser({args:["open",${JSON.stringify(fixture.baseUrl)}]}); emit((await browser({args:["open"]})).data.url);` });
 					assert.equal(script.isError, false, script.content[0]?.text);
 					assert.equal(script.details?.data, `${fixture.baseUrl}/`);
-					assert.equal((script.details?.scriptSession as { cleanup: string }).cleanup, "closed");
+					assert.equal(script.details?.sessionName, opened.details?.sessionName);
+					assert.equal((await cdp(endpoint, "SystemInfo.getProcessInfo")).processInfo.find((entry: { type: string }) => entry.type === "browser").id, pid);
 				}
 				console.log(JSON.stringify({ mode, stockVersion, browserPid: pid, pageCount: 1, headed, customArgsRetained: !["initial", "headless"].includes(mode), storageRetained: true, url: `${fixture.baseUrl}/` }));
 			} finally { await call(["close"]); }

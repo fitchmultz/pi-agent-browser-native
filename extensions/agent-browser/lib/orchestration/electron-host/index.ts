@@ -12,6 +12,7 @@ import {
 } from "../../managed-session-restore.js";
 import { getPageTargetValidationError } from "../../page-target-validation.js";
 import { isRecord } from "../../parsing.js";
+import { getBrowserResultMessage } from "../../browser-transcript.js";
 import { withAttachedBrowserSessionContext } from "../../process.js";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
@@ -151,9 +152,8 @@ function isElectronLaunchRecord(value: unknown): value is ElectronLaunchRecord {
 export function restoreElectronLaunchRecordsFromBranch(branch: unknown[]): Map<string, ElectronLaunchRecord> {
 	const records = new Map<string, ElectronLaunchRecord>();
 	for (const entry of branch) {
-		if (!isRecord(entry) || entry.type !== "message") continue;
-		const message = isRecord(entry.message) ? entry.message : undefined;
-		if (!message || message.toolName !== "agent_browser") continue;
+		const message = getBrowserResultMessage(entry);
+		if (!message) continue;
 		const details = isRecord(message.details) ? message.details : undefined;
 		const electron = isRecord(details?.electron) ? details.electron : undefined;
 		if (!electron) continue;

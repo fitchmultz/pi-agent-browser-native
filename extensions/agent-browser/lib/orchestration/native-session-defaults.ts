@@ -69,9 +69,9 @@ async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal
 	}
 }
 
-export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput, withLaunchDefaults?: (browserRun: (daemonInactive?: boolean) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>, root?: { id: string; profile?: string; executablePath?: string }): Promise<AgentBrowserToolResult> {
+export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput, withLaunchDefaults?: (browserRun: (daemonInactive?: boolean) => Promise<AgentBrowserToolResult>, signal?: AbortSignal) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>, root?: { id: string; profile?: string; executablePath?: string }): Promise<AgentBrowserToolResult> {
 	if (input.kind === "electron" && input.compiledElectron.action === "launch") return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_SESSION: undefined }, () => run(input));
-	if (input.kind === "script" || input.kind === "electron" || isPlainTextInspectionArgs(input.toolArgs)) return run(input);
+	if (input.kind === "electron" || isPlainTextInspectionArgs(input.toolArgs)) return run(input);
 	const env = getAgentBrowserProcessEnvironment();
 	const configArg = scanUpstreamGlobalFlagOccurrences(input.toolArgs, "--config")[0];
 	const configPath = configArg?.value ?? env.AGENT_BROWSER_CONFIG;
@@ -120,8 +120,8 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 		...(configPath !== undefined ? { AGENT_BROWSER_CONFIG: resolve(cwd, configPath) } : {}),
 		...(session !== undefined ? { AGENT_BROWSER_SESSION: session } : {}),
 		...(namespace !== undefined ? { AGENT_BROWSER_NAMESPACE: namespace } : {}),
-	}, () => run({ ...input, toolArgs: args, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun) => {
-		const daemon = await inspectManagedSessionDaemon({ cwd, signal, sessionName: rootDefault,
+	}, () => run({ ...input, toolArgs: args, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun, launchSignal = signal) => {
+		const daemon = await inspectManagedSessionDaemon({ cwd, signal: launchSignal, sessionName: rootDefault,
 			namespace: scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value ?? namespace, timeoutMs: 5_000 });
 		if (daemon.status === "missing-binary") return {
 			content: [{ type: "text", text: buildMissingBinaryMessage() }],

@@ -55,11 +55,14 @@ runInContext(
 	"    });\n" +
 	"  };\n" +
 	"  const emit = function emit(value) { sendValue({ type: 'emit', value }); };\n" +
+	"  const emitImage = function emitImage(value) { sendValue({ type: 'image', value }); };\n" +
 	"  Object.setPrototypeOf(browser, null);\n" +
 	"  Object.setPrototypeOf(emit, null);\n" +
+	"  Object.setPrototypeOf(emitImage, null);\n" +
 	"  Object.freeze(browser);\n" +
 	"  Object.freeze(emit);\n" +
-	"  Object.defineProperties(globalThis, { browser: { value: browser, writable: false, configurable: false }, emit: { value: emit, writable: false, configurable: false } });\n" +
+	"  Object.freeze(emitImage);\n" +
+	"  Object.defineProperties(globalThis, { browser: { value: browser, writable: false, configurable: false }, emit: { value: emit, writable: false, configurable: false }, emitImage: { value: emitImage, writable: false, configurable: false } });\n" +
 	"  const complete = (ok, value) => {\n" +
 	"    if (ok) {\n" +
 	"      try { sendValue(value === undefined ? { type: 'complete', hasValue: false } : { type: 'complete', hasValue: true, value }); }\n" +

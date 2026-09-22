@@ -21,6 +21,7 @@ const execFile = promisify(execFileCallback);
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_LIFECYCLE_MODEL = "zai/glm-5.2";
 const EXPECTED_URL = "https://react.dev/";
+const CODE_URL = "https://react.dev/learn";
 const SENTINEL_CUSTOM_TYPE = "piab-lifecycle-sentinel";
 const SENTINEL_COMMAND_PREFIX = "piab-lifecycle-sentinel";
 const SENTINEL_MARKER_START = "// PIAB_LIFECYCLE_SENTINEL_START";
@@ -169,7 +170,7 @@ function isRecord(value) {
 
 export function agentBrowserResults(entries) {
 	return entries
-		.filter((entry) => entry?.type === "message" && entry.message?.role === "toolResult" && entry.message?.toolName === "agent_browser")
+		.filter((entry) => entry?.type === "message" && entry.message?.role === "toolResult" && ["agent_browser", "agent_browser_code", "agent_browser_qa"].includes(entry.message?.toolName))
 		.map((entry) => entry.message);
 }
 
@@ -572,8 +573,8 @@ async function runPromptAndWaitForResult({ describe, prompt, sessionFile, timeou
 	return report;
 }
 
-function buildToolInputPrompt(params, extra = "") {
-	return `Use exactly one agent_browser tool call with input ${JSON.stringify(params)}${extra} Do not use bash. After the tool result, briefly report the result.`;
+function buildToolInputPrompt(params, extra = "", tool = "agent_browser") {
+	return `Use exactly one ${tool} tool call with input ${JSON.stringify(params)}${extra} Do not use bash. After the tool result, briefly report the result.`;
 }
 
 function buildPrompt(args, extra = "") {
@@ -642,6 +643,14 @@ async function verifyLifecycle(options = {}) {
 		assert(typeof firstSessionName === "string" && firstSessionName.length > 0, "Initial open did not report details.sessionName.");
 		assert(openReport.result.details?.managedSessionOutcome?.status === "created", "Initial fresh open did not create a managed session.");
 
+		const codeNavigation = await runPromptAndWaitForResult({
+			describe: "persistent code navigation before reload",
+			prompt: buildToolInputPrompt({ code: `emit((await browser({args:["open",${JSON.stringify(CODE_URL)}]})).data);` }, "", "agent_browser_code"),
+			sessionFile, timeoutMs, tmuxSession, verbose,
+			predicate: (result) => result.isError === false && result.details?.data?.url === CODE_URL && result.details?.codeRun?.callCount === 1,
+		});
+		assert(codeNavigation.result.details?.sessionName === firstSessionName, "Code navigation used a different browser.");
+
 		await sendLine(tmuxSession, `/${lifecycleSentinelCommand("v1")}`);
 		await waitForSentinel({ sessionFile, timeoutMs, token: "v1" });
 
@@ -656,7 +665,7 @@ async function verifyLifecycle(options = {}) {
 			timeoutMs,
 			tmuxSession,
 			verbose,
-			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", EXPECTED_URL),
+			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", CODE_URL),
 		});
 		assert(reloadSnapshot.result.details?.sessionName === firstSessionName, "Post-reload snapshot used a different managed session name.");
 		assert(reloadSnapshot.result.details?.usedImplicitSession === true, "Post-reload snapshot did not reuse the managed session.");
@@ -696,7 +705,7 @@ async function verifyLifecycle(options = {}) {
 			timeoutMs,
 			tmuxSession,
 			verbose,
-			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", EXPECTED_URL),
+			predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", CODE_URL),
 		});
 		assert(resumeSnapshot.result.details?.sessionName === firstSessionName, "Post-relaunch snapshot used a different managed session name.");
 		assert(resumeSnapshot.result.details?.usedImplicitSession === true, "Post-relaunch snapshot did not reuse the managed session.");
@@ -704,14 +713,15 @@ async function verifyLifecycle(options = {}) {
 
 		const qaFailureReport = await runPromptAndWaitForResult({
 			describe: "qa reclassification failure patch",
-			prompt: buildToolInputPrompt({ qa: { url: "https://fail.example.test/", expectedText: ["Welcome"], expectedSelector: "main" } }),
+			prompt: `First use agent_browser_tools with {"enable":["qa"]}. Then ${buildToolInputPrompt({ url: "https://fail.example.test/", expectedText: ["Welcome"], expectedSelector: "main" }, "", "agent_browser_qa")}`,
 			sessionFile,
 			timeoutMs,
 			tmuxSession,
 			verbose,
 			predicate: (result) => result?.details?.failureCategory === "qa-failure" && result?.details?.resultCategory === "failure" && result?.isError === true,
 		});
-		assert(resultText(qaFailureReport.result).includes("Result category: failure; failureCategory: qa-failure; Pi tool isError: true."), "QA failure transcript row did not include the model-visible Pi isError patch notice.");
+		const qaObservation = JSON.parse(resultText(qaFailureReport.result));
+		assert(qaObservation.success === false && qaObservation.failureCategory === "qa-failure", "QA failure was not visible in the canonical JSON observation.");
 
 		await capturePane(tmuxSession, join(artifactsDir, "success-pane.txt"));
 		return {
@@ -734,7 +744,8 @@ async function verifyLifecycle(options = {}) {
 		await capturePane(tmuxSession, join(artifactsDir, "final-pane.txt")).catch(() => undefined);
 		await killTmuxSession(tmuxSession);
 		if (!keepArtifacts && !failure) {
-			await rm(tempRoot, { force: true, recursive: true });
+			// Preserve Pi transcripts and evidence; remove only disposable runtime inputs.
+			for (const path of [packageDir, fakeBinDir, fakeStateDir, agentDir]) await rm(path, { force: true, recursive: true });
 		} else {
 			console.error(`${failure ? "Lifecycle artifacts retained for debugging" : "Lifecycle artifacts retained"}: ${tempRoot}`);
 		}

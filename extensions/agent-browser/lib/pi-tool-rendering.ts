@@ -2,7 +2,7 @@ import type { AgentToolResult, Theme, ToolResultEvent } from "@earendil-works/pi
 import { getKeybindings, Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 import { compileAgentBrowserElectron } from "./input-modes/electron.js";
-import { compileAgentBrowserJob, compileAgentBrowserQaPreset } from "./input-modes/job.js";
+import { compileAgentBrowserQaPreset } from "./input-modes/job.js";
 import { compileAgentBrowserNetworkSourceLookup, compileAgentBrowserSourceLookup } from "./input-modes/lookups.js";
 import { compileAgentBrowserSemanticAction } from "./input-modes/semantic-action.js";
 import { isRecord } from "./parsing.js";
@@ -103,10 +103,9 @@ function formatVisualTruncationNotice(remainingLines: number, totalLines: number
 }
 
 function getStructuredModeInvocation(input: Record<string, unknown>): { mode?: string; rawArgs: string[]; scriptSource?: string } {
-	if (typeof input.script === "string") return { mode: "script", rawArgs: [], scriptSource: input.script };
+	if (typeof input.code === "string") return { mode: "code", rawArgs: [], scriptSource: input.code };
 	if (Array.isArray(input.args)) return { rawArgs: input.args.filter((value): value is string => typeof value === "string") };
 	if (input.semanticAction !== undefined) return { mode: "semanticAction", rawArgs: compileAgentBrowserSemanticAction(input.semanticAction).compiled?.args ?? [] };
-	if (input.job !== undefined) return { mode: "job", rawArgs: compileAgentBrowserJob(input.job).compiled?.args ?? [] };
 	if (input.qa !== undefined) return { mode: "qa", rawArgs: compileAgentBrowserQaPreset(input.qa).compiled?.args ?? [] };
 	if (input.sourceLookup !== undefined) return { mode: "sourceLookup", rawArgs: compileAgentBrowserSourceLookup(input.sourceLookup).compiled?.args ?? [] };
 	if (input.networkSourceLookup !== undefined) return { mode: "networkSourceLookup", rawArgs: compileAgentBrowserNetworkSourceLookup(input.networkSourceLookup).compiled?.args ?? [] };
@@ -140,9 +139,9 @@ export function formatAgentBrowserRenderCall(args: unknown, theme: Theme, expand
 	const invocationPreview = scriptSource === undefined
 		? formatInvocationPreview(rawArgs)
 		: formatScriptSourceForDisplay(scriptSource, expanded);
-	let text = theme.fg("toolTitle", theme.bold("agent_browser"));
+	let text = theme.fg("toolTitle", theme.bold(mode === "code" ? "agent_browser_code" : "agent_browser"));
 	if (mode) {
-		text += ` ${theme.fg("accent", mode)}`;
+		if (mode !== "code") text += ` ${theme.fg("accent", mode)}`;
 		if (scriptSource !== undefined && expanded) {
 			text += `\n${theme.fg("dim", "Source:")}\n${theme.fg("accent", invocationPreview)}`;
 		} else if (invocationPreview.length > 0) {
@@ -236,8 +235,8 @@ function appendModelVisibleFailureCategoryNotice(content: AgentBrowserToolConten
 }
 
 export function buildAgentBrowserToolResultPatch(event: ToolResultEvent): AgentBrowserToolResultPatch | undefined {
-	if (event.toolName !== "agent_browser") return undefined;
-	const preservesParseableJson = agentBrowserToolResultRequestedJson(event) && agentBrowserToolResultHasParseableJsonContent(event.content);
+	if (event.toolName !== "agent_browser" && !event.toolName.startsWith("agent_browser_")) return undefined;
+	const preservesParseableJson = (event.toolName === "agent_browser_code" || agentBrowserToolResultRequestedJson(event)) && agentBrowserToolResultHasParseableJsonContent(event.content);
 	const notice = preservesParseableJson ? undefined : formatModelVisibleFailureCategoryNotice(event.details);
 	const content = notice ? appendModelVisibleFailureCategoryNotice(event.content, notice) : undefined;
 	const shouldMarkError = isRecord(event.details) && event.details.resultCategory === "failure" && event.isError !== true;

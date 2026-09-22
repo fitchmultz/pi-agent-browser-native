@@ -211,7 +211,7 @@ test("real native config identity follows file, environment and argv precedence"
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("real native config shares a persistent fixture profile while script stays disposable", { skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1", timeout: 120_000 }, async () => {
+test("real native config shares a persistent fixture profile with fresh code contexts", { skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1", timeout: 120_000 }, async () => {
 	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-"));
 	const socketDir = join(root, "s");
 	await mkdir(socketDir, { mode: 0o700 });
@@ -245,27 +245,28 @@ test("real native config shares a persistent fixture profile while script stays 
 				assert.equal(fresh.details?.sessionName, "shared", "configured native session wins just like explicit --session");
 				assert.equal(fresh.details?.managedSessionOutcome, undefined);
 				assert.equal(await readFile(pidPath, "utf8"), pid, "fresh must not restart the configured shared browser");
-				const qa = await executeRegisteredTool(two.tool, two.ctx, { qa: { attached: true, expectedText: "Agent Browser Contract Fixture" } });
+				const qa = await executeRegisteredTool(two.getTool("agent_browser_qa")!, two.ctx, { attached: true, expectedText: "Agent Browser Contract Fixture" });
 				assert.equal(qa.isError, false, qa.content[0]?.text);
 				assert.equal(qa.details?.sessionName, "shared");
-				const semantic = await executeRegisteredTool(two.tool, two.ctx, { semanticAction: { action: "fill", locator: "role", value: "textbox", name: "Name", text: "shared value" } });
+				const semantic = await executeRegisteredTool(two.getTool("agent_browser_action")!, two.ctx, { action: "fill", locator: "role", value: "textbox", name: "Name", text: "shared value" });
 				assert.equal(semantic.isError, false, semantic.content[0]?.text);
 				assert.equal(semantic.details?.sessionName, "shared");
 				assert.equal(semantic.details?.namespace, "team");
 				assert.ok((semantic.details?.effectiveArgs as string[]).some((arg) => /^@e\d+$/.test(arg)), "semantic re-planning uses a live ref and retains native defaults");
-				const job = await executeRegisteredTool(two.tool, two.ctx, { job: { steps: [{ action: "assertText", text: "Agent Browser Contract Fixture" }] } });
-				assert.equal(job.isError, false, job.content[0]?.text);
-				assert.equal(job.details?.sessionName, "shared");
-				const lookup = await executeRegisteredTool(two.tool, two.ctx, { sourceLookup: { selector: "#name-input" } });
+				const batch = await executeRegisteredTool(two.tool, two.ctx, { args: ["batch", "--bail"], stdin: JSON.stringify([["wait", "--text", "Agent Browser Contract Fixture"]]) });
+				assert.equal(batch.isError, false, batch.content[0]?.text);
+				assert.equal(batch.details?.sessionName, "shared");
+				const lookup = await executeRegisteredTool(two.getTool("agent_browser_source")!, two.ctx, { selector: "#name-input" });
 				assert.equal(lookup.isError, false, lookup.content[0]?.text);
 				assert.equal(lookup.details?.sessionName, "shared");
-				const network = await executeRegisteredTool(two.tool, two.ctx, { networkSourceLookup: { filter: "fixture" } });
+				const network = await executeRegisteredTool(two.getTool("agent_browser_network_source")!, two.ctx, { filter: "fixture" });
 				assert.equal(network.isError, false, network.content[0]?.text);
 				assert.equal(network.details?.sessionName, "shared");
-				const script = await executeRegisteredTool(two.tool, two.ctx, { script: `const opened = await browser({args:["open",${JSON.stringify(fixture.baseUrl)}]}); if (!opened.ok) throw Error(opened.error); const marker = await browser({args:["eval","--stdin"],stdin:'localStorage.getItem("fixture-marker")'}); emit({ok:marker.ok, data:marker.data});` });
-				assert.equal(script.isError, false, script.content[0]?.text);
-				assert.doesNotMatch(JSON.stringify(script.details?.data), /kept/);
-				assert.equal(await readFile(pidPath, "utf8"), pid, "helpers and script must not restart or close the shared daemon");
+				const code = await executeRegisteredTool(two.getTool("agent_browser_code")!, two.ctx, { code: `const marker = await browser({args:["eval","--stdin"],stdin:'localStorage.getItem("fixture-marker")'}); emit({success:marker.success, data:marker.data});` });
+				assert.equal(code.isError, false, code.content[0]?.text);
+				assert.match(JSON.stringify(code.details?.data), /kept/);
+				assert.equal(code.details?.sessionName, "shared");
+				assert.equal(await readFile(pidPath, "utf8"), pid, "helpers and code must not restart or close the shared daemon");
 				await runExtensionEvent(two.handlers, "session_shutdown", { reason: "quit" }, two.ctx);
 				assert.equal(await readFile(pidPath, "utf8"), pid, "transcript replay must not claim shared-browser quit ownership");
 			} finally {

@@ -1591,7 +1591,7 @@ if (args.includes("session") && args.includes("info")) {
 			const oldSessionName = oldOpen.details?.sessionName;
 			assertIsString(oldSessionName);
 			const freshFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "open", url: "https://example.com/fresh" }, { action: "assertText", text: "missing" }] },
+				args: ["batch", "--bail"], stdin: JSON.stringify([["open", "https://example.com/fresh"], ["wait", "--text", "missing"]]),
 				sessionMode: "fresh",
 			});
 			assert.equal(freshFailure.isError, true, JSON.stringify(freshFailure));

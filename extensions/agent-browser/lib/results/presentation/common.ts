@@ -42,6 +42,7 @@ export function extractAgentBrowserLifecycle(result: unknown): AgentBrowserLifec
 }
 
 export function omitUpstreamLifecycle(data: Record<string, unknown>): Record<string, unknown> {
+	if (Array.isArray(data)) return data;
 	const { lifecycle: _lifecycle, ...rest } = data;
 	return rest;
 }

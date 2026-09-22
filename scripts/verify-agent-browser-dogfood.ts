@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Run a deterministic, model-free live-browser smoke through the native agent_browser extension surface.
- * Responsibilities: Exercise top-level script, qa, semanticAction, job, artifact verification, and close without relying on an LLM to choose tool calls.
+ * Responsibilities: Exercise persistent code, QA, semantic actions, native batch, artifact verification, and close without relying on an LLM to choose tool calls.
  * Scope: Maintainer verification only; it uses a loopback HTTP fixture and the local extension harness, and it is not part of the published runtime package.
  * Usage: `npm run verify -- dogfood` or `npx tsx scripts/verify-agent-browser-dogfood.ts [--keep-artifacts] [--artifact-dir <path>] [--json]`.
  * Invariants/Assumptions: `agent-browser` is installed on PATH; the script serves a loopback fixture so platform checks do not depend on public network reachability.
@@ -55,7 +55,7 @@ Usage:
   npx tsx scripts/verify-agent-browser-dogfood.ts [--keep-artifacts] [--artifact-dir <path>] [--json]
 
 Options:
-  --artifact-dir <path>  Directory for qa/job screenshots. Defaults to a temp dir.
+  --artifact-dir <path>  Directory for QA/batch screenshots. Defaults to a temp dir.
   --keep-artifacts      Preserve the artifact directory after the run.
   --json                Print the machine-readable report only.
   -h, --help            Show this help.
@@ -182,7 +182,7 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 	const artifactDir = resolve(options.artifactDir ?? await mkdtemp(join(tmpdir(), "pi-agent-browser-dogfood-")));
 	const shouldRemoveArtifacts = !options.keepArtifacts && !options.artifactDir;
 	await mkdir(artifactDir, { recursive: true });
-	const jobScreenshotPath = join(artifactDir, "job.png");
+	const batchScreenshotPath = join(artifactDir, "batch.png");
 	const harness = createExtensionHarness({ cwd, sessionFile: join(artifactDir, "dogfood-session.jsonl"), sessionId: randomUUID() });
 	const fixture = await startDogfoodFixture();
 	const reports: DogfoodStepReport[] = [];
@@ -194,36 +194,31 @@ export async function runAgentBrowserDogfood(options: DogfoodOptions = {}): Prom
 		reports.push(await assertSuccessfulStep({
 			id: "qa-url",
 			textPattern: /Example Domain/,
-			result: await executeRegisteredTool(harness.tool, harness.ctx, {
-				sessionMode: "fresh",
-				qa: {
-					checkConsole: false,
-					checkErrors: false,
-					checkNetwork: false,
-					expectedText: "Example Domain",
-					url: fixture.origin,
-				},
+			result: await executeRegisteredTool(harness.getTool("agent_browser_qa")!, harness.ctx, {
+				sessionMode: "fresh", checkConsole: false, checkErrors: false, checkNetwork: false, expectedText: "Example Domain", url: fixture.origin,
 			}),
 		}));
 
-		const scriptResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-			script: `const values = [];
+		const scriptResult = await executeRegisteredTool(harness.getTool("agent_browser_code")!, harness.ctx, {
+			code: `const values = [];
 for (const url of ${JSON.stringify([`${fixture.origin}script-a`, `${fixture.origin}script-b`])}) {
   const opened = await browser({ args: ["open", url] });
-  if (!opened.ok) throw new Error(opened.error);
+  if (!opened.success) throw new Error(opened.error);
   const probe = await browser({ args: ["eval", "--stdin"], stdin: "({ hasBanner: Boolean(document.querySelector('[role=dialog]')), values: [...document.querySelectorAll('[data-value]')].map(node => node.getAttribute('data-value')) })" });
-  if (!probe.ok) throw new Error(probe.error);
+  if (!probe.success) throw new Error(probe.error);
   if (probe.data.result.hasBanner) {
     const dismissed = await browser({ args: ["click", "#dismiss"] });
-    if (!dismissed.ok) throw new Error(dismissed.error);
+    if (!dismissed.success) throw new Error(dismissed.error);
   }
   values.push(...probe.data.result.values);
 }
 emit(values);`,
 		});
 		assert.deepEqual(scriptResult.details?.data, ["a1", "a2", "b1", "b2"]);
-		assert.equal((scriptResult.details?.scriptSession as { cleanup?: string } | undefined)?.cleanup, "closed", `script cleanup should succeed: ${JSON.stringify(scriptResult.details)}`);
-		reports.push(await assertSuccessfulStep({ id: "script-branch-and-aggregate", result: scriptResult, textPattern: /a1/ }));
+		const afterCode = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+		assert.equal(afterCode.details?.sessionName, scriptResult.details?.sessionName);
+		assert.match(JSON.stringify(afterCode.details?.data), /script-b/);
+		reports.push(await assertSuccessfulStep({ id: "code-branch-and-aggregate", result: scriptResult, textPattern: /a1/ }));
 
 		reports.push(await assertSuccessfulStep({
 			id: "open-fresh-example",
@@ -237,9 +232,7 @@ emit(values);`,
 		reports.push(await assertSuccessfulStep({
 			id: "semantic-click-learn-more",
 			textPattern: /clicked/i,
-			result: await executeRegisteredTool(harness.tool, harness.ctx, {
-				semanticAction: { action: "click", selector: "a" },
-			}),
+			result: await executeRegisteredTool(harness.getTool("agent_browser_action")!, harness.ctx, { action: "click", selector: "a" }),
 		}));
 		reports.push(await assertSuccessfulStep({
 			id: "semantic-click-url",
@@ -257,17 +250,11 @@ emit(values);`,
 
 
 		reports.push(await assertSuccessfulStep({
-			artifactPath: jobScreenshotPath,
-			id: "job-open-assert-screenshot",
+			artifactPath: batchScreenshotPath,
+			id: "batch-open-assert-screenshot",
 			textPattern: /Step 2[\s\S]*Example Domain/,
 			result: await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: {
-					steps: [
-						{ action: "open", url: fixture.origin },
-						{ action: "assertText", text: "Example Domain" },
-						{ action: "screenshot", path: jobScreenshotPath },
-					],
-				},
+				args: ["batch", "--bail"], stdin: JSON.stringify([["open", fixture.origin], ["wait", "--text", "Example Domain"], ["screenshot", batchScreenshotPath]]),
 			}),
 		}));
 

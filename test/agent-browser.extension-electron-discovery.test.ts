@@ -674,7 +674,6 @@ test("agentBrowserExtension rejects electron mixed with other input modes and ca
 	const conflicts: Array<{ label: string; params: AgentBrowserToolParams }> = [
 		{ label: "args", params: { args: ["open", "https://example.test/"], electron: { action: "list" } } },
 		{ label: "semanticAction", params: { semanticAction: { action: "click", locator: "text", value: "Export" }, electron: { action: "list" } } },
-		{ label: "job", params: { job: { steps: [{ action: "open", url: "https://example.test/" }] }, electron: { action: "list" } } },
 		{ label: "qa", params: { qa: { url: "https://example.test/" }, electron: { action: "list" } } },
 		{ label: "sourceLookup", params: { sourceLookup: { componentName: "Panel" }, electron: { action: "list" } } },
 		{ label: "networkSourceLookup", params: { networkSourceLookup: { url: "/api" }, electron: { action: "list" } } },
@@ -682,7 +681,7 @@ test("agentBrowserExtension rejects electron mixed with other input modes and ca
 	for (const conflict of conflicts) {
 		const result = await executeRegisteredTool(harness.tool, harness.ctx, conflict.params);
 		assert.equal(result.isError, true, conflict.label);
-		assert.match(result.content[0]?.text ?? "", /Provide exactly one of script, args, semanticAction, job, qa, sourceLookup, networkSourceLookup, or electron/);
+		assert.match(result.content[0]?.text ?? "", /Provide exactly one of args, semanticAction, qa, sourceLookup, networkSourceLookup, or electron/);
 		assert.equal(result.details?.failureCategory, "validation-error");
 	}
 

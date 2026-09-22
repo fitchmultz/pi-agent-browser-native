@@ -3,25 +3,21 @@ export interface AgentBrowserNextAction {
 	id: string;
 	params?: {
 		args?: string[];
-		electron?: {
-			action: "cleanup" | "list" | "launch" | "probe" | "status";
-			all?: boolean;
-			handoff?: "connect" | "snapshot" | "tabs";
-			launchId?: string;
-		};
-		networkSourceLookup?: {
-			filter?: string;
-			namespace?: string;
-			requestId?: string;
-			session?: string;
-			url?: string;
-		};
+		action?: "cleanup" | "list" | "launch" | "probe" | "status";
+		all?: boolean;
+		handoff?: "connect" | "snapshot" | "tabs";
+		launchId?: string;
+		filter?: string;
+		namespace?: string;
+		requestId?: string;
+		session?: string;
+		url?: string;
 		sessionMode?: "auto" | "fresh";
 		stdin?: string;
 	};
 	reason: string;
 	safety?: string;
-	tool: "agent_browser";
+	tool: "agent_browser" | "agent_browser_electron" | "agent_browser_network_source";
 }
 
 export function withOptionalNamespaceArgs(namespace: string | undefined, args: string[]): string[] {
@@ -39,8 +35,7 @@ export function applyNamespaceToNextActions(actions: AgentBrowserNextAction[] | 
 	return actions.map((action) => {
 		const args = action.params?.args;
 		if (args) return { ...action, params: { ...action.params, args: withOptionalNamespaceArgs(namespace, args) } };
-		const networkSourceLookup = action.params?.networkSourceLookup;
-		return networkSourceLookup ? { ...action, params: { ...action.params, networkSourceLookup: { ...networkSourceLookup, namespace } } } : action;
+		return action.tool === "agent_browser_network_source" ? { ...action, params: { ...action.params, namespace } } : action;
 	});
 }
 

@@ -1,17 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseArgvDescriptor } from "../argv-descriptor.js";
-import { getFlagName } from "../argv-grammar.js";
-import { isBrowserIndependentRead, needsManagedSession } from "../command-policy.js";
-import { isCloseCommand } from "../command-taxonomy.js";
-import { LAUNCH_SCOPED_FLAGS, MANAGED_RESTORE_INCOMPATIBLE_FLAGS } from "../launch-scoped-flags.js";
 import { isRecord } from "../parsing.js";
-import { validateToolArgs } from "../runtime.js";
-import type { AgentBrowserFailureCategory, AgentBrowserNextAction, AgentBrowserResultCategory, AgentBrowserSuccessCategory } from "../results/contracts.js";
+import { extractExplicitNamespace, extractExplicitSessionName, scanUpstreamGlobalFlagOccurrences } from "../argv-grammar.js";
+import { getUpstreamEffectiveBatchSteps } from "../orchestration/batch-stdin.js";
+import { extractUpstreamCommandTokens } from "../argv-descriptor.js";
+import { isCloseAllCommand } from "../command-taxonomy.js";
+import { redactSensitiveText, validateToolArgs } from "../runtime.js";
+import type { AgentBrowserFailureCategory, AgentBrowserObservation, AgentBrowserResultCategory, AgentBrowserSuccessCategory } from "../results/contracts.js";
 
 export const AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES = 64 * 1_024;
 export const AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS = 120_000;
@@ -21,7 +19,6 @@ export const AGENT_BROWSER_SCRIPT_MAX_CALLS = 25;
 export const AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES = 64 * 1_024;
 export const AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES = 1 * 1_024 * 1_024;
 export const AGENT_BROWSER_SCRIPT_IPC_CUMULATIVE_MAX_BYTES = 8 * 1_024 * 1_024;
-export const AGENT_BROWSER_SCRIPT_SPILL_MAX_BYTES = 512 * 1_024;
 
 function findPackageRoot(startDir: string): string {
 	let currentDir = startDir;
@@ -40,15 +37,7 @@ function resolveScriptWorkerPath(): string {
 }
 
 const SCRIPT_SESSION_NAME_PATTERN = /^piab-script-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const SCRIPT_ALLOWED_LAUNCH_FLAG = "--allowed-domains";
-const SCRIPT_FORBIDDEN_COMMANDS = new Set(["attach", "auth", "batch", "connect", "script", "session", "state"]);
-const SCRIPT_FORBIDDEN_FLAGS = new Set<string>([
-	...LAUNCH_SCOPED_FLAGS.filter((flag) => flag !== SCRIPT_ALLOWED_LAUNCH_FLAG),
-	...MANAGED_RESTORE_INCOMPATIBLE_FLAGS.filter((flag) => flag !== SCRIPT_ALLOWED_LAUNCH_FLAG),
-	"--namespace",
-	"--session",
-	"--config",
-]);
+
 
 export interface CompiledAgentBrowserScript {
 	code: string;
@@ -60,18 +49,7 @@ export interface AgentBrowserScriptBrowserParams {
 	timeoutMs?: number;
 }
 
-export interface AgentBrowserScriptBrowserEnvelope {
-	data: unknown;
-	details?: Record<string, unknown>;
-	error?: string;
-	failureCategory?: AgentBrowserFailureCategory;
-	nextActions?: AgentBrowserNextAction[];
-	ok: boolean;
-	resultCategory: AgentBrowserResultCategory;
-	successCategory?: AgentBrowserSuccessCategory;
-	summary: string;
-	text: string;
-}
+export type AgentBrowserScriptBrowserEnvelope = AgentBrowserObservation;
 
 export interface AgentBrowserScriptStepSummary {
 	failureCategory?: AgentBrowserFailureCategory;
@@ -84,6 +62,7 @@ export interface AgentBrowserScriptStepSummary {
 
 export interface AgentBrowserScriptRunResult {
 	aborted?: boolean;
+	failures?: AgentBrowserObservation[];
 	callCount: number;
 	data?: unknown;
 	emitCount: number;
@@ -96,7 +75,7 @@ export interface AgentBrowserScriptRunResult {
 }
 
 export interface RunAgentBrowserScriptOptions {
-	beforeFirstCall?: () => void;
+	emitImage?: (image: unknown) => void | Promise<void>;
 	code: string;
 	dispatch: (params: AgentBrowserScriptBrowserParams, signal: AbortSignal) => Promise<AgentBrowserScriptBrowserEnvelope>;
 	signal?: AbortSignal;
@@ -107,6 +86,7 @@ type ScriptChildMessage =
 	| { type: "ready" }
 	| { id: number; params: unknown; type: "call" }
 	| { type: "emit"; value: unknown }
+	| { type: "image"; value: unknown }
 	| { error?: { message?: unknown; name?: unknown }; hasValue?: boolean; type: "complete"; value?: unknown };
 
 type ScriptParentMessage =
@@ -121,10 +101,6 @@ export function compileAgentBrowserScript(input: unknown): { compiled?: Compiled
 		: { compiled: { code: input } };
 }
 
-export function createAgentBrowserScriptSessionName(): string {
-	return `piab-script-${randomUUID()}`;
-}
-
 export function createAgentBrowserScriptCloseArgs(sessionName: string): string[] {
 	return ["--namespace", AGENT_BROWSER_SCRIPT_NAMESPACE, "--session", sessionName, "close"];
 }
@@ -133,21 +109,7 @@ export function isAgentBrowserScriptSessionName(value: unknown): value is string
 	return typeof value === "string" && SCRIPT_SESSION_NAME_PATTERN.test(value);
 }
 
-function getScriptCallPolicyError(args: string[]): string | undefined {
-	const descriptor = parseArgvDescriptor(args);
-	const command = descriptor.commandInfo.command;
-	if (!command) return "script browser call args must contain an agent-browser command.";
-	if (isCloseCommand(command)) return "script browser calls cannot close, quit, or exit their isolated session.";
-	if (SCRIPT_FORBIDDEN_COMMANDS.has(command)) return `script browser calls cannot use ${command}.`;
-	if (!needsManagedSession(descriptor) && !isBrowserIndependentRead(descriptor.upstreamCommandTokens)) return `script browser calls cannot use sessionless/local command ${command}.`;
-	for (const token of args) {
-		const flag = getFlagName(token);
-		if (SCRIPT_FORBIDDEN_FLAGS.has(flag)) {
-			return `script browser calls cannot use ${flag}; the parent owns the isolated session identity and launch policy.`;
-		}
-	}
-	return undefined;
-}
+
 
 export function validateAgentBrowserScriptBrowserParams(input: unknown): { params?: AgentBrowserScriptBrowserParams; error?: string; policyBlocked?: boolean } {
 	if (!isRecord(input)) return { error: "script browser(params) requires an object." };
@@ -167,61 +129,63 @@ export function validateAgentBrowserScriptBrowserParams(input: unknown): { param
 		stdin: input.stdin as string | undefined,
 		timeoutMs: input.timeoutMs as number | undefined,
 	};
-	const policyError = getScriptCallPolicyError(params.args);
-	if (policyError) return { error: policyError, policyBlocked: true };
 	const validationError = validateToolArgs(params.args);
 	return validationError ? { error: validationError } : { params };
+}
+
+export function bindBrowserCodeCall(params: AgentBrowserScriptBrowserParams, identity: { sessionName: string; namespace?: string }): AgentBrowserScriptBrowserParams {
+	const explicitSession = extractExplicitSessionName(params.args);
+	const namespaceFlags = scanUpstreamGlobalFlagOccurrences(params.args, "--namespace");
+	const explicitNamespace = extractExplicitNamespace(params.args);
+	if ((explicitSession !== undefined && explicitSession !== identity.sessionName)
+		|| (namespaceFlags.length > 0 && (explicitNamespace || undefined) !== (identity.namespace || undefined))) {
+		throw new Error("A code call uses one browser identity. Set session/namespace on agent_browser_code to choose another browser.");
+	}
+	const tokens = extractUpstreamCommandTokens(params.args);
+	if (isCloseAllCommand(tokens) || getUpstreamEffectiveBatchSteps(tokens, params.stdin).some(isCloseAllCommand)) {
+		throw new Error("Run namespace-wide close --all directly with agent_browser, outside a session-scoped code call.");
+	}
+	return { ...params, args: [
+		...(namespaceFlags.length === 0 ? ["--namespace", identity.namespace ?? ""] : []),
+		...(explicitSession === undefined ? ["--session", identity.sessionName] : []),
+		...params.args,
+	] };
 }
 
 function buildRejectedCallEnvelope(error: string, policyBlocked: boolean): AgentBrowserScriptBrowserEnvelope {
 	return {
 		data: null,
-		details: { failureCategory: policyBlocked ? "policy-blocked" : "validation-error", resultCategory: "failure" },
 		error,
 		failureCategory: policyBlocked ? "policy-blocked" : "validation-error",
-		ok: false,
+		success: false,
 		resultCategory: "failure",
 		summary: error,
-		text: error,
 	};
 }
 
 function normalizeBrowserEnvelope(value: AgentBrowserScriptBrowserEnvelope): AgentBrowserScriptBrowserEnvelope {
-	if (!isRecord(value)
-		|| typeof value.ok !== "boolean"
-		|| typeof value.text !== "string"
-		|| typeof value.summary !== "string"
-		|| (value.resultCategory !== "success" && value.resultCategory !== "failure")) {
-		return buildRejectedCallEnvelope("The ordinary agent_browser executor returned an invalid script envelope.", false);
+	if (!isRecord(value) || typeof value.success !== "boolean" || (value.resultCategory !== "success" && value.resultCategory !== "failure")) {
+		return buildRejectedCallEnvelope("The browser executor returned an invalid code observation.", false);
 	}
-	return {
-		data: value.data ?? null,
-		details: isRecord(value.details) ? value.details : undefined,
-		error: typeof value.error === "string" ? value.error : undefined,
-		failureCategory: value.failureCategory as AgentBrowserFailureCategory | undefined,
-		nextActions: Array.isArray(value.nextActions) ? value.nextActions as AgentBrowserNextAction[] : undefined,
-		ok: value.ok,
-		resultCategory: value.resultCategory,
-		successCategory: value.successCategory as AgentBrowserSuccessCategory | undefined,
-		summary: value.summary,
-		text: value.text,
-	};
+	return value;
 }
 
 function buildStepSummary(index: number, envelope: AgentBrowserScriptBrowserEnvelope): AgentBrowserScriptStepSummary {
 	return {
 		failureCategory: envelope.failureCategory,
 		index,
-		ok: envelope.ok,
+		ok: envelope.success,
 		resultCategory: envelope.resultCategory,
 		successCategory: envelope.successCategory,
-		summary: envelope.summary,
+		summary: envelope.summary ?? (typeof envelope.error === "string" ? envelope.error : "Browser call completed."),
 	};
 }
 
 function buildFailedRun(options: {
 	aborted?: boolean;
+	failures?: AgentBrowserObservation[];
 	callCount: number;
+	data?: unknown;
 	emitCount: number;
 	error: string;
 	failureCategory: AgentBrowserFailureCategory;
@@ -244,7 +208,7 @@ function isScriptChildMessage(value: unknown): value is ScriptChildMessage {
 	if (!isRecord(value) || typeof value.type !== "string") return false;
 	if (value.type === "ready") return true;
 	if (value.type === "call") return typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0;
-	if (value.type === "emit") return true;
+	if (value.type === "emit" || value.type === "image") return true;
 	return value.type === "complete";
 }
 
@@ -317,12 +281,12 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 	let cumulativeBytes = 0;
 	let callCount = 0;
 	let rejectedCallCount = 0;
-	let leaseStarted = false;
 	let ready = false;
 	let stopping = false;
 	let activeCallController: AbortController | undefined;
 	const emissions: unknown[] = [];
 	const steps: AgentBrowserScriptStepSummary[] = [];
+	const failures: AgentBrowserObservation[] = [];
 	const messages: ScriptChildMessage[] = [];
 	let draining = false;
 	let drainPromise = Promise.resolve();
@@ -351,9 +315,10 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 		stopping = true;
 		if (timeout) clearTimeout(timeout);
 		options.signal?.removeEventListener("abort", abortListener);
-		activeCallController?.abort();
+		activeCallController?.abort(result.timedOut ? new DOMException("Browser code deadline exceeded.", "TimeoutError") : options.signal?.reason);
 		killTimer = terminateChild(child);
-		if (waitForDrain) await settleWithin(drainPromise, 5_000);
+		// The caller holds the browser lease until dispatch actually settles.
+		if (waitForDrain) await drainPromise.catch(() => undefined);
 		await settleWithin(childExit, 1_000);
 		clearTimeout(killTimer);
 		resolveResult(result);
@@ -363,14 +328,17 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 		...flags,
 		callCount,
 		emitCount: emissions.length,
+		...(emissions.length ? { data: emissions.length === 1 ? emissions[0] : emissions } : {}),
 		error,
 		failureCategory,
+		failures,
 		rejectedCallCount,
 		steps,
 	}), waitForDrain);
 
 	const abortListener = () => {
-		void fail("Script execution was aborted.", "aborted", { aborted: true }, true);
+		const timedOut = options.signal?.reason instanceof Error && options.signal.reason.name === "TimeoutError";
+		void fail(timedOut ? "Browser code deadline exceeded." : "Browser code was aborted.", timedOut ? "timeout" : "aborted", timedOut ? { timedOut: true } : { aborted: true }, true);
 	};
 	options.signal?.addEventListener("abort", abortListener, { once: true });
 	timeout = setTimeout(() => {
@@ -409,6 +377,16 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 					emissions.push(message.value);
 					continue;
 				}
+				if (message.type === "image") {
+					try {
+						if (!options.emitImage) throw new Error("Image emission is unavailable.");
+						await options.emitImage(message.value);
+					} catch (error) {
+						await fail(error instanceof Error ? error.message : "Invalid image handle.", "validation-error");
+						return;
+					}
+					continue;
+				}
 				if (message.type === "complete") {
 					if (message.error) {
 						await fail(describeScriptError(message.error), "script-error");
@@ -428,7 +406,7 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 						await fail(`Final script output exceeds ${AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES} bytes.`, "validation-error");
 						return;
 					}
-					await finish({ callCount, data, emitCount: emissions.length, ok: true, rejectedCallCount, steps }, false);
+					await finish({ callCount, data, emitCount: emissions.length, failures, ok: true, rejectedCallCount, steps }, false);
 					return;
 				}
 
@@ -443,30 +421,22 @@ export async function runAgentBrowserScript(options: RunAgentBrowserScriptOption
 					rejectedCallCount += 1;
 					envelope = buildRejectedCallEnvelope(validated.error ?? "Invalid script browser call.", validated.policyBlocked === true);
 				} else {
-					if (!leaseStarted) {
-						try {
-							options.beforeFirstCall?.();
-							leaseStarted = true;
-						} catch {
-							await fail("Unable to persist the isolated script session lease.", "upstream-error");
-							return;
-						}
-					}
 					activeCallController = new AbortController();
 					try {
 						envelope = normalizeBrowserEnvelope(await options.dispatch(validated.params, activeCallController.signal));
-					} catch {
-						envelope = buildRejectedCallEnvelope("The ordinary agent_browser executor failed while dispatching this call.", false);
+					} catch (error) {
+						envelope = buildRejectedCallEnvelope(redactSensitiveText(error instanceof Error ? error.message : "The browser executor failed while dispatching this call."), false);
 					} finally {
 						activeCallController = undefined;
 					}
-					if (stopping) return;
 				}
 				steps.push(buildStepSummary(callCount - 1, envelope));
+				if (!envelope.success) failures.push({ ...envelope, index: callCount - 1 });
+				if (stopping) return;
 				try {
 					await sendParentMessage({ envelope, id: message.id, type: "response" });
 				} catch {
-					await fail("Unable to return a browser result to the script sandbox.", "upstream-error");
+					await fail("Unable to return a browser result within the code IPC limit. Narrow the native extraction or use agent_browser with outputPath; already-dispatched effects are not rolled back.", "upstream-error");
 					return;
 				}
 			}

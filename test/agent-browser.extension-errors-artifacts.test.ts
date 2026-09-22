@@ -15,7 +15,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { compileAgentBrowserJob } from "../extensions/agent-browser/lib/input-modes/job.js";
+import { compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
 import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 
 function initializeGitProject(cwd: string): void {
@@ -1746,7 +1746,7 @@ test("applyAgentBrowserOutputPath rehydrates compacted batch rows from live wrap
 	}
 });
 
-test("agentBrowserExtension reports partial progress and artifacts after job timeout", { concurrency: false }, async () => {
+test("agentBrowserExtension reports partial progress and artifacts after native batch timeout", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-timeout-progress-"));
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
@@ -1788,15 +1788,8 @@ if (args.includes("get") && args.includes("url")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: {
-					steps: [
-						{ action: "open", url: "https://example.test" },
-						{ action: "fill", selector: "#search", text: "export" },
-						{ action: "screenshot", path: "dogfood/secret-token/filled.png" },
-						{ action: "waitForDownload", path: "dogfood/export.csv" },
-						{ action: "wait", milliseconds: 500 },
-					],
-				},
+				args: ["batch", "--bail"],
+				stdin: JSON.stringify([["open", "https://example.test"], ["fill", "#search", "export"], ["screenshot", "dogfood/secret-token/filled.png"], ["wait", "--download", "dogfood/export.csv"], ["wait", "500"]]),
 			});
 
 			assert.equal(result.isError, true);
@@ -1858,7 +1851,7 @@ if (args.includes("get") && args.includes("url")) {
 			const openBeforeMutatingTimeout = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test"], timeoutMs: 10_000 });
 			assert.equal(openBeforeMutatingTimeout.isError, false);
 			const mutatingTimeoutResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "fill", selector: "#search", text: "export" }, { action: "wait", milliseconds: 500 }] },
+				args: ["batch", "--bail"], stdin: JSON.stringify([["fill", "#search", "export"], ["wait", "500"]]),
 			});
 			assert.equal(mutatingTimeoutResult.isError, true);
 			const mutatingProgress = mutatingTimeoutResult.details?.timeoutPartialProgress as { retryStep?: { args?: string[]; retry?: { args?: string[] }; status?: string } } | undefined;
@@ -1908,7 +1901,7 @@ if (args.includes("batch")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.test/start"] })).isError, false);
 			const timedOut = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "open", url: "https://example.test/next" }, { action: "fill", selector: "#search", text: "query" }] },
+				args: ["batch", "--bail"], stdin: JSON.stringify([["open", "https://example.test/next"], ["fill", "#search", "query"]]),
 				timeoutMs: 1000,
 			});
 			assert.equal(timedOut.isError, true);
@@ -1952,7 +1945,7 @@ if (args.includes("batch")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "open", url: "https://example.test/fresh-timeout" }, { action: "wait", milliseconds: 100 }] },
+				args: ["batch", "--bail"], stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"], ["wait", "100"]]),
 				sessionMode: "fresh",
 			});
 
@@ -2046,15 +2039,10 @@ if (args.includes("get") && args.includes("url")) {
 			assert.match(text, /Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/);
 			assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
 
-			const compiledJob = compileAgentBrowserJob({
-				steps: [
-					{ action: "open", url: "https://example.test", loadState: "domcontentloaded" },
-					{ action: "wait", milliseconds: 500 },
-				],
-			}).compiled;
+			const compiledJob = compileAgentBrowserQaPreset({ url: "https://example.test", checkConsole: false, checkErrors: false, checkNetwork: false }).compiled;
 			const generatedProgress = await collectTimeoutPartialProgress({ commandTokens: ["batch"], compiledJob, cwd: tempDir, sessionName: "named" });
-			assert.equal(generatedProgress?.steps?.[1]?.generatedFrom, "open.loadState");
-			assert.match(formatTimeoutPartialProgressText(generatedProgress as NonNullable<typeof generatedProgress>), /Step 2 \[failed, generated from open\.loadState\]: wait --load domcontentloaded/);
+			assert.deepEqual(generatedProgress?.steps?.[1]?.args, ["wait", "--load", "domcontentloaded"]);
+			assert.match(formatTimeoutPartialProgressText(generatedProgress as NonNullable<typeof generatedProgress>), /Step 2 \[failed\]: wait --load domcontentloaded/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

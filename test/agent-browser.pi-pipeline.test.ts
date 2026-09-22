@@ -42,7 +42,7 @@ import {
 const PIPELINE_PROVIDER = "piab-pipeline";
 const PIPELINE_MODEL_ID = "tool-pipeline";
 
-type PipelineToolResult = ToolResultMessage & { toolName: "agent_browser" };
+type PipelineToolResult = ToolResultMessage;
 
 type PipelinePromptResult = {
 	inMemoryResult: PipelineToolResult;
@@ -54,7 +54,8 @@ type PipelinePromptResult = {
 function isAgentBrowserToolResult(message: unknown): message is PipelineToolResult {
 	return typeof message === "object" && message !== null &&
 		(message as { role?: unknown }).role === "toolResult" &&
-		(message as { toolName?: unknown }).toolName === "agent_browser";
+		typeof (message as { toolName?: unknown }).toolName === "string" &&
+		(message as { toolName: string }).toolName.startsWith("agent_browser");
 }
 
 function usage() {
@@ -98,9 +99,9 @@ function streamTextResponse(model: Model<any>, text: string) {
 	return stream;
 }
 
-function createToolCallingStream(toolArguments: ToolCall["arguments"], priorCalls: ToolCall[] = []) {
+function createToolCallingStream(toolArguments: ToolCall["arguments"], priorCalls: ToolCall[] = [], toolName = "agent_browser") {
 	return (model: Model<any>, context: Context, _options?: SimpleStreamOptions) => {
-		const hasToolResult = context.messages.some((message) => message.role === "toolResult" && message.toolName === "agent_browser");
+		const hasToolResult = context.messages.some((message) => message.role === "toolResult" && message.toolName === toolName);
 		if (hasToolResult) return streamTextResponse(model, "Observed agent_browser result.");
 
 		const stream = createAssistantMessageEventStream();
@@ -109,7 +110,7 @@ function createToolCallingStream(toolArguments: ToolCall["arguments"], priorCall
 			const toolCall = {
 				arguments: toolArguments,
 				id: "call_agent_browser_pipeline",
-				name: "agent_browser",
+				name: toolName,
 				type: "toolCall" as const,
 			};
 			stream.push({ type: "start", partial: output });
@@ -157,7 +158,7 @@ async function readPersistedAgentBrowserResult(sessionDir: string): Promise<{ re
 	return { result, sessionFile };
 }
 
-function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: ToolCall["arguments"], priorCalls?: ToolCall[]): Model<any> {
+function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: ToolCall["arguments"], priorCalls?: ToolCall[], toolName?: string): Model<any> {
 	modelRuntime.registerProvider(PIPELINE_PROVIDER, {
 		api: "openai-completions",
 		apiKey: "piab-pipeline-key",
@@ -171,7 +172,7 @@ function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: Too
 			name: "Pi Agent Browser Pipeline Test",
 			reasoning: false,
 		}],
-		streamSimple: createToolCallingStream(toolArguments, priorCalls),
+		streamSimple: createToolCallingStream(toolArguments, priorCalls, toolName),
 	});
 	const model = modelRuntime.getModel(PIPELINE_PROVIDER, PIPELINE_MODEL_ID);
 	assert.ok(model, "pipeline test model should be registered");
@@ -181,6 +182,7 @@ function registerPipelineProvider(modelRuntime: ModelRuntime, toolArguments: Too
 async function runPipelinePrompt(options: {
 	fakeScript: string;
 	toolArguments: ToolCall["arguments"];
+	toolName?: string;
 	extensionFactory?: ExtensionFactory;
 	priorCalls?: ToolCall[];
 	runPrompt?: (session: AgentSession) => Promise<void>;
@@ -202,7 +204,7 @@ async function runPipelinePrompt(options: {
 				credentials: new InMemoryCredentialStore(),
 				modelsPath: null,
 			});
-			const model = registerPipelineProvider(modelRuntime, options.toolArguments, options.priorCalls);
+			const model = registerPipelineProvider(modelRuntime, options.toolArguments, options.priorCalls, options.toolName);
 			const resourceLoader = new DefaultResourceLoader({
 				agentDir: tempDir,
 				cwd: tempDir,
@@ -228,7 +230,7 @@ async function runPipelinePrompt(options: {
 				settingsManager: SettingsManager.inMemory(),
 				resourceLoader,
 				sessionManager: SessionManager.create(tempDir, sessionDir, { id: "piab-pipeline-session" }),
-				tools: [...(options.priorCalls ?? []).map((call) => call.name), "agent_browser"],
+				tools: [...(options.priorCalls ?? []).map((call) => call.name), options.toolName ?? "agent_browser"],
 			});
 			try {
 				await session.bindExtensions({ onError: (error) => { throw new Error(error.error); } });
@@ -291,11 +293,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Fixture", u
 	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
 });
 
-test("Pi pipeline captures script-created files before the next inner dispatch using the outer call ID", async () => {
+test("Pi pipeline captures code-created files before the next inner dispatch using the outer call ID", async () => {
 	const capturedIds: string[] = [];
 	const signals: AbortSignal[] = [];
 	const pipeline = await runPipelinePrompt({
-		toolArguments: { script: `emit(await Promise.all([
+		toolName: "agent_browser_code",
+		toolArguments: { code: `emit(await Promise.all([
   browser({ args: ["download", "#export", "report.txt"] }),
   browser({ args: ["open", "https://fixture.example.test/effect"] })
 ]));` },
@@ -322,21 +325,22 @@ process.stdout.write(JSON.stringify({ success: true, data: { path: "report.txt",
 	assert.deepEqual(capturedIds, ["call_agent_browser_pipeline", "call_agent_browser_pipeline"]);
 	assert.notEqual(signals[0], signals[1], "each inner dispatch supplies its own abort signal");
 	assert.equal(pipeline.inMemoryResult.isError, false, JSON.stringify(pipeline.inMemoryResult.content));
-	const details = pipeline.persistedResult.details as { data: Array<{ ok: boolean }> };
-	assert.deepEqual(details.data.map((result) => result.ok), [true, true]);
+	const details = pipeline.persistedResult.details as { data: Array<{ success: boolean }> };
+	assert.deepEqual(details.data.map((result) => result.success), [true, true]);
 	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("download")).length, 1);
 	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
-	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 1);
+	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 0);
 });
 
-for (const script of [false, true]) {
-	test(`Pi Stop cancels a pending beforeExecute without dispatching ${script ? "script" : "direct"} browser effects`, { timeout: 15_000 }, async () => {
+for (const code of [false, true]) {
+	test(`Pi Stop cancels a pending beforeExecute without dispatching ${code ? "code" : "direct"} browser effects`, { timeout: 15_000 }, async () => {
 		let notifyEntered!: () => void;
 		const entered = new Promise<void>((resolve) => { notifyEntered = resolve; });
 		let hookSignal: AbortSignal | undefined;
 		const pipeline = await runPipelinePrompt({
-			toolArguments: script
-				? { script: `await browser({ args: ["open", "https://fixture.example.test/effect"] });` }
+			toolName: code ? "agent_browser_code" : "agent_browser",
+			toolArguments: code
+				? { code: `await browser({ args: ["open", "https://fixture.example.test/effect"] });` }
 				: { args: ["open", "https://fixture.example.test/effect"] },
 			extensionFactory(pi) {
 				agentBrowserExtension(pi, {
@@ -363,7 +367,7 @@ for (const script of [false, true]) {
 		assert.equal(hookSignal?.aborted, true);
 		assert.equal(pipeline.persistedResult.isError, true);
 		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 0);
-		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, script ? 1 : 0);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 0);
 	});
 }
 
@@ -395,7 +399,8 @@ test("Pi pipeline keeps unconfigured browser scheduling and ordinary execution u
 
 test("Pi pipeline patches persisted QA reclassification failures to isError with model-visible prose", async () => {
 	const pipeline = await runPipelinePrompt({
-		toolArguments: { qa: { expectedSelector: "main", expectedText: ["Welcome"], url: "https://fail.example.test/" } },
+		toolName: "agent_browser_qa",
+		toolArguments: { expectedSelector: "main", expectedText: ["Welcome"], url: "https://fail.example.test/" },
 		fakeScript: `const fs = require("node:fs");
 if (process.argv.slice(-2).join(" ") === "get url") {
   process.stdout.write(JSON.stringify({ success: true, data: { url: "https://fail.example.test/" } }));
@@ -452,7 +457,15 @@ if (args.includes("click") || args.includes("find")) {
 			assert.deepEqual(details.nextActions?.map((action) => action.id), ["inspect-overlay-state"]);
 			assert.deepEqual(details.nextActions?.[0]?.params?.args, ["--namespace", "", "--session", "overlay-recovery", "snapshot", "-i"]);
 			const text = result.content.find((item) => item.type === "text")?.text ?? "";
-			if (json) assert.deepEqual(JSON.parse(text), { success: false, resultCategory: "failure", failureCategory: "upstream-error", summary: error, error, data: { error }, nextActions: details.nextActions });
+			if (json) {
+				const visible = JSON.parse(text);
+				assert.equal(visible.success, false);
+				assert.equal(visible.resultCategory, "failure");
+				assert.equal(visible.failureCategory, "upstream-error");
+				assert.equal(visible.error, error);
+				assert.deepEqual(visible.data, { error });
+				assert.deepEqual(visible.nextActions, details.nextActions);
+			}
 			else assert.match(text, /inspect-overlay-state/);
 			assert.match(details.nextActions?.[0]?.safety ?? "", /do not blindly retry/i);
 		}
@@ -485,6 +498,6 @@ test("Pi pipeline preserves persisted parseable JSON content while patching isEr
 		assert.equal((result.details as { resultCategory?: string } | undefined)?.resultCategory, "failure");
 		const text = result.content.find((item) => item.type === "text")?.text ?? "";
 		assert.doesNotMatch(text, /Pi tool isError/);
-		assert.deepEqual(JSON.parse(text), { error: "json boom", data: { code: "boom" }, success: false, resultCategory: "failure", failureCategory: "upstream-error", summary: "json boom" });
+		assert.deepEqual(JSON.parse(text), { error: "json boom", data: { code: "boom" }, success: false, resultCategory: "failure", failureCategory: "upstream-error", summary: "json boom", sessionName: (result.details as { sessionName: string }).sessionName });
 	}
 });

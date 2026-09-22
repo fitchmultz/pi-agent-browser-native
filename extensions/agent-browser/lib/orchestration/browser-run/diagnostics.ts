@@ -456,7 +456,7 @@ export function buildSourceLookupElectronNextActions(sourceLookup: AgentBrowserS
 	const actions: AgentBrowserNextAction[] = [];
 	const { launchId, sessionName } = sourceLookup.electronContext;
 	if (sessionName) actions.push({ id: "snapshot-electron-session", params: { args: withOptionalSessionArgs(sessionName, ["snapshot", "-i"]) }, reason: "Refresh interactive refs in the attached Electron session before retrying source lookup with a narrower target.", safety: "Read-only snapshot; no app mutation.", tool: "agent_browser" });
-	if (launchId) actions.push({ id: "probe-electron-launch", params: { electron: { action: "probe", launchId } }, reason: "Collect bounded wrapper/session context for the packaged Electron launch after sourceLookup found no candidates.", safety: "Read-only probe of title, URL, focus, tabs, and compact snapshot metadata.", tool: "agent_browser" });
+	if (launchId) actions.push({ id: "probe-electron-launch", params: { action: "probe", launchId }, reason: "Collect bounded wrapper/session context for the packaged Electron launch after sourceLookup found no candidates.", safety: "Read-only probe of title, URL, focus, tabs, and compact snapshot metadata.", tool: "agent_browser_electron" });
 	if (sessionName) actions.push({ id: "list-electron-tabs", params: { args: withOptionalSessionArgs(sessionName, ["tab", "list"]) }, reason: "Check current Electron tabs/targets before choosing a narrower selector or @ref.", safety: "Read-only tab listing.", tool: "agent_browser" });
 	return actions;
 }

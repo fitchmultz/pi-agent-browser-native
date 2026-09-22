@@ -15,15 +15,17 @@ import {
 import type { AgentBrowserExecuteParams } from "./orchestration/input-plan.js";
 import { ADVANCED_TOOL_PROMPT_GUIDELINES, buildToolPromptGuidelines } from "./playbook.js";
 
-export type AgentBrowserExecutor = ToolDefinition<TUnsafe<AgentBrowserExecuteParams>, Record<string, unknown>>["execute"];
-export type AgentBrowserCodeExecutor = ToolDefinition<TUnsafe<AgentBrowserCodeParams>, Record<string, unknown>>["execute"];
+export type AgentBrowserExecutor = ToolDefinition<TUnsafe<AgentBrowserExecuteParams>>["execute"];
+export type AgentBrowserCodeExecutor = ToolDefinition<TUnsafe<AgentBrowserCodeParams>>["execute"];
 
 export interface AgentBrowserToolSurfaceOptions {
 	execute: AgentBrowserExecutor;
 	executeCode: AgentBrowserCodeExecutor;
 	promptGuidelines?: string[];
-	renderCall?: ToolDefinition<typeof AGENT_BROWSER_PARAMS, Record<string, unknown>>["renderCall"];
-	renderResult?: ToolDefinition<TUnsafe<unknown>, Record<string, unknown>>["renderResult"];
+	executionMode?: ToolDefinition["executionMode"];
+	renderCodeCall?: ToolDefinition<typeof AGENT_BROWSER_CODE_PARAMS>["renderCall"];
+	renderCall?: ToolDefinition<typeof AGENT_BROWSER_PARAMS>["renderCall"];
+	renderResult?: ToolDefinition<TUnsafe<unknown>>["renderResult"];
 }
 
 export const AGENT_BROWSER_TOOL_INVENTORY = {
@@ -48,6 +50,7 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		renderCall: options.renderCall,
 		renderResult: options.renderResult,
 		execute: options.execute,
+		executionMode: options.executionMode,
 	});
 	pi.registerTool({
 		name: "agent_browser_code",
@@ -57,6 +60,9 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		parameters: AGENT_BROWSER_CODE_PARAMS,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		execute: options.executeCode,
+		executionMode: options.executionMode,
+		renderCall: options.renderCodeCall,
+		renderResult: options.renderResult,
 	});
 
 	pi.registerTool({
@@ -65,6 +71,7 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		promptGuidelines: [...ADVANCED_TOOL_PROMPT_GUIDELINES.action],
 		parameters: AGENT_BROWSER_ACTION_PARAMS,
 		renderResult: options.renderResult,
+		executionMode: options.executionMode,
 		execute(id, { outputPath, timeoutMs, ...semanticAction }, signal, onUpdate, ctx) {
 			return options.execute(id, { semanticAction, outputPath, timeoutMs }, signal, onUpdate, ctx);
 		},
@@ -75,6 +82,7 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		promptGuidelines: [...ADVANCED_TOOL_PROMPT_GUIDELINES.qa],
 		parameters: AGENT_BROWSER_QA_PARAMS,
 		renderResult: options.renderResult,
+		executionMode: options.executionMode,
 		execute(id, { outputPath, timeoutMs, sessionMode, ...qa }, signal, onUpdate, ctx) {
 			return options.execute(id, { qa, outputPath, timeoutMs, sessionMode }, signal, onUpdate, ctx);
 		},
@@ -85,6 +93,7 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		promptGuidelines: [...ADVANCED_TOOL_PROMPT_GUIDELINES.electron],
 		parameters: AGENT_BROWSER_ELECTRON_PARAMS,
 		renderResult: options.renderResult,
+		executionMode: options.executionMode,
 		execute(id, { outputPath, ...electron }, signal, onUpdate, ctx) {
 			return options.execute(id, { electron, outputPath }, signal, onUpdate, ctx);
 		},
@@ -95,6 +104,7 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		promptGuidelines: [...ADVANCED_TOOL_PROMPT_GUIDELINES.source],
 		parameters: AGENT_BROWSER_SOURCE_PARAMS,
 		renderResult: options.renderResult,
+		executionMode: options.executionMode,
 		execute(id, { outputPath, timeoutMs, sessionMode, ...sourceLookup }, signal, onUpdate, ctx) {
 			return options.execute(id, { sourceLookup, outputPath, timeoutMs, sessionMode }, signal, onUpdate, ctx);
 		},
@@ -105,6 +115,7 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		promptGuidelines: [...ADVANCED_TOOL_PROMPT_GUIDELINES.network],
 		parameters: AGENT_BROWSER_NETWORK_SOURCE_PARAMS,
 		renderResult: options.renderResult,
+		executionMode: options.executionMode,
 		execute(id, { outputPath, timeoutMs, sessionMode, ...networkSourceLookup }, signal, onUpdate, ctx) {
 			return options.execute(id, { networkSourceLookup, outputPath, timeoutMs, sessionMode }, signal, onUpdate, ctx);
 		},
@@ -138,6 +149,8 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		const argv = process.argv.slice(2);
 		const delimiter = argv.indexOf("--");
 		if ((delimiter < 0 ? argv : argv.slice(0, delimiter)).some((arg) => arg === "--tools" || arg === "-t")) return;
+		// Without the loader, hiding explicitly selected SDK capabilities makes them unreachable.
+		if (!pi.getAllTools().some(tool => tool.name === "agent_browser_tools")) return;
 		const { getCurrentSystemMessage } = await import("@earendil-works/pi-ai");
 		const current = getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
 		const restored = new Set(current?.toolsAdded?.map(({ name }) => name));

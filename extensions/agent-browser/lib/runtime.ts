@@ -9,6 +9,7 @@ import {
 	type CommandInfo,
 } from "./argv-descriptor.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { getBrowserResultMessage } from "./browser-transcript.js";
 import {
 	canonicalizeAgentBrowserNamespace,
 	extractExplicitNamespace,
@@ -601,11 +602,8 @@ export function restoreManagedSessionStateFromBranch(
 	};
 
 	for (const entry of branch) {
-		if (!isRecord(entry) || entry.type !== "message") {
-			continue;
-		}
-		const message = isRecord(entry.message) ? entry.message : undefined;
-		if (!message || message.toolName !== "agent_browser") {
+		const message = getBrowserResultMessage(entry);
+		if (!message) {
 			continue;
 		}
 		const details = isRecord(message.details) ? message.details : undefined;

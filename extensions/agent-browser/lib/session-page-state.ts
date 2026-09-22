@@ -1,6 +1,7 @@
 import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { getBrowserResultMessage } from "./browser-transcript.js";
 import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand, isWindowOrDiffPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { findReadConfirmation as findPendingReadConfirmation, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
@@ -429,9 +430,8 @@ export class SessionPageState {
 		const state = new SessionPageState();
 		let restoredOrder = 0;
 		for (const entry of branch) {
-			if (!isRecord(entry) || entry.type !== "message") continue;
-			const message = isRecord(entry.message) ? entry.message : undefined;
-			if (!message || message.toolName !== "agent_browser") continue;
+			const message = getBrowserResultMessage(entry);
+			if (!message) continue;
 			const details = isRecord(message.details) ? message.details : undefined;
 			if (!details) continue;
 			const sessionName = typeof details.sessionName === "string" ? details.sessionName : undefined;

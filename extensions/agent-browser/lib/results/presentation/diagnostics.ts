@@ -570,10 +570,10 @@ export function buildNetworkRequestsNextActions(data: unknown, sessionName: stri
 	if (selected.kind === "actionable") {
 		actions.push({
 			id: "trace-actionable-network-source",
-			params: { networkSourceLookup: { requestId: selected.requestId, ...(sessionName ? { session: sessionName } : {}) } },
+			params: { requestId: selected.requestId, ...(sessionName ? { session: sessionName } : {}) },
 			reason: `Look for local source candidates related to ${descriptor}.`,
-			safety: "Read-only experimental helper; it reports bounded candidates and may miss bundled or dynamic call sites.",
-			tool: "agent_browser",
+			safety: "Read-only experimental helper; enable network with agent_browser_tools when this tool is inactive. It reports bounded candidates and may miss bundled or dynamic call sites.",
+			tool: "agent_browser_network_source",
 		});
 	}
 	if (selected.filter) {

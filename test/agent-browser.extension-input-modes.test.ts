@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { Check } from "typebox/value";
 
-import { analyzeQaPresetResults, analyzeQaPresetTimeout, compileAgentBrowserJob, compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
+import { analyzeQaPresetResults, analyzeQaPresetTimeout, compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
 import { compileAgentBrowserSemanticAction } from "../extensions/agent-browser/lib/input-modes/semantic-action.js";
 import {
 	createExtensionHarness,
@@ -159,111 +159,6 @@ test("analyzeQaPresetResults reports a new matching error after a successful cle
 	], compiled);
 	assert.equal(analysis?.passed, false);
 	assert.deepEqual(analysis?.failedChecks, ["1 page error(s)"]);
-});
-
-test("compileAgentBrowserJob preserves explicit assertUrl and assertText immediately after click", () => {
-	const semanticJob = compileAgentBrowserJob({
-		steps: [
-			{ action: "open", url: "https://www.wikipedia.org/" },
-			{ action: "fill", locator: "role", role: "searchbox", name: "Search", text: "agent browser" },
-			{ action: "click", locator: "role", role: "button", name: "Search" },
-		],
-	});
-	assert.equal(semanticJob.error, undefined);
-	assert.deepEqual(semanticJob.compiled?.steps.map((step) => step.args), [
-		["open", "https://www.wikipedia.org/"],
-		["find", "role", "searchbox", "fill", "agent browser", "--name", "Search"],
-		["find", "role", "button", "click", "--name", "Search"],
-	]);
-	assert.match(compileAgentBrowserJob({ steps: [{ action: "click", selector: "button", locator: "text", value: "Search" }] }).error ?? "", /either selector or semantic locator fields/);
-
-	const { compiled, error } = compileAgentBrowserJob({
-		steps: [
-			{ action: "open", url: "https://shop.example/checkout" },
-			{ action: "fill", selector: "#email", text: "user@example.com" },
-			{ action: "click", selector: "#continue" },
-			{ action: "assertUrl", url: "**/shipping" },
-			{ action: "assertText", text: "Shipping address" },
-			{ action: "screenshot", path: ".dogfood/shipping.png" },
-		],
-	});
-	assert.equal(error, undefined);
-	assert.deepEqual(
-		compiled?.steps?.map((step) => step.action),
-		["open", "fill", "click", "assertUrl", "assertText", "screenshot"],
-	);
-	assert.deepEqual(compiled?.steps?.map((step) => step.args), [
-		["open", "https://shop.example/checkout"],
-		["fill", "#email", "user@example.com"],
-		["click", "#continue"],
-		["wait", "--url", "**/shipping"],
-		["wait", "--text", "Shipping address"],
-		["screenshot", ".dogfood/shipping.png"],
-	]);
-
-	const exactUrlJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/shipping" }] });
-	assert.deepEqual(exactUrlJob.compiled?.steps?.[0]?.args, ["wait", "--url", "https://shop.example/shipping"]);
-	const exactQueryUrlJob = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url: "https://shop.example/shipping?step=1&ref=a?b" }] });
-	assert.deepEqual(exactQueryUrlJob.compiled?.steps?.[0]?.args, ["wait", "--url", "https://shop.example/shipping?step=1&ref=a?b"]);
-	assert.deepEqual(JSON.parse(compiled?.stdin ?? "[]"), compiled?.steps?.map((step) => step.args));
-});
-
-test("compileAgentBrowserJob rejects unsupported fields for every constrained job action", () => {
-	const invalidSteps = [
-		[{ action: "open", url: "https://example.test/", path: "ignored.png" }, /job step open does not support path/],
-		[{ action: "click", selector: "#submit", text: "ignored" }, /job step click does not support text/],
-		[{ action: "fill", selector: "#email", text: "user@example.test", values: ["ignored"] }, /job step fill does not support values/],
-		[{ action: "type", selector: "#prompt", text: "go", url: "https://example.test/" }, /job step type does not support url/],
-		[{ action: "select", selector: "#theme", values: ["dark"], text: "ignored" }, /job step select does not support text/],
-		[{ action: "wait", milliseconds: 250, selector: "#spinner" }, /job step wait does not support selector/],
-		[{ action: "assertText", text: "Welcome", url: "https://example.test/" }, /job step assertText does not support url/],
-		[{ action: "assertUrl", url: "**/dashboard", text: "Welcome" }, /job step assertUrl does not support text/],
-		[{ action: "waitForDownload", path: "report.csv", url: "https://example.test/report.csv" }, /job step waitForDownload does not support url/],
-		[{ action: "snapshot", selector: "body" }, /job step snapshot does not support selector/],
-		[{ action: "screenshot", path: "job.png", url: "https://example.test/" }, /job step screenshot does not support url/],
-	] as const;
-
-	for (const [step, expectedError] of invalidSteps) {
-		const result = compileAgentBrowserJob({ steps: [step] });
-		assert.equal(result.compiled, undefined, `unexpected compile success for ${JSON.stringify(step)}`);
-		assert.match(result.error ?? "", expectedError);
-	}
-
-	const validJob = compileAgentBrowserJob({
-		steps: [
-			{ action: "open", url: "https://example.test/", loadState: "domcontentloaded" },
-			{ action: "click", locator: "role", role: "button", name: "Search" },
-			{ action: "fill", selector: "#email", text: "user@example.test" },
-			{ action: "select", selector: "#theme", values: ["dark"] },
-			{ action: "wait", milliseconds: 250 },
-			{ action: "assertText", text: "Welcome" },
-			{ action: "assertUrl", url: "**/dashboard" },
-			{ action: "waitForDownload", path: "report.csv" },
-			{ action: "snapshot" },
-			{ action: "screenshot", path: "job.png" },
-		],
-	});
-	assert.equal(validJob.error, undefined);
-	assert.deepEqual(validJob.compiled?.steps.map((step) => step.action), [
-		"open",
-		"wait",
-		"click",
-		"fill",
-		"select",
-		"wait",
-		"assertText",
-		"assertUrl",
-		"waitForDownload",
-		"snapshot",
-		"screenshot",
-	]);
-});
-
-test("compileAgentBrowserJob assertUrl delegates patterns to upstream wait --url", () => {
-	for (const url of ["https://shop.example/shipping?step=1&ref=a?b", "**/shipping", "https://shop.example/*/shipping"]) {
-		const result = compileAgentBrowserJob({ steps: [{ action: "assertUrl", url }] });
-		assert.deepEqual(result.compiled?.steps?.[0]?.args, ["wait", "--url", url]);
-	}
 });
 
 test("agentBrowserExtension compiles semantic actions to upstream find commands", { concurrency: false }, async () => {
@@ -685,126 +580,41 @@ if (args.includes("open")) {
 	}
 });
 
-test("agentBrowserExtension compiles constrained jobs to upstream batch commands", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-"));
+test("native batch preserves form fills, delayed keyboard input, condition waits, and artifacts", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-"));
 	const logPath = join(tempDir, "invocations.log");
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
-const path = require("node:path");
-const args = process.argv.slice(2);
-let stdin = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { stdin += chunk; });
-process.stdin.on("end", () => {
-  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-  const steps = JSON.parse(stdin);
-  process.stdout.write(JSON.stringify(steps.map((command) => {
-    const artifactPath = command[0] === "screenshot" ? command[1] : command[0] === "wait" && command[1] === "--download" ? command[2] : undefined;
-    if (artifactPath) {
-      fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-      fs.writeFileSync(artifactPath, "artifact");
-    }
-    return { command, success: true, result: artifactPath ? { command, path: artifactPath } : { command } };
-  })));
-});`,
-	);
-
+	await writeFakeAgentBrowserBinary(tempDir, `const fs=require('node:fs'); const path=require('node:path'); const args=process.argv.slice(2); let stdin='';
+process.stdin.setEncoding('utf8'); process.stdin.on('data',chunk=>stdin+=chunk); process.stdin.on('end',()=>{
+ fs.appendFileSync(${JSON.stringify(logPath)},JSON.stringify({args,stdin})+'\\n');
+ const rows=JSON.parse(stdin).map(command=>{const file=command[0]==='screenshot'?command[1]:command[0]==='wait'&&command[1]==='--download'?command[2]:undefined;
+ if(file){fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'artifact');}
+ return {command,success:true,result:file?{path:file}:{command}};}); process.stdout.write(JSON.stringify(rows));
+});`);
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: {
-					steps: [
-						{ action: "open", url: "https://example.test/", loadState: "domcontentloaded" },
-						{ action: "fill", selector: "#email", text: "user@example.test" },
-						{ action: "type", selector: "#prompt", text: "go", delayMs: 20, press: "Enter" },
-						{ action: "select", selector: "#theme", values: ["dark", "compact"] },
-						{ action: "click", selector: "#submit" },
-						{ action: "assertText", text: "Welcome" },
-						{ action: "assertUrl", url: "**/dashboard" },
-						{ action: "wait", milliseconds: 250 },
-						{ action: "waitForDownload", path: "report.csv" },
-						{ action: "snapshot" },
-						{ action: "screenshot", path: "job.png" },
-					],
-				},
-			});
-
-			assert.equal(result.isError, false);
-			assert.deepEqual(result.details?.args, ["batch", "--bail"]);
-			const effectiveArgs = result.details?.effectiveArgs as string[] | undefined;
-			assert.deepEqual(effectiveArgs?.slice(0, 4), ["--args", "--no-startup-window", "--json", "--session"]);
-			assert.match(effectiveArgs?.[4] ?? "", /^pi-root-[a-f0-9]{24}$/);
-			assert.equal(effectiveArgs?.[5], "batch");
-			assert.equal(effectiveArgs?.[6], "--bail");
-			const compiledJob = result.details?.compiledJob as { args?: string[]; failFast?: boolean; stdin?: string; steps?: Array<{ action: string; args: string[]; generatedFrom?: string }> } | undefined;
-			assert.deepEqual(compiledJob?.args, ["batch", "--bail"]);
-			assert.equal(compiledJob?.failFast, true);
-			const compiledStepArgs = compiledJob?.steps?.map((step) => step.args);
-			assert.deepEqual(compiledStepArgs?.slice(0, 11), [
-				["open", "https://example.test/"],
-				["wait", "--load", "domcontentloaded"],
-				["fill", "#email", "user@example.test"],
-				["focus", "#prompt"],
-				["keyboard", "type", "g"],
-				["wait", "20"],
-				["keyboard", "type", "o"],
-				["press", "Enter"],
-				["select", "#theme", "dark", "compact"],
-				["click", "#submit"],
-				["wait", "--text", "Welcome"],
-			]);
-			assert.deepEqual(compiledStepArgs?.[11], ["wait", "--url", "**/dashboard"]);
-			assert.deepEqual(compiledStepArgs?.slice(12), [
-				["wait", "250"],
-				["wait", "--download", "report.csv"],
-				["snapshot", "-i"],
-				["screenshot", "job.png"],
-			]);
-			assert.equal(compiledJob?.steps?.[1]?.generatedFrom, "open.loadState");
-			assert.equal(compiledJob?.steps?.[3]?.generatedFrom, "type.selector");
-			assert.equal(compiledJob?.steps?.[4]?.generatedFrom, "type.delayMs");
-			assert.equal(compiledJob?.steps?.[7]?.generatedFrom, "type.press");
-			assert.deepEqual(JSON.parse(compiledJob?.stdin ?? "[]"), compiledStepArgs);
-			assert.match(result.content[0]?.text ?? "", /Step 4-8 — type #prompt \(succeeded\)\nTyped 2 chars with delayMs=20\.\nPressed Enter\./);
-			assert.doesNotMatch(result.content[0]?.text ?? "", /Step 5 — keyboard type g/);
-			const redactedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "open", url: "https://user:secret@example.test/path?token=abc&ok=1#access_token=xyz" }] },
-			});
-			const redactedCompiledJob = redactedResult.details?.compiledJob as { stdin?: string; steps?: Array<{ args: string[] }> } | undefined;
-			assert.match(redactedCompiledJob?.stdin ?? "", /%5BREDACTED%5D/);
-			assert.doesNotMatch(redactedCompiledJob?.stdin ?? "", /secret|token=abc|access_token=xyz/);
-			assert.deepEqual(JSON.parse(redactedCompiledJob?.stdin ?? "[]"), redactedCompiledJob?.steps?.map((step) => step.args));
-
-			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(invocations[0]?.args.slice(-2), ["batch", "--bail"]);
-			const upstreamSteps = JSON.parse(invocations[0]?.stdin ?? "[]") as string[][];
-			assert.deepEqual(upstreamSteps.slice(0, 15), compiledJob?.steps?.slice(0, 15).map((step) => step.args));
-			assert.equal(upstreamSteps[15]?.[0], "screenshot");
-			assert.match(upstreamSteps[15]?.[1] ?? "", /job\.png$/);
-
-			const invalidTypeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "type", selector: "#prompt", text: "go", url: "https://example.test" }] },
-			});
-			assert.equal(invalidTypeResult.isError, true);
-			assert.match(invalidTypeResult.content[0]?.text ?? "", /job step type does not support url/);
-
-			const longDelayedTypeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: { steps: [{ action: "type", text: "x".repeat(201), delayMs: 1 }] },
-			});
-			assert.equal(longDelayedTypeResult.isError, true);
-			assert.match(longDelayedTypeResult.content[0]?.text ?? "", /delayMs supports at most 200 characters/);
+			const steps = [
+				["open", "https://example.test/"], ["wait", "--load", "domcontentloaded"], ["fill", "#email", "user@example.test"],
+				["focus", "#prompt"], ["keyboard", "type", "g"], ["wait", "20"], ["keyboard", "type", "o"], ["press", "Enter"],
+				["select", "#theme", "dark", "compact"], ["click", "#submit"], ["wait", "--text", "Welcome"], ["wait", "--url", "**/dashboard"],
+				["wait", "250"], ["wait", "--download", "report.csv"], ["snapshot", "-i"], ["screenshot", "batch.png"],
+			];
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", "--bail"], stdin: JSON.stringify(steps) });
+			assert.equal(result.isError, false, JSON.stringify(result));
+			assert.equal(result.details?.compiledJob, undefined);
+			const invocation = (await readInvocationLog(logPath)).find(call => call.args.includes("batch"));
+			assert.ok(invocation); assert.deepEqual(invocation.args.slice(-2), ["batch", "--bail"]);
+			const dispatched = JSON.parse(invocation.stdin ?? "[]");
+			assert.deepEqual(dispatched.slice(0, 15), steps.slice(0, 15));
+			assert.equal(dispatched[15][1], join(tempDir, "batch.png"));
+			const redacted = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", "--bail"], stdin: JSON.stringify([["open", "https://user:secret@example.test/path?token=abc&ok=1#access_token=xyz"]]) });
+			assert.doesNotMatch(JSON.stringify(redacted), /user:secret|token=abc|access_token=xyz/);
 		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
+	} finally { await rm(tempDir, { recursive: true, force: true }); }
 });
 
-test("agentBrowserExtension reports failed fresh jobs as post-launch failures", { concurrency: false }, async () => {
+test("agentBrowserExtension reports failed fresh batches as post-launch failures", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-fresh-job-failure-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -845,15 +655,8 @@ process.stdin.on("end", () => {
 
 			const screenshotPath = join(tempDir, "wiki.png");
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				job: {
-					failFast: false,
-					steps: [
-						{ action: "open", url: "https://www.wikipedia.org/" },
-						{ action: "fill", selector: "input[name='search']", text: "agent-browser" },
-						{ action: "click", selector: "button[type='submit']" },
-						{ action: "screenshot", path: screenshotPath },
-					],
-				},
+				args: ["batch"],
+				stdin: JSON.stringify([["open", "https://www.wikipedia.org/"], ["fill", "input[name='search']", "agent-browser"], ["click", "button[type='submit']"], ["screenshot", screenshotPath]]),
 				sessionMode: "fresh",
 			});
 
@@ -1003,9 +806,9 @@ process.stdin.on("end", () => {
 		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			assert.equal(Check(harness.tool.parameters, { qa: { attached: true, expectedText: "Welcome" } }), true);
-			assert.equal(Check(harness.tool.parameters, { qa: { attached: true, url: "https://example.test/" } }), false);
-			assert.equal(Check(harness.tool.parameters, { qa: { expectedText: "Welcome" } }), false);
+			assert.equal(Check(harness.getTool("agent_browser_qa")!.parameters, { attached: true, expectedText: "Welcome" }), true);
+			assert.equal(Check(harness.getTool("agent_browser_qa")!.parameters, { attached: true, url: "https://example.test/" }), false);
+			assert.equal(Check(harness.getTool("agent_browser_qa")!.parameters, { expectedText: "Welcome" }), false);
 			const attachedWithoutSession = await executeRegisteredTool(harness.tool, harness.ctx, { qa: { attached: true, expectedText: "Welcome" } });
 			assert.equal(attachedWithoutSession.isError, true);
 			assert.match(attachedWithoutSession.content[0]?.text ?? "", /qa\.attached requires an active attached session/);

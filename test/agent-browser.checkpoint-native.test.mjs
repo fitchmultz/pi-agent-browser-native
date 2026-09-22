@@ -52,13 +52,15 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
  const createLoader = () => new sdk.DefaultResourceLoader({ cwd, agentDir, settingsManager, noExtensions: true, noContextFiles: true, noSkills: true, noPromptTemplates: true, noThemes: true,
   additionalExtensionPaths: [extensionPath],
   extensionFactories: [pi => pi.registerCommand("checkpoint-browser-test", { description: "Model-free test dispatch", handler: async args => {
-   const tool = session.agent.state.tools.find(tool => tool.name === "agent_browser");
+   const params = JSON.parse(args);
+   const toolName = params.code === undefined ? "agent_browser" : "agent_browser_code";
+   const tool = session.agent.state.tools.find(tool => tool.name === toolName);
    assert.ok(tool);
    const id = `checkpoint-call-${++callId}`;
-   result = await tool.execute(id, JSON.parse(args), callController?.signal);
+   result = await tool.execute(id, params, callController?.signal);
    await beforeResult?.();
    // Real native entries from real tool results, without a model/provider call.
-   sm.appendMessage({ role: "toolResult", toolCallId: id, toolName: "agent_browser", content: result.content, details: result.details, isError: result.isError === true, timestamp: Date.now() });
+   sm.appendMessage({ role: "toolResult", toolCallId: id, toolName, content: result.content, details: result.details, isError: result.isError === true, timestamp: Date.now() });
   } })],
  });
  let loader = createLoader();
@@ -170,15 +172,15 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
     receipts.push({ label: "repaired journal separate-process restore", exactSelectionAndEntries: true, mismatchedArtifactRejected: true });
    } finally { hold.release(); }
   });
-  await t.test("detached SDK script execution has an explicit extension blocker", async () => {
+  await t.test("detached SDK code execution has an explicit extension blocker", async () => {
    const controller = new AbortController();
-   const tool = session.agent.state.tools.find(tool => tool.name === "agent_browser");
-   const running = tool.execute("detached-script", { script: "await new Promise(() => {});", timeoutMs: 10_000 }, controller.signal);
+   const tool = session.agent.state.tools.find(tool => tool.name === "agent_browser_code");
+   const running = tool.execute("detached-code", { code: "await new Promise(() => {});", timeoutMs: 10_000 }, controller.signal);
    try {
     await delay(200);
-    await checkpoint("detached script", false, /script execution/);
+    await checkpoint("detached code", false, /code execution/);
    } finally { controller.abort(); await running; }
-   await checkpoint("detached script released", true);
+   await checkpoint("detached code released", true);
   });
   await t.test("root browser, branch navigation, routes, and traces remain blockers", async () => {
    const beforeBrowser = sm.getLeafId();
@@ -264,22 +266,21 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
    const repaired = await checkpoint("recording retired after native journal repair", true);
    assert.equal(JSON.stringify(sdk.openSessionCheckpoint(repaired).getEntries()), JSON.stringify(sm.getEntries()));
   });
-  await t.test("native ownership waits for script; failed cleanup lease is retained", async () => {
+  await t.test("native ownership waits for code and cancellation preserves its browser", async () => {
    callController = new AbortController();
-   const running = call({ script: 'await browser({args:["open","about:blank"]}); await new Promise(() => {});', timeoutMs: 30_000 });
-   await waitFor(() => sm.getEntries().some(entry => entry.type === "custom" && entry.customType === "agent-browser-script-session"));
+   const before = sm.getEntries().length;
+   const running = call({ code: 'await browser({args:["open","about:blank"]}); await new Promise(() => {});', timeoutMs: 30_000 });
+   await waitFor(() => sm.getEntries().slice(before).some(entry => entry.type === "custom" && entry.customType === "agent-browser-transition" && entry.data?.isError === false));
    await assert.rejects(session.acquireCheckpoint({ signal: AbortSignal.timeout(200), quiesce: () => () => {} }), /cancel/i);
-   receipts.push({ label: "active script/native command", acquisition: "waited then cancelled" });
-   await chmod(sm.getSessionFile(), 0o400);
-   beforeResult = () => chmod(sm.getSessionFile(), 0o600);
-   callController.abort();
-   await running;
-   beforeResult = undefined; callController = undefined;
-   assert.equal(result.details.failureCategory, "cleanup-failed", JSON.stringify(result));
-   await checkpoint("failed script cleanup lease", false, /lease/);
+   receipts.push({ label: "active code/native command", acquisition: "waited then cancelled" });
+   callController.abort(); await running; callController = undefined;
+   assert.equal(result.details.failureCategory, "aborted", JSON.stringify(result));
+   const codeSessionName = result.details.sessionName;
+   await checkpoint("cancelled code keeps browser live", false, /daemon/);
    await session.reload();
-   const repaired = await checkpoint("startup lease recovery after native journal repair", true);
-   assert.equal(JSON.stringify(sdk.openSessionCheckpoint(repaired).getEntries()), JSON.stringify(sm.getEntries()));
+   await checkpoint("code browser survives reload", false, /daemon/);
+   await ok({ args: ["--session", codeSessionName, "close"] });
+   await checkpoint("code browser explicitly closed", true);
   });
   }
   await t.test("native root restore survives fresh checkout and state-directory inodes", async () => {

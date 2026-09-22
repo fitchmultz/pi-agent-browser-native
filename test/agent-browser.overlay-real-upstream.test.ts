@@ -59,7 +59,7 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 						{ args: [...prefix, "--json", "click", "#target"] },
 						{ args: [...prefix, "batch"], stdin: JSON.stringify(commands) },
 						...(mode === "empty-namespace" ? [] : [{ semanticAction: { action: "click", locator: "text", value: "Target", ...(mode === "managed" ? {} : { session: "overlay" }) } }]),
-						...(mode === "managed" ? [{ job: { steps: [{ action: "click", locator: "text", value: "Target" }] } }] : []),
+						...(mode === "managed" ? [{ args: ["batch", "--bail"], stdin: JSON.stringify([["find", "text", "Target", "click"]]) }] : []),
 					]) {
 						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
 						assert.equal(result.isError, true, JSON.stringify(result));

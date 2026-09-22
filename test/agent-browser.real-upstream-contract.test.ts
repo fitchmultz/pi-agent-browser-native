@@ -1179,10 +1179,10 @@ if (!REAL_UPSTREAM_ENABLED) {
 						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
 						"vanilla",
 					);
-					const jobSelect = await executeRegisteredTool(harness.tool, harness.ctx, {
-						job: { steps: [{ action: "select", selector: "#flavor-select", value: "chocolate" }] },
+					const batchSelect = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["batch", "--bail"], stdin: JSON.stringify([["select", "#flavor-select", "chocolate"]]),
 					});
-					assertCoreCommandResult(jobSelect, shapes.commands.batch, "job select", managedSessionName);
+					assertCoreCommandResult(batchSelect, shapes.commands.batch, "batch select", managedSessionName);
 					assert.equal(
 						getResultValue(await runCoreCommand(harness, ["get", "value", "#flavor-select"], shapes.commands.coreSubcommand, managedSessionName), ["value"]),
 						"chocolate",

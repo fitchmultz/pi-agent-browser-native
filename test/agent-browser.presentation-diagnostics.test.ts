@@ -614,7 +614,7 @@ test("buildToolPresentation formats redacted network payload, response, and erro
 		"start-network-har-capture",
 	]);
 	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["--session", "work", "network", "request", "req-2"]);
-	assert.deepEqual(presentation.nextActions?.[1]?.params?.networkSourceLookup, { requestId: "req-2", session: "work" });
+	assert.deepEqual(presentation.nextActions?.[1]?.params, { requestId: "req-2", session: "work" });
 	assert.deepEqual(presentation.nextActions?.[2]?.params?.args, ["--session", "work", "network", "requests", "--filter", "/items"]);
 	assert.deepEqual(presentation.nextActions?.[3]?.params?.args, ["--session", "work", "network", "requests", "--clear"]);
 	assert.deepEqual(presentation.nextActions?.[4]?.params?.args, ["--session", "work", "network", "har", "start"]);

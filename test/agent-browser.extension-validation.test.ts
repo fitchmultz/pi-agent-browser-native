@@ -53,7 +53,7 @@ test("agentBrowserExtension names its tools in every prompt guideline", () => {
 	for (const guideline of harness.tool.promptGuidelines) {
 		assert.match(guideline, /agent_browser/, guideline);
 	}
-	assert.match(harness.tool.promptGuidelines.find((guideline) => guideline.includes("one input mode")) ?? "", /\bscript\b/);
+	assert.match(harness.tool.promptGuidelines.join("\n"), /agent_browser_code.*loops\/branches/);
 	const webSearchTool = harness.getTool("agent_browser_web_search");
 	if (webSearchTool) {
 		for (const guideline of webSearchTool.promptGuidelines) {
@@ -68,23 +68,14 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		const harness = createExtensionHarness({ cwd: process.cwd() });
 		assert.deepEqual([...harness.handlers.keys()].sort(), ["before_agent_start", "session_checkpoint", "session_shutdown", "session_start", "session_tree", "tool_call", "tool_result"]);
 		assert.equal(harness.tool.name, "agent_browser");
-		assert.match(harness.tool.description, /authenticated\/profile-based browser work/);
-		assert.match(harness.tool.promptSnippet, /real web workflows/);
-		const parameterSchema = harness.tool.parameters as { description?: string; properties?: { args?: { description?: string }; stdin?: { description?: string } } };
-		assert.match(parameterSchema.description ?? "", /sourceLookup, networkSourceLookup, or electron/);
-		assert.match(parameterSchema.properties?.args?.description ?? "", /snapshot -i/);
-		const argsDescription = parameterSchema.properties?.args?.description ?? "";
-		assert.match(argsDescription, /screenshot \[selector\] \[path\] \[--full\/-f\]/);
-		assert.match(argsDescription, /record start <path> \[url\]/);
-		assert.match(argsDescription, /record restart <path> \[url\]/);
-		assert.match(argsDescription, /record stop/);
-		assert.match(argsDescription, /Paths are positional \(no --path\)/);
-		assert.match(argsDescription, /use --full, not --full-page/);
-		const stdinDescription = parameterSchema.properties?.stdin?.description ?? "";
-		assert.match(stdinDescription, /JSON array of token arrays/);
-		assert.ok(stdinDescription.includes('[["get","title"]]'));
-		assert.match(stdinDescription, /Raw text only for eval --stdin or auth save --password-stdin/);
-		assert.match(stdinDescription, /unavailable with structured modes and electron/);
+		assert.match(harness.tool.description, /native agent-browser commands/);
+		assert.match(harness.tool.promptSnippet, /native command batches/);
+		const parameterSchema = harness.tool.parameters as { properties?: Record<string, { description?: string }> };
+		assert.deepEqual(Object.keys(parameterSchema.properties ?? {}).sort(), ["args", "outputPath", "sessionMode", "stdin", "timeoutMs"]);
+		assert.match(parameterSchema.properties?.args?.description ?? "", /batch --bail/);
+		assert.match(parameterSchema.properties?.stdin?.description ?? "", /batch JSON, eval --stdin.*auth save --password-stdin/);
+		assert.match(harness.getTool("agent_browser_code")?.description ?? "", /persistent browser.*emitImage/);
+		assert.match(harness.getTool("agent_browser_tools")?.description ?? "", /adds tools.*preserves other active tools/);
 
 		const docsGuideline = buildInstalledDocsGuideline({
 			readmePath: join(process.cwd(), "README.md"),
@@ -108,7 +99,7 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 				`missing concise runtime guideline: ${guideline}`,
 			);
 		}
-		assert.match(guidelineText, /agent_browser: one input mode/);
+		assert.match(guidelineText, /agent_browser for one native command/);
 		assert.match(guidelineText, /For agent_browser, use open → snapshot -i/);
 		assert.match(guidelineText, /ordinary requested non-destructive submissions may proceed/);
 		assert.match(guidelineText, /require explicit authorization for purchases, production-control, destructive\/irreversible, or account\/security\/privacy changes/);
@@ -121,22 +112,22 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 			SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) => line.includes("ordinary non-destructive form submissions within the requested flow may proceed without separate confirmation")),
 			true,
 		);
-		assert.match(guidelineText, /sessionMode=fresh/);
+		assert.match(guidelineText, /sessionMode:fresh/);
 		assert.match(guidelineText, /bare calls share a root Pi browser with descendants/);
 		assert.match(SHARED_BROWSER_PLAYBOOK_GUIDELINES.join("\n"), /copied Chrome profiles may omit encrypted cookies/);
 		assert.match(guidelineText, /exact user paths/);
-		assert.match(guidelineText, /requested\/configured profiles only/);
-		assert.match(guidelineText, /read <url> for docs\/text/);
-		assert.match(guidelineText, /Batch 3\+ getters/);
+		assert.match(guidelineText, /requested\/configured profiles/);
+		assert.match(guidelineText, /read <url> for text/);
+		assert.match(guidelineText, /batch --bail with JSON-array stdin for fixed sequences/);
 		assert.match(guidelineText, /get text\/html\/value\/count <selector>/);
 		assert.match(guidelineText, /get attr <selector> <name>/);
 		assert.doesNotMatch(guidelineText, /get title\/url\/text\/html\/value\/attr\/count/);
-		assert.match(guidelineText, /Use --json for JSON text/);
+		assert.match(guidelineText, /Use --json only for JSON text/);
 		assert.doesNotMatch(guidelineText, /never pass --json/);
-		assert.match(harness.tool.description, /Input choice:/);
-		assert.match(guidelineText, /ffmpeg before recording/);
-		assert.match(guidelineText, /Dashboards: verify scroll/);
-		assert.match(guidelineText, /When agent_browser details\.nextActions exists/);
+		assert.match(harness.tool.description, /agent_browser_tools for advanced capabilities/);
+		assert.match(guidelineText, /ffmpeg before start/);
+		assert.match(guidelineText, /Verify nested scrolling/);
+		assert.match(guidelineText, /follow visible nextActions/);
 		assert.equal(harness.tool.promptGuidelines.includes(SHARED_BROWSER_PLAYBOOK_GUIDELINES[12]), false);
 		assert.equal(harness.tool.promptGuidelines.includes(QUICK_START_GUIDELINES[0]), false);
 		assert.equal(
@@ -151,10 +142,10 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		assert.doesNotMatch(fullPlaybookText, /diff snapshot\/screenshot\/url/);
 		assert.match(fullPlaybookText, /clipboard write <text>/);
 		assert.doesNotMatch(fullPlaybookText, /clipboard read\/write\/copy\/paste/);
-		assert.ok(harness.tool.promptGuidelines.length <= 10, "promptGuidelines should stay bounded");
+		assert.ok(harness.tool.promptGuidelines.length <= 12, "promptGuidelines should stay bounded");
 		const normalizedGuidelineText = guidelineText.split(process.cwd()).join("<cwd>");
 		assert.ok(
-			normalizedGuidelineText.length < 1_850,
+			normalizedGuidelineText.length < 3_800,
 			"promptGuidelines should point to docs instead of carrying the full command reference/playbook",
 		);
 		assert.equal(
@@ -170,17 +161,12 @@ test("agentBrowserExtension keeps concise browser guidance plus installed doc po
 		);
 		assert.equal(genericTurn, undefined);
 
-		const [browserTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
-			harness.handlers,
-			"before_agent_start",
-			{ prompt: "Open https://example.com and take a snapshot.", systemPrompt: "Base system prompt" },
-			harness.ctx,
-		);
-		assert.equal(typeof browserTurn?.systemPrompt, "string");
-		assert.equal(browserTurn?.systemPrompt.includes("Base system prompt"), true);
-		assert.equal(browserTurn?.systemPrompt.includes("Project rule: when browser automation is needed"), true);
-		assert.equal(browserTurn?.systemPrompt.includes("Quick start:"), false);
-		assert.equal(browserTurn?.systemPrompt.includes("Browser operating playbook:"), false);
+		const browserTurn = { prompt: "Open https://example.com and take a snapshot.", systemPrompt: "Base system prompt", systemPromptOptions: { sections: {} as Record<string, string> } };
+		const overrides = await runExtensionEventResults(harness.handlers, "before_agent_start", browserTurn, harness.ctx);
+		assert.deepEqual(overrides, [], "native section composition must not force a full prompt replacement");
+		assert.equal(browserTurn.systemPrompt, "Base system prompt");
+		assert.match(browserTurn.systemPromptOptions.sections.agent_browser, /Project rule: when browser automation is needed/);
+		assert.doesNotMatch(browserTurn.systemPromptOptions.sections.agent_browser, /Quick start:|Browser operating playbook:/);
 	});
 });
 
@@ -253,14 +239,10 @@ test("agentBrowserExtension uses project browser launch guidance when project co
 				assert.doesNotMatch(staticGuidelineText, /Project Profile/);
 				assert.doesNotMatch(staticGuidelineText, /\/tmp\/project-browser/);
 				assert.match(staticGuidelineText, /Global Profile/);
-				const [browserTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
-					harness.handlers,
-					"before_agent_start",
-					{ prompt: "Open https://example.com in the signed-in browser.", systemPrompt: "Base system prompt" },
-					harness.ctx,
-				);
-				assert.match(browserTurn?.systemPrompt ?? "", /Project Profile/);
-				assert.match(browserTurn?.systemPrompt ?? "", /\/tmp\/project-browser/);
+				const browserTurn = { prompt: "Open https://example.com in the signed-in browser.", systemPrompt: "Base system prompt", systemPromptOptions: { sections: {} as Record<string, string> } };
+				await runExtensionEvent(harness.handlers, "before_agent_start", browserTurn, harness.ctx);
+				assert.match(browserTurn.systemPromptOptions.sections.agent_browser, /Project Profile/);
+				assert.match(browserTurn.systemPromptOptions.sections.agent_browser, /\/tmp\/project-browser/);
 			});
 		} finally {
 			process.chdir(previousCwd);
@@ -293,14 +275,10 @@ test("agentBrowserExtension includes project-local browser launch guidance", asy
 				const guidelineText = harness.tool.promptGuidelines.join("\n");
 				assert.doesNotMatch(guidelineText, /Project Profile/);
 				assert.doesNotMatch(guidelineText, /\/tmp\/project-browser/);
-				const [browserTurn] = await runExtensionEventResults<{ systemPrompt: string }>(
-					harness.handlers,
-					"before_agent_start",
-					{ prompt: "Open https://example.com with the configured browser profile.", systemPrompt: "Base system prompt" },
-					harness.ctx,
-				);
-				assert.match(browserTurn?.systemPrompt ?? "", /Project Profile/);
-				assert.match(browserTurn?.systemPrompt ?? "", /\/tmp\/project-browser/);
+				const browserTurn = { prompt: "Open https://example.com with the configured browser profile.", systemPrompt: "Base system prompt", systemPromptOptions: { sections: {} as Record<string, string> } };
+				await runExtensionEvent(harness.handlers, "before_agent_start", browserTurn, harness.ctx);
+				assert.match(browserTurn.systemPromptOptions.sections.agent_browser, /Project Profile/);
+				assert.match(browserTurn.systemPromptOptions.sections.agent_browser, /\/tmp\/project-browser/);
 			});
 		} finally {
 			process.chdir(previousCwd);
@@ -324,12 +302,12 @@ test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], outputPath: "logs/page.json", timeoutMs: 35_000 }), true);
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], outputPath: "" }), false);
 	assert.equal(Check(schema, { args: ["open", "https://example.test/"], timeoutMs: 0 }), false);
-	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "role", role: "button", name: "Open" } }), true);
+	assert.equal(Check(harness.getTool("agent_browser_action")!.parameters, { action: "click", locator: "role", role: "button", name: "Open" }), true);
 	assert.equal(Check(schema, { semanticAction: { action: "click", locator: "text", value: "Open", values: ["nope"] } }), false);
-	assert.equal(Check(schema, { semanticAction: { action: "select", selector: "#flavor", value: "chocolate" } }), true);
-	assert.equal(Check(schema, { sourceLookup: { selector: "main" } }), true);
-	assert.equal(Check(schema, { networkSourceLookup: { namespace: "review", url: "https://example.test/api" } }), true);
-	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }), true);
+	assert.equal(Check(harness.getTool("agent_browser_action")!.parameters, { action: "select", selector: "#flavor", value: "chocolate" }), true);
+	assert.equal(Check(harness.getTool("agent_browser_source")!.parameters, { selector: "main" }), true);
+	assert.equal(Check(harness.getTool("agent_browser_network_source")!.parameters, { namespace: "review", url: "https://example.test/api" }), true);
+	assert.equal(Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }), false);
 });
 
 test("agentBrowserExtension rejects unsupported extra press/key args before upstream spawn", { concurrency: false }, async () => {
@@ -341,7 +319,7 @@ test("agentBrowserExtension rejects unsupported extra press/key args before upst
 		const topLevel = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["press", "@e1", "Enter"] });
 		assert.equal(topLevel.isError, true);
 		assert.match(topLevel.content[0]?.text ?? "", /accepts exactly one key argument/);
-		assert.equal(topLevel.details?.validationError, topLevel.content[0]?.text);
+		assert.equal(topLevel.details?.validationError, topLevel.content[0]?.text?.split("\n\nObservation:")[0]);
 
 		const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 			args: ["batch"],
@@ -1273,6 +1251,24 @@ if (command === "open") {
 	}
 });
 
+test("queued browser cancellation withdraws waiting work without releasing the active owner", async () => {
+	const queue = new KeyedAsyncExecutionQueue();
+	let release!: () => void;
+	let entered!: () => void;
+	const started = new Promise<void>(resolve => { entered = resolve; });
+	const held = new Promise<void>(resolve => { release = resolve; });
+	const first = queue.run("team\u0000same", "team", async () => { entered(); await held; });
+	await started;
+	const controller = new AbortController();
+	const cancelled = queue.run("team\u0000same", "team", async () => assert.fail("cancelled action dispatched"), controller.signal);
+	controller.abort();
+	await assert.rejects(cancelled, { name: "AbortError" });
+	let laterStarted = false;
+	const later = queue.run("team\u0000same", "team", async () => { laterStarted = true; });
+	await Promise.resolve(); assert.equal(laterStarted, false);
+	release(); await Promise.all([first, later]); assert.equal(laterStarted, true);
+});
+
 test("KeyedAsyncExecutionQueue drains same-namespace work without deadlocking late arrivals", async () => {
 	const queue = new KeyedAsyncExecutionQueue();
 	const key = getAgentBrowserSessionIdentityKey("shared", "team");
@@ -1717,7 +1713,7 @@ if (firstCallFailure) process.exit(1);`,
 			const reservedAtOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"], outputPath: "@demo.webm" });
 			assert.equal(reservedAtOutputPath.isError, true);
 			assert.match(reservedAtOutputPath.content[0]?.text ?? "", /@demo\.webm is reserved by an active recording/);
-			const reservedScriptOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { script: "emit({ ok: true });", outputPath: "demo.webm" });
+			const reservedScriptOutputPath = await executeRegisteredTool(harness.getTool("agent_browser_code")!, harness.ctx, { code: "emit({ ok: true });", outputPath: "demo.webm" });
 			assert.equal(reservedScriptOutputPath.isError, true);
 			assert.match(reservedScriptOutputPath.content[0]?.text ?? "", /demo\.webm is reserved by an active recording/);
 			const reservedElectronOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "status", all: true }, outputPath: "demo.webm" });
@@ -2086,13 +2082,13 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(semanticActionCallText, /<dim>→<\/dim> <accent>find text Definitely Missing Button click<\/accent>/);
 
 	const scriptSource = `const rows = [];\n${"rows.push('visible source'); ".repeat(12)}\n// osc-hidden line\x1B]0;\rawait browser({ args: ["get", "title"] }); //\x07\n// browser call follows\rawait browser({ args: ["get", "url"] });\u2028emit(rows);\x1B[31m\u202E\u200B`;
-	const scriptParams: AgentBrowserToolParams = { script: scriptSource };
+	const scriptParams: AgentBrowserToolParams = { code: scriptSource };
 	const collapsedScriptCallText = renderCall(
 		scriptParams,
 		PLAIN_RENDER_THEME,
 		createRenderContext({ args: scriptParams }),
 	).render(200).join("\n");
-	assert.match(collapsedScriptCallText, /<accent>script<\/accent>/);
+	assert.match(collapsedScriptCallText, /<toolTitle>\*\*agent_browser_code\*\*<\/toolTitle>/);
 	assert.match(collapsedScriptCallText, /const rows = \[\]/);
 	assert.match(collapsedScriptCallText, /↵/);
 	assert.match(collapsedScriptCallText, /\.\.\.<\/accent>/);

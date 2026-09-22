@@ -178,6 +178,9 @@ test("parseJsonl and extraction helpers read agent_browser results and sentinel 
 		JSON.stringify({ type: "session", id: "piab-lifecycle-4242" }),
 		JSON.stringify({ type: "custom", customType: "piab-lifecycle-sentinel", data: { token: "v1" } }),
 		JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "agent_browser", details: { sessionName: "s1", fullOutputPath: "/tmp/a.txt" } } }),
+		JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "agent_browser_code", details: { sessionName: "s1" } } }),
+		JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "agent_browser_qa", details: { sessionName: "s1" } } }),
+		JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "agent_browser_tools" } }),
 		JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "bash", details: { fullOutputPath: "/tmp/ignored.txt" } } }),
 		JSON.stringify({ type: "custom", customType: "piab-lifecycle-sentinel", data: { token: "v2" } }),
 		"",
@@ -186,7 +189,7 @@ test("parseJsonl and extraction helpers read agent_browser results and sentinel 
 	assert.equal(sessionHeaderId(entries), "piab-lifecycle-4242");
 	assert.deepEqual(sentinelTokens(entries), ["v1", "v2"]);
 	const results = agentBrowserResults(entries);
-	assert.equal(results.length, 1);
+	assert.deepEqual(results.map(result => result.toolName), ["agent_browser", "agent_browser_code", "agent_browser_qa"]);
 	assert.equal(results[0]?.details?.sessionName, "s1");
 	assert.deepEqual(collectFullOutputPaths(results), ["/tmp/a.txt"]);
 });

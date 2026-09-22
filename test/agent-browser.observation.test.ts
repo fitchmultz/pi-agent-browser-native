@@ -17,6 +17,13 @@ import { OBSERVATION_INLINE_MAX_CHARS, renderAgentBrowserObservation } from "../
 const actions: AgentBrowserNextAction[] = [{ id: "recover", tool: "agent_browser", params: { args: ["--namespace", "scope", "--session", "target", "eval", "--stdin"], stdin: "'" + "long exact recovery".repeat(60) + "'" }, reason: "Inspect the current page", safety: "Read-only; do not retry the mutation." }];
 const verification = { artifacts: [{ path: "/tmp/requested.png", state: "missing", kind: "image" }], missingCount: 1, pendingCount: 0, unverifiedCount: 0, verified: false, verifiedCount: 0 };
 
+test("canonical JSON preserves array-valued page and code output", async () => {
+	const data = ["a1", "a2", { count: 3 }];
+	assert.deepEqual(projectAgentBrowserObservation({ data }, true).data, data);
+	const rendered = await renderAgentBrowserObservation({ content: [], details: { data }, json: true, succeeded: true });
+	assert.deepEqual(JSON.parse(rendered.content.find(part => part.type === "text")!.text).data, data);
+});
+
 test("JSON observations retain exact recovery, failure category and artifact verification", () => {
 	const content = buildJsonVisibleContent({ error: "missing selector", presentation: { content: [], summary: "Selector missing", failureCategory: "selector-not-found", nextActions: actions }, details: { artifactVerification: verification }, succeeded: false });
 	const payload = JSON.parse(content[0].type === "text" ? content[0].text : "");

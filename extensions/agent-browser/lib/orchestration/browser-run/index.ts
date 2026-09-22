@@ -5,8 +5,7 @@ import { isPlainTextInspectionArgs, redactSensitiveValue } from "../../runtime.j
 import { formatWebMcpCatalogUpdate } from "../../results/presentation/common.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
-import { applyBrowserRunStatePatch, getSessionContextKey, getPersistentSessionArtifactStore } from "./session-state.js";
-import { renderAgentBrowserObservation } from "../../results/presentation/large-output.js";
+import { applyBrowserRunStatePatch, getSessionContextKey } from "./session-state.js";
 import { buildScreenshotGeometry, collectScreenshotSample } from "./screenshot-observation.js";
 import type { ImageObservation } from "../../results/contracts.js";
 import { buildJsonVisibleContent, buildMissingBinaryFailureResult } from "./final-result.js";
@@ -37,15 +36,6 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 		result.details = details;
 	}
 	if (options.modelVisible === false) result.content = [];
-	else if (!isPlainTextInspectionArgs(options.input.toolArgs)) {
-		const rendered = await renderAgentBrowserObservation({ content: result.content, details: details ?? {}, json: options.input.toolArgs.includes("--json"), succeeded: result.isError !== true, persistentArtifactStore: getPersistentSessionArtifactStore(options.ctx) });
-		result.content = rendered.content;
-		if (rendered.artifactManifest) {
-			options.state.artifactManifest = rendered.artifactManifest;
-			details = { ...details, artifactManifest: rendered.artifactManifest };
-			result.details = details;
-		}
-	}
 	const sessionKey = getSessionContextKey(typeof details?.sessionName === "string" ? details.sessionName : undefined, typeof details?.namespace === "string" ? details.namespace : undefined);
 	const page = options.state.sessionPageState.get(sessionKey);
 	return page.tabReopenPending === undefined ? result : {

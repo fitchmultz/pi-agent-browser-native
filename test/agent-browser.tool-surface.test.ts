@@ -140,6 +140,12 @@ test("explicit native CLI tool selection stays active and the loader cannot over
 	} finally { process.argv = original; }
 });
 
+test("SDK-selected advanced tools stay reachable when the loader is not selected", async () => {
+	await withSurface(async ({ active }) => {
+		assert.deepEqual(active(), ["agent_browser_qa"]);
+	}, { tools: ["agent_browser_qa"] });
+});
+
 test("internal input normalization preserves QA semantics without public job/script routes", () => {
 	for (const params of [{ script: "emit(1)" }, { job: { steps: [{ action: "snapshot" }] } }]) {
 		const resolved = resolveAgentBrowserInput({ params: params as AgentBrowserExecuteParams, getBatchPreflightValidationError: () => undefined });
