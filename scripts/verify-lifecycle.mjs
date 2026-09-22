@@ -8,7 +8,7 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
@@ -234,7 +234,7 @@ async function copyPackageSource({ packageDir, repoRoot }) {
 	const repoNodeModules = resolve(repoRoot, "node_modules");
 	const tempNodeModules = resolve(packageDir, "node_modules");
 	if (await pathExists(repoNodeModules)) {
-		await symlink(repoNodeModules, tempNodeModules, "dir").catch(() => undefined);
+		await cp(repoNodeModules, tempNodeModules, { recursive: true, verbatimSymlinks: true });
 	}
 }
 

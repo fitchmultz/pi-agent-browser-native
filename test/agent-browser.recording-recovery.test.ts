@@ -249,6 +249,7 @@ for (const mode of ["timeout", "stale-batch"]) {
 			const path = join(root, "raw.webm"), outputPath = join(root, "batch-receipt.json");
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "batch", `record start ${JSON.stringify(path)}`, "record stop"], stdin: JSON.stringify([["record", "start", join(root, "ignored.webm")], ["record", "stop"]]), timeoutMs: 200, outputPath });
 			assert.equal(result.isError, true, "a recording receipt cannot prove all timed-out batch steps succeeded");
+			assert.equal((result.details?.outputFile as { status?: string } | undefined)?.status, "saved", JSON.stringify(result));
 			const exported = JSON.parse(await readFile(outputPath, "utf8"));
 			assert.equal(exported.recordingRecovery.expected.absolutePath, path);
 			assert.equal(exported.recordingRecovery.healed, false);

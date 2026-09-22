@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { getCurrentSystemMessage } from "@earendil-works/pi-ai";
 import type { TUnsafe } from "./json-schema.js";
 import {
 	AGENT_BROWSER_PARAMS,
@@ -151,7 +152,6 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		// A host-filtered catalog is an explicit selection, not our default surface.
 		const available = new Set(pi.getAllTools().map(({ name }) => name));
 		if (!["agent_browser", "agent_browser_code", "agent_browser_tools", ...advancedNames].every(name => available.has(name))) return;
-		const { getCurrentSystemMessage } = await import("@earendil-works/pi-ai");
 		const current = getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
 		const restored = new Set(current?.toolsAdded?.map(({ name }) => name));
 		const active = pi.getActiveTools().filter((name) => !advancedNames.has(name) || restored.has(name));

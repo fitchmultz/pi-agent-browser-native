@@ -723,7 +723,10 @@ if (args.includes("get") && args.includes("url")) {
 			const snapshot = executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "snapshot", "-i"] }, controller.signal);
 			await waitForInvocation(logPath, (entry) => entry.args.includes("get") && entry.args.includes("url"));
 			controller.abort(new Error("caller cancelled"));
-			await assert.rejects(snapshot, /caller cancelled/);
+			const cancelled = await snapshot;
+			assert.equal(cancelled.isError, true);
+			assert.equal(cancelled.details?.failureCategory, "aborted");
+			assert.match(cancelled.content[0]?.text ?? "", /caller cancelled/);
 
 			const reopened = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "named", "open", "https://example.com/"] });
 			assert.equal(reopened.isError, false, JSON.stringify(reopened));

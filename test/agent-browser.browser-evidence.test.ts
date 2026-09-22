@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -44,7 +46,7 @@ test("explicit URL reads follow native operands without requiring a page or impl
 	assert.equal(getPageTargetValidationError({ args: ["batch", "read --raw public.test"], stdin: JSON.stringify([["snapshot", "-i"]]), pageUrlUnknown: true }), undefined);
 });
 
-test("shared URL reads and their timeouts dispatch no page helpers; bare reads still verify", { concurrency: false }, async () => {
+test("shared URL reads and their timeouts dispatch no page helpers; bare reads still verify", { concurrency: false }, async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "piab-url-read-"));
 	const logPath = join(root, "calls.jsonl");
 	await mkdir(join(root, ".git"));
@@ -89,16 +91,28 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`);
 				assert.match(result.content[0]?.text ?? "", /Native read argument error/);
 				assert.deepEqual((await readInvocationLog(logPath)).map(row => extractUpstreamCommandTokens(row.args)), [args]);
 			}
-			for (const params of [
-				{ args: ["read", "timeout.test"] },
-				{ args: ["batch"], stdin: JSON.stringify([["read", "public.test"], ["read", "timeout.test"]]) },
-				{ args: ["batch", "read timeout.test"], stdin: JSON.stringify([["snapshot", "-i"]]) },
-			]) {
-				await writeFile(logPath, "");
-				const timeout = await executeRegisteredTool(harness.tool, harness.ctx, { ...params, timeoutMs: 150 });
-				assert.equal(timeout.details?.failureCategory, "timeout");
-				assert.deepEqual((await readInvocationLog(logPath)).map((row) => extractUpstreamCommandTokens(row.args)[0]), [params.args[0]]);
-			}
+			const nativeSpawn = childProcess.spawn;
+			const spawned: string[][] = [];
+			t.mock.method(childProcess, "spawn", (...args: Parameters<typeof childProcess.spawn>) => {
+				if (Array.isArray(args[1]) && args[1].includes("--json")) spawned.push([...args[1]]);
+				return nativeSpawn(...args);
+			});
+			syncBuiltinESMExports();
+			try {
+				for (const params of [
+					{ args: ["read", "timeout.test"] },
+					{ args: ["batch"], stdin: JSON.stringify([["read", "public.test"], ["read", "timeout.test"]]) },
+					{ args: ["batch", "read timeout.test"], stdin: JSON.stringify([["snapshot", "-i"]]) },
+				]) {
+					await writeFile(logPath, "");
+					spawned.length = 0;
+					const timeout = await executeRegisteredTool(harness.tool, harness.ctx, { ...params, timeoutMs: 150 });
+					assert.equal(timeout.details?.failureCategory, "timeout");
+					assert.equal(timeout.details?.agentBrowserStarted, true);
+					// Observe real spawns: a short watchdog can expire before a slow fixture Node reaches its log write.
+					assert.deepEqual(spawned.map(args => extractUpstreamCommandTokens(args)[0]), [params.args[0]]);
+				}
+			} finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 			await writeFile(logPath, "");
 			const bare = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read"] });
 			assert.equal(bare.isError, false, bare.content[0]?.text);

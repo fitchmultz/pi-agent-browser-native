@@ -1572,7 +1572,6 @@ export default function agentBrowserExtension(
 			return component;
 		},
 		async execute(toolCallId, params: AgentBrowserExecuteParams, signal, onUpdate, ctx, nativeToolCallId: string = toolCallId, capturedCwd?: string, modelVisible = true) {
-			const startedAt = Date.now();
 			let operationCwd: string;
 			try { operationCwd = capturedCwd ?? resolveExecutionCwd(pi, ctx); }
 			catch (error) {
@@ -1604,7 +1603,7 @@ export default function agentBrowserExtension(
 				const bound = resolveOperationPaths(resolvedInput.toolArgs, resolvedInput.toolStdin, operationCwd);
 				resolvedInput = { ...resolvedInput, toolArgs: bound.args, toolStdin: bound.stdin };
 			}
-			const executionDeadline = startedAt + ((resolvedInput.kind === "electron" && "timeoutMs" in resolvedInput.compiledElectron ? resolvedInput.compiledElectron.timeoutMs : undefined) ?? params.timeoutMs ?? getCommandAwareProcessTimeoutMs(extractUpstreamCommandTokens(resolvedInput.toolArgs), resolvedInput.toolStdin) ?? getAgentBrowserProcessTimeoutMs());
+			const executionTimeoutMs = (resolvedInput.kind === "electron" && "timeoutMs" in resolvedInput.compiledElectron ? resolvedInput.compiledElectron.timeoutMs : undefined) ?? params.timeoutMs ?? getCommandAwareProcessTimeoutMs(extractUpstreamCommandTokens(resolvedInput.toolArgs), resolvedInput.toolStdin) ?? getAgentBrowserProcessTimeoutMs();
 			await beforeExecute?.(nativeToolCallId, { ...ctx, signal });
 			const runtimeBrowserConfig = loadAgentBrowserConfigSync({ cwd: ctx.cwd, includeProjectConfig: shouldIncludeProjectConfig(ctx) });
 			const rootProfile = runtimeBrowserConfig.trustedBrowserDefaultProfile;
@@ -1736,7 +1735,7 @@ export default function agentBrowserExtension(
 				if (sessions.length === 0) return execute();
 				try {
 					const identities = await Promise.all(sessions.map(session => resolveBrowserExecutionIdentity({ ...session, ownedManagedSession: true })));
-					return await withBrowserExecutionLocks({ identities, signal, deadline: executionDeadline, waitOnly: true }, execute);
+					return await withBrowserExecutionLocks({ identities, signal, deadline: Date.now() + executionTimeoutMs, waitOnly: true }, execute);
 				} catch (error) { return browserExecutionFailure(error, signal); }
 			};
 			const electronHostResult = await (shouldSerializeElectronHostInput(compiledElectron)
@@ -1954,7 +1953,7 @@ export default function agentBrowserExtension(
 						identities.push(await resolveBrowserExecutionIdentity({ namespace: managedSessionNamespace, ownedManagedSession: true, sessionName: managedSessionName }));
 					}
 					const activePageUrl = sessionPageState.get(getAgentBrowserSessionIdentityKey(plan.sessionName ?? "default", plan.namespace)).tabTarget?.url;
-					const deadline = startedAt + (params.timeoutMs ?? getCommandAwareProcessTimeoutMs(extractUpstreamCommandTokens(toolArgs), resolvedInput.toolStdin, activePageUrl) ?? getAgentBrowserProcessTimeoutMs());
+					const deadline = Date.now() + (params.timeoutMs ?? getCommandAwareProcessTimeoutMs(extractUpstreamCommandTokens(toolArgs), resolvedInput.toolStdin, activePageUrl) ?? getAgentBrowserProcessTimeoutMs());
 					return await withBrowserExecutionLocks({ identities, signal, deadline, waitOnly: true }, run);
 				} catch (error) {
 					return browserExecutionFailure(error, signal);

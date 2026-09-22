@@ -1254,7 +1254,7 @@ if (args.includes("get") && args.includes("url")) {
 
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args.at(-2), "get");
-			assert.equal(invocations.at(-1)?.args.at(-1), expectedPath);
+			assert.equal(invocations.find(entry => entry.args.includes("screenshot"))?.args.at(-1), expectedPath);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

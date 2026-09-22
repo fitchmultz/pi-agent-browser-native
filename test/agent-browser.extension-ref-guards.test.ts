@@ -215,6 +215,7 @@ if (args.includes("snapshot")) {
 			const failed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "const c = 1;"] });
 			assert.equal(failed.isError, true);
 			assert.equal(failed.details?.resultCategory, "failure");
+			assert.equal((failed.details?.sessionTabTarget as { url?: string } | undefined)?.url, "https://first.example/", JSON.stringify(failed));
 
 			// The live probe keeps the observed http(s) page verified, but the failed eval may still have
 			// mutated the document before throwing, so the pre-change ref snapshot must be invalidated.

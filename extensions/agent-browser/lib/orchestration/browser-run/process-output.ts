@@ -421,7 +421,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			|| (prepared.executionPlan.commandInfo.command === "batch" && batchHasFailedWebMcpSettlement(presentationEnvelope?.data))
 		);
 		const unsettledWebMcpMutation = pendingWebMcpMutation || failedWebMcpSettlement;
-		const observedSessionTabTarget = unsettledWebMcpMutation || unobservedMutation
+		const observedSessionTabTarget = unsettledWebMcpMutation || (unobservedMutation && !failedTransitionReverification)
 			? undefined
 			: normalizeSessionTabTarget(navigationSummary)
 				?? (trustsReportedPageTarget ? extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) : undefined)
@@ -522,7 +522,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				const plannedBatchTransitionInvalidation = !Array.isArray(presentationEnvelope?.data)
 					? batchCommandSteps.map(getCommandRefSnapshotInvalidation).find((invalidation) => invalidation !== undefined)
 					: undefined;
-				const pageTransitionInvalidation = unobservedMutation
+				const pageTransitionInvalidation = unobservedMutation && !failedTransitionReverification
 					? buildPageTransitionRefSnapshotInvalidation("A dispatched mutation was interrupted without a final outcome. Verify the current URL and take a fresh snapshot before deciding whether to retry.")
 					: unsettledWebMcpMutation
 					? buildPageTransitionRefSnapshotInvalidation("A detached WebMCP invocation is still pending or failed to settle and can mutate, rerender, or navigate the page, so prior snapshot refs remain invalid after URL verification. Run webmcp result or cancel, then take a fresh snapshot before using page-scoped refs.")
