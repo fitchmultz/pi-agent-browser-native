@@ -26,7 +26,8 @@ if (flavor === "floor" && candidate === MINIMUM_PI_VERSION) {
 const automation = resolve(automationPath);
 const { isolatedEnvironment } = await import(pathToFileURL(join(automation, "scripts/common.mjs")));
 const { prepareHost, selectDevelopmentHost } = await import(pathToFileURL(join(automation, "scripts/hosts.mjs")));
-const root = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "piab-ci-host-"));
+// Nested test sockets need the same short temporary root as the pinned qualifier.
+const root = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "pc-"));
 const env = isolatedEnvironment(root);
 
 function execute(command, args) {
