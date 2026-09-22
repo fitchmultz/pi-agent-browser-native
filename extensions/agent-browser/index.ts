@@ -1360,7 +1360,7 @@ export default function agentBrowserExtension(
 		}));
 	});
 
-	// Additive native checkpoint event; the package's 0.84 validation types predate it.
+	// Fork-only checkpoint event; official Pi validation types do not declare it.
 	// Pi owns awaited tools/events (including their execution queues). Only script
 	// children and retained browser/recording resources need extension-side checks.
 	const checkpointPi = pi as ExtensionAPI & { on(event: "session_checkpoint", handler: (event: { signal: AbortSignal }, ctx: ExtensionContext) => Promise<{ sleepReady: boolean; reason?: string }>): void };
