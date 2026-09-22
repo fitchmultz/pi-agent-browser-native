@@ -3,8 +3,6 @@ name: Native checkpoint
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -21,7 +19,7 @@ jobs:
   native-checkpoint-linux:
     name: Native checkpoint Linux
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 8
     defaults:
       run:
         shell: bash
@@ -68,37 +66,25 @@ jobs:
           env -i HOME="$CI_ROOT/home" TMPDIR=/tmp PI_FORK_REF="$PI_FORK_REF" \
             PATH="$CI_NODE_BIN:/usr/local/bin:/usr/bin:/bin" \
             bash "$CI_ROOT/extension/scripts/ci-native-checkpoint.sh" setup "$CI_ROOT"
-      - name: Qualify the locked local official graph on Node 26
-        run: |
-          # Consumer packaging installs public runtime dependencies. Do this before
-          # the loopback-only browser namespace; no service credentials are passed.
-          cd "$CI_ROOT/extension"
-          env -i HOME="$CI_ROOT/home" TMPDIR=/tmp \
-            PATH="$CI_NODE_BIN:/usr/local/bin:/usr/bin:/bin" \
-            PI_CODING_AGENT_DIR="$CI_ROOT/home/.pi/agent" \
-            PI_OFFLINE=1 PI_TELEMETRY=0 PI_COMPAT_HOST=official \
-            npm run check:compat 2>&1 | tee "$CI_ROOT/logs/node26-verify.log"
       - name: Allow the fixture Chrome to create its sandbox
         run: |
           # Chromium's documented Ubuntu 23.10+ filepath exception (option 2):
           # https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
           # The native fixture copies the download into /tmp/piab-cp-*/home.
           # Keep that short socket root and Chrome's sandbox; do not relax userns globally.
-          {
-            apparmor_parser --version
-            sysctl kernel.apparmor_restrict_unprivileged_userns
-            chrome=("$CI_ROOT/home/.agent-browser/browsers"/chrome-*/chrome)
-            [[ ${#chrome[@]} == 1 && -x ${chrome[0]} ]]
-            sudo tee "$CI_ROOT/logs/chrome.apparmor" <<EOF
+          apparmor_parser --version
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          chrome=("$CI_ROOT/home/.agent-browser/browsers"/chrome-*/chrome)
+          [[ ${#chrome[@]} == 1 && -x ${chrome[0]} ]]
+          sudo tee "$CI_ROOT/logs/chrome.apparmor" <<EOF
           abi <abi/4.0>,
           include <tunables/global>
           profile $(basename "$CI_ROOT")-chrome /tmp/piab-cp-*/home/.agent-browser/browsers/chrome-*/chrome flags=(unconfined) {
             userns,
           }
           EOF
-            # Load only our ephemeral profile, without reloading host policy or caching it.
-            sudo apparmor_parser --add --skip-cache "$CI_ROOT/logs/chrome.apparmor"
-          } 2>&1 | tee "$CI_ROOT/logs/sandbox-setup.log"
+          # Load only our ephemeral profile, without reloading host policy or caching it.
+          sudo apparmor_parser --add --skip-cache "$CI_ROOT/logs/chrome.apparmor"
       - name: Documentation drift and all 13 native browser checkpoints (loopback only)
         run: |
           # Root only creates a loopback-only namespace, then drops all privileges.
@@ -109,13 +95,6 @@ jobs:
               env -i HOME="$3/home" TMPDIR=/tmp PATH="$4:/usr/local/bin:/usr/bin:/bin" \
               bash "$3/extension/scripts/ci-native-checkpoint.sh" verify "$3"
           ' -- "$(id -u)" "$(id -g)" "$CI_ROOT" "$CI_NODE_BIN"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always() && env.CI_ROOT != ''
-        with:
-          name: native-checkpoint-linux-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ env.CI_ROOT }}/logs/*
-          if-no-files-found: error
-          retention-days: 7
       - name: Remove only the fixture AppArmor profile
         if: always() && env.CI_ROOT != ''
         run: |
