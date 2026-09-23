@@ -345,13 +345,23 @@ export function isSensitiveFieldName(key: string): boolean {
 
 function isEnvSecretAssignmentKey(key: string): boolean {
 	if (!isSensitiveFieldName(key)) return false;
-	if (key.includes("_") || key.includes("-") || key === key.toUpperCase()) return true;
+	if (key === "password" || key.includes("_") || key.includes("-") || key === key.toUpperCase()) return true;
 	return /(?:apiKey|ApiKey|privateKey|PrivateKey|databaseUrl|DatabaseUrl|dbUrl|DbUrl|connectionString|ConnectionString|mongoUri|MongoUri|mongodbUri|MongodbUri|mongoDbUri|MongoDbUri|redisUrl|RedisUrl|Token|Secret|Password|Credential|Credentials)$/.test(key);
 }
 
 function redactEnvSecretAssignments(text: string): string {
-	return text.replace(ENV_SECRET_ASSIGNMENT_PATTERN, (match, prefix: string, key: string) => {
+	return text.replace(ENV_SECRET_ASSIGNMENT_PATTERN, (match, prefix: string, key: string, _separator: string, offset: number) => {
 		if (!isEnvSecretAssignmentKey(key)) return match;
+		if (key === "password") {
+			// The loose matcher cannot safely distinguish inline punctuation from password characters.
+			const end = offset + match.length;
+			if ((offset > 0 && text[offset - 1] !== "\n" && text[offset - 1] !== "\r")
+				|| (end < text.length && text[end] !== "\n" && text[end] !== "\r")
+				|| /^(?:\[REDACTED\]|%5Bredacted%5D)/i.test(match.slice(prefix.length))) return match;
+			const value = match.slice(prefix.length);
+			const boundary = value[0] === '"' || value[0] === "'" ? -1 : value.search(/[&#](?=[A-Za-z_][A-Za-z0-9_-]*\s*=)/);
+			return `${prefix}[REDACTED]${boundary < 0 ? "" : value.slice(boundary)}`;
+		}
 		return `${prefix}[REDACTED]`;
 	});
 }

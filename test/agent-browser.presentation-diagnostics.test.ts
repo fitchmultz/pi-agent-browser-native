@@ -31,6 +31,15 @@ test("buildToolPresentation redacts scalar extraction results for eval and get c
 	const getText = (getPresentation.content[0] as { text: string }).text;
 	assert.doesNotMatch(getText, /get-secret/);
 	assert.match(getText, /\[REDACTED\]/);
+
+	const passwordPresentation = await buildToolPresentation({
+		commandInfo: { command: "get", subcommand: "text" },
+		cwd: process.cwd(),
+		envelope: { success: true, data: { text: "password=synthetic-secret-123" } },
+	});
+	assert.deepEqual(passwordPresentation.data, { text: "password=[REDACTED]" });
+	assert.match((passwordPresentation.content[0] as { text: string }).text, /password=\[REDACTED\]/);
+	assert.doesNotMatch(JSON.stringify(passwordPresentation), /synthetic-secret-123/);
 });
 
 test("buildToolPresentation adds clipboard permission guidance for denied clipboard commands", async () => {
