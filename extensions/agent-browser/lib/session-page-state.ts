@@ -2,7 +2,7 @@ import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "./argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import { getBrowserResultMessage } from "./browser-transcript.js";
-import { isCloseAllCommand, isCloseCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand, isWindowOrDiffPageTransitionCommand } from "./command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand, isWindowOrDiffPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { findReadConfirmation as findPendingReadConfirmation, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
@@ -10,6 +10,7 @@ import { enrichSnapshotRefEntries, getFullSnapshotData, getSnapshotRefEntries } 
 import { parseSnapshotLines } from "./results/snapshot-segments.js";
 
 export interface SessionTabTarget {
+	targetId?: string;
 	title?: string;
 	url: string;
 }
@@ -77,7 +78,7 @@ export function normalizeComparableUrl(url: string | undefined): string | undefi
 	}
 }
 
-export function normalizeSessionTabTarget(target: { title?: string; url?: string } | undefined): SessionTabTarget | undefined {
+export function normalizeSessionTabTarget(target: { targetId?: string; title?: string; url?: string } | undefined): SessionTabTarget | undefined {
 	if (!target) {
 		return undefined;
 	}
@@ -86,7 +87,7 @@ export function normalizeSessionTabTarget(target: { title?: string; url?: string
 		return undefined;
 	}
 	const title = target.title?.trim();
-	return { title: title && title.length > 0 ? title : undefined, url };
+	return { ...(target.targetId?.trim() ? { targetId: target.targetId.trim() } : {}), title: title && title.length > 0 ? title : undefined, url };
 }
 
 export function isAboutBlankUrl(url: string | undefined): boolean {
@@ -122,6 +123,7 @@ function extractStringResultField(data: unknown, fieldName: "result" | "title" |
 
 export function extractSessionTabTargetFromData(data: unknown): SessionTabTarget | undefined {
 	const directTarget = normalizeSessionTabTarget({
+		targetId: isRecord(data) && typeof data.targetId === "string" ? data.targetId : undefined,
 		title: extractStringResultField(data, "title"),
 		url: extractStringResultField(data, "url"),
 	});
@@ -155,8 +157,12 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 	let pendingTitle: string | undefined;
 	for (const item of data) {
 		if (!isRecord(item)) continue;
-		const [name, subcommand] = extractUpstreamCommandTokens(extractBatchResultCommand(item));
-		if (isWindowOrDiffPageTransitionCommand(name, subcommand)) {
+		// Only this row's native identity can describe the active tab after it ran.
+		if (currentTarget?.targetId) currentTarget = normalizeSessionTabTarget({ title: currentTarget.title, url: currentTarget.url });
+		const commandTokens = extractUpstreamCommandTokens(extractBatchResultCommand(item));
+		const [name, subcommand] = commandTokens;
+		if (isOpenNavigationCommand(name) || isUnverifiedPageTransitionCommand(name, subcommand)
+			|| (name === "click" && commandTokens.includes("--new-tab"))) {
 			currentTarget = undefined;
 			pendingTitle = undefined;
 		}
@@ -227,6 +233,7 @@ function getRestoredSessionTabTarget(details: Record<string, unknown>, command: 
 	}
 	const storedTarget = isRecord(details.sessionTabTarget)
 		? normalizeSessionTabTarget({
+			targetId: typeof details.sessionTabTarget.targetId === "string" ? details.sessionTabTarget.targetId : undefined,
 			title: typeof details.sessionTabTarget.title === "string" ? details.sessionTabTarget.title : undefined,
 			url: typeof details.sessionTabTarget.url === "string" ? details.sessionTabTarget.url : undefined,
 		  })
@@ -234,12 +241,14 @@ function getRestoredSessionTabTarget(details: Record<string, unknown>, command: 
 	if (command !== "batch") {
 		return storedTarget;
 	}
+	if (isRecord(details.compiledNetworkSourceLookup) || batchContainsOnlyReadOnlyDiagnosticTargets(details.data)) {
+		return undefined;
+	}
+	// The stored target includes post-batch live verification and native tab identity.
+	if (storedTarget || details.sessionTabTargetUnknown === true) return storedTarget;
 	const batchTarget = extractSessionTabTargetFromBatchResults(details.data);
 	if (batchTarget) {
 		return batchTarget;
-	}
-	if (isRecord(details.compiledNetworkSourceLookup) || batchContainsOnlyReadOnlyDiagnosticTargets(details.data)) {
-		return undefined;
 	}
 	return storedTarget;
 }

@@ -317,6 +317,33 @@ test("deriveSessionTabTarget discards stale targets after unobserved history nav
 	]), { title: undefined, url: "https://after.example/" });
 });
 
+test("batch targets discard reached failed transitions and accept later observations", () => {
+	const before = { command: ["open", "https://before.example/"], result: { url: "https://before.example/" }, success: true };
+	for (const command of [["open", "https://abort.example/"], ["back"], ["eval", "location.reload()"], ["tab", "t2"]]) {
+		const failed = { command, success: false, error: "navigation failed" };
+		assert.equal(extractSessionTabTargetFromBatchResults([before, failed]), undefined);
+		assert.deepEqual(extractSessionTabTargetFromBatchResults([before, failed, {
+			command: ["get", "url"], result: { url: "chrome-error://chromewebdata/" }, success: true,
+		}]), { title: undefined, url: "chrome-error://chromewebdata/" });
+	}
+	assert.deepEqual(extractSessionTabTargetFromBatchResults([before, { command: ["get", "title"], success: false }]), {
+		title: undefined, url: "https://before.example/",
+	});
+});
+
+test("batch observations do not inherit native identity from earlier rows", () => {
+	assert.deepEqual(extractSessionTabTargetFromBatchResults([
+		{ command: ["open", "https://same.example/"], success: true, result: { url: "https://same.example/", targetId: "FIRST" } },
+		{ command: ["get", "url"], success: true, result: { url: "https://same.example/" } },
+		{ command: ["snapshot", "-i"], success: true, result: { origin: "https://same.example/", refs: {} } },
+	]), { title: undefined, url: "https://same.example/" });
+	assert.deepEqual(extractSessionTabTargetFromBatchResults([
+		{ command: ["open", "https://same.example/"], success: true, result: { url: "https://same.example/", targetId: "FIRST" } },
+		{ command: ["click", "#next", "--new-tab"], success: true, result: { url: "https://same.example/next", newTab: true } },
+		{ command: ["get", "url"], success: true, result: { url: "https://same.example/next" } },
+	]), { title: undefined, url: "https://same.example/next" });
+});
+
 test("extractRefSnapshotFromData preserves editable evidence from snapshot text", () => {
 	const snapshot = extractRefSnapshotFromData({
 		refs: { e1: { name: "Editor", role: "generic" }, e2: { name: "Disabled", role: "generic" } },

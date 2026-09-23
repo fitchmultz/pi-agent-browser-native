@@ -101,7 +101,7 @@ export interface CompatibilityWorkaround {
 
 export interface OpenResultTabCorrection {
 	selectedTab: string;
-	selectionKind: "index" | "label" | "tabId";
+	selectionKind: "index" | "label" | "tabId" | "targetId";
 	targetTitle?: string;
 	targetUrl: string;
 }

@@ -221,6 +221,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 				sessionMode: "fresh",
 			});
 			assert.equal(aligned.isError, false);
+			const alignedInvocations = await readInvocationLog(logPath);
+			assert.deepEqual(alignedInvocations.map(entry => entry.args.slice(-2)), [
+				["open", "https://example.com/"],
+				["tab", "list"],
+			]);
+			assert.deepEqual(alignedInvocations.map(entry => entry.idleTimeout), ["1234", "1234"]);
 
 			const activeSessionMismatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--idle-timeout", "5000", "open", "https://example.com/next"],
@@ -228,7 +234,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 			assert.equal(activeSessionMismatch.isError, true);
 			assert.match(String(activeSessionMismatch.details?.validationError), /PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS=5000/);
 			assert.equal(activeSessionMismatch.details?.sessionRecoveryHint, undefined);
-			assert.deepEqual((await readInvocationLog(logPath)).map((entry) => entry.idleTimeout), ["1234"]);
+			assert.deepEqual(await readInvocationLog(logPath), alignedInvocations);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -805,10 +811,14 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				const command = normalizedArgs[0];
 				const tabAction = command === "tab" && normalizedArgs[1] !== undefined && !["list", "new"].includes(normalizedArgs[1]);
 				const probesSummary = command === "click" || tabAction || command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval";
-				if (!probesSummary) return [normalizedArgs];
+				if (!probesSummary) return command === "get" && normalizedArgs[1] === "url"
+					? [normalizedArgs, ["tab", "list"]]
+					: [normalizedArgs];
 				const titleProbe = !navigationSummaryTitleObserved || tabAction;
 				navigationSummaryTitleObserved = true;
-				return titleProbe ? [normalizedArgs, ["get", "url"], ["get", "title"]] : [normalizedArgs, ["get", "url"]];
+				return titleProbe
+					? [normalizedArgs, ["get", "url"], ["get", "title"], ["tab", "list"]]
+					: [normalizedArgs, ["get", "url"], ["tab", "list"]];
 			});
 			// Root-session page checks may add get url; retain exact argv/order for every other command.
 			const withoutUrlChecks = (rows: string[][]) => rows.filter((args) => args.join(" ") !== "get url");
@@ -1056,7 +1066,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			const invocations = await readInvocationLog(logPath);
 			const userInvocations = invocations.map((entry) => stripWrapperPrefix(entry.args));
 			assert.deepEqual(userInvocations.filter((args) => args.join(" ") !== "get url"), commands.flatMap((args) => args[0] === "diff" && args[1] === "url"
-				? [[...args], ["get", "title"]]
+				? [[...args], ["get", "title"], ["tab", "list"]]
 				: [[...args]]).filter((args) => args.join(" ") !== "get url"));
 			assert.ok(invocations.every((entry) => entry.args.includes("--json")));
 			assert.ok(invocations.every((entry) => {
