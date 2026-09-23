@@ -308,7 +308,7 @@ function buildTimeoutPartialProgressNextActions(options: FinalResultInput): Agen
 				args: withOptionalSessionArgs(options.executionPlan.sessionName, ["batch", "--bail"]),
 				stdin: JSON.stringify([["get", "url"], ["snapshot", "-i"]]),
 			},
-			reason: `Verify the current URL, then inspect the page after timeout${stepIndex === undefined ? "" : ` before resuming from incomplete step ${stepIndex}`}.`,
+			reason: `Verify the current URL, then inspect the page after timeout${stepIndex === undefined ? "" : ` before considering a retry of step ${stepIndex}`}.`,
 			safety: "Fail-fast read-only recovery: snapshot runs only after get url succeeds, satisfying the wrapper page-target guard without trusting the planned URL.",
 			tool: "agent_browser" as const,
 		}];
@@ -320,8 +320,8 @@ function buildTimeoutPartialProgressNextActions(options: FinalResultInput): Agen
 				? { ...retry, sessionMode: "fresh" }
 				: { ...retry, args: withOptionalSessionArgs(options.executionPlan.sessionName, retry.args) },
 			reason: freshSessionAbandoned
-				? `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} in a fresh browser session because the timed-out fresh session was not proven live.`
-				: `Retry the first incomplete timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} against the current browser session.`,
+				? `Consider retrying the single timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} in a fresh browser session because the timed-out fresh session was not proven live.`
+				: `Consider retrying the single timed-out step${stepIndex === undefined ? "" : ` ${stepIndex}`} against the current browser session.`,
 			safety: "Only read-only or idempotent timeout steps get executable retry args; inspect current page/artifact state before using the action.",
 			tool: "agent_browser" as const,
 		}];
@@ -330,7 +330,7 @@ function buildTimeoutPartialProgressNextActions(options: FinalResultInput): Agen
 	return [{
 		id: "inspect-current-page-after-timeout",
 		params: { args: withOptionalSessionArgs(options.executionPlan.sessionName, ["snapshot", "-i"]) },
-		reason: `Inspect the current page after timeout before deciding how to resume${stepIndex === undefined ? "" : ` from incomplete step ${stepIndex}`}.`,
+		reason: `Inspect the current page after timeout before deciding how to resume${stepIndex === undefined ? "" : ` with step ${stepIndex}`}.`,
 		safety: "Read details.timeoutPartialProgress first. Do not blindly retry mutating steps such as clicks, fills, key presses, selects, or checks; split the remaining flow into shorter batches around the next navigation or DOM mutation boundary.",
 		tool: "agent_browser" as const,
 	}];

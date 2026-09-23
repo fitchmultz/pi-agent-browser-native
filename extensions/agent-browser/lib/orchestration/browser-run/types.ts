@@ -251,7 +251,6 @@ export interface TimeoutPartialProgress {
 		url?: string;
 	};
 	liveUrlRecovered?: boolean;
-	openedButPostOpenTimedOut?: boolean;
 	retryStep?: TimeoutProgressStep;
 	steps?: TimeoutProgressStep[];
 	summary: string;
