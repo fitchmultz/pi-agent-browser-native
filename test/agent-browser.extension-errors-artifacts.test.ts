@@ -1771,6 +1771,47 @@ test("applyAgentBrowserOutputPath rehydrates compacted batch rows from live wrap
 	}
 });
 
+test("timeout observations do not prove planned steps ran", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-timeout-evidence-"));
+	const logPath = join(tempDir, "executed.log");
+	await writeFile(join(tempDir, "receipt.png"), "old receipt");
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("batch")) {
+  const steps = JSON.parse(fs.readFileSync(0, "utf8"));
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(steps[0]) + "\\n");
+  setInterval(() => {}, 60000);
+} else if (args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.test/start" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Start" } }));
+}`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			for (const lastStep of [["screenshot", "receipt.png"], ["open", "https://example.test/start"]]) {
+				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", "timeout-proof", "batch", "--bail"],
+					stdin: JSON.stringify([["wait", "60000"], ["fill", "#amount", "100"], ["click", "#submit"], lastStep]),
+					timeoutMs: 2000,
+				});
+				assert.equal(result.isError, true);
+				const progress = result.details?.timeoutPartialProgress as { steps?: Array<{ status: string }>; artifacts?: Array<{ exists: boolean }>; retryStep?: unknown; openedButPostOpenTimedOut?: boolean };
+				assert.deepEqual(progress.steps?.map(step => step.status), ["unknown", "unknown", "unknown", "unknown"]);
+				assert.equal(progress.retryStep, undefined);
+				assert.equal(progress.openedButPostOpenTimedOut, undefined);
+				if (lastStep[0] === "screenshot") assert.equal(progress.artifacts?.[0]?.exists, true);
+				assert.equal((result.details?.nextActions as Array<{ id: string }>)?.some(action => action.id === "retry-timeout-step"), false);
+			}
+			assert.deepEqual((await readFile(logPath, "utf8")).trim().split("\n").map(line => JSON.parse(line)), [["wait", "60000"], ["wait", "60000"]]);
+			assert.equal(await readFile(join(tempDir, "receipt.png"), "utf8"), "old receipt");
+		});
+	} finally {
+		await rm(tempDir, { recursive: true, force: true });
+	}
+});
+
 test("agentBrowserExtension reports partial progress and artifacts after native batch timeout", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-timeout-progress-"));
 	const basePath = process.env.PATH ?? "";
@@ -1833,9 +1874,9 @@ if (args.includes("get") && args.includes("url")) {
 				{ exists: true, path: "dogfood/secret-token/filled.png", state: "verified", stepIndex: 3 },
 				{ exists: false, path: "dogfood/export.csv", state: "missing", stepIndex: 4 },
 			]);
-			assert.deepEqual(timeoutProgress?.steps?.map((step) => [step.args?.[0], step.status]), [["open", "completed"], ["fill", "completed"], ["screenshot", "completed"], ["wait", "failed"], ["wait", "pending"]]);
-			assert.equal(timeoutProgress?.openedButPostOpenTimedOut, true);
-			assert.deepEqual(timeoutProgress?.retryStep?.args, ["wait", "--download", "dogfood/export.csv"]);
+			assert.deepEqual(timeoutProgress?.steps?.map((step) => [step.args?.[0], step.status]), [["open", "unknown"], ["fill", "unknown"], ["screenshot", "unknown"], ["wait", "unknown"], ["wait", "unknown"]]);
+			assert.equal(timeoutProgress?.openedButPostOpenTimedOut, undefined);
+			assert.equal(timeoutProgress?.retryStep, undefined);
 			const text = (result.content[0] as { text: string }).text;
 			assert.match(text, /Timeout partial progress:/);
 			if (timeoutProgress?.currentPage?.title) {
@@ -1845,14 +1886,11 @@ if (args.includes("get") && args.includes("url")) {
 			}
 			assert.match(text, /Artifact from step 3: dogfood\/\[REDACTED\]\/filled\.png \(exists, 10 bytes\)/);
 			assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
-			assert.match(text, /Step 2 \[completed\]: fill #search export/);
-			assert.match(text, /Step 4 \[failed\]: wait --download dogfood\/export\.csv/);
-			assert.ok(text.includes(`Retry failed step: ${JSON.stringify({ args: ["batch"], stdin: JSON.stringify([["wait", "--download", "dogfood/export.csv"]]) })}`));
+			assert.match(text, /Step 2 \[unknown\]: fill #search export/);
+			assert.match(text, /Step 4 \[unknown\]: wait --download dogfood\/export\.csv/);
+			assert.doesNotMatch(text, /Retry candidate|Retry failed step/);
 			assert.match(text, /Artifact from step 4: dogfood\/export\.csv \(missing\)/);
-			assert.deepEqual((result.details?.nextActions as Array<{ id?: string; params?: { args?: string[]; stdin?: string } }> | undefined)?.find((action) => action.id === "retry-timeout-step")?.params, {
-				args: ["--session", result.details?.sessionName, "batch"],
-				stdin: JSON.stringify([["wait", "--download", "dogfood/export.csv"]]),
-			});
+			assert.equal((result.details?.nextActions as Array<{ id?: string }> | undefined)?.some((action) => action.id === "retry-timeout-step"), false);
 
 			const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
@@ -1880,8 +1918,7 @@ if (args.includes("get") && args.includes("url")) {
 			});
 			assert.equal(mutatingTimeoutResult.isError, true);
 			const mutatingProgress = mutatingTimeoutResult.details?.timeoutPartialProgress as { retryStep?: { args?: string[]; retry?: { args?: string[] }; status?: string } } | undefined;
-			assert.deepEqual(mutatingProgress?.retryStep?.args, ["fill", "#search", "export"]);
-			assert.equal(mutatingProgress?.retryStep?.retry, undefined);
+			assert.equal(mutatingProgress?.retryStep, undefined);
 			const mutatingNextActions = (mutatingTimeoutResult.details?.nextActions as Array<{ id?: string; params?: { args?: string[] } }> | undefined) ?? [];
 			assert.equal(mutatingNextActions.some((action) => action.id === "retry-timeout-step"), false);
 			assert.deepEqual(mutatingNextActions.find((action) => action.id === "inspect-current-page-after-timeout")?.params?.args?.slice(-2), ["snapshot", "-i"]);
@@ -1938,7 +1975,7 @@ if (args.includes("batch")) {
 			const recovery = actions.find((action) => action.id === "verify-page-target-after-timeout");
 			assert.deepEqual(recovery?.params?.args?.slice(-2), ["batch", "--bail"]);
 			assert.equal(recovery?.params?.stdin, JSON.stringify([["get", "url"], ["snapshot", "-i"]]));
-			assert.match(timedOut.content[0]?.text ?? "", /Retry candidate for step \d+: .*Verify the current URL before running it\./i);
+			assert.doesNotMatch(timedOut.content[0]?.text ?? "", /Retry candidate/);
 			assert.match(timedOut.content[0]?.text ?? "", /verify-page-target-after-timeout.*batch.*--bail.*get.*url.*snapshot.*-i/);
 			assert.ok(recovery?.params);
 			const recovered = await executeRegisteredTool(harness.tool, harness.ctx, recovery.params);
@@ -1970,7 +2007,7 @@ if (args.includes("batch")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["batch", "--bail"], stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"], ["wait", "100"]]),
+				args: ["batch", "--bail"], stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]),
 				sessionMode: "fresh",
 			});
 
@@ -1983,7 +2020,7 @@ if (args.includes("batch")) {
 			assert.deepEqual(retryAction?.params, { args: ["batch"], stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]), sessionMode: "fresh" });
 			const namespaced = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--namespace", "r", "batch"],
-				stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"], ["wait", "100"]]),
+				stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]),
 				sessionMode: "fresh",
 			});
 			const namespacedRetry = (namespaced.details?.nextActions as Array<{ id: string; params?: unknown }>).find((action) => action.id === "retry-timeout-step");
@@ -2002,7 +2039,7 @@ test("timeout retries preserve native row semantics in visible and structured pa
 		assert.ok(progress);
 		const retry = { args: ["batch"], stdin: JSON.stringify([step]) };
 		assert.deepEqual(progress.retryStep?.retry, retry);
-		assert.ok(formatTimeoutPartialProgressText(progress).includes(`Retry failed step: ${JSON.stringify(retry)}`));
+		assert.ok(formatTimeoutPartialProgressText(progress).includes(`Retry candidate for step 1 (outcome unknown): ${JSON.stringify(retry)}`));
 	} finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
@@ -2067,7 +2104,7 @@ if (args.includes("get") && args.includes("url")) {
 			const compiledJob = compileAgentBrowserQaPreset({ url: "https://example.test", checkConsole: false, checkErrors: false, checkNetwork: false }).compiled;
 			const generatedProgress = await collectTimeoutPartialProgress({ commandTokens: ["batch"], compiledJob, cwd: tempDir, sessionName: "named" });
 			assert.deepEqual(generatedProgress?.steps?.[1]?.args, ["wait", "--load", "domcontentloaded"]);
-			assert.match(formatTimeoutPartialProgressText(generatedProgress as NonNullable<typeof generatedProgress>), /Step 2 \[failed\]: wait --load domcontentloaded/);
+			assert.match(formatTimeoutPartialProgressText(generatedProgress as NonNullable<typeof generatedProgress>), /Step 2 \[unknown\]: wait --load domcontentloaded/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

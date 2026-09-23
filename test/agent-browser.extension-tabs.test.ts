@@ -414,6 +414,49 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 	}
 });
 
+test("agentBrowserExtension retains deliberate blank tabs for subsequent navigation", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-blank-tab-"));
+	const statePath = join(tempDir, "state.json");
+	await writeFakeAgentBrowserBinary(tempDir, `const fs = require("node:fs");
+const args = process.argv.slice(2);
+const statePath = ${JSON.stringify(statePath)};
+const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, "utf8")) : { active: "t1", urls: { t1: "about:blank", t2: "about:blank" } };
+function page(id = state.active) { return { targetId: id, title: id === "t1" ? "Original" : "", url: state.urls[id] }; }
+function run([command, subcommand]) {
+  if (command === "open") { state.urls[state.active] = subcommand; return { ...page(), navigatedTab: state.active }; }
+  if (command === "tab" && subcommand === "list") return { tabs: ["t1", "t2"].map(id => ({ ...page(id), tabId: id, index: id === "t1" ? 0 : 1, active: id === state.active })) };
+  if (command === "tab") { state.active = subcommand === "new" ? "t2" : subcommand; return page(); }
+  if (command === "get") return { [subcommand]: page()[subcommand] };
+  return {};
+}
+const command = args.slice(args.indexOf("--session") + 2);
+const data = command[0] === "batch" ? JSON.parse(fs.readFileSync(0, "utf8")).map(row => ({ command: row, success: true, result: run(row) })) : run(command);
+fs.writeFileSync(statePath, JSON.stringify(state));
+process.stdout.write(JSON.stringify({ success: true, data }));`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+			for (const selection of [["tab", "new"], ["tab", "t2"], ["batch", "--bail"]]) {
+				await rm(statePath, { force: true });
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const call = (args: string[], stdin?: string) => executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "blank-tab", ...args], stdin });
+				assert.equal((await call(["open", "https://example.test/original"])).isError, false);
+				const selected = await call(selection, selection[0] === "batch" ? JSON.stringify([["tab", "t2"], ["get", "url"]]) : undefined);
+				assert.equal(selected.isError, false);
+				assert.equal(selected.details?.aboutBlankSessionMismatch, undefined, selection.join(" "));
+				assert.equal((selected.details?.sessionTabTarget as { url?: string })?.url, "about:blank");
+				assert.equal(JSON.parse(await readFile(statePath, "utf8")).active, "t2", selection.join(" "));
+				const opened = await call(["open", "https://example.test/second"]);
+				assert.equal(opened.isError, false);
+				assert.equal((opened.details?.data as { navigatedTab?: string })?.navigatedTab, "t2");
+				assert.equal(JSON.parse(await readFile(statePath, "utf8")).urls.t1, "https://example.test/original");
+			}
+		});
+	} finally {
+		await rm(tempDir, { recursive: true, force: true });
+	}
+});
+
 test("agentBrowserExtension refreshes the active tab target after closing a tab", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tab-close-target-"));
 	const logPath = join(tempDir, "invocations.log");
@@ -455,6 +498,8 @@ if (args.includes("open")) {
 				"open https://fixture.example/",
 				"tab list",
 				"--label docs",
+				"get url",
+				"get title",
 				"tab list",
 				"tab close",
 				"get url",

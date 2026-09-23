@@ -232,15 +232,13 @@ export interface TimeoutArtifactEvidence {
 	stepIndex: number;
 }
 
-export type TimeoutProgressStepStatus = "completed" | "failed" | "pending" | "unknown";
-
 export interface TimeoutProgressStep {
 	args: string[];
 	generatedFrom?: string;
 	index: number;
 	reason?: string;
 	retry?: { args: string[]; stdin: string };
-	status: TimeoutProgressStepStatus;
+	status: "unknown";
 }
 
 export interface TimeoutPartialProgress {
@@ -251,7 +249,6 @@ export interface TimeoutPartialProgress {
 		url?: string;
 	};
 	liveUrlRecovered?: boolean;
-	openedButPostOpenTimedOut?: boolean;
 	retryStep?: TimeoutProgressStep;
 	steps?: TimeoutProgressStep[];
 	summary: string;

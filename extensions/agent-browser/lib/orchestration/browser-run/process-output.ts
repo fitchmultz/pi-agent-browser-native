@@ -366,7 +366,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			}
 		}
 
-		const tabTransition = prepared.executionPlan.commandInfo.command === "tab" && prepared.executionPlan.commandInfo.subcommand !== undefined && !["list", "new"].includes(prepared.executionPlan.commandInfo.subcommand);
+		const tabTransition = dispatchedCommands.some((step) => {
+			const [command, subcommand] = extractUpstreamCommandTokens(step);
+			return command === "tab" && subcommand !== undefined && subcommand !== "list";
+		});
 		// Non-page rows (including a failed prefix) cannot retire a cold target for a navigation that never ran.
 		const resultingPageState = sessionPageState.get(sessionStateKey).tabReopenPending === true
 			? { currentPageUrl: prepared.priorSessionTabTarget?.url, pageTargetMayHaveChanged: false, pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true }
