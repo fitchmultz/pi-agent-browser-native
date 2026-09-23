@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -1991,6 +1992,15 @@ test("redactSensitiveText masks embedded JSON secrets before plaintext URL redac
 	assert.equal(redactSensitiveText(redacted), redacted);
 });
 
+test("redactSensitiveText finds embedded secrets after malformed JSON prefixes", () => {
+	const value = { label: 'brackets [ { ] } and a "quoted" value', apiKey: "synthetic-secret" };
+	const source = JSON.stringify(value);
+	const expected = JSON.stringify({ ...value, apiKey: "[REDACTED]" });
+	for (const prefix of ["Payload: ", "Payload: [", "Payload: [{]", 'Payload: ["unclosed ', String.raw`Payload: [\"escaped `]) {
+		assert.equal(redactSensitiveText(prefix + source), prefix + expected);
+	}
+});
+
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(redactInvocationArgs(["--headers", '{"Authorization":"Bearer demo"}', "open", "https://user:pass@example.com/path?token=abc&ok=1#access_token=xyz"]), [
 		"--headers",
@@ -2171,6 +2181,22 @@ test("redactSensitiveText scans long tokens without blocking the host", () => {
 	const startedAt = Date.now();
 	assert.equal(redactSensitiveText(input), input);
 	assert.ok(Date.now() - startedAt < 1_000, "redacting a 200k token should finish in under one second");
+});
+
+test("redactSensitiveText does not rescan unmatched JSON prefixes", () => {
+	// A separate process makes the watchdog effective even if redaction blocks the event loop.
+	const probe = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+		import assert from "node:assert/strict";
+		import { redactSensitiveText } from ${JSON.stringify(new URL("../extensions/agent-browser/lib/runtime.ts", import.meta.url).href)};
+		for (const input of [
+			"[".repeat(64_000),
+			"[".repeat(64_000) + "]",
+			'{\\\\"'.repeat(32_000),
+			'["' + '[\\\\"'.repeat(64_000) + '"' + "x".repeat(64_000),
+		]) assert.equal(redactSensitiveText(input), input);
+	`], { encoding: "utf8", timeout: 5_000 });
+	assert.equal(probe.error, undefined, `redaction did not finish: ${probe.error?.message}`);
+	assert.equal(probe.status, 0, probe.stderr);
 });
 
 test("redactSensitiveValue masks obvious secret-bearing object keys", () => {

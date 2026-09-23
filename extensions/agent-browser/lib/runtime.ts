@@ -210,47 +210,37 @@ function redactLooseUrlMatches(text: string): string {
 	return text.replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'`<>\])]+/g, (match) => redactUrlToken(match));
 }
 
-function findBalancedJsonEnd(text: string, startIndex: number): number | undefined {
-	const opener = text[startIndex];
-	const closer = opener === "{" ? "}" : opener === "[" ? "]" : undefined;
-	if (!closer) return undefined;
-	const stack = [closer];
-	let inString = false;
-	let escaped = false;
-	for (let index = startIndex + 1; index < text.length; index += 1) {
-		const char = text[index];
-		if (inString) {
-			if (escaped) {
-				escaped = false;
-				continue;
+function createBalancedJsonEndFinder(text: string): (startIndex: number) => number | undefined {
+	let boundaries: Int32Array | undefined;
+	return (startIndex) => {
+		const opener = text[startIndex];
+		if (opener !== "{" && opener !== "[") return undefined;
+		if (!boundaries) {
+			// Resolve each suffix once: skip strings and balanced groups to its first unmatched closer.
+			boundaries = new Int32Array(text.length + 1).fill(-1);
+			let quoteAtNext = -1;
+			let quoteAfterNext = -1;
+			for (let index = text.length - 1; index >= 0; index -= 1) {
+				const char = text[index];
+				if (char === "}" || char === "]") {
+					boundaries[index] = index;
+				} else if (char === '"') {
+					boundaries[index] = quoteAtNext < 0 ? -1 : boundaries[quoteAtNext + 1];
+				} else if (char === "{" || char === "[") {
+					const end = boundaries[index + 1];
+					boundaries[index] = end >= 0 && text[end] === (char === "{" ? "}" : "]") ? boundaries[end + 1] : -1;
+				} else {
+					boundaries[index] = boundaries[index + 1];
+				}
+				// Inside a string, backslash skips one character; outside, it is ordinary text.
+				const quote = char === '"' ? index : char === "\\" ? quoteAfterNext : quoteAtNext;
+				quoteAfterNext = quoteAtNext;
+				quoteAtNext = quote;
 			}
-			if (char === "\\") {
-				escaped = true;
-				continue;
-			}
-			if (char === '"') {
-				inString = false;
-			}
-			continue;
 		}
-		if (char === '"') {
-			inString = true;
-			continue;
-		}
-		if (char === "{") {
-			stack.push("}");
-			continue;
-		}
-		if (char === "[") {
-			stack.push("]");
-			continue;
-		}
-		if (char === "}" || char === "]") {
-			if (stack.pop() !== char) return undefined;
-			if (stack.length === 0) return index;
-		}
-	}
-	return undefined;
+		const end = boundaries[startIndex + 1];
+		return end >= 0 && text[end] === (opener === "{" ? "}" : "]") ? end : undefined;
+	};
 }
 
 function redactSerializedJson(text: string): string | undefined {
@@ -262,6 +252,7 @@ function redactSerializedJson(text: string): string | undefined {
 	}
 	let output = "";
 	let cursor = 0;
+	const findEnd = createBalancedJsonEndFinder(text);
 	const strings = /"(?:\\.|[^"\\])*"/g;
 	let match: RegExpExecArray | null;
 	while ((match = strings.exec(text)) !== null) {
@@ -275,7 +266,7 @@ function redactSerializedJson(text: string): string | undefined {
 		const separator = /^\s*:\s*/.exec(text.slice(end));
 		if (!separator || !isSensitiveFieldName(value)) continue;
 		const valueStart = end + separator[0].length;
-		let valueEnd = findBalancedJsonEnd(text, valueStart);
+		let valueEnd = findEnd(valueStart);
 		if (valueEnd !== undefined) {
 			valueEnd += 1;
 		} else if (text[valueStart] === '"') {
@@ -297,6 +288,7 @@ function redactSerializedJson(text: string): string | undefined {
 function redactEmbeddedStructuredText(text: string): string {
 	let output = "";
 	let cursor = 0;
+	const findEnd = createBalancedJsonEndFinder(text);
 	while (cursor < text.length) {
 		const char = text[cursor];
 		if (char !== "{" && char !== "[") {
@@ -304,7 +296,7 @@ function redactEmbeddedStructuredText(text: string): string {
 			cursor += 1;
 			continue;
 		}
-		const endIndex = findBalancedJsonEnd(text, cursor);
+		const endIndex = findEnd(cursor);
 		if (endIndex === undefined) {
 			output += char;
 			cursor += 1;
