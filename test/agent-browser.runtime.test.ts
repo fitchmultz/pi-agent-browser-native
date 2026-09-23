@@ -1933,6 +1933,15 @@ test("redaction preserves harmless URL spelling", () => {
 	}
 });
 
+test("redactSensitiveText masks plaintext lowercase password assignments", () => {
+	const text = "password=synthetic-secret-123";
+	assert.equal(redactSensitiveText(text), "password=[REDACTED]");
+	assert.deepEqual(redactSensitiveValue({ text }), { text: "password=[REDACTED]" });
+	assert.equal(redactSensitiveText("Redirect /?password=synthetic-secret-123&ok=1"), "Redirect /?password=[REDACTED]&ok=1");
+	assert.equal(redactSensitiveText("password=synthetic-secret-123&role=admin"), "password=[REDACTED]&role=admin");
+	assert.equal(redactSensitiveText("password=synthetic-secret-123&token=other-secret"), "password=[REDACTED]&token=[REDACTED]");
+});
+
 test("redactSensitiveText preserves nested serialized JSON through repeated redaction", () => {
 	const prehydration = { url: "https://example.test/callback?authorization_session_id=private-fixture&state=flow-fixture", label: 'A "quoted" value', count: 2, ready: true, missing: null };
 	const serialized = JSON.stringify({ evidence: { prehydration: JSON.stringify(prehydration), apiKey: "adjacent-fixture" }, values: [1, false, null] }, null, 2);
