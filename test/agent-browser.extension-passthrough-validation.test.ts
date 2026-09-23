@@ -804,12 +804,12 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				.map((entry) => stripWrapperPrefix(entry.args))
 				.filter((args) => !(args.length === 2 && args[0] === "eval" && args[1] === "--stdin"));
 			// The navigation-summary helper reuses an already-observed title for ordinary same-URL probes. Tab
-			// selection and close always verify the active target title because same-URL tabs can have different titles.
+			// creation, selection and close always verify the active target title because same-URL tabs can have different titles.
 			let navigationSummaryTitleObserved = false;
 			const expectedInvocations = commands.flatMap((args) => {
 				const normalizedArgs = stripWrapperPrefix([...args]);
 				const command = normalizedArgs[0];
-				const tabAction = command === "tab" && normalizedArgs[1] !== undefined && !["list", "new"].includes(normalizedArgs[1]);
+				const tabAction = command === "tab" && normalizedArgs[1] !== undefined && normalizedArgs[1] !== "list";
 				const probesSummary = command === "click" || tabAction || command === "back" || command === "forward" || command === "reload" || command === "dblclick" || command === "eval";
 				if (!probesSummary) return command === "get" && normalizedArgs[1] === "url"
 					? [normalizedArgs, ["tab", "list"]]
