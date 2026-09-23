@@ -92,6 +92,7 @@ Schema:
 
 Provider notes:
 - `provider` is optional; `auto` uses available keys plus `webSearch.preferredProvider`.
+- `offset` skips results, not pages, for both providers. Each fetches the first `count + offset` results and slices locally; the maximum request is 19 results (`count: 10`, `offset: 9`), within Brave's 20-result page limit.
 - `searchType` applies to Exa only and supports `auto`, `fast`, `instant`, `deep-lite`, `deep`, and `deep-reasoning`. Effective precedence is the per-call field, then `webSearch.defaultSearchType`, then `auto`. Use `deep-lite` for implementation research, `deep` for hard multi-source work, and `deep-reasoning` only for the hardest or exhaustive work.
 - `includeDomains` and `excludeDomains` accept 1–20 Exa hostname, path-prefix, or wildcard-subdomain strings. `category` accepts `company`, `people`, `publication`, `news`, `personal site`, or `financial report`. `company` and `people` reject `freshness` and `excludeDomains` before a request is sent.
 - `additionalQueries` accepts 1–10 strings only when the effective type is `deep-lite`, `deep`, or `deep-reasoning`. HTTP timeouts are 15 seconds for non-deep types, 45 seconds for `deep-lite`, 60 seconds for `deep`, and 90 seconds for `deep-reasoning`.

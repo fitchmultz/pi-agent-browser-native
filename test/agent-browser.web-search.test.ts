@@ -412,7 +412,7 @@ test("provider adapters expose provider-agnostic request and normalization contr
 	const braveRequest = brave.buildRequest({ count: 1, offset: 2, query: "adapter brave" });
 	assert.ok(braveRequest instanceof URL);
 	assert.equal(braveRequest.searchParams.get("q"), "adapter brave");
-	const braveNormalized = brave.normalizeResponse({ query: { original: "adapter brave" }, web: { results: [{ title: "Brave", url: "https://example.com/brave" }] } }, { count: 1, offset: 2, query: "adapter brave" });
+	const braveNormalized = brave.normalizeResponse({ query: { original: "adapter brave" }, web: { results: [{ title: "Skip 1", url: "https://example.com/skip1" }, { title: "Skip 2", url: "https://example.com/skip2" }, { title: "Brave", url: "https://example.com/brave" }] } }, { count: 1, offset: 2, query: "adapter brave" });
 	assert.equal(braveNormalized.returnedQuery, "adapter brave");
 	assert.deepEqual(braveNormalized.results.map((result) => result.title), ["Brave"]);
 
@@ -438,6 +438,31 @@ test("disabled web search config prevents registration despite environment keys"
 		const harness = createExtensionHarness({ cwd: fixture.cwd });
 		assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
 	});
+});
+
+test("Brave pagination skips results rather than pages, including partial pages and short responses", () => {
+	const brave = getWebSearchProviderAdapter("brave");
+	const rankedResults = Array.from({ length: 20 }, (_, index) => ({
+		title: `Result ${index + 1}`,
+		url: `https://example.com/${index + 1}`,
+	}));
+	for (const [count, offset, available, expected] of [
+		[5, 0, 20, [1, 2, 3, 4, 5]],
+		[5, 5, 20, [6, 7, 8, 9, 10]],
+		[5, 3, 20, [4, 5, 6, 7, 8]],
+		[10, 9, 20, [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]],
+		[5, 5, 7, [6, 7]],
+		[5, 5, 3, []],
+	] as const) {
+		const params = { query: "pagination", count, offset };
+		const request = brave.buildRequest(params);
+		assert.ok(request instanceof URL);
+		assert.equal(request.searchParams.get("count"), String(count + offset));
+		assert.equal(request.searchParams.get("offset"), "0");
+		const response = { web: { results: rankedResults.slice(0, Math.min(count + offset, available)) } };
+		assert.deepEqual(brave.normalizeResponse(response, params).results.map(result => result.title),
+			expected.map(rank => `Result ${rank}`));
+	}
 });
 
 test("builds Brave search URL parameters", () => {
