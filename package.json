@@ -27,12 +27,15 @@
     "node": ">=22.19.0"
   },
   "bin": {
+    "pi-agent-browser-chrome-relay": "scripts/chrome-relay.mjs",
     "pi-agent-browser-config": "scripts/config.mjs",
     "pi-agent-browser-doctor": "scripts/doctor.mjs"
   },
   "files": [
+    "chrome-relay",
     "dist",
     "platform-smoke.config.mjs",
+    "scripts/chrome-relay.mjs",
     "scripts/config.mjs",
     "scripts/doctor.mjs",
     "scripts/prepare.mjs",
@@ -71,6 +74,7 @@
     "@types/cross-spawn": "6.0.6",
     "@types/node": "^25.9.3",
     "@types/which": "2.0.2",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typebox": "^1.1.38",
     "typescript": "^6.0.3"
@@ -118,6 +122,7 @@
   "dependencies": {
     "cross-spawn": "7.0.6",
     "path-key": "3.1.1",
-    "which": "2.0.2"
+    "which": "2.0.2",
+    "ws": "^8.21.3"
   }
 }

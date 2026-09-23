@@ -9,6 +9,7 @@
     "sourceMap": false
   },
   "include": [
+    "chrome-relay/*.ts",
     "extensions/**/*.ts",
     "extensions/agent-browser/lib/config-policy.js"
   ],

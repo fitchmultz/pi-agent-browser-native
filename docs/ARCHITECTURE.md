@@ -297,6 +297,21 @@ Avoid:
 - embedding a human-browsable browser UI inside `pi`
 - a slash-command-heavy UX
 
+## Chrome relay sidecar
+
+Attaching to the user's real browser is a sidecar, not wrapper logic: a
+vendored relay server ([`chrome-relay/`](../chrome-relay/VENDOR.md), Node
+port of oh-my-pi's browser relay) impersonates Chrome's CDP discovery
+endpoint, and an MV3 `chrome.debugger` extension proxies the browser side.
+The wrapper stays thin — `connect ws://127.0.0.1:9224/cdp` is an ordinary
+upstream connect — because the relay speaks Chrome's own façade
+(`Browser`/`Target` emulation, minted `PAGE`/`SP` session ids), refuses
+`Browser.close`, and binds loopback only. The extension host field is the one
+delta beyond upstream, added for WSL2 NAT where Windows Chrome cannot reach
+the VM's loopback. The sidecar is opt-in: no relay runs unless the operator
+starts `pi-agent-browser-chrome-relay`, and no config-policy surface exists
+for it.
+
 ## Product priorities
 
 ### Must have

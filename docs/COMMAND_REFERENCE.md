@@ -686,7 +686,7 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 | `pdf <path>` | Save the page as a PDF. |
 | `snapshot` | Print an accessibility tree with refs for AI interaction. Common options include `snapshot --interactive`, `snapshot --urls`, `snapshot --compact`, `snapshot --depth <n>`, `snapshot --selector <sel>`, and native `snapshot --delta` / `snapshot --delta --full`. Cursor-interactive elements are included by default; `snapshot --cursor` / `snapshot -C` are deprecated no-ops. |
 | `eval <js>` | Run JavaScript. Use `eval --stdin` through this wrapper for larger snippets, or `eval -b <base64>` for shell-escaping-safe one-liners. |
-| `connect <port|url>` | Connect to a browser through CDP. |
+| `connect <port|url>` | Connect to a browser through CDP. To drive the user's real, headed Chrome without a debug port, start the optional sidecar (`npx pi-agent-browser-chrome-relay start`) and load the bundled extension, then pass the printed `ws://127.0.0.1:9224/cdp` URL; see [`CHROME_RELAY.md`](CHROME_RELAY.md). |
 | `close [--all]` | Close the current browser or all sessions; `quit` and `exit` are upstream close aliases. |
 | `tap <selector>` | Touch-oriented tap alias for iOS/provider workflows. |
 | `swipe <direction> [distance]` | Touch-oriented swipe for iOS/provider workflows. |

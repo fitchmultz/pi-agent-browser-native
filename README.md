@@ -585,6 +585,18 @@ Example explicit session plus profile launch:
 }
 ```
 
+### Chrome relay sidecar: drive the user's real Chrome
+
+When the goal is the user's actual signed-in browser rather than a managed
+profile, the optional Chrome relay sidecar attaches upstream `connect` to the
+user's real, headed Chrome through a `chrome.debugger` extension — no debug
+port, no Playwright profile. Start it with
+`npx pi-agent-browser-chrome-relay start`, load the unpacked extension from
+`npx pi-agent-browser-chrome-relay extension-path` in `chrome://extensions`,
+then `{ "args": ["connect", "ws://127.0.0.1:9224/cdp"], "sessionMode": "fresh" }`.
+Setup steps, the Windows/WSL2 NAT recipe, and the security model live in
+[`docs/CHROME_RELAY.md`](docs/CHROME_RELAY.md).
+
 ## React, SPA, and first-navigation setup
 
 React and SPA tooling from upstream `agent-browser` is passed through directly.
