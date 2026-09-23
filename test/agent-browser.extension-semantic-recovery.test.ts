@@ -244,9 +244,10 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 			assert.deepEqual(nextActions?.[6]?.params?.args?.slice(-2), ["click", "@e13"]);
 			assert.match(nextActions?.[1]?.safety ?? "", /Several editable refs share/);
 			const invocationsAfterFirstMiss = await readInvocationLog(logPath);
-			assert.equal(invocationsAfterFirstMiss.length, 3);
+			assert.equal(invocationsAfterFirstMiss.length, 4);
 			assert.deepEqual(invocationsAfterFirstMiss.map((entry) => entry.args.slice(3)), [
 				["snapshot", "-i"],
+				["tab", "list"],
 				["find", "placeholder", "Search Wikipedia", "fill", "- [ ] item"],
 				["snapshot", "-i"],
 			]);

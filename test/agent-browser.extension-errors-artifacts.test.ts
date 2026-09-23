@@ -145,7 +145,12 @@ if (args.includes("screenshot")) {
 				assert.equal(result.isError, false, JSON.stringify(result));
 			}
 			const invocations = await readInvocationLog(logPath) as Array<{ allowFileAccess?: string; args: string[]; config?: string; rawArgs?: string }>;
-			assert.equal(invocations.filter(entry => !entry.args.includes("eval")).length, 3);
+			assert.deepEqual(invocations.filter(entry => !entry.args.includes("eval")).map(entry => entry.args.slice(-2)), [
+				["open", localUrl],
+				["tab", "list"],
+				["screenshot", artifactPath],
+				["open", "https://example.com"],
+			]);
 			assert.equal(invocations.filter(entry => entry.args.includes("eval")).length, 2, "screenshot geometry uses the same invocation environment");
 			assert.ok(invocations.every(entry => entry.allowFileAccess === "true" && entry.rawArgs === "--disable-web-security"));
 			assert.equal(invocations[0]?.allowFileAccess, "true");
@@ -269,6 +274,7 @@ if (args.includes("get") && args.includes("url")) {
 					["tab", "t2"],
 					["get", "url"],
 					["get", "title"],
+					["tab", "list"],
 				]);
 				const otherOpenIndex = invocations.findIndex((entry) => entry.args.includes("caller-other") && entry.args.includes("open"));
 				const raceContentIndex = invocations.findIndex((entry) => entry.args.includes("caller-race") && entry.args.includes("html"));
@@ -403,7 +409,13 @@ if (args.includes("get") && args.includes("url")) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "get", "url"] });
 				assert.equal(result.isError, false, JSON.stringify(result));
 			}
-			assert.equal((await readInvocationLog(logPath)).length, 3);
+			assert.deepEqual((await readInvocationLog(logPath)).map(entry => entry.args), [
+				["--json", "session", "list"],
+				["--json", "--session", "piab-foreign-live", "get", "url"],
+				["--json", "--session", "piab-foreign-live", "tab", "list"],
+				["--json", "--session", "PIAB-foreign-live", "get", "url"],
+				["--json", "--session", "PIAB-foreign-live", "tab", "list"],
+			]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -625,7 +637,7 @@ try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
 if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey } : null } }));
 } else {
-  fs.appendFileSync(${JSON.stringify(mainLogPath)}, String(process.env.AGENT_BROWSER_RESTORE ?? "disabled") + "\\n");
+  fs.appendFileSync(${JSON.stringify(mainLogPath)}, JSON.stringify({ args, restore: process.env.AGENT_BROWSER_RESTORE ?? "disabled" }) + "\\n");
   fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({ active: true, restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null }));
   process.stdout.write(JSON.stringify({ success: true, data: { title: "safe", url: "https://example.com/safe" } }));
 }`);
@@ -635,12 +647,19 @@ if (args.includes("session") && args.includes("info")) {
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const initial = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://example.com/safe"], sessionMode: "fresh" });
 			assert.equal(initial.isError, false, JSON.stringify(initial));
+			const initialInvocations = await readInvocationLog(mainLogPath) as Array<{ args: string[]; restore: string }>;
+			assert.deepEqual(initialInvocations.map(entry => entry.args.slice(-2)), [
+				["open", "https://example.com/safe"],
+				["tab", "list"],
+			]);
+			const restoreKey = createManagedSessionRestoreKey(tempDir, getManagedSessionRestoreScope(String(initial.details?.sessionName)));
+			assert.deepEqual(initialInvocations.map(entry => entry.restore), [restoreKey, restoreKey]);
 			await writeFile(statePath, JSON.stringify({ active: true, restoreKey: null }));
 
 			const restarted = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(restarted.isError, true, JSON.stringify(restarted));
 			assert.match(String(restarted.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
-			assert.equal((await readFile(mainLogPath, "utf8")).trim().split("\n").length, 1);
+			assert.deepEqual(await readInvocationLog(mainLogPath), initialInvocations);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -726,7 +745,7 @@ try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8"));
 if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey } : null } }));
 } else {
-  fs.appendFileSync(${JSON.stringify(mainLogPath)}, String(process.env.AGENT_BROWSER_RESTORE ?? "disabled") + "\\n");
+  fs.appendFileSync(${JSON.stringify(mainLogPath)}, JSON.stringify({ args, restore: process.env.AGENT_BROWSER_RESTORE ?? "disabled" }) + "\\n");
   fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({ active: true, restoreKey: process.env.AGENT_BROWSER_RESTORE ?? null }));
   process.stdout.write(JSON.stringify({ success: true, data: { title: "safe", url: "https://example.com/safe" } }));
 }`);
@@ -737,6 +756,12 @@ if (args.includes("session") && args.includes("info")) {
 			const initial = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--proxy", "http://127.0.0.1:8080", "open", "https://example.com/safe"], sessionMode: "fresh" });
 			assert.equal(initial.isError, false, JSON.stringify(initial));
 			assert.equal(initial.details?.managedSessionRestoreDisabled, true);
+			const initialInvocations = await readInvocationLog(mainLogPath) as Array<{ args: string[]; restore: string }>;
+			assert.deepEqual(initialInvocations.map(entry => entry.args.slice(-2)), [
+				["open", "https://example.com/safe"],
+				["tab", "list"],
+			]);
+			assert.deepEqual(initialInvocations.map(entry => entry.restore), ["disabled", "disabled"]);
 			await writeFile(statePath, JSON.stringify({ active: true, restoreKey: `piab-r2-${"c".repeat(32)}` }));
 
 			const restarted = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
@@ -745,7 +770,7 @@ if (args.includes("session") && args.includes("info")) {
 			const retried = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(retried.isError, true, JSON.stringify(retried));
 			assert.match(String(retried.details?.validationError ?? ""), /does not match the requested managed-restore policy/);
-			assert.equal((await readFile(mainLogPath, "utf8")).trim().split("\n").length, 1);
+			assert.deepEqual(await readInvocationLog(mainLogPath), initialInvocations);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
