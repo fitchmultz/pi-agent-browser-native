@@ -649,8 +649,9 @@ const BRAVE_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<URL, BraveWebSearchResp
 	buildRequest(params) {
 		return buildBraveSearchUrl({
 			query: params.query,
-			count: params.count,
-			offset: params.offset,
+			// Brave offsets count pages; fetch the prefix and slice by result like Exa.
+			count: params.count + params.offset,
+			offset: 0,
 			country: params.country,
 			searchLang: params.searchLang,
 			safesearch: params.safesearch,
@@ -664,7 +665,8 @@ const BRAVE_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<URL, BraveWebSearchResp
 		return {
 			results: (response.web?.results ?? [])
 				.map(normalizeBraveSearchResult)
-				.filter((result): result is NormalizedSearchResult => Boolean(result)),
+				.filter((result): result is NormalizedSearchResult => Boolean(result))
+				.slice(params.offset, params.offset + params.count),
 			returnedQuery: cleanSearchText(response.query?.altered, 300) ?? cleanSearchText(response.query?.original, 300) ?? params.query,
 		};
 	},
