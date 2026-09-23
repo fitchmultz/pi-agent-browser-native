@@ -2146,6 +2146,7 @@ if (args.includes("snapshot")) {
 test("agentBrowserExtension keeps pending WebMCP targets unknown and trusts a later batch snapshot", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-webmcp-page-state-"));
 	const logPath = join(tempDir, "invocations.log");
+	const pageStatePath = join(tempDir, "after-webmcp");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -2153,6 +2154,7 @@ test("agentBrowserExtension keeps pending WebMCP targets unknown and trusts a la
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("batch")) {
+  fs.writeFileSync(${JSON.stringify(pageStatePath)}, "after");
   const detached = args.some((arg) => arg.includes("--detach"));
   process.stdout.write(JSON.stringify({ success: true, data: detached ? [
     { command: ["webmcp", "invoke", "wait_for_navigation", "--detach"], success: true, result: { invocationId: "invocation-2", status: "pending" } },
@@ -2181,9 +2183,11 @@ if (args.includes("batch")) {
 } else if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "WebMCP", url: "https://webmcp.example/start" } }));
 } else if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { result: "https://webmcp.example/start", url: "https://webmcp.example/start" } }));
+  const url = fs.existsSync(${JSON.stringify(pageStatePath)}) ? "https://webmcp.example/after" : "https://webmcp.example/start";
+  process.stdout.write(JSON.stringify({ success: true, data: { result: url, url } }));
 } else if (args.includes("get") && args.includes("title")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { result: "WebMCP", title: "WebMCP" } }));
+  const title = fs.existsSync(${JSON.stringify(pageStatePath)}) ? "After WebMCP" : "WebMCP";
+  process.stdout.write(JSON.stringify({ success: true, data: { result: title, title } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }));
 } else {

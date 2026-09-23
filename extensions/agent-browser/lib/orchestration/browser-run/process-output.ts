@@ -5,7 +5,7 @@ import { parseArgvDescriptor } from "../../argv-descriptor.js";
 import { isBrowserIndependentRead, needsManagedSession } from "../../command-policy.js";
 import { deleteIdentityKeysInNamespace, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace } from "../../argv-grammar.js";
 import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
-import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand, isPageMutationCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWindowOrDiffPageTransitionCommand } from "../../command-taxonomy.js";
+import { isCloseAllCommand, isCloseCommand, isNavigationObservableCommandName, isOpenNavigationCommand, isPageMutationCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWindowOrDiffPageTransitionCommand } from "../../command-taxonomy.js";
 import { OPEN_RESULT_TAB_CORRECTION_FLAGS } from "../../launch-scoped-flags.js";
 import { cleanupElectronLaunchResources, inspectElectronLaunchStatus, type ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -377,11 +377,12 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true,
 			});
 		if (
-			succeeded &&
+			succeeded && !nestedBatchClosed &&
 			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data, prepared.executionPlan.commandInfo.subcommand) ||
+				(prepared.executionPlan.commandInfo.command === "batch" && dispatchedCommands.some(([command, subcommand]) => isNavigationObservableCommandName(command, subcommand))) ||
 				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data) ||
 				commandRequiresLivePageVerification(prepared.executionPlan.effectiveArgs, prepared.runtimeToolStdin) ||
-				(destinationTransition && !nestedBatchClosed) || tabTransition)
+				destinationTransition || tabTransition)
 		) {
 			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, reusePriorTitle: !tabTransition, sessionName: prepared.executionPlan.sessionName, signal });
 		}
