@@ -521,16 +521,21 @@ export function shouldCorrectSessionTabAfterCommand(options: { command?: string;
 	);
 }
 
-function getTabSelection(tab: { index?: number; label?: string; tabId?: string }): Pick<OpenResultTabCorrection, "selectedTab" | "selectionKind"> | undefined {
+function getTabSelection(tab: { index?: number; label?: string; tabId?: string; targetId?: string }): Pick<OpenResultTabCorrection, "selectedTab" | "selectionKind"> | undefined {
+	if (tab.targetId) return { selectedTab: tab.targetId, selectionKind: "targetId" };
 	if (typeof tab.tabId === "string" && tab.tabId.trim().length > 0) return { selectedTab: tab.tabId.trim(), selectionKind: "tabId" };
 	if (typeof tab.label === "string" && tab.label.trim().length > 0) return { selectedTab: tab.label.trim(), selectionKind: "label" };
 	return typeof tab.index === "number" ? { selectedTab: String(tab.index), selectionKind: "index" } : undefined;
 }
 
 function selectSessionTargetTab(options: {
-	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }>;
+	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; targetId?: string; title?: string; url?: string }>;
 	target: SessionTabTarget;
 }): OpenResultTabCorrection | undefined {
+	if (options.target.targetId) {
+		const target = selectAnySessionTargetTab(options);
+		return target && options.tabs.find((tab) => tab.targetId === options.target.targetId)?.active !== true ? target : undefined;
+	}
 	return chooseOpenResultTabCorrection({
 		tabs: options.tabs,
 		targetTitle: options.target.title,
@@ -539,12 +544,14 @@ function selectSessionTargetTab(options: {
 }
 
 function selectAnySessionTargetTab(options: {
-	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }>;
+	tabs: Array<{ active?: boolean; index?: number; label?: string; tabId?: string; targetId?: string; title?: string; url?: string }>;
 	target: SessionTabTarget;
 }): OpenResultTabCorrection | undefined {
 	const targetUrl = typeof options.target.url === "string" ? normalizeComparableUrl(options.target.url) : undefined;
 	if (!targetUrl) return undefined;
-	const matchingTabs = options.tabs.filter((tab) => normalizeComparableUrl(tab.url ?? "") === targetUrl);
+	const matchingTabs = options.tabs.filter((tab) => options.target.targetId
+		? tab.targetId === options.target.targetId
+		: normalizeComparableUrl(tab.url ?? "") === targetUrl);
 	const targetTitle = options.target.title?.trim() ?? "";
 	const titledTabs = targetTitle ? matchingTabs.filter((tab) => tab.title?.trim() === targetTitle) : [];
 	const selectedTab = titledTabs.find((tab) => tab.active) ?? titledTabs[0] ?? matchingTabs.find((tab) => tab.active) ?? matchingTabs[0];
@@ -624,22 +631,40 @@ export async function collectOpenResultTabCorrection(options: {
 		index: typeof tab.index === "number" ? tab.index : index,
 		label: typeof tab.label === "string" ? tab.label : undefined,
 		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
+		targetId: typeof tab.targetId === "string" ? tab.targetId : undefined,
 		title: typeof tab.title === "string" ? tab.title : undefined,
 		url: typeof tab.url === "string" ? tab.url : undefined,
 	}));
 	return chooseOpenResultTabCorrection({ tabs, targetTitle, targetUrl });
 }
 
-function mapTabData(tabData: unknown): Array<{ active?: boolean; index?: number; label?: string; tabId?: string; title?: string; url?: string }> | undefined {
+function mapTabData(tabData: unknown): Array<{ active?: boolean; index?: number; label?: string; tabId?: string; targetId?: string; title?: string; url?: string }> | undefined {
 	if (!isRecord(tabData) || !Array.isArray(tabData.tabs)) return undefined;
 	return tabData.tabs.filter(isRecord).map((tab, index) => ({
 		active: tab.active === true,
 		index: typeof tab.index === "number" ? tab.index : index,
 		label: typeof tab.label === "string" ? tab.label : undefined,
 		tabId: typeof tab.tabId === "string" ? tab.tabId : undefined,
+		targetId: typeof tab.targetId === "string" ? tab.targetId : undefined,
 		title: typeof tab.title === "string" ? tab.title : undefined,
 		url: typeof tab.url === "string" ? tab.url : undefined,
 	}));
+}
+
+export async function collectSessionTabTarget(options: {
+	cwd: string;
+	namespace?: string;
+	sessionName?: string;
+	signal?: AbortSignal;
+	target: SessionTabTarget;
+}): Promise<SessionTabTarget> {
+	const tabs = mapTabData(await runSessionCommandData({ ...options, args: ["tab", "list"] }));
+	const active = tabs?.find((tab) => tab.active);
+	const observedUrl = normalizeComparableUrl(options.target.url);
+	if (normalizeComparableUrl(active?.url) !== observedUrl && tabs?.some((tab) => normalizeComparableUrl(tab.url) === observedUrl)) return options.target;
+	return active?.targetId
+		? { ...options.target, targetId: active.targetId }
+		: options.target;
 }
 
 export async function collectSessionTabSelection(options: {
@@ -668,11 +693,17 @@ export async function ensureSessionTabTarget(options: {
 	const correction = tabs && selectAnySessionTargetTab({ tabs, target: options.target });
 	const error = "agent-browser could not re-select and verify the intended tab before running the command. Run tab list and select the intended tab, then snapshot -i before retrying.";
 	if (!correction) return { error };
+	const verifyUrl = async (tab: NonNullable<typeof active>) => {
+		if (normalizeComparableUrl(tab.url) === normalizeComparableUrl(options.target.url)) return true;
+		// Native tab metadata can retain the attempted URL while get url reports Chrome's error page.
+		const data = await runSessionCommandData({ ...options, args: ["get", "url"] });
+		return normalizeComparableUrl(extractStringResultField(data, "url")) === normalizeComparableUrl(options.target.url);
+	};
 	// Native tab selection clears refs and frame scope even when selecting the current tab.
-	if (active && getTabSelection(active)?.selectedTab === correction.selectedTab) return {};
+	if (active && getTabSelection(active)?.selectedTab === correction.selectedTab) return await verifyUrl(active) ? {} : { error };
 	if (!await applyOpenResultTabCorrection({ ...options, correction })) return { correction, error };
 	const selected = (await readTabs())?.find((tab) => tab.active);
-	return selected && getTabSelection(selected)?.selectedTab === correction.selectedTab && normalizeComparableUrl(selected.url ?? "") === normalizeComparableUrl(options.target.url)
+	return selected && getTabSelection(selected)?.selectedTab === correction.selectedTab && await verifyUrl(selected)
 		? { correction }
 		: { correction, error };
 }

@@ -498,7 +498,8 @@ test("real upstream batch argv and ref fidelity for pinned and unpinned register
 						assert.equal(JSON.parse((await direct(["tab", "list"])).stdout).data.tabs.find((tab: { tabId: string }) => tab.tabId === duplicate).title, "Different tab");
 						const filled = await call(["fill", "#name-input", "intended"]);
 						assert.equal(filled.isError, false, JSON.stringify(filled));
-						assert.equal((filled.details?.sessionTabCorrection as { selectedTab: string } | undefined)?.selectedTab, original, JSON.stringify({ original, duplicate, originalTabs, duplicateTabs, filled }));
+						assert.equal((filled.details?.sessionTabCorrection as { selectedTab: string } | undefined)?.selectedTab, originalTab.targetId, JSON.stringify({ original, duplicate, originalTabs, duplicateTabs, filled }));
+						assert.equal((filled.details?.sessionTabCorrection as { selectionKind: string } | undefined)?.selectionKind, "targetId");
 						await direct(["tab", duplicate]);
 						assert.equal(JSON.parse((await direct(["get", "value", "#name-input"])).stdout).data.value, "");
 						await direct(["tab", original]);

@@ -1046,7 +1046,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 			assert.notEqual(followUpSessionName, electronSessionName);
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations[0]?.args, ["--session", electronSessionName, "close"]);
-			assert.deepEqual(invocations.map((entry) => entry.sessionName), [electronSessionName, followUpSessionName]);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [electronSessionName, followUpSessionName, followUpSessionName]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -1121,6 +1121,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 				electronSessionName,
 				firstFollowUpSessionName,
 				firstFollowUpSessionName,
+				firstFollowUpSessionName,
+				reservedAfterClose,
 				reservedAfterClose,
 			]);
 		});
@@ -1182,7 +1184,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "ok", url: 
 			assert.notEqual(finalSessionName, restoredGeneratedSessionName);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.deepEqual(invocations.map((entry) => entry.sessionName), [restoredGeneratedSessionName, restoredGeneratedSessionName, finalSessionName]);
+			assert.deepEqual(invocations.map((entry) => entry.sessionName), [restoredGeneratedSessionName, restoredGeneratedSessionName, restoredGeneratedSessionName, finalSessionName, finalSessionName]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -2847,7 +2849,7 @@ if (args.includes("snapshot")) {
 			const invocations = await readInvocationLog(logPath);
 			assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
 			assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
-			assert.deepEqual(invocations.map((entry) => entry.idleTimeout), ["1234", "1234"]);
+			assert.deepEqual(invocations.map((entry) => entry.idleTimeout), ["1234", "1234", "1234"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

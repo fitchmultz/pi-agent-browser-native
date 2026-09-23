@@ -9,6 +9,7 @@ import { prepareAgentBrowserSpawnArgs, withChromeStartupArgs } from "../../proce
 import { cleanupElectronLaunchResources } from "../../electron/cleanup.js";
 import { launchElectronApp, type ElectronLaunchSuccess } from "../../electron/launch.js";
 import { pathExists } from "../../fs-utils.js";
+import { isRecord } from "../../parsing.js";
 import { getCompiledSemanticActionSessionPrefix } from "../../input-modes/semantic-action.js";
 import { type CompiledAgentBrowserSemanticAction } from "../../input-modes/types.js";
 import { tryNetworkRequestsPageFilter } from "./prepare/network-page-filter.js";
@@ -683,13 +684,18 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		});
 		if (!executionPlan.validationError && !executionPlan.plainTextInspection && !knownStaleRef && !invalidStdin && priorSessionTabTarget && pinSessionTab) {
 			signal?.throwIfAborted();
-			const reopened = !coldManagedSession || await runSessionCommandData({
+			const reopenedData = coldManagedSession ? await runSessionCommandData({
 				args: ["open", priorSessionTabTarget.url], cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal, timeoutMs: params.timeoutMs,
 				onProcessResult: ({ agentBrowserStarted }) => {
 					// A started open may have navigated even if its CLI was aborted before replying.
 					if (agentBrowserStarted && sessionStateKey) sessionPageState.setTabReopenPending({ pending: false, sessionName: sessionStateKey, update: options.sessionPageStateUpdate });
 				},
-			}) !== undefined;
+			}) : undefined;
+			const reopened = !coldManagedSession || reopenedData !== undefined;
+			if (coldManagedSession && reopened) priorSessionTabTarget = {
+				...priorSessionTabTarget,
+				targetId: isRecord(reopenedData) && typeof reopenedData.targetId === "string" ? reopenedData.targetId : undefined,
+			};
 			const selection = signal?.aborted ? undefined : reopened
 				? await ensureSessionTabTarget({ cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal, target: priorSessionTabTarget })
 				: { error: "agent-browser could not reopen the remembered URL after the managed browser shut down. Navigate explicitly, then run snapshot -i before retrying." };

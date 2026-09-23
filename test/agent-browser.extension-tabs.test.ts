@@ -272,18 +272,19 @@ if (args.includes("click")) {
 			);
 
 			const invocations = await readInvocationLog(logPath);
-			assert.equal(invocations.length, 4);
+			assert.equal(invocations.length, 5);
 			assert.deepEqual(invocations[0]?.args, ["--json", "--session", "named", "get", "url"]);
 			assert.equal(invocations[1]?.args.includes("click"), true);
 			assert.deepEqual(invocations[2]?.args, ["--json", "--session", "named", "get", "url"]);
 			assert.deepEqual(invocations[3]?.args, ["--json", "--session", "named", "get", "title"]);
+			assert.deepEqual(invocations[4]?.args, ["--json", "--session", "named", "tab", "list"]);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 
-test("agentBrowserExtension avoids routine tab-list probes for ordinary same-session clicks", { concurrency: false }, async () => {
+test("agentBrowserExtension observes native identity when same-session results omit it", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-no-routine-tab-list-"));
 	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
@@ -329,13 +330,16 @@ if (args.includes("open")) {
 			const invocations = await readInvocationLog(logPath);
 			assert.deepEqual(invocations.map((entry) => entry.args.slice(-2).join(" ")), [
 				"open https://example.com/",
+				"tab list",
 				"snapshot -i",
+				"tab list",
 				"snapshot -i",
 				"click @e1",
 				"get url",
 				"get title",
+				"tab list",
 			]);
-			assert.equal(invocations.some((entry) => entry.args.includes("tab") && entry.args.includes("list")), false);
+			assert.equal(invocations.filter((entry) => entry.args.includes("tab") && entry.args.includes("list")).length, 3);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -381,10 +385,13 @@ if (args.includes("open")) {
 			assert.deepEqual(closeTab.details?.sessionTabTarget, { title: "Regression Fixture A", url: "https://fixture.example/" });
 			assert.deepEqual((await readInvocationLog(logPath)).map((entry) => entry.args.slice(-2).join(" ")), [
 				"open https://fixture.example/",
+				"tab list",
 				"--label docs",
+				"tab list",
 				"tab close",
 				"get url",
 				"get title",
+				"tab list",
 			]);
 		});
 	} finally {

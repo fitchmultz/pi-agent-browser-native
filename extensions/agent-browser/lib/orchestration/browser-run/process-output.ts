@@ -53,6 +53,7 @@ import {
 	buildManagedSessionOutcome,
 	collectOpenResultTabCorrection,
 	collectSessionTabSelection,
+	collectSessionTabTarget,
 	commandChoosesSessionTabTarget,
 	extractNavigationSummaryFromData,
 	extractStringResultField,
@@ -391,8 +392,11 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			!processResult.aborted &&
 			!processResult.timedOut &&
 			!nestedBatchClosed &&
-			(destinationTransition || (prepared.executionPlan.commandInfo.command !== "batch" &&
-				isUnverifiedPageTransitionCommand(prepared.executionPlan.commandInfo.command, prepared.executionPlan.commandInfo.subcommand)))
+			dispatchedCommands.some((step) => {
+				const [command, subcommand] = extractUpstreamCommandTokens(step);
+				return (prepared.executionPlan.commandInfo.command === "batch" && isOpenNavigationCommand(command))
+					|| isUnverifiedPageTransitionCommand(command, subcommand);
+			})
 		) {
 			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName, signal });
 			// Re-verifying a failed transition's URL does not make its prior refs valid.
@@ -421,11 +425,20 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			|| (prepared.executionPlan.commandInfo.command === "batch" && batchHasFailedWebMcpSettlement(presentationEnvelope?.data))
 		);
 		const unsettledWebMcpMutation = pendingWebMcpMutation || failedWebMcpSettlement;
-		const observedSessionTabTarget = unsettledWebMcpMutation || (unobservedMutation && !failedTransitionReverification)
+
+		let observedSessionTabTarget = unsettledWebMcpMutation || (unobservedMutation && !failedTransitionReverification)
 			? undefined
 			: normalizeSessionTabTarget(navigationSummary)
 				?? (trustsReportedPageTarget ? extractSessionTabTargetFromBatchResults(presentationEnvelope?.data) : undefined)
 				?? (succeeded && trustsReportedPageTarget ? extractSessionTabTargetFromCommandData(prepared.commandTokens, presentationEnvelope?.data) : undefined);
+		if (observedSessionTabTarget && !browserIndependentRead && !nestedBatchClosed && !isCloseCommand(prepared.executionPlan.commandInfo.command)) {
+			const reportedTarget = prepared.executionPlan.commandInfo.command === "batch"
+				? extractSessionTabTargetFromBatchResults(presentationEnvelope?.data)
+				: prepared.commandTokens[0] === "tab" && prepared.commandTokens[1] === "close" ? undefined
+				: extractSessionTabTargetFromCommandData(prepared.commandTokens, presentationEnvelope?.data);
+			if (reportedTarget?.targetId) observedSessionTabTarget.targetId = reportedTarget.targetId;
+			else observedSessionTabTarget = await collectSessionTabTarget({ cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal, target: observedSessionTabTarget });
+		}
 		const safeObservedSessionTabTarget = observedSessionTabTarget;
 		let currentSessionTabTarget = safeObservedSessionTabTarget;
 		if (!currentSessionTabTarget && nestedBatchClose === undefined && !unobservedMutation) {
@@ -529,7 +542,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 					: processResult.agentBrowserStarted && (directTransitionInvalidation || plannedBatchTransitionInvalidation)
 						? directTransitionInvalidation ?? plannedBatchTransitionInvalidation
 					: failedTransitionReverification
-						? buildPageTransitionRefSnapshotInvalidation("A failed eval/back/forward/reload/connect/state-load/tab command may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
+						? buildPageTransitionRefSnapshotInvalidation("A failed page transition may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
 						: batchRefSnapshotState?.invalidation?.reason === "page-transition"
 							? batchRefSnapshotState.invalidation
 							: undefined;
