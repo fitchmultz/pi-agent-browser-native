@@ -78,7 +78,7 @@
   "overrides": {
     "basic-ftp": "6.0.1",
     "esbuild": "0.28.1",
-    "protobufjs": "7.6.5"
+    "protobufjs": "7.6.6"
   },
   "scripts": {
     "docs": "node ./scripts/project.mjs docs",
