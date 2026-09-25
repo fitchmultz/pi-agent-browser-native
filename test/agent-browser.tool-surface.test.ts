@@ -3,10 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { InMemoryCredentialStore, validateToolArguments, type JsonObject } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, normalizeContext, validateToolArguments, type JsonObject } from "@earendil-works/pi-ai";
+import { stream as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import {
 	createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager,
-	type ExtensionContext,
+	type AgentSession, type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { JsonSchema } from "../extensions/agent-browser/lib/json-schema.js";
 import { AGENT_BROWSER_ACTION_PARAMS, AGENT_BROWSER_QA_PARAMS } from "../extensions/agent-browser/lib/input-modes/params.js";
@@ -16,6 +17,7 @@ import { registerAgentBrowserToolSurface } from "../extensions/agent-browser/lib
 
 async function withSurface(
 	run: (fixture: {
+		session: AgentSession;
 		call: (name: string, input: JsonObject) => Promise<{ content: unknown; details?: unknown }>;
 		active: () => string[];
 		all: () => string[];
@@ -57,6 +59,7 @@ async function withSurface(
 		try {
 			await session.bindExtensions({ onError: (error) => { throw new Error(error.error); } });
 			await run({
+				session,
 				async call(name, input) {
 					const tool = session.getToolDefinition(name);
 					assert.ok(tool, `registered ${name}`);
@@ -77,6 +80,48 @@ async function withSurface(
 }
 
 const baseTools = ["agent_browser", "agent_browser_code", "agent_browser_tools", "unrelated"];
+
+test("registered browser code serializes for Anthropic while Pi still rejects invalid arguments", async () => {
+	await withSurface(async ({ session, call, codeCalls }) => {
+		const tool = session.getToolDefinition("agent_browser_code");
+		assert.ok(tool);
+		let payload: { tools: { name: string; strict?: boolean; input_schema: { properties: Record<string, unknown>; required: string[] } }[] } | undefined;
+		const result = await streamAnthropic({
+			id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic", api: "anthropic-messages",
+			baseUrl: "https://api.anthropic.com", reasoning: false, input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, maxTokens: 1024,
+			compat: { supportsStrictTools: true },
+		}, normalizeContext({ messages: [
+			{ role: "system", content: "", toolsAdded: [tool], timestamp: 1 },
+			{ role: "user", content: "Use browser code.", timestamp: 2 },
+		] }), {
+			apiKey: "test-key", maxRetries: 0,
+			async fetch(_url, init) {
+				payload = JSON.parse(String(init?.body));
+				return new Response('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n', {
+					headers: { "content-type": "text/event-stream" },
+				});
+			},
+		}).result();
+		assert.equal(result.stopReason, "stop", result.errorMessage);
+		assert.ok(payload);
+		const [wireTool] = payload.tools;
+		assert.equal(wireTool.name, "agent_browser_code");
+		// Anthropic rejects integer minimum/maximum in strict tool schemas.
+		assert.equal(wireTool.strict ?? false, false);
+		assert.deepEqual(wireTool.input_schema.properties.timeoutMs, { type: "integer", minimum: 1, maximum: 300000 });
+		assert.deepEqual(wireTool.input_schema.required, ["code"]);
+		assert.deepEqual(Object.keys(wireTool.input_schema.properties).sort(), ["code", "namespace", "outputPath", "session", "timeoutMs"]);
+		assert.ok(Buffer.byteLength(JSON.stringify(tool.parameters)) < 1400);
+		const invalidInputs: JsonObject[] = [{ code: "" }, { code: "emit(1)", session: "" }, { code: "emit(1)", timeoutMs: 0 }, { code: "emit(1)", timeoutMs: 300001 }, { code: "emit(1)", timeoutMs: 1.5 }, { code: "emit(1)", args: [] }, { script: "emit(1)" }];
+		for (const input of invalidInputs) {
+			await assert.rejects(call(tool.name, input), /Validation failed/, JSON.stringify(input));
+		}
+		assert.deepEqual(codeCalls, []);
+		await call(tool.name, { code: "emit(1)", session: null, namespace: "", timeoutMs: null, outputPath: null });
+		assert.deepEqual(codeCalls, [{ code: "emit(1)", namespace: "" }]);
+	});
+});
 
 test("native Pi registration keeps advanced tools discoverable and activation additive", async () => {
 	await withSurface(async ({ call, active, all }) => {

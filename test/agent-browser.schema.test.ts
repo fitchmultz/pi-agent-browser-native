@@ -44,23 +44,6 @@ test("agent_browser exposes only compact native command input", () => {
 	assert.ok(Buffer.byteLength(JSON.stringify(schema)) < 1400);
 });
 
-test("agent_browser_code has strict portable JSON input with explicit browser identity", () => {
-	const schema = createAgentBrowserCodeParamsSchema();
-	const tool = { name: "agent_browser_code", description: "Browser code", parameters: schema, constrainedSampling: { type: "json_schema", strict: "prefer" } as const };
-	const properties = (schema as { properties?: Record<string, unknown> }).properties;
-	assert.ok(properties);
-	assert.deepEqual(Object.keys(properties).sort(), ["code", "namespace", "outputPath", "session", "timeoutMs"]);
-	assert.equal(Check(schema, { code: "emit(1)", namespace: "", session: "example", timeoutMs: 300000 }), true);
-	for (const input of [{ code: "" }, { code: "emit(1)", session: "" }, { code: "emit(1)", timeoutMs: 300001 }, { code: "emit(1)", timeoutMs: 1.5 }, { code: "emit(1)", args: [] }, { script: "emit(1)" }]) {
-		assert.equal(Check(schema, input), false, JSON.stringify(input));
-	}
-	const [providerTool] = convertResponsesTools([tool], { supportsStrictMode: true });
-	assert.equal(providerTool.type, "function");
-	assert.equal(providerTool.strict, true);
-	assert.deepEqual(validateToolArguments(tool, { type: "toolCall", id: "code", name: tool.name, arguments: { code: "emit(1)", session: null, namespace: "", timeoutMs: null, outputPath: null } }), { code: "emit(1)", namespace: "" });
-	assert.ok(Buffer.byteLength(JSON.stringify(schema)) < 1400);
-});
-
 test("semantic schema keeps optional properties visible to Pi null normalization", () => {
 	const semantic = createAgentBrowserActionParamsSchema() as { properties?: Record<string, unknown>; required?: string[] };
 	for (const field of ["locator", "value", "values", "selector", "text", "role", "name", "session"]) {
