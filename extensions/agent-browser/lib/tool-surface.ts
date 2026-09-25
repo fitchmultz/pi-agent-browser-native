@@ -59,7 +59,6 @@ export function registerAgentBrowserToolSurface(pi: ExtensionAPI, options: Agent
 		description: "Run fresh JavaScript against a persistent browser. await browser({args,stdin?,timeoutMs?}) returns success/data/error/nextActions and imageObservations; emit(selected JSON) and emitImage(image handle) explicitly choose output. No host APIs or imports. Use native batch for fixed sequences.",
 		promptSnippet: "Branch, loop, and aggregate browser observations with explicit JSON/image output.",
 		parameters: AGENT_BROWSER_CODE_PARAMS,
-		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		execute: options.executeCode,
 		executionMode: options.executionMode,
 		renderCall(args, theme, context) {
