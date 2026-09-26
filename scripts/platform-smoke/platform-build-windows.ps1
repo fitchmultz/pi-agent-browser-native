@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory=$true)][string]$PackageName,
-  [Parameter(Mandatory=$true)][int]$NodeValidationMajor
+  [Parameter(Mandatory=$true)][string]$NodeValidationVersion
 )
 
 $ErrorActionPreference = "Continue"
@@ -20,10 +20,9 @@ Write-Output "Starting platform-build in $SourceRoot at $((Get-Date).ToUniversal
 Write-Output "PLATFORM_RUN_ROOT=$RunRoot"
 
 $NodeVersion = (& node --version 2>$null)
-$NodeMajor = 0
-if ($NodeVersion -match '^v?(\d+)\.') { $NodeMajor = [int]$Matches[1] }
 Write-Output "PLATFORM_NODE_VERSION=$NodeVersion"
-$NodeVersionExit = if ($NodeMajor -ge $NodeValidationMajor) { 0 } else { 1 }
+$NodeVersionExit = 1
+try { if ([version]$NodeVersion.TrimStart("v") -ge [version]$NodeValidationVersion) { $NodeVersionExit = 0 } } catch {}
 Write-Output "PLATFORM_NODE_VERSION_EXIT=$NodeVersionExit"
 
 & npm ci 2>&1

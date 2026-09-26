@@ -73,7 +73,7 @@ import config, * as configModule from "./platform-smoke.config.mjs";
 const result = {
   agentBrowserVersion: config.agentBrowserVersion,
   crabboxMinVersion: config.requiredCrabbox.minVersion,
-  nodeValidationMajor: config.nodeValidationMajor,
+  nodeValidationVersion: config.nodeValidationVersion,
   packageName: config.packageName,
   privateConstantsExported: "PLATFORM_SMOKE_AGENT_BROWSER_VERSION" in configModule || "PLATFORM_SMOKE_UBUNTU_IMAGE" in configModule,
   ubuntuContainerImage: config.ubuntuContainerImage,
@@ -85,7 +85,7 @@ const result = {
 console.log(JSON.stringify(result));
 if (result.packageName !== "pi-agent-browser-native" || result.privateConstantsExported) process.exit(1);
 if (result.crabboxMinVersion !== "0.26.0") process.exit(1);
-if (result.nodeValidationMajor !== 24) process.exit(1);
+if (result.nodeValidationVersion !== "24.21.0") process.exit(1);
 if (!result.ubuntuContainerImage.includes("agent-browser" + result.agentBrowserVersion)) process.exit(1);
 if (result.windowsSourceVm !== "pi-extension-windows-template" || !String(result.windowsSnapshot || "").startsWith("crabbox-ready")) process.exit(1);
 if (!/^\d+\.\d+\.\d+$/.test(result.agentBrowserVersion)) process.exit(1);
@@ -100,10 +100,10 @@ test("platform command rendering uses POSIX and PowerShell without source-extens
 	const code = String.raw`
 import { readFileSync } from "node:fs";
 import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
-import { buildBrowserDogfoodCommand, buildPlatformBuildCommand, platformFor } from "./scripts/platform-smoke/targets.mjs";
-const posix = buildPlatformBuildCommand("ubuntu", "pi-agent-browser-native", 24);
-const macos = buildPlatformBuildCommand("macos", "pi-agent-browser-native", 24);
-const powershell = buildPlatformBuildCommand("windows-native", "pi-agent-browser-native", 24);
+import { buildBrowserDogfoodCommand, buildPlatformBuildCommand, nodeVersionAtLeast, platformFor } from "./scripts/platform-smoke/targets.mjs";
+const posix = buildPlatformBuildCommand("ubuntu", "pi-agent-browser-native", "24.21.0");
+const macos = buildPlatformBuildCommand("macos", "pi-agent-browser-native", "24.21.0");
+const powershell = buildPlatformBuildCommand("windows-native", "pi-agent-browser-native", "24.21.0");
 const powershellScript = readFileSync("scripts/platform-smoke/platform-build-windows.ps1", "utf8");
 const dogfoodPosix = buildBrowserDogfoodCommand("ubuntu");
 const dogfoodWarmPosix = buildBrowserDogfoodCommand("ubuntu", CAPABILITY_BASELINE.targetVersion, true);
@@ -114,6 +114,8 @@ const result = {
   macosPlatform: platformFor("macos") === "posix",
   ubuntuPlatform: platformFor("ubuntu") === "posix",
   windowsPlatform: platformFor("windows-native") === "powershell",
+  nodePatchFloorEnforced: !nodeVersionAtLeast("v24.20.9", "24.21.0") && !nodeVersionAtLeast("v24.3.0", "24.21.0") && nodeVersionAtLeast("v24.21.0", "24.21.0") && nodeVersionAtLeast("v24.100.0", "24.21.0") && nodeVersionAtLeast("v25.0.0", "24.21.0") && !nodeVersionAtLeast("", "24.21.0"),
+  commandsCarryNodeFloor: posix.includes("'24.21.0'") && powershell.includes("-NodeValidationVersion '24.21.0'"),
   posixHasVerify: posix.includes("npm run verify -- platform-target"),
   posixHasPackedInstall: posix.includes("install -l --approve ./node_modules/pi-agent-browser-native"),
   posixHasApprovedList: posix.includes("list --approve"),

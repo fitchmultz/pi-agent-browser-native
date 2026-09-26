@@ -254,9 +254,13 @@ export function createLeaseWarmupFailureResult(config, targetName, warmupResult,
 	return { ok: false, suiteDir, assertions };
 }
 
-export function buildPlatformBuildCommand(targetName, packageName = "pi-agent-browser-native", nodeValidationMajor = 24) {
+export function nodeVersionAtLeast(actual, minimum) {
+	return /^v?\d+\.\d+\.\d+$/.test(actual) && actual.replace(/^v/, "").localeCompare(minimum, undefined, { numeric: true }) >= 0;
+}
+
+export function buildPlatformBuildCommand(targetName, packageName, nodeValidationVersion) {
 	if (platformFor(targetName) === "powershell") {
-		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\platform-build-windows.ps1 -PackageName ${psSingleQuote(packageName)} -NodeValidationMajor ${nodeValidationMajor}`;
+		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\platform-build-windows.ps1 -PackageName ${psSingleQuote(packageName)} -NodeValidationVersion ${psSingleQuote(nodeValidationVersion)}`;
 	}
 
 	const lines = [];
@@ -268,10 +272,8 @@ export function buildPlatformBuildCommand(targetName, packageName = "pi-agent-br
 	lines.push(`mkdir -p "$PACK_DIR" "$PI_PROJECT"`);
 	lines.push(`echo "PLATFORM_RUN_ROOT=$RUN_ROOT"`);
 	lines.push(`NODE_VERSION=$(node --version)`);
-	lines.push(`NODE_MAJOR="${"${NODE_VERSION#v}"}"`);
-	lines.push(`NODE_MAJOR="${"${NODE_MAJOR%%.*}"}"`);
 	lines.push(`echo "PLATFORM_NODE_VERSION=$NODE_VERSION"`);
-	lines.push(`if [ "$NODE_MAJOR" -ge ${nodeValidationMajor} ]; then NODE_VERSION_EXIT=0; else NODE_VERSION_EXIT=1; fi`);
+	lines.push(`if node -e 'process.exit(process.versions.node.localeCompare(process.argv[1], undefined, { numeric: true }) < 0 ? 1 : 0)' ${shellQuote(nodeValidationVersion)}; then NODE_VERSION_EXIT=0; else NODE_VERSION_EXIT=1; fi`);
 	lines.push(`echo "PLATFORM_NODE_VERSION_EXIT=$NODE_VERSION_EXIT"`);
 	lines.push(`npm ci 2>&1`);
 	lines.push(`NPM_CI_EXIT=$?`);
@@ -418,7 +420,7 @@ async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession
 	const startedAt = Date.now();
 	const platform = platformFor(targetName);
 	const slug = `${config.packageName}-${targetName}`;
-	const command = buildPlatformBuildCommand(targetName, config.packageName, config.nodeValidationMajor);
+	const command = buildPlatformBuildCommand(targetName, config.packageName, config.nodeValidationVersion);
 	mkdirSync(dirname(suiteDir), { recursive: true });
 	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(targetEvidence(config, targetName, runId, slug), null, 2));
 	writeFileSync(resolve(suiteDir, "suite.json"), JSON.stringify({ suiteName, modelCalls: 0 }, null, 2));
@@ -453,7 +455,7 @@ async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession
 
 	const stdout = result.stdout;
 	const listOutput = section(stdout, "PI_LIST_STDOUT");
-	const nodeMajor = Number(marker(stdout, "PLATFORM_NODE_VERSION").replace(/^v/, "").split(".")[0] ?? 0);
+	const nodeVersion = marker(stdout, "PLATFORM_NODE_VERSION");
 	const secretViolations = [
 		...scanForSecrets(`${result.stdout}\n${result.stderr}`, secretValues),
 		...scanArtifactTextFiles(suiteDir, secretValues).map((finding) => `${finding.file}: ${finding.violation}`),
@@ -461,7 +463,7 @@ async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession
 	const checks = [
 		{ id: "command-exit-zero", fn: () => result.code === 0, error: `exit ${result.code}` },
 		{ id: "platform-marker", fn: () => stdout.includes("PLATFORM_BUILD_OK") },
-		{ id: "node-version", fn: () => nodeMajor >= (config.nodeValidationMajor ?? 24), error: `Node major ${nodeMajor}` },
+		{ id: "node-version", fn: () => nodeVersionAtLeast(nodeVersion, config.nodeValidationVersion), error: `Node ${nodeVersion || "unknown"} < ${config.nodeValidationVersion}` },
 		{ id: "npm-ci", fn: () => /PLATFORM_NPM_CI_EXIT=0/.test(stdout) },
 		{ id: "npm-run-verify", fn: () => /PLATFORM_VERIFY_EXIT=0/.test(stdout) },
 		{ id: "npm-pack", fn: () => /PLATFORM_NPM_PACK_EXIT=0/.test(stdout) && marker(stdout, "PLATFORM_PACKED_TARBALL").length > 0 },

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 - 2026-09-26
+
+### Fixed
+
+- Enforce the complete Node 24.21.0 minimum in platform qualification instead of accepting any Node 24 release.
+
 ## 0.8.0 - 2026-09-26
 
 ### Breaking Changes

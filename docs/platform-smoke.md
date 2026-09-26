@@ -42,7 +42,7 @@ npm run verify -- platform-smoke run --target ubuntu --suite platform-build
 
 With maintainer approval, local macOS execution can replace localhost SSH. Routine GitHub Actions has no Windows job; the separate Crabbox/Parallels release target remains as documented above. Record alternate native checks separately from Crabbox SSH or Parallels results. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
 
-On macOS, run the unchanged commands returned by `buildPlatformBuildCommand('macos', 'pi-agent-browser-native', 24)` and `buildBrowserDogfoodCommand('macos', '0.38.1', true)` in [`scripts/platform-smoke/targets.mjs`](../scripts/platform-smoke/targets.mjs), serially in a clean private source copy. Use private HOME, npm and Pi settings, and headless browser profiles. No Remote Login or host security change is required.
+On macOS, run the unchanged commands returned by `buildPlatformBuildCommand('macos', 'pi-agent-browser-native', '24.21.0')` and `buildBrowserDogfoodCommand('macos', '0.38.1', true)` in [`scripts/platform-smoke/targets.mjs`](../scripts/platform-smoke/targets.mjs), serially in a clean private source copy. Use private HOME, npm and Pi settings, and headless browser profiles. No Remote Login or host security change is required.
 
 Retain the exact source head/tree, package and tool versions, native OS/architecture, generated commands, stdout/stderr, every `PLATFORM_*` exit marker, actual Pi registration output, dogfood JSON and verified screenshot. Check the suite assertions below and clean up only the run's processes and temporary files. These alternatives do not waive Ubuntu or any non-platform release check.
 
@@ -88,7 +88,7 @@ The configured upstream `agent-browser` baseline is imported from [`scripts/agen
 
 Crabbox does not install project runtime tools. The macOS host, Ubuntu image, and Windows template must already provide:
 
-- Node/npm at or above the configured Node major baseline in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs).
+- Node/npm at or above the full Node version declared by `package.json` `engines.node` and used by [`platform-smoke.config.mjs`](../platform-smoke.config.mjs).
 - Git and `tar`.
 - Upstream `agent-browser` matching this wrapper’s capability baseline. The Ubuntu target gets it from [`scripts/platform-smoke/linux-image/Dockerfile`](../scripts/platform-smoke/linux-image/Dockerfile); the Windows template gets it from the shared `pi-extension-windows-template` snapshot named in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs) (currently `crabbox-ready-ab-0.33.0`, a child of the shared `crabbox-ready` base used by other projects' linked clones).
 - Browser/runtime dependencies needed by upstream `agent-browser`.
@@ -102,7 +102,7 @@ Each required target runs `platform-build` and `browser-dogfood-smoke` on one Cr
 
 ### `platform-build`
 
-1. Verify the target Node major version.
+1. Verify the target's full Node version.
 2. Run `npm ci` in the synced checkout.
 3. Run `npm run verify -- platform-target`, a fast target-local gate covering generated docs, TypeScript, package/platform harness tests, and runtime planning. The full unit/fake suite still runs once in the host default gate before the release matrix starts; target-local smoke must not duplicate that full suite on every OS. Browser subprocess behavior is then exercised by the target-local `browser-dogfood-smoke` suite against the real upstream binary.
 4. Run `npm pack`.
