@@ -37,7 +37,7 @@ const model = { id: "offline-recording-check", name: "Offline recording check", 
 let serial = 0;
 const NAMESPACE = randomUUID();
 const explicit = (name = "A") => ["--namespace", NAMESPACE, "--session", name];
-const readDisk = (file) => fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+const readDisk = (file) => fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
 const reservationRows = (sm) => sm.getBranch().filter((entry) => entry.type === "custom" && entry.customType === ENTRY);
 const protectedResult = (result) => /reserved by an active recording/.test(JSON.stringify(result));
 function log(type, data = {}) {

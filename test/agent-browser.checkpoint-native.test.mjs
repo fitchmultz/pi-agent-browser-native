@@ -141,7 +141,7 @@ test("native idle checkpoint, active controls, and stable root restore", { skip:
     assert.deepEqual(sm.getEntries(), accepted);
     assert.equal(sm.getEntriesRevision(), revision);
     assert.equal(sm.getLeafId(), leaf);
-    assert.deepEqual((await readFile(journal, "utf8")).trim().split("\n").map(JSON.parse), [hold.checkpoint.header, ...hold.checkpoint.entries]);
+    assert.deepEqual((await readFile(journal, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse), [hold.checkpoint.header, ...hold.checkpoint.entries]);
     assert.equal(JSON.stringify(sdk.openSessionCheckpoint(hold.checkpoint).getEntries()), JSON.stringify(accepted));
     receipts.push({ label: "native repair before receipt", sleepReady: hold.sleepReady, sleepBlockers: hold.sleepBlockers, journalMatches: true, strictRestore: true });
     assert.equal(hold.sleepReady, true, JSON.stringify(receipts.at(-1)));
