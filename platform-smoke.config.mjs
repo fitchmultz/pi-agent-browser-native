@@ -1,6 +1,7 @@
 // Platform smoke configuration for pi-agent-browser-native.
 // Crabbox owns the target lease/sync loop; this file is the project source of truth for release-blocking platform coverage.
 
+import packageJson from "./package.json" with { type: "json" };
 import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
 
 const PLATFORM_SMOKE_AGENT_BROWSER_VERSION = CAPABILITY_BASELINE.targetVersion;
@@ -26,6 +27,6 @@ export default {
 		// Parent crabbox-ready remains for other projects' linked clones.
 		snapshot: "crabbox-ready-ab-0.34.0-d",
 	},
-	nodeValidationMajor: 24,
+	nodeValidationVersion: packageJson.engines.node.replace(/^>=/, ""),
 	agentBrowserVersion: PLATFORM_SMOKE_AGENT_BROWSER_VERSION,
 };

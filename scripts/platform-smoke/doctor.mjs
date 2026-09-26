@@ -234,7 +234,7 @@ export async function runDoctor(config) {
 	const failures = { count: 0 };
 	const packageName = config?.packageName ?? "pi-agent-browser-native";
 	const artifactRoot = config?.artifactRoot ?? ".artifacts/platform-smoke";
-	const nodeMajor = config?.nodeValidationMajor ?? 24;
+	const nodeVersion = config?.nodeValidationVersion;
 	const agentBrowserVersion = config?.agentBrowserVersion;
 
 	console.log("\n── Platform smoke config ──");
@@ -280,9 +280,8 @@ export async function runDoctor(config) {
 		else ok(`${name}: ${output.split(/\r?\n/)[0]}`);
 	}
 	const localNode = shell("node --version");
-	const localNodeMajor = Number(localNode?.replace(/^v/, "").split(".")[0] ?? 0);
-	if (localNodeMajor >= nodeMajor) ok(`host Node major ${localNodeMajor} >= ${nodeMajor}`);
-	else fail(`host Node major ${localNodeMajor || "unknown"} < ${nodeMajor}`, failures);
+	if (nodeVersion && localNode && versionAtLeast(localNode, nodeVersion)) ok(`host Node ${localNode} >= ${nodeVersion}`);
+	else fail(`host Node ${localNode || "unknown"} < ${nodeVersion ?? "configured minimum"}`, failures);
 	checkAgentBrowserVersion(agentBrowserVersion, failures);
 
 	console.log("\n── Crabbox providers ──");
