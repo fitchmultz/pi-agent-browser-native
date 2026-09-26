@@ -1257,7 +1257,7 @@ test("agentBrowserExtension reuses only verified tracked Electron connections af
 	let liveBrowserEndpoint: string;
 	let pageEndpoint: string;
 	const server = createServer((request, response) => {
-		// Node 22's Undici parser timer can outlive this fixture when setTimeout is mocked below.
+		// Undici's parser timer can outlive this fixture when setTimeout is mocked below.
 		response.writeHead(pidIsAlive(child?.pid) ? 200 : 503, { "content-type": "application/json", connection: "close" });
 		response.end(JSON.stringify(request.url === "/json/version"
 			? { Browser: "Electron/Test", webSocketDebuggerUrl: liveBrowserEndpoint }

@@ -236,14 +236,22 @@ test("executePackagedAgentBrowserSmoke reports packaged invocation failures clea
 	assert.match(failures, /boom/);
 });
 
-test("package metadata keeps Pi peers host-provided and declares the Windows spawner at runtime", async () => {
+test("package metadata keeps Pi peers host-provided and declares the qualified runtime graph", async () => {
 	const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
 		dependencies?: Record<string, string>;
+		engines?: Record<string, string>;
+		overrides?: Record<string, string>;
+		packageManager?: string;
 		peerDependencies?: Record<string, string>;
 		scripts?: Record<string, string>;
 	};
 
 	assert.equal(packageJson.dependencies?.["cross-spawn"], "7.0.6", "the spawner must not rely on Pi's private transitive dependencies");
+	assert.equal(packageJson.dependencies?.["path-key"], "3.1.1", "launcher PATH selection must match cross-spawn 7");
+	assert.equal(packageJson.dependencies?.which, "2.0.2", "launcher resolution must match cross-spawn 7");
+	assert.equal(packageJson.engines?.node, ">=24.21.0");
+	assert.equal(packageJson.packageManager, "npm@12.1.0");
+	assert.equal(packageJson.overrides, undefined, "transitive owners should select their compatible dependency versions");
 	for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
 		assert.equal(packageJson.peerDependencies?.[packageName], "*", `${packageName} should stay host-provided per Pi package docs`);
 	}

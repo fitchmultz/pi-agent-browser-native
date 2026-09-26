@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 - 2026-09-26
+
+### Breaking Changes
+
+- Require Node.js 24.21.0 or newer.
+
+### Changed
+
+- Update the official Pi validation graph to 0.87.1, adopt TypeScript 7, npm 12, and the latest compatible development tooling, and remove stale transitive dependency overrides.
+- Qualify official Pi, the forked Pi host, package smoke, native checkpoints, and platform builds on Node 24.
+
+### Fixed
+
+- Keep lifecycle sentinel replacement byte-stable outside its generated block without retaining the removed TypeScript compiler API.
+
 ## 0.7.1 - 2026-09-22
 
 ### Fixed

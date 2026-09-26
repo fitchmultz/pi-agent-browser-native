@@ -254,7 +254,7 @@ export function createLeaseWarmupFailureResult(config, targetName, warmupResult,
 	return { ok: false, suiteDir, assertions };
 }
 
-export function buildPlatformBuildCommand(targetName, packageName = "pi-agent-browser-native", nodeValidationMajor = 22) {
+export function buildPlatformBuildCommand(targetName, packageName = "pi-agent-browser-native", nodeValidationMajor = 24) {
 	if (platformFor(targetName) === "powershell") {
 		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\platform-build-windows.ps1 -PackageName ${psSingleQuote(packageName)} -NodeValidationMajor ${nodeValidationMajor}`;
 	}
@@ -461,7 +461,7 @@ async function runPlatformBuildSuite(config, targetName, suiteName, leaseSession
 	const checks = [
 		{ id: "command-exit-zero", fn: () => result.code === 0, error: `exit ${result.code}` },
 		{ id: "platform-marker", fn: () => stdout.includes("PLATFORM_BUILD_OK") },
-		{ id: "node-version", fn: () => nodeMajor >= (config.nodeValidationMajor ?? 22), error: `Node major ${nodeMajor}` },
+		{ id: "node-version", fn: () => nodeMajor >= (config.nodeValidationMajor ?? 24), error: `Node major ${nodeMajor}` },
 		{ id: "npm-ci", fn: () => /PLATFORM_NPM_CI_EXIT=0/.test(stdout) },
 		{ id: "npm-run-verify", fn: () => /PLATFORM_VERIFY_EXIT=0/.test(stdout) },
 		{ id: "npm-pack", fn: () => /PLATFORM_NPM_PACK_EXIT=0/.test(stdout) && marker(stdout, "PLATFORM_PACKED_TARBALL").length > 0 },

@@ -245,7 +245,7 @@ function lifecycleSentinelCommand(token) {
 export function injectLifecycleSentinelSource(source, token) {
 	const withoutOldSentinel = source.replace(
 		new RegExp(`\\n\\t${SENTINEL_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?\\n\\t${SENTINEL_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n`),
-		"\n",
+		"",
 	);
 	const marker = "export default function agentBrowserExtension(pi, { beforeExecute } = {}) {";
 	const snippet = `
