@@ -1,4 +1,16 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>fitchmultz/.github:pi-extensions"]
+  "extends": ["github>fitchmultz/.github:pi-extensions"],
+  "packageRules": [
+    {
+      "description": "Node types must not authorize APIs above the supported Node 24 runtime.",
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "<25"
+    },
+    {
+      "description": "Windows launcher resolution must match cross-spawn 7's public which/path-key dependency line.",
+      "matchPackageNames": ["which", "path-key", "@types/which"],
+      "enabled": false
+    }
+  ]
 }
