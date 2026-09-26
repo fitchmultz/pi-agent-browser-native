@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PI_AUTOMATION_REF: 117b227140265329055bcda5927ac170c6301d75 # v1.0.0
+  PI_AUTOMATION_REF: febbb67574a846d68b1422dd26c5b5e6b901ca4f # v1.0.0
 
 jobs:
   official:
