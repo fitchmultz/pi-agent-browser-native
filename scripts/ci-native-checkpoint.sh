@@ -5,7 +5,7 @@ mode=${1:?setup or verify}
 root=${2:?absolute isolated root}
 cd "$root/extension"
 [[ $(id -u) != 0 ]]
-[[ $(node --version) == v26.9.0 ]]
+[[ $(node --version) == v24.21.0 ]]
 [[ $HOME == "$root/home" && $PWD != "$HOME"/* ]]
 mkdir -p "$root/logs"
 export PATH="$root/browser/bin:$PATH"

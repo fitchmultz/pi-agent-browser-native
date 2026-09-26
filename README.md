@@ -6,7 +6,7 @@ It is for Pi users who want agents to browse sites, inspect pages, click through
 
 ## Pi release qualification
 
-Development host dependencies are pinned to official Pi **0.87.0**, with wildcard runtime peers. `npm run check:compat` checks the installed candidate SDK/CLI identity, typechecks, runs the existing offline tests (including the native Pi pipeline with a controlled provider and fake browser), and tests a packed runtime-only installation through both the SDK and the actual bundled RPC CLI. The fork lane additionally requires the native idle checkpoint hook. It does not substitute a fork SDK while leaving official types or child CLI installed.
+Development host dependencies are pinned to official Pi **0.87.1**, with wildcard runtime peers. `npm run check:compat` checks the installed candidate SDK/CLI identity, typechecks, runs the existing offline tests (including the native Pi pipeline with a controlled provider and fake browser), and tests a packed runtime-only installation through both the SDK and the actual bundled RPC CLI. The fork lane additionally requires the native idle checkpoint hook. It does not substitute a fork SDK while leaving official types or child CLI installed.
 
 Run in an empty HOME with a **short** TMPDIR outside your real home. Long temporary paths can exceed macOS's 103-byte Unix socket limit; keep the fixture's socket safety checks intact. Real-browser/checkpoint controls, live upstream help sampling, lifecycle dogfood, and platform qualification remain the separate gates documented below. A Pi-only compatibility run uses no live browser profiles, credentials, or agent-browser fork, and does not certify those external integrations.
 
@@ -102,7 +102,7 @@ Artifact results show known requested paths separately from reported/resolved lo
 
 ## Fastest way to try it
 
-Use Pi 0.87.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, pins its direct Pi validation dependencies to 0.87.0, and makes hosts below 0.87.0 a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
+Use Node 24.21.0 or newer and Pi 0.87.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, pins its direct Pi validation dependencies to 0.87.1, and makes Pi hosts below 0.87.0 a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -720,7 +720,7 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
-Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@11.14.0 install`) so optional-platform lockfile metadata does not drift. Use Pi 0.87.0 or newer for lifecycle and interactive browser smokes; the pinned Pi devDependencies are validation fixtures, not an exact-version requirement for the host CLI. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@12.1.0 install`) so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 0.87.0 or newer for lifecycle and interactive browser smokes; the pinned Pi 0.87.1 devDependencies are validation fixtures, not an exact-version requirement for the host CLI. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
 
 Checkout-only extension smoke test:
 

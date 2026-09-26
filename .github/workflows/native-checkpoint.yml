@@ -49,8 +49,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg libatomic1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '26.9.0'
+          node-version: '24.21.0'
           package-manager-cache: false
+      - name: Use the package npm version
+        run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
       - name: Prepare isolated sources and prerequisites
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}

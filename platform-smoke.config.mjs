@@ -26,6 +26,6 @@ export default {
 		// Parent crabbox-ready remains for other projects' linked clones.
 		snapshot: "crabbox-ready-ab-0.34.0-d",
 	},
-	nodeValidationMajor: 22,
+	nodeValidationMajor: 24,
 	agentBrowserVersion: PLATFORM_SMOKE_AGENT_BROWSER_VERSION,
 };

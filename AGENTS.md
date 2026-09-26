@@ -13,7 +13,7 @@ Native `pi` integration of `agent-browser` as a `pi` tool.
 - The primary UX is the agent invoking the native tool directly, not a slash-command-heavy manual workflow.
 - Do **not** overengineer or solve hypothetical problems that do not exist in observed behavior.
 - Do **not** add a reusable named "browser recipe" runtime layer on top of browser code, advanced tools, or native batch without new dogfood evidence and an explicit design pass; the current no-adopt decision and revisit criteria live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) and [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md).
-- Require Pi 0.87.0+ for this contract; qualify official and fork graphs independently, with optional fork checkpoint integration.
+- Require Node 24.21.0+ and Pi 0.87.0+ for this contract; qualify official and fork graphs independently, with optional fork checkpoint integration.
 - Thoroughly check official `pi` docs/examples/source behavior before inventing bespoke integration patterns. Prefer an official `pi` mechanism whenever one exists.
 - Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
 - Keep the local extension-side documentation good enough that an agent can use the tool without relying on direct `agent-browser` binary help; when upstream `agent-browser` changes, update the repo-readable command reference, prompt guidance, README/docs, and any relevant tests in the same work.
@@ -152,7 +152,7 @@ Use an end-to-end interactive `pi` run inside `tmux`.
 - Clean up tmux sessions after testing.
 - Before ending a turn, sweep for and remove repo-local scratch files, project-scoped temp artifacts, and lingering browser sessions created during the work unless the user explicitly asked to keep them.
 - Do not overfit testing to `example.com`; use it for smoke checks only, then validate against additional realistic pages and flows. The lifecycle harness intentionally uses a fake upstream browser for deterministic lifecycle assertions and does not replace occasional real-browser manual smoke testing before release.
-- Prefer **tmux** over `pi -p` for real-browser checkout and release smokes; print mode may hang without a TTY. Use npm 11 when touching `package-lock.json` (`packageManager` in `package.json`), and never commit WorkOS or other private-registry URLs in that lockfile. After real-browser runs, close sessions and sweep lingering browser/tmux temp artifacts. Maintainer environment pitfalls (Pi/npm version skew, lifecycle `/reload` timing, automated pane matchers) are documented in [`docs/RELEASE.md`](docs/RELEASE.md#environment-and-automation-pitfalls).
+- Prefer **tmux** over `pi -p` for real-browser checkout and release smokes; print mode may hang without a TTY. Use npm 12 when touching `package-lock.json` (`packageManager` in `package.json`), and never commit WorkOS or other private-registry URLs in that lockfile. After real-browser runs, close sessions and sweep lingering browser/tmux temp artifacts. Maintainer environment pitfalls (Pi/npm version skew, lifecycle `/reload` timing, automated pane matchers) are documented in [`docs/RELEASE.md`](docs/RELEASE.md#environment-and-automation-pitfalls).
 
 ## Current testing focus
 

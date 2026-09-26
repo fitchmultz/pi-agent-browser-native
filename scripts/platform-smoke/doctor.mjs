@@ -234,7 +234,7 @@ export async function runDoctor(config) {
 	const failures = { count: 0 };
 	const packageName = config?.packageName ?? "pi-agent-browser-native";
 	const artifactRoot = config?.artifactRoot ?? ".artifacts/platform-smoke";
-	const nodeMajor = config?.nodeValidationMajor ?? 22;
+	const nodeMajor = config?.nodeValidationMajor ?? 24;
 	const agentBrowserVersion = config?.agentBrowserVersion;
 
 	console.log("\n── Platform smoke config ──");
