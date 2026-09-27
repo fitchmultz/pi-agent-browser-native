@@ -12,9 +12,6 @@ concurrency:
   group: native-checkpoint-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PI_AUTOMATION_REF: febbb67574a846d68b1422dd26c5b5e6b901ca4f # v1.0.0
-
 jobs:
   native-checkpoint-linux:
     name: Native checkpoint Linux
@@ -30,17 +27,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: fitchmultz/.github
-          ref: ${{ env.PI_AUTOMATION_REF }}
-          path: automation
-          persist-credentials: false
-      - name: Select the reviewed shared fork target
-        run: echo "PI_FORK_REF=$(node -p 'require("./automation/host-targets.json").forkRef')" >> "$GITHUB_ENV"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: fork
         with:
           repository: fitchmultz/pi
-          ref: ${{ env.PI_FORK_REF }}
+          ref: main
           path: pi-host
           persist-credentials: false
       - name: Install system prerequisites
@@ -64,6 +54,8 @@ jobs:
           cp -a extension pi-host "$root/"
           mkdir -m 700 "$root/home"
       - name: Build current native fixture host and download stock browser
+        env:
+          PI_FORK_REF: ${{ steps.fork.outputs.commit }}
         run: |
           env -i HOME="$CI_ROOT/home" TMPDIR=/tmp PI_FORK_REF="$PI_FORK_REF" \
             PATH="$CI_NODE_BIN:/usr/local/bin:/usr/bin:/bin" \

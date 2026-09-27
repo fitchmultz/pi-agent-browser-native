@@ -61,12 +61,11 @@ jobs:
           ref: ${{ env.PI_AUTOMATION_REF }}
           path: automation
           persist-credentials: false
-      - name: Select the reviewed fork target
-        run: echo "PI_FORK_REF=$(node -p 'require("./automation/host-targets.json").forkRef')" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: fork
         with:
           repository: fitchmultz/pi
-          ref: ${{ env.PI_FORK_REF }}
+          ref: main
           path: pi-host
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -75,8 +74,10 @@ jobs:
           package-manager-cache: false
       - name: Use the package npm version
         run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
-      - name: Build the pinned fork packages
+      - name: Build the current fork packages
         working-directory: pi-host
+        env:
+          PI_FORK_REF: ${{ steps.fork.outputs.commit }}
         run: |
           test "$(git rev-parse HEAD)" = "$PI_FORK_REF"
           npm ci --ignore-scripts --no-audit --no-fund
