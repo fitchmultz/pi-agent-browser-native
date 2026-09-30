@@ -306,20 +306,23 @@ async function ownerAlive(owner: PolicyLockOwner, budget?: { signal?: AbortSigna
 	return current === undefined ? undefined : processStartIdentitiesMatch(owner.startIdentity, current);
 }
 
-async function ownerAliveWhileClaimExists(claim: PolicyLockClaim, budget: { signal?: AbortSignal; deadline?: number }): Promise<boolean | undefined> {
+async function ownerAliveWhileClaimRelevant(claim: PolicyLockClaim, budget: { signal?: AbortSignal; deadline?: number }, ownClaim?: PolicyLockClaim): Promise<boolean | undefined> {
 	const controller = new AbortController();
 	const signal = budget.signal ? AbortSignal.any([budget.signal, controller.signal]) : controller.signal;
-	const disappearance = (async () => {
+	const obsolescence = (async () => {
 		while (!signal.aborted) {
 			try { await lstat(claim.path); }
 			catch (error) {
 				if ((error as NodeJS.ErrnoException).code === "ENOENT") { controller.abort(); return; }
 			}
+			if (ownClaim && await hasPublishedLaterTicket(claim, ownClaim)) { controller.abort(); return; }
 			await waitForRetry(signal);
 		}
 	})();
-	try { return await ownerAlive(claim.owner, { ...budget, signal }); }
-	finally { controller.abort(); await disappearance; }
+	try {
+		const alive = await ownerAlive(claim.owner, { ...budget, signal });
+		return signal.aborted ? undefined : alive;
+	} finally { controller.abort(); await obsolescence; }
 }
 
 async function removeClaimOwnedBy(path: string, token: string, deadline = 0): Promise<boolean> {
@@ -359,7 +362,7 @@ async function cleanDeadPolicyArtifacts(directory: string, budget: { signal?: Ab
 		if (budget.signal?.aborted || Date.now() >= (budget.deadline ?? Infinity)) return;
 		const path = join(directory, name);
 		const claim = await readClaim(path);
-		if (claim && await ownerAlive(claim.owner, budget) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
+		if (claim && await ownerAliveWhileClaimRelevant(claim, budget) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
 	}
 }
 
@@ -459,7 +462,7 @@ async function acquireExecutionClaim(options: {
 				// Choosing is transient: a later published ticket must not make
 				// its predecessor wait on it using an earlier null snapshot.
 				if (await hasPublishedLaterTicket(claim, ownClaim)) continue;
-				const alive = await ownerAliveWhileClaimExists(claim, budget);
+				const alive = await ownerAliveWhileClaimRelevant(claim, budget, ownClaim);
 				if (alive === false) {
 					await removeClaimOwnedBy(claim.path, claim.owner.token);
 					continue;

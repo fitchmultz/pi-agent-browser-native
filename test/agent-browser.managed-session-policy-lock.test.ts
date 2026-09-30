@@ -5,6 +5,7 @@
  */
 
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -20,6 +21,7 @@ import {
 	getBrowserExecutionLockPath,
 	resolveBrowserExecutionIdentity,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
+import { buildProcessStartIdentityCommands } from "../extensions/agent-browser/lib/process-identity.js";
 
 const sessionName = `piab-policy-lock-${process.pid}`;
 const originalSocketDir = process.env.PI_AGENT_BROWSER_SOCKET_DIR;
@@ -172,6 +174,105 @@ for (const publicationRead of [1, 2]) {
 		} finally {
 			t.mock.restoreAll();
 			syncBuiltinESMExports();
+		}
+	});
+}
+
+for (const publication of ["later", "earlier", "disappearance", "cleanup-disappearance", "cleanup-live", "unknown", "malformed", "mismatch", "abort"] as const) {
+	test(`managed session policy lock handles ${publication} during a distinct live owner's native identity query`, { timeout: 15_000 }, async (t) => {
+		const moduleUrl = new URL("../extensions/agent-browser/lib/managed-session-policy-lock.ts", import.meta.url).href;
+		const script = `import fs from "node:fs/promises"; import { basename, dirname, join } from "node:path"; import { acquireManagedSessionPolicyLock, resolveBrowserExecutionIdentity, getBrowserExecutionLockPath } from ${JSON.stringify(moduleUrl)}; const sessionName = ${JSON.stringify(sessionName)}; const seed = await acquireManagedSessionPolicyLock({ sessionName }); if (!seed) process.exit(2); const base = getBrowserExecutionLockPath(await resolveBrowserExecutionIdentity({ sessionName, ownedManagedSession: true })); const path = (await fs.readdir(dirname(base))).find(name => name.startsWith(basename(base) + ".claim-")); const owner = JSON.parse(await fs.readFile(join(dirname(base), path, "owner.json"), "utf8")); await seed.release(); process.send(owner); await new Promise(resolve => process.stdin.once("data", resolve));`;
+		const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], { stdio: ["pipe", "ignore", "pipe", "ipc"] });
+		const exit = once(child, "exit");
+		let stderr = "";
+		child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+		t.after(async () => {
+			if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+			await exit;
+		});
+		const [owner] = await Promise.race([once(child, "message"), exit.then(([code]) => assert.fail(`seed owner exited ${code}: ${stderr}`))]) as [{ pid: number; token: string; startIdentity: string }];
+		assert.notEqual(owner.pid, process.pid);
+		assert.deepEqual(await claimPaths(), []);
+		const choosingPath = publication.startsWith("cleanup-") ? testOrphanPath : `${lockBasePath}.claim-${owner.token}`;
+		await mkdir(choosingPath, { mode: 0o700 });
+		const ownerContent = JSON.stringify(owner);
+		await writeFile(join(choosingPath, "owner.json"), ownerContent, { mode: 0o600 });
+		if (publication === "earlier") await writeFile(join(choosingPath, "ticket.json"), JSON.stringify({ ticket: 1, token: owner.token, version: 4 }), { mode: 0o600 });
+		const nativeExecFile = childProcess.execFile;
+		const ownerCommands = buildProcessStartIdentityCommands(owner.pid);
+		let queryStarted!: () => void;
+		const startedQuery = new Promise<void>(resolve => { queryStarted = resolve; });
+		const queries: Array<{ error: string | number | null; errorName?: string; signal?: string; stdout: string; elapsed: number; timeout?: number }> = [];
+		const queryCompletions: Promise<void>[] = [];
+		t.mock.method(childProcess, "execFile", (file: string, args: string[], options: childProcess.ExecFileOptionsWithStringEncoding, callback: (error: childProcess.ExecFileException | null, stdout: string, stderr: string) => void) => {
+			if (!ownerCommands.some(command => command.file === file && command.args.length === args.length
+				&& command.args.every((arg, index) => arg === args[index]))) return nativeExecFile(file, args, options, callback);
+			// Delay only the predecessor's real native helper, retaining execFile's
+			// deadline/AbortSignal and genuine PID/start output (never a supplied identity).
+			const source = `setTimeout(() => { const { execFileSync } = require("node:child_process"); process.stdout.write(execFileSync(${JSON.stringify(file)}, ${JSON.stringify(args)})); }, 1250);`;
+			const started = Date.now();
+			const query = nativeExecFile(process.execPath, ["--eval", source], options, (error, stdout, stderr) => {
+				queries.push({ error: error?.code ?? null, errorName: error?.name, signal: error?.signal ?? undefined, stdout, elapsed: Date.now() - started, timeout: options.timeout });
+				callback(error, stdout, stderr);
+			});
+			queryCompletions.push(new Promise(resolve => query.once("close", () => resolve())));
+			queryStarted();
+			return query;
+		});
+		syncBuiltinESMExports();
+		const controller = new AbortController();
+		let lock;
+		try {
+			const started = Date.now();
+			const waiting = acquireManagedSessionPolicyLock({ sessionName, signal: controller.signal }); // Public default 1,000ms.
+			await Promise.race([startedQuery, waiting.then(() => assert.fail("the predecessor native query was not reached"))]);
+			if (publication === "disappearance" || publication === "cleanup-disappearance") await rm(choosingPath, { recursive: true });
+			else if (publication === "abort") controller.abort();
+			else if (publication !== "unknown" && publication !== "cleanup-live") {
+				const candidate = join(choosingPath, ".ticket.tmp");
+				await writeFile(candidate, publication === "malformed" ? "{" : JSON.stringify({
+					ticket: publication === "earlier" ? 1 : 2,
+					token: publication === "mismatch" ? "different-token" : owner.token,
+					version: 4,
+				}), { mode: 0o600 });
+				if (publication === "earlier") {
+					const ownPath = (await claimPaths()).find(path => path !== choosingPath)!;
+					const ownTicket = JSON.parse(await readFile(join(ownPath, "ticket.json"), "utf8"));
+					assert.ok(ownTicket.ticket > 1, "the live control must actually precede the waiter");
+				}
+				await fs.rename(candidate, join(choosingPath, "ticket.json"));
+			}
+			lock = await waiting;
+			const elapsed = Date.now() - started;
+			t.diagnostic(JSON.stringify({ publication, elapsed, acquired: !!lock, owner, queries }));
+			if (publication === "later" || publication === "disappearance" || publication === "cleanup-disappearance") {
+				assert.ok(lock, "an obsolete predecessor query must not consume the default acquisition budget");
+				assert.ok(elapsed < 1_000, `acquisition took ${elapsed}ms`);
+				assert.equal(queries[0]?.error, "ABORT_ERR");
+			} else {
+				assert.equal(lock, undefined);
+				if (publication !== "abort") assert.ok(elapsed >= 1_000, "unvalidated or preceding claims must not cancel the query");
+			}
+			assert.ok(queries.length > 0);
+			assert.equal(queries[0]?.stdout, "");
+			process.kill(owner.pid, 0);
+			await lock?.release();
+			lock = undefined;
+			if (publication === "disappearance" || publication === "cleanup-disappearance") {
+				assert.deepEqual(await claimPaths(), []);
+				await assert.rejects(stat(choosingPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+			} else {
+				assert.deepEqual(await claimPaths(), publication === "cleanup-live" ? [] : [choosingPath]);
+				assert.equal(await readFile(join(choosingPath, "owner.json"), "utf8"), ownerContent);
+			}
+		} finally {
+			controller.abort();
+			await Promise.all(queryCompletions);
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			await lock?.release();
+			child.stdin!.end("done");
+			await exit;
 		}
 	});
 }
