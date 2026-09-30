@@ -57,7 +57,7 @@ console.log(JSON.stringify({
 	return JSON.parse(result.stdout.trim()) as StartupMeasurement;
 }
 
-test("agent_browser cold startup stays below the issue #84 regression budget", async () => {
+test("agent_browser cold startup stays below the issue #84 regression budget", async (t) => {
 	const entrypoint = await getPackageExtensionEntrypoint();
 	assert.equal(entrypoint, "./dist/extensions/agent-browser/index.js");
 	// Measure one cold Pi extension load at a time on every platform. Parallel
@@ -65,6 +65,7 @@ test("agent_browser cold startup stays below the issue #84 regression budget", a
 	// a fresh process and every result must meet the unchanged startup budget.
 	const measurements = [await measureColdStartup(entrypoint), await measureColdStartup(entrypoint), await measureColdStartup(entrypoint)];
 	const totals = measurements.map((measurement) => measurement.totalMs);
+	t.diagnostic(JSON.stringify({ budgetMs: STARTUP_BUDGET_MS, measurements }));
 	const maxTotal = Math.max(...totals);
 
 	for (const measurement of measurements) {

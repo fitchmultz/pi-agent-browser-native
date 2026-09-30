@@ -1,8 +1,8 @@
 import type { AgentBrowserObservation, ToolPresentation } from "../contracts.js";
 import { isRecord } from "../../parsing.js";
-import { redactSensitiveValue } from "../../runtime.js";
+import { redactSensitiveText, redactSensitiveValue } from "../../runtime.js";
 import { omitUpstreamLifecycle } from "./common.js";
-import { redactTimeoutPartialProgress } from "../../orchestration/browser-run/diagnostics.js";
+import type { TimeoutPartialProgress } from "../../orchestration/browser-run/types.js";
 
 export type { AgentBrowserObservation } from "../contracts.js";
 
@@ -33,6 +33,34 @@ export function getPresentationPaths(options: {
 
 export function formatBatchStepCommand(command: string[] | undefined, index: number): string {
 	return command && command.length > 0 ? command.join(" ") : `step-${index + 1}`;
+}
+
+export function redactSensitivePathSegmentsForDiagnostic(path: string): string {
+	return path.split(/([/\\]+)/).map((segment) => segment === "/" || segment === "\\" || /^[/\\]+$/.test(segment) ? segment : redactSensitiveText(segment) !== segment || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(segment) ? "[REDACTED]" : segment).join("");
+}
+
+export function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
+	try {
+		const parsedUrl = new URL(url);
+		parsedUrl.pathname = parsedUrl.pathname.split("/").map((segment) => redactSensitivePathSegmentsForDiagnostic(segment)).join("/");
+		for (const [key, value] of parsedUrl.searchParams.entries()) {
+			if (redactSensitiveText(key) !== key || redactSensitiveText(value) !== value || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(`${key} ${value}`)) parsedUrl.searchParams.set(key, "[REDACTED]");
+		}
+		if (parsedUrl.hash) parsedUrl.hash = redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(parsedUrl.hash));
+		return redactSensitiveText(parsedUrl.toString());
+	} catch {
+		return redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(url));
+	}
+}
+
+export function redactTimeoutPartialProgress(progress: TimeoutPartialProgress): TimeoutPartialProgress {
+	const redact = (value: unknown): unknown => {
+		if (typeof value === "string") return /^https?:\/\//i.test(value) ? sanitizeCurrentPageUrlForTimeoutDiagnostic(value) : redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(value));
+		if (Array.isArray(value)) return value.map(redact);
+		if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redact(item)]));
+		return value;
+	};
+	return redact(progress) as TimeoutPartialProgress;
 }
 
 // Shared by direct results and code observations; ownership/replay state stays in details.

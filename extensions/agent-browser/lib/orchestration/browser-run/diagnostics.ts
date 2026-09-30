@@ -14,6 +14,7 @@ import { buildVisibleRefFallbackDiagnosticFromSnapshot, getVisibleRefFallbackTar
 import { extractRefSnapshotFromData, isAboutBlankUrl, normalizeComparableUrl, type SessionRefSnapshot, type SessionTabTarget } from "../../session-page-state.js";
 import { redactInvocationArgs, redactSensitiveText, type CommandInfo } from "../../runtime.js";
 import { isRecord } from "../../parsing.js";
+import { redactSensitivePathSegmentsForDiagnostic, sanitizeCurrentPageUrlForTimeoutDiagnostic } from "../../results/presentation/content.js";
 import {
 	extractBatchResultCommand,
 	extractNavigationSummaryFromData,
@@ -808,34 +809,6 @@ export async function collectTimeoutPartialProgress(options: { commandTokens: st
 	const foundArtifacts = artifacts.filter((artifact) => artifact.exists).length;
 	const pageStateSummary = recoveredUrl || title ? " and current page state" : plannedUrl ? " and planned page URL" : "";
 	return { artifacts, currentPage: url || title ? { source: currentPageSource, title, url } : undefined, liveUrlRecovered: recoveredUrl !== undefined, retryStep, steps: steps.length > 0 ? steps : undefined, summary: `Timed out before upstream returned final results; ${steps.length} planned step outcome${steps.length === 1 ? " is" : "s are"} unknown. Found ${foundArtifacts}/${artifacts.length} declared artifact path${artifacts.length === 1 ? "" : "s"}${pageStateSummary}; these observations do not prove step execution.` };
-}
-
-function redactSensitivePathSegmentsForDiagnostic(path: string): string {
-	return path.split(/([/\\]+)/).map((segment) => segment === "/" || segment === "\\" || /^[/\\]+$/.test(segment) ? segment : redactSensitiveText(segment) !== segment || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(segment) ? "[REDACTED]" : segment).join("");
-}
-
-function sanitizeCurrentPageUrlForTimeoutDiagnostic(url: string): string {
-	try {
-		const parsedUrl = new URL(url);
-		parsedUrl.pathname = parsedUrl.pathname.split("/").map((segment) => redactSensitivePathSegmentsForDiagnostic(segment)).join("/");
-		for (const [key, value] of parsedUrl.searchParams.entries()) {
-			if (redactSensitiveText(key) !== key || redactSensitiveText(value) !== value || /(?:secret|token|password|passwd|credential|auth|api[-_]?key|bearer)/i.test(`${key} ${value}`)) parsedUrl.searchParams.set(key, "[REDACTED]");
-		}
-		if (parsedUrl.hash) parsedUrl.hash = redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(parsedUrl.hash));
-		return redactSensitiveText(parsedUrl.toString());
-	} catch {
-		return redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(url));
-	}
-}
-
-export function redactTimeoutPartialProgress(progress: TimeoutPartialProgress): TimeoutPartialProgress {
-	const redact = (value: unknown): unknown => {
-		if (typeof value === "string") return /^https?:\/\//i.test(value) ? sanitizeCurrentPageUrlForTimeoutDiagnostic(value) : redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(value));
-		if (Array.isArray(value)) return value.map(redact);
-		if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redact(item)]));
-		return value;
-	};
-	return redact(progress) as TimeoutPartialProgress;
 }
 
 export function formatTimeoutPartialProgressText(progress: TimeoutPartialProgress, pageTargetUnknown = false): string {

@@ -16,7 +16,6 @@ import { isPlainTextInspectionArgs } from "../runtime.js";
 import { buildValidationFailureResult, type ResolvedAgentBrowserValidInput } from "./input-plan.js";
 import type { AgentBrowserToolResult } from "./browser-run/index.js";
 import { inspectManagedSessionDaemon } from "./browser-run/managed-session-daemon-policy.js";
-import { buildMissingBinaryMessage } from "./browser-run/final-result.js";
 
 interface NativeDefaults { session?: string; namespace?: string; profile?: unknown; executablePath?: unknown; [key: string]: unknown }
 
@@ -123,11 +122,14 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 	}, () => run({ ...input, toolArgs: args, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun, launchSignal = signal) => {
 		const daemon = await inspectManagedSessionDaemon({ cwd, signal: launchSignal, sessionName: rootDefault,
 			namespace: scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value ?? namespace, timeoutMs: 5_000 });
-		if (daemon.status === "missing-binary") return {
-			content: [{ type: "text", text: buildMissingBinaryMessage() }],
-			details: { agentBrowserStarted: false, args: input.redactedArgs, sessionName: rootDefault, resultCategory: "failure", failureCategory: "missing-binary" },
-			isError: true,
-		};
+		if (daemon.status === "missing-binary") {
+			const { buildMissingBinaryMessage } = await import("./browser-run/final-result.js");
+			return {
+				content: [{ type: "text", text: buildMissingBinaryMessage() }],
+				details: { agentBrowserStarted: false, args: input.redactedArgs, sessionName: rootDefault, resultCategory: "failure", failureCategory: "missing-binary" },
+				isError: true,
+			};
+		}
 		if (input.kind === "qa" && input.compiledQaPreset.checks.attached && daemon.status !== "active") {
 			return buildValidationFailureResult({ ...input, attemptedKind: "qa", kind: "invalid", status: "invalid", validationError: "qa.attached requires an active attached session. Open the root browser first, or select an existing native session." });
 		}

@@ -77,16 +77,9 @@ import {
 } from "./lib/input-modes/script.js";
 import type { AgentBrowserToolResult, BrowserRunState, TraceOwner } from "./lib/orchestration/browser-run/types.js";
 import { canonicalizeExplicitArtifactDestination, getExplicitArtifactDestination, getRecordContactSheetDestination } from "./lib/orchestration/browser-run/artifact-paths.js";
-import { findElectronLaunchRecordForSession, getActiveElectronRecords, getPersistentSessionArtifactStore, getSessionContextKey } from "./lib/orchestration/browser-run/session-state.js";
+import { ELECTRON_POST_COMMAND_STATUS_SETTLE_MS, ELECTRON_PROFILE_ISOLATION_DETAILS, findElectronLaunchRecordForSession, getActiveElectronRecords, getPersistentSessionArtifactStore, getSessionContextKey, restoreElectronLaunchRecordsFromBranch } from "./lib/orchestration/browser-run/session-state.js";
 import { parseBatchCommandArgument, parseUserBatchStdin } from "./lib/orchestration/batch-stdin.js";
-import {
-	ELECTRON_POST_COMMAND_STATUS_SETTLE_MS,
-	ELECTRON_PROFILE_ISOLATION_DETAILS,
-	cleanupActiveElectronHostLaunches,
-	handleElectronHostInput,
-	restoreElectronLaunchRecordsFromBranch,
-	type ElectronLaunchRecord,
-} from "./lib/orchestration/electron-host/index.js";
+import type { ElectronLaunchRecord } from "./lib/electron/launch.js";
 import { buildValidationFailureResult, resolveAgentBrowserInput, type AgentBrowserExecuteParams } from "./lib/orchestration/input-plan.js";
 import { applyAgentBrowserOutputPath, canWriteAgentBrowserOutput, normalizeRequestedOutputPath } from "./lib/orchestration/output-file.js";
 import { appendScriptSessionLease, createBrowserCodeOutput, getScriptSessionLeasesFromBranch } from "./lib/orchestration/script-mode.js";
@@ -1464,7 +1457,7 @@ export default function agentBrowserExtension(
 			const electronRecordsToCleanup = quitting
 				? ownedElectronLaunchRecords
 				: getOffBranchOwnedElectronLaunchRecords(ownedElectronLaunchRecords, electronLaunchRecords);
-			const electronCleanupResults = await cleanupActiveElectronHostLaunches({
+			const electronCleanupResults = getActiveElectronRecords(electronRecordsToCleanup).length === 0 ? [] : await (await import("./lib/orchestration/electron-host/index.js")).cleanupActiveElectronHostLaunches({
 				attachedSessionKeys,
 				cwd: shutdownCwd,
 				electronChildProcesses,
@@ -1671,6 +1664,8 @@ export default function agentBrowserExtension(
 			const compiledElectron = resolvedInput.kind === "electron" ? resolvedInput.compiledElectron : undefined;
 			const redactedCompiledElectron = resolvedInput.kind === "electron" ? resolvedInput.redactedCompiledElectron : undefined;
 			const runElectronHostInput = async (executionSignal = signal) => {
+				if (!compiledElectron) return undefined;
+				const { handleElectronHostInput } = await import("./lib/orchestration/electron-host/index.js");
 				const electronHostLaunchRecords = getElectronHostLaunchRecordsForInput({
 					branchRecords: electronLaunchRecords,
 					compiledElectron,

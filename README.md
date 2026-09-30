@@ -10,7 +10,7 @@ Development host dependencies are pinned to official Pi **0.99.1**, with wildcar
 
 Run in an empty HOME with a **short** TMPDIR outside your real home. Long temporary paths can exceed macOS's 103-byte Unix socket limit; keep the fixture's socket safety checks intact. Real-browser/checkpoint controls, live upstream help sampling, lifecycle dogfood, and platform qualification remain the separate gates documented below. A Pi-only compatibility run uses no live browser profiles, credentials, or agent-browser fork, and does not certify those external integrations.
 
-For the 0.6.16 compatibility rollout, the owner explicitly waived Windows qualification on 2026-09-21. Windows diagnostics and failures remain visible but nonblocking; this is **not** a Windows full-suite pass. Linux/macOS, declared Node floors, official/fork host and consumer-artifact checks remain required. Known Windows failures and follow-up are tracked in [#191](https://github.com/fitchmultz/pi-agent-browser-native/issues/191); see the [current support evidence](docs/SUPPORT_MATRIX.md#current-0616-rollout).
+Native Windows official/fork full-contract and package checks are required for Pi 0.99.1 alignment, alongside Linux/macOS, declared floors and consumer checks. The earlier 0.6.16 Windows waiver is historical, not a current exemption or a Windows pass. Its diagnostics remain in [#191](https://github.com/fitchmultz/pi-agent-browser-native/issues/191) and the [0.6.16 support record](docs/SUPPORT_MATRIX.md#current-0616-rollout); see [current qualification](docs/RELEASE.md#platform-qualification).
 
 ## Source-of-truth map
 

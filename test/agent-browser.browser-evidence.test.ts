@@ -3,7 +3,7 @@ import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import test from "node:test";
 
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
@@ -92,9 +92,9 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`);
 				assert.deepEqual((await readInvocationLog(logPath)).map(row => extractUpstreamCommandTokens(row.args)), [args]);
 			}
 			const nativeSpawn = childProcess.spawn;
-			const spawned: string[][] = [];
+			const spawned: Array<{ file: string; args: string[] }> = [];
 			t.mock.method(childProcess, "spawn", (...args: Parameters<typeof childProcess.spawn>) => {
-				if (Array.isArray(args[1]) && args[1].includes("--json")) spawned.push([...args[1]]);
+				if (basename(args[0]).toLowerCase() !== "taskkill.exe") spawned.push({ file: args[0], args: Array.isArray(args[1]) ? [...args[1]] : [] });
 				return nativeSpawn(...args);
 			});
 			syncBuiltinESMExports();
@@ -110,7 +110,9 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`);
 					assert.equal(timeout.details?.failureCategory, "timeout");
 					assert.equal(timeout.details?.agentBrowserStarted, true);
 					// Observe real spawns: a short watchdog can expire before a slow fixture Node reaches its log write.
-					assert.deepEqual(spawned.map(args => extractUpstreamCommandTokens(args)[0]), [params.args[0]]);
+					assert.equal(spawned.length, 1, JSON.stringify(spawned));
+					assert.ok(Array.isArray(timeout.details?.effectiveArgs));
+					assert.deepEqual(extractUpstreamCommandTokens(timeout.details.effectiveArgs), params.args);
 				}
 			} finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 			await writeFile(logPath, "");

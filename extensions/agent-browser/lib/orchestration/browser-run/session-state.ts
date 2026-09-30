@@ -37,6 +37,7 @@ import {
 } from "../../command-taxonomy.js";
 import { chooseOpenResultTabCorrection, type OpenResultTabCorrection } from "../../runtime.js";
 import { isRecord, parseRefId } from "../../parsing.js";
+import { getBrowserResultMessage } from "../../browser-transcript.js";
 import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
 import { findFirstPositionalArgument } from "./prepare/wait-timeouts.js";
 import type { AboutBlankSessionMismatch,
@@ -739,6 +740,50 @@ export function getLiveElectronRendererTargets(targets: ElectronCdpTarget[]): El
 export function electronTargetLabel(target: ElectronCdpTarget | undefined): string {
 	if (!target) return "unknown target";
 	return [target.title, target.url, target.id].find((value) => typeof value === "string" && value.trim().length > 0) ?? "unknown target";
+}
+
+export const ELECTRON_PROFILE_ISOLATION_NOTE = "Profile note: electron.launch starts an isolated temporary profile; it does not reuse the app's normal signed-in profile or attach to an already-running authenticated app.";
+export const ELECTRON_EXISTING_AUTH_GUIDANCE = "For already-authenticated desktop app content, do not stop here: if host tools are allowed and the app is not running, launch the normal app with --remote-debugging-port=<port>, verify the port, then run agent_browser connect <port>; if it is already running without a debug port, ask before relaunching it.";
+export const ELECTRON_PROFILE_ISOLATION_DETAILS = {
+	attachesToAlreadyRunningApp: false,
+	existingAuthenticatedAppGuidance: ELECTRON_EXISTING_AUTH_GUIDANCE,
+	hostDebugLaunchExample: "macOS: open -a <App Name> --args --remote-debugging-port=9222 --remote-allow-origins='*'; then agent_browser connect 9222 with sessionMode=fresh",
+	isolatedLaunch: true,
+	note: ELECTRON_PROFILE_ISOLATION_NOTE,
+	reusesExistingSignedInProfile: false,
+} as const;
+export const ELECTRON_POST_COMMAND_STATUS_SETTLE_MS = 250;
+
+function isElectronLaunchRecord(value: unknown): value is ElectronLaunchRecord {
+	if (!isRecord(value)) return false;
+	return value.version === 1 &&
+		value.launchedByWrapper === true &&
+		(value.namespace === undefined || typeof value.namespace === "string") &&
+		typeof value.launchId === "string" &&
+		typeof value.appName === "string" &&
+		typeof value.executablePath === "string" &&
+		typeof value.userDataDir === "string" &&
+		typeof value.port === "number" &&
+		typeof value.createdAtMs === "number";
+}
+
+export function restoreElectronLaunchRecordsFromBranch(branch: unknown[]): Map<string, ElectronLaunchRecord> {
+	const records = new Map<string, ElectronLaunchRecord>();
+	for (const entry of branch) {
+		const message = getBrowserResultMessage(entry);
+		if (!message) continue;
+		const details = isRecord(message.details) ? message.details : undefined;
+		const electron = isRecord(details?.electron) ? details.electron : undefined;
+		if (!electron) continue;
+		const namespace = typeof details?.namespace === "string" ? details.namespace : undefined;
+		const launch = isElectronLaunchRecord(electron.launch) ? electron.launch : undefined;
+		if (launch) records.set(launch.launchId, { ...launch, namespace: launch.namespace ?? namespace });
+		const cleanupRecords = isRecord(electron.cleanup) && Array.isArray(electron.cleanup.records) ? electron.cleanup.records : [];
+		for (const cleanupRecord of cleanupRecords) {
+			if (isElectronLaunchRecord(cleanupRecord)) records.set(cleanupRecord.launchId, { ...cleanupRecord, namespace: cleanupRecord.namespace ?? namespace });
+		}
+	}
+	return records;
 }
 
 export function getActiveElectronRecords(records: Map<string, ElectronLaunchRecord>): ElectronLaunchRecord[] {

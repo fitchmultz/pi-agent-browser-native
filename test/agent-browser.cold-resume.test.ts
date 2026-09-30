@@ -26,6 +26,7 @@ type ResumedPage = {
 
 async function withResumedPage(run: (page: ResumedPage) => Promise<void>, options: { live?: boolean; restoreDisabled?: boolean; explicit?: boolean; attached?: boolean } = {}): Promise<void> {
 	const root = await mkdtemp(join(tmpdir(), "cold-"));
+	const sockets = process.platform === "darwin" ? await mkdtemp("/private/var/tmp/crs-") : join(root, "s");
 	const cwd = join(root, "g");
 	const home = join(root, "h");
 	const logPath = join(root, "calls.jsonl");
@@ -69,7 +70,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 			AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64),
 			AGENT_BROWSER_NAMESPACE: "",
 			AGENT_BROWSER_CONFIG: undefined,
-			PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"),
+			PI_AGENT_BROWSER_SOCKET_DIR: sockets,
 			PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: options.restoreDisabled ? "0" : undefined,
 			PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
 		}, async () => {
@@ -99,6 +100,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 		});
 	} finally {
 		await rm(root, { recursive: true, force: true });
+		if (process.platform === "darwin") await rm(sockets, { recursive: true, force: true });
 	}
 }
 

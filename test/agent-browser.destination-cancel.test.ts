@@ -41,6 +41,7 @@ type Page = {
 
 async function withPage(run: (page: Page) => Promise<void>, options: { cold?: boolean; callerOwned?: boolean } = {}): Promise<void> {
 	const root = await mkdtemp(join(tmpdir(), "dc-"));
+	const sockets = process.platform === "darwin" ? await mkdtemp("/private/var/tmp/dcs-") : join(root, "s");
 	const cwd = join(root, "g"), home = join(root, "h");
 	const statePath = join(root, "browser.json"), logPath = join(root, "calls.jsonl"), marker = join(root, "open-started");
 	await Promise.all([cwd, home].map((path) => mkdir(path, { mode: 0o700 })));
@@ -118,7 +119,7 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 			PATH: `${root}${delimiter}${process.env.PATH ?? ""}`, HOME: home, USERPROFILE: home,
 			// Enabled-restore scenarios need the native Windows storage prerequisite too.
 			AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64),
-			PI_CODING_AGENT_DIR: join(root, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"),
+			PI_CODING_AGENT_DIR: join(root, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: sockets,
 			AGENT_BROWSER_NAMESPACE: "", PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
 		}, async () => {
 			const branch: unknown[] = [];
@@ -158,7 +159,10 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 				});
 			} finally { await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx); }
 		});
-	} finally { await rm(root, { recursive: true, force: true }); }
+	} finally {
+		await rm(root, { recursive: true, force: true });
+		if (process.platform === "darwin") await rm(sockets, { recursive: true, force: true });
+	}
 }
 
 for (const command of destinations) {

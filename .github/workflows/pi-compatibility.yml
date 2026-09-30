@@ -92,6 +92,71 @@ jobs:
           node scripts/ci-host-compat.mjs fork full "$GITHUB_WORKSPACE/automation" "$RUNNER_TEMP/fork-package"
           git diff --exit-code
 
+  windows:
+    name: Windows ${{ matrix.host }} / Node 24
+    runs-on: windows-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [locked, fork]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: matrix.host == 'fork'
+        id: fork
+        with:
+          repository: fitchmultz/pi
+          ref: main
+          path: pi-host
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Initialize native Windows module discovery for bash
+        shell: pwsh
+        run: '"PSModulePath=$env:PSModulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+      - name: Use the package npm version
+        run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
+      - name: Build the current fork packages
+        if: matrix.host == 'fork'
+        working-directory: pi-host
+        env:
+          PI_FORK_REF: ${{ steps.fork.outputs.commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$PI_FORK_REF"
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run hydrate:model-data
+          PI_OFFLINE=1 PI_TELEMETRY=0 npm run build:offline
+          node ../automation/scripts/pack-fork.mjs . "$RUNNER_TEMP/fork-package" "$PI_FORK_REF"
+          git diff --exit-code
+      - name: Qualify the native Windows full contract and package
+        working-directory: extension
+        env:
+          PI_COMPAT_HOST_FLAVOR: ${{ matrix.host }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [[ "$PI_COMPAT_HOST_FLAVOR" == fork ]]; then
+            node scripts/ci-host-compat.mjs fork full "$GITHUB_WORKSPACE/automation" "$RUNNER_TEMP/fork-package"
+          else
+            node scripts/ci-host-compat.mjs locked full "$GITHUB_WORKSPACE/automation"
+          fi
+          git diff --exit-code
+
   macos:
     name: macOS package smoke
     runs-on: macos-latest

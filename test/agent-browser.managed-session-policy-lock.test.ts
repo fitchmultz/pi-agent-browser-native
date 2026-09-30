@@ -223,41 +223,47 @@ test("managed session policy lock excludes a live owner in another process", asy
 	await recovered.release();
 });
 
-test("competing cross-process reclaimers stay serialized after a stale claim", async () => {
-	const moduleUrl = new URL("../extensions/agent-browser/lib/managed-session-policy-lock.ts", import.meta.url).href;
-	const staleScript = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
-	const stale = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", staleScript], { stdio: "ignore" });
-	const [staleCode] = await once(stale, "exit") as [number | null];
-	assert.equal(staleCode, 0);
-	await onlyClaimPath();
+for (const identityDelayMs of [0, 350, 550]) {
+	test(`competing cross-process reclaimers stay serialized after a stale claim with ${identityDelayMs}ms native identity startup`, async () => {
+		const moduleUrl = new URL("../extensions/agent-browser/lib/managed-session-policy-lock.ts", import.meta.url).href;
+		const staleScript = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
+		const stale = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", staleScript], { stdio: "ignore" });
+		const [staleCode] = await once(stale, "exit") as [number | null];
+		assert.equal(staleCode, 0);
+		await onlyClaimPath();
 
-	const logPath = join(dirname(lockBasePath), `${basename(lockBasePath)}.critical.log`);
-	const contenderScript = `import fs from "node:fs"; import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)}, timeoutMs: 1000 }); if (!lock) process.exit(2); fs.appendFileSync(${JSON.stringify(logPath)}, "start:" + process.pid + "\\n"); await new Promise((resolve) => setTimeout(resolve, 25)); fs.appendFileSync(${JSON.stringify(logPath)}, "end:" + process.pid + "\\n"); await lock.release();`;
-	try {
-		const contenders = Array.from({ length: 4 }, () => {
-			const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", contenderScript], { stdio: ["ignore", "ignore", "pipe"] });
-			let stderr = "";
-			child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-			return { child, exit: once(child, "exit"), getStderr: () => stderr };
-		});
-		for (const contender of contenders) {
-			const [code] = await contender.exit as [number | null];
-			assert.equal(code, 0, contender.getStderr());
+		const logPath = join(dirname(lockBasePath), `${basename(lockBasePath)}.critical.log`);
+		const contenderScript = `import fs from "node:fs"; import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const started = Date.now(); const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)}, timeoutMs: 1000 }); if (!lock) { console.error(JSON.stringify({ phase: "acquisition", pid: process.pid, elapsed: Date.now() - started })); process.exit(2); } fs.appendFileSync(${JSON.stringify(logPath)}, "start:" + process.pid + "\\n"); await new Promise((resolve) => setTimeout(resolve, 25)); fs.appendFileSync(${JSON.stringify(logPath)}, "end:" + process.pid + "\\n"); await lock.release();`;
+		try {
+			const contenders = Array.from({ length: 4 }, () => {
+				const child = spawn(process.execPath, ["--import", "tsx", "--import", new URL("./helpers/native-identity-startup.mjs", import.meta.url).href, "--input-type=module", "--eval", contenderScript], {
+					env: { ...process.env, PIAB_TEST_IDENTITY_DELAY_MS: String(identityDelayMs) },
+					stdio: ["ignore", "ignore", "pipe"],
+				});
+				let stderr = "";
+				child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+				return { exit: once(child, "exit"), getStderr: () => stderr };
+			});
+			const exits = await Promise.all(contenders.map(contender => contender.exit));
+			for (const [index, [code]] of exits.entries()) {
+				assert.equal(code, 0, contenders[index]?.getStderr());
+			}
+			const lines = (await readFile(logPath, "utf8")).trim().split("\n");
+			assert.equal(lines.length, 8, "all four contenders must enter and leave");
+			let active = 0;
+			let maxActive = 0;
+			for (const line of lines) {
+				active += line.startsWith("start:") ? 1 : -1;
+				maxActive = Math.max(maxActive, active);
+				assert.ok(active >= 0);
+			}
+			assert.equal(active, 0);
+			assert.equal(maxActive, 1);
+		} finally {
+			await rm(logPath, { force: true });
 		}
-		const lines = (await readFile(logPath, "utf8")).trim().split("\n");
-		let active = 0;
-		let maxActive = 0;
-		for (const line of lines) {
-			active += line.startsWith("start:") ? 1 : -1;
-			maxActive = Math.max(maxActive, active);
-			assert.ok(active >= 0);
-		}
-		assert.equal(active, 0);
-		assert.equal(maxActive, 1);
-	} finally {
-		await rm(logPath, { force: true });
-	}
-});
+	});
+}
 
 test("managed session policy lock reclaims only the proven-dead immutable claim", async () => {
 	const moduleUrl = new URL("../extensions/agent-browser/lib/managed-session-policy-lock.ts", import.meta.url).href;

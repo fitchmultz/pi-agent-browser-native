@@ -2,9 +2,9 @@
 
 `pi-agent-browser-native` uses a Crabbox-backed local platform smoke gate to prove the package on macOS, Ubuntu Linux, and native Windows before release.
 
-**Current 0.6.16 rollout exception:** the owner explicitly waived Windows qualification on 2026-09-21, including available runners. Windows failures remain visible but nonblocking, not passed; no further Windows repair experiments are part of this rollout. Linux/macOS and all other required checks remain required. See [release waiver and artifact requirements](RELEASE.md#current-0616-rollout-waiver) and [follow-up #191](https://github.com/fitchmultz/pi-agent-browser-native/issues/191). The commands below are unchanged and a waived Windows result does not make the full composition a passing matrix.
+Native Windows qualification is required for the Pi 0.99.1 alignment. The owner's earlier 0.6.16 waiver is historical; its failed diagnostics remain visible in [follow-up #191](https://github.com/fitchmultz/pi-agent-browser-native/issues/191), not relabeled as passes. See [current qualification and artifact requirements](RELEASE.md#platform-qualification).
 
-Outside that rollout exception, this is a release-blocking gate. Missing setup is not a skipped pass. When a maintainer approves an [alternate native transport](#alternate-native-transports), it must prove the same target-local suites; missing upstream `agent-browser` or browser dependencies still blocks that target.
+This is a release-blocking gate. Missing setup is not a skipped pass. When a maintainer approves an [alternate native transport](#alternate-native-transports), it must prove the same target-local suites; missing upstream `agent-browser` or browser dependencies still blocks that target.
 
 ## Required release gate
 
@@ -36,11 +36,11 @@ npm run verify -- platform-smoke run --target ubuntu --suite platform-build
 | --- | --- | --- | --- |
 | `macos` | `ssh` static localhost | POSIX shell on macOS | Required |
 | `ubuntu` | `local-container` | POSIX shell in a Docker-compatible local container | Required |
-| `windows-native` | `parallels` | native Windows PowerShell over OpenSSH | Nonblocking for the owner-waived 0.6.16 rollout; otherwise required |
+| `windows-native` | `parallels` | native Windows PowerShell over OpenSSH | Required |
 
 ## Alternate native transports
 
-With maintainer approval, local macOS execution can replace localhost SSH. Routine GitHub Actions has no Windows job; the separate Crabbox/Parallels release target remains as documented above. Record alternate native checks separately from Crabbox SSH or Parallels results. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
+With maintainer approval, local macOS execution can replace localhost SSH. Routine GitHub Actions requires native Windows official/fork full-contract and package checks; those do not replace the separate Crabbox/Parallels release target above. Record alternate native checks separately from Crabbox SSH or Parallels results. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
 
 On macOS, run the unchanged commands returned by `buildPlatformBuildCommand('macos', 'pi-agent-browser-native', '24.21.0')` and `buildBrowserDogfoodCommand('macos', '0.38.1', true)` in [`scripts/platform-smoke/targets.mjs`](../scripts/platform-smoke/targets.mjs), serially in a clean private source copy. Use private HOME, npm and Pi settings, and headless browser profiles. No Remote Login or host security change is required.
 

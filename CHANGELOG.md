@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Stop waiting on obsolete native PID/start queries after their exact immutable policy claim disappears, preserving the 1,000ms acquisition deadline and fail-closed ownership checks.
+- Keep Electron execution and missing-binary diagnostics out of the cold registration graph while preserving synchronous tools, rendering and transcript replay.
+- Count native Windows CMD browser launches correctly in URL-read timeout coverage without changing transport or caller arguments.
+
+### Changed
+
+- Require native Windows official/fork full-contract and package checks in the existing PR compatibility workflow; retain Linux, macOS and native checkpoint jobs.
+
 ## 0.8.2 - 2026-09-27
 
 ### Added

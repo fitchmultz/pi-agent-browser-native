@@ -306,6 +306,22 @@ async function ownerAlive(owner: PolicyLockOwner, budget?: { signal?: AbortSigna
 	return current === undefined ? undefined : processStartIdentitiesMatch(owner.startIdentity, current);
 }
 
+async function ownerAliveWhileClaimExists(claim: PolicyLockClaim, budget: { signal?: AbortSignal; deadline?: number }): Promise<boolean | undefined> {
+	const controller = new AbortController();
+	const signal = budget.signal ? AbortSignal.any([budget.signal, controller.signal]) : controller.signal;
+	const disappearance = (async () => {
+		while (!signal.aborted) {
+			try { await lstat(claim.path); }
+			catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") { controller.abort(); return; }
+			}
+			await waitForRetry(signal);
+		}
+	})();
+	try { return await ownerAlive(claim.owner, { ...budget, signal }); }
+	finally { controller.abort(); await disappearance; }
+}
+
 async function removeClaimOwnedBy(path: string, token: string, deadline = 0): Promise<boolean> {
 	const movedPath = join(dirname(path), `.pi-agent-browser-policy-remove-${token}-${randomUUID()}`);
 	while (true) {
@@ -443,7 +459,7 @@ async function acquireExecutionClaim(options: {
 				// Choosing is transient: a later published ticket must not make
 				// its predecessor wait on it using an earlier null snapshot.
 				if (await hasPublishedLaterTicket(claim, ownClaim)) continue;
-				const alive = await ownerAlive(claim.owner, budget);
+				const alive = await ownerAliveWhileClaimExists(claim, budget);
 				if (alive === false) {
 					await removeClaimOwnedBy(claim.path, claim.owner.token);
 					continue;
