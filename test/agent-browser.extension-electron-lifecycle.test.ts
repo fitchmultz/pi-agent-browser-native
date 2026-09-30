@@ -26,6 +26,7 @@ import {
 	createExtensionHarness,
 	createToolBranchEntry,
 	executeRegisteredTool,
+	executeRegisteredToolWithControlledTimeout,
 	readInvocationLog,
 	runExtensionEvent,
 	withPatchedEnv,
@@ -1008,15 +1009,16 @@ else write({ ok: true, title: currentPage().title, url: currentPage().url });`,
 	}
 });
 
-test("agentBrowserExtension applies electron.probe timeoutMs to bounded subprocess probes", { concurrency: false }, async () => {
+test("agentBrowserExtension applies electron.probe timeoutMs to bounded subprocess probes", { concurrency: false }, async (t) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-timeout-"));
 	const logPath = join(tempDir, "agent-browser.log");
+	const holdPath = join(tempDir, "hold-probe");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-const valueFlags = new Set(["--session"]);
+const valueFlags = new Set(["--session", "--namespace"]);
 let commandIndex = -1;
 for (let i = 0; i < args.length; i += 1) {
 	const token = args[i];
@@ -1036,9 +1038,11 @@ if (command === "open") {
 	process.stdout.write(JSON.stringify({ success: true, data: { title: "Safe", url: "https://safe.example/" } }));
 	return;
 }
-setTimeout(() => {
+if (fs.existsSync(${JSON.stringify(holdPath)})) {
+	setInterval(() => {}, 60_000);
+} else {
 	process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
-}, 200);`,
+}`,
 	);
 
 	try {
@@ -1058,12 +1062,18 @@ setTimeout(() => {
 			const safeOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example/"] });
 			assert.equal(safeOpen.isError, false, JSON.stringify(safeOpen));
 
-			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
+			await writeFile(holdPath, "hold");
+			const probeResult = await executeRegisteredToolWithControlledTimeout(t, harness, { electron: { action: "probe", timeoutMs: 25 } }, {
+				logPath,
+				matchesInvocation: (entry) => entry.args.at(-2) === "get" && entry.args.at(-1) === "url",
+				timeoutMs: 25,
+			});
 			assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
 			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
 			assert.equal(probeResult.details?.failureCategory, "upstream-error", JSON.stringify(probeResult));
 			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "failed");
 			assert.match(probeResult.content[0]?.text ?? "", /Electron probe failed/);
+			assert.match(probeResult.content[0]?.text ?? "", /Electron probe failed: get url: agent-browser process exited with code \d+/);
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });

@@ -35,6 +35,7 @@ import {
 	createExtensionHarness,
 	getBrowserInstructions,
 	executeRegisteredTool,
+	executeRegisteredToolWithControlledTimeout,
 	readInvocationLog,
 	runExtensionEvent,
 	runExtensionEventResults,
@@ -620,8 +621,9 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Modal"
 	}
 });
 
-test("agentBrowserExtension bounds dialog recovery commands and exposes recovery actions", { concurrency: false }, async () => {
+test("agentBrowserExtension bounds dialog recovery commands and exposes recovery actions", { concurrency: false }, async (t) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-dialog-timeout-"));
+	const logPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -630,6 +632,7 @@ const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm"))) {
   setInterval(() => {}, 60_000);
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
 }`,
@@ -640,7 +643,9 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["dialog", "status"] });
+			const result = await executeRegisteredToolWithControlledTimeout(t, harness, { args: ["dialog", "status"] }, {
+				logPath, matchesInvocation: (entry) => entry.args.includes("dialog"), timeoutMs: 50,
+			});
 			assert.equal(result.isError, true);
 			assert.equal(result.details?.failureCategory, "timeout");
 			assert.equal(result.details?.timeoutMs, 50);
@@ -649,11 +654,16 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 			assert.ok(nextActions?.some((action) => action.id === "dismiss-dialog-after-timeout"));
 			assert.ok(nextActions?.some((action) => action.id === "recover-fresh-session-after-dialog-timeout" && action.params?.sessionMode === "fresh"));
 
-			const explicitTimeoutResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["dialog", "status"], timeoutMs: 75 });
+			const explicitTimeoutResult = await executeRegisteredToolWithControlledTimeout(t, harness, { args: ["dialog", "status"], timeoutMs: 75 }, {
+				logPath, matchesInvocation: (entry) => entry.args.includes("dialog"), timeoutMs: 75,
+			});
 			assert.equal(explicitTimeoutResult.isError, true);
+			assert.equal(explicitTimeoutResult.details?.failureCategory, "timeout");
 			assert.equal(explicitTimeoutResult.details?.timeoutMs, 75);
 
-			const evalResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["eval", "--stdin"], stdin: "confirm('Continue?')" });
+			const evalResult = await executeRegisteredToolWithControlledTimeout(t, harness, { args: ["eval", "--stdin"], stdin: "confirm('Continue?')" }, {
+				logPath, matchesInvocation: (entry) => entry.args.includes("eval") && entry.stdin === "confirm('Continue?')", timeoutMs: 60,
+			});
 			assert.equal(evalResult.isError, true);
 			assert.equal(evalResult.details?.failureCategory, "timeout");
 			assert.equal(evalResult.details?.timeoutMs, 60);

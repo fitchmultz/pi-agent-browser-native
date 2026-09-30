@@ -15,6 +15,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { execPath as nodeExecPath, platform as processPlatform } from "node:process";
+import type { TestContext } from "node:test";
 
 import type {
 	AgentToolResult,
@@ -733,6 +734,48 @@ export async function readInvocationLog(logPath: string): Promise<InvocationLogE
 			return [];
 		}
 		throw error;
+	}
+}
+
+export async function executeRegisteredToolWithControlledTimeout(
+	t: TestContext,
+	harness: ReturnType<typeof createExtensionHarness>,
+	params: AgentBrowserToolParams,
+	options: { logPath: string; matchesInvocation: (entry: InvocationLogEntry) => boolean; timeoutMs: number },
+) {
+	const realNow = Date.now;
+	const realSetTimeout = setTimeout;
+	const realClearTimeout = clearTimeout;
+	const initialCount = (await readInvocationLog(options.logPath)).length;
+	const controller = new AbortController();
+	let completionTimer: NodeJS.Timeout | undefined;
+	// Freeze coordination deadlines too, but leave native process/identity I/O real.
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realNow() });
+	const pending = executeRegisteredTool(harness.tool, harness.ctx, params, controller.signal);
+	let completed = false;
+	const drained = pending.then(() => { completed = true; }, () => { completed = true; });
+	try {
+		const deadline = realNow() + 5_000;
+		while (!(await readInvocationLog(options.logPath)).slice(initialCount).some(options.matchesInvocation)) {
+			assert.equal(completed, false, "tool completed before the intended watchdog child dispatched");
+			assert.ok(realNow() < deadline, "intended watchdog child must dispatch");
+			await new Promise((resolve) => realSetTimeout(resolve, 5));
+		}
+		t.mock.timers.tick(options.timeoutMs - 1);
+		await new Promise((resolve) => realSetTimeout(resolve, 5));
+		assert.equal(completed, false, "held child must not complete before its watchdog deadline");
+		t.mock.timers.tick(1);
+		return await Promise.race([
+			pending,
+			new Promise<never>((_resolve, reject) => {
+				completionTimer = realSetTimeout(() => reject(new Error("watchdog did not stop the dispatched child")), 5_000);
+			}),
+		]);
+	} finally {
+		realClearTimeout(completionTimer);
+		t.mock.timers.reset();
+		controller.abort();
+		await drained;
 	}
 }
 
