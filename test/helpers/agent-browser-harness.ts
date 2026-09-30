@@ -765,6 +765,8 @@ export async function executeRegisteredToolWithControlledTimeout(
 		await new Promise((resolve) => realSetTimeout(resolve, 5));
 		assert.equal(completed, false, "held child must not complete before its watchdog deadline");
 		t.mock.timers.tick(1);
+		// Native child receipts and filesystem mtimes must not be ahead of the recovery clock.
+		t.mock.timers.setTime(Math.max(Date.now(), realNow()));
 		return await Promise.race([
 			pending,
 			new Promise<never>((_resolve, reject) => {

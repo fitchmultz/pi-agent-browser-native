@@ -8,7 +8,7 @@ import { recoverRecordingStop } from "../extensions/agent-browser/lib/orchestrat
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
-import { createExtensionHarness, createToolBranchEntry, executeRegisteredTool, readInvocationLog, runExtensionEvent, withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
+import { createExtensionHarness, createToolBranchEntry, executeRegisteredTool, executeRegisteredToolWithControlledTimeout, readInvocationLog, runExtensionEvent, withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
 
 async function withRecorder(mode: string, run: (options: {
 	root: string;
@@ -21,7 +21,6 @@ async function withRecorder(mode: string, run: (options: {
 	const logPath = join(root, "calls.jsonl"), statePath = join(root, "state.json");
 	await writeFakeAgentBrowserBinary(root, `const fs = require('node:fs'), path = require('node:path');
 const args = process.argv.slice(2), stdin = fs.readFileSync(0, 'utf8');
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + '\\n');
 const tokens = [];
 for (let i = 0; i < args.length; i++) {
   if (['--session', '--namespace'].includes(args[i])) i++;
@@ -81,6 +80,8 @@ if (tokens[0] === 'batch') {
   try { const data = execute(tokens); if (data !== undefined) output = { success: data.success !== false, data, error: data.error }; }
   catch (error) { output = { success: false, error: error.message }; }
 }
+// Publish readiness only after the native command has persisted its recording state.
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + '\\n');
 if (output !== undefined && (tokens[0] !== 'batch' || mode === 'mixed-failure')) { process.stdout.write(JSON.stringify(output)); process.exitCode = Array.isArray(output) ? Number(output.some(row => row.success === false)) : output.success === false ? 1 : 0; }
 `);
 	try {
@@ -135,7 +136,7 @@ for (const outputPrefix of ["", "@"]) {
 }
 
 for (const mode of ["timeout", "no-recording", "no-recording-no-receipt", "old-receipt", "pending-reused-path", "id-mismatch", "namespace-mismatch", "path-mismatch", "file-mismatch", "no-receipt", "query-failed", "timeout-native-failed", "encode-failed"]) {
-	test(`record stop receipt recovery: ${mode}`, { concurrency: false }, async () => {
+	test(`record stop receipt recovery: ${mode}`, { concurrency: false }, async (t) => {
 		await withRecorder(mode, async ({ root, logPath, harness, prefix, reload }) => {
 			const started = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "record", "start", join(root, "capture.webm")] });
 			assert.equal(started.isError, false, started.content[0]?.text);
@@ -145,7 +146,13 @@ for (const mode of ["timeout", "no-recording", "no-recording-no-receipt", "old-r
 			}
 			await writeFile(logPath, "");
 			const outputPath = join(root, "receipt.json");
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--json", "record", "stop"], timeoutMs: 200, outputPath });
+			const params = { args: [...prefix, "--json", "record", "stop"], timeoutMs: 200, outputPath };
+			const timesOut = !["no-recording", "no-recording-no-receipt", "old-receipt", "encode-failed"].includes(mode);
+			const result = timesOut
+				? await executeRegisteredToolWithControlledTimeout(t, harness, params, {
+					logPath, matchesInvocation: entry => extractUpstreamCommandTokens(entry.args).join(" ") === "record stop", timeoutMs: 200,
+				})
+				: await executeRegisteredTool(harness.tool, harness.ctx, params);
 			const healed = ["timeout", "no-recording", "old-receipt"].includes(mode);
 			assert.equal(result.isError, !healed, result.content[0]?.text);
 			const visible = JSON.parse(result.content[0]?.text ?? "");
@@ -153,6 +160,10 @@ for (const mode of ["timeout", "no-recording", "no-recording-no-receipt", "old-r
 			const exported = JSON.parse(await readFile(outputPath, "utf8"));
 			assert.equal(exported.success, healed);
 			assert.equal(exported.attempt.success, false);
+			if (timesOut) {
+				assert.equal(result.details?.timeoutMs, 200);
+				assert.equal(exported.recordingRecovery.attempt.timedOut, true);
+			}
 			assert.equal(exported.artifacts[0].exists, true);
 			const recovery = exported.recordingRecovery;
 			if (mode !== "encode-failed") {
@@ -244,11 +255,14 @@ test("a no-recording failure without start metadata still exports an honest empt
 });
 
 for (const mode of ["timeout", "stale-batch"]) {
-	test(`timed-out raw recording batch keeps receipt evidence without claiming other steps succeeded: ${mode}`, { concurrency: false }, async () => {
+	test(`timed-out raw recording batch keeps receipt evidence without claiming other steps succeeded: ${mode}`, { concurrency: false }, async (t) => {
 		await withRecorder(mode, async ({ root, logPath, harness, prefix }) => {
 			const path = join(root, "raw.webm"), outputPath = join(root, "batch-receipt.json");
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "batch", `record start ${JSON.stringify(path)}`, "record stop"], stdin: JSON.stringify([["record", "start", join(root, "ignored.webm")], ["record", "stop"]]), timeoutMs: 200, outputPath });
+			const result = await executeRegisteredToolWithControlledTimeout(t, harness, { args: [...prefix, "batch", `record start ${JSON.stringify(path)}`, "record stop"], stdin: JSON.stringify([["record", "start", join(root, "ignored.webm")], ["record", "stop"]]), timeoutMs: 200, outputPath }, {
+				logPath, matchesInvocation: entry => extractUpstreamCommandTokens(entry.args)[0] === "batch", timeoutMs: 200,
+			});
 			assert.equal(result.isError, true, "a recording receipt cannot prove all timed-out batch steps succeeded");
+			assert.equal(result.details?.timeoutMs, 200);
 			assert.equal((result.details?.outputFile as { status?: string } | undefined)?.status, "saved", JSON.stringify(result));
 			const exported = JSON.parse(await readFile(outputPath, "utf8"));
 			assert.equal(exported.recordingRecovery.expected.absolutePath, path);
