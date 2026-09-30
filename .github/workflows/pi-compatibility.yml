@@ -151,9 +151,9 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           if [[ "$PI_COMPAT_HOST_FLAVOR" == fork ]]; then
-            node scripts/ci-host-compat.mjs fork full "$GITHUB_WORKSPACE/automation" "$RUNNER_TEMP/fork-package"
+            npm exec --offline --call "node scripts/ci-host-compat.mjs fork full \"$GITHUB_WORKSPACE/automation\" \"$RUNNER_TEMP/fork-package\""
           else
-            node scripts/ci-host-compat.mjs locked full "$GITHUB_WORKSPACE/automation"
+            npm exec --offline --call "node scripts/ci-host-compat.mjs locked full \"$GITHUB_WORKSPACE/automation\""
           fi
           git diff --exit-code
 
