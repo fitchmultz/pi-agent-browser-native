@@ -287,6 +287,7 @@ for (const outcome of process.platform === "win32" ? ["released", "aborted", "to
 		let candidatePath: string | undefined;
 		let collisionPath: string | undefined;
 		let nativeConflict = false;
+		let publicationAttempts = 0;
 		t.mock.method(fs, "writeFile", async (...args: Parameters<typeof fs.writeFile>) => {
 			await nativeWriteFile(...args);
 			const path = String(args[0]);
@@ -296,6 +297,7 @@ for (const outcome of process.platform === "win32" ? ["released", "aborted", "to
 			}
 		});
 		t.mock.method(fs, "rename", async (...args: Parameters<typeof fs.rename>) => {
+			if (String(args[0]) === candidatePath) publicationAttempts++;
 			try { return await nativeRename(...args); } catch (error) {
 				if (String(args[0]) === candidatePath && (error as NodeJS.ErrnoException).code === "EPERM") {
 					nativeConflict = true;
@@ -306,7 +308,7 @@ for (const outcome of process.platform === "win32" ? ["released", "aborted", "to
 						const owner = JSON.parse(await readFile(path, "utf8"));
 						await nativeWriteFile(path, outcome === "malformed" ? "{" : JSON.stringify({ ...owner, token: "replacement" }));
 					}
-					if (outcome === "destination") {
+					if (outcome === "destination" && !collisionPath) {
 						collisionPath = String(args[1]);
 						await mkdir(collisionPath);
 						await nativeWriteFile(join(collisionPath, "collision"), "untouched");
@@ -324,6 +326,7 @@ for (const outcome of process.platform === "win32" ? ["released", "aborted", "to
 				await lock.release();
 			} else assert.equal(lock, undefined, "unsafe, cancelled or still-busy publication must not admit execution");
 			if (process.platform === "win32") assert.equal(nativeConflict, true, "the real native conflict must be reached");
+			if (outcome === "destination") assert.equal(publicationAttempts, 1, "a destination collision must not be retried");
 			if (collisionPath) assert.equal(await readFile(join(collisionPath, "collision"), "utf8"), "untouched");
 			else assert.deepEqual(await claimPaths(), []);
 		} finally {
