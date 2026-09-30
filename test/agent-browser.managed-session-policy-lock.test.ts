@@ -223,7 +223,8 @@ test("managed session policy lock excludes a live owner in another process", asy
 	await recovered.release();
 });
 
-for (const identityDelayMs of [0, 350, 550]) {
+// Model Windows startup latency on POSIX; Windows already uses real PowerShell.
+for (const identityDelayMs of process.platform === "win32" ? [0] : [0, 350, 550]) {
 	test(`competing cross-process reclaimers stay serialized after a stale claim with ${identityDelayMs}ms native identity startup`, async () => {
 		const moduleUrl = new URL("../extensions/agent-browser/lib/managed-session-policy-lock.ts", import.meta.url).href;
 		const staleScript = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;

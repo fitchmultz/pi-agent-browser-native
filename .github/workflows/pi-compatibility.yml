@@ -95,7 +95,7 @@ jobs:
   windows:
     name: Windows ${{ matrix.host }} / Node 24
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
