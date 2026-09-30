@@ -105,9 +105,10 @@ console.log(JSON.stringify({ success: true, data }));
 		await withPatchedEnv({ PATH: `${cwd}${delimiter}${process.env.PATH}` }, async () => {
 			const h = createExtensionHarness({ cwd });
 			await runExtensionEvent(h.handlers, "session_start", { reason: "new" }, h.ctx);
-			await Promise.all(["catalog-a", "catalog-b"].map(async (session) => {
+			const results = await Promise.allSettled(["catalog-a", "catalog-b"].map(async (session) => {
 				const call = (args: string[]) => executeRegisteredTool(h.tool, h.ctx, { args: ["--session", session, ...args] });
-				await call(["open", origin]);
+				const opened = await call(["open", origin]);
+				assert.equal(opened.isError, false, opened.content[0]?.text);
 				await writeFile(join(cwd, session), "advertise");
 				const result = await call(["get", "title"]);
 				assert.equal(result.isError, false);
@@ -121,6 +122,8 @@ console.log(JSON.stringify({ success: true, data }));
 				assert.doesNotThrow(() => JSON.parse(json.content[0]?.text ?? ""));
 				assert.ok(json.details?.webMcpCatalog);
 			}));
+			// Keep PATH and cwd alive until every started native helper has finished.
+			for (const result of results) if (result.status === "rejected") throw result.reason;
 		});
 	} finally { await rm(cwd, { recursive: true, force: true }); }
 });

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Retry native Windows policy-claim publication sharing conflicts within the existing acquisition deadline, revalidating ownership without treating destination collisions as contention.
 - Stop waiting on obsolete native PID/start queries after their exact immutable policy claim disappears or publishes a validated later ticket, preserving the 1,000ms acquisition deadline and fail-closed ownership checks.
 - Keep Electron execution and missing-binary diagnostics out of the cold registration graph while preserving synchronous tools, rendering and transcript replay.
 

@@ -15,7 +15,7 @@ import { withAgentBrowserProcessEnvironment } from "../extensions/agent-browser/
 type WorkerOptions = { identities?: Array<{ socketDir: string; namespace?: string; sessionName?: string }>; socketDir: string; namespace?: string; sessionName?: string; mode: string; statePath?: string; logPath?: string; timeoutMs?: number; ablate?: boolean };
 const workerCleanups = new WeakMap<TestContext, Array<() => Promise<void>>>();
 function worker(t: TestContext, options: WorkerOptions) {
-	const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./helpers/browser-execution-lock-worker.ts", import.meta.url)), JSON.stringify(options)], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+	const child = spawn(process.execPath, ["--import", "tsx", "--import", new URL("./helpers/native-identity-startup.mjs", import.meta.url).href, fileURLToPath(new URL("./helpers/browser-execution-lock-worker.ts", import.meta.url)), JSON.stringify(options)], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
 	const messages: Array<{ event: string; data?: unknown }> = [];
 	let stderr = "";
 	child.stderr!.on("data", chunk => { stderr += chunk; });
@@ -38,7 +38,7 @@ function worker(t: TestContext, options: WorkerOptions) {
 		child, messages,
 		send(message: string) { child.send(message); },
 		async event(event: string) {
-			await until(() => messages.some(message => message.event === event), () => `waiting for ${event}: ${JSON.stringify(messages)} ${stderr}`);
+			await until(() => messages.some(message => message.event === event), () => `waiting for ${event} from pid ${child.pid} ${JSON.stringify(options)}: ${JSON.stringify(messages)} ${stderr}`);
 			return messages.find(message => message.event === event)!;
 		},
 		async done() { const [code] = await exit; assert.equal(code, 0, stderr); },

@@ -277,6 +277,65 @@ for (const publication of ["later", "earlier", "disappearance", "cleanup-disappe
 	});
 }
 
+// Windows controls require the actual native sharing conflict, not an injected EPERM.
+for (const outcome of process.platform === "win32" ? ["released", "aborted", "token-changed", "malformed", "destination", "busy"] : ["released"]) {
+	test(`managed session policy lock handles ${outcome} during native publication sharing contention`, async (t) => {
+		const nativeWriteFile = fs.writeFile;
+		const nativeRename = fs.rename;
+		const controller = new AbortController();
+		let reader: Awaited<ReturnType<typeof fs.open>> | undefined;
+		let candidatePath: string | undefined;
+		let collisionPath: string | undefined;
+		let nativeConflict = false;
+		t.mock.method(fs, "writeFile", async (...args: Parameters<typeof fs.writeFile>) => {
+			await nativeWriteFile(...args);
+			const path = String(args[0]);
+			if (path.startsWith(`${lockBasePath}.candidate-`) && path.endsWith("owner.json")) {
+				candidatePath = dirname(path);
+				reader = await fs.open(path, "r"); // A concurrent cleanup scan reads this same file.
+			}
+		});
+		t.mock.method(fs, "rename", async (...args: Parameters<typeof fs.rename>) => {
+			try { return await nativeRename(...args); } catch (error) {
+				if (String(args[0]) === candidatePath && (error as NodeJS.ErrnoException).code === "EPERM") {
+					nativeConflict = true;
+					if (outcome !== "busy") await reader!.close();
+					if (outcome === "aborted") controller.abort();
+					if (outcome === "token-changed" || outcome === "malformed") {
+						const path = join(candidatePath!, "owner.json");
+						const owner = JSON.parse(await readFile(path, "utf8"));
+						await nativeWriteFile(path, outcome === "malformed" ? "{" : JSON.stringify({ ...owner, token: "replacement" }));
+					}
+					if (outcome === "destination") {
+						collisionPath = String(args[1]);
+						await mkdir(collisionPath);
+						await nativeWriteFile(join(collisionPath, "collision"), "untouched");
+					}
+				}
+				throw error; // Preserve the actual native conflict, not a supplied result.
+			}
+		});
+		syncBuiltinESMExports();
+		let lock;
+		try {
+			lock = await acquireManagedSessionPolicyLock({ sessionName, signal: controller.signal }); // Unchanged default 1,000ms.
+			if (outcome === "released") {
+				assert.ok(lock, "publication must survive a competing reader finishing within the deadline");
+				await lock.release();
+			} else assert.equal(lock, undefined, "unsafe, cancelled or still-busy publication must not admit execution");
+			if (process.platform === "win32") assert.equal(nativeConflict, true, "the real native conflict must be reached");
+			if (collisionPath) assert.equal(await readFile(join(collisionPath, "collision"), "utf8"), "untouched");
+			else assert.deepEqual(await claimPaths(), []);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			await reader?.close();
+			await lock?.release();
+			if (candidatePath) await rm(candidatePath, { recursive: true, force: true });
+		}
+	});
+}
+
 for (const holdMs of [0, 1_100]) {
 	test(`managed session policy lock releases after a native open-file rename conflict ${holdMs === 0 ? "within" : "after"} its acquisition wait`, async (t) => {
 		const lock = await acquireManagedSessionPolicyLock({ sessionName });

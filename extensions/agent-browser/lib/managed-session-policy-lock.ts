@@ -437,7 +437,25 @@ async function acquireExecutionClaim(options: {
 	try {
 		await mkdir(candidatePath, { mode: 0o700 });
 		await writeFile(join(candidatePath, LOCK_OWNER_FILE), ownerContent, { encoding: "utf8", flag: "wx", mode: 0o600 });
-		await rename(candidatePath, claimPath);
+		while (true) {
+			try {
+				await rename(candidatePath, claimPath);
+				break;
+			} catch (error) {
+				// A concurrent cleanup scan can still be reading this live candidate.
+				if (platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM"
+					|| options.signal?.aborted || Date.now() >= deadline) return undefined;
+				try {
+					await lstat(claimPath);
+					return undefined; // A destination collision is not a sharing conflict.
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+				}
+				await waitForRetry(options.signal);
+				const candidate = await readClaim(candidatePath);
+				if (candidate?.owner.token !== token || options.signal?.aborted || Date.now() >= deadline) return undefined;
+			}
+		}
 		claimPublished = true;
 
 		const initialClaims = await readClaims(basePath);
