@@ -98,7 +98,7 @@
     "startup-profile": "node ./scripts/profile-startup.mjs",
     "prepare": "node ./scripts/prepare.mjs"
   },
-  "packageManager": "npm@12.1.0",
+  "packageManager": "npm@12.2.0",
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
       "optional": true
