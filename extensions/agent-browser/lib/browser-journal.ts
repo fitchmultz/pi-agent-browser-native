@@ -193,6 +193,7 @@ export async function readBrowserEntries(manager: ReadonlySessionManager, physic
 		// Public in-memory ancestry is the only fallback. No writable SessionManager is constructed.
 		return inMemory();
 	}
+	const leaf = physical ? null : manager.getLeafId();
 	let file: FileHandle;
 	try { file = await open(path, constants.O_RDONLY); }
 	catch (error) {
@@ -209,9 +210,9 @@ export async function readBrowserEntries(manager: ReadonlySessionManager, physic
 			getEntryMetadata?: (id: string) => unknown;
 			iterateEntryMetadata?: (options?: { branchFrom?: string | null }) => Iterable<{ id: string; parentId: string | null }>;
 		};
-		const selected = physical ? metadata.filter(entry => entry.value.type !== "session") : branchEntries(metadata.filter(entry => entry.value.type !== "session"), manager.getLeafId());
+		const selected = physical ? metadata.filter(entry => entry.value.type !== "session") : branchEntries(metadata.filter(entry => entry.value.type !== "session"), leaf);
 		if (publicManager.iterateEntryMetadata) {
-			const native = new Map([...publicManager.iterateEntryMetadata(physical ? {} : { branchFrom: manager.getLeafId() })].map(entry => [entry.id, entry.parentId]));
+			const native = new Map([...publicManager.iterateEntryMetadata(physical ? {} : { branchFrom: leaf })].map(entry => [entry.id, entry.parentId]));
 			for (const entry of selected) if (typeof entry.value.id !== "string" || native.get(entry.value.id) !== entry.value.parentId) throw new Error("Published browser journal ancestry differs from the native selected boundary.");
 		}
 		const projected: unknown[] = [];

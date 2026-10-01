@@ -14,7 +14,7 @@ A saved URL or map cannot prove the native browser survived. Reuse checks native
 
 ## Reading and retention
 
-Replay locates the journal through Pi's public session file, UUID and selected leaf. It token-validates complete newline-terminated records with unpacked discarded strings, projects envelopes, follows ancestry, and reads only winning snapshot bodies. An incomplete live tail remains uncommitted. Optional public metadata APIs and `getEntry()` provide structural ancestry and selected snapshot access on the maintained fork. No writable manager or private core storage is used.
+Replay locates the journal through Pi's public session file, UUID and selected leaf. It captures that leaf before asynchronous reads and uses the same boundary for file and optional native ancestry validation, so concurrent appends cannot change the branch being replayed. It token-validates complete newline-terminated records with unpacked discarded strings, projects envelopes, follows ancestry, and reads only winning snapshot bodies. An incomplete live tail remains uncommitted. Optional public metadata APIs and `getEntry()` provide structural ancestry and selected snapshot access on the maintained fork. No writable manager or private core storage is used.
 
 Official Pi 0.99.2 eagerly loads its own native journal before extension startup. This extension reduces browser write duplication and bounds extension recovery on that host; complete heap-independent host loading requires adoption of the native core repair. A caller-requested individual snapshot/result still must fit its consumer's memory. This is not an unlimited model-context or single-value API.
 

@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Keep browser replay on one captured journal branch when new entries are published during the read, avoiding a false unpublished-conversation refusal.
 - Restore extension startup in consumer installs by replaying native tool-name deltas without a dynamic host-package import (#210, #207).
 - Expose an object-rooted Electron tool schema for strict providers while preserving action-specific validation (#214).
 - Report QA checks not reached after a fail-fast error separately from executed failures, retain the redacted cause, and keep missing execution evidence unknown.

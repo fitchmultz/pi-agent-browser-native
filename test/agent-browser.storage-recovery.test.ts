@@ -24,6 +24,45 @@ async function records(file: string): Promise<Array<Record<string, unknown>>> {
 	return (await readFile(file, "utf8")).trim().split("\n").filter(line => line.trim()).map(line => JSON.parse(line));
 }
 
+for (const nativeMetadata of [false, true]) test(`published replay retains its captured branch while a new leaf is appended (${nativeMetadata ? "native metadata" : "official APIs"})`, async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-replay-boundary-"));
+	try {
+		const file = join(root, "session.jsonl");
+		const header = { type: "session", id: "fixture-session" };
+		const entry = (id: string) => ({ type: "custom", customType: BROWSER_TRANSITION_ENTRY, id, parentId: null, data: {
+			event: { version: 1, phase: "state", operationId: id, toolCallId: id, commandIndex: 0, isError: false, state: {},
+				pages: [{ key: "shared", target: { url: `https://fixture.test/${id}` }, refs: { kind: "invalidate" } }] },
+		} });
+		const before = entry("before"), after = entry("after");
+		await writeFile(file, `${JSON.stringify(header)}\n${JSON.stringify(before)}\n`);
+		let leaf = before.id, appended = false;
+		const selected = { ...manager(file, leaf), getLeafId: () => leaf, getHeader() {
+			if (!appended) {
+				// Identity validation follows the awaited scan. Publish and select another
+				// root here so both file projection and optional native ancestry must agree.
+				appendFileSync(file, `${JSON.stringify(after)}\n`);
+				leaf = after.id;
+				appended = true;
+			}
+			return header;
+		}, ...(nativeMetadata ? {
+			*iterateEntryMetadata({ branchFrom }: { branchFrom?: string | null } = {}) {
+				for (const item of [before, after]) if (branchFrom === undefined || item.id === branchFrom) yield { id: item.id, parentId: item.parentId };
+			},
+		} : {}) } as unknown as ExtensionContext["sessionManager"];
+		const first = await readBrowserEntries(selected);
+		assert.equal(appended, true, "the fixture must reach the concurrent publication window");
+		assert.equal(SessionPageState.fromBranch(first).get("shared").tabTarget?.url, "https://fixture.test/before");
+		const next = await readBrowserEntries(selected);
+		assert.equal(SessionPageState.fromBranch(next).get("shared").tabTarget?.url, "https://fixture.test/after", "the next replay observes the newly published selection");
+		leaf = "missing";
+		await assert.rejects(readBrowserEntries(selected), /Selected journal entry missing is not persisted/);
+		appendFileSync(file, JSON.stringify(entry("uncommitted")));
+		leaf = "uncommitted";
+		await assert.rejects(readBrowserEntries(selected), /Selected journal entry uncommitted is not persisted/, "an unterminated live entry remains unpublished");
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("native branch admission permits descendants and siblings without reading bodies, but validates identity and ancestry", async () => {
 	const entries = new Map<string, { id: string; parentId: string | null }>([
 		["a", { id: "a", parentId: null }], ["first", { id: "first", parentId: "a" }],

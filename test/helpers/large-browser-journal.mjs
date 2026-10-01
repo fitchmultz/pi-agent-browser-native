@@ -26,7 +26,7 @@ try {
     await file.write(JSON.stringify(header) + '\n');
     await file.write('{"type":"custom","customType":"unrelated","id":"giant","parentId":null,"timestamp":"' + timestamp + '","data":{"ignored":"');
     const chunk = Buffer.alloc(1024 * 1024, 120);
-    for (let index = 0; index < 513; index++) await file.write(chunk); // One string exceeds Node's whole-string ceiling.
+    for (let index = 0; index < 1025; index++) await file.write(chunk); // The ignored string alone exceeds 1 GiB and Node's whole-string ceiling.
     await file.write('"}}\n');
     const refIds = Array.from({ length: 34683 }, (_, index) => `e${index + 1}`);
     const target = { url: 'https://fixture.test/large#exact-fragment', targetId: 'native-target' };
