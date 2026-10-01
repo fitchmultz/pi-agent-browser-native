@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -13,6 +13,9 @@ const POLICY_LOCK_RETRY_MS = 10;
 const POLICY_LOCK_MAX_BYTES = 1_048_576; // One claim may cover an entire owned-browser cleanup set.
 const LOCK_OWNER_FILE = "owner.json";
 const LOCK_TICKET_FILE = "ticket.json";
+const STALE_CLAIM_MIN_AGE_MS = 30 * 60 * 1_000;
+const POLICY_GC_BATCH_SIZE = 8;
+let lastPolicyGcName: string | undefined;
 
 interface PolicyLockOwner {
 	// null claims the whole native namespace; other sessions may otherwise run concurrently.
@@ -220,6 +223,7 @@ function parseOwner(content: string): PolicyLockOwner | undefined {
 			&& Number.isSafeInteger(parsed.pid) && (parsed.pid ?? 0) > 0
 			&& typeof parsed.startIdentity === "string" && parsed.startIdentity.length > 0
 			&& typeof parsed.token === "string" && parsed.token.length > 0
+			&& !parsed.token.includes("/") && !parsed.token.includes("\\") && !parsed.token.includes("\0")
 			? parsed as PolicyLockOwner
 			: undefined;
 	} catch {
@@ -337,13 +341,25 @@ async function removeClaimOwnedBy(path: string, token: string, deadline = 0): Pr
 async function cleanDeadPolicyArtifacts(directory: string, budget: { signal?: AbortSignal; deadline?: number }): Promise<void> {
 	let names: string[];
 	try { names = await readdir(directory); } catch { return; }
-	for (const name of names.filter((candidate) =>
-		candidate.startsWith(".pi-agent-browser-policy-remove-")
-		|| candidate.includes(".lock-v4.candidate-"))) {
+	// ponytail: list/sort all names; stream directories if enumeration becomes the bottleneck.
+	const candidates = names.filter((name) => name.startsWith(".pi-agent-browser-policy-remove-")
+		|| /^\.pi-agent-browser-policy-[a-f0-9]{64}\.lock-v4\.(?:candidate|claim)-/.test(name)).sort();
+	if (candidates.length === 0) return;
+	const start = lastPolicyGcName === undefined ? randomInt(candidates.length)
+		: Math.max(0, candidates.findIndex((name) => name > lastPolicyGcName!));
+	const batch = Array.from({ length: Math.min(POLICY_GC_BATCH_SIZE, candidates.length) }, (_, offset) => candidates[(start + offset) % candidates.length]!);
+	lastPolicyGcName = batch.at(-1);
+	for (const name of batch) {
 		if (budget.signal?.aborted || Date.now() >= (budget.deadline ?? Infinity)) return;
 		const path = join(directory, name);
+		const published = name.includes(".lock-v4.claim-");
+		if (published) {
+			const entry = await lstat(path).catch(() => undefined);
+			if (!entry || entry.mtimeMs >= Date.now() - STALE_CLAIM_MIN_AGE_MS) continue;
+		}
 		const claim = await readClaim(path);
-		if (claim && await ownerAlive(claim.owner, budget) === false) await rm(path, { force: true, recursive: true }).catch(() => undefined);
+		if (!claim || (published && !name.endsWith(`.claim-${claim.owner.token}`))) continue;
+		if (await ownerAlive(claim.owner, budget) === false) await removeClaimOwnedBy(path, claim.owner.token).catch(() => false);
 	}
 }
 

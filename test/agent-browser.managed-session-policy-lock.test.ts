@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
-import { chmod, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
 	getBrowserExecutionLockPath,
 	resolveBrowserExecutionIdentity,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
+import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
 
 const sessionName = `piab-policy-lock-${process.pid}`;
 const originalSocketDir = process.env.PI_AGENT_BROWSER_SOCKET_DIR;
@@ -79,13 +80,151 @@ test("managed session policy lock waits asynchronously and releases only its imm
 	assert.deepEqual(await claimPaths(), []);
 });
 
-test("managed session policy lock cleans dead removal artifacts", async () => {
-	await mkdir(testOrphanPath, { mode: 0o700 });
-	await writeFile(join(testOrphanPath, "owner.json"), JSON.stringify({ pid: 2_147_483_647, startIdentity: "dead", token: "orphan", sessionNames: null, version: 4 }), { mode: 0o600 });
-	const lock = await acquireManagedSessionPolicyLock({ sessionName });
-	assert.ok(lock);
-	await assert.rejects(stat(testOrphanPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
-	await lock.release();
+test("managed session policy lock retains malformed removal tokens and reclaims valid orphan artifacts", async (t) => {
+	const malformedTokens = [
+		`../../../piab-${randomUUID()}`,
+		`..\\..\\..\\piab-${randomUUID()}`,
+		`piab-${randomUUID()}\0suffix`,
+	];
+	const malformedPaths = malformedTokens.map((_, index) => join(dirname(lockBasePath), `.pi-agent-browser-policy-remove-malformed-${process.pid}-${index}-${randomUUID()}`));
+	const fixtures = [{ path: testOrphanPath, token: "orphan" }, ...malformedPaths.map((path, index) => ({ path, token: malformedTokens[index]! }))];
+	const ownerContents = new Map<string, string>();
+	for (const fixture of fixtures) {
+		await mkdir(fixture.path, { mode: 0o700 });
+		const content = JSON.stringify({ pid: 2_147_483_647, startIdentity: "dead", token: fixture.token, sessionNames: null, version: 4 });
+		ownerContents.set(fixture.path, content);
+		await writeFile(join(fixture.path, "owner.json"), content, { mode: 0o600 });
+	}
+
+	const fixturePaths = new Set(fixtures.map(({ path }) => path));
+	const inspected = new Set<string>();
+	const renamed: Array<{ source: string; destination: string }> = [];
+	const nativeLstat = fs.lstat;
+	const nativeRename = fs.rename;
+	t.mock.method(fs, "lstat", async (...args: Parameters<typeof fs.lstat>) => {
+		if (fixturePaths.has(String(args[0]))) inspected.add(String(args[0]));
+		return nativeLstat(...args);
+	});
+	t.mock.method(fs, "rename", async (...args: Parameters<typeof fs.rename>) => {
+		const source = String(args[0]);
+		const destination = String(args[1]);
+		if (fixturePaths.has(source)) renamed.push({ source, destination });
+		return nativeRename(...args);
+	});
+	syncBuiltinESMExports();
+	try {
+		const candidates = (await readdir(dirname(lockBasePath))).filter((name) => name.startsWith(".pi-agent-browser-policy-remove-")
+			|| /^\.pi-agent-browser-policy-[a-f0-9]{64}\.lock-v4\.(?:candidate|claim)-/.test(name));
+		const maxAttempts = Math.ceil((candidates.length + 1) / 7) + 4;
+		for (let attempt = 0; attempt < maxAttempts && inspected.size < fixturePaths.size; attempt += 1) {
+			const lock = await acquireManagedSessionPolicyLock({ sessionName });
+			assert.ok(lock);
+			await lock.release();
+		}
+		assert.deepEqual([...inspected].sort(), [...fixturePaths].sort(), "GC must inspect every fixture before their outcomes are checked");
+		assert.deepEqual(renamed.filter(({ source }) => malformedPaths.includes(source)), [], "malformed tokens must never reach native rename");
+		for (const path of malformedPaths) {
+			assert.equal(await readFile(join(path, "owner.json"), "utf8"), ownerContents.get(path));
+			await stat(path);
+		}
+		assert.ok(renamed.some(({ source }) => source === testOrphanPath), "an ordinary opaque token still uses native rename cleanup");
+		await assert.rejects(stat(testOrphanPath), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		for (const { destination } of renamed) {
+			if (!destination.includes("\0")) await rm(destination, { force: true, recursive: true });
+		}
+		for (const { path } of fixtures) await rm(path, { force: true, recursive: true });
+	}
+});
+
+test("unrelated lock acquisitions bound and rotate GC without reclaiming live, young or ambiguous claims", async (t) => {
+	const first = await acquireManagedSessionPolicyLock({ sessionName });
+	assert.ok(first);
+	const liveOwner = JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8"));
+	await first.release();
+	const paths: string[] = [];
+	const old = new Date(Date.now() - 31 * 60 * 1_000);
+	const triggerNamespace = `${sessionName}-gc`;
+	try {
+		for (let index = 0; index < 16; index += 1) {
+			const token = randomUUID();
+			const path = `${lockBasePath}.claim-${token}`;
+			paths.push(path);
+			await mkdir(path, { mode: 0o700 });
+			const owner = { ...liveOwner, pid: index === 0 ? process.pid : 2_147_483_647, token };
+			if (index === 2) owner.version = 2;
+			if (index === 3) owner.startIdentity = "";
+			await writeFile(join(path, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
+			if (index !== 1) await utimes(path, old, old);
+		}
+		const exists = (path: string) => stat(path).then(() => true, () => false);
+		const inspected = new Set<string>();
+		const nativeLstat = fs.lstat;
+		t.mock.method(fs, "lstat", async (...args: Parameters<typeof fs.lstat>) => {
+			if (paths.includes(String(args[0]))) inspected.add(String(args[0]));
+			return nativeLstat(...args);
+		});
+		syncBuiltinESMExports();
+		let remaining = 12;
+		for (let attempt = 0; attempt < 32 && remaining > 0; attempt += 1) {
+			inspected.clear();
+			const lock = await acquireManagedSessionPolicyLock({ sessionName, namespace: triggerNamespace });
+			assert.ok(lock, "stale claims must not block a different session");
+			await lock.release();
+			assert.ok(inspected.size <= 8, "each acquisition inspects at most eight GC candidates, including retained ones");
+			const after = (await Promise.all(paths.slice(4).map(exists))).filter(Boolean).length;
+			assert.ok(remaining - after <= 8, "each acquisition may reclaim at most eight GC candidates");
+			remaining = after;
+		}
+		assert.equal(remaining, 0, "unrelated acquisitions must eventually collect old dead claims");
+		assert.deepEqual(await Promise.all(paths.slice(0, 4).map(exists)), [true, true, true, true]);
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		for (const path of paths) await rm(path, { force: true, recursive: true });
+	}
+});
+
+test("short-lived lock processes randomize GC past retained removal artifacts", async () => {
+	const tag = randomUUID();
+	const paths: string[] = [];
+	try {
+		for (let index = 0; index < 12; index += 1) {
+			const token = `${tag}-${index}`;
+			const path = join(dirname(lockBasePath), `.pi-agent-browser-policy-remove-${index < 8 ? "000" : "zzzz"}-${token}`);
+			paths.push(path);
+			await mkdir(path, { mode: 0o700 });
+			await writeFile(join(path, "owner.json"), JSON.stringify({
+				pid: 2_147_483_647, startIdentity: "dead", token, sessionNames: null, version: index < 8 ? 2 : 4,
+			}), { mode: 0o600 });
+		}
+		for (let attempt = 0; attempt < 4; attempt += 1) {
+			const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+				import crypto from "node:crypto";
+				import { syncBuiltinESMExports } from "node:module";
+				// Control the random draw; assert actual reclamation below.
+				crypto.randomInt = (max) => max - 1;
+				syncBuiltinESMExports();
+				const { acquireManagedSessionPolicyLock } = await import("./extensions/agent-browser/lib/managed-session-policy-lock.ts");
+				const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} });
+				if (!lock) throw new Error("unrelated acquisition failed");
+				await lock.release();
+				console.log(JSON.stringify({ done: true }));
+			`], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+			const exited = once(child, "exit");
+			try {
+				assert.deepEqual(await readChildStdoutJsonLine(child), { done: true });
+				assert.equal((await exited)[0], 0);
+			} finally { await stopChildProcess(child); }
+		}
+		assert.deepEqual(await Promise.all(paths.map(path => stat(path).then(() => true, () => false))), [
+			...Array(8).fill(true), ...Array(4).fill(false),
+		]);
+	} finally {
+		for (const path of paths) await rm(path, { force: true, recursive: true });
+	}
 });
 
 test("managed session policy lock fails closed without repairing unsafe owner metadata or POSIX permissions", async () => {

@@ -15,6 +15,7 @@
 - Restore extension startup in consumer installs by replaying native tool-name deltas without a dynamic host-package import (#210, #207).
 - Expose an object-rooted Electron tool schema for strict providers while preserving action-specific validation (#214).
 - Report QA checks not reached after a fail-fast error separately from executed failures, retain the redacted cause, and keep missing execution evidence unknown.
+- Bound crash-abandoned policy and secure-temp cleanup to eight inspected candidates per call, with randomized first windows and in-process rotation so short-lived processes do not always stall behind retained entries (#120). Preserve dead-owner proof, age floors, ambiguous/legacy owners, and protected Electron profiles.
 - Prevent dispatch after an unconfirmed begin, stop dependent code after an unconfirmed finish, and preserve observed native lifecycle effects through presentation/export failure.
 - Invalidate refs on changed or unverifiable native daemon generations, including same-URL replacement and helper captures. Restart reuses wrapper-owned launch provenance only after matching the native generation and restore key; ordinary forks cannot inherit parent Electron/script cleanup rights.
 
