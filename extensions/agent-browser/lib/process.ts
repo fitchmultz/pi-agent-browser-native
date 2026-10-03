@@ -23,7 +23,7 @@ import {
 	getPageTargetValidationError,
 } from "./page-target-validation.js";
 import { getImplicitSessionIdleTimeoutMs } from "./runtime.js";
-import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
+import { getAgentBrowserProcessArgs, getAgentBrowserProcessEnvironment } from "./process-environment.js";
 import { openSecureTempFile, writeSecureTempChunk } from "./temp.js";
 import { resolveWindowsStockLauncher } from "./windows-stock-launcher.js";
 
@@ -585,7 +585,7 @@ export async function runAgentBrowserProcess(options: {
 			return;
 		}
 		const spawnBrowser = processPlatform === "win32" && !stockLauncher ? crossSpawn : spawn;
-		const child = spawnBrowser(stockLauncher ?? "agent-browser", prepareAgentBrowserSpawnArgs(args, ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession, chromeStartupArgsContext.getStore()), {
+		const child = spawnBrowser(stockLauncher ?? "agent-browser", prepareAgentBrowserSpawnArgs(getAgentBrowserProcessArgs(args), ownedManagedSessionCompatibilityEnv.AGENT_BROWSER_USER_AGENT, preserveAttachedBrowserSession, chromeStartupArgsContext.getStore()), {
 			cwd,
 			env: childEnv,
 			stdio: ["pipe", "pipe", "pipe"],

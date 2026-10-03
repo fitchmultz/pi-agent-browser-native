@@ -7,6 +7,7 @@ import { compileAgentBrowserNetworkSourceLookup, compileAgentBrowserSourceLookup
 import { compileAgentBrowserSemanticAction } from "./input-modes/semantic-action.js";
 import { isRecord } from "./parsing.js";
 import { redactInvocationArgs } from "./runtime.js";
+import { isBooleanFlagEnabled } from "./argv-grammar.js";
 
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 160;
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 12;
@@ -201,7 +202,7 @@ function agentBrowserToolResultRequestedJson(result: AgentToolResult<unknown>, i
 	const details = isRecord(result.details) ? result.details : undefined;
 	const detailArgs = Array.isArray(details?.args) ? details.args : undefined;
 	const inputArgs = isRecord(input) && Array.isArray(input.args) ? input.args : undefined;
-	return detailArgs?.includes("--json") === true || inputArgs?.includes("--json") === true;
+	return isBooleanFlagEnabled(detailArgs ?? [], "--json") || isBooleanFlagEnabled(inputArgs ?? [], "--json");
 }
 
 function agentBrowserToolResultHasParseableJsonContent(content: AgentBrowserToolContent): boolean {

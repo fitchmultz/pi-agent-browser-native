@@ -452,6 +452,20 @@ test("buildToolPresentation keeps benign storage values visible while redacting 
 	assert.match(details, /valueRedacted/);
 });
 
+test("buildToolPresentation redacts native all-entry storage maps, including batch rows", async () => {
+	const data = { data: { refresh: "opaque-credential", theme: "dark", locale: "en-US" } };
+	for (const batch of [false, true]) {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: batch ? "batch" : "storage", subcommand: batch ? undefined : "local" },
+			cwd: process.cwd(),
+			envelope: { success: true, data: batch ? [{ command: ["storage", "local"], success: true, result: data }] : data },
+		});
+		assert.doesNotMatch(JSON.stringify(presentation), /opaque-credential/);
+		assert.match(JSON.stringify(presentation.data), /refresh/);
+		assert.match(JSON.stringify(presentation.data), /dark|en-US/);
+	}
+});
+
 test("buildToolPresentation adds routed pending network diagnostics", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "network", subcommand: "requests" },

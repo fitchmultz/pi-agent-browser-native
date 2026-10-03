@@ -60,7 +60,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const rawRows = tokens[0] === 'batch' ? tokens.slice(1).filter(token => token !== '--bail') : [];
 const batchRows = tokens[0] === 'batch' ? rawRows.length ? rawRows.map(row => row.split(' ')) : JSON.parse(stdin) : undefined;
-const data = batchRows ? batchRows.map(command => ({ command, success: true, result: { source: 'http', content: 'bearer token', url: 'https://public.test' } }))
+const data = batchRows ? batchRows.filter(row => row.length > 0).map(command => ({ command, success: true, result: { source: 'http', content: 'bearer token', url: 'https://public.test' } }))
   : tokens[0] === 'session' ? { session: args[args.indexOf('--session') + 1], active: false, runtime: null }
   : tokens[0] === 'read' && tokens[1] === 'public.test/confirm' ? { confirmation_required: true, confirmation_id: 'read-id', action: 'read', capabilities: { readRequiresConfirmation: true } }
   : tokens[0] === 'confirm' ? { confirmed: true, action: 'read', result: { success: true, data: { source: 'http', content: 'Confirmed read' } } }
@@ -76,6 +76,7 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`);
 			for (const params of [
 				...urlReads.map((args) => ({ args })),
 				{ args: ["batch"], stdin: JSON.stringify(urlReads) },
+				{ args: ["batch"], stdin: JSON.stringify([[], ...urlReads, []]) },
 				{ args: ["--profile", "/exact/untouched-profile", "read", "public.test"], sessionMode: "fresh" },
 			]) {
 				await writeFile(logPath, "");

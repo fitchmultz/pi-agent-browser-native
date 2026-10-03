@@ -58,6 +58,7 @@ if (tokens[0] === 'batch') {
   const steps = raw.length ? JSON.parse(fs.readFileSync(${JSON.stringify(join(root, "raw-steps.json"))}, 'utf8')) : JSON.parse(stdin);
   const results = [];
   for (const command of steps) {
+    if (command.length === 0) continue; // Native skips empty rows without a result placeholder.
     try { results.push({ command, success: true, result: execute(command) }); }
     catch (error) { results.push({ command, success: false, error: error.message }); process.exitCode = 1; if (tokens.includes('--bail')) break; }
   }
@@ -282,6 +283,26 @@ test("batch screenshot normalization preserves a literal double-dash selector", 
 		assert.deepEqual(JSON.parse(prepared.stdin ?? "[]"), [["screenshot", "--", join(root, "nested/capture.png")]]);
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
+
+for (const bail of [false, true]) {
+	test(`batch screenshot requests track executed rows after empty rows: bail=${bail}`, { concurrency: false }, async () => {
+		await withFixture(async (root, harness, log) => {
+			const steps = [[], ["screenshot", "first.png"], [], bail ? ["wait", "--text", "Never"] : ["get", "title"], ["screenshot", "second.png"], [], ["screenshot", "third.png"]];
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["batch", ...(bail ? ["--bail"] : [])], stdin: JSON.stringify(steps) });
+			assert.equal(result.isError, bail, result.content[0]?.text);
+			const rows = result.details?.batchSteps as Array<{ artifacts?: FileArtifactMetadata[] }>;
+			assert.equal(rows.length, bail ? 2 : 4);
+			assert.equal(rows[1].artifacts, undefined, "nonscreenshot rows keep their placeholder");
+			for (const [index, name] of bail ? [[0, "first.png"]] as const : [[0, "first.png"], [2, "second.png"], [3, "third.png"]] as const) {
+				assert.equal(rows[index].artifacts?.[0]?.requestedPath, name);
+				assert.equal(rows[index].artifacts?.[0]?.absolutePath, join(root, name));
+				assert.equal(rows[index].artifacts?.[0]?.status, "saved");
+			}
+			const invocation = (await readInvocationLog(log)).find(row => row.args.includes("batch"));
+			assert.deepEqual(JSON.parse(invocation?.stdin ?? "[]"), steps.map(row => row[0] === "screenshot" ? [row[0], join(root, row[1])] : row), "preparation preserves original empty rows and native positions");
+		});
+	});
+}
 
 test("registered artifacts retain requested and reported paths without new argv normalization", { concurrency: false }, async () => {
 	await withFixture(async (root, harness, log) => {

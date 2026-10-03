@@ -77,6 +77,7 @@ function getBatchCommandSteps(args: string[], stdin?: string): { error?: string;
 	const parsedStdin = parseUserBatchStdin(stdin);
 	if (parsedStdin.error) return { error: parsedStdin.error, steps: [] };
 	for (const step of parsedStdin.steps ?? []) {
+		if (step.length === 0) continue;
 		if (parseArgvDescriptor(step).commandInfo.command === "batch") return { error: NESTED_BATCH_ARGUMENT_MESSAGE, steps: [] };
 		steps.push(step);
 	}

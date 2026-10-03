@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -18,12 +18,12 @@ test("native environment defaults share caller ownership across Pi sessions and 
 	const log = join(root, "calls.jsonl");
 	await writeFakeAgentBrowserBinary(root, `
 const args = process.argv.slice(2);
-require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null }) + "\\n");
+require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null, actionPolicy: process.env.AGENT_BROWSER_ACTION_POLICY ?? null, confirmActions: process.env.AGENT_BROWSER_CONFIRM_ACTIONS ?? null, debug: process.env.AGENT_BROWSER_DEBUG ?? null, noAutoDialog: process.env.AGENT_BROWSER_NO_AUTO_DIALOG ?? null }) + "\\n");
 const data = args.includes("snapshot") ? { snapshot: "- button \\"Continue\\" [ref=e1]", refs: { e1: { role: "button", name: "Continue" } }, url: "https://fixture.test/" } : { title: "Fixture", url: "https://fixture.test/" };
 console.log(JSON.stringify({ success: true, data }));
 `);
 	try {
-		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}`, AGENT_BROWSER_SESSION: "shared", AGENT_BROWSER_NAMESPACE: "Team Work", PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}`, AGENT_BROWSER_SESSION: "shared", AGENT_BROWSER_NAMESPACE: "Team Work", AGENT_BROWSER_DEBUG: "1", AGENT_BROWSER_NO_AUTO_DIALOG: "0", PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
 			const one = createExtensionHarness({ cwd: root, sessionId: "pi-one" });
 			const two = createExtensionHarness({ cwd: root, sessionId: "pi-two" });
 			for (const harness of [one, two]) {
@@ -35,15 +35,19 @@ console.log(JSON.stringify({ success: true, data }));
 				assert.equal(result.details?.usedImplicitSession, false);
 				assert.equal(result.details?.managedSessionOutcome, undefined);
 			}
-			const override = await executeRegisteredTool(two.tool, two.ctx, { args: ["--namespace", "", "--session", "override", "--idle-timeout", "42", "get", "title"] });
+			const override = await executeRegisteredTool(two.tool, two.ctx, { args: ["--namespace", "", "--session", "override", "--idle-timeout", "42", "--action-policy", "old.json", "--action-policy", "policy.json", "--confirm-actions", "click", "--confirm-actions", "navigate", "--debug", "true", "--debug", "false", "--no-auto-dialog", "false", "--no-auto-dialog", "true", "get", "title"] });
 			assert.equal(override.isError, false, override.content[0]?.text);
 			assert.equal(override.details?.sessionName, "override");
 			assert.equal(override.details?.namespace, "");
+			assert.equal((await executeRegisteredTool(one.tool, one.ctx, { args: ["get", "title"] })).isError, false);
 			await runExtensionEvent(one.handlers, "session_shutdown", { reason: "quit" }, one.ctx);
 			await runExtensionEvent(two.handlers, "session_shutdown", { reason: "quit" }, two.ctx);
-			const calls = await readInvocationLog(log);
+			const calls = await readInvocationLog(log) as Array<{ args: string[]; idleTimeout: string | null; actionPolicy: string | null; confirmActions: string | null; debug: string | null; noAutoDialog: string | null }>;
 			assert.ok(calls.some((call) => call.args.includes("url")), "caller-owned live target helpers run");
 			assert.ok(calls.every((call) => call.idleTimeout === (call.args.includes("override") ? "42" : null)), "native idle selection is consistent across caller-owned helpers and main calls");
+			assert.ok(calls.filter(call => call.args.includes("override")).some(call => call.args.includes("url")), "explicit policy call reaches its live page helper");
+			assert.ok(calls.every(call => call.actionPolicy === (call.args.includes("override") ? "policy.json" : null) && call.confirmActions === (call.args.includes("override") ? "navigate" : null)), "last explicit policy values reach every helper without leaking into later calls");
+			assert.ok(calls.every(call => call.debug === (call.args.includes("override") ? null : "1") && call.noAutoDialog === (call.args.includes("override") ? "1" : "0")), "explicit last-wins booleans reach helpers; later calls keep inherited values");
 			assert.ok(calls.every((call) => !call.args.includes("close")), "Pi quit leaves shared caller-owned browser alone");
 		});
 	} finally { await rm(root, { recursive: true, force: true }); }
@@ -73,6 +77,44 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "abou
 		});
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
+
+for (const [enabled, oppositeDefaults] of [[true, true], [false, true], [false, false]]) {
+	test(`real native helper booleans preserve the page and daemon: ${enabled} (${oppositeDefaults ? "opposite defaults" : "clean"})`, { skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1", timeout: 120_000 }, async () => {
+		const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-bool-"));
+		const fixture = await startAgentBrowserContractFixtureServer();
+		const socketDir = join(root, "s");
+		const config = join(root, "native.json");
+		await writeFile(config, JSON.stringify({ debug: oppositeDefaults && !enabled, noAutoDialog: oppositeDefaults && !enabled }));
+		const flags = ["--config", config, "--session", "booleans", "--debug", String(enabled), "--no-auto-dialog", String(enabled)];
+		try {
+			await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_DEBUG: oppositeDefaults ? enabled ? "0" : "1" : undefined, AGENT_BROWSER_NO_AUTO_DIALOG: oppositeDefaults ? enabled ? "0" : "1" : undefined }, async () => {
+				const harness = createExtensionHarness({ cwd: root });
+				try {
+					const opened = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...flags, "open", fixture.baseUrl] });
+					assert.equal(opened.isError, false, opened.content[0]?.text);
+					const pidPath = join(socketDir, "booleans.pid");
+					const pid = await readFile(pidPath, "utf8");
+					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...flags, "snapshot", "-i"] });
+					assert.equal(snapshot.isError, false, snapshot.content[0]?.text);
+					assert.match(JSON.stringify(snapshot.details?.data), /Mark ready|Name input/);
+					assert.equal((snapshot.details?.data as { origin?: string }).origin, fixture.baseUrl + "/");
+					assert.equal(await readFile(pidPath, "utf8"), pid, "helper calls retain the exact CLI fingerprint even over opposite config/environment booleans");
+					assert.equal(await stat(join(socketDir, "booleans.log")).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; }), enabled, "explicit false disables native debug logging even when env/config defaults enable it");
+					const inherited = ["--config", config, "--session", "inherited"];
+					assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: [...inherited, "open", fixture.baseUrl] })).isError, false);
+					const inheritedPid = await readFile(join(socketDir, "inherited.pid"), "utf8");
+					const inheritedSnapshot = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...inherited, "snapshot", "-i"] });
+					assert.match(JSON.stringify(inheritedSnapshot.details?.data), /Mark ready|Name input/);
+					assert.equal(await readFile(join(socketDir, "inherited.pid"), "utf8"), inheritedPid, "later calls retain native env/config inheritance without leaked CLI overrides");
+					assert.equal(await stat(join(socketDir, "inherited.log")).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; }), oppositeDefaults, "later logging follows native variable-presence semantics, without leaked overrides");
+				} finally {
+					await executeRegisteredTool(harness.tool, harness.ctx, { args: [...flags, "close"] });
+					await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--config", config, "--session", "inherited", "close"] });
+				}
+			});
+		} finally { await fixture.close(); await rm(root, { recursive: true, force: true }); }
+	});
+}
 
 test("root defaults isolate roots, share descendants, and keep bootstrap settings on helpers without claiming quit ownership", async () => {
 	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-root-"));

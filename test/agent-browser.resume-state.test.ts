@@ -2485,12 +2485,7 @@ test("agentBrowserExtension rejects malformed resumed explicit-session batch std
 		{
 			name: "non-array step",
 			stdin: JSON.stringify([{ oops: 1 }]),
-			errorPattern: /step 0 must be a non-empty array of string command tokens/i,
-		},
-		{
-			name: "empty step",
-			stdin: JSON.stringify([[]]),
-			errorPattern: /step 0 must not be empty/i,
+			errorPattern: /step 0 must be an array of string command tokens/i,
 		},
 		{
 			name: "non-string token",

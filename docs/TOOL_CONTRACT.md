@@ -168,15 +168,21 @@ Use exact labels from the latest snapshot. Return to the model when a fresh obse
 
 `screenshot --if-changed` and `--threshold <0-1>` preserve native `changed`, `revision`, `pixelChangeRatio`, and `threshold`. An unchanged response has no path, artifact, or image attachment—even if the caller requested an existing file. It succeeds as an observation, not proof that an evidence file was saved.
 
-`record start` / `restart` accept `--cursor`, `--contact-sheet`, and `--contact-sheet-threshold <n>`. Reported `contactSheetPath` values become image artifacts: pending during capture, checked on disk after stop, and attached when verified. The contact-sheet destination shares the active video's reservation and transcript lifecycle; same-call/batch artifact and `outputPath` aliases are rejected before dispatch. A successful direct `record restart` retains the prior take's known contact-sheet path from the existing reservation, checks it on disk, and labels it unverified because native restart omits terminal sheet evidence. Use `record stop` then a new start when verified completion of both artifacts is required. Video receipt handling remains separate. Native `--input-mode <mode>` is a sticky, live-changeable session setting, not a launch flag; per-action pointer options pass through. See the [command reference](COMMAND_REFERENCE.md#upstream-0381-rebaseline).
+`record start` / `restart` accept `--cursor`, `--contact-sheet`, and `--contact-sheet-threshold <n>`. Reported `contactSheetPath` values become image artifacts: pending during capture, checked on disk after stop, and attached when verified. The contact-sheet destination shares the active video's reservation and transcript lifecycle; same-call/batch artifact and `outputPath` aliases are rejected before dispatch. A successful direct `record restart` retains the prior take's known contact-sheet path from the existing reservation, checks it on disk, and labels it unverified because native restart omits terminal sheet evidence. Use `record stop` then a new start when verified completion of both artifacts is required. Video receipt handling remains separate. Without a terminal `previousRecording` receipt, only native `restarted: true` retires the prior take; rejected or pending restarts preserve its reservation and exact stop action. Native `--input-mode <mode>` is a sticky, live-changeable session setting, not a launch flag; per-action pointer options pass through. See the [command reference](COMMAND_REFERENCE.md#upstream-0381-rebaseline).
 
 <a id="wrapper-json"></a>
 
 ## Wrapper `--json`
 
+Native text cookie reads redact `name=value`, including empty names; storage reads redact `key: value`, including empty and colon-containing keys, with the existing benign-value policy. A standalone get-by-key (`storage local|session get <key>` or native shorthand `storage local|session <key>`) redacts the entire value, including embedded newlines, when that policy requires it, even if invocation display redaction changes the supplied key. Content, details, spills and exports use the same redacted text. Effective batch argv takes precedence over stdin when selecting these format heuristics; text never establishes per-row provenance. Native all-entry storage and raw-batch output do not escape multiline values: a secret continuation can look identical to a separate benign entry or ordinary page output. Text redaction cannot resolve that ambiguity; use structured JSON for an unambiguous sensitive-storage boundary. Native JSON all-entry maps retain names and benign values while redacting other values.
+
 When explicitly requested, visible JSON remains parseable for early preparation results too: snapshot/network filters, scroll results, and preparation failures use the same JSON envelope as ordinary execution. Diagnostic metadata remains in `details`; `outputPath` notices do not append prose to JSON. Help/version stays native text.
 
-The extension always plans normal browser commands with `--json` prepended in `effectiveArgs` so upstream returns structured JSON for presentation and `details`. Omit `--json` in caller `args` for ordinary prose. Include it when you need the visible tool text as a parseable JSON envelope; structured `details` remain available in both modes. Plain-text inspection (`--help`, `--version`) keeps its own output shape. Read-only skills and local/setup commands such as auth/profile/setup, `session list`, and syntactically local state lifecycle operations skip implicit session injection as documented under `sessionMode`. Upstream session/state rows and targets remain visible, and state/config/path operations pass through unchanged.
+The extension prepends `--json` to normal browser commands when the caller does not select an output mode, so upstream returns structured JSON for presentation and `details`. Omit `--json` in caller `args` for ordinary prose. Include it when you need the visible tool text as a parseable JSON envelope; structured `details` remain available in both modes. Plain-text inspection (`--help`, `--version`) keeps its own output shape. Read-only skills and local/setup commands such as auth/profile/setup, `session list`, and syntactically local state lifecycle operations skip implicit session injection as documented under `sessionMode`. Upstream session/state rows and targets remain visible, and state/config/path operations pass through unchanged.
+
+Explicit `--json false` selects native text, including native batch output. Optional booleans use upstream's last-occurrence-wins semantics; `--json` and `--json true` select JSON. Caller argv/stdin, config, and environment remain unchanged. Native text is retained as a redacted string, including leading/trailing whitespace and line breaks, even when it resembles JSON or a confirmation banner. Inline data, complete spills and output exports preserve that whitespace. Success means the process completed successfully; nonzero exit, stderr errors, timeout, cancellation, and spawn failure remain failures. Text does not supply trusted batch rows, pending confirmations, lifecycle, page-target or artifact receipts. URL-shaped page content cannot replace the session target; only structured native observations can establish it. Saved-output notices stay prose and never parse native text as JSON, including when an export fails. Native confirmation enforcement and visible confirm/deny instructions remain upstream-owned; the wrapper never auto-confirms. Use JSON mode when structured evidence is required. Helpers that need structured state continue requesting and strictly parsing JSON. Explicit `--action-policy`, `--confirm-actions`, `--debug` and `--no-auto-dialog` selections reach those helpers within the current call, including CLI boolean `false` over true config/environment defaults; retain the same settings on subsequent calls, including confirm/deny, to avoid native daemon replacement.
+
+Empty stdin batch rows (`[]`) pass through and are skipped by native execution; `[""]` remains a failing command. Native bail behavior and later reached rows remain intact. When an upstream process exits nonzero with stderr instead of an envelope, stderr is the primary error and `failureCategory` is `upstream-error`; `details.parseError` retains secondary diagnostics. Zero-exit malformed machine output still fails strict JSON parsing.
 
 ## Experimental WebMCP
 
@@ -270,7 +276,7 @@ URL-less `open` is executed as native `get url`, including effective raw/stdin b
 - exact CLI args passed after `agent-browser`; this is the 1:1 upstream CLI coverage path for the targeted `agent-browser` version
 - no shell operators
 - do not include the binary name
-- omit `--json` for prose; include it for parseable model-visible JSON (the wrapper injects upstream JSON internally either way)
+- omit `--json` for prose backed by structured upstream JSON; include `--json` or `--json true` for parseable model-visible JSON; `--json false` selects opaque native text (see [Wrapper `--json`](#wrapper-json))
 - first-call recipe: `open` → `snapshot -i` → `click` / `fill` with current `@eN` refs from that snapshot → `snapshot -i` again after navigation or DOM changes
 
 Examples:
@@ -503,14 +509,14 @@ Recommended use:
 
 ## Wrapper behavior
 
-Caller `args` should omit `--json`; the wrapper prepends it for normal execution so `details` and presentation stay structured. See [Wrapper `--json`](#wrapper-json).
+Caller `args` may omit `--json` for structured details and prose; explicit `--json false` selects opaque native text. See [Wrapper `--json`](#wrapper-json).
 
 The extension should:
-- inject `--json`
+- inject `--json` when no caller output mode is selected
 - invoke `agent-browser` directly, not through a shell
-- parse JSON output into tool details
+- parse JSON-mode output into tool details
 - handle observed JSON result shapes, including the array returned by `batch --json`
-- allow plain-text output for native inspection calls and valid sessionless `upgrade` commands; all other commands retain JSON envelope validation
+- allow plain-text output for native inspection calls, valid sessionless `upgrade` commands and explicit `--json false`; JSON-mode browser commands retain strict envelope validation
 - support those inspection calls unconditionally so the tool contract stays local and predictable
 
 <!-- agent-browser-playbook:start inspection -->

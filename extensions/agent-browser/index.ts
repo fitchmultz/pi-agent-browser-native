@@ -44,7 +44,7 @@ import {
 	isPlainTextInspectionArgs,
 	type CompatibilityWorkaround,
 } from "./lib/runtime.js";
-import { deleteIdentityKeysInNamespace, extractExplicitNamespace, extractExplicitSessionName, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace, scanUpstreamGlobalFlagOccurrences } from "./lib/argv-grammar.js";
+import { isBooleanFlagEnabled, deleteIdentityKeysInNamespace, extractExplicitNamespace, extractExplicitSessionName, getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNamespace, isUpstreamEnvFlagEnabled, resolveAgentBrowserNamespace, scanUpstreamGlobalFlagOccurrences } from "./lib/argv-grammar.js";
 import { parseArgvDescriptor } from "./lib/argv-descriptor.js";
 import { needsManagedSession } from "./lib/command-policy.js";
 import { ManagedSessionRestoreState } from "./lib/managed-session-restore.js";
@@ -218,6 +218,7 @@ function getArtifactPreflightValidationError(options: {
 	const artifactDestinations = new Map<string, number>();
 	let sawBatchClose = false;
 	for (const [index, commandStep] of steps.entries()) {
+		if (commandStep.length === 0) continue; // Native skips empty stdin rows.
 		if (batch) {
 			const stepValidationError = validateToolArgs(commandStep, { batchStep: true });
 			if (stepValidationError) return `Unsupported batch step ${index + 1}: ${stepValidationError}`;
@@ -1931,7 +1932,7 @@ export default function agentBrowserExtension(
 						&& !getArtifactCommandSteps(toolArgs, resolvedInput.toolStdin).steps.some(step => step[0] === "snapshot")) delete result.details.refSnapshot;
 					result.details.artifactManifest = invocationArtifactManifest(branch.isCurrent() ? artifactManifest : browserRunState.artifactManifest, initialArtifactManifest, result.details);
 				}
-				return applyAgentBrowserOutputPath({ cwd: operationCwd, outputPath, preserveTextContent: Array.isArray(params.args) && params.args.includes("--json"), result: warnRecordingPersistence(result) });
+				return applyAgentBrowserOutputPath({ cwd: operationCwd, outputPath, preserveTextContent: Array.isArray(params.args) && isBooleanFlagEnabled(params.args, "--json"), result: warnRecordingPersistence(result) });
 			};
 
 			const closesAllSessions = commandClosesAllSessions(toolArgs, resolvedInput.toolStdin);
@@ -2103,7 +2104,7 @@ export default function agentBrowserExtension(
 		const details = isRecord(result.details) ? result.details : {};
 		if (result.isError && details.error === undefined) details.error = details.validationError ?? details.summary ?? result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
 		const priorManifest = isSessionArtifactManifest(details.artifactManifest) ? details.artifactManifest : undefined;
-		const renderOptions = { content: result.content, details, json: "code" in params || params.args?.includes("--json") === true, succeeded: result.isError !== true,
+		const renderOptions = { content: result.content, details, json: "code" in params || isBooleanFlagEnabled(params.args ?? [], "--json"), succeeded: result.isError !== true,
 			persistentArtifactStore: branch.isCurrent() ? getPersistentSessionArtifactStore(ctx) : undefined,
 			withArtifactWrite: <T>(write: () => Promise<T>) => artifactExecutionQueue.run(() => {
 				if (!branch.isCurrent()) renderOptions.persistentArtifactStore = undefined;

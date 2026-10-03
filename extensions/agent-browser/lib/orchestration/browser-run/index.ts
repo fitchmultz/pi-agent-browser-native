@@ -1,5 +1,6 @@
 import { runAgentBrowserProcess, withAttachedBrowserSessionContext, withChromeStartupArgs } from "../../process.js";
 import { isRecord } from "../../parsing.js";
+import { isBooleanFlagEnabled } from "../../argv-grammar.js";
 import { collectNativeWebMcp, getNativeWebMcpCatalog } from "../../webmcp-observation.js";
 import { isPlainTextInspectionArgs, redactSensitiveValue } from "../../runtime.js";
 import { formatWebMcpCatalogUpdate } from "../../results/presentation/common.js";
@@ -25,7 +26,7 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 		const catalog = redactSensitiveValue(observed.catalog) as Record<string, unknown>;
 		details = { ...details, webMcpCatalog: catalog };
 		result.details = details;
-		if (!options.input.toolArgs.includes("--json") && JSON.stringify(getNativeWebMcpCatalog(details.data)) !== JSON.stringify(catalog)) {
+		if (!isBooleanFlagEnabled(options.input.toolArgs, "--json") && JSON.stringify(getNativeWebMcpCatalog(details.data)) !== JSON.stringify(catalog)) {
 			const notice = formatWebMcpCatalogUpdate(catalog);
 			if (result.content[0]?.type === "text") result.content[0] = { ...result.content[0], text: `${result.content[0].text}\n\n${notice}` };
 			else result.content.push({ type: "text", text: notice });
@@ -49,7 +50,7 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 	applyBrowserRunStatePatch(options.state, preparedResult.kind === "ready" ? preparedResult.prepared.statePatch : preparedResult.statePatch);
 	if (preparedResult.kind === "early-result") {
 		const result = preparedResult.result;
-		if (options.modelVisible !== false && options.input.toolArgs.includes("--json") && !isPlainTextInspectionArgs(options.input.toolArgs)) {
+		if (options.modelVisible !== false && isBooleanFlagEnabled(options.input.toolArgs, "--json") && !isPlainTextInspectionArgs(options.input.toolArgs)) {
 			const details = isRecord(result.details) ? result.details : {};
 			const summary = result.content.filter(item => item.type === "text").map(item => item.text).join("\n");
 			result.content = buildJsonVisibleContent({

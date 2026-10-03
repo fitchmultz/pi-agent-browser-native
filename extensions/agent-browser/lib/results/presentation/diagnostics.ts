@@ -1,4 +1,5 @@
 import { isRecord } from "../../parsing.js";
+import { getUpstreamEffectiveBatchSteps } from "../../orchestration/batch-stdin.js";
 import { redactSensitiveText, redactSensitiveValue, type CommandInfo } from "../../runtime.js";
 import type { AgentBrowserNextAction, NetworkRouteDiagnostic } from "../contracts.js";
 import { classifyNetworkRequestFailure, isApiLikeNetworkRequest, isNetworkArtifactNoiseRequest, summarizeNetworkFailures } from "../network.js";
@@ -847,6 +848,7 @@ function redactStorageData(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map((item) => redactStorageData(item));
 	if (!isRecord(value)) return redactSensitiveValue(value);
 	const entries = Object.fromEntries(Object.entries(value).map(([key, entryValue]) => {
+		if (key === "data" && isRecord(entryValue)) return [key, Object.fromEntries(Object.entries(entryValue).map(([storageKey, storageValue]) => [storageKey, shouldRevealStorageValue(storageKey, storageValue) ? redactSensitiveValue(storageValue) : "[REDACTED]"]))];
 		if ((key === "entries" || key === "items") && Array.isArray(entryValue)) return [key, entryValue.map((item) => isRecord(item) ? redactStorageEntryValue(item) : redactSensitiveValue(item))];
 		if (key === "value") {
 			const itemKey = getStringField(value, "key") ?? getStringField(value, "name");
@@ -866,6 +868,9 @@ function redactStorageData(value: unknown): unknown {
 
 function formatStorageText(data: Record<string, unknown>): string | undefined {
 	const type = getStringField(data, "type") ?? getStringField(data, "storage") ?? "storage";
+	if (isRecord(data.data)) {
+		return Object.entries(data.data).map(([key, value]) => `${redactModelFacingText(key)}: ${formatStorageValue(key, value)}`).join("\n") || `${type}: no entries.`;
+	}
 	const entries = getArrayField(data, "entries") ?? getArrayField(data, "items");
 	if (entries) {
 		if (entries.length === 0) return `${type}: no entries.`;
@@ -943,7 +948,30 @@ function redactStatefulValues(value: unknown, sensitiveKeys: Set<string>): unkno
 	);
 }
 
-export function redactPresentationData(commandInfo: CommandInfo, data: unknown): unknown {
+function redactNativeContextText(commandInfo: CommandInfo, text: string, stdin?: string): string {
+	if (commandInfo.command === "batch") {
+		const steps = getUpstreamEffectiveBatchSteps(commandInfo.commandTokens ?? ["batch"], stdin);
+		if (steps.some(step => step[0] === "cookies")) text = redactNativeContextText({ command: "cookies" }, text);
+		if (steps.some(step => step[0] === "storage")) text = redactNativeContextText({ command: "storage" }, text);
+		return text;
+	}
+	if (commandInfo.command === "cookies") return text.replace(/^([^=\r\n]*)=([^\r\n]*)/gm, "$1=[REDACTED]");
+	if (commandInfo.command !== "storage") return text;
+	const tokens = commandInfo.commandTokens;
+	const operation = tokens?.[2];
+	const key = operation === "get" ? tokens?.[3] : operation === "set" || operation === "clear" ? undefined : operation;
+	if (key !== undefined && text.startsWith(`${key}: `)) {
+		const suffix = text.endsWith("\n") ? "\n" : "";
+		const value = text.slice(key.length + 2, suffix ? -1 : undefined);
+		return `${key}: ${formatStorageValue(key, value)}${suffix}`;
+	}
+	// ponytail: native all-entry/raw-batch text does not escape multiline values.
+	// Format heuristics cannot separate lookalike entries; use structured JSON for sensitive storage.
+	return text.replace(/^([^\r\n]*?): ([^\r\n]*)/gm, (_line, key: string, value: string) => `${key}: ${formatStorageValue(key, value)}`);
+}
+
+export function redactPresentationData(commandInfo: CommandInfo, data: unknown, stdin?: string): unknown {
+	if (typeof data === "string") return redactSensitiveText(redactNativeContextText(commandInfo, data, stdin));
 	if (commandInfo.command === "cookies") return redactStatefulValues(data, new Set(["value"]));
 	if (commandInfo.command === "storage") return redactStorageData(data);
 	if (commandInfo.command === "state" && commandInfo.subcommand === "show") return redactStatefulValues(data, new Set(["value"]));

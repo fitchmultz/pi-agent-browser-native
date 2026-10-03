@@ -2,6 +2,7 @@ import type { AgentToolResult, ToolNamespace } from "@earendil-works/pi-coding-a
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { JsonSchema } from "./json-schema.js";
 import { isRecord } from "./parsing.js";
+import { isBooleanFlagEnabled } from "./argv-grammar.js";
 import { finalizeAgentBrowserFailure } from "./pi-tool-rendering.js";
 import { isPlainTextInspectionArgs } from "./runtime.js";
 import { projectAgentBrowserObservation, OBSERVATION_INLINE_MAX_CHARS } from "./results/presentation/content.js";
@@ -35,7 +36,7 @@ export async function finalizeAgentBrowserNativeResult<T extends AgentToolResult
 		const { renderAgentBrowserObservation } = await import("./results/presentation/large-output.js");
 		const rendered = await renderAgentBrowserObservation({
 			content: finalized.content, details, succeeded,
-			json: isRecord(input) && ("code" in input || Array.isArray(input.args) && input.args.includes("--json")),
+			json: isRecord(input) && ("code" in input || Array.isArray(input.args) && isBooleanFlagEnabled(input.args, "--json")),
 			// The caller's exact visible output stays inline (for example formatted search results); only the structured field is bounded.
 			preserveContent: true,
 		});

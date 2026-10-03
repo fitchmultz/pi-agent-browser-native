@@ -32,7 +32,7 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 test("batch stdin shape errors include a copyable native-tool example", () => {
 	const error = parseUserBatchStdin(JSON.stringify([{ action: "get", target: "title" }])).error ?? "";
-	assert.match(error, /must be a non-empty array of string command tokens/);
+	assert.match(error, /must be an array of string command tokens/);
 	assert.match(error, /\{ "args": \["batch"\], "stdin": "\[\[\\"get\\",\\"title\\"\],\[\\"get\\",\\"url\\"\]\]" \}/);
 });
 
@@ -298,6 +298,25 @@ test("buildToolPresentation renders record restart as a pending lifecycle state"
 	assert.equal(presentation.artifactVerification?.artifacts[0]?.state, "pending");
 });
 
+test("unacknowledged recording restarts retain the pending take without a terminal artifact", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-rejected-restart-"));
+	try {
+		const path = join(root, "active.webm");
+		const started = await buildToolPresentation({ commandInfo: { command: "record", subcommand: "start" }, cwd: root, sessionName: "recording", envelope: { success: true, data: { path } } });
+		await writeFile(path, "still active");
+		for (const envelope of [
+			{ success: false, error: "Unexpected argument", data: { type: "invalid_value" } },
+			{ success: false, error: "Action denied by policy", data: null },
+			{ success: true, data: { confirmation_required: true, confirmation_id: "r123", action: "recording_restart" } },
+		]) {
+			const result = await buildToolPresentation({ artifactManifest: started.artifactManifest, commandInfo: { command: "record", subcommand: "restart" }, cwd: root, sessionName: "recording", envelope, errorText: envelope.error });
+			assert.equal(result.artifacts?.some(artifact => artifact.subcommand === "restart-previous") ?? false, false);
+			assert.equal((result.artifactManifest ?? started.artifactManifest)?.entries.some(entry => entry.path === path && entry.subcommand === "start"), true);
+			assert.equal(await readFile(path, "utf8"), "still active");
+		}
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("buildToolPresentation keeps a legacy restart file unverified without a terminal native receipt", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-restart-"));
 	try {
@@ -314,7 +333,7 @@ test("buildToolPresentation keeps a legacy restart file unverified without a ter
 			artifactManifest: started.artifactManifest,
 			commandInfo: { command: "record", subcommand: "restart" },
 			cwd: tempDir,
-			envelope: { success: true, data: { path: restartedPath } },
+			envelope: { success: true, data: { path: restartedPath, restarted: true } },
 		});
 
 		assert.match(restarted.summary, /Previous recording unverified: .*first\.webm/);
@@ -355,7 +374,7 @@ test("buildToolPresentation rejects a stale previous recording reported by recor
 			artifactMinUpdatedAtMs: runStartedAtMs,
 			commandInfo: { command: "record", subcommand: "restart" },
 			cwd: tempDir,
-			envelope: { success: true, data: { path: restartedPath } },
+			envelope: { success: true, data: { path: restartedPath, restarted: true } },
 		});
 
 		assert.equal(restarted.resultCategory, "failure");
@@ -393,7 +412,7 @@ test("buildToolPresentation rejects a missing previous recording reported by rec
 			artifactMinUpdatedAtMs: Date.now() - 1_000,
 			commandInfo: { command: "record", subcommand: "restart" },
 			cwd: tempDir,
-			envelope: { success: true, data: { path: restartedPath } },
+			envelope: { success: true, data: { path: restartedPath, restarted: true } },
 		});
 
 		assert.equal(restarted.resultCategory, "failure");
@@ -427,7 +446,7 @@ test("buildToolPresentation rejects same-path record restart when the prior outp
 			artifactMinUpdatedAtMs: Date.now() - 1_000,
 			commandInfo: { command: "record", subcommand: "restart" },
 			cwd: tempDir,
-			envelope: { success: true, data: { path: recordingPath } },
+			envelope: { success: true, data: { path: recordingPath, restarted: true } },
 		});
 
 		assert.equal(restarted.resultCategory, "failure");

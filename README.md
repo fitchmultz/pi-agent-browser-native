@@ -327,7 +327,7 @@ Profile hints with `authenticated-only` remain advisory. Global/override profile
 
 You usually prompt the agent in natural language. These JSON snippets show the exact native tool shape the agent should use.
 
-Open a page and inspect it (first-call recipe: open → snapshot -i → interact with current `@refs` → snapshot -i after changes). Omit `--json` unless you need JSON text; structured details are always available.
+Open a page and inspect it (first-call recipe: open → snapshot -i → interact with current `@refs` → snapshot -i after changes). Omit `--json` unless you need JSON text; structured details are available by default. Explicit `--json false` selects native text without trusted row, confirmation, lifecycle, page-target or artifact receipts; see [the output contract](docs/TOOL_CONTRACT.md#wrapper-json).
 
 ```json
 { "args": ["open", "https://example.com"] }
@@ -411,6 +411,8 @@ Evaluate page JavaScript through stdin. Put the script in the top-level `stdin` 
 { "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })" }
 { "args": ["eval", "--stdin"], "stdin": "({ title: document.title, url: location.href })", "outputPath": "logs/page-state.json" }
 ```
+
+Native text cookie reads redact `name=value` values, including empty cookie names; storage reads redact `key: value`, including empty and colon-containing keys, using the same benign-value policy as JSON. Standalone `storage local|session get <key>` and native shorthand `storage local|session <key>` protect the entire sensitive value, including embedded newlines, even when invocation display redaction changes the supplied key. Names and benign preferences remain visible in content, details, spills and exports. Native all-entry storage and raw batches do not escape multiline values, so text redaction is heuristic: use structured JSON when sensitive storage must be unambiguous.
 
 Use `outputPath` when `eval`, `get`, `snapshot`, or another extraction should be saved as a durable workspace file. Recording results also export on failure or timeout: their JSON envelope retains the failed attempt, native receipt, verification and any recovery evidence rather than writing misleading bare success data. Keep it distinct from screenshot, download, recording, and other browser artifact destinations; preflight rejects known same-call aliases before browser activity, and the result writer preserves the browser artifact if an alias becomes apparent only afterward. The wrapper writes `details.data` when present, otherwise the model-facing text content. When presentation compacted a large direct result, a result row, or the whole `batch`, it instead reads the full command-redacted pre-compaction payload only from the corresponding live wrapper-managed spill recorded in `details.artifactManifest`; if any required spill is unavailable or untrusted, the call fails without writing compact metadata to the requested path. `details.outputFile` reports the saved path and byte count. Explicit upstream `--json` content stays parseable, including early snapshot/network filters, scroll results, and preparation failures; metadata stays in `details` and the save notice lives only in `details.outputFile`. Help/version output remains native text.
 
