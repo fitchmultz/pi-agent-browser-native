@@ -275,10 +275,17 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const confirmationSessionName = prepared.executionPlan.sessionName ?? "default";
 		let readConfirmation = state.sessionPageState.getReadConfirmation(getAgentBrowserSessionIdentityKey(confirmationSessionName, prepared.executionPlan.namespace));
 		let readConfirmationEvent: ReadConfirmation | undefined;
+		const confirmedEffects: Array<{ command: string; data: unknown; succeeded: boolean }> = [];
 		const confirmationRows = prepared.executionPlan.commandInfo.command === "batch" && Array.isArray(presentationEnvelope?.data)
 			? presentationEnvelope.data.flatMap((row, index) => isRecord(row) ? [{ tokens: Array.isArray(row.command) && row.command.every(token => typeof token === "string") ? row.command as string[] : batchCommandSteps[index] ?? [], data: row.result, response: row, succeeded: row.success === true }] : [])
 			: [{ tokens: prepared.commandTokens, data: presentationEnvelope?.data, response: presentationEnvelope, succeeded: presentationEnvelope?.success === true }];
 		for (const row of confirmationRows) {
+			if (readConfirmation?.state === "pending" && readConfirmation.source === "native-guarded-action" && typeof readConfirmation.command === "string"
+				&& row.tokens.length === 2 && row.tokens[0] === "confirm" && row.tokens[1] === readConfirmation.id
+				&& isRecord(row.data) && row.data.confirmed === true && row.data.action === readConfirmation.action
+				&& isRecord(row.data.result) && !detectConfirmationRequired(row.data)) {
+				confirmedEffects.push({ command: readConfirmation.command, data: row.data.result.data, succeeded: row.succeeded && row.data.result.success === true });
+			}
 			const transition = nextReadConfirmation({ commandTokens: row.tokens, current: readConfirmation, data: row.data, namespace: prepared.executionPlan.namespace, sessionName: confirmationSessionName, succeeded: row.succeeded });
 			if (transition) { readConfirmationEvent = transition; readConfirmation = transition; }
 			if (row.tokens.length === 2 && row.tokens[0] === "confirm" && isRecord(row.data) && row.data.confirmed === true && isRecord(row.data.result) && row.data.result.success === false && row.response) {
@@ -287,13 +294,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				if (presentationEnvelope) presentationEnvelope.success = false;
 			}
 		}
-		const confirmedData = prepared.commandTokens[0] === "confirm" && prepared.commandTokens.length === 2
-			&& isRecord(presentationEnvelope?.data) && presentationEnvelope.data.confirmed === true
-			&& isRecord(presentationEnvelope.data.result) && !detectConfirmationRequired(presentationEnvelope.data)
-				? presentationEnvelope.data.result.data : undefined;
-		const confirmedCommand = confirmedData !== undefined && prepared.readConfirmation?.source === "native-guarded-action"
-			&& isRecord(presentationEnvelope?.data) && presentationEnvelope.data.action === prepared.readConfirmation.action
-			? prepared.readConfirmation.command : undefined;
+		const confirmedData = prepared.commandTokens[0] === "confirm" ? confirmedEffects[0]?.data : undefined;
+		const confirmedCommand = prepared.commandTokens[0] === "confirm" ? confirmedEffects[0]?.command : undefined;
 		const directClose = isCloseCommand(prepared.executionPlan.commandInfo.command)
 			|| isSuccessfulNativeConfirmedClose(prepared.commandTokens, presentationEnvelope?.data);
 		if (readConfirmationEvent?.state === "pending") state.observedBrowserEffects = { ...state.observedBrowserEffects, readConfirmation: readConfirmationEvent };
@@ -383,7 +385,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			}
 		}
 
-		const tabTransition = confirmedCommand === "tab" || dispatchedCommands.some((step) => {
+		const tabTransition = confirmedEffects.some(effect => effect.command === "tab") || dispatchedCommands.some((step) => {
 			const [command, subcommand] = extractUpstreamCommandTokens(step);
 			return command === "tab" && subcommand !== undefined && subcommand !== "list";
 		});
@@ -398,8 +400,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true,
 			});
 		if (
-			succeeded && readConfirmation?.state !== "pending" && !nestedBatchClosed && !directClose &&
-			(confirmedCommand !== undefined && shouldCaptureNavigationSummary(confirmedCommand, confirmedData) || shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data, prepared.executionPlan.commandInfo.subcommand) ||
+			(succeeded || processSucceeded && confirmedEffects.some(effect => effect.succeeded)) && readConfirmation?.state !== "pending" && !nestedBatchClosed && !directClose &&
+			(confirmedEffects.some(effect => shouldCaptureNavigationSummary(effect.command, effect.data)) || shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data, prepared.executionPlan.commandInfo.subcommand) ||
 				(prepared.executionPlan.commandInfo.command === "batch" && dispatchedCommands.some(([command, subcommand]) => isNavigationObservableCommandName(command, subcommand))) ||
 				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data) ||
 				commandRequiresLivePageVerification(prepared.executionPlan.effectiveArgs, prepared.runtimeToolStdin) ||
@@ -409,12 +411,12 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		// Failed transitions may already have changed the page; keep only a live observed URL.
 		if (
-			succeeded === false && readConfirmation?.state !== "pending" &&
+			succeeded === false && navigationSummary === undefined && readConfirmation?.state !== "pending" &&
 			processResult.agentBrowserStarted && nativeCommandMayHaveExecuted &&
 			!processResult.aborted &&
 			!processResult.timedOut &&
 			!nestedBatchClosed && !directClose &&
-			(isUnverifiedPageTransitionCommand(prepared.readConfirmation?.source === "native-guarded-action" ? prepared.readConfirmation.command : undefined) || dispatchedCommands.some((step) => {
+			(confirmedEffects.some(effect => isUnverifiedPageTransitionCommand(effect.command)) || dispatchedCommands.some((step) => {
 				const [command, subcommand] = extractUpstreamCommandTokens(step);
 				return (prepared.executionPlan.commandInfo.command === "batch" && isOpenNavigationCommand(command))
 					|| isUnverifiedPageTransitionCommand(command, subcommand);
@@ -450,7 +452,9 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const unsettledWebMcpMutation = pendingWebMcpMutation || failedWebMcpSettlement;
 
 		const helperConfirmation = parseReadConfirmation(state.observedBrowserEffects?.readConfirmation);
-		if (helperConfirmation?.state === "pending") { readConfirmationEvent = helperConfirmation; readConfirmation = helperConfirmation; succeeded = false; }
+		// Main pending installs this object above; only a helper can replace it during post-processing.
+		let confirmationFromHelper = state.observedBrowserEffects?.readConfirmation !== readConfirmationEvent;
+		if (confirmationFromHelper && helperConfirmation?.state === "pending") { readConfirmationEvent = helperConfirmation; readConfirmation = helperConfirmation; succeeded = false; }
 		const pageTargetData = textOutput ? undefined : presentationEnvelope?.data;
 		let observedSessionTabTarget = unsettledWebMcpMutation || (unobservedMutation && !failedTransitionReverification)
 			? undefined
@@ -789,7 +793,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		if ((plainTextUpgrade || textOutput) && errorText) presentationEnvelope = { ...presentationEnvelope, success: false, error: errorText };
 		const finalHelperConfirmation = parseReadConfirmation(state.observedBrowserEffects?.readConfirmation);
-		if (finalHelperConfirmation?.state === "pending") { readConfirmationEvent = finalHelperConfirmation; succeeded = false; }
+		if (finalHelperConfirmation?.state === "pending") { confirmationFromHelper ||= state.observedBrowserEffects?.readConfirmation !== readConfirmationEvent; readConfirmationEvent = finalHelperConfirmation; succeeded = false; }
 		let presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : recordingStopRecovery && !recordingStopRecovery.batch ? recordingStopRecovery.presentation : await buildToolPresentation({ textOutput, stdin: prepared.processStdin, modelVisible: input.modelVisible, args: prepared.redactedProcessArgs, artifactManifest, artifactMaxUpdatedAtMs: Date.now(), artifactMinUpdatedAtMs: input.artifactRunStartedAtMs, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: { ...prepared.executionPlan.commandInfo, commandTokens: prepared.commandTokens }, compiledSemanticAction: prepared.compiledSemanticAction, cwd: operationCwd, envelope: presentationEnvelope, errorText, namespace: prepared.executionPlan.namespace, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, previousRecordingContactSheetPath: sessionStateKey ? state.activeRecordingReservations?.get(sessionStateKey)?.contactSheetPath : undefined, piCleanupOwnership: sessionStateKey && (state.ownedManagedSessions.has(sessionStateKey) || prepared.executionPlan.managedSessionName !== undefined) ? "wrapper-managed" : "caller-owned", sessionName: prepared.executionPlan.sessionName });
 		if (recordingStopRecovery) presentation = mergeRecordingRecoveryPresentation(presentation, recordingStopRecovery);
 		if (parseError && processResult.exitCode !== 0 && processResult.stderr.trim() && !processResult.timedOut && !processResult.aborted && !processResult.spawnError) {
@@ -805,7 +809,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				presentation.resultCategory = "failure";
 				presentation.failureCategory = "confirmation-required";
 				presentation.successCategory = undefined;
-				if (helperConfirmation?.state === "pending") presentation.content.unshift({ type: "text", text: `Native helper ${confirmation.command ?? "read"} requires confirmation (${confirmation.action ?? "read"}, ${confirmation.id}). The requested command's result, if dispatched, is preserved below.` });
+				if (confirmationFromHelper) presentation.content.unshift({ type: "text", text: `Native helper ${confirmation.command ?? "read"} requires confirmation (${confirmation.action ?? "read"}, ${confirmation.id}). The requested command's result, if dispatched, is preserved below.` });
 			}
 		}
 		if (plainTextUpgrade && !textOutput && !succeeded && typeof presentationEnvelope?.data === "string") {

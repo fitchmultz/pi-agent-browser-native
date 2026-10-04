@@ -82,7 +82,7 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 		const data = { confirmation_required: true, confirmation_id: helperConfirmation.id, action: helperConfirmation.action ?? "read" };
 		const presentation = await buildToolPresentation({ commandInfo: { command: helperConfirmation.command, commandTokens: [helperConfirmation.command ?? "read"] }, cwd: options.cwd, envelope: { success: true, data }, namespace: helperConfirmation.namespace, sessionName: helperConfirmation.sessionName });
 		preparedResult = { kind: "early-result", result: {
-			content: presentation.content,
+			content: [{ type: "text", text: `Native helper ${helperConfirmation.command} requires confirmation (${helperConfirmation.action}). The requested command was not dispatched.` }, ...presentation.content],
 			details: { ...options.state.observedBrowserEffects, agentBrowserStarted: false, args: options.input.redactedArgs, data, sessionName: helperConfirmation.sessionName, namespace: helperConfirmation.namespace, sessionTabTargetUnknown: options.state.sessionPageState.get(getAgentBrowserSessionIdentityKey(helperConfirmation.sessionName, helperConfirmation.namespace)).tabTargetUnknown, readConfirmation: helperConfirmation, nextActions: presentation.nextActions,
 				...buildAgentBrowserResultCategoryDetails({ succeeded: false, failureCategory: "confirmation-required" }) },
 			isError: true,

@@ -1617,11 +1617,11 @@ export default function agentBrowserExtension(
 			await beforeExecute?.(nativeToolCallId, { ...ctx, signal });
 			const runtimeBrowserConfig = loadAgentBrowserConfigSync({ cwd: ctx.cwd, includeProjectConfig: shouldIncludeProjectConfig(ctx) });
 			const rootProfile = runtimeBrowserConfig.trustedBrowserDefaultProfile;
-			const pendingReadConfirmation = sessionPageState.findReadConfirmation(resolvedInput.toolArgs, resolveAgentBrowserNamespace(resolvedInput.toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE));
+			const pendingReadConfirmation = sessionPageState.findReadConfirmation(resolvedInput.toolArgs, resolveAgentBrowserNamespace(resolvedInput.toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE), resolvedInput.toolStdin);
 			const rootSessionId = process.env.PI_SUBAGENT_CHILD === "1" && process.env.PI_SUBAGENT_ROOT_SESSION_ID
 				? process.env.PI_SUBAGENT_ROOT_SESSION_ID : ctx.sessionManager.getSessionId();
 			return withNativeSessionDefaults(resolvedInput, browserCwd, signal, async (resolvedInput, withLaunchDefaults) => {
-			const readConfirmation = sessionPageState.findReadConfirmation(resolvedInput.toolArgs, resolveAgentBrowserNamespace(resolvedInput.toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE));
+			const readConfirmation = sessionPageState.findReadConfirmation(resolvedInput.toolArgs, resolveAgentBrowserNamespace(resolvedInput.toolArgs, getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE), resolvedInput.toolStdin);
 			if (readConfirmation) resolvedInput = { ...resolvedInput, toolArgs: scopeReadConfirmationArgs(resolvedInput.toolArgs, readConfirmation) };
 			if (resolvedInput.kind === "qa" && resolvedInput.compiledQaPreset.checks.attached && !managedSessionActive && !extractExplicitSessionName(resolvedInput.toolArgs)) {
 				return buildValidationFailureResult({ ...resolvedInput, attemptedKind: "qa", kind: "invalid", status: "invalid", validationError: "qa.attached requires an active attached session. Run electron.launch or connect to an Electron debug port first, or configure a native shared session." });

@@ -3,6 +3,7 @@ import { extractExplicitSessionName, getAgentBrowserSessionIdentityKey, resolveA
 import { getExplicitReadUrl } from "./command-policy.js";
 import { isCloseCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
+import { getUpstreamEffectiveBatchSteps } from "./orchestration/batch-stdin.js";
 import type { AgentBrowserNextAction } from "./results/contracts.js";
 
 // Extend the existing observation with compact native provenance, never original argv or command replay.
@@ -39,12 +40,14 @@ export function isSuccessfulNativeConfirmedClose(commandTokens: string[], data: 
 		&& isRecord(data.result.data) && data.result.data.closed === true;
 }
 
-export function findReadConfirmation(args: string[], confirmations: Iterable<ReadConfirmation>, namespace?: string): ReadConfirmation | undefined {
-	const tokens = extractUpstreamCommandTokens(args);
+export function findReadConfirmation(args: string[], confirmations: Iterable<ReadConfirmation>, namespace?: string, stdin?: string): ReadConfirmation | undefined {
+	const command = extractUpstreamCommandTokens(args);
+	const tokens = command[0] === "batch" ? getUpstreamEffectiveBatchSteps(command, stdin)[0] ?? [] : command;
 	if (tokens.length !== 2 || !["confirm", "deny"].includes(tokens[0])) return undefined;
 	const sessionName = extractExplicitSessionName(args);
 	const effectiveNamespace = resolveAgentBrowserNamespace(args, namespace);
 	const matches = [...confirmations].filter(value => value.state === "pending" && value.id === tokens[1]
+		&& (command[0] !== "batch" || value.source === "native-guarded-action")
 		&& (sessionName === undefined || getAgentBrowserSessionIdentityKey(sessionName, value.namespace) === getAgentBrowserSessionIdentityKey(value.sessionName, value.namespace))
 		&& (effectiveNamespace === undefined || getAgentBrowserSessionIdentityKey(value.sessionName, effectiveNamespace) === getAgentBrowserSessionIdentityKey(value.sessionName, value.namespace)));
 	return matches.length === 1 ? matches[0] : undefined;

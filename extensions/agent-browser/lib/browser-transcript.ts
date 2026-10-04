@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { isRecord } from "./parsing.js";
+import { isSuccessfulNativeConfirmedClose } from "./read-confirmation.js";
 
 export const BROWSER_TRANSITION_ENTRY = "agent-browser-transition";
 
@@ -31,8 +33,14 @@ const TRANSITION_FIELDS = [
 
 export function appendBrowserTransition(pi: ExtensionAPI, toolCallId: string, details: Record<string, unknown>, isError: boolean): void {
 	const state = Object.fromEntries(TRANSITION_FIELDS.filter(key => details[key] !== undefined).map(key => [key, details[key]]));
+	const args = Array.isArray(details.args) && details.args.every(arg => typeof arg === "string") ? details.args : [];
+	if (!isError && isSuccessfulNativeConfirmedClose(extractUpstreamCommandTokens(args), details.data)) {
+		state.command = "close";
+		delete state.subcommand;
+	}
 	if (Array.isArray(details.batchSteps)) state.batchSteps = details.batchSteps.filter(isRecord).map(step => ({
-		command: step.command, success: step.success, lifecycle: step.lifecycle,
+		command: Array.isArray(step.command) && step.command.every(arg => typeof arg === "string") && step.success === true && isSuccessfulNativeConfirmedClose(step.command, step.data) ? ["close"] : step.command,
+		success: step.success, lifecycle: step.lifecycle,
 	}));
 	pi.appendEntry(BROWSER_TRANSITION_ENTRY, { toolCallId, details: state, isError });
 }
