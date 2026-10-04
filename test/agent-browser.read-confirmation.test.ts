@@ -334,19 +334,21 @@ for (const action of [
 	});
 });
 
-for (const semantic of [false, true]) for (const drift of [false, true]) test(`warm confirmed capture checks the live page without resume (semantic=${semantic}, drift=${drift})`, { concurrency: false }, async () => {
+for (const route of ["path", "hash"]) for (const semantic of [false, true]) for (const drift of [false, true]) test(`warm confirmed capture checks the live page without resume (route=${route}, semantic=${semantic}, drift=${drift})`, { concurrency: false }, async () => {
 	await withConfirmations(async ({ state, log, harness }) => {
 		const prefix = ["--session", "shared"];
+		const url = route === "hash" ? "https://current.test/#/contract" : "https://current.test/contract";
+		const movedUrl = route === "hash" ? "https://current.test/#/other" : "https://current.test/other";
 		await writeFile(state, JSON.stringify({ semanticSnapshot: {
-			origin: "https://current.test/contract",
+			origin: url,
 			refs: { e8: { role: "combobox", name: "Flavor" } }, snapshot: '- combobox "Flavor" [ref=e8]',
 		} }));
-		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", "snapshot", "open", "https://current.test/contract"] });
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", "snapshot", "open", url] });
 		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "snapshot", "-i"] });
 		assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "confirm", "snapshot-id"] })).isError, false);
 		if (drift) {
 			const native = JSON.parse(await readFile(state, "utf8"));
-			native.url = "https://current.test/other";
+			native.url = movedUrl;
 			native.semanticSnapshot.refs.e8.name = "Renamed";
 			await writeFile(state, JSON.stringify(native));
 		}
@@ -357,7 +359,7 @@ for (const semantic of [false, true]) for (const drift of [false, true]) test(`w
 		assert.equal(result.isError, drift, result.content[0]?.text);
 		if (drift) {
 			assert.equal(result.details?.failureCategory, "stale-ref");
-			assert.match(result.content[0]?.text ?? "", /current session target is https:\/\/current.test\/other/);
+			assert.ok(result.content[0]?.text?.includes(`current session target is ${movedUrl}`));
 		}
 		const calls = (await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args));
 		assert.equal(calls.some(tokens => tokens.join(" ") === "get url"), true, "the live URL must be observed on this warm call");
