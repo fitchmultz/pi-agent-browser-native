@@ -17,8 +17,8 @@ Native `pi` integration of `agent-browser` as a `pi` tool.
 - Thoroughly check official `pi` docs/examples/source behavior before inventing bespoke integration patterns. Prefer an official `pi` mechanism whenever one exists.
 - Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
 - Keep the local extension-side documentation good enough that an agent can use the tool without relying on direct `agent-browser` binary help; when upstream `agent-browser` changes, update the repo-readable command reference, prompt guidance, README/docs, and any relevant tests in the same work.
-- For this repository, assume a single operator model: no human and no other agent is making changes here besides you.
-- Treat every lingering scratch file, temp artifact, browser session, tmux session, or other side effect related to this repository as your responsibility to clean up.
+- Work in an isolated worktree and preserve unrelated user and agent changes; other operators may be working in this repository.
+- Clean up scratch files, temp artifacts, browser sessions, tmux sessions, and other side effects created by this task or verified as task-owned. Preserve unrelated resources, explicit user artifacts, Pi transcripts, and subagent records; investigate unknown ownership before cleanup.
 
 ## Documentation placement
 
