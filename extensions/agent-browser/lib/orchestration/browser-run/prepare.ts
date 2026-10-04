@@ -763,7 +763,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				return;
 			}
 			livePageVerified = true;
-			priorSessionTabTarget = normalizeComparableUrl(priorSessionTabTarget?.url) === normalizeComparableUrl(liveUrl)
+			priorSessionTabTarget = priorSessionTabTarget?.url === liveUrl
 				? { ...priorSessionTabTarget, url: liveUrl }
 				: { url: liveUrl };
 			priorSessionTabTargetUnknown = undefined;
@@ -951,6 +951,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const staleRefPreflight = buildStaleRefPreflight({
 			commandTokens,
 			currentTarget: priorSessionTabTarget,
+			requireExactTargetUrl: reuseConfirmedCapture,
 			refSnapshot: resolvedSemanticActionRefSnapshot ?? priorRefSnapshotState,
 			refSnapshotInvalidation: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotInvalidation,
 			stdin: runtimeToolStdin,

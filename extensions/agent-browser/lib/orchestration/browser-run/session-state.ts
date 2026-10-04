@@ -433,6 +433,7 @@ function getBatchRefInvalidationMessage(commandTokens: string[], stdin?: string,
 export function buildStaleRefPreflight(options: {
 	commandTokens: string[];
 	currentTarget?: SessionTabTarget;
+	requireExactTargetUrl?: boolean;
 	refSnapshot?: SessionRefSnapshot;
 	refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
 	stdin?: string;
@@ -460,7 +461,8 @@ export function buildStaleRefPreflight(options: {
 		};
 	}
 	if (!options.refSnapshot) return undefined;
-	if (!targetsMatch(options.refSnapshot.target, options.currentTarget)) {
+	if (!targetsMatch(options.refSnapshot.target, options.currentTarget)
+		|| options.requireExactTargetUrl && options.refSnapshot.target && options.currentTarget && options.refSnapshot.target.url !== options.currentTarget.url) {
 		return {
 			message: `Ref ${usedRefIds.map((refId) => `@${refId}`).join(", ")} came from a snapshot for ${options.refSnapshot.target?.url ?? "a prior page"}, but the current session target is ${options.currentTarget?.url ?? "unknown"}. Run snapshot -i again before using page-scoped refs.`,
 			refIds: usedRefIds,
