@@ -40,7 +40,7 @@ function fakeIdentityCommands(logPath: string): string {
 	return fakeClickIdentityCommands.replace("LOG_PATH", JSON.stringify(logPath));
 }
 
-for (const mode of ["match", "mismatch", "lookup-failure", "install-failure", "removal-failure", "abort"] as const) {
+for (const mode of ["match", "mismatch", "lookup-failure", "install-failure", "removal-failure", "abort", "expiry"] as const) {
 	test(`click dispatch identity ${mode} cleans up the exact candidate`, { concurrency: false }, async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-identity-"));
 		const logPath = join(tempDir, "invocations.log");
@@ -70,7 +70,7 @@ if (args.includes("attr") && mode === "abort") {
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
 				const options = {
-					commandTokens: ["click", "ref=e1"], cwd: tempDir, namespace: "identity-fixture", sessionName: "click-fixture", signal: controller.signal,
+					commandTokens: ["click", "ref=e1"], cwd: tempDir, namespace: "identity-fixture", sessionName: "click-fixture", signal: controller.signal, timeoutMs: 3000,
 					refSnapshot: { refIds: ["e1"], refs: { e1: { role: "button", name: "Save" } } },
 				};
 				const pending = prepareClickDispatchProbe(options);
@@ -86,12 +86,14 @@ if (args.includes("attr") && mode === "abort") {
 					}
 				}
 				const probe = await pending;
-				if (mode === "match") {
+				if (mode === "match" || mode === "expiry") {
 					assert.ok(probe);
+				}
+				if (mode === "match") {
 					const diagnostic = await collectClickDispatchDiagnostic({ ...options, probe });
 					assert.equal(diagnostic?.status, "no-native-event-observed", "confirmed refs retain true no-dispatch detection");
 					await cleanupClickDispatchProbe({ ...options, probe });
-				} else {
+				} else if (mode !== "expiry") {
 					assert.equal(probe, undefined, "unconfirmed candidates cannot diagnose a click failure");
 				}
 				const invocations = await readInvocationLog(logPath);
@@ -103,7 +105,7 @@ if (args.includes("attr") && mode === "abort") {
 					assert.ok(identityCall.args.includes("click-fixture"));
 				}
 				const scripts = invocations.filter((entry) => entry.args.includes("eval")).map((entry) => entry.stdin ?? "");
-				assert.equal(scripts.some((script) => script.includes("cleaned-up")), mode !== "match");
+				assert.equal(scripts.some((script) => script.includes("cleaned-up")), mode !== "match" && mode !== "expiry");
 				assert.equal(scripts.some((script) => script.includes("no-native-event-observed")), mode === "match");
 
 				// Execute the emitted scripts, not just their fake receipts. The collision
@@ -127,7 +129,11 @@ if (args.includes("attr") && mode === "abort") {
 				let candidates = mode === "mismatch" ? [save, copy] : [copy];
 				const listeners = new Map<string, unknown>();
 				const window: Record<string, unknown> = { innerHeight: 100, innerWidth: 100, getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }) };
-				const context = { window, Element: FixtureElement, Node: FixtureElement, document: {
+				let expire: (() => void) | undefined;
+				const timers = new Set<unknown>();
+				const context = { window, Element: FixtureElement, Node: FixtureElement,
+					setTimeout: (callback: () => void, ms: number) => { assert.equal(ms, 5000); expire = callback; timers.add(callback); return callback; },
+					clearTimeout: (timer: unknown) => timers.delete(timer), document: {
 					querySelectorAll: () => candidates,
 					addEventListener: (type: string, listener: unknown) => listeners.set(type, listener),
 					removeEventListener: (type: string) => listeners.delete(type),
@@ -148,6 +154,11 @@ if (args.includes("attr") && mode === "abort") {
 						assert.equal(listeners.size, 5, "identity confirmation retains event monitoring");
 					}
 				}
+				if (mode === "expiry") {
+					assert.ok(expire, "lost or confirmation-blocked cleanup must not leave permanent listeners");
+					expire();
+				}
+				assert.equal(timers.size, 0, "normal cleanup cancels the expiry timer too");
 				assert.equal(copy.getAttribute(attribute), null);
 				assert.equal(copy.getAttribute("aria-labelledby"), "copy-label");
 				assert.equal(window[installed.marker], undefined);

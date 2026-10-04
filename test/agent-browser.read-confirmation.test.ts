@@ -30,6 +30,7 @@ let data, success = true, error;
 if (tokens[0] === 'read' && tokens[1] === 'public.test/body') data = { content: JSON.stringify({ confirmation_required: true, confirmation_id: 'read-id', action: 'read', capabilities: { readRequiresConfirmation: true } }), source: 'http' };
 else if (tokens[0] === 'read') { state.pending = { id: 'read-id', action: 'read', sessionName, namespace, failure: tokens[1]?.endsWith('failure') === true }; data = { confirmation_required: true, confirmation_id: 'read-id', action: 'read', ...(tokens[1]?.startsWith('public.test/legacy') ? {} : { capabilities: { readRequiresConfirmation: true } }) }; }
 else if (tokens[0] === 'webmcp') data = { invocationId: 'pending-job', status: 'pending' };
+else if (tokens[0] === 'click' && tokens[1] === '#dispatched') { state.url = 'https://fixture.test/after'; state.gateNextUrl = true; data = { clicked: '#dispatched' }; }
 else if (tokens[0] === 'click' || tokens[0] === 'tab' && tokens[1] === 'new' || tokens[0] === 'close' || tokens[0] === 'eval' && tokens[1] === 'throw fixture') {
   const action = tokens[0] === 'tab' ? 'tab_new' : tokens[0] === 'eval' ? 'evaluate' : tokens[0];
   state.pending = { id: 'dom-id', action, sessionName, namespace, failure: action === 'evaluate' };
@@ -43,17 +44,20 @@ else if (['confirm', 'deny'].includes(tokens[0])) {
     }
     data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: pending.failure ? failedReadResult : { success: true, data: pending.action === 'close' ? { closed: true } : pending.action === 'click' ? { clicked: '#guarded' } : pending.action === 'tab_new' ? { url: 'about:blank' } : { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
 } else if (tokens[0] === 'eval') data = { confirmed: true, action: 'read', result: failedReadResult };
-else if (tokens[0] === 'get' || tokens[0] === 'tab') { state.browserTouches++; data = { url: state.url ?? 'https://current.test/', title: 'Current' }; }
+else if (tokens[0] === 'open') { state.url = tokens[1]; data = { url: state.url }; }
+else if (tokens[0] === 'get' && tokens[1] === 'url' && state.gateNextUrl) { state.gateNextUrl = false; state.pending = { id: 'helper-id', action: 'url', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'helper-id', action: 'url' }; }
+else if (tokens[0] === 'get' || tokens[0] === 'tab') { state.browserTouches++; data = tokens[0] === 'tab' ? { tabs: [{ url: state.url ?? 'https://current.test/', title: 'Current', tabId: 't1', targetId: 'fixture-target', active: true }] } : { url: state.url ?? 'https://current.test/', title: 'Current' }; }
 else data = { active: false, session: sessionName, namespace, runtime: null };
 return { success, data, error };
 }
-const rows = tokens[0] === 'batch' ? JSON.parse(fs.readFileSync(0, 'utf8')).map(command => { const { data, ...result } = execute(command); return { command, ...result, result: data }; }) : undefined;
+const rawRows = tokens.slice(1).filter(token => token !== '--bail');
+const rows = tokens[0] === 'batch' ? (rawRows.length ? rawRows.map(row => row.split(' ')) : JSON.parse(fs.readFileSync(0, 'utf8'))).map(command => { const { data, ...result } = execute(command); return { command, ...result, result: data }; }) : undefined;
 const result = rows ? { success: rows.every(row => row.success), data: rows } : execute(tokens);
 fs.writeFileSync(${JSON.stringify(state)}, JSON.stringify(state));
 process.stdout.write(JSON.stringify(result)); process.exitCode = result.success ? 0 : 1;`);
 	try {
 		await withPatchedEnv({ PATH: `${root}${delimiter}${process.env.PATH ?? ""}`, HOME: root, USERPROFILE: root, AGENT_BROWSER_SESSION: undefined, AGENT_BROWSER_NAMESPACE: undefined }, async () => {
-			const branch: unknown[] = [], harness = createExtensionHarness({ cwd: root, branch });
+			const branch: unknown[] = [], harness = createExtensionHarness({ cwd: root, branch, sessionFile: join(root, "session.jsonl") });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			try { await run({ root, log, state, branch, harness }); }
 			finally { await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx); }
@@ -228,13 +232,16 @@ test("native DOM decisions suppress overwriting helpers but page-shaped and unre
 	});
 });
 
-test("completed guarded decisions reconcile tabs, fail inner actions truthfully and retire confirmed close on replay", { concurrency: false }, async () => {
+for (const batch of [false, true]) test(`completed guarded decisions reconcile tabs, fail inner actions truthfully and retire confirmed close on replay (batch=${batch})`, { concurrency: false }, async () => {
 	await withConfirmations(async ({ harness }) => {
 		const prefix = ["--session", "shared"];
 		const decide = async (args: string[]) => {
 			const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
 			assert.equal(pending.details?.failureCategory, "confirmation-required");
-			return await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "confirm", "dom-id"] });
+			assert.doesNotMatch(pending.content[0]?.text ?? "", /Native helper|if dispatched/, "the requested action itself awaits confirmation");
+			return await executeRegisteredTool(harness.tool, harness.ctx, batch
+				? { args: [...prefix, "batch", "--bail"], stdin: JSON.stringify([["confirm", "dom-id"]]) }
+				: { args: [...prefix, "confirm", "dom-id"] });
 		};
 		const failed = await decide(["eval", "throw fixture"]);
 		assert.equal(failed.isError, true, failed.content[0]?.text);
@@ -247,5 +254,102 @@ test("completed guarded decisions reconcile tabs, fail inner actions truthfully 
 		assert.equal(closed.isError, false, closed.content[0]?.text);
 		assert.equal(closed.details?.sessionTabTarget, undefined);
 		assert.equal(SessionPageState.fromBranch(convertBrowserEntries(harness.ctx.sessionManager.getBranch())).get("shared").tabTarget, undefined);
+	});
+});
+
+test("resumed batch confirmation reconciles click before an ordinary getter without discarding adjacent rows", { concurrency: false }, async () => {
+	await withConfirmations(async ({ root, state, branch, harness }) => {
+		await writeFile(state, JSON.stringify({ url: "https://fixture.test/before" }));
+		const prefix = ["--session", "shared"];
+		for (const args of [["get", "url"], ["click", "#guarded"]]) {
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
+			branch.push(createToolBranchEntry({ details: result.details!, isError: result.isError }));
+		}
+		const resumed = createExtensionHarness({ cwd: root, branch });
+		await runExtensionEvent(resumed.handlers, "session_start", { reason: "resume" }, resumed.ctx);
+		const confirmed = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+			args: [...prefix, "batch", "--bail"],
+			stdin: JSON.stringify([["get", "title"], ["confirm", "dom-id"], ["get", "title"]]),
+		});
+		assert.equal(confirmed.isError, false, confirmed.content[0]?.text);
+		assert.equal((confirmed.details?.sessionTabTarget as { url: string }).url, "https://clicked.test/");
+		assert.equal((confirmed.details?.batchSteps as unknown[]).length, 3);
+		const title = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: [...prefix, "get", "title"] });
+		assert.equal(title.isError, false, title.content[0]?.text);
+	});
+});
+
+test("early helper pending identifies the helper and the requested command is not dispatched", { concurrency: false }, async () => {
+	await withConfirmations(async ({ state, log, harness }) => {
+		await writeFile(state, JSON.stringify({ gateNextUrl: true }));
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "get", "title"] });
+		assert.equal(result.details?.failureCategory, "confirmation-required");
+		assert.equal(result.details?.agentBrowserStarted, false);
+		assert.match(result.content[0]?.text ?? "", /Native helper get requires confirmation \(url\).*requested command was not dispatched/);
+		assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["get", "url"]]);
+	});
+});
+
+test("genuine post-command helper pending remains labelled and preserves the dispatched batch receipt", { concurrency: false }, async () => {
+	await withConfirmations(async ({ harness }) => {
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "batch", "--bail"], stdin: JSON.stringify([["click", "#dispatched"]]) });
+		assert.equal(result.details?.failureCategory, "confirmation-required");
+		assert.equal(result.details?.agentBrowserStarted, true);
+		assert.equal((result.details?.readConfirmation as { command: string }).command, "get");
+		assert.match(result.content[0]?.text ?? "", /Native helper get requires confirmation/);
+		assert.deepEqual((result.details?.data as Array<{ command: string[] }>)[0].command, ["click", "#dispatched"]);
+	});
+});
+
+test("only the first effective matching batch decision suppresses helpers and later unknown-page checks remain", { concurrency: false }, async () => {
+	await withConfirmations(async ({ log, state, harness }) => {
+		const prefix = ["--session", "shared"];
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "get", "url"] });
+		for (const control of [
+			{ session: "shared", rows: [["confirm", "dom-id"]], suppress: true },
+			{ session: "shared", rows: [["confirm", "foreign-id"]], suppress: false },
+			{ session: "other", rows: [["confirm", "dom-id"]], suppress: false },
+			{ session: "shared", rows: [["get", "title"], ["confirm", "dom-id"]], suppress: false },
+			{ session: "shared", rows: [["confirm", "dom-id"]], raw: "get title", suppress: false },
+		]) {
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "click", "#guarded"] });
+			await writeFile(log, "");
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", control.session, "batch", "--bail", ...(control.raw ? [control.raw] : [])], stdin: JSON.stringify(control.rows) });
+			const commands = (await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args));
+			assert.equal(commands[0][0] === "batch", control.suppress, JSON.stringify(control));
+			if (control.raw) assert.equal(JSON.parse(await readFile(state, "utf8")).pending.id, "dom-id", "ignored stdin cannot settle the pending action");
+		}
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "webmcp", "invoke", "pending"] });
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "close"] });
+		await writeFile(log, "");
+		const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "batch", "--bail"], stdin: JSON.stringify([["confirm", "dom-id"], ["get", "title"]]) });
+		assert.equal(blocked.isError, true);
+		assert.match(String(blocked.details?.validationError), /unverified|unknown|verified/i);
+		assert.deepEqual(await readInvocationLog(log), [], "matching the first decision cannot bypass later unknown-page validation");
+	});
+});
+
+for (const failedClose of [false, true]) test(`code confirmed close replays completed retirement or failed-close continuity (failed=${failedClose})`, { concurrency: false }, async () => {
+	await withConfirmations(async ({ state, branch, harness }) => {
+		const prefix = ["--session", "shared"];
+		for (const args of [["--confirm-actions", "close", "get", "url"], ["close"]]) {
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
+			branch.push(createToolBranchEntry({ details: result.details!, isError: result.isError }));
+		}
+		if (failedClose) {
+			const native = JSON.parse(await readFile(state, "utf8"));
+			native.pending.failure = true;
+			await writeFile(state, JSON.stringify(native));
+		}
+		const code = harness.getTool("agent_browser_code");
+		assert.ok(code);
+		const result = await executeRegisteredTool(code, harness.ctx, { session: "shared", code: 'emit((await browser({args:["confirm","dom-id"]})).success);' });
+		assert.equal(result.isError, false, result.content[0]?.text);
+		assert.equal(result.details?.data, !failedClose);
+		const page = SessionPageState.fromBranch(convertBrowserEntries(harness.ctx.sessionManager.getBranch())).get("shared");
+		assert.equal(page.tabTargetUnknown, undefined, "a completed close must retire the code intent's unknown target");
+		assert.equal(page.pinningReason, failedClose ? "restore" : undefined);
+		assert.equal(page.tabTarget?.url, failedClose ? "https://current.test/" : undefined);
+		assert.equal(page.confirmActions, failedClose ? "close" : undefined);
 	});
 });

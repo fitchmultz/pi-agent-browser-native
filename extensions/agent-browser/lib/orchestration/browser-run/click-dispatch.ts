@@ -3,6 +3,7 @@ import { redactSensitiveText } from "../../runtime.js";
 import { withOptionalSessionArgs, type AgentBrowserNextAction } from "../../results/next-actions.js";
 import type { SessionRefSnapshot } from "../../session-page-state.js";
 import { runSessionCommandData } from "./session-state.js";
+import { getAgentBrowserProcessTimeoutMs } from "../../process.js";
 import type { ClickDispatchDiagnostic, ClickDispatchProbe, ClickDispatchProbeTarget } from "./types.js";
 
 const CLICK_DISPATCH_MARKER_PREFIX = "__piAgentBrowserClickDispatchProbe_";
@@ -37,7 +38,7 @@ function getClickDispatchIdentityAttribute(probe: ClickDispatchProbe): string {
 	return `data-pi-click-dispatch-${probe.marker.toLowerCase()}`;
 }
 
-function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe): string {
+function buildClickDispatchProbeInstallScript(probe: ClickDispatchProbe, timeoutMs: number): string {
 	const target = probe.target;
 	const resolveTarget = target.kind === "selector"
 		? `(() => { try { return document.querySelector(${JSON.stringify(target.selector)}); } catch { return null; } })()`
@@ -132,10 +133,15 @@ const listeners = eventTypes.map((type) => {
 });
 const identityAttribute = ${JSON.stringify(getClickDispatchIdentityAttribute(probe))};
 state.removeIdentityMarker = () => element.removeAttribute(identityAttribute);
+let cleanupTimer;
 state.cleanup = () => {
+  clearTimeout(cleanupTimer);
   state.removeIdentityMarker();
   listeners.forEach(([type, listener]) => document.removeEventListener(type, listener, true));
+  try { delete window[marker]; } catch {}
 };
+// A native pending decision can forbid cleanup eval; expire without another command.
+cleanupTimer = setTimeout(state.cleanup, ${timeoutMs + CLICK_DISPATCH_CLEANUP_TIMEOUT_MS});
 window[marker] = state;
 element.setAttribute(identityAttribute, marker);
 return { status: "installed", marker, target: state.target };
@@ -211,14 +217,14 @@ export function buildClickDispatchNextActions(options: { commandTokens: string[]
 	return actions;
 }
 
-export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; namespace?: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal }): Promise<ClickDispatchProbe | undefined> {
+export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; namespace?: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<ClickDispatchProbe | undefined> {
 	if (!options.sessionName || options.commandTokens[0] !== "click" || options.commandTokens.includes("--new-tab")) return undefined;
 	const target = getClickDispatchProbeTarget(options.commandTokens, options.refSnapshot);
 	if (!target) return undefined;
 	const probe: ClickDispatchProbe = { marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`, target };
 	let prepared = false;
 	try {
-		const installData = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeInstallScript(probe) });
+		const installData = await runSessionCommandData({ args: ["eval", "--stdin"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal, stdin: buildClickDispatchProbeInstallScript(probe, options.timeoutMs ?? getAgentBrowserProcessTimeoutMs()) });
 		if (getEvalResultRecord(installData)?.status !== "installed") return undefined;
 		// Name matching and in-page XPath only find candidates. Native resolution
 		// must prove identity, including frame scope, before missing events mean failure.

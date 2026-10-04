@@ -515,7 +515,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		} };
 	}
 	const userRequestedJson = getBooleanFlagValue(runtimeToolArgs, "--json") === true;
-	const routedReadConfirmation = state.sessionPageState.findReadConfirmation(preparedArgs.args, resolveAgentBrowserNamespace(preparedArgs.args, agentBrowserProcessEnv.AGENT_BROWSER_NAMESPACE));
+	const routedReadConfirmation = state.sessionPageState.findReadConfirmation(preparedArgs.args, resolveAgentBrowserNamespace(preparedArgs.args, agentBrowserProcessEnv.AGENT_BROWSER_NAMESPACE), runtimeToolStdin);
 	const readConfirmation = suppressConfirmationPageHelpers(routedReadConfirmation) ? routedReadConfirmation : undefined;
 	const browserIndependentConfirmation = isBrowserIndependentConfirmation(readConfirmation);
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {
@@ -532,7 +532,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		|| (executionPlan.commandInfo.command === "session" && executionPlan.commandInfo.subcommand === "info");
 	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const plannedSessionPageState = sessionPageState.get(ownedSessionKey);
-	const pageTargetError = readConfirmation ? undefined : getPageTargetValidationError({
+	const pageTargetError = readConfirmation && executionPlan.commandInfo.command !== "batch" ? undefined : getPageTargetValidationError({
+		allowFirstBatchConfirmation: readConfirmation !== undefined,
 		args: executionPlan.effectiveArgs,
 		currentPageUrl: plannedSessionPageState.tabTarget?.url,
 		pageUrlUnknown: plannedSessionPageState.tabTargetUnknown === true,
@@ -1115,9 +1116,6 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 
 		const processArgs = executionPlan.effectiveArgs;
 		const processStdin = preparedArgs.stdin ?? runtimeToolStdin;
-		const clickDispatchProbe = compiledElectron === undefined
-			? await prepareClickDispatchProbe({ commandTokens, cwd, namespace: executionPlan.namespace, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal })
-			: undefined;
 		let readTimeoutPageUrl = priorSessionTabTarget?.url;
 		if (options.params.timeoutMs === undefined && readTimeoutPageUrl === undefined && executionPlan.sessionName && commandTimeoutNeedsActivePageUrl(commandTokens, processStdin)) {
 			try {
@@ -1126,6 +1124,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			} catch {}
 		}
 		const processTimeoutMs = options.params.timeoutMs ?? getDialogAwareProcessTimeoutMs(commandTokens, promptRefSnapshot, processStdin) ?? getCommandAwareProcessTimeoutMs(commandTokens, processStdin, readTimeoutPageUrl);
+		const clickDispatchProbe = compiledElectron === undefined
+			? await prepareClickDispatchProbe({ commandTokens, cwd, namespace: executionPlan.namespace, refSnapshot: promptRefSnapshot, sessionName: executionPlan.sessionName, signal, timeoutMs: processTimeoutMs })
+			: undefined;
 		const redactedProcessArgs = redactInvocationArgs(prepareAgentBrowserSpawnArgs(processArgs, ownedManagedSession?.compatibilityUserAgent, options.preserveAttachedBrowserSession, chromeStartupArgs));
 		const scrollAmount = Number(commandTokens.find((token) => /^\d+(?:\.\d+)?$/.test(token)));
 		const shouldProbeScrollNoop = executionPlan.commandInfo.command === "scroll" && executionPlan.startupScopedFlags.length === 0 && (state.managedSessionActive || sessionMode === "fresh") && (!Number.isFinite(scrollAmount) || scrollAmount >= 500);

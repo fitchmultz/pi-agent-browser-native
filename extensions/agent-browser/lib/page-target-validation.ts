@@ -205,6 +205,7 @@ function getUnverifiedPageError(options: {
 }
 
 export function getPageTargetValidationError(options: {
+	allowFirstBatchConfirmation?: boolean;
 	allowUnverifiedPageTransitions?: boolean;
 	args: string[];
 	currentPageUrl?: string;
@@ -236,7 +237,7 @@ export function getPageTargetValidationError(options: {
 			let directError: string | undefined;
 			let failedNavigationHazard = false;
 			for (const state of possibleStates) {
-				const error = getUnverifiedPageError({
+				const error = options.allowFirstBatchConfirmation === true && index === 0 ? undefined : getUnverifiedPageError({
 					allowUnverifiedPageTransitions: options.allowUnverifiedPageTransitions,
 					args: step,
 					pageUrlUnknown: state.pageUrlUnknown,

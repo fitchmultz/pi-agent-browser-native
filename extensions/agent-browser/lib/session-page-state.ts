@@ -466,8 +466,8 @@ export class SessionPageState {
 		};
 	}
 
-	findReadConfirmation(args: string[], namespace?: string): ReadConfirmation | undefined {
-		return findPendingReadConfirmation(args, [...this.readConfirmations.values()].map(entry => entry.value), namespace);
+	findReadConfirmation(args: string[], namespace?: string, stdin?: string): ReadConfirmation | undefined {
+		return findPendingReadConfirmation(args, [...this.readConfirmations.values()].map(entry => entry.value), namespace, stdin);
 	}
 
 	setConfirmActions(sessionName: string, value: string | undefined): void {
