@@ -70,8 +70,7 @@ async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal
 }
 
 export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput, withLaunchDefaults?: (browserRun: (daemonInactive?: boolean) => Promise<AgentBrowserToolResult>, signal?: AbortSignal) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>, root?: { id: string; profile?: string; executablePath?: string }): Promise<AgentBrowserToolResult> {
-	if (input.kind === "electron" && input.compiledElectron.action === "launch") return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_SESSION: undefined }, () => run(input));
-	if (input.kind === "electron" || isPlainTextInspectionArgs(input.toolArgs)) return run(input);
+	if (isPlainTextInspectionArgs(input.toolArgs)) return run(input);
 	const env = getAgentBrowserProcessEnvironment();
 	const configArg = scanUpstreamGlobalFlagOccurrences(input.toolArgs, "--config")[0];
 	const configPath = configArg?.value ?? env.AGENT_BROWSER_CONFIG;
@@ -80,11 +79,18 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 		: [join(homedir(), ".agent-browser", "config.json"), join(cwd, "agent-browser.json")];
 	const rootName = root && rootBrowserSessionName(root.id);
 	const explicitSession = extractExplicitSessionName(input.toolArgs);
+	const browserCommand = input.kind !== "electron" && needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
 	const rootFallback = root !== undefined && env.AGENT_BROWSER_SESSION === undefined && (explicitSession === undefined || explicitSession === rootName)
-		&& needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
+		&& browserCommand;
 	let identity: NativeDefaults = {};
-	const browserCommand = needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
 	for (const path of paths) identity = { ...identity, ...await readNativeIdentity(path, cwd, signal, rootFallback, browserCommand) };
+	if (input.kind === "electron") {
+		const nativeConfirmActions = env.AGENT_BROWSER_CONFIRM_ACTIONS ?? (typeof identity.confirmActions === "string" ? identity.confirmActions : undefined);
+		return withAgentBrowserProcessEnvironment({
+			...(input.compiledElectron.action === "launch" ? { AGENT_BROWSER_SESSION: undefined } : {}),
+			...(configPath !== undefined ? { AGENT_BROWSER_CONFIG: resolve(cwd, configPath) } : {}),
+		}, () => run({ ...input, nativeConfirmActions }));
+	}
 	// Native ORs environment/config booleans; only CLI false overrides configured auto-connect.
 	const autoConnect = getBooleanFlagValue(input.toolArgs, "--auto-connect")
 		?? (isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT) || identity.autoConnect === true);

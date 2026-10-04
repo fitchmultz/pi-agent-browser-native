@@ -59,6 +59,10 @@ test("explicit fresh sessions retain ownership and idle cleanup", async () => {
 	await writeFakeAgentBrowserBinary(root, `
 const args = process.argv.slice(2);
 require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, idleTimeout: process.env.AGENT_BROWSER_IDLE_TIMEOUT_MS ?? null, confirmActions: process.env.AGENT_BROWSER_CONFIRM_ACTIONS ?? null }) + "\\n");
+if (args.includes("close") && process.env.FAIL_CLOSE === "1") {
+  console.log(JSON.stringify({ success: false, error: "fixture close refused" }));
+  process.exit(1);
+}
 console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "about:blank" } }));
 `);
 	try {
@@ -67,14 +71,27 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "abou
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--confirm-actions", "navigate", "open", "about:blank"], sessionMode: "fresh" });
 			assert.equal(result.isError, false, result.content[0]?.text);
 			assert.equal((result.details?.managedSessionOutcome as { activeAfter?: boolean })?.activeAfter, true);
-			const fresh = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" });
+			const fresh = await withPatchedEnv({ FAIL_CLOSE: "1" }, () => executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "about:blank"], sessionMode: "fresh" }));
 			assert.equal(fresh.isError, false, fresh.content[0]?.text);
 			assert.notEqual(fresh.details?.sessionName, result.details?.sessionName, "fresh still rotates unconfigured implicit sessions");
+			assert.equal((fresh.details?.managedSessionOutcome as { replacedSessionClosed?: boolean })?.replacedSessionClosed, false);
+			const oldSession = String(result.details?.sessionName);
+			const followup = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", oldSession, "get", "title"] });
+			assert.equal(followup.isError, false, followup.content[0]?.text);
+			const closed = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", oldSession, "close"] });
+			assert.equal(closed.isError, false, closed.content[0]?.text);
+			const offBranch = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--confirm-actions", "click", "open", "about:blank"], sessionMode: "fresh" });
+			assert.equal(offBranch.isError, false, offBranch.content[0]?.text);
+			harness.setBranch([]);
+			await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
 			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
 			const calls = await readInvocationLog(log) as Array<{ args: string[]; idleTimeout: string; confirmActions: string | null }>;
 			assert.ok(calls.some((call) => call.args.includes("close")));
 			assert.ok(calls.every((call) => call.idleTimeout === "900000"));
-			assert.deepEqual(calls.filter(call => call.args.includes("open")).map(call => call.confirmActions), ["navigate", null], "replacement starts a new policy lifecycle");
+			assert.deepEqual(calls.filter(call => call.args.includes("open")).map(call => call.confirmActions), ["navigate", null, "click"], "replacement starts a new policy lifecycle");
+			assert.ok(calls.filter(call => call.args.includes(oldSession)).every(call => call.confirmActions === "navigate"), "old-session cleanup and recovery retain its setting after failed replacement close");
+			assert.ok(calls.filter(call => call.args.includes(String(fresh.details?.sessionName))).every(call => call.confirmActions === null), "the replacement keeps its own unset setting");
+			assert.ok(calls.some(call => call.args.includes(String(offBranch.details?.sessionName)) && call.args.includes("close") && call.confirmActions === "click"), "shutdown cleanup retains the off-branch owner's setting");
 		});
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -87,6 +104,9 @@ test("confirmation policy follows canonical session lifecycle, replay and native
 	await writeFakeAgentBrowserBinary(root, `
 const args = process.argv.slice(2);
 require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, confirmActions: process.env.AGENT_BROWSER_CONFIRM_ACTIONS ?? null }) + "\\n");
+if (args.at(-1) === "connect") { console.log(JSON.stringify({ success: false, error: "Missing port argument", type: "missing_arguments" })); process.exit(1); }
+if (args.includes("bork")) { console.log(JSON.stringify({ success: false, error: "Unknown command: bork", type: "unknown_command" })); process.exit(1); }
+if (process.env.AGENT_BROWSER_CONFIG?.endsWith("missing.json")) { console.error("config file not found: " + process.env.AGENT_BROWSER_CONFIG); process.exit(1); }
 const page = { title: "Fixture", url: "https://fixture.test/" };
 const data = args.includes("tab") && args.includes("list") ? { tabs: [{ ...page, active: true, index: 0, tabId: "t1" }] } : { ...page, session: "default" };
 console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FAIL_CLOSE === "1"), data }));
@@ -110,6 +130,25 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 			const resumed = createExtensionHarness({ cwd: root, sessionId: "confirmation-owner", branch: one.ctx.sessionManager.getBranch().slice() });
 			await runExtensionEvent(resumed.handlers, "session_start", { reason: "resume" }, resumed.ctx);
 			await check(resumed, [...prefix, "get", "title"], "navigate");
+			for (const args of [
+				[...prefix, "--confirm-actions", "click", "--auto-connect=false", "get", "title"],
+				[...prefix, "--confirm-actions", "click", "connect"],
+				[...prefix, "--config", join(root, "missing.json"), "get", "title"],
+			]) {
+				const rejected = await executeRegisteredTool(resumed.tool, resumed.ctx, { args });
+				assert.equal(rejected.isError, true, JSON.stringify({ args, result: rejected.details, calls: await readInvocationLog(log) }));
+				await check(resumed, [...prefix, "get", "title"], "navigate");
+			}
+			await executeRegisteredTool(resumed.tool, resumed.ctx, { args: [...prefix, "--confirm-actions", "click", "--help"] });
+			await executeRegisteredTool(resumed.tool, resumed.ctx, { args: [...prefix, "--confirm-actions", "click", "session", "info"] });
+			await check(resumed, [...prefix, "get", "title"], "navigate");
+			const afterHelper = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: [...prefix, "--confirm-actions", "click", "bork"] });
+			assert.equal(afterHelper.isError, true);
+			await check(resumed, [...prefix, "get", "title"], "click");
+			await check(resumed, [...prefix, "--confirm-actions", "navigate", "get", "title"], "navigate");
+			await withPatchedEnv({ FAIL_CLOSE: "1" }, async () => assert.equal((await check(resumed, [...prefix, "--confirm-actions", "click", "close"], "click")).isError, true));
+			await check(resumed, [...prefix, "get", "title"], "click");
+			await check(resumed, [...prefix, "--confirm-actions", "navigate", "get", "title"], "navigate");
 			await check(resumed, ["--namespace", "other", "--session", "selected", "get", "title"], null);
 			await check(resumed, ["--namespace", "other", "--session", "selected", "--confirm-actions", "tab_new", "get", "title"], "tab_new");
 			await check(resumed, [...prefix.slice(0, 2), "--session", "unrelated", "get", "title"], null);
@@ -120,6 +159,11 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 				await check(resumed, [...prefix, "--confirm-actions", "", "get", "title"], "");
 			});
 			await check(resumed, [...prefix, "get", "title"], "");
+			await writeFile(config, "{}");
+			await check(resumed, [...prefix, "--config", config, "get", "title"], null);
+			await writeFile(join(root, "agent-browser.json"), JSON.stringify({ confirmActions: "click" }));
+			await check(resumed, [...prefix, "get", "title"], "click");
+			await rm(join(root, "agent-browser.json"));
 			await check(resumed, [...prefix, "--confirm-actions", "navigate", "get", "title"], "navigate");
 			await writeFile(log, "");
 			const code = await executeRegisteredTool(resumed.getTool("agent_browser_code")!, resumed.ctx, {
@@ -144,6 +188,46 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 			resumed.setBranch([]);
 			await runExtensionEvent(resumed.handlers, "session_tree", {}, resumed.ctx);
 			await check(resumed, [...prefix, "get", "title"], null);
+		});
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("pending batch navigation preserves completed targets when the native URL helper is gated", async () => {
+	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-pending-"));
+	const before = "https://fixture.test/before";
+	const observed = "https://fixture.test/observed";
+	const after = "https://fixture.test/after";
+	const pending = { command: ["open", "https://fixture.test/unvisited"], success: true, result: { confirmation_required: true, confirmation_id: "pending-open", action: "navigate" } };
+	await writeFakeAgentBrowserBinary(root, `
+const args = process.argv.slice(2);
+let data = args.includes("session") && args.includes("info") ? {} : { url: ${JSON.stringify(before)}, title: "Before" };
+if (args.includes("batch")) data = JSON.parse(process.env.BATCH_RESULTS);
+else if (args.at(-2) === "get" && args.at(-1) === "url" && process.env.GATE_URL === "1") data = { confirmation_required: true, confirmation_id: "pending-url", action: "url" };
+else if (args.includes("tab") && args.includes("list")) data = { tabs: [] };
+console.log(JSON.stringify({ success: true, data }));
+`);
+	try {
+		await withPatchedEnv({ ...clearedBrowserEnv, HOME: root, USERPROFILE: root, PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"), PATH: `${root}${delimiter}${process.env.PATH}`, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" }, async () => {
+			for (const [rows, expected] of [
+				[[pending], before],
+				[[{ command: ["open", observed], success: true, result: { url: observed } }, pending], observed],
+				[[{ command: ["back"], success: true, result: {} }, pending], undefined],
+				[[{ command: ["back"], success: true, result: {} }, pending, { command: ["get", "url"], success: true, result: { url: after } }], after],
+			] as const) {
+				const harness = createExtensionHarness({ cwd: root });
+				const prefix = ["--session", "pending-batch"];
+				assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", "navigate,url", "get", "url"] })).isError, false);
+				const result = await withPatchedEnv({ GATE_URL: "1", BATCH_RESULTS: JSON.stringify(rows) }, () =>
+					executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "batch", "--bail"], stdin: JSON.stringify(rows.map(row => row.command)) }));
+				assert.equal(result.details?.failureCategory, "confirmation-required", result.content[0]?.text);
+				assert.equal((result.details?.sessionTabTarget as { url?: string } | undefined)?.url, expected, JSON.stringify(rows));
+				assert.equal(result.details?.sessionTabTargetUnknown, expected === undefined ? true : undefined);
+				const resumed = createExtensionHarness({ cwd: root, branch: harness.ctx.sessionManager.getBranch().slice() });
+				await runExtensionEvent(resumed.handlers, "session_start", {}, resumed.ctx);
+				// No page observation: this result can only report replayed target state.
+				const replayed = await executeRegisteredTool(resumed.tool, resumed.ctx, { args: [...prefix, "session", "info"] });
+				assert.equal((replayed.details?.sessionTabTarget as { url?: string } | undefined)?.url, expected);
+			}
 		});
 	} finally { await rm(root, { recursive: true, force: true }); }
 });

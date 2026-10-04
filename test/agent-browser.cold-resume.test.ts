@@ -25,7 +25,7 @@ type ResumedPage = {
 	url: string;
 };
 
-async function withResumedPage(run: (page: ResumedPage) => Promise<void>, options: { live?: boolean } = {}): Promise<void> {
+async function withResumedPage(run: (page: ResumedPage) => Promise<void>, options: { live?: boolean; confirmActions?: string } = {}): Promise<void> {
 	const root = await mkdtemp(join(tmpdir(), "cold-"));
 	const socketDir = createShortPrivateSocketDir(root);
 	const cwd = join(root, "g");
@@ -49,6 +49,8 @@ function execute(tokens) {
   if (tokens[0] === 'close') { state = { active: false, url: 'about:blank', restoreKey: null }; return { closed: true }; }
   if (tokens[0] === 'read' && tokens.some((token) => token.startsWith('http:'))) return { content: 'Fetched page', source: 'http', url: tokens.at(-1) };
   if (!state.active) { state.active = true; state.restoreKey = process.env.AGENT_BROWSER_RESTORE ?? null; }
+  if (tokens[0] === 'open' && state.requireConfirmation) { state.pendingUrl = tokens[1]; return { confirmation_required: true, confirmation_id: 'cold-open', action: 'navigate' }; }
+  if (tokens[0] === 'confirm' && tokens[1] === 'cold-open' && state.pendingUrl) { state.url = state.pendingUrl; delete state.pendingUrl; return { confirmed: true, action: 'navigate', result: { success: true, data: { url: state.url, title: 'Page' } } }; }
   if (tokens[0] === 'open' || tokens[0] === 'vitals') state.url = state.redirectUrl ?? tokens[1] ?? 'about:blank';
   if (tokens[0] === 'connect') state.url = ${JSON.stringify(url)};
   if (tokens[0] === 'tab') return { tabs: [{ tabId: 't1', active: true, url: state.url, title: 'Page' }] };
@@ -84,7 +86,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`);
 				[...prefix, "open", url],
 				[...prefix, "snapshot", "-i"],
 			]) {
-				const result = await executeRegisteredTool(first.tool, first.ctx, { args, ...(args.includes("open") ? { sessionMode: "fresh" as const } : {}) });
+				const result = await executeRegisteredTool(first.tool, first.ctx, { args: args.includes("open") && options.confirmActions !== undefined ? ["--confirm-actions", options.confirmActions, ...args] : args, ...(args.includes("open") ? { sessionMode: "fresh" as const } : {}) });
 				assert.equal(result.isError, false, result.content[0]?.text);
 				if (!sessionName) {
 					assert.equal(typeof result.details?.sessionName, "string");
@@ -186,6 +188,31 @@ test("cold resume verifies the reopened page before a read and retains ref inval
 		assert.equal(calls.filter((row) => row.args.includes("open")).length, 1, "a failed reopen is not permission to navigate a now-live browser again");
 		assert.equal(calls.some((row) => row.args.at(-1) === "title" || row.args.includes("snapshot")), false);
 	});
+});
+
+test("cold retained-policy reopen exposes its native decision and exact confirm without replaying open", { concurrency: false }, async () => {
+	await withResumedPage(async ({ harness, statePath, logPath, sessionName, url }) => {
+		await writeFile(statePath, JSON.stringify({ ...JSON.parse(await readFile(statePath, "utf8")), requireConfirmation: true }));
+		const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"] });
+		assert.equal(pending.details?.failureCategory, "confirmation-required", pending.content[0]?.text);
+		assert.equal(pending.details?.agentBrowserStarted, false, "the requested getter did not dispatch");
+		assert.equal(pending.details?.sessionTabTargetUnknown, true);
+		assert.notEqual(pending.details?.sessionTabReopenPending, true, "the started reopen is consumed, not silently replayed");
+		const approval = (pending.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(action => action.id === "approve-confirmation");
+		assert.deepEqual(approval?.params.args, ["--namespace", "cold", "--session", sessionName, "confirm", "cold-open"]);
+		harness.setBranch(harness.ctx.sessionManager.getBranch().slice());
+		await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
+		await writeFile(logPath, "");
+		const confirmed = await executeRegisteredTool(harness.tool, harness.ctx, approval!.params);
+		assert.equal(confirmed.isError, false, confirmed.content[0]?.text);
+		const title = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "title"] });
+		assert.equal(title.isError, false, title.content[0]?.text);
+		assert.equal((title.details?.sessionTabTarget as { url: string }).url, url);
+		const calls = await readInvocationLog(logPath);
+		const browserCalls = calls.filter(call => !call.args.includes("session"));
+		assert.equal(browserCalls[0]?.args.at(-2), "confirm", "no pre-confirm page helper can overwrite the native slot");
+		assert.equal(calls.some(call => call.args.includes("open")), false);
+	}, { confirmActions: "navigate" });
 });
 
 test("a live missing tab is not permission to reopen", { concurrency: false }, async () => {

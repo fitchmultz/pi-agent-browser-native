@@ -5,7 +5,8 @@ import { getAgentBrowserSessionIdentityKey, isAgentBrowserSessionIdentityKeyInNa
 import { getBrowserRecord, snapshotFromDefinition, type BrowserRecord } from "./browser-transcript.js";
 import { isCloseCommand, isOpenNavigationCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand, isWindowOrDiffPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
-import { findReadConfirmation as findPendingReadConfirmation, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
+import { detectConfirmationRequired } from "./results/confirmation.js";
+import { findReadConfirmation as findPendingReadConfirmation, isSuccessfulNativeConfirmedClose, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getFullSnapshotData, getSnapshotRefEntries } from "./results/snapshot-refs.js";
 import { parseSnapshotLines } from "./results/snapshot-segments.js";
@@ -146,6 +147,10 @@ function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 
 export function extractSessionTabTargetFromCommandData(commandTokens: string[], data: unknown): SessionTabTarget | undefined {
 	const [command, subcommand] = commandTokens;
+	if (command === "confirm" && isRecord(data) && data.confirmed === true && ["navigate", "url"].includes(String(data.action))
+		&& isRecord(data.result) && data.result.success === true && !detectConfirmationRequired(data)) {
+		return extractSessionTabTargetFromData(data.result.data);
+	}
 	if (command === "get" && subcommand === "url") {
 		return normalizeSessionTabTarget({ url: extractStringResultField(data, "url") ?? extractStringResultField(data, "result") });
 	}
@@ -160,7 +165,7 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 	let currentTarget: SessionTabTarget | undefined;
 	let pendingTitle: string | undefined;
 	for (const item of data) {
-		if (!isRecord(item)) continue;
+		if (!isRecord(item) || detectConfirmationRequired(item.result)) continue;
 		// Only this row's native identity can describe the active tab after it ran.
 		if (currentTarget?.targetId) currentTarget = normalizeSessionTabTarget({ title: currentTarget.title, url: currentTarget.url });
 		const commandTokens = extractUpstreamCommandTokens(extractBatchResultCommand(item));
@@ -173,7 +178,7 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 		if (item.success === false) continue;
 		const result = item.result;
 
-		if (isCloseCommand(name)) {
+		if (isCloseCommand(name) || isSuccessfulNativeConfirmedClose(commandTokens, result)) {
 			currentTarget = undefined;
 			pendingTitle = undefined;
 			continue;
@@ -210,9 +215,9 @@ export function deriveSessionTabTarget(options: {
 	if (isCloseCommand(options.command)) {
 		return undefined;
 	}
-	const commandDataTarget = isReadOnlyDiagnosticSessionTargetCommand(options.command, options.subcommand)
-		? undefined
-		: extractSessionTabTargetFromData(options.data);
+	const commandDataTarget = extractSessionTabTargetFromCommandData(
+		[options.command, options.subcommand].filter((token): token is string => token !== undefined), options.data,
+	);
 	const observedTarget = normalizeSessionTabTarget(options.navigationSummary)
 		?? extractSessionTabTargetFromBatchResults(options.data)
 		?? commandDataTarget;
@@ -291,7 +296,7 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 		if (!isRecord(item)) continue;
 		const commandTokens = extractUpstreamCommandTokens(extractBatchResultCommand(item));
 		const [name] = commandTokens;
-		if (item.success !== false && isCloseCommand(name)) {
+		if (item.success !== false && !detectConfirmationRequired(item.result) && (isCloseCommand(name) || isSuccessfulNativeConfirmedClose(commandTokens, item.result))) {
 			latestState = undefined;
 			continue;
 		}

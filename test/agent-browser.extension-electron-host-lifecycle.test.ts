@@ -52,8 +52,8 @@ test("agentBrowserExtension supports Electron launch handoff modes", { concurren
 	try {
 		await mkdir(applicationsDir, { recursive: true });
 		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.HandoffElectron", launchLogPath, name: "Handoff Electron" });
-		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath).replace("JSON.stringify({ args, autosave:", "JSON.stringify({ args, confirmActions: process.env.AGENT_BROWSER_CONFIRM_ACTIONS ?? null, autosave:"));
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, AGENT_BROWSER_CONFIRM_ACTIONS: "click" }, async () => {
 			for (const [handoff, expectedCommands] of [["connect", ["connect"]], ["tabs", ["connect", "tab"]]] as const) {
 				await rm(upstreamLogPath, { force: true });
 				const harness = createExtensionHarness({ cwd: tempDir });
@@ -65,7 +65,20 @@ test("agentBrowserExtension supports Electron launch handoff modes", { concurren
 				assert.deepEqual(commands, expectedCommands, handoff);
 				const launchId = ((result.details?.electron as { launch?: { launchId: string } } | undefined)?.launch?.launchId);
 				assert.ok(launchId);
-				await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId } });
+				assert.ok((await readInvocationLog(upstreamLogPath) as Array<{ args: string[]; confirmActions: string }>).every(call => call.confirmActions === "click"), "Electron connect inherits the ambient setting on first admission");
+				const selected = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["get", "url"] });
+				assert.equal(selected.isError, false, selected.content[0]?.text);
+				await writeFile(upstreamLogPath, "");
+				await withPatchedEnv({ AGENT_BROWSER_CONFIRM_ACTIONS: "tab_new" }, async () => {
+					for (const electron of [{ action: "status", launchId }, { action: "probe", launchId }, { action: "probe" }] as const) {
+						const inspected = await executeRegisteredTool(harness.tool, harness.ctx, { electron });
+						assert.equal(inspected.isError, false, inspected.content[0]?.text);
+					}
+					await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "cleanup", launchId } });
+				});
+				const helpers = await readInvocationLog(upstreamLogPath) as Array<{ args: string[]; confirmActions: string }>;
+				assert.ok(helpers.length > 0);
+				assert.ok(helpers.every(call => call.confirmActions === "click"), "status, both probe selectors, and cleanup retain the target's selected setting");
 			}
 		});
 	} finally {

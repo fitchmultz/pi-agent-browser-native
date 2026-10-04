@@ -17,6 +17,7 @@ import { tryContainerScroll, tryPageScrollTo } from "./prepare/scroll-shims.js";
 import { trySnapshotFilter } from "./prepare/snapshot-filter.js";
 import { commandTimeoutNeedsActivePageUrl, getCommandAwareProcessTimeoutMs } from "./prepare/wait-timeouts.js";
 import { getPersistentSessionArtifactStore } from "./session-state.js";
+import { isBrowserIndependentConfirmation, suppressConfirmationPageHelpers } from "../../read-confirmation.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { applyNamespaceToNextActions } from "../../results/next-actions.js";
 import { buildSessionAwareStaleRefNextActions, buildSessionTabRecoveryNextActions } from "../../results/recovery-next-actions.js";
@@ -515,7 +516,8 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 	}
 	const userRequestedJson = getBooleanFlagValue(runtimeToolArgs, "--json") === true;
 	const routedReadConfirmation = state.sessionPageState.findReadConfirmation(preparedArgs.args, resolveAgentBrowserNamespace(preparedArgs.args, agentBrowserProcessEnv.AGENT_BROWSER_NAMESPACE));
-	const readConfirmation = routedReadConfirmation?.capabilities?.readRequiresConfirmation === true ? routedReadConfirmation : undefined;
+	const readConfirmation = suppressConfirmationPageHelpers(routedReadConfirmation) ? routedReadConfirmation : undefined;
+	const browserIndependentConfirmation = isBrowserIndependentConfirmation(readConfirmation);
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {
 		freshSessionName,
 		managedSessionActive: state.managedSessionActive,
@@ -524,9 +526,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		managedSessionNamespace: state.managedSessionNamespace,
 		sessionMode,
 		stdin: runtimeToolStdin,
-		browserIndependentReadConfirmation: readConfirmation !== undefined,
+		browserIndependentReadConfirmation: browserIndependentConfirmation,
 	});
-	const browserIndependent = readConfirmation !== undefined || isBrowserIndependentRead(extractUpstreamCommandTokens(preparedArgs.args), runtimeToolStdin)
+	const browserIndependent = browserIndependentConfirmation || isBrowserIndependentRead(extractUpstreamCommandTokens(preparedArgs.args), runtimeToolStdin)
 		|| (executionPlan.commandInfo.command === "session" && executionPlan.commandInfo.subcommand === "info");
 	const ownedSessionKey = getSessionContextKey(executionPlan.sessionName, executionPlan.namespace);
 	const plannedSessionPageState = sessionPageState.get(ownedSessionKey);

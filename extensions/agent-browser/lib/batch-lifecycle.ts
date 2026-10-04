@@ -1,6 +1,8 @@
 import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
+import { isSuccessfulNativeConfirmedClose } from "./read-confirmation.js";
+import { detectConfirmationRequired } from "./results/confirmation.js";
 
 export interface SuccessfulBatchCloseLifecycle {
 	endsClosed: boolean;
@@ -15,7 +17,7 @@ export function batchHasSuccessfulCloseAll(data: unknown, fallbackCommands: stri
 		const rowCommand = Array.isArray(row.command) && row.command.every((token) => typeof token === "string")
 			? row.command
 			: fallbackCommands[index];
-		return rowCommand ? isCloseAllCommand(extractUpstreamCommandTokens(rowCommand)) : false;
+		return rowCommand ? !detectConfirmationRequired(row.result) && isCloseAllCommand(extractUpstreamCommandTokens(rowCommand)) : false;
 	});
 }
 
@@ -48,12 +50,13 @@ export function getSuccessfulBatchCloseLifecycle(
 			continue;
 		}
 		const [command, subcommand] = extractUpstreamCommandTokens(rowCommand);
-		if (stepSucceeded && isCloseCommand(command)) {
+		if (stepSucceeded && !detectConfirmationRequired(result) && (isCloseCommand(command) || isSuccessfulNativeConfirmedClose(extractUpstreamCommandTokens(rowCommand), result))) {
 			sawClose = true;
 			endsClosed = true;
 			browserActiveAfterClose = false;
 			recordingClosedAfterBatch = true;
-			statePath = typeof result?.statePath === "string" ? result.statePath : undefined;
+			const closeData = command === "confirm" && isRecord(result?.result) ? result.result.data : result;
+			statePath = isRecord(closeData) && typeof closeData.statePath === "string" ? closeData.statePath : undefined;
 		} else if (sawClose && command === "record") {
 			if (browserLaunched !== false) {
 				endsClosed = false;

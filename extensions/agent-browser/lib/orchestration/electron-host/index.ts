@@ -14,6 +14,7 @@ import { getPageTargetValidationError } from "../../page-target-validation.js";
 import { isRecord } from "../../parsing.js";
 import { getBrowserResultMessage } from "../../browser-transcript.js";
 import { withAttachedBrowserSessionContext } from "../../process.js";
+import { getAgentBrowserProcessEnvironment, withAgentBrowserProcessEnvironment } from "../../process-environment.js";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { appendUniqueAgentBrowserNextActions } from "../../results/next-actions.js";
@@ -486,6 +487,7 @@ class ElectronManagedSessionPolicyError extends Error {}
 
 async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	args: string[];
+	confirmActions?: string;
 	cwd: string;
 	electronLaunchRecord?: ElectronLaunchRecord;
 	headedManagedAutosaveDisabled?: boolean;
@@ -496,6 +498,7 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	signal?: AbortSignal;
 	timeoutMs?: number;
 }, run: () => Promise<T>): Promise<T> {
+	return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_CONFIRM_ACTIONS: options.confirmActions }, async () => {
 	const autosavePolicyChangeError = getRunningHeadedAutosavePolicyChangeError(options.headedManagedAutosaveInterval);
 	if (autosavePolicyChangeError) throw new ElectronManagedSessionPolicyError(autosavePolicyChangeError);
 	const context = buildOwnedManagedSessionRestoreContext({
@@ -521,9 +524,11 @@ async function withOwnedElectronManagedSessionPolicy<T>(options: {
 	} finally {
 		await policy.lock?.release();
 	}
+	});
 }
 
 async function collectOwnedElectronManagedSessionTarget(options: {
+	confirmActions?: string;
 	cwd: string;
 	electronLaunchRecord?: ElectronLaunchRecord;
 	headedManagedAutosaveDisabled?: boolean;
@@ -729,6 +734,7 @@ function buildElectronProbeResult(options: {
 }
 
 interface ElectronHostLaunchCleanupState {
+	sessionPageState: SessionPageState;
 	attachedSessionKeys: ReadonlySet<string>;
 	electronChildProcesses: Map<string, ChildProcess>;
 	electronLaunchRecords: Map<string, ElectronLaunchRecord>;
@@ -746,7 +752,7 @@ export async function cleanupTrackedElectronHostLaunches(options: ElectronHostLa
 		const sessionKey = getSessionPageStateKey(record.sessionName, record.namespace) ?? record.sessionName;
 		const managedSessionOwner = sessionKey ? options.ownedManagedSessions.get(sessionKey) : undefined;
 		const managedSessionCloseError = record.sessionName
-			? await closeManagedSession({ cwd: options.cwd, headedManagedAutosaveInterval: managedSessionOwner?.headedManagedAutosaveInterval, namespace: record.namespace, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, socketDir: managedSessionOwner?.socketDir, timeoutMs: options.timeoutMs })
+			? await closeManagedSession({ confirmActions: options.sessionPageState.get(sessionKey ?? record.sessionName).confirmActions ?? process.env.AGENT_BROWSER_CONFIRM_ACTIONS, cwd: options.cwd, headedManagedAutosaveInterval: managedSessionOwner?.headedManagedAutosaveInterval, namespace: record.namespace, preserveAttachedBrowserSession: options.attachedSessionKeys.has(sessionKey ?? record.sessionName), restoreState: options.managedSessionRestoreState, sessionName: record.sessionName, socketDir: managedSessionOwner?.socketDir, timeoutMs: options.timeoutMs })
 			: undefined;
 		const managedSessionStep = record.sessionName
 			? managedSessionCloseError
@@ -849,6 +855,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 			.map((record) => {
 				const sessionKey = getSessionPageStateKey(record.sessionName, record.namespace) ?? record.sessionName;
 				return collectOwnedElectronManagedSessionTarget({
+					confirmActions: sessionPageState.get(sessionKey).confirmActions ?? getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS,
 					cwd,
 					electronLaunchRecord: record,
 					headedManagedAutosaveDisabled: ownedManagedSessions.get(sessionKey)?.headedManagedAutosaveDisabled,
@@ -925,6 +932,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 			const probe = await withOwnedElectronManagedSessionPolicy(
 				{
 					args: ["snapshot", "-i"],
+					confirmActions: currentPageState.confirmActions ?? getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS,
 					cwd,
 					electronLaunchRecord: launchRecord,
 					headedManagedAutosaveDisabled,
@@ -997,7 +1005,7 @@ async function handleElectronHostInputInContext(options: Parameters<typeof handl
 	if (compiledElectron?.action === "cleanup") {
 		const selection = selectElectronRecords(compiledElectron, electronLaunchRecords);
 		if (selection.error) return buildElectronHostFailureResult({ compiledElectron: redactedCompiledElectron ?? compiledElectron, errorText: selection.error, failureCategory: "validation-error" });
-		const cleanupResults = await cleanupTrackedElectronHostLaunches({ attachedSessionKeys, cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, ownedManagedSessions, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
+		const cleanupResults = await cleanupTrackedElectronHostLaunches({ attachedSessionKeys, cwd, electronChildProcesses, electronLaunchRecords, managedSessionRestoreState, ownedManagedSessions, sessionPageState, records: selection.records ?? [], timeoutMs: compiledElectron.timeoutMs ?? implicitSessionCloseTimeoutMs });
 		return buildElectronCleanupResult(redactedCompiledElectron ?? compiledElectron, cleanupResults);
 	}
 	return undefined;

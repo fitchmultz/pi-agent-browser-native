@@ -86,6 +86,29 @@ setTimeout(() => process.stdout.write(JSON.stringify({ success: true, data: { cl
 	}
 });
 
+test("pending native cleanup keeps the managed restore identity", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-close-pending-"));
+	const restoreState = new ManagedSessionRestoreState();
+	const sessionName = "piab-close-pending";
+	restoreState.disable(sessionName, "");
+	restoreState.recordDaemonRestoreKey(sessionName, "", null);
+	await writeFakeAgentBrowserBinary(tempDir, `
+const data = process.argv.includes("info")
+  ? { active: true, runtime: { restoreKey: null } }
+  : { confirmation_required: true, confirmation_id: "close-decision", action: "close" };
+console.log(JSON.stringify({ success: true, data }));
+`);
+	try {
+		const error = await withPatchedEnv({ PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` }, () =>
+			closeManagedSession({ cwd: tempDir, namespace: "", restoreState, sessionName, timeoutMs: 5000 }));
+		assert.match(error ?? "", /requires confirmation \(close-decision\)/);
+		assert.equal(restoreState.isDisabled(sessionName, ""), true);
+		assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), true);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 test("inspectManagedSessionDaemon waits through a temporarily busy daemon", { concurrency: false, timeout: 15_000 }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-daemon-policy-"));
 	await writeFakeAgentBrowserBinary(tempDir, `

@@ -171,6 +171,14 @@ test("contract suite matches confirmation launch policy surviving native nextAct
 					const prefix = ["--session", `policy-${decision}`];
 					const call = (args: string[]) => executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
 					try {
+						if (decision === "confirm") {
+							const initial = await call(["--confirm-actions", "navigate,recording_restart,tab_new", "a11y", `${fixture.baseUrl}/next`, "--selector", "body"]);
+							const approve = (initial.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(row => row.id === "approve-confirmation");
+							assert.ok(approve, initial.content[0]?.text);
+							assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, approve.params)).isError, false);
+							const observed = await call(["get", "url"]);
+							assert.equal((observed.details?.data as { url: string }).url, `${fixture.baseUrl}/next`, "establish a genuine prior nonblank target before pending navigation");
+						}
 						const pending = await call(["--confirm-actions", "navigate,recording_restart,tab_new", "a11y", `${fixture.baseUrl}/contract`, "--selector", "body"]);
 						assert.equal(pending.details?.failureCategory, "confirmation-required", pending.content[0]?.text);
 						const action = (result: typeof pending, command: "confirm" | "deny") => {
@@ -197,6 +205,12 @@ test("contract suite matches confirmation launch policy surviving native nextAct
 							const audit = (settled.details?.data as { result?: { data?: { violations?: unknown[]; url?: string } } }).result?.data;
 							assert.ok(Array.isArray(audit?.violations), "the confirmed compound command completes a useful audit");
 							assert.equal(audit.url, `${fixture.baseUrl}/contract`);
+							const title = await call(["get", "title"]);
+							assert.equal(title.isError, false, title.content[0]?.text);
+							assert.match(JSON.stringify(title.details?.data), /Agent Browser Contract Fixture/);
+							const body = await call(["get", "text", "body"]);
+							assert.equal(body.isError, false, body.content[0]?.text);
+							assert.match(JSON.stringify(body.details?.data), /Mark ready/);
 						}
 						const before = await call(["get", "url"]);
 						assert.equal((before.details?.data as { url: string }).url, decision === "confirm" ? `${fixture.baseUrl}/contract` : "about:blank");
@@ -228,6 +242,27 @@ test("contract suite matches confirmation launch policy surviving native nextAct
 					} finally { await call(["close"]); }
 				});
 			}
+			await t.test("exact native action survives a confirmation-gated URL helper", async () => {
+				const harness = createExtensionHarness({ cwd: root });
+				const prefix = ["--session", "policy-helper-gated"];
+				const url = `${fixture.baseUrl}/contract`;
+				try {
+					const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", "navigate,url", "a11y", url, "--selector", "body"] });
+					assert.equal(pending.details?.failureCategory, "confirmation-required");
+					assert.equal((pending.details?.data as { action: string }).action, "navigate");
+					const approval = (pending.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(action => action.id === "approve-confirmation");
+					assert.ok(approval);
+					const pidPath = join(socketDir, "policy-helper-gated.pid");
+					const pid = await readFile(pidPath, "utf8");
+					const confirmed = await executeRegisteredTool(harness.tool, harness.ctx, approval.params);
+					assert.equal(confirmed.isError, false, confirmed.content[0]?.text);
+					const data = confirmed.details?.data as { action: string; result: { data: { url: string; violations: unknown[] } } };
+					assert.equal(data.action, "navigate", "the native slot still contains the requested action, not a hidden url probe");
+					assert.equal(data.result.data.url, url);
+					assert.ok(Array.isArray(data.result.data.violations));
+					assert.equal(await readFile(pidPath, "utf8"), pid);
+				} finally { await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "close"] }); }
+			});
 			await t.test("native refused and invalid restart preserves page, sentinel and active take", async () => {
 				const policy = join(root, "policy.json");
 				await writeFile(policy, JSON.stringify({ deny: ["recording_restart"] }));

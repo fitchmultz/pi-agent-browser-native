@@ -17,6 +17,7 @@ import { readProcessStartIdentity } from "../../process-identity.js";
 import { getAgentBrowserProcessEnvironment, withAgentBrowserProcessEnvironment } from "../../process-environment.js";
 import { runAgentBrowserProcess, withAttachedBrowserSessionContext } from "../../process.js";
 import { getAgentBrowserErrorText, parseAgentBrowserEnvelope } from "../../results/envelope.js";
+import { detectConfirmationRequired } from "../../results/confirmation.js";
 import { redactInvocationArgs } from "../../runtime.js";
 import { runSessionCommandData } from "./session-state.js";
 
@@ -176,6 +177,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(options: {
 }
 
 export async function closeManagedSession(options: {
+	confirmActions?: string;
 	cwd: string;
 	headedManagedAutosaveInterval?: string;
 	namespace?: string;
@@ -186,7 +188,7 @@ export async function closeManagedSession(options: {
 	socketDir?: string;
 	timeoutMs: number;
 }): Promise<string | undefined> {
-	return withAgentBrowserProcessEnvironment(options.socketDir ? { PI_AGENT_BROWSER_SOCKET_DIR: options.socketDir } : {}, async () => {
+	return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_CONFIRM_ACTIONS: options.confirmActions, ...(options.socketDir ? { PI_AGENT_BROWSER_SOCKET_DIR: options.socketDir } : {}) }, async () => {
 	const controller = new AbortController();
 	let phase = "policy coordination";
 	let phaseStartedAt = Date.now();
@@ -236,28 +238,33 @@ export async function closeManagedSession(options: {
 		});
 		clearTimeout(timer);
 		stdoutSpillPath = processResult.stdoutSpillPath;
+		const parsed = await parseAgentBrowserEnvelope({ stdout: processResult.stdout, stdoutPath: processResult.stdoutSpillPath });
 		if (!processResult.aborted && !processResult.spawnError && processResult.exitCode === 0) {
-			const parsed = await parseAgentBrowserEnvelope({ stdout: processResult.stdout, stdoutPath: processResult.stdoutSpillPath });
-			const data = parsed.envelope?.success === true && isRecord(parsed.envelope.data) ? parsed.envelope.data : undefined;
-			options.restoreState.clear(options.sessionName, options.namespace);
-			pruneOwnedManagedSessionRestoreSnapshots({
-				cwd: options.cwd,
-				namespace: options.namespace,
-				restoreKey: ownedRestoreKey,
-				statePath: typeof data?.statePath === "string" ? data.statePath : undefined,
-			});
+			const data = parsed.envelope?.success === true && isRecord(parsed.envelope.data) && parsed.envelope.data.closed === true ? parsed.envelope.data : undefined;
+			if (data) {
+				options.restoreState.clear(options.sessionName, options.namespace);
+				pruneOwnedManagedSessionRestoreSnapshots({
+					cwd: options.cwd,
+					namespace: options.namespace,
+					restoreKey: ownedRestoreKey,
+					statePath: typeof data.statePath === "string" ? data.statePath : undefined,
+				});
+			}
 		}
-		return timeoutError ?? getAgentBrowserErrorText({
+		const pending = detectConfirmationRequired(parsed.envelope?.data);
+		return timeoutError ?? (pending ? `Native close requires confirmation (${pending.id}); the session remains wrapper-owned.` : getAgentBrowserErrorText({
 			aborted: processResult.aborted,
 			command: "close",
 			effectiveArgs: redactInvocationArgs(closeArgs),
+			envelope: parsed.envelope,
 			exitCode: processResult.exitCode,
+			parseError: parsed.parseError,
 			plainTextInspection: false,
 			spawnError: processResult.spawnError,
 			stderr: processResult.stderr,
 			timedOut: processResult.timedOut,
 			timeoutMs: processResult.timeoutMs,
-		});
+		}));
 	} catch (error) {
 		return timeoutError ?? (error instanceof Error ? error.message : String(error));
 	} finally {

@@ -1,12 +1,18 @@
 import { runAgentBrowserProcess, withAttachedBrowserSessionContext, withChromeStartupArgs } from "../../process.js";
 import { isRecord } from "../../parsing.js";
-import { isBooleanFlagEnabled } from "../../argv-grammar.js";
+import { getAgentBrowserSessionIdentityKey, isBooleanFlagEnabled, resolveAgentBrowserNamespace } from "../../argv-grammar.js";
+import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
+import { parseArgvDescriptor } from "../../argv-descriptor.js";
+import { isBrowserIndependentRead, needsManagedSession } from "../../command-policy.js";
+import { nextReadConfirmation, parseReadConfirmation, suppressConfirmationPageHelpers } from "../../read-confirmation.js";
+import { buildToolPresentation } from "../../results/presentation.js";
+import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { collectNativeWebMcp, getNativeWebMcpCatalog } from "../../webmcp-observation.js";
 import { isPlainTextInspectionArgs, redactSensitiveValue } from "../../runtime.js";
 import { formatWebMcpCatalogUpdate } from "../../results/presentation/common.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
-import { applyBrowserRunStatePatch, getSessionContextKey } from "./session-state.js";
+import { applyBrowserRunStatePatch, getSessionContextKey, nativePolicyDefinitelyUnestablished, withSessionCommandObservation } from "./session-state.js";
 import { buildScreenshotGeometry, collectScreenshotSample } from "./screenshot-observation.js";
 import type { ImageObservation } from "../../results/contracts.js";
 import { buildJsonVisibleContent, buildMissingBinaryFailureResult } from "./final-result.js";
@@ -19,7 +25,29 @@ export { getSessionContextKey } from "./session-state.js";
 export type { AgentBrowserToolResult, BrowserRunOptions, BrowserRunState, TraceOwner } from "./types.js";
 
 export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
-	const observed = await collectNativeWebMcp(() => withChromeStartupArgs(options.input.persistentChromeArgs, () => withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options))));
+	const observed = await collectNativeWebMcp(() => withSessionCommandObservation({
+		allow: helper => {
+			const pending = parseReadConfirmation(options.state.observedBrowserEffects?.readConfirmation);
+			return !needsManagedSession(parseArgvDescriptor(helper.args), helper.stdin) && !isBrowserIndependentRead(helper.args, helper.stdin)
+				|| pending?.state !== "pending" || getAgentBrowserSessionIdentityKey(helper.sessionName ?? "default", resolveAgentBrowserNamespace([], helper.namespace ?? getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE)) !== getAgentBrowserSessionIdentityKey(pending.sessionName, pending.namespace);
+		},
+		observe: (helper, processResult, envelope) => {
+			const namespace = resolveAgentBrowserNamespace([], helper.namespace ?? getAgentBrowserProcessEnvironment().AGENT_BROWSER_NAMESPACE);
+			const sessionName = helper.sessionName ?? "default";
+			const key = getAgentBrowserSessionIdentityKey(sessionName, namespace);
+			if (key === options.state.confirmationPolicyIdentity && !nativePolicyDefinitelyUnestablished(processResult, envelope, helper.args)) options.state.confirmationPolicyMayBeEstablished = true;
+			const confirmation = nextReadConfirmation({ commandTokens: helper.args, current: options.state.sessionPageState.getReadConfirmation(key), data: envelope?.data, namespace, sessionName, succeeded: envelope?.success === true && processResult.exitCode === 0 && !processResult.aborted && !processResult.timedOut });
+			if (confirmation) {
+				options.state.sessionPageState.applyReadConfirmation(confirmation, options.sessionPageStateUpdate);
+				if (helper.args[0] === "open" && confirmation.state === "pending") {
+					const invalidation = options.state.sessionPageState.get(key).refSnapshotInvalidation;
+					options.state.sessionPageState.markTabTargetUnknown({ sessionName: key, update: options.sessionPageStateUpdate });
+					if (invalidation) options.state.sessionPageState.applyRefSnapshotInvalidation({ sessionName: key, update: options.sessionPageStateUpdate, invalidation });
+				}
+				options.state.observedBrowserEffects = { ...options.state.observedBrowserEffects, readConfirmation: confirmation };
+			}
+		},
+	}, () => withChromeStartupArgs(options.input.persistentChromeArgs, () => withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options)))));
 	const result = observed.result;
 	let details = isRecord(result.details) ? result.details : undefined;
 	if (observed.catalog) {
@@ -46,9 +74,22 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 }
 
 async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise<AgentBrowserToolResult> {
-	const preparedResult = await prepareBrowserRun(options);
+	let preparedResult = await prepareBrowserRun(options);
 	applyBrowserRunStatePatch(options.state, preparedResult.kind === "ready" ? preparedResult.prepared.statePatch : preparedResult.statePatch);
+	const helperConfirmation = parseReadConfirmation(options.state.observedBrowserEffects?.readConfirmation);
+	if (helperConfirmation?.state === "pending") {
+		if (preparedResult.kind === "ready") await preparedResult.prepared.managedSessionPolicyLock?.release();
+		const data = { confirmation_required: true, confirmation_id: helperConfirmation.id, action: helperConfirmation.action ?? "read" };
+		const presentation = await buildToolPresentation({ commandInfo: { command: helperConfirmation.command, commandTokens: [helperConfirmation.command ?? "read"] }, cwd: options.cwd, envelope: { success: true, data }, namespace: helperConfirmation.namespace, sessionName: helperConfirmation.sessionName });
+		preparedResult = { kind: "early-result", result: {
+			content: presentation.content,
+			details: { ...options.state.observedBrowserEffects, agentBrowserStarted: false, args: options.input.redactedArgs, data, sessionName: helperConfirmation.sessionName, namespace: helperConfirmation.namespace, sessionTabTargetUnknown: options.state.sessionPageState.get(getAgentBrowserSessionIdentityKey(helperConfirmation.sessionName, helperConfirmation.namespace)).tabTargetUnknown, readConfirmation: helperConfirmation, nextActions: presentation.nextActions,
+				...buildAgentBrowserResultCategoryDetails({ succeeded: false, failureCategory: "confirmation-required" }) },
+			isError: true,
+		} };
+	}
 	if (preparedResult.kind === "early-result") {
+		options.state.confirmationPolicyMayBeEstablished ??= false;
 		const result = preparedResult.result;
 		if (options.modelVisible !== false && isBooleanFlagEnabled(options.input.toolArgs, "--json") && !isPlainTextInspectionArgs(options.input.toolArgs)) {
 			const details = isRecord(result.details) ? result.details : {};
@@ -75,7 +116,7 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 			const artifactRunStartedAtMs = Date.now();
 			const processResult = await withChromeStartupArgs(prepared.chromeStartupArgs, () => runAgentBrowserProcess({
 				args: prepared.processArgs,
-				browserIndependentReadConfirmation: prepared.readConfirmation !== undefined,
+				nativeConfirmationDecision: suppressConfirmationPageHelpers(prepared.readConfirmation),
 				cwd: options.cwd,
 				env: ownedManagedSession
 					? { AGENT_BROWSER_IDLE_TIMEOUT_MS: options.implicitSessionIdleTimeoutMs }
@@ -105,7 +146,10 @@ async function runAgentBrowserToolInContext(options: BrowserRunOptions): Promise
 				sessionMode: prepared.sessionMode,
 				sessionTabCorrection: prepared.sessionTabCorrection,
 			});
-			if (missingBinaryResult) return missingBinaryResult;
+			if (missingBinaryResult) {
+				options.state.confirmationPolicyMayBeEstablished ??= false;
+				return missingBinaryResult;
+			}
 
 			const output = await processBrowserOutput({ ...options, artifactRunStartedAtMs, prepared, processResult });
 			applyBrowserRunStatePatch(options.state, output.statePatch);
