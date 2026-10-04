@@ -763,7 +763,9 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				return;
 			}
 			livePageVerified = true;
-			priorSessionTabTarget ??= { url: liveUrl };
+			priorSessionTabTarget = normalizeComparableUrl(priorSessionTabTarget?.url) === normalizeComparableUrl(liveUrl)
+				? { ...priorSessionTabTarget, url: liveUrl }
+				: { url: liveUrl };
 			priorSessionTabTargetUnknown = undefined;
 		};
 		const hasPotentialLiveSemanticSession = state.managedSessionActive || priorSessionTabTarget !== undefined || isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true;

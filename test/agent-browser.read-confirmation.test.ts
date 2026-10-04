@@ -291,6 +291,38 @@ for (const action of [
 	});
 });
 
+for (const semantic of [false, true]) for (const drift of [false, true]) test(`warm confirmed capture checks the live page without resume (semantic=${semantic}, drift=${drift})`, { concurrency: false }, async () => {
+	await withConfirmations(async ({ state, log, harness }) => {
+		const prefix = ["--session", "shared"];
+		await writeFile(state, JSON.stringify({ semanticSnapshot: {
+			origin: "https://current.test/contract",
+			refs: { e8: { role: "combobox", name: "Flavor" } }, snapshot: '- combobox "Flavor" [ref=e8]',
+		} }));
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", "snapshot", "open", "https://current.test/contract"] });
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "snapshot", "-i"] });
+		assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "confirm", "snapshot-id"] })).isError, false);
+		if (drift) {
+			const native = JSON.parse(await readFile(state, "utf8"));
+			native.url = "https://current.test/other";
+			native.semanticSnapshot.refs.e8.name = "Renamed";
+			await writeFile(state, JSON.stringify(native));
+		}
+		await writeFile(log, "");
+		const result = await executeRegisteredTool(semantic ? harness.getTool("agent_browser_action")! : harness.tool, harness.ctx,
+			semantic ? { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate", session: "shared" }
+				: { args: [...prefix, "select", "@e8", "chocolate"] });
+		assert.equal(result.isError, drift, result.content[0]?.text);
+		if (drift) {
+			assert.equal(result.details?.failureCategory, "stale-ref");
+			assert.match(result.content[0]?.text ?? "", /current session target is https:\/\/current.test\/other/);
+		}
+		const calls = (await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args));
+		assert.equal(calls.some(tokens => tokens.join(" ") === "get url"), true, "the live URL must be observed on this warm call");
+		assert.equal(calls.some(tokens => tokens[0] === "snapshot"), false, "one-use freshness must not acquire another gated capture");
+		assert.deepEqual(JSON.parse(await readFile(state, "utf8")).actions ?? [], drift ? [] : [["select", "@e8", "chocolate"]]);
+	});
+});
+
 for (const mode of ["absent", "ambiguous", "drift", "intervening"] as const) test(`confirmed semantic select retains its guards (${mode})`, { concurrency: false }, async () => {
 	await withConfirmations(async ({ root, state, log, harness }) => {
 		const refs = mode === "absent" ? { e5: { role: "button", name: "Save" } }
