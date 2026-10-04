@@ -388,7 +388,7 @@ function restoreAttachedSessionKeysFromBranch(branch: unknown[]): Set<string> {
 		if (!succeeded && !retainedFailedAttachment && !terminalBatchClose) continue;
 		if (!sessionName) continue;
 		const sessionKey = getSessionContextKey(sessionName, namespace) ?? sessionName;
-		if ((succeeded && (isCloseCommand(extractUpstreamCommandTokens(args)[0]) || isSuccessfulNativeConfirmedClose(extractUpstreamCommandTokens(args), details.data))) || terminalBatchClose) attachedSessionKeys.delete(sessionKey);
+		if ((succeeded && (isCloseCommand(typeof details.command === "string" ? details.command : extractUpstreamCommandTokens(args)[0]) || isSuccessfulNativeConfirmedClose(extractUpstreamCommandTokens(args), details.data))) || terminalBatchClose) attachedSessionKeys.delete(sessionKey);
 		else if (details.attachedBrowserSession === true || isAttachedBrowserInvocation(args, {})) attachedSessionKeys.add(sessionKey);
 	}
 	return attachedSessionKeys;

@@ -50,6 +50,10 @@ export async function runAgentBrowserTool(options: BrowserRunOptions): Promise<A
 	}, () => withChromeStartupArgs(options.input.persistentChromeArgs, () => withAttachedBrowserSessionContext(options.preserveAttachedBrowserSession === true, () => runAgentBrowserToolInContext(options)))));
 	const result = observed.result;
 	let details = isRecord(result.details) ? result.details : undefined;
+	if (details?.readConfirmation === undefined && options.state.observedBrowserEffects?.readConfirmation) {
+		details = { ...details, readConfirmation: options.state.observedBrowserEffects.readConfirmation };
+		result.details = details;
+	}
 	if (observed.catalog) {
 		const catalog = redactSensitiveValue(observed.catalog) as Record<string, unknown>;
 		details = { ...details, webMcpCatalog: catalog };

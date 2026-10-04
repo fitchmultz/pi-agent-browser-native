@@ -658,6 +658,15 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const sessionTabPinningReason = priorSessionPageState.pinningReason;
 		let priorRefSnapshotState = priorSessionPageState.refSnapshot;
 		let priorRefSnapshotInvalidation = priorSessionPageState.refSnapshotInvalidation;
+		const confirmedCapture = sessionStateKey ? sessionPageState.getReadConfirmation(sessionStateKey) : undefined;
+		// ponytail: reuse the approved capture for one call; DOM-only renames after that sample are not resampled on this use.
+		const reuseConfirmedCapture = confirmedCapture?.refSnapshotFresh === true;
+		if (reuseConfirmedCapture && confirmedCapture) {
+			const consumed = { ...confirmedCapture };
+			delete consumed.refSnapshotFresh;
+			sessionPageState.applyReadConfirmation(consumed, options.sessionPageStateUpdate);
+			state.observedBrowserEffects = { ...state.observedBrowserEffects, readConfirmation: consumed };
+		}
 		let nativeGenerationChanged = false;
 		if (!browserIndependent && !isCloseCommand(executionPlan.commandInfo.command) && priorRefSnapshotState?.refIds.length && sessionStateKey && executionPlan.sessionName) {
 			const daemon = await inspectManagedSessionDaemon({ cwd, namespace: executionPlan.namespace, sessionName: executionPlan.sessionName, signal, includeGeneration: true, headedManagedAutosaveInterval: ownedManagedSession?.headedManagedAutosaveInterval ?? (ownedManagedSession?.headedManagedAutosaveDisabled ? "0" : undefined), timeoutMs: params.timeoutMs });
@@ -983,7 +992,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			commandTokens,
 			cwd,
 			currentTarget: priorSessionTabTarget,
-			previousSnapshot: resolvedSemanticActionRefSnapshot ? undefined : priorRefSnapshotState,
+			previousSnapshot: resolvedSemanticActionRefSnapshot || reuseConfirmedCapture ? undefined : priorRefSnapshotState,
 			stdin: runtimeToolStdin,
 			namespace: executionPlan.namespace,
 			sessionName: executionPlan.sessionName,
