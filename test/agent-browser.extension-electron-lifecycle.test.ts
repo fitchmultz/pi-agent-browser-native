@@ -1050,7 +1050,7 @@ if (command === "open") {
 if (args.includes("get") && args.includes("url")) {
 	setTimeout(() => {
 		process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
-	}, 200);
+	}, 2000);
 	return;
 }
 process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));`,
@@ -1073,18 +1073,19 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 			const safeOpen = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", "https://safe.example/"] });
 			assert.equal(safeOpen.isError, false, JSON.stringify(safeOpen));
 
-			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 25 } });
+			// Leave room for lock admission and process startup, but not the fake URL response.
+			const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 1_000 } });
 			assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
-			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 25 });
+			assert.deepEqual(probeResult.details?.compiledElectron, { action: "probe", timeoutMs: 1_000 }, JSON.stringify(probeResult));
 			assert.equal(probeResult.details?.failureCategory, "upstream-error", JSON.stringify(probeResult));
 			assert.equal((probeResult.details?.electron as { status?: string } | undefined)?.status, "failed");
 			assert.match(probeResult.content[0]?.text ?? "", /Electron probe failed: get url: agent-browser process exited with code 124/);
 
 			// Control: the same fixture under a generous timeout must succeed, proving the
 			// bounded failure above comes from the applied timeoutMs, not any other failure.
-			const controlResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 4000 } });
+			const controlResult = await executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 5_000 } });
 			assert.equal(controlResult.isError, false, JSON.stringify(controlResult));
-			assert.deepEqual(controlResult.details?.compiledElectron, { action: "probe", timeoutMs: 4000 });
+			assert.deepEqual(controlResult.details?.compiledElectron, { action: "probe", timeoutMs: 5_000 });
 			const controlElectron = controlResult.details?.electron as { probe?: { status?: string; url?: string } } | undefined;
 			assert.equal(controlElectron?.probe?.status, "succeeded");
 			assert.equal(controlElectron?.probe?.url, "late");

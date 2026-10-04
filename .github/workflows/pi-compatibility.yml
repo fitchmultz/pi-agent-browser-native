@@ -4,6 +4,16 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      official-version:
+        description: Official stable version resolved for this run; blank resolves latest
+        type: string
+        default: ''
+      fork-ref:
+        description: Maintained fork commit resolved for this run; blank resolves main
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -13,14 +23,27 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PI_AUTOMATION_REF: a0fdc5780053237ac4ee24f49976ee5449e3aaab # v1.0.1
+  PI_AUTOMATION_REF: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
 
 jobs:
+  resolve:
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+    with:
+      automation-ref: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+      official-version: ${{ inputs.official-version }}
+      fork-ref: ${{ inputs.fork-ref }}
+
   official:
+    needs: resolve
+    if: ${{ !cancelled() }}
     name: Official Pi / Node 24
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
+      - name: Require resolved latest hosts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+        run: test "$RESOLVE" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: extension
@@ -38,18 +61,34 @@ jobs:
           package-manager-cache: false
       - name: Use the package npm version
         run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
-      - name: Qualify the locked official graph
+      - name: Qualify latest official Pi
         working-directory: extension
+        env:
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+          PI_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/official-evidence
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          node scripts/ci-host-compat.mjs locked full "$GITHUB_WORKSPACE/automation"
+          node scripts/ci-host-compat.mjs official full "$GITHUB_WORKSPACE/automation" "$OFFICIAL_VERSION"
           git diff --exit-code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: official-host
+          path: ${{ runner.temp }}/official-evidence
+          if-no-files-found: error
+          retention-days: 3
 
   fork:
+    needs: resolve
+    if: ${{ !cancelled() }}
     name: Fork Pi / Node 24
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
+      - name: Require resolved latest hosts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+        run: test "$RESOLVE" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: extension
@@ -65,39 +104,9 @@ jobs:
         id: fork
         with:
           repository: fitchmultz/pi
-          ref: main
+          ref: ${{ needs.resolve.outputs.fork-ref }}
           path: pi-host
           persist-credentials: false
-      - name: Check the fork against the supported Pi floor
-        id: fork_floor
-        working-directory: pi-host
-        env:
-          PI_FORK_REF: ${{ steps.fork.outputs.commit }}
-        run: |
-          node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            import { appendFileSync } from "node:fs";
-            import { MINIMUM_PI_VERSION, versionAtLeast } from "../extension/scripts/doctor.mjs";
-            const forkVersion = JSON.parse(readFileSync("packages/coding-agent/package.json", "utf8")).version;
-            const forkRef = process.env.PI_FORK_REF;
-            if (!versionAtLeast(forkVersion, MINIMUM_PI_VERSION)) {
-              const receipt = {
-                check: "Fork Pi / Node 24",
-                forkRef,
-                forkVersion,
-                minimumPiVersion: MINIMUM_PI_VERSION,
-                status: "unattempted-below-floor",
-                note: `Fork main ${forkRef} reports Pi ${forkVersion}, below the supported ${MINIMUM_PI_VERSION} floor. Fork qualification is UNATTEMPTED for this run; the full supported-fork build and qualification path runs unchanged once the fork reaches the floor. No dropped fork APIs are resurrected for this check.`,
-              };
-              const line = JSON.stringify(receipt, null, 2);
-              console.log(line);
-              if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, "### Fork Pi / Node 24 — qualification unattempted (below floor)\n```json\n" + line + "\n```\n");
-              appendFileSync(process.env.GITHUB_OUTPUT, "supported=false\n");
-            } else {
-              console.log(`Fork main ${forkRef} reports Pi ${forkVersion} >= ${MINIMUM_PI_VERSION}; running the full supported-fork qualification.`);
-              appendFileSync(process.env.GITHUB_OUTPUT, "supported=true\n");
-            }
-          '
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.21.0'
@@ -105,7 +114,6 @@ jobs:
       - name: Use the package npm version
         run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
       - name: Build the current fork packages
-        if: steps.fork_floor.outputs.supported == 'true'
         working-directory: pi-host
         env:
           PI_FORK_REF: ${{ steps.fork.outputs.commit }}
@@ -117,18 +125,32 @@ jobs:
           node ../automation/scripts/pack-fork.mjs . "$RUNNER_TEMP/fork-package" "$PI_FORK_REF"
           git diff --exit-code
       - name: Qualify the installed fork graph
-        if: steps.fork_floor.outputs.supported == 'true'
         working-directory: extension
+        env:
+          PI_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/fork-evidence
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           node scripts/ci-host-compat.mjs fork full "$GITHUB_WORKSPACE/automation" "$RUNNER_TEMP/fork-package"
           git diff --exit-code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: fork-host
+          path: ${{ runner.temp }}/fork-evidence
+          if-no-files-found: error
+          retention-days: 3
 
   macos:
+    needs: resolve
+    if: ${{ !cancelled() }}
     name: macOS package smoke
     runs-on: macos-latest
     timeout-minutes: 8
     steps:
+      - name: Require resolved latest hosts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+        run: test "$RESOLVE" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: extension
@@ -146,10 +168,19 @@ jobs:
           package-manager-cache: false
       - name: Use the package npm version
         run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
-      - name: Load the packed package in Pi
+      - name: Load the packed package in latest Pi
         working-directory: extension
+        env:
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+          PI_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/macos-evidence
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          node scripts/ci-host-compat.mjs locked smoke "$GITHUB_WORKSPACE/automation"
-          node scripts/ci-host-compat.mjs floor smoke "$GITHUB_WORKSPACE/automation"
+          node scripts/ci-host-compat.mjs official smoke "$GITHUB_WORKSPACE/automation" "$OFFICIAL_VERSION"
           git diff --exit-code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: macos-host
+          path: ${{ runner.temp }}/macos-evidence
+          if-no-files-found: error
+          retention-days: 3

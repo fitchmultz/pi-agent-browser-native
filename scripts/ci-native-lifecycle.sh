@@ -5,9 +5,10 @@ if [[ ${1:-} == -h || ${1:-} == --help ]]; then
   printf '%s\n' \
     'Usage: ci-native-lifecycle.sh setup|verify ABSOLUTE_ROOT' \
     'Run model-free, real-browser public Pi lifecycle checks against the' \
-    'locked official Pi graph installed in ROOT/extension by npm ci.' \
+    'latest stable official Pi graph selected in ROOT/extension.' \
     'Requires Node 24.21.0, a non-root user, private HOME=ROOT/home, and a' \
-    'ROOT/extension source checkout.' \
+    'ROOT/extension source checkout and ROOT/automation pinned helpers.' \
+    'OFFICIAL_VERSION freezes the version resolved once by CI; blank resolves latest.' \
     'Example: env -i HOME=/tmp/ci/home PATH="$PATH" bash scripts/ci-native-lifecycle.sh setup /tmp/ci' \
     'Run verify in a loopback-only network namespace after setup (see native-lifecycle.yml).' \
     'Exit codes: 0 passed/help, 1 verification/prerequisite failure, 2 invalid usage.'
@@ -38,7 +39,8 @@ case "$mode" in
       git rev-parse HEAD
       sha256sum package-lock.json
     }
-    npm ci --ignore-scripts
+    PI_COMPAT_EVIDENCE_DIR="$root/logs/host" node scripts/ci-host-compat.mjs \
+      official install "$root/automation" "${OFFICIAL_VERSION:-latest}"
     npm run build
     # A separate stock installation, never a dependency or a custom browser build.
     npm install --global --prefix "$root/browser" agent-browser@0.38.1

@@ -6,7 +6,7 @@ It is for Pi users who want agents to browse sites, inspect pages, click through
 
 ## Pi release qualification
 
-Development host dependencies are pinned to official Pi **1.0.0**, with wildcard runtime peers. `npm run check:compat` checks the installed candidate SDK/CLI identity, typechecks, runs the existing offline tests (including the native Pi pipeline with a controlled provider and fake browser), and tests a packed runtime-only installation through both the SDK and the actual bundled RPC CLI. It does not substitute a fork SDK while leaving official types or child CLI installed.
+CI qualifies the latest stable official Pi and latest maintained fork `main`, resolving their version/commit once per run and retaining SDK/CLI identity evidence. Locked development dependencies are reproducible build snapshots, not qualification targets; runtime peers remain wildcard. `npm run check:compat` checks the installed candidate SDK/CLI identity, typechecks, runs the existing offline tests (including the native Pi pipeline with a controlled provider and fake browser), and tests a packed runtime-only installation through both the SDK and the actual bundled RPC CLI. It does not substitute a fork SDK while leaving official types or child CLI installed.
 
 Run in an empty HOME with a **short** TMPDIR outside your real home. Long temporary paths can exceed macOS's 103-byte Unix socket limit; keep the fixture's socket safety checks intact. Native lifecycle controls, live upstream help sampling, lifecycle dogfood, and platform qualification remain the separate gates documented below. A Pi-only compatibility run uses no live browser profiles, credentials, or agent-browser fork, and does not certify those external integrations.
 
@@ -103,7 +103,7 @@ Artifact results show known requested paths separately from reported/resolved lo
 
 ## Fastest way to try it
 
-Use Node 24.21.0 or newer and Pi 1.0.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, pins its direct Pi validation dependencies to 1.0.0, and makes Pi hosts below 1.0.0 a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
+Use Node 24.21.0 or newer and Pi 1.0.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes Pi hosts below 1.0.0 a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -741,6 +741,14 @@ The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/
 - Real authenticated profile use is powerful but sensitive. Treat profile and cookie access as user-approved, task-specific behavior.
 - Wrapper tab/session recovery is best effort around observed upstream behavior, not a replacement for explicit profile/session design.
 
+## Automatic npm releases (maintainers)
+
+Follow the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases): merge a reviewed PR into `main` with an intentional `package.json` version bump and a matching versioned `CHANGELOG.md` section. Automation never bumps versions, overwrites releases, or republishes an existing version. Once configured and enabled, it runs existing compatibility and native lifecycle checks, qualifies one candidate tarball, then waits for `fitchmultz` approval in the `npm` environment.
+
+Approve only after checking the exact source commit, version, downloaded candidate tarball and summary against [the existing release gates](docs/RELEASE.md#pre-release-checks), including required lifecycle/live-site evidence, artifact checks and all three final reviewer approvals. Apply the documented Windows waiver without claiming a Windows or full composed-gate pass. Approval attests genuine satisfaction of those requirements; it does not create proof. Authenticated, model-backed and paid checks stay outside CI. Automated publication disables npm hooks to publish the already checked bytes; the manual publisher instructions and their gates remain valid.
+
+Failed/unpublished candidates can retry daily at 12:17 UTC or via manual dispatch of `npm release` on `main`, without another bump. Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed. Workflow validation is not evidence of a completed real OIDC publication.
+
 ## Local development
 
 Install upstream `agent-browser`, then install dependencies:
@@ -749,7 +757,7 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
-Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@12.2.0 install`) so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.0.0 or newer for lifecycle and interactive browser smokes; the pinned Pi 1.0.0 devDependencies are validation fixtures, not an exact-version requirement for the host CLI. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@12.2.0 install`) so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.0.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](docs/RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
 
 Checkout-only extension smoke test:
 

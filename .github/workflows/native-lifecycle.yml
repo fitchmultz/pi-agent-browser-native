@@ -4,6 +4,16 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      official-version:
+        description: Official stable version resolved for this run; blank resolves latest
+        type: string
+        default: ''
+      fork-ref:
+        description: Maintained fork commit resolved for this run; blank resolves main
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -13,7 +23,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  resolve:
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+    with:
+      automation-ref: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+      official-version: ${{ inputs.official-version }}
+      fork-ref: ${{ inputs.fork-ref }}
+
   native-lifecycle-linux:
+    needs: resolve
+    if: ${{ !cancelled() }}
     name: Native lifecycle Linux
     runs-on: ubuntu-26.04
     timeout-minutes: 25
@@ -21,10 +40,20 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Require resolved latest hosts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+        run: test "$RESOLVE" = success
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: extension
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+          path: automation
           persist-credentials: false
       - name: Install system prerequisites
         run: |
@@ -44,11 +73,13 @@ jobs:
           root=$(mktemp -d /tmp/piab-ci.XXXXXX)
           echo "CI_ROOT=$root" >> "$GITHUB_ENV"
           echo "CI_NODE_BIN=$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
-          cp -a extension "$root/"
+          cp -a extension automation "$root/"
           mkdir -m 700 "$root/home"
-      - name: Build current native fixture host and download stock browser
+      - name: Build latest native fixture host and download stock browser
+        env:
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
         run: |
-          env -i HOME="$CI_ROOT/home" TMPDIR=/tmp \
+          env -i HOME="$CI_ROOT/home" TMPDIR=/tmp OFFICIAL_VERSION="$OFFICIAL_VERSION" \
             PATH="$CI_NODE_BIN:/usr/local/bin:/usr/bin:/bin" \
             bash "$CI_ROOT/extension/scripts/ci-native-lifecycle.sh" setup "$CI_ROOT"
       - name: Allow the fixture Chrome to create its sandbox
@@ -86,6 +117,14 @@ jobs:
           if [[ -f "$CI_ROOT/logs/chrome.apparmor" ]]; then
             sudo apparmor_parser --remove --skip-cache "$CI_ROOT/logs/chrome.apparmor"
           fi
+      - name: Retain exact host and native lifecycle evidence
+        if: always() && env.CI_ROOT != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-lifecycle
+          path: ${{ env.CI_ROOT }}/logs
+          if-no-files-found: error
+          retention-days: 3
       - name: Remove isolated sources and fixtures
         if: always() && env.CI_ROOT != ''
         run: rm -rf -- "$CI_ROOT"
