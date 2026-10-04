@@ -54,6 +54,7 @@ export type SessionTabPinningReason = "drift" | "restore";
 export type SessionPageStateUpdateToken = number & { readonly __sessionPageStateUpdateToken: unique symbol };
 
 export interface SessionPageStateView {
+	confirmActions?: string;
 	pinningReason?: SessionTabPinningReason;
 	tabReopenPending?: boolean;
 	tabTargetUnknown?: true;
@@ -342,6 +343,7 @@ export function getSessionPageStateKey(sessionName: string | undefined, namespac
 }
 
 export class SessionPageState {
+	private confirmActions = new Map<string, string>();
 	private readConfirmations = new Map<string, { order: number; value: ReadConfirmation }>();
 	private refSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
 	private refSnapshots = new Map<string, OrderedSessionRefSnapshot>();
@@ -366,6 +368,7 @@ export class SessionPageState {
 	/** A command operates on its admitted state while the committed view is unavailable. */
 	fork(): SessionPageState {
 		const state = new SessionPageState();
+		state.confirmActions = new Map(this.confirmActions);
 		state.readConfirmations = new Map(this.readConfirmations);
 		state.refSnapshotInvalidations = new Map(this.refSnapshotInvalidations);
 		state.refSnapshots = new Map(this.refSnapshots);
@@ -379,7 +382,7 @@ export class SessionPageState {
 	}
 
 	views(): Map<string, SessionPageStateView> {
-		return new Map([...new Set([...this.tabTargets.keys(), ...this.tabTargetUnknownOrders.keys(), ...this.refSnapshots.keys(), ...this.refSnapshotInvalidations.keys()])].map(key => [key, this.get(key)]));
+		return new Map([...new Set([...this.confirmActions.keys(), ...this.tabTargets.keys(), ...this.tabTargetUnknownOrders.keys(), ...this.refSnapshots.keys(), ...this.refSnapshotInvalidations.keys()])].map(key => [key, this.get(key)]));
 	}
 
 	/** The same reducer commits live observations and replays selected journal envelopes. */
@@ -388,15 +391,16 @@ export class SessionPageState {
 		const confirmation = parseReadConfirmation(event.state.readConfirmation);
 		for (const page of event.pages ?? []) {
 			const key = page.key;
+			if (page.clear) { this.clearSession(key); continue; }
+			const pending = this.pending.get(key);
+			if (event.phase === "finish" && pending && pending.operationId !== event.operationId) continue;
+			if (page.confirmActions !== undefined) this.setConfirmActions(key, page.confirmActions ?? undefined);
 			if (event.phase === "begin") {
 				this.pending.set(key, { operationId: event.operationId, snapshot: this.refSnapshots.get(key) ?? this.pending.get(key)?.snapshot });
 				this.markTabTargetUnknown({ sessionName: key, update });
 				this.applyRefSnapshotInvalidation({ sessionName: key, update, invalidation: buildPageTransitionRefSnapshotInvalidation("This browser operation has no persisted finish. Inspect the current URL and take a fresh snapshot before using refs; changes may already have happened.") });
 				continue;
 			}
-			if (page.clear) { this.clearSession(key); continue; }
-			const pending = this.pending.get(key);
-			if (event.phase === "finish" && pending && pending.operationId !== event.operationId) continue;
 			if (page.unknown || page.refs.kind === "unknown") {
 				this.markTabTargetUnknown({ sessionName: key, update });
 				this.applyRefSnapshotInvalidation({ sessionName: key, update, invalidation: page.refs.kind === "unknown" && page.refs.invalidation
@@ -432,6 +436,7 @@ export class SessionPageState {
 	}
 
 	reset(): void {
+		this.confirmActions.clear();
 		this.readConfirmations.clear();
 		this.pending.clear();
 		this.nativeGenerations.clear();
@@ -446,6 +451,7 @@ export class SessionPageState {
 	get(sessionName: string | undefined): SessionPageStateView {
 		if (!sessionName) return {};
 		return {
+			...(this.confirmActions.has(sessionName) ? { confirmActions: this.confirmActions.get(sessionName) } : {}),
 			pinningReason: this.tabPinningReasons.get(sessionName),
 			...(this.tabTargets.get(sessionName)?.reopenPending !== undefined ? { tabReopenPending: this.tabTargets.get(sessionName)?.reopenPending } : {}),
 			refSnapshot: stripRefSnapshotOrder(this.refSnapshots.get(sessionName)),
@@ -457,6 +463,11 @@ export class SessionPageState {
 
 	findReadConfirmation(args: string[], namespace?: string): ReadConfirmation | undefined {
 		return findPendingReadConfirmation(args, [...this.readConfirmations.values()].map(entry => entry.value), namespace);
+	}
+
+	setConfirmActions(sessionName: string, value: string | undefined): void {
+		if (value !== undefined) this.confirmActions.set(sessionName, value);
+		else this.confirmActions.delete(sessionName);
 	}
 
 	getReadConfirmation(sessionKey: string): ReadConfirmation | undefined {
@@ -543,6 +554,7 @@ export class SessionPageState {
 	}
 
 	clearSession(sessionName: string): void {
+		this.confirmActions.delete(sessionName);
 		this.pending.delete(sessionName);
 		this.nativeGenerations.delete(sessionName);
 		this.readConfirmations.delete(sessionName);
@@ -555,6 +567,7 @@ export class SessionPageState {
 
 	clearNamespace(namespace?: string): void {
 		const sessionKeys = new Set([
+			...this.confirmActions.keys(),
 			...this.readConfirmations.keys(),
 			...this.refSnapshotInvalidations.keys(),
 			...this.refSnapshots.keys(),

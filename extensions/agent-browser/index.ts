@@ -1764,13 +1764,15 @@ export default function agentBrowserExtension(
 					&& (needsManagedSession(parseArgvDescriptor(toolArgs), resolvedInput.toolStdin) || (selectedPlan.startupScopedFlags?.length ?? 0) > 0);
 				const operationId = randomUUID();
 				const selectedKey = getAgentBrowserSessionIdentityKey(selectedPlan.sessionName ?? "default", selectedPlan.namespace);
+				const confirmActions = getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS;
+				workingPageState.setConfirmActions(selectedKey, confirmActions);
 				const begin: BrowserRecord = { event: {
 					version: 1, phase: "begin", operationId, toolCallId, commandIndex: commandIndex ?? 0, isError: true,
 					state: { args: redactInvocationArgs(toolArgs), sessionName: selectedPlan.sessionName, namespace: selectedPlan.namespace,
 						ownerSessionId: ctx.sessionManager.getSessionId(), usedImplicitSession: selectedPlan.usedImplicitSession,
 						wrapperManaged: selectedPlan.managedSessionName !== undefined || ownedManagedSessions.has(selectedKey), managedSessionCwd: browserCwd,
 						managedSessionSocketDir: resolveAgentBrowserSocketDir({ ownedManagedSession: selectedPlan.managedSessionName !== undefined || ownedManagedSessions.has(selectedKey) }) },
-					pages: [{ key: selectedKey, refs: { kind: "unknown" }, unknown: true }],
+					pages: [{ key: selectedKey, confirmActions: confirmActions ?? null, refs: { kind: "unknown" }, unknown: true }],
 				} };
 				if (browserAffecting) {
 					try {
@@ -1945,7 +1947,14 @@ export default function agentBrowserExtension(
 					stdin: resolvedInput.toolStdin,
 				});
 				const owner = ownedManagedSessions.get(getAgentBrowserSessionIdentityKey(plan.sessionName ?? "default", plan.namespace));
-				return withAgentBrowserProcessEnvironment(owner?.socketDir ? { PI_AGENT_BROWSER_SOCKET_DIR: owner.socketDir } : {}, async () => {
+				// Resolve inside the identity queue, before daemon inspection or any page helper.
+				const explicitConfirmationSetting = ["--confirm-actions", "--config"].some(flag => scanUpstreamGlobalFlagOccurrences(toolArgs, flag).length > 0);
+				const retainedConfirmActions = sessionPageState.get(getAgentBrowserSessionIdentityKey(plan.sessionName ?? "default", plan.namespace)).confirmActions;
+				const confirmActions = !explicitConfirmationSetting && retainedConfirmActions !== undefined ? retainedConfirmActions : resolvedInput.nativeConfirmActions;
+				return withAgentBrowserProcessEnvironment({
+					...(owner?.socketDir ? { PI_AGENT_BROWSER_SOCKET_DIR: owner.socketDir } : {}),
+					AGENT_BROWSER_CONFIRM_ACTIONS: confirmActions,
+				}, async () => {
 				const run = (executionSignal = signal) => {
 					const execute = () => withLaunchDefaults
 						? withLaunchDefaults(inactive => runBrowserCommand(inactive, executionSignal), executionSignal)

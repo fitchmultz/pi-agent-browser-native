@@ -50,7 +50,7 @@ async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal
 	if (!isRecord(config)) return {};
 	const rootLaunchConfig = browserCommand && (hasLocalLaunchDefaults(config, {}) || ["cdp", "autoConnect", "provider"].some((key) => config[key] !== undefined))
 		|| rootFallback && ["restore", "sessionName", "state", "allowedDomains", "profile", "executablePath"].some((key) => config[key] !== undefined);
-	if (!rootLaunchConfig && typeof config.session !== "string" && typeof config.namespace !== "string") return {};
+	if (!rootLaunchConfig && config.confirmActions === undefined && typeof config.session !== "string" && typeof config.namespace !== "string") return {};
 	const result = await runAgentBrowserProcess({ args: ["--config", path, "--json", "session"], cwd, signal, timeoutMs: 5_000 });
 	try {
 		if (result.aborted || result.timedOut || result.spawnError) throw new Error("Could not resolve native agent-browser session configuration; the browser command was not run.");
@@ -118,6 +118,8 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 	const idleTimeout = scanUpstreamGlobalFlagOccurrences(args, "--idle-timeout").at(-1)?.value;
 	const actionPolicy = scanUpstreamGlobalFlagOccurrences(args, "--action-policy").at(-1)?.value;
 	const confirmActions = scanUpstreamGlobalFlagOccurrences(args, "--confirm-actions").at(-1)?.value;
+	const nativeConfirmActions = confirmActions ?? env.AGENT_BROWSER_CONFIRM_ACTIONS
+		?? (typeof identity.confirmActions === "string" ? identity.confirmActions : undefined);
 	const debug = getBooleanFlagValue(args, "--debug");
 	const noAutoDialog = getBooleanFlagValue(args, "--no-auto-dialog");
 	return withAgentBrowserProcessEnvironment({
@@ -129,7 +131,7 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 		...(configPath !== undefined ? { AGENT_BROWSER_CONFIG: resolve(cwd, configPath) } : {}),
 		...(session !== undefined ? { AGENT_BROWSER_SESSION: session } : {}),
 		...(namespace !== undefined ? { AGENT_BROWSER_NAMESPACE: namespace } : {}),
-	}, () => run({ ...input, toolArgs: args, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun, launchSignal = signal) => {
+	}, () => run({ ...input, toolArgs: args, nativeConfirmActions, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun, launchSignal = signal) => {
 		const daemon = await inspectManagedSessionDaemon({ cwd, signal: launchSignal, sessionName: rootDefault,
 			namespace: scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value ?? namespace, timeoutMs: 5_000 });
 		if (daemon.status === "missing-binary") return {

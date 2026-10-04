@@ -589,7 +589,9 @@ Use `tab list` and `tab <tab-id-or-label>` when a profile restore, pop-up, or cl
 
 ### Recover from guarded-action confirmations
 
-When a call uses `--confirm-actions` and upstream requires confirmation, the native tool result prints the pending confirmation id and both recovery calls. Use the same `agent_browser` tool; do not switch to bash.
+Configure `--confirm-actions` on the session's first command. The extension retains that setting for the same canonical namespace/session across helpers, bare follow-ups, code and advanced calls, and transcript resume. Follow the exact returned confirm/deny action without repeating the policy. First launch and new explicit `--confirm-actions` / `--config` selections use native argv → environment → config precedence. Bare follow-ups retain the established setting over ambient environment/discovered-config edits; those defaults apply again after close or for a new identity. Explicit policy changes still use native restart behavior and can discard pending confirmations. Successful close, namespace-wide close, and managed replacement retire the setting with that session.
+
+When upstream requires confirmation, the native tool result prints the pending confirmation id and both recovery calls. Confirming one action in a compound command can return another native confirmation; follow its returned action too. Pending navigation is intent, never an observed page target. Use the same `agent_browser` tool; do not switch to bash.
 
 ```json
 { "args": ["--confirm-actions", "click", "click", "@danger"] }
@@ -1071,7 +1073,7 @@ On Android/Termux, follow the README setup to install the packaged Linux-musl ar
 - `--content-boundaries`: wrap page output in boundary markers. Environment: `AGENT_BROWSER_CONTENT_BOUNDARIES`.
 - `--max-output <chars>`: truncate page output to N characters. Environment: `AGENT_BROWSER_MAX_OUTPUT`.
 - `--allowed-domains <list>`: restrict browser and `read` traffic to exact or `*.` wildcard domain patterns. Environment: `AGENT_BROWSER_ALLOWED_DOMAINS`. Use a fresh local Chrome context; upstream 0.32.0 owns containment and incompatible-mode rejection and disables Chromium `RTCPeerConnection` while active. The wrapper passes the setting and result through unchanged.
-- `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`. Explicit policy and `--confirm-actions` values also reach internal helpers for the current call. Keep them consistent on follow-ups, including confirm/deny; changing or omitting them can restart the native daemon and discard pending confirmations.
+- `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`. Explicit policy values also reach internal helpers for the current call. Keep the action-policy path consistent on follow-ups; changing or omitting it can restart the native daemon and discard pending confirmations. The established `--confirm-actions` setting is retained for same-session follow-ups.
 - `--confirm-actions <list>`: action categories requiring confirmation. Environment: `AGENT_BROWSER_CONFIRM_ACTIONS`.
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
 - `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.

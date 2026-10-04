@@ -44,6 +44,8 @@ function getNestedConfirmationRecord(data: Record<string, unknown>): Record<stri
 }
 
 export function detectConfirmationRequired(data: unknown): ConfirmationRequiredPresentation | undefined {
+	// Native confirm can acknowledge one action while its original compound command remains pending.
+	if (isRecord(data) && data.confirmed === true && isRecord(data.result) && data.result.success === true) data = data.result.data;
 	if (!isRecord(data)) {
 		return undefined;
 	}

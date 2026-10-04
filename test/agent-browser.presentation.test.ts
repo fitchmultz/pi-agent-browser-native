@@ -291,13 +291,17 @@ for (const success of [false, true]) test(`buildToolPresentation renders pending
 	assert.equal(presentation.summary, "Confirmation required: c_8f3a1234");
 });
 
-test("buildToolPresentation renders nested pending confirmations without stringifying sensitive nested context", async () => {
+for (const native of [false, true]) test(`buildToolPresentation renders nested pending confirmations without stringifying sensitive nested context (native=${native})`, async () => {
 	const presentation = await buildToolPresentation({
-		commandInfo: { command: "click", subcommand: "@danger" },
+		commandInfo: native ? { command: "confirm", subcommand: "c_nested" } : { command: "click", subcommand: "@danger" },
 		cwd: process.cwd(),
 		envelope: {
-			success: false,
-			data: {
+			success: native,
+			data: native ? {
+				confirmed: true,
+				result: { success: true, data: { confirmation_required: true, confirmation_id: "c_nested", action: "navigate" } },
+				context: "https://user:pass@example.com/delete?token=secret Authorization: Bearer raw-token",
+			} : {
 				context: "https://user:pass@example.com/delete?token=secret Authorization: Bearer raw-token",
 				pendingConfirmation: {
 					confirmationRequired: true,

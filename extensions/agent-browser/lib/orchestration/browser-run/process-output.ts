@@ -37,6 +37,7 @@ import {
 	type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.js";
 import { isRecord } from "../../parsing.js";
+import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
 import { buildReadConfirmationNextActions, nextReadConfirmation, type ReadConfirmation } from "../../read-confirmation.js";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
@@ -315,7 +316,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		if (isStreamEnableAlreadyEnabledNoop({ command: prepared.executionPlan.commandInfo.command, envelope: presentationEnvelope, processSucceeded, subcommand: prepared.executionPlan.commandInfo.subcommand })) {
 			presentationEnvelope = { success: true, data: { alreadyEnabled: true, enabled: true, message: getEnvelopeErrorString(presentationEnvelope) ?? "Stream already enabled" } };
 		}
-		const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false;
+		const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false && !detectConfirmationRequired(presentationEnvelope?.data);
 		let succeeded = (processSucceeded && parseSucceeded && envelopeSuccess) || recordingStopRecovery?.recovery.healed === true;
 		const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
 		const unobservedMutation = processResult.agentBrowserStarted && !plainTextInspection
@@ -345,6 +346,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			networkRoutesBySession.delete(sessionStateKey);
 			sessionPageState.clearSession(sessionStateKey);
 		}
+		if (sessionStateKey && nestedBatchRemainsActive) {
+			const confirmActions = getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS;
+			if (confirmActions !== undefined) sessionPageState.setConfirmActions(sessionStateKey, confirmActions);
+		}
 		if (prepared.executionPlan.commandInfo.command === "batch" && Array.isArray(presentationEnvelope?.data)) {
 			for (const [index, row] of presentationEnvelope.data.entries()) {
 				if (!isRecord(row)) continue;
@@ -373,7 +378,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			return command === "tab" && subcommand !== undefined && subcommand !== "list";
 		});
 		// Non-page rows (including a failed prefix) cannot retire a cold target for a navigation that never ran.
-		const resultingPageState = sessionPageState.get(sessionStateKey).tabReopenPending === true
+		const resultingPageState = detectConfirmationRequired(presentationEnvelope?.data) || sessionPageState.get(sessionStateKey).tabReopenPending === true
 			? { currentPageUrl: prepared.priorSessionTabTarget?.url, pageTargetMayHaveChanged: false, pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true }
 			: getResultingPageTargetState({
 				args: prepared.executionPlan.effectiveArgs,

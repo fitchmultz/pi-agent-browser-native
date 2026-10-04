@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep the established native confirmation policy across same-session helpers, exact confirm/deny follow-ups, code/advanced calls and resume, without changing caller argv or native first-command precedence. Native compound prompts remain pending and do not become observed page targets.
+
 ## 0.9.2 - 2026-10-04
 
 ### Fixed

@@ -30,6 +30,7 @@ export type BrowserRefDisposition =
 
 export interface BrowserPageChange {
 	key: string;
+	confirmActions?: string | null;
 	refs: BrowserRefDisposition;
 	target?: SessionTabTarget;
 	unknown?: true;
@@ -95,6 +96,7 @@ export function getBrowserRecord(entry: unknown): BrowserRecord | undefined {
 	}
 	if (event.pages !== undefined && (!Array.isArray(event.pages) || !event.pages.every(page => isRecord(page)
 		&& typeof page.key === "string" && isRecord(page.refs) && ["reuse", "replace", "invalidate", "unknown"].includes(String(page.refs.kind))
+		&& (page.confirmActions === undefined || page.confirmActions === null || typeof page.confirmActions === "string")
 		&& (!["reuse", "replace"].includes(String(page.refs.kind)) || typeof page.refs.snapshotId === "string" && page.refs.snapshotId.length > 0)
 		&& (page.target === undefined || isRecord(page.target) && normalizeSessionTabTarget(page.target) !== undefined)
 		&& (page.unknown === undefined || page.unknown === true) && (page.clear === undefined || page.clear === true)
@@ -150,7 +152,7 @@ export function snapshotFromDefinition(definition: BrowserSnapshot): SessionRefS
 
 export function pageChange(key: string, page: SessionPageStateView, previousSnapshotId?: string): BrowserPageChange {
 	return {
-		key, target: page.tabTarget, unknown: page.tabTargetUnknown, reopenPending: page.tabReopenPending, pinningReason: page.pinningReason,
+		key, confirmActions: page.confirmActions ?? null, target: page.tabTarget, unknown: page.tabTargetUnknown, reopenPending: page.tabReopenPending, pinningReason: page.pinningReason,
 		refs: page.tabTargetUnknown ? { kind: "unknown", invalidation: page.refSnapshotInvalidation }
 			: page.refSnapshot && !targetsMatch(page.refSnapshot.target, page.tabTarget) ? { kind: "invalidate", invalidation: buildPageTransitionRefSnapshotInvalidation(`The saved refs came from a snapshot for ${page.refSnapshot.target?.url}; the current session target is ${page.tabTarget?.url}. Take a fresh snapshot before using page-scoped refs.`) }
 			: page.refSnapshot?.snapshotId ? { kind: page.refSnapshot.snapshotId === previousSnapshotId ? "reuse" : "replace", snapshotId: page.refSnapshot.snapshotId }
