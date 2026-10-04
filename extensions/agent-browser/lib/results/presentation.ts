@@ -153,6 +153,7 @@ export async function buildToolPresentation(options: {
 		data = { ...data, piCleanupOwnership: options.piCleanupOwnership ?? "unknown" };
 	}
 	const readConfirmation = nextReadConfirmation({ commandTokens: commandInfoWithTokens.commandTokens ?? [], data, namespace, sessionName: sessionName ?? "default", succeeded: envelope?.success !== false });
+	const confirmationRequired = detectConfirmationRequired(data);
 	const presentationData = commandInfo.command === "batch" && isAgentBrowserBatchResultArray(data)
 		? redactBatchSpillData(data)
 		: redactPresentationData(commandInfoWithTokens, data);
@@ -180,7 +181,7 @@ export async function buildToolPresentation(options: {
 			sessionName,
 			summary,
 		});
-	} else if (options.modelVisible !== false && commandInfo.command === "snapshot" && isRecord(data)) {
+	} else if (options.modelVisible !== false && commandInfo.command === "snapshot" && isRecord(data) && !confirmationRequired) {
 		presentation = await buildSnapshotPresentation(data, persistentArtifactStore, artifactManifest);
 	} else {
 		presentation = {
@@ -258,7 +259,6 @@ export async function buildToolPresentation(options: {
 		currentSpillPaths,
 	) ?? presentationWithManifest.artifactVerification;
 
-	const confirmationRequired = detectConfirmationRequired(data);
 	const missingArtifactFailureText = formatMissingArtifactFailureText(presentationWithManifest.artifacts);
 	if (!errorText && missingArtifactFailureText && hasMissingFileArtifact(presentationWithManifest.artifacts)) {
 		presentationWithManifest.resultCategory = "failure";

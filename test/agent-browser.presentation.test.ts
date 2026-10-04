@@ -264,14 +264,14 @@ test("buildToolPresentation enriches click results with a current-page navigatio
 	});
 });
 
-for (const success of [false, true]) test(`buildToolPresentation renders pending confirmations with approve and deny recovery calls (success=${success})`, async () => {
+for (const command of ["click", "snapshot"]) for (const success of [false, true]) test(`buildToolPresentation renders pending ${command} confirmations with approve and deny recovery calls (success=${success})`, async () => {
 	const presentation = await buildToolPresentation({
-		commandInfo: { command: "click", subcommand: "@e7" },
+		commandInfo: { command, subcommand: command === "snapshot" ? "-i" : "@e7" },
 		cwd: process.cwd(),
 		envelope: {
 			success,
 			data: {
-				action: "click @e7",
+				action: command === "snapshot" ? "snapshot" : "click @e7",
 				confirmation_id: "c_8f3a1234",
 				confirmation_required: true,
 			},
@@ -282,7 +282,8 @@ for (const success of [false, true]) test(`buildToolPresentation renders pending
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Confirmation required\./);
 	assert.match(text, /Pending confirmation id: c_8f3a1234/);
-	assert.match(text, /Action: click @e7/);
+	assert.match(text, command === "snapshot" ? /Action: snapshot/ : /Action: click @e7/);
+	assert.doesNotMatch(text, /no interactive elements|Refs: 0/);
 	assert.equal(presentation.resultCategory, "failure");
 	assert.equal(presentation.failureCategory, "confirmation-required");
 	assert.match(text, /\{ "args": \["confirm", "c_8f3a1234"\] \}/);
@@ -291,9 +292,10 @@ for (const success of [false, true]) test(`buildToolPresentation renders pending
 	assert.equal(presentation.summary, "Confirmation required: c_8f3a1234");
 });
 
-for (const native of [false, true]) test(`buildToolPresentation renders nested pending confirmations without stringifying sensitive nested context (native=${native})`, async () => {
+for (const command of ["click", "confirm", "snapshot"]) test(`buildToolPresentation renders nested pending ${command} confirmations without stringifying sensitive nested context`, async () => {
+	const native = command !== "click";
 	const presentation = await buildToolPresentation({
-		commandInfo: native ? { command: "confirm", subcommand: "c_nested" } : { command: "click", subcommand: "@danger" },
+		commandInfo: { command, subcommand: native ? "c_nested" : "@danger" },
 		cwd: process.cwd(),
 		envelope: {
 			success: native,
@@ -314,10 +316,22 @@ for (const native of [false, true]) test(`buildToolPresentation renders nested p
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = (presentation.content[0] as { text: string }).text;
 	assert.match(text, /Pending confirmation id: c_nested/);
+	assert.doesNotMatch(text, /no interactive elements|Refs: 0/);
 	assert.match(text, /\["confirm", "c_nested"\]/);
 	assert.match(text, /\["deny", "c_nested"\]/);
 	assert.doesNotMatch(text, /user:pass|raw-token|token=secret/);
 	assert.equal(presentation.summary, "Confirmation required: c_nested");
+});
+
+test("a complete empty snapshot remains an observed empty page", async () => {
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "snapshot", subcommand: "-i" }, cwd: process.cwd(),
+		envelope: { success: true, data: { origin: "https://empty.test/", refs: {}, snapshot: "" } },
+	});
+	assert.equal(presentation.resultCategory, "success");
+	assert.match(presentationText(presentation), /Origin: https:\/\/empty.test\/\nRefs: 0/);
+	assert.match(presentationText(presentation), /no interactive elements/);
+	assert.doesNotMatch(presentationText(presentation), /Confirmation required/);
 });
 
 test("buildToolPresentation does not classify confirmation-like records without an id", async () => {
