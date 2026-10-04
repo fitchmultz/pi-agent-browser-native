@@ -38,7 +38,7 @@ if (args.includes("snapshot")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://shop.example/checkout-step-two" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir, prompt: "Stop on the checkout overview page; do not place the order." });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 

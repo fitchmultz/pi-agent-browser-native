@@ -201,7 +201,7 @@ if (args.includes("eval")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.invalid/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -253,7 +253,7 @@ if (args.includes("eval")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.invalid/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -309,7 +309,7 @@ if (args.includes("snapshot")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.invalid/" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -412,7 +412,7 @@ if (args.includes("snapshot")) {
 	);
 
 	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+		await withPatchedEnv({ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://shop.example/inventory" }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -541,6 +541,7 @@ if (args.includes("snapshot")) {
 test("agentBrowserExtension observes live URL after href-less CSS clicks", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-css-click-url-"));
 	const logPath = join(tempDir, "invocations.log");
+	const urlPath = join(tempDir, "url.txt");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -548,11 +549,13 @@ test("agentBrowserExtension observes live URL after href-less CSS clicks", { con
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("open")) {
+  fs.writeFileSync(${JSON.stringify(urlPath)}, "https://shop.example/login");
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Login", url: "https://shop.example/login" } }));
 } else if (args.includes("click")) {
+  fs.writeFileSync(${JSON.stringify(urlPath)}, "https://shop.example/inventory");
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
 } else if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://shop.example/inventory" } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { url: fs.readFileSync(${JSON.stringify(urlPath)}, "utf8") } }));
 } else if (args.includes("get") && args.includes("title")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Inventory" } }));
 } else {
