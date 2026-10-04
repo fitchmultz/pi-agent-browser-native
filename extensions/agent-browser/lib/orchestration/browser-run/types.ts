@@ -64,6 +64,9 @@ export interface OwnedManagedSessionReference {
 }
 
 export interface BrowserRunState {
+	observedBrowserEffects?: Record<string, unknown>;
+	confirmationPolicyIdentity?: string;
+	confirmationPolicyMayBeEstablished?: boolean;
 	activeRecordingReservations?: ReadonlyMap<string, ActiveRecordingReservation>;
 	attachedSessionKeys: Set<string>;
 	artifactManifest?: SessionArtifactManifest;

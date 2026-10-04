@@ -393,12 +393,12 @@ function getManagedPreSpawnPolicyError(
 	options: ManagedSessionRestoreEnvOptions,
 	currentPageUrl?: string,
 	pageUrlUnknown = false,
-	browserIndependentReadConfirmation = false,
+	nativeConfirmationDecision = false,
 ): string | undefined {
 	if (!validateManagedSessionRestoreContextForSpawn(options)) {
 		return "Managed session restore policy, storage, or checkout identity changed after planning; refusing to start agent-browser.";
 	}
-	if (browserIndependentReadConfirmation) return undefined;
+	if (nativeConfirmationDecision) return undefined;
 	return getPageTargetValidationError({
 		args: options.args,
 		currentPageUrl,
@@ -409,7 +409,7 @@ function getManagedPreSpawnPolicyError(
 
 export async function runAgentBrowserProcess(options: {
 	args: string[];
-	browserIndependentReadConfirmation?: boolean;
+	nativeConfirmationDecision?: boolean;
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
 	managedSessionRestoreState?: ManagedSessionRestoreState;
@@ -439,7 +439,7 @@ export async function runAgentBrowserProcess(options: {
 		restoreState: managedSessionRestoreState,
 		stdin,
 	};
-	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, options.browserIndependentReadConfirmation);
+	const planningPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, options.nativeConfirmationDecision);
 	if (planningPolicyError) {
 		return {
 			aborted: false,
@@ -586,7 +586,7 @@ export async function runAgentBrowserProcess(options: {
 			});
 		};
 
-		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, options.browserIndependentReadConfirmation);
+		const spawnPolicyError = getManagedPreSpawnPolicyError(managedSessionRestoreOptions, managedStateCurrentPageUrl, managedStatePageUrlUnknown, options.nativeConfirmationDecision);
 		if (spawnPolicyError) {
 			resolve({ aborted: false, agentBrowserStarted: false, exitCode: 1, spawnError: new Error(spawnPolicyError), stderr: "", stdout: "", timedOut: false });
 			return;

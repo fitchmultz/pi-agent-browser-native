@@ -1041,13 +1041,13 @@ test("runAgentBrowserProcess refuses a changed checkout identity before spawning
 			} else {
 				await chmod(markerPath, 0o644);
 			}
-			for (const browserIndependentReadConfirmation of [false, true]) {
+			for (const nativeConfirmationDecision of [false, true]) {
 				const result: ProcessRunResult = await withOwnedManagedSessionContext(context, () => runAgentBrowserProcess({
-					args: browserIndependentReadConfirmation ? ["--session", "piab-managed", "confirm", "read-id"] : args,
-					browserIndependentReadConfirmation,
+					args: nativeConfirmationDecision ? ["--session", "piab-managed", "confirm", "read-id"] : args,
+					nativeConfirmationDecision,
 					cwd: tempDir,
 					managedSessionRestoreState: restoreState,
-					managedStatePageUrlUnknown: browserIndependentReadConfirmation,
+					managedStatePageUrlUnknown: nativeConfirmationDecision,
 					ownedManagedSession: true,
 				}));
 				assert.equal(result.agentBrowserStarted, false);

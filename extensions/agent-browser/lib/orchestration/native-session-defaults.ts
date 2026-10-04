@@ -50,7 +50,7 @@ async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal
 	if (!isRecord(config)) return {};
 	const rootLaunchConfig = browserCommand && (hasLocalLaunchDefaults(config, {}) || ["cdp", "autoConnect", "provider"].some((key) => config[key] !== undefined))
 		|| rootFallback && ["restore", "sessionName", "state", "allowedDomains", "profile", "executablePath"].some((key) => config[key] !== undefined);
-	if (!rootLaunchConfig && typeof config.session !== "string" && typeof config.namespace !== "string") return {};
+	if (!rootLaunchConfig && config.confirmActions === undefined && typeof config.session !== "string" && typeof config.namespace !== "string") return {};
 	const result = await runAgentBrowserProcess({ args: ["--config", path, "--json", "session"], cwd, signal, timeoutMs: 5_000 });
 	try {
 		if (result.aborted || result.timedOut || result.spawnError) throw new Error("Could not resolve native agent-browser session configuration; the browser command was not run.");
@@ -70,8 +70,7 @@ async function readNativeIdentity(path: string, cwd: string, signal: AbortSignal
 }
 
 export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValidInput, cwd: string, signal: AbortSignal | undefined, run: (input: ResolvedAgentBrowserValidInput, withLaunchDefaults?: (browserRun: (daemonInactive?: boolean) => Promise<AgentBrowserToolResult>, signal?: AbortSignal) => Promise<AgentBrowserToolResult>) => Promise<AgentBrowserToolResult>, root?: { id: string; profile?: string; executablePath?: string }): Promise<AgentBrowserToolResult> {
-	if (input.kind === "electron" && input.compiledElectron.action === "launch") return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_SESSION: undefined }, () => run(input));
-	if (input.kind === "electron" || isPlainTextInspectionArgs(input.toolArgs)) return run(input);
+	if (isPlainTextInspectionArgs(input.toolArgs)) return run(input);
 	const env = getAgentBrowserProcessEnvironment();
 	const configArg = scanUpstreamGlobalFlagOccurrences(input.toolArgs, "--config")[0];
 	const configPath = configArg?.value ?? env.AGENT_BROWSER_CONFIG;
@@ -80,11 +79,18 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 		: [join(homedir(), ".agent-browser", "config.json"), join(cwd, "agent-browser.json")];
 	const rootName = root && rootBrowserSessionName(root.id);
 	const explicitSession = extractExplicitSessionName(input.toolArgs);
+	const browserCommand = input.kind !== "electron" && needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
 	const rootFallback = root !== undefined && env.AGENT_BROWSER_SESSION === undefined && (explicitSession === undefined || explicitSession === rootName)
-		&& needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
+		&& browserCommand;
 	let identity: NativeDefaults = {};
-	const browserCommand = needsManagedSession(parseArgvDescriptor(input.toolArgs), input.toolStdin);
 	for (const path of paths) identity = { ...identity, ...await readNativeIdentity(path, cwd, signal, rootFallback, browserCommand) };
+	if (input.kind === "electron") {
+		const nativeConfirmActions = env.AGENT_BROWSER_CONFIRM_ACTIONS ?? (typeof identity.confirmActions === "string" ? identity.confirmActions : undefined);
+		return withAgentBrowserProcessEnvironment({
+			...(input.compiledElectron.action === "launch" ? { AGENT_BROWSER_SESSION: undefined } : {}),
+			...(configPath !== undefined ? { AGENT_BROWSER_CONFIG: resolve(cwd, configPath) } : {}),
+		}, () => run({ ...input, nativeConfirmActions }));
+	}
 	// Native ORs environment/config booleans; only CLI false overrides configured auto-connect.
 	const autoConnect = getBooleanFlagValue(input.toolArgs, "--auto-connect")
 		?? (isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT) || identity.autoConnect === true);
@@ -117,6 +123,8 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 	const idleTimeout = scanUpstreamGlobalFlagOccurrences(args, "--idle-timeout").at(-1)?.value;
 	const actionPolicy = scanUpstreamGlobalFlagOccurrences(args, "--action-policy").at(-1)?.value;
 	const confirmActions = scanUpstreamGlobalFlagOccurrences(args, "--confirm-actions").at(-1)?.value;
+	const nativeConfirmActions = confirmActions ?? env.AGENT_BROWSER_CONFIRM_ACTIONS
+		?? (typeof identity.confirmActions === "string" ? identity.confirmActions : undefined);
 	const debug = getBooleanFlagValue(args, "--debug");
 	const noAutoDialog = getBooleanFlagValue(args, "--no-auto-dialog");
 	return withAgentBrowserProcessEnvironment({
@@ -128,7 +136,7 @@ export async function withNativeSessionDefaults(input: ResolvedAgentBrowserValid
 		...(configPath !== undefined ? { AGENT_BROWSER_CONFIG: resolve(cwd, configPath) } : {}),
 		...(session !== undefined ? { AGENT_BROWSER_SESSION: session } : {}),
 		...(namespace !== undefined ? { AGENT_BROWSER_NAMESPACE: namespace } : {}),
-	}, () => run({ ...input, toolArgs: args, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun, launchSignal = signal) => {
+	}, () => run({ ...input, toolArgs: args, nativeConfirmActions, chromeStartupArgs, persistentChromeArgs, configuredChromeLaunch }, !rootDefault ? undefined : async (browserRun, launchSignal = signal) => {
 		const daemon = await inspectManagedSessionDaemon({ cwd, signal: launchSignal, sessionName: rootDefault,
 			namespace: scanUpstreamGlobalFlagOccurrences(args, "--namespace").at(-1)?.value ?? namespace, timeoutMs: 5_000 });
 		if (daemon.status === "missing-binary") return {

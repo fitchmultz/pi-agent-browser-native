@@ -408,7 +408,7 @@ test("agentBrowserExtension keeps Electron cleanup ownership after session_tree 
 		tempDir,
 		`const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, confirmActions: process.env.AGENT_BROWSER_CONFIRM_ACTIONS ?? null }) + "\\n");
 process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
 	);
 
@@ -457,7 +457,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 				},
 				isError: false,
 			})];
-			const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+			const harness = createExtensionHarness({ cwd: tempDir });
+			const selected = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", electronSessionName, "--confirm-actions", "navigate", "open", "about:blank"] });
+			assert.equal(selected.isError, false, selected.content[0]?.text);
+			harness.setBranch([...harness.ctx.sessionManager.getBranch(), createToolBranchEntry({ details: selected.details ?? {}, isError: selected.isError }), ...branchA]);
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
 			harness.setBranch([]);
 			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: null, oldLeafId: "branch-a" }, harness.ctx);
@@ -465,6 +468,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 
 			const invocations = await readInvocationLog(logPath);
 			assert.ok(invocations.some((entry) => entry.args.join("\0") === ["--session", electronSessionName, "close"].join("\0")));
+			assert.ok((invocations as Array<{ args: string[]; confirmActions?: string }>).filter(entry => entry.args.includes("close")).every(entry => entry.confirmActions === "navigate"), "off-branch Electron cleanup keeps the native setting for its session");
 			assert.equal(pidIsAlive(child?.pid), false);
 		});
 	} finally {

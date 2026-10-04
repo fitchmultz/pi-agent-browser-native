@@ -25,7 +25,7 @@ const TRANSITION_FIELDS = [
 	"args", "command", "subcommand", "sessionName", "namespace", "sessionMode", "usedImplicitSession",
 	"agentBrowserStarted", "resultCategory", "exitCode", "closeAllApplied", "attachedBrowserSession",
 	"sessionTabTarget", "sessionTabTargetUnknown", "sessionTabReopenPending", "refSnapshot", "refSnapshotInvalidation",
-	"readConfirmation", "compatibilityWorkaround", "managedSessionHeadedAutosaveDisabled", "managedSessionHeadedAutosaveInterval",
+	"readConfirmation", "sessionConfirmActions", "compatibilityWorkaround", "managedSessionHeadedAutosaveDisabled", "managedSessionHeadedAutosaveInterval",
 	"managedSessionOutcome", "managedSessionCwd", "managedSessionRestoreDisabled", "artifactManifest", "electron", "compiledNetworkSourceLookup",
 ] as const;
 

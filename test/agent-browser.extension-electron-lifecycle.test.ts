@@ -416,8 +416,8 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 	try {
 		await mkdir(applicationsDir, { recursive: true });
 		const app = await writeFakeLaunchableElectronApp({ applicationsDir, bundleId: "com.example.DemoElectron", launchLogPath, name: "Demo Electron" });
-		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath));
-		await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "ambient-at-launch", PATH: `${tempDir}:${basePath}` }, async () => {
+		await writeFakeAgentBrowserBinary(tempDir, fakeAgentBrowserLifecycleScript(upstreamLogPath).replace("JSON.stringify({ args, autosave:", "JSON.stringify({ args, confirmActions: process.env.AGENT_BROWSER_CONFIRM_ACTIONS ?? null, autosave:"));
+		await withPatchedEnv({ AGENT_BROWSER_CONFIRM_ACTIONS: "click", AGENT_BROWSER_NAMESPACE: "ambient-at-launch", PATH: `${tempDir}:${basePath}` }, async () => {
 			const harness = createExtensionHarness({ cwd: tempDir });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
@@ -464,6 +464,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(invocationsAfterLaunch.map((entry) => entry.args.at(-2)), ["connect", "get", "tab", "snapshot"]);
 			assert.equal(invocationsAfterLaunch[1]?.args.at(-1), "url");
 			assert.equal(invocationsAfterLaunch[0]?.args.includes("--session"), true);
+			assert.ok((invocationsAfterLaunch as Array<{ args: string[]; confirmActions: string }>).every(call => call.confirmActions === "click"), "Electron connect inherits the ambient setting on first admission");
 
 			const snapshotResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] });
 			assert.equal(snapshotResult.isError, false, JSON.stringify(snapshotResult));
@@ -478,7 +479,7 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.equal(snapshotInvocations.every((entry) => entry.args[entry.args.indexOf("--session") + 1] === launchDetails.electron.launch.sessionName), true);
 
 			await rm(upstreamLogPath, { force: true });
-			const statusResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, () =>
+			const statusResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected", AGENT_BROWSER_CONFIRM_ACTIONS: "tab_new" }, () =>
 				executeRegisteredTool(harness.tool, harness.ctx, {
 					electron: { action: "status", launchId: launchDetails.electron.launch.launchId },
 				}));
@@ -492,9 +493,10 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(statusInvocations.map((entry) => entry.args.at(-1)), ["url", "title"]);
 			assert.equal(statusInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
 			assert.equal(statusInvocations.every((entry) => (entry as { restore?: string | null }).restore === null), true);
+			assert.ok((statusInvocations as Array<{ args: string[]; confirmActions: string }>).every(call => call.confirmActions === "click"), "status retains the target's setting despite ambient changes");
 
 			await rm(upstreamLogPath, { force: true });
-			const probeResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected" }, () =>
+			const probeResult = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "redirected", AGENT_BROWSER_CONFIRM_ACTIONS: "tab_new" }, () =>
 				executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", timeoutMs: 10_000 } }));
 			assert.equal(probeResult.isError, false);
 			assert.match(probeResult.content[0]?.text ?? "", /Electron probe: Demo Electron — app:\/\/demo/);
@@ -523,6 +525,10 @@ test("agentBrowserExtension launches Electron with isolated profile, snapshot ha
 			assert.deepEqual(probeInvocations.slice(0, 2).map((entry) => entry.args.at(-1)), ["url", "title"]);
 			assert.equal(probeInvocations.every((entry) => entry.args[entry.args.indexOf("--namespace") + 1] === ""), true);
 			assert.equal(probeInvocations.every((entry) => (entry as { restore?: string | null }).restore === null), true);
+			assert.ok((probeInvocations as Array<{ args: string[]; confirmActions: string }>).every(call => call.confirmActions === "click"), "the current-session probe retains its selected setting");
+			const namedProbe = await withPatchedEnv({ AGENT_BROWSER_CONFIRM_ACTIONS: "tab_new" }, () => executeRegisteredTool(harness.tool, harness.ctx, { electron: { action: "probe", launchId: launchDetails.electron.launch.launchId } }));
+			assert.equal(namedProbe.isError, false, namedProbe.content[0]?.text);
+			assert.ok((await readInvocationLog(upstreamLogPath) as Array<{ args: string[]; confirmActions: string }>).every(call => call.confirmActions === "click"), "the launchId probe uses the same retained setting");
 
 			harness.setBranch([{ type: "message", message: { details: { ...launchResult.details, namespace: "team" }, isError: false, toolName: "agent_browser" } }]);
 			await runExtensionEvent(harness.handlers, "session_tree", { newLeafId: "namespaced", oldLeafId: null }, harness.ctx);

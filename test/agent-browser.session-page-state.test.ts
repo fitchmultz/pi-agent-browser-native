@@ -41,6 +41,12 @@ test("getSuccessfulBatchCloseLifecycle treats unidentified transcript rows conse
 	assert.equal(batchHasSuccessfulCloseAll([{ command: ["quit", "--all"], success: true }]), true);
 	assert.equal(batchHasSuccessfulCloseAll([{ command: ["close", "--all"], success: false }]), false);
 	assert.equal(getSuccessfulBatchCloseLifecycle([{ success: true }]), undefined);
+	const pendingClose = { confirmation_required: true, confirmation_id: "close-id", action: "close" };
+	assert.equal(getSuccessfulBatchCloseLifecycle([{ command: ["close"], success: true, result: pendingClose }]), undefined);
+	assert.equal(batchHasSuccessfulCloseAll([{ command: ["close", "--all"], success: true, result: pendingClose }]), false);
+	assert.deepEqual(getSuccessfulBatchCloseLifecycle([{ command: ["confirm", "close-id"], success: true,
+		result: { confirmed: true, action: "close", result: { success: true, data: { closed: true, statePath: "/tmp/confirmed-state.json" } } } }]),
+		{ endsClosed: true, recordingClosedAfterBatch: true, statePath: "/tmp/confirmed-state.json" });
 	assert.deepEqual(getSuccessfulBatchCloseLifecycle([
 		{ command: ["close"], result: { statePath: "/tmp/state.json" }, success: true },
 		{ success: true },
@@ -356,6 +362,12 @@ test("extractRefSnapshotFromData preserves editable evidence from snapshot text"
 });
 
 test("read fetch metadata does not replace the active browser tab target", () => {
+	const confirmation = (action: string) => ({ confirmed: true, action, result: { success: true, data: { url: "https://after.example/" } } });
+	assert.equal(extractSessionTabTargetFromCommandData(["confirm", "id"], confirmation("read")), undefined);
+	assert.equal(extractSessionTabTargetFromCommandData(["confirm", "id"], confirmation("network")), undefined, "request URLs are not tab observations");
+	assert.deepEqual(extractSessionTabTargetFromCommandData(["confirm", "id"], confirmation("navigate")), { title: undefined, url: "https://after.example/" });
+	assert.equal(shouldCaptureNavigationSummary("confirm", confirmation("read")), false);
+	assert.equal(shouldCaptureNavigationSummary("confirm", { confirmed: true, action: "navigate", result: { success: true, data: { restarted: true, path: "take.webm" } } }), true, "completed compound navigation can omit a page URL");
 	assert.deepEqual(extractSessionTabTargetFromCommandData(["get", "url"], { result: "https://active.example/" }), { title: undefined, url: "https://active.example/" });
 	assert.equal(
 		extractSessionTabTargetFromCommandData(["read", "https://docs.example.com"], {

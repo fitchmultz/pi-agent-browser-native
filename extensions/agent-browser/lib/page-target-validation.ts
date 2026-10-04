@@ -5,6 +5,8 @@ import {
 } from "./argv-grammar.js";
 import { isBrowserIndependentRead, needsManagedSession } from "./command-policy.js";
 import { isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
+import { isRecord } from "./parsing.js";
+import { detectConfirmationRequired } from "./results/confirmation.js";
 import { type BatchCommandStep, parseBatchCommandArgument, parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 
 const UNVERIFIED_PAGE_MESSAGE = "The active page became unverified after a tab, attachment, history, script, or state-load transition. Run get url or navigate explicitly before page-content inspection.";
@@ -151,6 +153,7 @@ function getResultingPageState(options: {
 export function getResultingPageTargetState(options: {
 	args: string[];
 	executedBatchSteps: string[][];
+	batchResults?: unknown;
 	currentPageUrl?: string;
 	pageUrlUnknown?: boolean;
 }): { currentPageUrl?: string; pageTargetMayHaveChanged: boolean; pageUrlUnknown: boolean } {
@@ -162,7 +165,9 @@ export function getResultingPageTargetState(options: {
 			|| isUnverifiedPageTransitionCommand(descriptor.commandInfo.command, descriptor.commandInfo.subcommand);
 		return { ...getResultingPageState({ ...state, args: options.args, trustedBatchTabSelection: false }), pageTargetMayHaveChanged };
 	}
-	for (const step of options.executedBatchSteps) {
+	for (const [index, step] of options.executedBatchSteps.entries()) {
+		const row = Array.isArray(options.batchResults) ? options.batchResults[index] : undefined;
+		if (isRecord(row) && detectConfirmationRequired(row.result)) continue;
 		const stepDescriptor = parseArgvDescriptor(step);
 		pageTargetMayHaveChanged ||= getExplicitNavigationTarget(step) !== undefined
 			|| isUnverifiedPageTransitionCommand(stepDescriptor.commandInfo.command, stepDescriptor.commandInfo.subcommand);

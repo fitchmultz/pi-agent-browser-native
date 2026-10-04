@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep the established native confirmation policy across same-session helpers, exact confirm/deny follow-ups, code/advanced calls and resume, without changing caller argv or native first-command precedence. Pending navigation, including native batch rows, never becomes an observed target; completed compound confirmations reconcile their actual target before follow-ups. Replacement cleanup retains the old identity's selected string and continuity state until successful close; native unset still uses native defaults. Exact native guarded-control markers avoid helper-slot replacement without command replay or native ID-validation claims. Completed click/tab/close effects and inner failures reconcile normally; cold pending helpers expose the exact decision before getters dispatch. Electron host helpers retain the setting, and definite unestablished requests no longer overwrite it.
+
 ## 0.7.1 - 2026-09-22
 
 ### Fixed

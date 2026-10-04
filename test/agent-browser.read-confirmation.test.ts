@@ -29,13 +29,20 @@ let data, success = true, error;
 if (tokens[0] === 'read' && tokens[1] === 'public.test/body') data = { content: JSON.stringify({ confirmation_required: true, confirmation_id: 'read-id', action: 'read', capabilities: { readRequiresConfirmation: true } }), source: 'http' };
 else if (tokens[0] === 'read') { state.pending = { id: 'read-id', action: 'read', sessionName, namespace, failure: tokens[1]?.endsWith('failure') === true }; data = { confirmation_required: true, confirmation_id: 'read-id', action: 'read', ...(tokens[1]?.startsWith('public.test/legacy') ? {} : { capabilities: { readRequiresConfirmation: true } }) }; }
 else if (tokens[0] === 'webmcp') data = { invocationId: 'pending-job', status: 'pending' };
-else if (tokens[0] === 'click') { state.pending = { id: 'dom-id', action: 'click', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'dom-id', action: 'click' }; }
+else if (tokens[0] === 'click' || tokens[0] === 'tab' && tokens[1] === 'new' || tokens[0] === 'close' || tokens[0] === 'eval' && tokens[1] === 'throw fixture') {
+  const action = tokens[0] === 'tab' ? 'tab_new' : tokens[0] === 'eval' ? 'evaluate' : tokens[0];
+  state.pending = { id: 'dom-id', action, sessionName, namespace, failure: action === 'evaluate' };
+  data = { confirmation_required: true, confirmation_id: 'dom-id', action };
+}
 else if (['confirm', 'deny'].includes(tokens[0])) {
   if (!state.pending || state.pending.id !== tokens[1] || state.pending.sessionName !== sessionName || state.pending.namespace !== namespace) { success = false; error = 'Confirmation ID or session mismatch'; }
-  else { const pending = state.pending; state.pending = null; if (pending.action === 'click' && tokens[0] === 'confirm') { state.domConfirmed = true; state.browserTouches++; }
-    data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: pending.failure ? failedReadResult : { success: true, data: { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
+  else { const pending = state.pending; state.pending = null; if (tokens[0] === 'confirm') {
+      if (pending.action === 'click') { state.domConfirmed = true; state.browserTouches++; state.url = 'https://clicked.test/'; }
+      if (pending.action === 'tab_new') state.url = 'about:blank';
+    }
+    data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: pending.failure ? failedReadResult : { success: true, data: pending.action === 'close' ? { closed: true } : pending.action === 'click' ? { clicked: '#guarded' } : pending.action === 'tab_new' ? { url: 'about:blank' } : { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
 } else if (tokens[0] === 'eval') data = { confirmed: true, action: 'read', result: failedReadResult };
-else if (tokens[0] === 'get' || tokens[0] === 'tab') { state.browserTouches++; data = { url: 'https://current.test/', title: 'Current' }; }
+else if (tokens[0] === 'get' || tokens[0] === 'tab') { state.browserTouches++; data = { url: state.url ?? 'https://current.test/', title: 'Current' }; }
 else data = { active: false, session: sessionName, namespace, runtime: null };
 return { success, data, error };
 }
@@ -90,7 +97,7 @@ for (const command of ["confirm", "deny"]) test(`proven HTTP ${command} preserve
 		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "click", "#guarded"] });
 		const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "webmcp", "invoke", "wait_for_navigation", "--detach"] });
 		assert.equal(pending.details?.sessionTabTargetUnknown, true);
-		for (const id of ["dom-id", "unproven-id"]) {
+		for (const id of ["unproven-id"]) {
 			await writeFile(log, "");
 			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, command, id] });
 			assert.equal(blocked.isError, true);
@@ -173,7 +180,29 @@ test("a stale read ID cannot consume a newer native DOM confirmation or acquire 
 	});
 });
 
-test("DOM and page-content-shaped confirmations keep their existing page checks", { concurrency: false }, async () => {
+test("completed guarded decisions reconcile tabs, fail inner actions truthfully and retire confirmed close on replay", { concurrency: false }, async () => {
+	await withConfirmations(async ({ harness }) => {
+		const prefix = ["--session", "shared"];
+		const decide = async (args: string[]) => {
+			const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
+			assert.equal(pending.details?.failureCategory, "confirmation-required");
+			return await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "confirm", "dom-id"] });
+		};
+		const failed = await decide(["eval", "throw fixture"]);
+		assert.equal(failed.isError, true, failed.content[0]?.text);
+		assert.match(failed.content[0]?.text ?? "", /HTTP read failed: test response 500/);
+		assert.equal((failed.details?.readConfirmation as { state: string }).state, "cleared");
+		const newTab = await decide(["tab", "new"]);
+		assert.equal(newTab.isError, false, newTab.content[0]?.text);
+		assert.equal((newTab.details?.sessionTabTarget as { url: string }).url, "about:blank");
+		const closed = await decide(["close"]);
+		assert.equal(closed.isError, false, closed.content[0]?.text);
+		assert.equal(closed.details?.sessionTabTarget, undefined);
+		assert.equal(SessionPageState.fromBranch(harness.ctx.sessionManager.getBranch()).get("shared").tabTarget, undefined);
+	});
+});
+
+test("native DOM decisions suppress overwriting helpers but page-shaped and unrelated decisions keep page checks", { concurrency: false }, async () => {
 	await withConfirmations(async ({ log, branch, harness }) => {
 		const body = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "read", "public.test/body"] });
 		assert.equal(body.details?.readConfirmation, undefined);
@@ -184,7 +213,8 @@ test("DOM and page-content-shaped confirmations keep their existing page checks"
 		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "confirm", "read-id"] });
 		assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["get", "url"], ["confirm", "read-id"]]);
 		const bare = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "read"] });
-		assert.equal(bare.details?.readConfirmation, undefined, "a capability-shaped DOM read response is not explicit-URL provenance");
+		assert.equal((bare.details?.readConfirmation as { source: string })?.source, "native-guarded-action", "a native current-page read is browser-backed, not explicit-URL provenance");
+		assert.equal((bare.details?.readConfirmation as { capabilities?: unknown })?.capabilities, undefined);
 		const legacy = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "read", "public.test/legacy"] });
 		assert.equal((legacy.details?.readConfirmation as { capabilities?: unknown })?.capabilities, undefined, "legacy routing metadata does not prove native ID checking");
 		await writeFile(log, "");
@@ -195,17 +225,24 @@ test("DOM and page-content-shaped confirmations keep their existing page checks"
 		const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "click", "#guarded"] });
 		assert.equal(blocked.isError, true);
 		assert.equal(blocked.details?.failureCategory, "confirmation-required");
-		assert.equal((blocked.details?.readConfirmation as { state: string }).state, "cleared");
+		assert.equal((blocked.details?.readConfirmation as { state: string }).state, "pending");
 		const actions = blocked.details?.nextActions as Array<{ params: { args: string[] } }>;
-		assert.deepEqual(actions.map(action => action.params.args), [["--session", "shared", "confirm", "dom-id"], ["--session", "shared", "deny", "dom-id"]]);
+		assert.deepEqual(actions.map(action => action.params.args), [["--namespace", "", "--session", "shared", "confirm", "dom-id"], ["--namespace", "", "--session", "shared", "deny", "dom-id"]]);
 		branch.push(createToolBranchEntry({ details: blocked.details!, isError: blocked.isError }));
 		const replayed = SessionPageState.fromBranch(branch);
 		assert.equal(replayed.findReadConfirmation(["--session", "shared", "confirm", "read-id"]), undefined);
-		assert.equal(replayed.findReadConfirmation(["--session", "shared", "confirm", "dom-id"]), undefined);
+		assert.equal(replayed.findReadConfirmation(["--session", "shared", "confirm", "dom-id"])?.source, "native-guarded-action");
+		for (const args of [["--session", "shared", "confirm", "foreign-id"], ["--session", "other", "confirm", "dom-id"]]) {
+			await writeFile(log, "");
+			const unrelated = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+			assert.equal(unrelated.isError, true);
+			assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["get", "url"], ["confirm", args.at(-1)!]]);
+		}
 		await writeFile(log, "");
 		const dom = await executeRegisteredTool(harness.tool, harness.ctx, actions[0].params);
 		assert.equal(dom.isError, false, dom.content[0]?.text);
-		assert.equal(dom.details?.readConfirmation, undefined);
-		assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["get", "url"], ["confirm", "dom-id"]]);
+		assert.equal((dom.details?.readConfirmation as { state: string }).state, "cleared");
+		assert.deepEqual((await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args)), [["confirm", "dom-id"], ["get", "url"], ["get", "title"], ["tab", "list"]]);
+		assert.equal((dom.details?.sessionTabTarget as { url: string }).url, "https://clicked.test/", "completed native click reconciles its resulting target before follow-ups");
 	});
 });

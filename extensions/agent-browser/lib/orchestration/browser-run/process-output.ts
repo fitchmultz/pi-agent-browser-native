@@ -37,7 +37,8 @@ import {
 	type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.js";
 import { isRecord } from "../../parsing.js";
-import { buildReadConfirmationNextActions, nextReadConfirmation, type ReadConfirmation } from "../../read-confirmation.js";
+import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
+import { buildReadConfirmationNextActions, isBrowserIndependentConfirmation, isSuccessfulNativeConfirmedClose, nextReadConfirmation, parseReadConfirmation, type ReadConfirmation } from "../../read-confirmation.js";
 import { pruneOwnedManagedSessionRestoreSnapshots } from "../../managed-session-restore.js";
 import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { createFreshSessionName, extractUpstreamCommandTokens, resolveManagedSessionState } from "../../runtime.js";
@@ -93,7 +94,7 @@ import {
 } from "./diagnostics.js";
 import { repairScreenshotData } from "./prepare.js";
 import { mergeRecordingRecoveryPresentation, recoverRecordingStop } from "./recording-recovery.js";
-import { getPersistentSessionArtifactStore } from "./session-state.js";
+import { getPersistentSessionArtifactStore, nativePolicyDefinitelyUnestablished } from "./session-state.js";
 import {
 	buildFinalAgentBrowserToolResult,
 	buildRedactedPresentationContent,
@@ -216,7 +217,7 @@ function applyBatchNetworkRouteState(options: { data: unknown; routesBySession: 
 	for (const item of options.data) {
 		if (!isRecord(item) || !Array.isArray(item.command) || !item.command.every((token) => typeof token === "string")) continue;
 		const commandTokens = extractUpstreamCommandTokens(item.command as string[]);
-		const stepSucceeded = item.success !== false;
+		const stepSucceeded = item.success !== false && !detectConfirmationRequired(item.result);
 		if (stepSucceeded && isCloseCommand(commandTokens[0])) routes = undefined;
 		else routes = applyNetworkRouteRecords(routes, commandTokens, stepSucceeded);
 	}
@@ -275,17 +276,27 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let readConfirmation = state.sessionPageState.getReadConfirmation(getAgentBrowserSessionIdentityKey(confirmationSessionName, prepared.executionPlan.namespace));
 		let readConfirmationEvent: ReadConfirmation | undefined;
 		const confirmationRows = prepared.executionPlan.commandInfo.command === "batch" && Array.isArray(presentationEnvelope?.data)
-			? presentationEnvelope.data.flatMap((row, index) => isRecord(row) ? [{ tokens: batchCommandSteps[index] ?? [], data: row.result, response: row, succeeded: row.success === true }] : [])
+			? presentationEnvelope.data.flatMap((row, index) => isRecord(row) ? [{ tokens: Array.isArray(row.command) && row.command.every(token => typeof token === "string") ? row.command as string[] : batchCommandSteps[index] ?? [], data: row.result, response: row, succeeded: row.success === true }] : [])
 			: [{ tokens: prepared.commandTokens, data: presentationEnvelope?.data, response: presentationEnvelope, succeeded: presentationEnvelope?.success === true }];
 		for (const row of confirmationRows) {
 			const transition = nextReadConfirmation({ commandTokens: row.tokens, current: readConfirmation, data: row.data, namespace: prepared.executionPlan.namespace, sessionName: confirmationSessionName, succeeded: row.succeeded });
 			if (transition) { readConfirmationEvent = transition; readConfirmation = transition; }
-			if (row.tokens.length === 2 && row.tokens[0] === "confirm" && isRecord(row.data) && row.data.confirmed === true && row.data.action === "read" && isRecord(row.data.result) && row.data.result.success === false && row.response) {
+			if (row.tokens.length === 2 && row.tokens[0] === "confirm" && isRecord(row.data) && row.data.confirmed === true && isRecord(row.data.result) && row.data.result.success === false && row.response) {
 				row.response.success = false;
 				row.response.error = row.data.result.error;
 				if (presentationEnvelope) presentationEnvelope.success = false;
 			}
 		}
+		const confirmedData = prepared.commandTokens[0] === "confirm" && prepared.commandTokens.length === 2
+			&& isRecord(presentationEnvelope?.data) && presentationEnvelope.data.confirmed === true
+			&& isRecord(presentationEnvelope.data.result) && !detectConfirmationRequired(presentationEnvelope.data)
+				? presentationEnvelope.data.result.data : undefined;
+		const confirmedCommand = confirmedData !== undefined && prepared.readConfirmation?.source === "native-guarded-action"
+			&& isRecord(presentationEnvelope?.data) && presentationEnvelope.data.action === prepared.readConfirmation.action
+			? prepared.readConfirmation.command : undefined;
+		const directClose = isCloseCommand(prepared.executionPlan.commandInfo.command)
+			|| isSuccessfulNativeConfirmedClose(prepared.commandTokens, presentationEnvelope?.data);
+		if (readConfirmationEvent?.state === "pending") state.observedBrowserEffects = { ...state.observedBrowserEffects, readConfirmation: readConfirmationEvent };
 		const destinationTransition = dispatchedCommands.some((step) => {
 			const [command, subcommand] = extractUpstreamCommandTokens(step);
 			return isWindowOrDiffPageTransitionCommand(command, subcommand);
@@ -298,23 +309,24 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const nestedBatchClosesAll = prepared.executionPlan.commandInfo.command === "batch"
 			&& batchHasSuccessfulCloseAll(presentationEnvelope?.data, batchCommandSteps);
 		const directCloseAllRequested = isCloseAllCommand(extractUpstreamCommandTokens(prepared.commandTokens));
-		const rawCloseStatePath = isCloseCommand(prepared.executionPlan.commandInfo.command)
-			&& isRecord(presentationEnvelope?.data)
-			&& typeof presentationEnvelope.data.statePath === "string"
-			? presentationEnvelope.data.statePath
+		const directCloseData = confirmedData ?? presentationEnvelope?.data;
+		const rawCloseStatePath = directClose && isRecord(directCloseData) && typeof directCloseData.statePath === "string"
+			? directCloseData.statePath
 			: nestedBatchClose?.statePath;
 		if (presentationEnvelope && prepared.exactSensitiveValues.length > 0) presentationEnvelope = redactExactSensitiveValue(presentationEnvelope, prepared.exactSensitiveValues) as AgentBrowserEnvelope;
 		const parseFailureOutput: ParseFailureOutput = parseError && processResult.stdoutSpillPath
 			? { fullOutputUnavailable: "Malformed upstream output was discarded because it may contain sensitive browser data." }
 			: {};
-		const browserIndependentRead = prepared.readConfirmation !== undefined || isBrowserIndependentRead(prepared.commandTokens, prepared.runtimeToolStdin);
+		const browserIndependentRead = isBrowserIndependentConfirmation(prepared.readConfirmation) || isBrowserIndependentRead(prepared.commandTokens, prepared.runtimeToolStdin);
+		const nativeCommandMayHaveExecuted = !nativePolicyDefinitelyUnestablished(processResult, parsed.envelope, prepared.commandTokens);
+		if (state.confirmationPolicyMayBeEstablished !== true) state.confirmationPolicyMayBeEstablished = nativeCommandMayHaveExecuted;
 		const processSucceeded = !processResult.timedOut && !processResult.aborted && !processResult.spawnError && processResult.exitCode === 0;
 		const plainTextInspection = prepared.executionPlan.plainTextInspection && processSucceeded;
 		const parseSucceeded = plainTextInspection || parseError === undefined;
 		if (isStreamEnableAlreadyEnabledNoop({ command: prepared.executionPlan.commandInfo.command, envelope: presentationEnvelope, processSucceeded, subcommand: prepared.executionPlan.commandInfo.subcommand })) {
 			presentationEnvelope = { success: true, data: { alreadyEnabled: true, enabled: true, message: getEnvelopeErrorString(presentationEnvelope) ?? "Stream already enabled" } };
 		}
-		const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false;
+		const envelopeSuccess = plainTextInspection ? true : presentationEnvelope?.success !== false && !detectConfirmationRequired(presentationEnvelope?.data);
 		let succeeded = (processSucceeded && parseSucceeded && envelopeSuccess) || recordingStopRecovery?.recovery.healed === true;
 		const inspectionText = plainTextInspection ? processResult.stdout.trim() : undefined;
 		const unobservedMutation = processResult.agentBrowserStarted && !plainTextInspection
@@ -344,6 +356,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			networkRoutesBySession.delete(sessionStateKey);
 			sessionPageState.clearSession(sessionStateKey);
 		}
+		if (sessionStateKey && nestedBatchRemainsActive) {
+			const confirmActions = getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS;
+			if (confirmActions !== undefined) sessionPageState.setConfirmActions(sessionStateKey, confirmActions);
+		}
 		if (prepared.executionPlan.commandInfo.command === "batch" && Array.isArray(presentationEnvelope?.data)) {
 			for (const [index, row] of presentationEnvelope.data.entries()) {
 				if (!isRecord(row)) continue;
@@ -352,10 +368,10 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 					: batchCommandSteps[index];
 				if (!rowCommand) continue;
 				const [command, subcommand] = extractUpstreamCommandTokens(rowCommand);
-				updateTraceOwnerState({ command, sessionName: sessionStateKey, subcommand, succeeded: row.success === true, traceOwners });
+				updateTraceOwnerState({ command, sessionName: sessionStateKey, subcommand, succeeded: row.success === true && !detectConfirmationRequired(row.result), traceOwners });
 			}
 		} else {
-			updateTraceOwnerState({ command: prepared.executionPlan.commandInfo.command, sessionName: sessionStateKey, subcommand: prepared.executionPlan.commandInfo.subcommand, succeeded, traceOwners });
+			updateTraceOwnerState({ command: directClose ? "close" : prepared.executionPlan.commandInfo.command, sessionName: sessionStateKey, subcommand: prepared.executionPlan.commandInfo.subcommand, succeeded, traceOwners });
 		}
 
 		let clickDispatchDiagnostic: Awaited<ReturnType<typeof collectClickDispatchDiagnostic>>;
@@ -367,22 +383,23 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			}
 		}
 
-		const tabTransition = dispatchedCommands.some((step) => {
+		const tabTransition = confirmedCommand === "tab" || dispatchedCommands.some((step) => {
 			const [command, subcommand] = extractUpstreamCommandTokens(step);
 			return command === "tab" && subcommand !== undefined && subcommand !== "list";
 		});
 		// Non-page rows (including a failed prefix) cannot retire a cold target for a navigation that never ran.
-		const resultingPageState = sessionPageState.get(sessionStateKey).tabReopenPending === true
+		const resultingPageState = !nativeCommandMayHaveExecuted || detectConfirmationRequired(presentationEnvelope?.data) || sessionPageState.get(sessionStateKey).tabReopenPending === true
 			? { currentPageUrl: prepared.priorSessionTabTarget?.url, pageTargetMayHaveChanged: false, pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true }
 			: getResultingPageTargetState({
 				args: prepared.executionPlan.effectiveArgs,
 				executedBatchSteps: dispatchedCommands,
+				batchResults: presentationEnvelope?.data,
 				currentPageUrl: prepared.priorSessionTabTarget?.url,
 				pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true,
 			});
 		if (
-			succeeded && !nestedBatchClosed &&
-			(shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data, prepared.executionPlan.commandInfo.subcommand) ||
+			succeeded && readConfirmation?.state !== "pending" && !nestedBatchClosed && !directClose &&
+			(confirmedCommand !== undefined && shouldCaptureNavigationSummary(confirmedCommand, confirmedData) || shouldCaptureNavigationSummary(prepared.executionPlan.commandInfo.command, presentationEnvelope?.data, prepared.executionPlan.commandInfo.subcommand) ||
 				(prepared.executionPlan.commandInfo.command === "batch" && dispatchedCommands.some(([command, subcommand]) => isNavigationObservableCommandName(command, subcommand))) ||
 				shouldCaptureSemanticActionNavigationSummary(prepared.compiledSemanticAction, presentationEnvelope?.data) ||
 				commandRequiresLivePageVerification(prepared.executionPlan.effectiveArgs, prepared.runtimeToolStdin) ||
@@ -392,16 +409,16 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		// Failed transitions may already have changed the page; keep only a live observed URL.
 		if (
-			succeeded === false &&
-			processResult.agentBrowserStarted &&
+			succeeded === false && readConfirmation?.state !== "pending" &&
+			processResult.agentBrowserStarted && nativeCommandMayHaveExecuted &&
 			!processResult.aborted &&
 			!processResult.timedOut &&
-			!nestedBatchClosed &&
-			dispatchedCommands.some((step) => {
+			!nestedBatchClosed && !directClose &&
+			(isUnverifiedPageTransitionCommand(prepared.readConfirmation?.source === "native-guarded-action" ? prepared.readConfirmation.command : undefined) || dispatchedCommands.some((step) => {
 				const [command, subcommand] = extractUpstreamCommandTokens(step);
 				return (prepared.executionPlan.commandInfo.command === "batch" && isOpenNavigationCommand(command))
 					|| isUnverifiedPageTransitionCommand(command, subcommand);
-			})
+			}))
 		) {
 			navigationSummary = await collectNavigationSummary({ cwd, namespace: prepared.executionPlan.namespace, priorTarget: prepared.priorSessionTabTarget, sessionName: prepared.executionPlan.sessionName, signal });
 			// Re-verifying a failed transition's URL does not make its prior refs valid.
@@ -418,7 +435,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (plannedTabCorrection) openResultTabCorrection = await applyOpenResultTabCorrection({ correction: plannedTabCorrection, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal });
 		}
 
-		const verifiesCurrentUrl = prepared.executionPlan.commandInfo.command === "get" && prepared.executionPlan.commandInfo.subcommand === "url";
+		const verifiesCurrentUrl = prepared.executionPlan.commandInfo.command === "get" && prepared.executionPlan.commandInfo.subcommand === "url"
+			|| readConfirmationEvent?.state === "cleared" && prepared.readConfirmation?.source === "native-guarded-action" && extractSessionTabTargetFromCommandData(prepared.commandTokens, presentationEnvelope?.data) !== undefined;
 		const trustsReportedPageTarget = !resultingPageState.pageUrlUnknown || verifiesCurrentUrl;
 		const pendingWebMcpMutation = isPendingWebMcpMutation(
 			prepared.executionPlan.commandInfo.command,
@@ -431,13 +449,15 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		);
 		const unsettledWebMcpMutation = pendingWebMcpMutation || failedWebMcpSettlement;
 
+		const helperConfirmation = parseReadConfirmation(state.observedBrowserEffects?.readConfirmation);
+		if (helperConfirmation?.state === "pending") { readConfirmationEvent = helperConfirmation; readConfirmation = helperConfirmation; succeeded = false; }
 		const pageTargetData = textOutput ? undefined : presentationEnvelope?.data;
 		let observedSessionTabTarget = unsettledWebMcpMutation || (unobservedMutation && !failedTransitionReverification)
 			? undefined
 			: normalizeSessionTabTarget(navigationSummary)
 				?? (trustsReportedPageTarget ? extractSessionTabTargetFromBatchResults(pageTargetData) : undefined)
 				?? (succeeded && trustsReportedPageTarget ? extractSessionTabTargetFromCommandData(prepared.commandTokens, pageTargetData) : undefined);
-		if (observedSessionTabTarget && !browserIndependentRead && !nestedBatchClosed && !isCloseCommand(prepared.executionPlan.commandInfo.command)) {
+		if (observedSessionTabTarget && readConfirmation?.state !== "pending" && !browserIndependentRead && !nestedBatchClosed && !directClose) {
 			const reportedTarget = prepared.executionPlan.commandInfo.command === "batch"
 				? extractSessionTabTargetFromBatchResults(pageTargetData)
 				: prepared.commandTokens[0] === "tab" && prepared.commandTokens[1] === "close" ? undefined
@@ -451,7 +471,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			// Window/diff responses do not report the final URL; URL2 is intent, not redirect evidence.
 			currentSessionTabTarget = resultingPageState.pageTargetMayHaveChanged
 				? succeeded && !destinationTransition ? normalizeSessionTabTarget({ url: resultingPageState.currentPageUrl }) : undefined
-				: deriveSessionTabTarget({ command: prepared.executionPlan.commandInfo.command, data: pageTargetData, navigationSummary, previousTarget: prepared.priorSessionTabTarget, subcommand: prepared.executionPlan.commandInfo.subcommand });
+				: deriveSessionTabTarget({ command: directClose ? "close" : prepared.executionPlan.commandInfo.command, data: pageTargetData, navigationSummary, previousTarget: prepared.priorSessionTabTarget, subcommand: prepared.executionPlan.commandInfo.subcommand });
 		}
 		let aboutBlankSessionMismatch: AboutBlankSessionMismatch | undefined;
 		let electronPostCommandHealth: ReturnType<typeof buildElectronPostCommandHealthDiagnostic>;
@@ -526,7 +546,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		let currentRefSnapshot: SessionRefSnapshot | undefined;
 		let currentRefSnapshotInvalidation: SessionRefSnapshotInvalidation | undefined;
 		if (sessionStateKey && !browserIndependentRead) {
-			const sessionClosed = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed;
+			const sessionClosed = (directClose && succeeded) || nestedBatchClosed;
 			if (sessionClosed) {
 				state.attachedSessionKeys.delete(sessionStateKey);
 				networkRoutesBySession = new Map(networkRoutesBySession);
@@ -545,7 +565,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 					? buildPageTransitionRefSnapshotInvalidation("A dispatched mutation was interrupted without a final outcome. Verify the current URL and take a fresh snapshot before deciding whether to retry.")
 					: unsettledWebMcpMutation
 					? buildPageTransitionRefSnapshotInvalidation("A detached WebMCP invocation is still pending or failed to settle and can mutate, rerender, or navigate the page, so prior snapshot refs remain invalid after URL verification. Run webmcp result or cancel, then take a fresh snapshot before using page-scoped refs.")
-					: processResult.agentBrowserStarted && (directTransitionInvalidation || plannedBatchTransitionInvalidation)
+					: processResult.agentBrowserStarted && nativeCommandMayHaveExecuted && (directTransitionInvalidation || plannedBatchTransitionInvalidation)
 						? directTransitionInvalidation ?? plannedBatchTransitionInvalidation
 					: failedTransitionReverification
 						? buildPageTransitionRefSnapshotInvalidation("A failed page transition may still have changed the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.")
@@ -563,13 +583,13 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 					: prepared.executionPlan.commandInfo.command === "batch"
 						? batchRefSnapshotState?.snapshot
 						: succeeded
-							? prepared.executionPlan.commandInfo.command === "snapshot" ? extractRefSnapshotFromData(presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot
+							? prepared.executionPlan.commandInfo.command === "snapshot" || confirmedCommand === "snapshot" ? extractRefSnapshotFromData(confirmedData ?? presentationEnvelope?.data) : prepared.resolvedSemanticActionRefSnapshot ?? overlayBlockerDiagnostic?.snapshot
 							: undefined;
 				const refreshArgs = batchRefSnapshotState?.refreshArgs ?? (succeeded && prepared.commandTokens[0] === "snapshot" && isRecord(presentationEnvelope?.data) && isRecord(presentationEnvelope.data.snapshot) && !refSnapshot
 					? prepared.commandTokens.filter((token) => token !== "--delta" && token !== "--full") : undefined);
 				// Native owns delta baselines. Read complete refs without advancing that baseline
 				// rather than maintaining a second revision/tree cache in the wrapper.
-				if (refreshArgs && !unsettledWebMcpMutation && !unobservedMutation) {
+				if (refreshArgs && readConfirmation?.state !== "pending" && !unsettledWebMcpMutation && !unobservedMutation) {
 					refSnapshot = extractRefSnapshotFromData(await runSessionCommandData({ args: refreshArgs, cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal }));
 					if (!refSnapshot) sessionPageState.applyRefSnapshotInvalidation({ invalidation: buildPageTransitionRefSnapshotInvalidation("The native snapshot delta did not include complete refs and the full ref read failed. Run snapshot -i before using refs."), sessionName: sessionStateKey, update: sessionPageStateUpdate });
 				}
@@ -602,8 +622,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			&& nestedBatchRemainsActive
 			&& sessionStateKey === priorManagedSessionKey;
 		const closeAllClosesPriorManagedSession = closeAllTargetsPriorManagedSession && !closeAllRetainsPriorManagedSession;
-		const commandClosesSession = isCloseCommand(prepared.executionPlan.commandInfo.command) || nestedBatchClosed || closeAllClosesPriorManagedSession;
-		const closeCommandSucceeded = (isCloseCommand(prepared.executionPlan.commandInfo.command) && succeeded) || nestedBatchClosed || closeAllClosesPriorManagedSession;
+		const commandClosesSession = directClose || nestedBatchClosed || closeAllClosesPriorManagedSession;
+		const closeCommandSucceeded = (directClose && succeeded) || nestedBatchClosed || closeAllClosesPriorManagedSession;
 		const closeTargetsPriorManagedNamespace = prepared.executionPlan.namespace === priorManagedSessionNamespace;
 		const managedCloseSessionName = closeAllClosesPriorManagedSession
 			? priorManagedSessionName
@@ -677,11 +697,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		}
 		if (replacedManagedSessionName) {
 			const replacedSessionStateKey = getSessionContextKey(replacedManagedSessionName, priorManagedSessionNamespace);
-			networkRoutesBySession = new Map(networkRoutesBySession);
-			networkRoutesBySession.delete(replacedSessionStateKey ?? replacedManagedSessionName);
-			sessionPageState.clearSession(replacedSessionStateKey ?? replacedManagedSessionName);
 			const replacedSessionKey = replacedSessionStateKey ?? replacedManagedSessionName;
-			const replacedCloseError = await closeManagedSession({ cwd: priorManagedSessionCwd, headedManagedAutosaveInterval: priorManagedSessionHeadedAutosaveInterval, namespace: priorManagedSessionNamespace, preserveAttachedBrowserSession: state.attachedSessionKeys.has(replacedSessionKey), restoreState: state.managedSessionRestoreState, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+			const replacedCloseError = await closeManagedSession({ confirmActions: sessionPageState.get(replacedSessionKey).confirmActions ?? process.env.AGENT_BROWSER_CONFIRM_ACTIONS, cwd: priorManagedSessionCwd, headedManagedAutosaveInterval: priorManagedSessionHeadedAutosaveInterval, namespace: priorManagedSessionNamespace, preserveAttachedBrowserSession: state.attachedSessionKeys.has(replacedSessionKey), restoreState: state.managedSessionRestoreState, sessionName: replacedManagedSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
 			if (managedSessionOutcome) {
 				managedSessionOutcome = {
 					...managedSessionOutcome,
@@ -692,6 +709,9 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				};
 			}
 			if (!replacedCloseError) {
+				networkRoutesBySession = new Map(networkRoutesBySession);
+				networkRoutesBySession.delete(replacedSessionKey);
+				sessionPageState.clearSession(replacedSessionKey);
 				state.attachedSessionKeys.delete(replacedSessionKey);
 				state.closedManagedSessionNames.add(replacedSessionKey);
 			}
@@ -718,7 +738,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				if (electronHandoff.error) {
 					succeeded = false;
 					presentationEnvelope = { error: electronHandoff.error, success: false };
-					const closeError = await closeManagedSession({ cwd, headedManagedAutosaveInterval: prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval, namespace: prepared.executionPlan.namespace, policyLock: prepared.managedSessionPolicyLock, preserveAttachedBrowserSession: input.preserveAttachedBrowserSession, restoreState: state.managedSessionRestoreState, sessionName: electronSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
+					const closeError = await closeManagedSession({ confirmActions: sessionPageState.get(electronSessionStateKey).confirmActions ?? process.env.AGENT_BROWSER_CONFIRM_ACTIONS, cwd, headedManagedAutosaveInterval: prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval, namespace: prepared.executionPlan.namespace, policyLock: prepared.managedSessionPolicyLock, preserveAttachedBrowserSession: input.preserveAttachedBrowserSession, restoreState: state.managedSessionRestoreState, sessionName: electronSessionName, timeoutMs: implicitSessionCloseTimeoutMs });
 					electronFailedConnectCleanup = await cleanupElectronLaunchResources({ child: prepared.electronLaunch.child, record: electronLaunchRecord, timeoutMs: implicitSessionCloseTimeoutMs });
 					electronLaunchRecord = electronFailedConnectCleanup.record;
 					if (electronFailedConnectCleanup.partial) {
@@ -768,6 +788,8 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 			if (presentationEnvelope?.error !== undefined) presentationEnvelope = { ...presentationEnvelope, error: redactClipboardPermissionErrorValue(prepared.executionPlan.commandInfo, presentationEnvelope.error, clipboardWritePayloadCandidates) };
 		}
 		if ((plainTextUpgrade || textOutput) && errorText) presentationEnvelope = { ...presentationEnvelope, success: false, error: errorText };
+		const finalHelperConfirmation = parseReadConfirmation(state.observedBrowserEffects?.readConfirmation);
+		if (finalHelperConfirmation?.state === "pending") { readConfirmationEvent = finalHelperConfirmation; succeeded = false; }
 		let presentation = plainTextInspection ? { artifacts: undefined, batchFailure: undefined, batchSteps: undefined, content: [{ type: "text" as const, text: inspectionText ?? "" }], data: undefined, fullOutputPath: undefined, fullOutputPaths: undefined, imagePath: undefined, imagePaths: undefined, savedFile: undefined, savedFilePath: undefined, summary: `${prepared.redactedArgs.join(" ")} completed` } : recordingStopRecovery && !recordingStopRecovery.batch ? recordingStopRecovery.presentation : await buildToolPresentation({ textOutput, stdin: prepared.processStdin, modelVisible: input.modelVisible, args: prepared.redactedProcessArgs, artifactManifest, artifactMaxUpdatedAtMs: Date.now(), artifactMinUpdatedAtMs: input.artifactRunStartedAtMs, artifactRequest: screenshotArtifactRequest, batchArtifactRequests: batchScreenshotArtifactRequests, commandInfo: { ...prepared.executionPlan.commandInfo, commandTokens: prepared.commandTokens }, compiledSemanticAction: prepared.compiledSemanticAction, cwd: operationCwd, envelope: presentationEnvelope, errorText, namespace: prepared.executionPlan.namespace, networkRouteDiagnostics, networkRoutes: activeNetworkRoutes, persistentArtifactStore, previousRecordingContactSheetPath: sessionStateKey ? state.activeRecordingReservations?.get(sessionStateKey)?.contactSheetPath : undefined, piCleanupOwnership: sessionStateKey && (state.ownedManagedSessions.has(sessionStateKey) || prepared.executionPlan.managedSessionName !== undefined) ? "wrapper-managed" : "caller-owned", sessionName: prepared.executionPlan.sessionName });
 		if (recordingStopRecovery) presentation = mergeRecordingRecoveryPresentation(presentation, recordingStopRecovery);
 		if (parseError && processResult.exitCode !== 0 && processResult.stderr.trim() && !processResult.timedOut && !processResult.aborted && !processResult.spawnError) {
@@ -783,6 +805,7 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 				presentation.resultCategory = "failure";
 				presentation.failureCategory = "confirmation-required";
 				presentation.successCategory = undefined;
+				if (helperConfirmation?.state === "pending") presentation.content.unshift({ type: "text", text: `Native helper ${confirmation.command ?? "read"} requires confirmation (${confirmation.action ?? "read"}, ${confirmation.id}). The requested command's result, if dispatched, is preserved below.` });
 			}
 		}
 		if (plainTextUpgrade && !textOutput && !succeeded && typeof presentationEnvelope?.data === "string") {

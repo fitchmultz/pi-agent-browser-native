@@ -99,7 +99,7 @@ import {
 	type ActiveRecordingReservation,
 } from "./lib/recording-reservations.js";
 import { createAgentBrowserWebSearchTool } from "./lib/web-search.js";
-import { scopeReadConfirmationArgs } from "./lib/read-confirmation.js";
+import { isSuccessfulNativeConfirmedClose, scopeReadConfirmationArgs } from "./lib/read-confirmation.js";
 import {
 	isDirectAgentBrowserBashAllowed,
 	isHarmlessAgentBrowserInspectionCommand,
@@ -426,7 +426,7 @@ function restoreAttachedSessionKeysFromBranch(branch: unknown[]): Set<string> {
 		if (!succeeded && !retainedFailedAttachment && !terminalBatchClose) continue;
 		if (!sessionName) continue;
 		const sessionKey = getSessionContextKey(sessionName, namespace) ?? sessionName;
-		if ((succeeded && isCloseCommand(extractUpstreamCommandTokens(args)[0])) || terminalBatchClose) attachedSessionKeys.delete(sessionKey);
+		if ((succeeded && (isCloseCommand(extractUpstreamCommandTokens(args)[0]) || isSuccessfulNativeConfirmedClose(extractUpstreamCommandTokens(args), details.data))) || terminalBatchClose) attachedSessionKeys.delete(sessionKey);
 		else if (details.attachedBrowserSession === true || isAttachedBrowserInvocation(args, {})) attachedSessionKeys.add(sessionKey);
 	}
 	return attachedSessionKeys;
@@ -704,10 +704,11 @@ function collectBranchManagedResourceEvents(branch: unknown[]): BranchManagedRes
 			const replacedSessionNamespace = typeof outcome.replacedSessionNamespace === "string" ? outcome.replacedSessionNamespace : namespace;
 			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(typeof outcome.replacedSessionName === "string" ? outcome.replacedSessionName : undefined, replacedSessionNamespace), eventRank);
 		}
-		if (succeeded && !isCloseCommand(command) && sessionName && ((!explicitSessionName && (usedImplicitSession || sessionMode === "fresh")) || details.managedSessionHeadedAutosaveDisabled === true || typeof details.managedSessionHeadedAutosaveInterval === "string")) {
+		const closesSession = isCloseCommand(command) || isSuccessfulNativeConfirmedClose(extractUpstreamCommandTokens(getToolResultArgs(details)), details.data);
+		if (succeeded && !closesSession && sessionName && ((!explicitSessionName && (usedImplicitSession || sessionMode === "fresh")) || details.managedSessionHeadedAutosaveDisabled === true || typeof details.managedSessionHeadedAutosaveInterval === "string")) {
 			setBranchManagedSessionActive(events, sessionName, namespace, eventRank);
 		}
-		if (succeeded && isCloseCommand(command)) {
+		if (succeeded && closesSession) {
 			setBranchRankForString(events.managedSessionCloseRanks, getSessionContextKey(explicitSessionName ?? sessionName ?? outcomeAttemptedSessionName ?? outcomeCurrentSessionName, namespace), eventRank);
 		}
 		if (closeAllApplied) {
@@ -759,11 +760,11 @@ function syncElectronCleanupManagedSessions(sessions: Map<string, OwnedManagedSe
 	}
 }
 
-async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManagedSession>, restoreState: ManagedSessionRestoreState, keepSessionName: string | undefined, timeoutMs: number, attachedSessionKeys: ReadonlySet<string>, keepNamespace?: string, onClosed?: (owner: OwnedManagedSession) => void): Promise<void> {
+async function closeOwnedManagedSessionsExcept(sessions: Map<string, OwnedManagedSession>, restoreState: ManagedSessionRestoreState, sessionPageState: SessionPageState, keepSessionName: string | undefined, timeoutMs: number, attachedSessionKeys: ReadonlySet<string>, keepNamespace?: string, onClosed?: (owner: OwnedManagedSession) => void): Promise<void> {
 	const keepKey = getSessionContextKey(keepSessionName, keepNamespace);
 	for (const [key, owner] of [...sessions]) {
 		if (key === keepKey) continue;
-		const error = await closeManagedSession({ cwd: owner.cwd, headedManagedAutosaveInterval: owner.headedManagedAutosaveInterval, namespace: owner.namespace, preserveAttachedBrowserSession: attachedSessionKeys.has(key), restoreState, sessionName: owner.sessionName, timeoutMs });
+		const error = await closeManagedSession({ confirmActions: sessionPageState.get(key).confirmActions ?? process.env.AGENT_BROWSER_CONFIRM_ACTIONS, cwd: owner.cwd, headedManagedAutosaveInterval: owner.headedManagedAutosaveInterval, namespace: owner.namespace, preserveAttachedBrowserSession: attachedSessionKeys.has(key), restoreState, sessionName: owner.sessionName, timeoutMs });
 		if (!error) {
 			sessions.delete(key);
 			onClosed?.(owner);
@@ -1164,6 +1165,7 @@ export default function agentBrowserExtension(
 
 	const closeScriptSessionLeaseWithinQueue = async (sessionName: string, cwd: string): Promise<string | undefined> => {
 		const closeError = await withIsolatedAgentBrowserEnvironment(() => closeManagedSession({
+			confirmActions: sessionPageState.get(getAgentBrowserSessionIdentityKey(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE)).confirmActions,
 			cwd,
 			namespace: AGENT_BROWSER_SCRIPT_NAMESPACE,
 			restoreState: managedSessionRestoreState,
@@ -1212,6 +1214,7 @@ export default function agentBrowserExtension(
 		const previousManagedSessionName = managedSessionName;
 		const previousFreshSessionOrdinal = freshSessionOrdinal;
 		const previousAttachedSessionKeys = attachedSessionKeys;
+		const previousSessionPageState = sessionPageState;
 		managedSessionBaseName = createImplicitSessionName(ctx.sessionManager.getSessionId(), ctx.cwd, ephemeralSessionSeed);
 		const branch = ctx.sessionManager.getBranch();
 		const branchResourceEvents = collectBranchManagedResourceEvents(branch);
@@ -1335,6 +1338,10 @@ export default function agentBrowserExtension(
 			markBranchOwned: true,
 		});
 		if (!options.resetRuntimeOwnership) {
+			// Off-branch live owners still need their established setting for cleanup.
+			for (const key of ownedManagedSessions.keys()) {
+				if (!branchResourceEvents.managedSessionActiveIdentities.has(key)) sessionPageState.setConfirmActions(key, previousSessionPageState.get(key).confirmActions);
+			}
 			for (const sessionKey of previousAttachedSessionKeys) {
 				if (ownedManagedSessions.has(sessionKey)) attachedSessionKeys.add(sessionKey);
 			}
@@ -1472,6 +1479,7 @@ export default function agentBrowserExtension(
 				electronLaunchRecords: electronRecordsToCleanup,
 				managedSessionRestoreState,
 				ownedManagedSessions,
+				sessionPageState,
 				timeoutMs: implicitSessionCloseTimeoutMs,
 			});
 			preservedElectronProfileDirs = [...new Set([
@@ -1481,11 +1489,12 @@ export default function agentBrowserExtension(
 			syncElectronCleanupManagedSessions(ownedManagedSessions, electronCleanupResults);
 			for (const identity of getCleanupResultsClosedManagedSessionIdentities(electronCleanupResults)) retireRecordingSession(identity.sessionName, identity.namespace);
 			if (quitting) {
-				await closeOwnedManagedSessionsExcept(ownedManagedSessions, managedSessionRestoreState, undefined, implicitSessionCloseTimeoutMs, attachedSessionKeys, undefined, (owner) => retireRecordingSession(owner.sessionName, owner.namespace));
+				await closeOwnedManagedSessionsExcept(ownedManagedSessions, managedSessionRestoreState, sessionPageState, undefined, implicitSessionCloseTimeoutMs, attachedSessionKeys, undefined, (owner) => retireRecordingSession(owner.sessionName, owner.namespace));
 			} else {
 				await closeOwnedManagedSessionsExcept(
 					ownedManagedSessions,
 					managedSessionRestoreState,
+					sessionPageState,
 					managedSessionActive ? managedSessionName : undefined,
 					implicitSessionCloseTimeoutMs,
 					attachedSessionKeys,
@@ -1801,6 +1810,11 @@ export default function agentBrowserExtension(
 					stdin: resolvedInput.toolStdin,
 					browserIndependentReadConfirmation: readConfirmation?.capabilities?.readRequiresConfirmation === true,
 				});
+				const selectedKey = getAgentBrowserSessionIdentityKey(selectedPlan.sessionName ?? "default", selectedPlan.namespace);
+				browserRunState.confirmationPolicyIdentity = selectedKey;
+				const priorConfirmActions = sessionPageState.get(selectedKey).confirmActions;
+				const confirmActions = getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS;
+				if (!selectedPlan.plainTextInspection) sessionPageState.setConfirmActions(selectedKey, confirmActions);
 				const initialArtifactManifest = browserRunState.artifactManifest;
 				const initialNetworkRoutesBySession = browserRunState.networkRoutesBySession;
 				const attachedSessionRequested = isAttachedBrowserInvocation(toolArgs)
@@ -1833,6 +1847,7 @@ export default function agentBrowserExtension(
 					state: browserRunState,
 				});
 				const branchRestoreStillCurrent = branchRestoreGenerationAtStart === branchRestoreGeneration;
+				if (branchRestoreStillCurrent && browserRunState.confirmationPolicyMayBeEstablished === false) sessionPageState.setConfirmActions(selectedKey, priorConfirmActions);
 				const resultDetails = isRecord(result.details) ? result.details : undefined;
 				if (typeof resultDetails?.sessionName === "string" && browserRunState.managedSessionActive
 					&& getAgentBrowserSessionIdentityKey(resultDetails.sessionName, typeof resultDetails.namespace === "string" ? resultDetails.namespace : undefined) === getAgentBrowserSessionIdentityKey(browserRunState.managedSessionName, browserRunState.managedSessionNamespace)) {
@@ -1851,7 +1866,7 @@ export default function agentBrowserExtension(
 					const closeAllApplied = resultDetails?.closeAllApplied === true;
 					const attachedSessionRemainsActive = result.isError !== true
 						|| ((attachedSessionRequested || attachedSessionKnown) && managedSessionOutcome?.activeAfter === true);
-					const closesAttachedSession = (result.isError !== true && isCloseCommand(extractUpstreamCommandTokens(toolArgs)[0]))
+					const closesAttachedSession = (result.isError !== true && (isCloseCommand(extractUpstreamCommandTokens(toolArgs)[0]) || isSuccessfulNativeConfirmedClose(extractUpstreamCommandTokens(toolArgs), resultDetails?.data)))
 						|| resultBatchCloseLifecycle?.endsClosed === true;
 					if (closeAllApplied) {
 						deleteIdentityKeysInNamespace(attachedSessionKeys, resultNamespace);
@@ -1922,6 +1937,7 @@ export default function agentBrowserExtension(
 					});
 					if (serializeBrowserCommand) branchStateGeneration += 1;
 				}
+				if (isRecord(result.details)) result.details.sessionConfirmActions = browserRunState.sessionPageState.get(selectedKey).confirmActions ?? null;
 				return applyAgentBrowserOutputPath({ cwd: operationCwd, outputPath, preserveTextContent: Array.isArray(params.args) && isBooleanFlagEnabled(params.args, "--json"), result: warnRecordingPersistence(result) });
 			};
 
@@ -1934,6 +1950,11 @@ export default function agentBrowserExtension(
 					sessionMode: compiledElectron?.action === "launch" ? "fresh" : params.sessionMode ?? "auto",
 					stdin: resolvedInput.toolStdin,
 				});
+				// Resolve inside the identity queue, before daemon inspection or any page helper.
+				const explicitConfirmationSetting = ["--confirm-actions", "--config"].some(flag => scanUpstreamGlobalFlagOccurrences(toolArgs, flag).length > 0);
+				const retainedConfirmActions = sessionPageState.get(getAgentBrowserSessionIdentityKey(plan.sessionName ?? "default", plan.namespace)).confirmActions;
+				const confirmActions = !explicitConfirmationSetting && retainedConfirmActions !== undefined ? retainedConfirmActions : resolvedInput.nativeConfirmActions;
+				return withAgentBrowserProcessEnvironment({ AGENT_BROWSER_CONFIRM_ACTIONS: confirmActions }, async () => {
 				const run = (executionSignal = signal) => {
 					const execute = () => withLaunchDefaults
 						? withLaunchDefaults(inactive => runBrowserCommand(inactive, executionSignal), executionSignal)
@@ -1959,6 +1980,7 @@ export default function agentBrowserExtension(
 				} catch (error) {
 					return browserExecutionFailure(error, signal);
 				}
+				});
 			};
 			const runWithinSessionQueue = () => {
 				if (closesAllSessions) return managedSessionExecutionQueue.run(() => {

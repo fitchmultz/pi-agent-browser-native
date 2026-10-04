@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { rm } from "node:fs/promises";
 
 import { getScreenshotPositionalIndices } from "./artifact-paths.js";
@@ -9,10 +10,11 @@ import { isBrowserIndependentRead, needsManagedSession } from "../../command-pol
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import type { ElectronCdpTarget, ElectronLaunchRecord } from "../../electron/launch.js";
-import { runAgentBrowserProcess } from "../../process.js";
+import { runAgentBrowserProcess, type ProcessRunResult } from "../../process.js";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
 import { parseAgentBrowserEnvelope } from "../../results/envelope.js";
-import { type AgentBrowserNextAction } from "../../results/contracts.js";
+import { type AgentBrowserEnvelope, type AgentBrowserNextAction } from "../../results/contracts.js";
+import { detectConfirmationRequired } from "../../results/confirmation.js";
 import { buildNextToolAction, withOptionalNamespaceArgs, withOptionalSessionArgs } from "../../results/next-actions.js";
 import {
 	getSessionPageStateKey,
@@ -316,6 +318,9 @@ export function extractNavigationSummaryFromData(data: unknown): NavigationSumma
 
 export function shouldCaptureNavigationSummary(command: string | undefined, data: unknown, subcommand?: string): boolean {
 	if (command === "eval") return true;
+	// A completed compound action may navigate without returning a page URL (e.g. recording restart).
+	if (command === "confirm" && isRecord(data) && data.confirmed === true && data.action === "navigate"
+		&& isRecord(data.result) && data.result.success === true && extractStringResultField(data.result.data, "url") === undefined) return true;
 	return (
 		isNavigationObservableCommandName(command, subcommand) &&
 		(!isRecord(data) || (typeof data.title !== "string" && typeof data.url !== "string"))
@@ -559,57 +564,65 @@ function selectAnySessionTargetTab(options: {
 	return selection ? { ...selection, ...(targetTitle ? { targetTitle } : {}), targetUrl } : undefined;
 }
 
-export async function runSessionCommandData(options: {
+export interface SessionCommandOptions {
 	args: string[];
 	cwd: string;
 	env?: NodeJS.ProcessEnv;
 	namespace?: string;
-	onProcessResult?: (result: Awaited<ReturnType<typeof runAgentBrowserProcess>>) => void;
+	onProcessResult?: (result: ProcessRunResult) => void;
 	pinNamespace?: boolean;
 	sessionName?: string;
 	signal?: AbortSignal;
 	stdin?: string;
 	throwOnFailure?: boolean;
 	timeoutMs?: number;
-}): Promise<unknown | undefined> {
-	const { args, cwd, env, namespace, pinNamespace, sessionName, signal, stdin, throwOnFailure, timeoutMs } = options;
-	if (!sessionName) return undefined;
+}
 
+const sessionCommandObservation = new AsyncLocalStorage<{
+	allow: (options: SessionCommandOptions) => boolean;
+	observe: (options: SessionCommandOptions, result: ProcessRunResult, envelope?: AgentBrowserEnvelope) => void;
+}>();
+
+export function withSessionCommandObservation<T>(observer: NonNullable<ReturnType<typeof sessionCommandObservation.getStore>>, run: () => T): T {
+	return sessionCommandObservation.run(observer, run);
+}
+
+export function nativePolicyDefinitelyUnestablished(result: ProcessRunResult, envelope?: AgentBrowserEnvelope, commandTokens?: string[]): boolean {
+	if (commandTokens && !needsManagedSession(parseArgvDescriptor(commandTokens)) && !isBrowserIndependentRead(commandTokens)) return true;
+	if (!result.agentBrowserStarted) return true;
+	if (result.aborted || result.timedOut || result.spawnError || result.exitCode !== 1) return false;
+	// Native CLI parse/config failures precede ensure_daemon; a failed executed action does not.
+	return envelope?.success === false && isRecord(envelope.data) && Object.keys(envelope.data).length === 1
+		&& ["unknown_command", "unknown_subcommand", "missing_arguments", "invalid_value", "invalid_session_name"].includes(String(envelope.data.type))
+		|| result.stdout.trim() === "" && /config file not found:|failed to load config from /.test(result.stderr);
+}
+
+export async function runSessionCommandData(options: SessionCommandOptions): Promise<unknown | undefined> {
+	const { args, cwd, env, namespace, pinNamespace, sessionName, signal, stdin, throwOnFailure, timeoutMs } = options;
+	if (!sessionName || sessionCommandObservation.getStore()?.allow(options) === false) return undefined;
 	const processResult = await runAgentBrowserProcess({
 		args: ["--json", ...(namespace !== undefined || pinNamespace ? ["--namespace", namespace ?? ""] : []), "--session", sessionName, ...args],
-		cwd,
-		env,
-		signal,
-		stdin,
-		timeoutMs,
+		cwd, env, signal, stdin, timeoutMs,
 	});
 	try {
 		options.onProcessResult?.(processResult);
+		const parsed = await parseAgentBrowserEnvelope({ stdout: processResult.stdout, stdoutPath: processResult.stdoutSpillPath });
+		sessionCommandObservation.getStore()?.observe(options, processResult, parsed.envelope);
 		if (processResult.aborted || processResult.spawnError || processResult.exitCode !== 0) {
 			if (throwOnFailure) {
-				const reason = processResult.aborted
-					? "command was aborted"
-					: processResult.spawnError
-						? "process could not start"
-						: `process exited with code ${processResult.exitCode}`;
+				const reason = processResult.aborted ? "command was aborted" : processResult.spawnError ? "process could not start" : `process exited with code ${processResult.exitCode}`;
 				throw new Error(`agent-browser ${reason}`);
 			}
 			return undefined;
 		}
-		const parsed = await parseAgentBrowserEnvelope({
-			stdout: processResult.stdout,
-			stdoutPath: processResult.stdoutSpillPath,
-		});
-		if (parsed.parseError || parsed.envelope?.success === false) {
-			if (throwOnFailure) throw new Error(parsed.parseError ? "agent-browser returned invalid structured output" : "agent-browser reported failure");
+		if (parsed.parseError || parsed.envelope?.success === false || detectConfirmationRequired(parsed.envelope?.data)) {
+			if (throwOnFailure) throw new Error(parsed.parseError ? "agent-browser returned invalid structured output" : "agent-browser reported failure or requires confirmation");
 			return undefined;
 		}
 		observeNativeWebMcp(parsed.envelope?.data);
 		return parsed.envelope?.data;
 	} finally {
-		if (processResult.stdoutSpillPath) {
-			await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
-		}
+		if (processResult.stdoutSpillPath) await rm(processResult.stdoutSpillPath, { force: true }).catch(() => undefined);
 	}
 }
 

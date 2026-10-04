@@ -45,6 +45,7 @@ interface ResolvedAgentBrowserInputBase {
 }
 
 interface ResolvedAgentBrowserValidInputBase extends ResolvedAgentBrowserInputBase {
+	nativeConfirmActions?: string;
 	chromeStartupArgs?: string;
 	configuredChromeLaunch?: boolean;
 	persistentChromeArgs?: string;

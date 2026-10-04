@@ -152,34 +152,117 @@ test("real native explicit text preserves standalone, compound batch and opaque 
 	}
 });
 
-test("real native policy helpers preserve pending confirmations and a refused recording restart", { skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, concurrency: false }, async (t) => {
+test("contract suite matches confirmation launch policy surviving native nextActions", { skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, concurrency: false }, async (t) => {
 	await assertInstalledAgentBrowserVersion();
 	const root = await mkdtemp(join(tmpdir(), "piab-policy-"));
 	const socketDir = await mkdtemp("/tmp/piab-p-");
 	const fixture = await startAgentBrowserContractFixtureServer();
+	await writeFile(join(root, "agent-browser.json"), JSON.stringify({ confirmActions: "click" }));
 	try {
-		await withPatchedEnv({ HOME: root, USERPROFILE: root, PI_CODING_AGENT_DIR: join(root, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
-			for (const decision of ["confirm", "deny"] as const) {
-				await t.test(`native pending then same-flag ${decision}`, async () => {
-					const harness = createExtensionHarness({ cwd: root });
-					const prefix = ["--session", `policy-${decision}`, "--confirm-actions", "navigate"];
+		await withPatchedEnv({ HOME: root, USERPROFILE: root, PI_CODING_AGENT_DIR: join(root, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_CONFIRM_ACTIONS: "click", AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
+			const control = createExtensionHarness({ cwd: root });
+			const controlCall = (args: string[]) => executeRegisteredTool(control.tool, control.ctx, { args: ["--session", "policy-control", ...args] });
+			assert.equal((await controlCall(["open", `${fixture.baseUrl}/next`])).isError, false);
+			const controlBefore = await controlCall(["tab", "list"]);
+			try {
+			for (const decision of ["deny", "confirm"] as const) {
+				await t.test(`native pending then exact ${decision}`, async (decisionTest) => {
+					let harness = createExtensionHarness({ cwd: root });
+					const prefix = ["--session", `policy-${decision}`];
 					const call = (args: string[]) => executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
 					try {
-						assert.equal((await call(["get", "url"])).isError, false);
-						const pending = await call(["open", `${fixture.baseUrl}/contract`]);
+						if (decision === "confirm") {
+							const initial = await call(["--confirm-actions", "navigate,recording_restart,tab_new", "a11y", `${fixture.baseUrl}/next`, "--selector", "body"]);
+							const approve = (initial.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(row => row.id === "approve-confirmation");
+							assert.ok(approve, initial.content[0]?.text);
+							assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, approve.params)).isError, false);
+							const observed = await call(["get", "url"]);
+							assert.equal((observed.details?.data as { url: string }).url, `${fixture.baseUrl}/next`, "establish a genuine prior nonblank target before pending navigation");
+						}
+						const pending = await call(["--confirm-actions", "navigate,recording_restart,tab_new", "a11y", `${fixture.baseUrl}/contract`, "--selector", "body"]);
 						assert.equal(pending.details?.failureCategory, "confirmation-required", pending.content[0]?.text);
-						const id = (pending.details?.data as { confirmation_id: string }).confirmation_id;
-						assert.ok(id);
-						const before = await call(["get", "url"]);
-						assert.equal((before.details?.data as { url: string }).url, "about:blank");
-						const settled = await call([decision, id]);
+						const action = (result: typeof pending, command: "confirm" | "deny") => {
+							const next = (result.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(row => row.id === (command === "confirm" ? "approve-confirmation" : "deny-confirmation"));
+							assert.ok(next, result.content[0]?.text);
+							assert.ok(!next.params.args.includes("--confirm-actions"), "follow the exact native-tool action without repeating policy flags");
+							return next.params;
+						};
+						const pidPath = join(socketDir, `policy-${decision}.pid`);
+						const pid = await readFile(pidPath, "utf8");
+						const params = action(pending, decision);
+						if (decision === "confirm") {
+							harness = createExtensionHarness({ cwd: root, branch: [createToolBranchEntry({ details: pending.details ?? {}, isError: pending.isError })] });
+							await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+						}
+						let settled = await executeRegisteredTool(harness.tool, harness.ctx, params);
+						t.diagnostic(JSON.stringify({ decision, pending: pending.details, params, settled: settled.details }));
+						assert.doesNotMatch(settled.content[0]?.text ?? "", /No pending confirmation/);
+						for (let nested = 0; decision === "confirm" && settled.details?.failureCategory === "confirmation-required" && nested < 3; nested++) {
+							settled = await executeRegisteredTool(harness.tool, harness.ctx, action(settled, "confirm"));
+						}
 						assert.equal(settled.isError, false, settled.content[0]?.text);
-						const after = await call(["get", "url"]);
-						assert.equal((after.details?.data as { url: string }).url, decision === "confirm" ? `${fixture.baseUrl}/contract` : "about:blank");
-						t.diagnostic(JSON.stringify({ decision, pending: pending.details?.data, settled: settled.details?.data, after: after.details?.data }));
+						if (decision === "confirm") {
+							const audit = (settled.details?.data as { result?: { data?: { violations?: unknown[]; url?: string } } }).result?.data;
+							assert.ok(Array.isArray(audit?.violations), "the confirmed compound command completes a useful audit");
+							assert.equal(audit.url, `${fixture.baseUrl}/contract`);
+							const title = await call(["get", "title"]);
+							assert.equal(title.isError, false, title.content[0]?.text);
+							assert.match(JSON.stringify(title.details?.data), /Agent Browser Contract Fixture/);
+							const body = await call(["get", "text", "body"]);
+							assert.equal(body.isError, false, body.content[0]?.text);
+							assert.match(JSON.stringify(body.details?.data), /Mark ready/);
+						}
+						const before = await call(["get", "url"]);
+						assert.equal((before.details?.data as { url: string }).url, decision === "confirm" ? `${fixture.baseUrl}/contract` : "about:blank");
+						if (decision === "confirm") {
+							const take = join(root, "confirmation-take.webm");
+							const sentinel = join(root, "confirmation-sentinel.webm");
+							await writeFile(sentinel, "NATIVE_CONFIRMATION_SENTINEL");
+							assert.equal((await call(["record", "start", take])).isError, false);
+							const restart = await call(["record", "restart", sentinel, `${fixture.baseUrl}/next`]);
+							assert.equal(restart.details?.failureCategory, "confirmation-required", restart.content[0]?.text);
+							const denied = await executeRegisteredTool(harness.tool, harness.ctx, action(restart, "deny"));
+							assert.equal(denied.isError, false, denied.content[0]?.text);
+							assert.equal(await readFile(sentinel, "utf8"), "NATIVE_CONFIRMATION_SENTINEL");
+							await decisionTest.test("patched native recording restart requires a second navigation decision", { skip: process.env.PI_AGENT_BROWSER_NATIVE_COMPOUND_POLICY !== "1" && "Requires the pinned native recording-policy patch; stock 0.38.1 does not guard this nested navigation." }, async () => {
+								const nested = await call(["record", "restart", join(root, "nested-take.webm"), `${fixture.baseUrl}/next`]);
+								const advanced = await executeRegisteredTool(harness.tool, harness.ctx, action(nested, "confirm"));
+								t.diagnostic(JSON.stringify({ nested: nested.details?.data, advanced: advanced.details?.data }));
+								assert.equal(advanced.details?.failureCategory, "confirmation-required", "confirming recording_restart must still expose its native navigate confirmation");
+								assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, action(advanced, "deny"))).isError, false);
+							});
+							const stopped = await call(["record", "stop"]);
+							assert.equal(stopped.isError, false, stopped.content[0]?.text);
+							assert.match(JSON.stringify(stopped.details?.data), /confirmation-take.webm/);
+							assert.ok((await readFile(take)).length > 0);
+							t.diagnostic(JSON.stringify({ restart: restart.details, denied: denied.details, stopped: stopped.details }));
+						}
+						assert.equal(await readFile(pidPath, "utf8"), pid, "helpers and bare follow-ups preserve the native daemon and its pending policy");
+						t.diagnostic(JSON.stringify({ decision, settled: settled.details?.data, after: before.details?.data, journalEntries: harness.ctx.sessionManager.getBranch().length }));
 					} finally { await call(["close"]); }
 				});
 			}
+			await t.test("exact native action survives a confirmation-gated URL helper", async () => {
+				const harness = createExtensionHarness({ cwd: root });
+				const prefix = ["--session", "policy-helper-gated"];
+				const url = `${fixture.baseUrl}/contract`;
+				try {
+					const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", "navigate,url", "a11y", url, "--selector", "body"] });
+					assert.equal(pending.details?.failureCategory, "confirmation-required");
+					assert.equal((pending.details?.data as { action: string }).action, "navigate");
+					const approval = (pending.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(action => action.id === "approve-confirmation");
+					assert.ok(approval);
+					const pidPath = join(socketDir, "policy-helper-gated.pid");
+					const pid = await readFile(pidPath, "utf8");
+					const confirmed = await executeRegisteredTool(harness.tool, harness.ctx, approval.params);
+					assert.equal(confirmed.isError, false, confirmed.content[0]?.text);
+					const data = confirmed.details?.data as { action: string; result: { data: { url: string; violations: unknown[] } } };
+					assert.equal(data.action, "navigate", "the native slot still contains the requested action, not a hidden url probe");
+					assert.equal(data.result.data.url, url);
+					assert.ok(Array.isArray(data.result.data.violations));
+					assert.equal(await readFile(pidPath, "utf8"), pid);
+				} finally { await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "close"] }); }
+			});
 			await t.test("native refused and invalid restart preserves page, sentinel and active take", async () => {
 				const policy = join(root, "policy.json");
 				await writeFile(policy, JSON.stringify({ deny: ["recording_restart"] }));
@@ -215,6 +298,10 @@ test("real native policy helpers preserve pending confirmations and a refused re
 					t.diagnostic(JSON.stringify({ invalid: invalid.details?.error, denied: denied.details?.error, before: before.details?.data, after: after.details?.data, stopped: stopped.details?.data }));
 				} finally { await call(["close"]); }
 			});
+			const controlAfter = await controlCall(["tab", "list"]);
+			const tabs = (result: typeof controlBefore) => (result.details?.data as { tabs: Array<{ targetId: string; url: string }> }).tabs.map(({ targetId, url }) => ({ targetId, url }));
+			assert.deepEqual(tabs(controlAfter), tabs(controlBefore), "confirmation settings and continuations do not replace an unrelated browser's targets");
+			} finally { await controlCall(["close"]); }
 		});
 	} finally {
 		await fixture.close();

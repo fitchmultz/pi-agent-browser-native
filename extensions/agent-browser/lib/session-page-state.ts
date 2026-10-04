@@ -4,7 +4,8 @@ import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./
 import { getBrowserResultMessage } from "./browser-transcript.js";
 import { isCloseAllCommand, isCloseCommand, isOpenNavigationCommand, isReadOnlyDiagnosticSessionTargetCommand, isRecordPageTransitionCommand, isUnverifiedPageTransitionCommand, isWebMcpPageMutationCommand, isWindowOrDiffPageTransitionCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
-import { findReadConfirmation as findPendingReadConfirmation, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
+import { detectConfirmationRequired } from "./results/confirmation.js";
+import { findReadConfirmation as findPendingReadConfirmation, isSuccessfulNativeConfirmedClose, parseReadConfirmation, type ReadConfirmation } from "./read-confirmation.js";
 import { getEditableRefEvidence } from "./results/editable-ref-evidence.js";
 import { enrichSnapshotRefEntries, getFullSnapshotData, getSnapshotRefEntries } from "./results/snapshot-refs.js";
 import { parseSnapshotLines } from "./results/snapshot-segments.js";
@@ -51,6 +52,7 @@ export type SessionTabPinningReason = "drift" | "restore";
 export type SessionPageStateUpdateToken = number & { readonly __sessionPageStateUpdateToken: unique symbol };
 
 export interface SessionPageStateView {
+	confirmActions?: string;
 	pinningReason?: SessionTabPinningReason;
 	tabReopenPending?: boolean;
 	tabTargetUnknown?: true;
@@ -142,6 +144,10 @@ function extractBatchResultCommand(item: Record<string, unknown>): string[] {
 
 export function extractSessionTabTargetFromCommandData(commandTokens: string[], data: unknown): SessionTabTarget | undefined {
 	const [command, subcommand] = commandTokens;
+	if (command === "confirm" && isRecord(data) && data.confirmed === true && ["navigate", "url"].includes(String(data.action))
+		&& isRecord(data.result) && data.result.success === true && !detectConfirmationRequired(data)) {
+		return extractSessionTabTargetFromData(data.result.data);
+	}
 	if (command === "get" && subcommand === "url") {
 		return normalizeSessionTabTarget({ url: extractStringResultField(data, "url") ?? extractStringResultField(data, "result") });
 	}
@@ -156,7 +162,7 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 	let currentTarget: SessionTabTarget | undefined;
 	let pendingTitle: string | undefined;
 	for (const item of data) {
-		if (!isRecord(item)) continue;
+		if (!isRecord(item) || detectConfirmationRequired(item.result)) continue;
 		// Only this row's native identity can describe the active tab after it ran.
 		if (currentTarget?.targetId) currentTarget = normalizeSessionTabTarget({ title: currentTarget.title, url: currentTarget.url });
 		const commandTokens = extractUpstreamCommandTokens(extractBatchResultCommand(item));
@@ -169,7 +175,7 @@ export function extractSessionTabTargetFromBatchResults(data: unknown): SessionT
 		if (item.success === false) continue;
 		const result = item.result;
 
-		if (isCloseCommand(name)) {
+		if (isCloseCommand(name) || isSuccessfulNativeConfirmedClose(commandTokens, result)) {
 			currentTarget = undefined;
 			pendingTitle = undefined;
 			continue;
@@ -206,9 +212,9 @@ export function deriveSessionTabTarget(options: {
 	if (isCloseCommand(options.command)) {
 		return undefined;
 	}
-	const commandDataTarget = isReadOnlyDiagnosticSessionTargetCommand(options.command, options.subcommand)
-		? undefined
-		: extractSessionTabTargetFromData(options.data);
+	const commandDataTarget = extractSessionTabTargetFromCommandData(
+		[options.command, options.subcommand].filter((token): token is string => token !== undefined), options.data,
+	);
 	const observedTarget = normalizeSessionTabTarget(options.navigationSummary)
 		?? extractSessionTabTargetFromBatchResults(options.data)
 		?? commandDataTarget;
@@ -320,7 +326,7 @@ export function extractLatestRefSnapshotStateFromBatchResults(data: unknown): Ba
 		if (!isRecord(item)) continue;
 		const commandTokens = extractUpstreamCommandTokens(extractBatchResultCommand(item));
 		const [name] = commandTokens;
-		if (item.success !== false && isCloseCommand(name)) {
+		if (item.success !== false && !detectConfirmationRequired(item.result) && (isCloseCommand(name) || isSuccessfulNativeConfirmedClose(commandTokens, item.result))) {
 			latestState = undefined;
 			continue;
 		}
@@ -427,6 +433,7 @@ export function getSessionPageStateKey(sessionName: string | undefined, namespac
 }
 
 export class SessionPageState {
+	private confirmActions = new Map<string, string>();
 	private readConfirmations = new Map<string, { order: number; value: ReadConfirmation }>();
 	private refSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
 	private refSnapshots = new Map<string, OrderedSessionRefSnapshot>();
@@ -454,7 +461,8 @@ export class SessionPageState {
 			const closeAllApplied = details.closeAllApplied === true
 				|| (message.isError !== true && isCloseAllCommand(commandTokens))
 				|| batchHasSuccessfulCloseAll(details.batchSteps);
-			const lifecycleReset = (isCloseCommand(command) && message.isError !== true) || batchCloseLifecycle !== undefined;
+			const closesSession = isCloseCommand(command) || isSuccessfulNativeConfirmedClose(commandTokens, details.data);
+			const lifecycleReset = (closesSession && message.isError !== true) || batchCloseLifecycle !== undefined;
 			if (closeAllApplied) {
 				restoredOrder += 1;
 				state.clearNamespace(namespace);
@@ -464,7 +472,8 @@ export class SessionPageState {
 			}
 			const readConfirmation = parseReadConfirmation(details.readConfirmation);
 			if (readConfirmation) state.applyReadConfirmation(readConfirmation, ++restoredOrder as SessionPageStateUpdateToken);
-			if (!sessionKey || ((closeAllApplied || lifecycleReset) && (isCloseCommand(command) || batchCloseLifecycle?.endsClosed === true))) continue;
+			if (!sessionKey || ((closeAllApplied || lifecycleReset) && (closesSession || batchCloseLifecycle?.endsClosed === true))) continue;
+			if (typeof details.sessionConfirmActions === "string" || details.sessionConfirmActions === null) state.setConfirmActions(sessionKey, details.sessionConfirmActions ?? undefined);
 			const tabTarget = getRestoredSessionTabTarget(details, command, subcommand);
 			const tabTargetUnknown = details.sessionTabTargetUnknown === true;
 			const reopenPending = typeof details.sessionTabReopenPending === "boolean" ? details.sessionTabReopenPending : undefined;
@@ -509,6 +518,7 @@ export class SessionPageState {
 	}
 
 	reset(): void {
+		this.confirmActions.clear();
 		this.readConfirmations.clear();
 		this.refSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
 		this.refSnapshots = new Map<string, OrderedSessionRefSnapshot>();
@@ -521,6 +531,7 @@ export class SessionPageState {
 	get(sessionName: string | undefined): SessionPageStateView {
 		if (!sessionName) return {};
 		return {
+			...(this.confirmActions.has(sessionName) ? { confirmActions: this.confirmActions.get(sessionName) } : {}),
 			pinningReason: this.tabPinningReasons.get(sessionName),
 			...(this.tabTargets.get(sessionName)?.reopenPending !== undefined ? { tabReopenPending: this.tabTargets.get(sessionName)?.reopenPending } : {}),
 			refSnapshot: stripRefSnapshotOrder(this.refSnapshots.get(sessionName)),
@@ -532,6 +543,11 @@ export class SessionPageState {
 
 	findReadConfirmation(args: string[], namespace?: string): ReadConfirmation | undefined {
 		return findPendingReadConfirmation(args, [...this.readConfirmations.values()].map(entry => entry.value), namespace);
+	}
+
+	setConfirmActions(sessionName: string, value: string | undefined): void {
+		if (value !== undefined) this.confirmActions.set(sessionName, value);
+		else this.confirmActions.delete(sessionName);
 	}
 
 	getReadConfirmation(sessionKey: string): ReadConfirmation | undefined {
@@ -611,6 +627,7 @@ export class SessionPageState {
 	}
 
 	clearSession(sessionName: string): void {
+		this.confirmActions.delete(sessionName);
 		this.readConfirmations.delete(sessionName);
 		this.refSnapshotInvalidations.delete(sessionName);
 		this.refSnapshots.delete(sessionName);
@@ -621,6 +638,7 @@ export class SessionPageState {
 
 	clearNamespace(namespace?: string): void {
 		const sessionKeys = new Set([
+			...this.confirmActions.keys(),
 			...this.readConfirmations.keys(),
 			...this.refSnapshotInvalidations.keys(),
 			...this.refSnapshots.keys(),
