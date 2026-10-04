@@ -40,7 +40,11 @@ if (args.includes("snapshot")) {
     refs: { e1: { role: "button", name: "Old Search" } },
     snapshot: '- button "Old Search" [ref=e1]'
   } }));
+} else if (args.includes("get") && args.includes("url")) {
+  const url = fs.existsSync(${JSON.stringify(join(tempDir, "navigated"))}) ? "https://second.example/" : "https://first.example/";
+  process.stdout.write(JSON.stringify({ success: true, data: { url } }));
 } else if (args.includes("open")) {
+  fs.writeFileSync(${JSON.stringify(join(tempDir, "navigated"))}, "true");
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Second", url: "https://second.example/" } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "recycled ref" } }));
@@ -583,6 +587,10 @@ if (args.includes("snapshot")) {
     refs: { e1: { role: "button", name: "Refresh data" } },
     snapshot: '- button "Refresh data" [ref=e1]'
   } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: appTarget } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "" } }));
 } else if (args.includes("network") && args.includes("request")) {
   process.stdout.write(JSON.stringify({ success: true, data: { id: "42", method: "GET", status: 500, url: apiTarget, error: "server error" } }));
 } else if (args.includes("errors")) {
@@ -660,6 +668,10 @@ const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://app.example/", snapshot: '- button "Refresh" [ref=e1]', refs: { e1: { role: "button", name: "Refresh" } } } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://app.example/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "" } }));
 } else if (args.includes("tab") && args.includes("list")) {
   process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ tabId: "t1", url: "https://app.example/", active: true }] } }));
 } else if (args.includes("click")) {
@@ -1105,6 +1117,8 @@ if (args.includes("snapshot")) {
     refs: { e1: { role: "link", name: "Old target" } },
     snapshot: '- link "Old target" [ref=e1]'
   } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://record.example/" } }));
 } else if (args.includes("record") && args.includes("start")) {
   if (args.some((arg) => arg.includes("already-active"))) {
     process.stdout.write(JSON.stringify({ success: false, error: "Recording already active" }));
@@ -1290,6 +1304,8 @@ if (args.includes("snapshot")) {
     refs: { e1: { role: "link", name: "Old target" } },
     snapshot: '- link "Old target" [ref=e1]'
   } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://record.example/" } }));
 } else if (args.includes("batch")) {
   // Simulate upstream buffering batch rows past the wrapper timeout.
   setTimeout(() => {
@@ -1369,6 +1385,8 @@ if (args.includes("snapshot")) {
     },
     snapshot: '- textbox "Username" [ref=e4]\\n- textbox "Password" [ref=e5]\\n- button "Login" [ref=e3]'
   } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://login.example/" } }));
 } else if (args.includes("batch")) {
   const steps = JSON.parse(stdin || "[]");
   process.stdout.write(JSON.stringify(steps.map((step) => ({ command: step, success: true, result: { ok: step[0] } }))));
@@ -1443,6 +1461,8 @@ if (args.includes("snapshot")) {
     },
     snapshot: '- checkbox "Email alerts" [ref=e1]\\n- checkbox "SMS alerts" [ref=e2]\\n- radio "Daily" [ref=e3]\\n- combobox "Plan" [ref=e4]\\n- button "Submit" [ref=e5]\\n- textbox "Name" [ref=e6]'
   } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://form.example/" } }));
 } else if (args.includes("batch")) {
   const steps = JSON.parse(stdin || "[]");
   process.stdout.write(JSON.stringify(steps.map((step) => ({ command: step, success: true, result: { ok: step[0] } }))));
@@ -1591,6 +1611,8 @@ if (args.includes("batch")) {
     refs: { e7: { role: "button", name: "Batched" } },
     snapshot: '- button "Batched" [ref=e7]'
   } }]));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://batched.example/" } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "batched ref" } }));
 } else {
