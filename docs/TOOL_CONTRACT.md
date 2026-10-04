@@ -168,9 +168,11 @@ Use exact labels from the latest snapshot. Return to the model when a fresh obse
 
 ## Wrapper `--json`
 
+Explicit `--json false` preserves opaque native text, complete whitespace and process-owned failures without trusted row, confirmation, lifecycle, target or artifact receipts. Structured helpers stay strict JSON. Native text cookie reads redact `name=value`, including empty names; storage reads redact `key: value`, including empty and colon-containing keys, with the existing benign-value policy. A standalone get-by-key (`storage local|session get <key>` or native shorthand `storage local|session <key>`) redacts the entire value, including embedded newlines, when that policy requires it, even if invocation display redaction changes the supplied key. Content, details, spills and exports use the same redacted text. Effective batch argv takes precedence over stdin when selecting these format heuristics; text never establishes per-row provenance. Native all-entry storage and raw-batch output do not escape multiline values: a secret continuation can look identical to a separate benign entry or ordinary page output. Text redaction cannot resolve that ambiguity; use structured JSON for an unambiguous sensitive-storage boundary. Native JSON all-entry maps retain names and benign values while redacting other values. Explicit `--action-policy`, `--confirm-actions`, `--debug` and `--no-auto-dialog` selections reach helpers within the current call, including CLI boolean `false` over true config/environment defaults; keep the selections consistent on follow-ups to avoid native daemon replacement.
+
 When explicitly requested, visible JSON remains parseable for early preparation results too: snapshot/network filters, scroll results, and preparation failures use the same JSON envelope as ordinary execution. Diagnostic metadata remains in `details`; `outputPath` notices do not append prose to JSON. Help/version stays native text.
 
-The extension always plans normal browser commands with `--json` prepended in `effectiveArgs` so upstream returns structured JSON for presentation and `details`. Omit `--json` in caller `args` for ordinary prose. Include it when you need the visible tool text as a parseable JSON envelope; structured `details` remain available in both modes. Plain-text inspection (`--help`, `--version`) keeps its own output shape. Read-only skills and local/setup commands such as auth/profile/setup, `session list`, and syntactically local state lifecycle operations skip implicit session injection as documented under `sessionMode`. Upstream session/state rows and targets remain visible, and state/config/path operations pass through unchanged.
+The extension prepends `--json` to normal browser commands when the caller does not select an output mode, so upstream returns structured JSON for presentation and `details`. Omit `--json` in caller `args` for ordinary prose. Include it when you need the visible tool text as a parseable JSON envelope; structured `details` remain available in both modes. Plain-text inspection (`--help`, `--version`) keeps its own output shape. Read-only skills and local/setup commands such as auth/profile/setup, `session list`, and syntactically local state lifecycle operations skip implicit session injection as documented under `sessionMode`. Upstream session/state rows and targets remain visible, and state/config/path operations pass through unchanged.
 
 ## Experimental WebMCP
 
@@ -497,14 +499,14 @@ Recommended use:
 
 ## Wrapper behavior
 
-Caller `args` should omit `--json`; the wrapper prepends it for normal execution so `details` and presentation stay structured. See [Wrapper `--json`](#wrapper-json).
+Caller `args` may omit `--json` for structured details and prose; explicit `--json false` selects opaque native text. See [Wrapper `--json`](#wrapper-json).
 
 The extension should:
-- inject `--json`
+- inject `--json` when no caller output mode is selected
 - invoke `agent-browser` directly, not through a shell
-- parse JSON output into tool details
+- parse JSON-mode output into tool details
 - handle observed JSON result shapes, including the array returned by `batch --json`
-- allow plain-text output for native inspection calls and valid sessionless `upgrade` commands; all other commands retain JSON envelope validation
+- allow plain-text output for native inspection calls, valid sessionless `upgrade` commands and explicit `--json false`; JSON-mode browser commands retain strict envelope validation
 - support those inspection calls unconditionally so the tool contract stays local and predictable
 
 <!-- agent-browser-playbook:start inspection -->

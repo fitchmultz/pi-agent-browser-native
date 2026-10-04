@@ -1367,7 +1367,7 @@ const path = args[commandIndex + 2];
 if (command === "record" && subcommand === "restart") fs.writeFileSync(${JSON.stringify(join(tempDir, "z-previous.webm"))}, "finished recording");
 const data = command === "get" && subcommand === "url"
   ? { result: "https://safe.example/", url: "https://safe.example/" }
-  : { command, path, subcommand };
+  : { command, path, subcommand, ...(command === "record" && subcommand === "restart" ? { restarted: true } : {}) };
 process.stdout.write(JSON.stringify({ success: true, data }));`);
 
 	try {

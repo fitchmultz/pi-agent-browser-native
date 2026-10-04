@@ -1,6 +1,6 @@
 import { projectUpstreamGlobalFlags } from "../argv-grammar.js";
 
-export type BatchCommandStep = [string, ...string[]];
+export type BatchCommandStep = string[];
 
 /** Bare open's native launch action drops prior launch options. URL reads lazily launch without navigating. */
 export function normalizeUrlLessOpen(args: string[], stdin?: string, batchStep = false): { args: string[]; stdin?: string } {
@@ -66,13 +66,7 @@ export function parseBatchCommandArgument(command: string): { error?: string; st
 function validateUserBatchStep(step: unknown, index: number): { error: string; ok: false } | { ok: true; step: BatchCommandStep } {
 	if (!Array.isArray(step)) {
 		return {
-			error: `agent_browser batch stdin step ${index} must be a non-empty array of string command tokens.${BATCH_STDIN_EXAMPLE}`,
-			ok: false,
-		};
-	}
-	if (step.length === 0) {
-		return {
-			error: `agent_browser batch stdin step ${index} must not be empty.${BATCH_STDIN_EXAMPLE}`,
+			error: `agent_browser batch stdin step ${index} must be an array of string command tokens.${BATCH_STDIN_EXAMPLE}`,
 			ok: false,
 		};
 	}
@@ -133,7 +127,7 @@ export function getUpstreamEffectiveBatchSteps(commandTokens: readonly string[],
 		return step ? [step] : [];
 	});
 	if (argumentSteps.length > 0) return argumentSteps;
-	return parseUserBatchStdin(stdin).steps ?? [];
+	return parseUserBatchStdin(stdin).steps?.filter(step => step.length > 0) ?? [];
 }
 
 export function parseValidBatchStepEntries(stdin: string | undefined): Array<{ index: number; step: BatchCommandStep }> {

@@ -753,6 +753,8 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `cookies [get|set|clear]` | Manage cookies. Full set form: `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`; also supports `cookies set --curl <file>` for JSON, cURL, or bare Cookie-header bulk imports. |
 | `storage <local|session>` | Manage web storage. |
 
+With explicit `--json false`, cookie `name=value` (including empty names) and storage `key: value` (including empty and colon-containing keys) output use command-aware redaction before presentation and export; benign preferences remain visible. Standalone `storage local|session get <key>` and shorthand `storage local|session <key>` redact the whole sensitive value, including embedded newlines, even when invocation display redaction changes the supplied key. All-entry/raw-batch text has unescaped multiline values and no row provenance, so use structured JSON for unambiguous sensitive storage. See [the output contract](TOOL_CONTRACT.md#wrapper-json).
+
 Privacy note: `cookies get` can expose real profile cookies. Do not run it against `--profile Default` or other authenticated profiles unless the user explicitly needs cookie inspection; prefer task-specific page actions and storage checks.
 
 ### WebMCP page tools
@@ -1028,7 +1030,7 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 
 On Android/Termux, follow the README setup to install the packaged Linux-musl arm64 upstream binary, install Termux's `which`, and expose its launcher as `$PREFIX/bin/chromium`. Prefer that upstream system-browser discovery over ambient `AGENT_BROWSER_EXECUTABLE_PATH`: it survives isolated `HOME` values and works for ordinary native calls. Code retains the selected browser's normal launch configuration. Wrapper-generated Android managed identities use a compact 80-bit digest so ordinary namespaces and fresh rotations fit upstream's Unix socket path.
 
-- `--no-auto-dialog`: disable automatic dismissal of alert/beforeunload dialogs. Environment: `AGENT_BROWSER_NO_AUTO_DIALOG`.
+- `--no-auto-dialog`: disable automatic dismissal of alert/beforeunload dialogs. Environment: `AGENT_BROWSER_NO_AUTO_DIALOG`. Explicit `true`/`false` reaches all helpers in that call; keep the same selection on follow-ups to avoid native daemon replacement.
 - `--idle-timeout <ms>`: native background browser lifecycle setting (also accepts `10s`, `3m`, `1h`). Caller-owned sessions retain native idle policy; an explicit flag is carried to every helper in that call. Keep it consistent between calls to avoid a native daemon restart. Only wrapper-owned sessions receive the implicit timeout and numeric mismatch check against `PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS`.
 
 ### Output, provider, policy, and AI flags
@@ -1050,7 +1052,7 @@ On Android/Termux, follow the README setup to install the packaged Linux-musl ar
 - `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
 - `-v, --verbose`: show tool commands and raw output.
 - `-q, --quiet`: show only AI text responses.
-- `--debug`: debug output. Environment: `AGENT_BROWSER_DEBUG`.
+- `--debug`: debug output. Environment: `AGENT_BROWSER_DEBUG`. Explicit `true`/`false` reaches all helpers in that call, including overriding true config defaults; `false` removes the debug variable so native presence checks cannot enable logging. Inherited env/config behavior is unchanged.
 - `AGENT_BROWSER_PLUGINS`: JSON plugin registry override for the upstream `plugin` commands.
 - `--version`, `-V`: show version.
 

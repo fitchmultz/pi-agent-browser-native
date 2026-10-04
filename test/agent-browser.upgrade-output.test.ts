@@ -49,7 +49,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { url: ${JSON.st
 });
 
 
-for (const mode of ["nonzero", "nonzero-json", "large-nonzero", "structured-error", "timeout", "abort", "missing-binary", "ordinary-json", "unsupported-upgrade-shape"] as const) {
+for (const mode of ["nonzero", "nonzero-json", "nonzero-text", "large-nonzero", "structured-error", "timeout", "abort", "missing-binary", "ordinary-json", "unsupported-upgrade-shape"] as const) {
 	test(`registered upgrade output keeps failure precedence: ${mode}`, { concurrency: false }, async (t) => {
 		const root = await mkdtemp(join(tmpdir(), "up-"));
 		const marker = join(root, "started");
@@ -74,7 +74,7 @@ if (mode === 'structured-error') {
 				if (mode === "missing-binary") await rm(binary);
 				const harness = createExtensionHarness({ cwd: root });
 				const controller = new AbortController();
-				const args = mode === "ordinary-json" ? ["snapshot", "-i"] : mode === "unsupported-upgrade-shape" ? ["upgrade", "future"] : mode === "nonzero-json" || mode === "structured-error" ? ["--json", "upgrade"] : ["upgrade"];
+				const args = mode === "ordinary-json" ? ["snapshot", "-i"] : mode === "unsupported-upgrade-shape" ? ["upgrade", "future"] : mode === "nonzero-text" ? ["--json", "false", "upgrade"] : mode === "nonzero-json" || mode === "structured-error" ? ["--json", "upgrade"] : ["upgrade"];
 				const realSetTimeout = setTimeout;
 				if (mode === "timeout") t.mock.timers.enable({ apis: ["setTimeout"] });
 				const pending = executeRegisteredTool(harness.tool, harness.ctx, { args, ...(mode === "timeout" ? { timeoutMs: 500 } : {}) }, controller.signal);
@@ -100,6 +100,7 @@ if (mode === 'structured-error') {
 						assert.equal(result.details?.exitCode, 7);
 						assert.equal(result.details?.parseError, undefined);
 						assert.match(String(result.details?.data), /Detected installation via npm/);
+						if (mode === "nonzero-text") assert.equal(JSON.stringify(result.content).split("Detected installation via npm").length - 1, 1, "explicit text stdout is rendered only once");
 						if (mode === "nonzero-json") {
 							const json = JSON.parse(result.content[0]?.text ?? "");
 							assert.equal(json.success, false);

@@ -197,7 +197,7 @@ async function prepareBatchScreenshotPaths(args: string[], stdin: string | undef
 	return changed
 		? {
 				args,
-				batchScreenshotPathRequests,
+				batchScreenshotPathRequests: parsed.steps.flatMap((step, index) => Array.isArray(step) && step.length === 0 ? [] : [batchScreenshotPathRequests[index]]),
 				stdin: JSON.stringify(preparedSteps),
 		  }
 		: undefined;
@@ -512,7 +512,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 			isError: true,
 		} };
 	}
-	const userRequestedJson = runtimeToolArgs.includes("--json");
+	const userRequestedJson = getBooleanFlagValue(runtimeToolArgs, "--json") === true;
 	const routedReadConfirmation = state.sessionPageState.findReadConfirmation(preparedArgs.args, resolveAgentBrowserNamespace(preparedArgs.args, agentBrowserProcessEnv.AGENT_BROWSER_NAMESPACE));
 	const readConfirmation = routedReadConfirmation?.capabilities?.readRequiresConfirmation === true ? routedReadConfirmation : undefined;
 	let executionPlan = buildExecutionPlan(preparedArgs.args, {

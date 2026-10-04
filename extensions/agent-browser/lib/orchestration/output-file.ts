@@ -2,6 +2,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, resolve } from "node:path";
 
 import { isRecord } from "../parsing.js";
+import { getBooleanFlagValue } from "../argv-grammar.js";
 import { isSessionArtifactManifest } from "../results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../results/contracts.js";
 import { parseCommandInfo, redactSensitiveValue } from "../runtime.js";
@@ -100,8 +101,9 @@ function serializeOutputPayload(value: unknown): string {
 function appendOutputFileNotice(result: AgentBrowserToolResult, message: string, failed = false): AgentBrowserToolResult["content"] {
 	const content = [...(result.content ?? [])] as AgentBrowserToolResult["content"];
 	if (content[0]?.type === "text") {
+		const nativeText = isRecord(result.details) && Array.isArray(result.details.args) && getBooleanFlagValue(result.details.args, "--json") === false;
 		try {
-			const json = JSON.parse(content[0].text);
+			const json = nativeText ? undefined : JSON.parse(content[0].text);
 			if (isRecord(json) && typeof json.success === "boolean") {
 				content[0] = { type: "text", text: JSON.stringify({ ...json, ...(failed ? { success: false, error: message } : {}), outputFileNotice: message }, null, 2) };
 				return content;

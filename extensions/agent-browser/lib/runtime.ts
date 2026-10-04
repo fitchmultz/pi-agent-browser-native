@@ -1036,7 +1036,7 @@ export function buildExecutionPlan(
 	const argvDescriptor = parseArgvDescriptor(args);
 	const commandInfo = argvDescriptor.commandInfo;
 	const commandNeedsManagedSession = !plainTextInspection && !options.browserIndependentReadConfirmation && needsManagedSession(argvDescriptor, options.stdin);
-	const effectiveArgs = plainTextInspection ? [...args] : args.includes("--json") ? [] : ["--json"];
+	const effectiveArgs = plainTextInspection ? [...args] : getBooleanFlagValue(args, "--json") !== undefined ? [] : ["--json"];
 	let namespace = explicitNamespacePresent ? explicitNamespace ?? "" : undefined;
 	if (plainTextInspection) {
 		return {

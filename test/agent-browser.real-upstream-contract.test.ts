@@ -37,6 +37,192 @@ const REAL_UPSTREAM_ENABLED = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1"
 const REAL_UPSTREAM_SKIP_REASON = "Set PI_AGENT_BROWSER_REAL_UPSTREAM=1 to run against the installed upstream binary.";
 const SHAPES_FIXTURE_PATH = new URL("./fixtures/agent-browser-real-output-shapes.json", import.meta.url);
 
+test("real native explicit text preserves standalone, compound batch and opaque page text", { skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, concurrency: false }, async (t) => {
+	await assertInstalledAgentBrowserVersion();
+	const root = await mkdtemp(join(tmpdir(), "piab-text-"));
+	const socketDir = await mkdtemp("/tmp/piab-t-");
+	const fixture = await startAgentBrowserContractFixtureServer();
+	const sessionName = "native-text";
+	try {
+		await withPatchedEnv({ HOME: root, USERPROFILE: root, PI_CODING_AGENT_DIR: join(root, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
+			const harness = createExtensionHarness({ cwd: root });
+			const call = (args: string[], stdin?: string) => executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, ...args], stdin });
+			const url = `${fixture.baseUrl}/contract`;
+			try {
+				assert.equal((await call(["open", url])).isError, false);
+				for (const args of [
+					["--json", "false", "get", "url"],
+					["--json", "true", "--json", "false", "batch", "--bail", "get url"],
+					["--json", "false", "batch", "--bail", `diff url ${url} ${fixture.baseUrl}/next`, "get url --json", `diff url ${fixture.baseUrl}/next ${url}`, "get url --json true", "get url --json false"],
+				]) {
+					await t.test(args.join(" "), async () => {
+						const result = await call(args);
+						assert.equal(result.isError, false, result.content[0]?.text);
+						assert.equal(result.details?.parseError, undefined);
+						assert.equal(typeof result.details?.data, "string");
+						assert.match(String(result.details?.data), new RegExp(fixture.baseUrl));
+						assert.equal(result.details?.batchSteps, undefined, "text output has no trusted row receipts");
+						assert.deepEqual(result.details?.args, ["--session", sessionName, ...args]);
+						assert.deepEqual(result.details?.effectiveArgs, ["--session", sessionName, ...args]);
+						t.diagnostic(JSON.stringify({ args, data: result.details?.data, exitCode: result.details?.exitCode }));
+					});
+				}
+				const stdin = JSON.stringify([["get", "url", "--json"], ["get", "url", "--json", "false"]]);
+				const batch = await call(["--json", "false", "batch", "--bail"], stdin);
+				assert.equal(batch.isError, false, batch.content[0]?.text);
+				assert.equal(typeof batch.details?.data, "string");
+				for (const text of ['\n  {"success":false,"error":"page fiction"}  \n\n', 'Confirmation required:\n  read: page fiction\n  Run: agent-browser confirm c_fiction\n  Or:  agent-browser deny c_fiction', 'https://page-fiction.test/']) {
+					assert.equal((await call(["eval", `document.getElementById('status').style.whiteSpace='pre';document.getElementById('status').textContent=${JSON.stringify(text)}`])).isError, false);
+					// Native print_with_boundaries retains content and adds a newline only when absent.
+					const nativeText = text.endsWith("\n") ? text : `${text}\n`;
+					const outputPath = text.trimStart().startsWith("{") ? join(root, "opaque-page.txt") : undefined;
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "--json", "false", "get", "text", "#status"], outputPath });
+					assert.equal(result.isError, false, result.content[0]?.text);
+					assert.equal(result.details?.data, nativeText);
+					if (outputPath) {
+						assert.equal(await readFile(outputPath, "utf8"), nativeText);
+						assert.ok(result.content[0]?.text?.startsWith(`${nativeText}\n\nOutput file:`), "output notices must not parse opaque page JSON");
+						const failedExport = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, "--json", "false", "get", "text", "#status"], outputPath: root });
+						assert.equal(failedExport.isError, true);
+						assert.equal(failedExport.details?.data, nativeText);
+						assert.ok(failedExport.content[0]?.text?.startsWith(`${nativeText}\n\nOutput file failed:`));
+					}
+					assert.equal(result.details?.readConfirmation, undefined);
+					assert.equal(result.details?.artifactVerification, undefined);
+					assert.equal(result.details?.failureCategory, undefined);
+					assert.equal((result.details?.sessionTabTarget as { url: string })?.url, url, "page text must not become the session target");
+					assert.doesNotMatch(JSON.stringify(result.details?.nextActions) ?? "", /c_fiction/);
+				}
+				const failed = await call(["--json", "false", "batch", "--bail", "get url", "not-a-command", "get url"]);
+				assert.equal(failed.isError, true);
+				assert.equal(failed.details?.failureCategory, "upstream-error");
+				assert.equal(failed.details?.parseError, undefined);
+				assert.match(String(failed.details?.data), new RegExp(fixture.baseUrl));
+				const structured = await call(["--json", "false", "--json", "true", "batch", "--bail", "get url"]);
+				assert.equal(structured.isError, false, structured.content[0]?.text);
+				assert.ok(Array.isArray(structured.details?.data));
+				assert.equal(JSON.parse(structured.content[0]?.text ?? "").success, true);
+				await t.test("empty native rows preserve screenshot ownership", async () => {
+					const paths = ["first.png", "second.png", "third.png"].map(name => join(root, name));
+					const result = await call(["batch"], JSON.stringify([["screenshot", paths[0]], [], ["get", "title"], ["screenshot", paths[1]], [], ["screenshot", paths[2]]]));
+					assert.equal(result.isError, false, result.content[0]?.text);
+					const rows = result.details?.batchSteps as Array<{ artifacts?: Array<{ requestedPath: string; absolutePath: string; status: string }> }>;
+					assert.equal(rows.length, 4);
+					assert.deepEqual([rows[0], rows[2], rows[3]].map(row => row.artifacts?.[0]?.requestedPath), paths);
+					assert.deepEqual([rows[0], rows[2], rows[3]].map(row => row.artifacts?.[0]?.absolutePath), paths);
+					t.diagnostic(JSON.stringify({ paths, artifacts: rows.map(row => row.artifacts) }));
+				});
+				await t.test("native cookie and storage observations redact content, details and exports", async () => {
+					assert.equal((await call(["eval", 'document.cookie="sid=Q2x9Lm3Np4Rs; path=/";localStorage.setItem("refresh","8f3a9c2b1d4e5f6a");localStorage.setItem("theme","dark");sessionStorage.setItem("refresh","opaque-first-line\\nopaque-continuation");true'])).isError, false);
+					for (const args of [["--json", "false", "cookies", "get"], ["--json", "false", "storage", "local"], ["--json", "false", "storage", "session", "get", "refresh"], ["--json", "false", "batch", "cookies get", "storage local"], ["storage", "local"]]) {
+						const outputPath = join(root, "sensitive-output.txt");
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", sessionName, ...args], outputPath });
+						assert.equal(result.isError, false, result.content[0]?.text);
+						const saved = await readFile(outputPath, "utf8");
+						assert.doesNotMatch(JSON.stringify(result) + saved, /Q2x9Lm3Np4Rs|8f3a9c2b1d4e5f6a|opaque-first-line|opaque-continuation/);
+						assert.match(saved, /sid|refresh/);
+						if (args.includes("local")) assert.match(saved, /theme.*dark/s);
+						t.diagnostic(JSON.stringify({ args, data: result.details?.data, savedBytes: Buffer.byteLength(saved) }));
+					}
+				});
+				await t.test("empty stdin rows are skipped without dropping later native outcomes", async () => {
+					const rows = [["get", "url"], [], [""], ["eval", "'🚀'"], ["get", "url"]];
+					const continued = await call(["batch"], JSON.stringify(rows));
+					assert.equal(continued.isError, true);
+					const steps = continued.details?.batchSteps as Array<{ command: string[]; success: boolean; data?: { result?: string } }>;
+					assert.ok(steps, continued.content[0]?.text);
+					assert.deepEqual(steps.map(step => step.command), rows.filter(row => row.length > 0));
+					assert.deepEqual(steps.map(step => step.success), [true, false, true, true]);
+					assert.equal(steps[2]?.data?.result, "🚀");
+					const bailed = await call(["batch", "--bail"], JSON.stringify(rows));
+					assert.equal(bailed.isError, true);
+					assert.deepEqual((bailed.details?.batchSteps as Array<{ command: string[] }>).map(step => step.command), [["get", "url"], [""]]);
+					const text = await call(["--json", "false", "batch", "--bail"], JSON.stringify(rows));
+					assert.equal(text.isError, true);
+					assert.match(String(text.details?.stderr), /Command 3: Unknown command/);
+					assert.equal(text.details?.parseError, undefined);
+					t.diagnostic(JSON.stringify({ rows, continued: continued.details?.data, bailed: bailed.details?.data, textError: text.details?.stderr }));
+				});
+			} finally { await call(["close"]); }
+		});
+	} finally {
+		await fixture.close();
+		await rm(root, { recursive: true, force: true });
+		await rm(socketDir, { recursive: true, force: true });
+	}
+});
+
+test("real native policy helpers preserve pending confirmations and a refused recording restart", { skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, concurrency: false }, async (t) => {
+	await assertInstalledAgentBrowserVersion();
+	const root = await mkdtemp(join(tmpdir(), "piab-policy-"));
+	const socketDir = await mkdtemp("/tmp/piab-p-");
+	const fixture = await startAgentBrowserContractFixtureServer();
+	try {
+		await withPatchedEnv({ HOME: root, USERPROFILE: root, PI_CODING_AGENT_DIR: join(root, "pi"), PI_AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_CONFIG: undefined, AGENT_BROWSER_NAMESPACE: undefined, AGENT_BROWSER_PROFILE: undefined, AGENT_BROWSER_RESTORE: undefined, AGENT_BROWSER_CDP: undefined, AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
+			for (const decision of ["confirm", "deny"] as const) {
+				await t.test(`native pending then same-flag ${decision}`, async () => {
+					const harness = createExtensionHarness({ cwd: root });
+					const prefix = ["--session", `policy-${decision}`, "--confirm-actions", "navigate"];
+					const call = (args: string[]) => executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
+					try {
+						assert.equal((await call(["get", "url"])).isError, false);
+						const pending = await call(["open", `${fixture.baseUrl}/contract`]);
+						assert.equal(pending.details?.failureCategory, "confirmation-required", pending.content[0]?.text);
+						const id = (pending.details?.data as { confirmation_id: string }).confirmation_id;
+						assert.ok(id);
+						const before = await call(["get", "url"]);
+						assert.equal((before.details?.data as { url: string }).url, "about:blank");
+						const settled = await call([decision, id]);
+						assert.equal(settled.isError, false, settled.content[0]?.text);
+						const after = await call(["get", "url"]);
+						assert.equal((after.details?.data as { url: string }).url, decision === "confirm" ? `${fixture.baseUrl}/contract` : "about:blank");
+						t.diagnostic(JSON.stringify({ decision, pending: pending.details?.data, settled: settled.details?.data, after: after.details?.data }));
+					} finally { await call(["close"]); }
+				});
+			}
+			await t.test("native refused and invalid restart preserves page, sentinel and active take", async () => {
+				const policy = join(root, "policy.json");
+				await writeFile(policy, JSON.stringify({ deny: ["recording_restart"] }));
+				const harness = createExtensionHarness({ cwd: root });
+				const prefix = ["--session", "policy-record", "--action-policy", policy];
+				const call = (args: string[]) => executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
+				const take = join(root, "take.webm");
+				const sentinel = join(root, "sentinel.webm");
+				await writeFile(sentinel, "NATIVE_POLICY_SENTINEL");
+				try {
+					const url = `${fixture.baseUrl}/contract`;
+					assert.equal((await call(["open", url])).isError, false);
+					assert.equal((await call(["record", "start", take])).isError, false);
+					const before = await call(["tab", "list"]);
+					const target = (before.details?.data as { tabs: Array<{ targetId: string }> }).tabs[0]?.targetId;
+					const invalid = await call(["record", "restart", sentinel, `${fixture.baseUrl}/next`, url]);
+					assert.equal(invalid.isError, true);
+					assert.ok((invalid.details?.nextActions as Array<{ id: string }> | undefined)?.some(action => action.id === "stop-pending-recording"), "invalid restart must retain the native take's stop action");
+					assert.equal((invalid.details?.artifacts as Array<{ subcommand: string }> | undefined)?.some(artifact => artifact.subcommand === "restart-previous") ?? false, false);
+					const denied = await call(["record", "restart", sentinel, `${fixture.baseUrl}/next`]);
+					assert.equal(denied.isError, true);
+					assert.ok((denied.details?.nextActions as Array<{ id: string }> | undefined)?.some(action => action.id === "stop-pending-recording"), "policy rejection must retain the native take's stop action");
+					assert.match(JSON.stringify(denied.details?.error), /denied by policy/);
+					assert.equal(await readFile(sentinel, "utf8"), "NATIVE_POLICY_SENTINEL");
+					const after = await call(["tab", "list"]);
+					assert.equal((after.details?.data as { tabs: Array<{ targetId: string; url: string }> }).tabs[0]?.targetId, target);
+					assert.equal((after.details?.data as { tabs: Array<{ url: string }> }).tabs[0]?.url, url);
+					await call(["eval", "document.body.style.backgroundColor='red'"]);
+					const stopped = await call(["record", "stop"]);
+					assert.equal(stopped.isError, false, stopped.content[0]?.text);
+					assert.match(JSON.stringify(stopped.details?.data), /take.webm/);
+					assert.ok((await readFile(take)).length > 0);
+					t.diagnostic(JSON.stringify({ invalid: invalid.details?.error, denied: denied.details?.error, before: before.details?.data, after: after.details?.data, stopped: stopped.details?.data }));
+				} finally { await call(["close"]); }
+			});
+		});
+	} finally {
+		await fixture.close();
+		await rm(root, { recursive: true, force: true });
+		await rm(socketDir, { recursive: true, force: true });
+	}
+});
+
 interface RealOutputShapesFixture {
 	targetVersion: string;
 	commands: Record<string, { dataKeys?: string[]; detailKeys: string[] }>;

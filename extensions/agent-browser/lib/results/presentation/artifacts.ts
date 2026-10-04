@@ -261,6 +261,8 @@ async function buildPreviousRestartRecordingArtifact(options: {
 		const recording = getRecordingReceipt(options.data.previousRecording);
 		return recording ? buildFileArtifactMetadata({ ...options, commandInfo: { command: "record", subcommand: "restart-previous" }, path: recording.path, recording }) : undefined;
 	}
+	// A rejected or pending restart has not acknowledged replacement of the active take.
+	if (!isRecord(options.data) || options.data.restarted !== true) return undefined;
 	const sessionKey = options.sessionName ? getAgentBrowserSessionIdentityKey(options.sessionName, options.namespace) : undefined;
 	const previousRecording = options.artifactManifest?.entries.find((entry) => (
 		entry.command === "record" &&
