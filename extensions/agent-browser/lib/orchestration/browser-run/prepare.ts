@@ -397,23 +397,18 @@ function requiresResolvedSemanticVisibleRef(compiled: CompiledAgentBrowserSemant
 	return compiled?.action === "select" && compiled.locator !== undefined;
 }
 
-function resolveSemanticActionVisibleRefArgsFromSnapshot(compiled: CompiledAgentBrowserSemanticAction | undefined, snapshotData: unknown): SemanticActionVisibleRefResolution | undefined {
-	if (!canResolveSemanticVisibleRef(compiled)) return undefined;
-	const resolution = resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction: compiled, snapshotData });
-	if (!resolution) return undefined;
-	return { args: [...getCompiledSemanticActionSessionPrefix(compiled), ...resolution.args], snapshot: resolution.snapshot };
-}
-
 export async function resolveSemanticActionVisibleRefArgs(options: {
 	compiled: CompiledAgentBrowserSemanticAction | undefined;
 	cwd: string;
 	namespace?: string;
+	refSnapshot?: SessionRefSnapshot;
 	sessionName?: string;
 	signal?: AbortSignal;
 }): Promise<SemanticActionVisibleRefResolution | undefined> {
-	if (!options.compiled || !options.sessionName) return undefined;
-	const snapshotData = await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
-	return resolveSemanticActionVisibleRefArgsFromSnapshot(options.compiled, snapshotData);
+	if (!canResolveSemanticVisibleRef(options.compiled) || !options.sessionName) return undefined;
+	const snapshotData = options.refSnapshot ? undefined : await runSessionCommandData({ args: ["snapshot", "-i"], cwd: options.cwd, namespace: options.namespace, sessionName: options.sessionName, signal: options.signal });
+	const resolution = resolveVisibleRefActionFromSnapshot({ allowFill: true, compiledAction: options.compiled, refSnapshot: options.refSnapshot, snapshotData });
+	return resolution ? { args: [...getCompiledSemanticActionSessionPrefix(options.compiled), ...resolution.args], snapshot: resolution.snapshot } : undefined;
 }
 
 export async function prepareBrowserRun(options: BrowserRunOptions): Promise<PrepareBrowserRunResult> {
@@ -784,6 +779,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 				compiled: compiledSemanticAction,
 				cwd,
 				namespace: executionPlan.namespace,
+				refSnapshot: reuseConfirmedCapture && !priorSessionTabTargetUnknown && !priorRefSnapshotInvalidation ? priorRefSnapshotState : undefined,
 				sessionName: executionPlan.sessionName,
 				signal,
 			});

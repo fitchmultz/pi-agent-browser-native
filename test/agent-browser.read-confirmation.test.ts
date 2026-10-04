@@ -30,6 +30,8 @@ if (tokens[0] === 'read' && tokens[1] === 'public.test/body') data = { content: 
 else if (tokens[0] === 'read') { state.pending = { id: 'read-id', action: 'read', sessionName, namespace, failure: tokens[1]?.endsWith('failure') === true }; data = { confirmation_required: true, confirmation_id: 'read-id', action: 'read', ...(tokens[1]?.startsWith('public.test/legacy') ? {} : { capabilities: { readRequiresConfirmation: true } }) }; }
 else if (tokens[0] === 'webmcp') data = { invocationId: 'pending-job', status: 'pending' };
 else if (tokens[0] === 'snapshot') { state.pending = { id: 'snapshot-id', action: 'snapshot', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'snapshot-id', action: 'snapshot' }; }
+else if (state.semanticSnapshot && ['click', 'check', 'fill', 'select'].includes(tokens[0]) && tokens[1]?.startsWith('@')) { state.actions = [...(state.actions ?? []), tokens]; data = { acted: true }; }
+else if (state.semanticSnapshot && tokens[0] === 'find') { success = false; error = 'Unexpected native find fallback'; }
 else if (tokens[0] === 'click' && tokens[1] === '#dispatched') { state.url = 'https://fixture.test/after'; state.gateNextUrl = true; data = { clicked: '#dispatched' }; }
 else if (tokens[0] === 'click' || tokens[0] === 'tab' && tokens[1] === 'new' || tokens[0] === 'close' || tokens[0] === 'eval' && tokens[1] === 'throw fixture') {
   const action = tokens[0] === 'tab' ? 'tab_new' : tokens[0] === 'eval' ? 'evaluate' : tokens[0];
@@ -44,7 +46,7 @@ else if (['confirm', 'deny'].includes(tokens[0])) {
       if (pending.action === 'tab_new') state.url = 'about:blank';
     }
     if (tokens[0] === 'confirm' && pending.action === 'snapshot') state.captures = (state.captures ?? 0) + 1;
-    data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: pending.failure === 'no-active-page' ? { success: false, error: 'No active page' } : pending.failure ? failedReadResult : { success: true, data: pending.action === 'snapshot' ? { origin: 'https://current.test/', snapshot: '- button "Current" [ref=e' + state.captures + ']', refs: { ['e' + state.captures]: { role: 'button', name: 'Current' } } } : pending.action === 'close' ? { closed: true } : pending.action === 'click' ? { clicked: '#guarded' } : pending.action === 'tab_new' ? { url: 'about:blank' } : { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
+    data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: pending.failure === 'no-active-page' ? { success: false, error: 'No active page' } : pending.failure ? failedReadResult : { success: true, data: pending.action === 'snapshot' ? state.semanticSnapshot ?? { origin: 'https://current.test/', snapshot: '- button "Current" [ref=e' + state.captures + ']', refs: { ['e' + state.captures]: { role: 'button', name: 'Current' } } } : pending.action === 'close' ? { closed: true } : pending.action === 'click' ? { clicked: '#guarded' } : pending.action === 'tab_new' ? { url: 'about:blank' } : { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
 } else if (tokens[0] === 'eval') data = { confirmed: true, action: 'read', result: failedReadResult };
 else if (tokens[0] === 'open') { state.url = tokens[1]; data = { url: state.url }; }
 else if (tokens[0] === 'get' && tokens[1] === 'url' && state.gateNextUrl) { state.gateNextUrl = false; state.pending = { id: 'helper-id', action: 'url', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'helper-id', action: 'url' }; }
@@ -246,6 +248,90 @@ for (const after of ["none", "failed-row", "pending", "invalidation", "capture",
 		assert.equal(getter.isError, !fresh, getter.content[0]?.text);
 		assert.equal((await readInvocationLog(log)).some(call => extractUpstreamCommandTokens(call.args).join(" ") === `get text @${current}`), fresh);
 		if (!invalidated && !fresh) assert.equal(getter.details?.failureCategory, "confirmation-required", "later rows retire one-use freshness, not the completed snapshot's membership");
+	});
+});
+
+for (const action of [
+	{ action: "click", locator: "role", role: "button", name: "Save", expected: ["click", "@e5"] },
+	{ action: "check", locator: "role", role: "checkbox", name: "Terms", expected: ["check", "@e6"] },
+	{ action: "fill", locator: "role", role: "textbox", name: "Name", text: "-kept verbatim", expected: ["fill", "@e7", "-kept verbatim"] },
+	{ action: "select", locator: "role", role: "combobox", name: "Flavor", values: ["-1", "chocolate"], expected: ["select", "@e8", "-1", "chocolate"] },
+	{ action: "select", locator: "label", value: "Flavor", values: ["vanilla"], expected: ["select", "@e8", "vanilla"] },
+]) test(`semantic ${action.action}/${action.locator} uses a confirmed capture once across resume`, { concurrency: false }, async () => {
+	await withConfirmations(async ({ root, state, log, harness }) => {
+		await writeFile(state, JSON.stringify({ semanticSnapshot: {
+			origin: "https://current.test/",
+			refs: { e5: { role: "button", name: "Save" }, e6: { role: "checkbox", name: "Terms" }, e7: { role: "textbox", name: "Name" }, e8: { role: "combobox", name: "Flavor" } },
+			snapshot: '- button "Save" [ref=e5]\n- checkbox "Terms" [ref=e6]\n- textbox "Name" [ref=e7]\n- combobox "Flavor" [ref=e8]',
+		} }));
+		const prefix = ["--session", "shared"];
+		const call = async (params: Record<string, unknown>, tool = harness.tool) => {
+			const result = await executeRegisteredTool(tool, harness.ctx, params);
+			harness.ctx.sessionManager.getBranch().push(createToolBranchEntry({ details: result.details!, isError: result.isError }));
+			return result;
+		};
+		assert.equal((await call({ args: [...prefix, "--confirm-actions", "snapshot", "open", "https://current.test/"] })).isError, false);
+		const { expected, ...params } = action;
+		const request = { ...params, session: "shared" };
+		const pending = await call(request, harness.getTool("agent_browser_action")!);
+		assert.equal(pending.details?.failureCategory, "confirmation-required");
+		assert.match(pending.content[0]?.text ?? "", /requested command was not dispatched/);
+		const approval = (pending.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(row => row.id === "approve-confirmation")!;
+		assert.equal((await call(approval.params)).isError, false);
+		harness = createExtensionHarness({ cwd: root, branch: structuredClone(harness.ctx.sessionManager.getBranch()), sessionFile: join(root, "session.jsonl") });
+		await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+		await writeFile(log, "");
+		const result = await call(request, harness.getTool("agent_browser_action")!);
+		assert.equal(result.isError, false, result.content[0]?.text);
+		assert.deepEqual(JSON.parse(await readFile(state, "utf8")).actions, [expected]);
+		assert.equal((await readInvocationLog(log)).some(call => extractUpstreamCommandTokens(call.args)[0] === "snapshot"), false, "reuse must not acquire another gated snapshot");
+		const second = await call(request, harness.getTool("agent_browser_action")!);
+		assert.equal(second.details?.failureCategory, "confirmation-required", "the next operation must acquire its own sample");
+		assert.deepEqual(JSON.parse(await readFile(state, "utf8")).actions, [expected]);
+	});
+});
+
+for (const mode of ["absent", "ambiguous", "drift", "intervening"] as const) test(`confirmed semantic select retains its guards (${mode})`, { concurrency: false }, async () => {
+	await withConfirmations(async ({ root, state, log, harness }) => {
+		const refs = mode === "absent" ? { e5: { role: "button", name: "Save" } }
+			: { e8: { role: "combobox", name: "Flavor" }, ...(mode === "ambiguous" ? { e9: { role: "combobox", name: "Flavor" } } : {}) };
+		await writeFile(state, JSON.stringify({ semanticSnapshot: { origin: "https://current.test/", refs, snapshot: "" } }));
+		const prefix = ["--session", "shared"];
+		const call = async (params: Record<string, unknown>) => {
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+			harness.ctx.sessionManager.getBranch().push(createToolBranchEntry({ details: result.details!, isError: result.isError }));
+			return result;
+		};
+		await call({ args: [...prefix, "--confirm-actions", "snapshot", "open", "https://current.test/"] });
+		await call({ args: [...prefix, "snapshot", "-i"] });
+		assert.equal((await call({ args: [...prefix, "confirm", "snapshot-id"] })).isError, false);
+		harness = createExtensionHarness({ cwd: root, branch: structuredClone(harness.ctx.sessionManager.getBranch()), sessionFile: join(root, "session.jsonl") });
+		await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+		if (mode === "intervening") await call({ args: [...prefix, "get", "title"] });
+		if (mode === "drift") {
+			const native = JSON.parse(await readFile(state, "utf8"));
+			await writeFile(state, JSON.stringify({ ...native, url: "https://external.test/" }));
+		}
+		await writeFile(log, "");
+		const result = await executeRegisteredTool(harness.getTool("agent_browser_action")!, harness.ctx, { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate", session: "shared" });
+		assert.equal(result.isError, true);
+		if (mode === "absent" || mode === "ambiguous") assert.match(String(result.details?.validationError), /exactly one current visible/);
+		if (mode === "drift") assert.equal(result.details?.failureCategory, "tab-drift");
+		if (mode === "intervening") assert.equal(result.details?.failureCategory, "confirmation-required");
+		assert.equal((await readInvocationLog(log)).some(call => ["select", "find"].includes(extractUpstreamCommandTokens(call.args)[0])), false);
+	});
+});
+
+test("pending snapshots preserve explicit JSON and executable identity-qualified actions", { concurrency: false }, async () => {
+	await withConfirmations(async ({ harness }) => {
+		const result = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--namespace", "team", "--session", "shared", "--json", "snapshot", "-i"] });
+		assert.equal(result.details?.failureCategory, "confirmation-required");
+		assert.equal(JSON.parse(result.content[0]?.text ?? "").data.confirmation_required, true);
+		assert.doesNotMatch(result.content[0]?.text ?? "", /no interactive elements|Refs: 0/);
+		assert.deepEqual((result.details?.nextActions as Array<{ params: { args: string[] } }>).map(row => row.params.args), [
+			["--namespace", "team", "--session", "shared", "confirm", "snapshot-id"],
+			["--namespace", "team", "--session", "shared", "deny", "snapshot-id"],
+		]);
 	});
 });
 

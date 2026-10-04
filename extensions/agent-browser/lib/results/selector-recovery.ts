@@ -151,8 +151,8 @@ export function getVisibleRefFallbackTarget(options: {
 	return getFindVisibleRefFallbackTarget(options.commandTokens, { allowLeadingDashFillText: true }) ?? (options.compiledSemanticAction ? getFindVisibleRefFallbackTarget(options.compiledSemanticAction.args, { allowLeadingDashFillText: true }) : undefined);
 }
 
-function getVisibleRefFallbackCandidates(target: VisibleRefFallbackTarget, snapshotData: unknown): VisibleRefFallbackCandidate[] {
-	const refs = getSnapshotRefRecord(snapshotData);
+function getVisibleRefFallbackCandidates(target: VisibleRefFallbackTarget, snapshotData: unknown, refSnapshot?: SessionRefSnapshot): VisibleRefFallbackCandidate[] {
+	const refs = refSnapshot?.refs ?? getSnapshotRefRecord(snapshotData);
 	if (!refs) return [];
 	const snapshotLineByRef = getSnapshotLineTextByRef(snapshotData);
 	const roleOrder = target.roles.map((role) => role.toLowerCase());
@@ -160,7 +160,7 @@ function getVisibleRefFallbackCandidates(target: VisibleRefFallbackTarget, snaps
 	const candidates = Object.entries(refs).flatMap(([ref, entry]): VisibleRefFallbackCandidate[] => {
 		if (!/^e\d+$/.test(ref) || !isRecord(entry)) return [];
 		const snapshotLine = snapshotLineByRef.get(ref);
-		const editableEvidence = getEditableRefEvidence({ ref: entry, text: snapshotLine });
+		const editableEvidence = refSnapshot ? refSnapshot.refs?.[ref]?.isEditable : getEditableRefEvidence({ ref: entry, text: snapshotLine });
 		const role = getSnapshotRefRole(entry, editableEvidence);
 		const name = typeof entry.name === "string" ? entry.name : undefined;
 		if (!role || !name || !roleOrder.includes(role.toLowerCase()) || normalizeSemanticActionAccessibleName(name) !== targetName) return [];
@@ -212,11 +212,12 @@ export interface VisibleRefActionResolution {
 export function resolveVisibleRefActionFromSnapshot(options: {
 	allowFill?: boolean;
 	compiledAction: SelectorRecoveryCompiledAction;
-	snapshotData: unknown;
+	refSnapshot?: SessionRefSnapshot;
+	snapshotData?: unknown;
 }): VisibleRefActionResolution | undefined {
 	const target = getFindVisibleRefFallbackTarget(options.compiledAction.args, { allowLeadingDashFillText: true });
 	if (!target) return undefined;
-	const snapshot = extractRefSnapshotFromData(options.snapshotData);
+	const snapshot = options.refSnapshot ?? extractRefSnapshotFromData(options.snapshotData);
 	if (!snapshot) return undefined;
 	const selectOptionValues = options.compiledAction.values && options.compiledAction.values.length > 0
 		? options.compiledAction.values
@@ -224,7 +225,7 @@ export function resolveVisibleRefActionFromSnapshot(options: {
 	const effectiveTarget = target.action === "select" && selectOptionValues
 		? { ...target, optionValues: selectOptionValues }
 		: target;
-	const candidates = getVisibleRefFallbackCandidates(effectiveTarget, options.snapshotData);
+	const candidates = getVisibleRefFallbackCandidates(effectiveTarget, options.snapshotData, options.refSnapshot);
 	if (effectiveTarget.action === "fill") {
 		if (!options.allowFill || candidates.length !== 1 || effectiveTarget.text === undefined) return undefined;
 		const [candidate] = candidates;
