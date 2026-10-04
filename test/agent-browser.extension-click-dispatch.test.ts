@@ -334,6 +334,49 @@ if (args.includes("snapshot")) {
 	}
 });
 
+for (const guardedClick of [false, true]) test(`evaluate-gated optional probes do not prevent native ref or XPath clicks (click guarded=${guardedClick})`, { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-policy-"));
+	const logPath = join(tempDir, "calls.jsonl");
+	await writeFakeAgentBrowserBinary(tempDir, `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+let data;
+if (args.includes("eval")) data = { confirmation_required: true, confirmation_id: "eval-id", action: "evaluate" };
+else if (args.includes("click")) data = ${guardedClick} ? { confirmation_required: true, confirmation_id: "click-id", action: "click" } : { clicked: args.at(-1) };
+else if (args.includes("confirm")) data = { confirmed: true, action: "click", result: { success: true, data: { clicked: "Save" } } };
+else if (args.includes("snapshot")) data = { origin: "https://fixture.invalid/", snapshot: '- button "Save" [ref=e1]', refs: { e1: { role: "button", name: "Save" } } };
+else if (args.includes("session")) data = { active: false };
+else data = { url: "https://fixture.invalid/", title: "Fixture" };
+process.stdout.write(JSON.stringify({ success: true, data }));
+`);
+	try {
+		await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}`, AGENT_BROWSER_CONFIRM_ACTIONS: undefined }, async () => {
+			const harness = createExtensionHarness({ cwd: tempDir });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const prefix = ["--session", "click-policy"];
+			await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", guardedClick ? " evaluate , click " : " EvAlUaTe ", "open", "https://fixture.invalid/"] });
+			for (const selector of ["@e1", "xpath=//button"]) {
+				await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "snapshot", "-i"] });
+				const clicked = await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "click", selector] });
+				assert.equal(clicked.isError, guardedClick, clicked.content[0]?.text);
+				if (guardedClick) {
+					assert.equal((clicked.details?.readConfirmation as { action: string }).action, "click", "native click policy remains enforced, rather than approving the diagnostic");
+					const action = (clicked.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(row => row.id === "approve-confirmation");
+					assert.ok(action);
+					const completed = await executeRegisteredTool(harness.tool, harness.ctx, action.params);
+					assert.equal(completed.isError, false, completed.content[0]?.text);
+				}
+			}
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter(row => row.args.includes("click")).length, 2, "both native targets must dispatch");
+			assert.equal(invocations.some(row => row.stdin?.includes("window[marker] = state")), false, "retained evaluate policy must not cause a retry loop in optional probe installation");
+			await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, harness.ctx);
+		});
+	} finally { await rm(tempDir, { recursive: true, force: true }); }
+});
+
 test("agentBrowserExtension leaves duplicate-name ref clicks upstream-owned", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-click-dispatch-duplicate-ref-"));
 	const logPath = join(tempDir, "invocations.log");

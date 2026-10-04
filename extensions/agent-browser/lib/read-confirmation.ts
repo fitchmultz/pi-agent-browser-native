@@ -16,6 +16,7 @@ export interface ReadConfirmation {
 	command?: string;
 	action?: string;
 	state: "pending" | "cleared";
+	refSnapshotFresh?: true;
 }
 
 export function parseReadConfirmation(value: unknown): ReadConfirmation | undefined {
@@ -23,7 +24,8 @@ export function parseReadConfirmation(value: unknown): ReadConfirmation | undefi
 	if (typeof value.id !== "string" || !value.id || typeof value.sessionName !== "string" || !value.sessionName || (value.namespace !== undefined && typeof value.namespace !== "string")) return undefined;
 	if (value.source === "native-guarded-action" && (typeof value.command !== "string" || !value.command || typeof value.action !== "string" || !value.action)) return undefined;
 	return { ...(value.source === "native-explicit-url-read" && isRecord(value.capabilities) && value.capabilities.readRequiresConfirmation === true ? { capabilities: { readRequiresConfirmation: true as const } } : {}), id: value.id, sessionName: value.sessionName, namespace: value.namespace, source: value.source, state: value.state,
-		...(value.source === "native-guarded-action" ? { command: typeof value.command === "string" ? value.command : undefined, action: typeof value.action === "string" ? value.action : undefined } : {}) };
+		...(value.source === "native-guarded-action" ? { command: typeof value.command === "string" ? value.command : undefined, action: typeof value.action === "string" ? value.action : undefined } : {}),
+		...(value.source === "native-guarded-action" && value.state === "cleared" && value.command === "snapshot" && value.action === "snapshot" && value.refSnapshotFresh === true ? { refSnapshotFresh: true as const } : {}) };
 }
 
 export function isBrowserIndependentConfirmation(value?: ReadConfirmation): boolean {

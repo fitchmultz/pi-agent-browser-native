@@ -275,16 +275,16 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const confirmationSessionName = prepared.executionPlan.sessionName ?? "default";
 		let readConfirmation = state.sessionPageState.getReadConfirmation(getAgentBrowserSessionIdentityKey(confirmationSessionName, prepared.executionPlan.namespace));
 		let readConfirmationEvent: ReadConfirmation | undefined;
-		const confirmedEffects: Array<{ command: string; data: unknown; succeeded: boolean }> = [];
+		const confirmedEffects: Array<{ command: string; data: unknown; index: number; succeeded: boolean }> = [];
 		const confirmationRows = prepared.executionPlan.commandInfo.command === "batch" && Array.isArray(presentationEnvelope?.data)
-			? presentationEnvelope.data.flatMap((row, index) => isRecord(row) ? [{ tokens: Array.isArray(row.command) && row.command.every(token => typeof token === "string") ? row.command as string[] : batchCommandSteps[index] ?? [], data: row.result, response: row, succeeded: row.success === true }] : [])
-			: [{ tokens: prepared.commandTokens, data: presentationEnvelope?.data, response: presentationEnvelope, succeeded: presentationEnvelope?.success === true }];
+			? presentationEnvelope.data.flatMap((row, index) => isRecord(row) ? [{ tokens: Array.isArray(row.command) && row.command.every(token => typeof token === "string") ? row.command as string[] : batchCommandSteps[index] ?? [], data: row.result, index, response: row, succeeded: row.success === true }] : [])
+			: [{ tokens: prepared.commandTokens, data: presentationEnvelope?.data, index: 0, response: presentationEnvelope, succeeded: presentationEnvelope?.success === true }];
 		for (const row of confirmationRows) {
 			if (readConfirmation?.state === "pending" && readConfirmation.source === "native-guarded-action" && typeof readConfirmation.command === "string"
 				&& row.tokens.length === 2 && row.tokens[0] === "confirm" && row.tokens[1] === readConfirmation.id
 				&& isRecord(row.data) && row.data.confirmed === true && row.data.action === readConfirmation.action
 				&& isRecord(row.data.result) && !detectConfirmationRequired(row.data)) {
-				confirmedEffects.push({ command: readConfirmation.command, data: row.data.result.data, succeeded: row.succeeded && row.data.result.success === true });
+				confirmedEffects.push({ command: readConfirmation.command, data: row.data.result.data, index: row.index, succeeded: row.succeeded && row.data.result.success === true });
 			}
 			const transition = nextReadConfirmation({ commandTokens: row.tokens, current: readConfirmation, data: row.data, namespace: prepared.executionPlan.namespace, sessionName: confirmationSessionName, succeeded: row.succeeded });
 			if (transition) { readConfirmationEvent = transition; readConfirmation = transition; }
@@ -546,7 +546,12 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		const comboboxFocusDiagnostic = succeeded ? await collectComboboxFocusDiagnostic({ command: prepared.executionPlan.commandInfo.command, commandTokens: prepared.commandTokens, cwd, namespace: prepared.executionPlan.namespace, semanticAction: prepared.compiledSemanticAction, sessionName: prepared.executionPlan.sessionName, signal }) : undefined;
 		const recordingDependencyWarning = await collectRecordingDependencyWarning({ command: prepared.executionPlan.commandInfo.command, commandTokens: prepared.commandTokens, succeeded });
 		const scrollNoopDiagnostic = succeeded && prepared.shouldProbeScrollNoop ? buildScrollNoopDiagnostic(prepared.scrollPositionBefore, await collectScrollPositionSnapshot({ cwd, namespace: prepared.executionPlan.namespace, sessionName: prepared.executionPlan.sessionName, signal })) : undefined;
-		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(presentationEnvelope?.data) : undefined;
+		const batchRefSnapshotState = prepared.executionPlan.commandInfo.command === "batch" ? extractLatestRefSnapshotStateFromBatchResults(
+			Array.isArray(presentationEnvelope?.data) ? presentationEnvelope.data.map((row, index) => {
+				const snapshot = confirmedEffects.find(effect => effect.index === index && effect.command === "snapshot");
+				return snapshot && isRecord(row) ? { ...row, command: ["snapshot"], result: snapshot.data, success: snapshot.succeeded } : row;
+			}) : presentationEnvelope?.data,
+		) : undefined;
 		let currentRefSnapshot: SessionRefSnapshot | undefined;
 		let currentRefSnapshotInvalidation: SessionRefSnapshotInvalidation | undefined;
 		if (sessionStateKey && !browserIndependentRead) {
@@ -926,6 +931,15 @@ export async function processBrowserOutput(input: ProcessBrowserOutputInput): Pr
 		currentRefSnapshot = finalRecoveryState.currentRefSnapshot;
 		currentRefSnapshotInvalidation = finalRecoveryState.currentRefSnapshotInvalidation;
 		const authoritativePageState = sessionStateKey ? sessionPageState.get(sessionStateKey) : undefined;
+		if (sessionStateKey && currentRefSnapshot && processSucceeded && parseSucceeded && !unobservedMutation && readConfirmationEvent?.state === "cleared"
+			&& readConfirmationEvent.command === "snapshot" && readConfirmationEvent.action === "snapshot"
+			&& confirmedEffects.some(effect => effect.command === "snapshot" && effect.succeeded
+				&& effect.index === (Array.isArray(presentationEnvelope?.data) ? presentationEnvelope.data.length - 1 : 0) && extractRefSnapshotFromData(effect.data))) {
+			readConfirmationEvent = { ...readConfirmationEvent, refSnapshotFresh: true };
+			presentation.readConfirmation = readConfirmationEvent;
+			sessionPageState.applyReadConfirmation(readConfirmationEvent, sessionPageStateUpdate);
+			state.observedBrowserEffects = { ...state.observedBrowserEffects, readConfirmation: readConfirmationEvent };
+		}
 		if (sessionStateKey) currentSessionTabTarget = authoritativePageState?.tabTarget;
 		const currentSessionTabTargetUnknown = authoritativePageState?.tabTargetUnknown === true ? true : undefined;
 		const resultRetainsPreparedManagedSession = !managedSessionOutcome || (

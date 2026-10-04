@@ -4,6 +4,7 @@ import { withOptionalSessionArgs, type AgentBrowserNextAction } from "../../resu
 import type { SessionRefSnapshot } from "../../session-page-state.js";
 import { runSessionCommandData } from "./session-state.js";
 import { getAgentBrowserProcessTimeoutMs } from "../../process.js";
+import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
 import type { ClickDispatchDiagnostic, ClickDispatchProbe, ClickDispatchProbeTarget } from "./types.js";
 
 const CLICK_DISPATCH_MARKER_PREFIX = "__piAgentBrowserClickDispatchProbe_";
@@ -219,6 +220,8 @@ export function buildClickDispatchNextActions(options: { commandTokens: string[]
 
 export async function prepareClickDispatchProbe(options: { commandTokens: string[]; cwd: string; namespace?: string; refSnapshot?: SessionRefSnapshot; sessionName?: string; signal?: AbortSignal; timeoutMs?: number }): Promise<ClickDispatchProbe | undefined> {
 	if (!options.sessionName || options.commandTokens[0] !== "click" || options.commandTokens.includes("--new-tab")) return undefined;
+	// This optional diagnostic must not require approving a fresh eval on every click retry.
+	if (getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS?.split(",").some(action => action.trim().toLowerCase() === "evaluate")) return undefined;
 	const target = getClickDispatchProbeTarget(options.commandTokens, options.refSnapshot);
 	if (!target) return undefined;
 	const probe: ClickDispatchProbe = { marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`, target };

@@ -273,6 +273,7 @@ function extractRefSnapshotRefs(data: unknown): Record<string, { isContentEditab
 }
 
 export function extractRefSnapshotFromData(value: unknown): SessionRefSnapshot | undefined {
+	if (detectConfirmationRequired(value)) return undefined;
 	const data = getFullSnapshotData(value);
 	if (!data) return undefined;
 	const refs = extractRefSnapshotRefs(data);
