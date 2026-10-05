@@ -1,5 +1,6 @@
 import type { CompiledAgentBrowserSemanticAction } from "../../input-modes/types.js";
 import { isRecord } from "../../parsing.js";
+import { getNativeTabContinuationGuidance } from "../../read-confirmation.js";
 import type { CommandInfo } from "../../runtime.js";
 import { detectConfirmationRequired, type ConfirmationRequiredPresentation } from "../confirmation.js";
 import { formatRawSnapshotText, formatSnapshotSummary } from "../snapshot.js";
@@ -252,7 +253,10 @@ export function formatPresentationContentText(
 	compiledSemanticAction?: CompiledAgentBrowserSemanticAction,
 ): string {
 	const confirmationRequired = detectConfirmationRequired(data);
-	if (confirmationRequired) return formatConfirmationRequiredText(confirmationRequired);
+	if (confirmationRequired) return [
+		formatConfirmationRequiredText(confirmationRequired),
+		getNativeTabContinuationGuidance(commandInfo.commandTokens ?? [], data),
+	].filter(Boolean).join("\n\n");
 
 	const presenterText = commandInfo.command ? COMMAND_PRESENTERS[commandInfo.command]?.text?.(commandInfo, data) : undefined;
 	if (presenterText) return presenterText;

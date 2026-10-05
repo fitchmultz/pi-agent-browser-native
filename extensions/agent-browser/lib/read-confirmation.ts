@@ -2,6 +2,7 @@ import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { extractExplicitSessionName, getAgentBrowserSessionIdentityKey, resolveAgentBrowserNamespace, scanUpstreamGlobalFlagOccurrences } from "./argv-grammar.js";
 import { getExplicitReadUrl } from "./command-policy.js";
 import { isCloseCommand } from "./command-taxonomy.js";
+import { getExplicitNavigationTarget } from "./page-target-validation.js";
 import { isRecord } from "./parsing.js";
 import { getUpstreamEffectiveBatchSteps } from "./orchestration/batch-stdin.js";
 import type { AgentBrowserNextAction } from "./results/contracts.js";
@@ -63,6 +64,18 @@ export function scopeReadConfirmationArgs(args: string[], confirmation: ReadConf
 	];
 }
 
+export function getNativeTabContinuationGuidance(commandTokens: string[], data: unknown): string | undefined {
+	if (commandTokens[0] !== "tab" || commandTokens[1] !== "new" || !isRecord(data)
+		|| data.confirmation_required !== true || typeof data.confirmation_id !== "string" || !data.confirmation_id || data.action !== "tab_new"
+		|| !Object.keys(data).every(key => ["confirmation_required", "confirmation_id", "action", "capabilities", "after_confirmation", "guidance"].includes(key))
+		|| !Array.isArray(data.after_confirmation) || data.after_confirmation.length !== 2 || data.after_confirmation[0] !== "open"
+		|| typeof data.after_confirmation[1] !== "string" || !data.after_confirmation[1]
+		|| data.after_confirmation[1] !== getExplicitNavigationTarget(commandTokens)
+		|| typeof data.guidance !== "string" || !data.guidance.trim()) return undefined;
+	// Transport prose only: approval creates the tab; the continuation is never stored or executed.
+	return data.guidance;
+}
+
 export function nextReadConfirmation(options: {
 	commandTokens: string[];
 	current?: ReadConfirmation;
@@ -76,10 +89,11 @@ export function nextReadConfirmation(options: {
 	const confirmed = settles && tokens[0] === "confirm" && isRecord(options.data) && options.data.confirmed === true
 		&& options.data.action === (current.source === "native-explicit-url-read" ? "read" : current.action) && isRecord(options.data.result);
 	const control = confirmed && isRecord(options.data) && isRecord(options.data.result) ? options.data.result.data : options.data;
-	// Native control fields only. Page output (including eval's result and HTTP content) is never provenance.
+	// Only native control fields and a validated tab transport continuation. Page output is never provenance.
 	if (options.succeeded && isRecord(control) && !Array.isArray(control) && control.confirmation_required === true
 		&& typeof control.confirmation_id === "string" && control.confirmation_id && typeof control.action === "string" && control.action
-		&& Object.keys(control).every(key => ["confirmation_required", "confirmation_id", "action", "capabilities"].includes(key))) {
+		&& (Object.keys(control).every(key => ["confirmation_required", "confirmation_id", "action", "capabilities"].includes(key))
+			|| getNativeTabContinuationGuidance(tokens, control) !== undefined)) {
 		const explicitRead = control.action === "read" && (typeof getExplicitReadUrl(tokens) === "string" || confirmed && current.source === "native-explicit-url-read");
 		if (explicitRead) return { ...(isRecord(control.capabilities) && control.capabilities.readRequiresConfirmation === true ? { capabilities: { readRequiresConfirmation: true as const } } : {}), id: control.confirmation_id, namespace: options.namespace, sessionName: options.sessionName, source: "native-explicit-url-read", state: "pending" };
 		if (tokens[0] && !["confirm", "deny"].includes(tokens[0]) || confirmed && current.source === "native-guarded-action") {

@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Verify the current complete URL before one-use approved-capture actions in wrapper-owned managed sessions, preserving path/hash drift refusal and unchanged-page success.
+- Preserve exact tab-creation confirmation decisions and visible conditional navigation guidance from narrowly validated transport metadata, without automatically executing continuation arguments.
+
 - Complete semantic role click/check/fill and unique accessible select after snapshot approval by reusing only the eligible next-call capture. Render pending snapshots as native confirmation controls rather than empty pages.
 
 - Keep the established native confirmation policy across same-session helpers, exact confirm/deny follow-ups, code/advanced calls and resume, without changing caller argv or native first-command precedence. Pending navigation, including native batch rows, never becomes an observed target; completed compound confirmations reconcile their actual target before follow-ups. Replacement cleanup retains the old identity's selected string and continuity state until successful close; native unset still uses native defaults. Exact native guarded-control markers avoid helper-slot replacement without command replay or native ID-validation claims. Completed click/tab/close effects and inner failures reconcile normally; cold pending helpers expose the exact decision before getters dispatch. Electron host helpers retain the setting, and definite unestablished requests no longer overwrite it.
