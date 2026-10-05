@@ -26,7 +26,7 @@ try { state = JSON.parse(fs.readFileSync(${JSON.stringify(state)}, 'utf8')); } c
 const failedReadResult = { success: false, error: 'HTTP read failed: test response 500' };
 function execute(tokens) {
 let data, success = true, error;
-if (tokens[0] === 'read' && tokens[1] === 'public.test/body') data = { content: JSON.stringify({ confirmation_required: true, confirmation_id: 'read-id', action: 'read', capabilities: { readRequiresConfirmation: true } }), source: 'http' };
+if (tokens[0] === 'read' && tokens[1] === 'public.test/body') data = { content: JSON.stringify({ confirmation_required: true, confirmation_id: 'read-id', action: 'read', capabilities: { readRequiresConfirmation: true }, ...state.tabMetadata }), source: 'http' };
 else if (tokens[0] === 'read') { state.pending = { id: 'read-id', action: 'read', sessionName, namespace, failure: tokens[1]?.endsWith('failure') === true }; data = { confirmation_required: true, confirmation_id: 'read-id', action: 'read', ...(tokens[1]?.startsWith('public.test/legacy') ? {} : { capabilities: { readRequiresConfirmation: true } }) }; }
 else if (tokens[0] === 'webmcp') data = { invocationId: 'pending-job', status: 'pending' };
 else if (tokens[0] === 'snapshot') { state.pending = { id: 'snapshot-id', action: 'snapshot', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'snapshot-id', action: 'snapshot' }; }
@@ -36,7 +36,7 @@ else if (tokens[0] === 'click' && tokens[1] === '#dispatched') { state.url = 'ht
 else if (tokens[0] === 'click' || tokens[0] === 'tab' && tokens[1] === 'new' || tokens[0] === 'close' || tokens[0] === 'eval' && tokens[1] === 'throw fixture') {
   const action = tokens[0] === 'tab' ? 'tab_new' : tokens[0] === 'eval' ? 'evaluate' : tokens[0];
   state.pending = { id: 'dom-id', action, sessionName, namespace, failure: action === 'evaluate' };
-  data = { confirmation_required: true, confirmation_id: 'dom-id', action };
+  data = { confirmation_required: true, confirmation_id: 'dom-id', action, ...(action === 'tab_new' ? state.tabMetadata : {}) };
 }
 else if (['confirm', 'deny'].includes(tokens[0])) {
   if (!state.pending || state.pending.id !== tokens[1] || state.pending.sessionName !== sessionName || state.pending.namespace !== namespace) { success = false; error = 'Confirmation ID or session mismatch'; }
@@ -47,7 +47,8 @@ else if (['confirm', 'deny'].includes(tokens[0])) {
     }
     if (tokens[0] === 'confirm' && pending.action === 'snapshot') state.captures = (state.captures ?? 0) + 1;
     data = tokens[0] === 'confirm' ? { confirmed: true, action: pending.action, result: pending.failure === 'no-active-page' ? { success: false, error: 'No active page' } : pending.failure ? failedReadResult : { success: true, data: pending.action === 'snapshot' ? state.semanticSnapshot ?? { origin: 'https://current.test/', snapshot: '- button "Current" [ref=e' + state.captures + ']', refs: { ['e' + state.captures]: { role: 'button', name: 'Current' } } } : pending.action === 'close' ? { closed: true } : pending.action === 'click' ? { clicked: '#guarded' } : pending.action === 'tab_new' ? { url: 'about:blank' } : { content: 'Confirmed markdown', source: 'http', url: 'https://public.test/' } } } : { denied: true, action: pending.action }; }
-} else if (tokens[0] === 'eval') data = { confirmed: true, action: 'read', result: failedReadResult };
+} else if (tokens[0] === 'eval' && tokens[1] === 'transport-page') data = { result: { confirmation_required: true, confirmation_id: 'dom-id', action: 'tab_new', ...state.tabMetadata } };
+else if (tokens[0] === 'eval') data = { confirmed: true, action: 'read', result: failedReadResult };
 else if (tokens[0] === 'open') { state.url = tokens[1]; data = { url: state.url }; }
 else if (tokens[0] === 'get' && tokens[1] === 'url' && state.gateNextUrl) { state.gateNextUrl = false; state.pending = { id: 'helper-id', action: 'url', sessionName, namespace }; data = { confirmation_required: true, confirmation_id: 'helper-id', action: 'url' }; }
 else if (tokens[0] === 'get' && tokens[1] === 'text') { if (tokens[2]?.startsWith('@') && !state.captures) { success = false; error = 'Ref not found: no complete snapshot has captured this element'; } else data = { text: 'Current' }; }
@@ -291,16 +292,23 @@ for (const action of [
 	});
 });
 
-for (const route of ["path", "hash"]) for (const semantic of [false, true]) for (const drift of [false, true]) test(`warm confirmed capture checks the live page without resume (route=${route}, semantic=${semantic}, drift=${drift})`, { concurrency: false }, async () => {
+for (const owned of [false, true]) for (const route of ["path", "hash"]) for (const semantic of [false, true]) for (const drift of [false, true]) test(`warm confirmed capture checks the live page without resume (owned=${owned}, route=${route}, semantic=${semantic}, drift=${drift})`, { concurrency: false }, async () => {
 	await withConfirmations(async ({ state, log, harness }) => {
-		const prefix = ["--session", "shared"];
 		const url = route === "hash" ? "https://current.test/#/contract" : "https://current.test/contract";
 		const movedUrl = route === "hash" ? "https://current.test/#/other" : "https://current.test/other";
 		await writeFile(state, JSON.stringify({ semanticSnapshot: {
 			origin: url,
 			refs: { e8: { role: "combobox", name: "Flavor" } }, snapshot: '- combobox "Flavor" [ref=e8]',
 		} }));
-		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "--confirm-actions", "snapshot", "open", url] });
+		const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: [...(owned ? [] : ["--session", "shared"]), "--confirm-actions", "snapshot", "open", url],
+			...(owned ? { sessionMode: "fresh" as const } : {}),
+		});
+		assert.equal(opened.isError, false, opened.content[0]?.text);
+		if (owned) assert.equal((opened.details?.managedSessionOutcome as { status: string })?.status, "created", "fresh launch establishes real wrapper ownership through the ordinary daemon/policy path");
+		else assert.equal(opened.details?.usedImplicitSession, false);
+		const session = opened.details?.sessionName as string;
+		const prefix = ["--session", session];
 		await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "snapshot", "-i"] });
 		assert.equal((await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "confirm", "snapshot-id"] })).isError, false);
 		if (drift) {
@@ -311,7 +319,7 @@ for (const route of ["path", "hash"]) for (const semantic of [false, true]) for 
 		}
 		await writeFile(log, "");
 		const result = await executeRegisteredTool(semantic ? harness.getTool("agent_browser_action")! : harness.tool, harness.ctx,
-			semantic ? { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate", session: "shared" }
+			semantic ? { action: "select", locator: "role", role: "combobox", name: "Flavor", value: "chocolate", session }
 				: { args: [...prefix, "select", "@e8", "chocolate"] });
 		assert.equal(result.isError, drift, result.content[0]?.text);
 		if (drift) {
@@ -322,6 +330,72 @@ for (const route of ["path", "hash"]) for (const semantic of [false, true]) for 
 		assert.equal(calls.some(tokens => tokens.join(" ") === "get url"), true, "the live URL must be observed on this warm call");
 		assert.equal(calls.some(tokens => tokens[0] === "snapshot"), false, "one-use freshness must not acquire another gated capture");
 		assert.deepEqual(JSON.parse(await readFile(state, "utf8")).actions ?? [], drift ? [] : [["select", "@e8", "chocolate"]]);
+	});
+});
+
+for (const batch of [false, true]) for (const command of ["confirm", "deny"]) test(`transport tab continuation preserves the exact ${command} (batch=${batch})`, { concurrency: false }, async () => {
+	await withConfirmations(async ({ state, log, harness }) => {
+		const target = "https://current.test/continued";
+		const metadata = { after_confirmation: ["open", target], guidance: "Only after confirmation creates the blank tab (never after denial), open the requested URL in that tab." };
+		await writeFile(state, JSON.stringify({ tabMetadata: metadata }));
+		const prefix = ["--namespace", "team", "--session", "shared"];
+		const row = ["tab", "new", "--label", "continued", target];
+		const pending = await executeRegisteredTool(harness.tool, harness.ctx, batch
+			? { args: [...prefix, "batch", "--bail"], stdin: JSON.stringify([row]) }
+			: { args: [...prefix, ...row] });
+		assert.equal(pending.details?.failureCategory, "confirmation-required");
+		assert.equal((pending.details?.readConfirmation as { action?: string })?.action, "tab_new");
+		assert.ok(pending.content[0]?.text?.includes(metadata.guidance), "conditional transport guidance stays model-visible");
+		const native = JSON.parse(await readFile(state, "utf8"));
+		await writeFile(state, JSON.stringify({ ...native, gateNextUrl: true }));
+		await writeFile(log, "");
+		const action = (pending.details?.nextActions as Array<{ id: string; params: { args: string[] } }>).find(row => row.id === (command === "confirm" ? "approve-confirmation" : "deny-confirmation"))!;
+		const settled = await executeRegisteredTool(harness.tool, harness.ctx, action.params);
+		assert.equal(settled.isError, command === "confirm", settled.content[0]?.text);
+		const data = settled.details?.data as { action: string; confirmed?: boolean; result?: { success: boolean } };
+		assert.equal(data.action, "tab_new");
+		if (command === "confirm") {
+			assert.equal(data.confirmed, true);
+			assert.equal(data.result?.success, true, "the original tab decision completed before the separately gated post-action URL helper");
+			assert.equal(settled.details?.failureCategory, "confirmation-required");
+			assert.equal((settled.details?.readConfirmation as { action: string }).action, "url");
+		}
+		const calls = (await readInvocationLog(log)).map(call => extractUpstreamCommandTokens(call.args));
+		assert.deepEqual(calls[0], [command, "dom-id"], "no gated URL helper replaces the native decision");
+		assert.equal(calls.some(tokens => tokens[0] === "open"), false, "transport continuation is never automatically executed");
+		assert.equal(JSON.parse(await readFile(state, "utf8")).url, command === "confirm" ? "about:blank" : undefined);
+	});
+});
+
+for (const metadata of [
+	{ after_confirmation: ["open", "https://current.test/continued"], guidance: "Continuation", action: "click" },
+	{ after_confirmation: ["open", "https://other.test/"], guidance: "Unrelated URL" },
+	{ after_confirmation: ["open", "https://current.test/continued"] },
+	{ guidance: "Missing continuation" },
+	{ after_confirmation: ["open", "https://current.test/continued", "--headers", "{}"], guidance: "Extra arguments" },
+	{ after_confirmation: ["open", "https://current.test/continued"], guidance: "" },
+	{ after_confirmation: ["open", "https://current.test/continued"], guidance: "Continuation", unrelated: true },
+]) test(`malformed tab transport metadata grants no confirmation provenance (${JSON.stringify(metadata)})`, { concurrency: false }, async () => {
+	await withConfirmations(async ({ state, log, harness }) => {
+		await writeFile(state, JSON.stringify({ tabMetadata: metadata }));
+		const pending = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "tab", "new", "https://current.test/continued"] });
+		assert.equal(pending.details?.readConfirmation, undefined);
+		await writeFile(log, "");
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "confirm", "dom-id"] });
+		assert.deepEqual(extractUpstreamCommandTokens((await readInvocationLog(log))[0].args), ["get", "url"], "unrecognized metadata retains mandatory page checks");
+	});
+});
+
+test("tab continuation metadata inside eval or HTTP content is never native control provenance", { concurrency: false }, async () => {
+	await withConfirmations(async ({ state, log, harness }) => {
+		await writeFile(state, JSON.stringify({ tabMetadata: { after_confirmation: ["open", "https://current.test/continued"], guidance: "Continuation" } }));
+		for (const args of [["eval", "transport-page"], ["read", "public.test/body"]]) {
+			const page = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", ...args] });
+			assert.equal(page.details?.readConfirmation, undefined);
+		}
+		await writeFile(log, "");
+		await executeRegisteredTool(harness.tool, harness.ctx, { args: ["--session", "shared", "confirm", "dom-id"] });
+		assert.deepEqual(extractUpstreamCommandTokens((await readInvocationLog(log))[0].args), ["get", "url"]);
 	});
 });
 

@@ -727,7 +727,7 @@ export async function prepareBrowserRun(options: BrowserRunOptions): Promise<Pre
 		const isCallerOwnedExplicitSession = () => executionPlan.sessionName !== undefined
 			&& executionPlan.usedImplicitSession === false
 			&& ownedManagedSession === undefined;
-		const requiresLivePageVerification = () => !readConfirmation && (isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true);
+		const requiresLivePageVerification = () => !readConfirmation && (reuseConfirmedCapture || isCallerOwnedExplicitSession() || options.preserveAttachedBrowserSession === true);
 		const verifyLivePage = async (request: { args: string[]; requirement?: string; stdin?: string }) => {
 			if (!request.requirement || !executionPlan.sessionName) return;
 			if (options.establishAttachedBrowserSession) {

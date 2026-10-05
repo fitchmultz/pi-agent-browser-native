@@ -36,7 +36,7 @@ function getPositionalOperands(commandTokens: string[]): string[] {
 	return values;
 }
 
-function getExplicitNavigationTarget(args: string[]): string | undefined {
+export function getExplicitNavigationTarget(args: string[]): string | undefined {
 	const descriptor = parseArgvDescriptor(args);
 	const positionals = getPositionalOperands(descriptor.upstreamCommandTokens);
 	if (EXPLICIT_NAVIGATION_COMMANDS.has(descriptor.commandInfo.command ?? "")) return positionals[0];
