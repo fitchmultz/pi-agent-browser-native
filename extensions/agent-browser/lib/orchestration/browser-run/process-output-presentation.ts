@@ -100,6 +100,7 @@ function resolveNativeErrorText(draft: ResolveNativeErrorTextInput): void {
 					effectiveArgs: draft.input.prepared.redactedProcessArgs,
 					envelope: draft.presentationEnvelope,
 					exitCode: draft.input.processResult.exitCode,
+					exitSignal: draft.input.processResult.exitSignal,
 					parseError: draft.parseError,
 					plainTextInspection: draft.plainTextInspection,
 					staleRefArgs: getStaleRefArgs(
@@ -180,7 +181,6 @@ function classifyMalformedNativeFailure(draft: ClassifyMalformedNativeFailureInp
 		draft.parseError !== undefined &&
 		draft.parseError.length > 0 &&
 		draft.input.processResult.exitCode !== 0 &&
-		draft.input.processResult.stderr.trim().length > 0 &&
 		!draft.input.processResult.timedOut &&
 		!draft.input.processResult.aborted &&
 		!draft.input.processResult.spawnError
