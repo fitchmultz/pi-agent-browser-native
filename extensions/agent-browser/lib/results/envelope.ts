@@ -202,6 +202,7 @@ interface AgentBrowserErrorOptions {
 	readonly effectiveArgs?: readonly string[];
 	readonly envelope?: Readonly<AgentBrowserEnvelope>;
 	readonly exitCode: number;
+	readonly exitSignal?: NodeJS.Signals;
 	readonly parseError?: string;
 	readonly plainTextInspection: boolean;
 	readonly spawnError?: Error;
@@ -223,11 +224,29 @@ function getTransportErrorText(options: AgentBrowserErrorOptions): string | unde
 		return options.spawnError.message;
 	}
 	if ((options.parseError ?? "") !== "") {
-		return options.exitCode !== 0 && options.stderr.trim().length > 0
-			? options.stderr.trim()
-			: options.parseError;
+		return malformedProcessErrorText(options);
 	}
 	return undefined;
+}
+
+function malformedProcessErrorText(options: AgentBrowserErrorOptions): string | undefined {
+	if (options.exitCode === 0 && !options.exitSignal) {
+		return options.parseError;
+	}
+	const signalText = options.exitSignal ? `Signal: ${options.exitSignal}.` : undefined;
+	const oomHint =
+		options.exitSignal === "SIGKILL" || options.exitCode === 137
+			? "SIGKILL may indicate an OOM kill or an external stop. Inspect the host kernel log and cgroup memory.events before retrying; the command may have executed."
+			: undefined;
+	return [
+		buildExitCodeFallback(options),
+		signalText,
+		options.stderr.trim(),
+		options.stderr.trim().length > 0 ? undefined : options.parseError,
+		oomHint,
+	]
+		.filter(Boolean)
+		.join("\n");
 }
 
 function getEnvelopeDataError(data: unknown): unknown {

@@ -155,6 +155,27 @@ test("resolveSpawnedChildExitCode prefers close, then timeout, then exit fallbac
 	);
 });
 
+test("resolveSpawnedChildExitCode never converts signal termination into success", () => {
+	assert.equal(
+		resolveSpawnedChildExitCode({
+			closeCode: null,
+			exitCode: null,
+			exitSignal: "SIGKILL",
+			useExitFallback: true,
+			timedOut: false,
+		}),
+		137,
+	);
+	assert.equal(
+		resolveSpawnedChildExitCode({ exitSignal: "SIGTERM", useExitFallback: true, timedOut: false }),
+		143,
+	);
+	assert.equal(
+		resolveSpawnedChildExitCode({ exitSignal: "SIGKILL", useExitFallback: true, timedOut: true }),
+		124,
+	);
+});
+
 test("prepareAgentBrowserSpawnArgs preserves caller launch controls", () => {
 	assert.deepEqual(prepareAgentBrowserSpawnArgs(["open", "about:blank"]), ["open", "about:blank"]);
 	assert.deepEqual(

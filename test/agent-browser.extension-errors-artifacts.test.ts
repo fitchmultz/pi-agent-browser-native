@@ -1968,6 +1968,64 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", u
 	},
 );
 
+test(
+	"agentBrowserExtension exposes killed CLI diagnostics without leaking stderr secrets",
+	{ concurrency: false, skip: process.platform === "win32" },
+	async (t) => {
+		for (const { name, script, exitSignal } of [
+			{
+				name: "signal without output",
+				script: "process.kill(process.pid, 'SIGKILL');",
+				exitSignal: "SIGKILL",
+			},
+			{
+				name: "launcher exit 137 without output",
+				script: "process.exit(137);",
+				exitSignal: undefined,
+			},
+			{
+				name: "signal with secret stderr",
+				script:
+					"process.stderr.write('Authorization: Bearer browser-failure-secret\\n', () => process.kill(process.pid, 'SIGKILL'));",
+				exitSignal: "SIGKILL",
+			},
+		]) {
+			// Each child fixture owns its PATH and lifecycle until completion.
+			// oxlint-disable-next-line no-await-in-loop
+			await t.test(name, async () => {
+				const tempDir = await mkdtemp(join(tmpdir(), "pi-browser-signal-"));
+				try {
+					await writeFakeAgentBrowserBinary(tempDir, script);
+					await withPatchedEnv(
+						{ PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` },
+						async () => {
+							const harness = createExtensionHarness({ cwd: tempDir });
+							await runExtensionEvent(
+								harness.handlers,
+								"session_start",
+								{ reason: "new" },
+								harness.ctx,
+							);
+							const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+								args: ["open", "https://fixture.test/"],
+							});
+							assert.equal(result.isError, true);
+							assert.equal(result.details?.exitCode, 137);
+							assert.equal(result.details?.exitSignal, exitSignal);
+							assert.equal(result.details?.failureCategory, "upstream-error");
+							assert.match(JSON.stringify(result), /OOM kill/);
+							assert.match(JSON.stringify(result), /no JSON output/);
+							assert.doesNotMatch(JSON.stringify(result), /browser-failure-secret/);
+						},
+					);
+				} finally {
+					await rm(tempDir, { recursive: true, force: true });
+				}
+			});
+		}
+	},
+);
+
 const MISSING_SUCCESS_PARSE_ERROR =
 	"agent-browser returned an invalid JSON envelope: missing boolean success field.";
 

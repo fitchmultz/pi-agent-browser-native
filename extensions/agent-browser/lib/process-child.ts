@@ -1,5 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { platform as processPlatform } from "node:process";
+import { constants } from "node:os";
 import { spawn as crossSpawn } from "cross-spawn";
 import { appendProcessOutputTail, ProcessStdout } from "./process-stdout.js";
 import { getErrorCode, normalizeProcessError } from "./process-errors.js";
@@ -11,6 +12,7 @@ export interface ProcessRunResult {
 	/** True once the agent-browser command, not merely the Windows shell, has started. */
 	readonly agentBrowserStarted: boolean;
 	readonly exitCode: number;
+	readonly exitSignal?: NodeJS.Signals;
 	readonly spawnError?: Error;
 	readonly stderr: string;
 	readonly stdout: string;
@@ -54,6 +56,7 @@ async function terminateSpawnedChild(
 export function resolveSpawnedChildExitCode(input: {
 	readonly closeCode?: number | null;
 	readonly exitCode?: number | null;
+	readonly exitSignal?: NodeJS.Signals | null;
 	readonly useExitFallback: boolean;
 	readonly timedOut: boolean;
 	readonly spawnError?: Error;
@@ -68,6 +71,9 @@ export function resolveSpawnedChildExitCode(input: {
 	if (input.useExitFallback && input.exitCode !== null && input.exitCode !== undefined) {
 		return input.exitCode;
 	}
+	if (input.exitSignal) {
+		return 128 + constants.signals[input.exitSignal];
+	}
 	return input.spawnError ? 127 : 0;
 }
 
@@ -80,23 +86,26 @@ function destroySpawnedChildStreams(child: ChildProcessWithoutNullStreams): void
 class ChildCompletion {
 	private exited = false;
 	private exitCode: number | null = null;
+	private exitSignal: NodeJS.Signals | null = null;
 	private timer: NodeJS.Timeout | undefined;
 	private completed = false;
 	constructor(
 		child: ChildProcessWithoutNullStreams,
-		private readonly complete: (exitCode: number) => void,
+		private readonly complete: (exitCode: number, exitSignal?: NodeJS.Signals) => void,
 		private readonly context: () => { readonly timedOut: boolean; readonly spawnError?: Error },
 	) {
-		child.once("exit", (code) => {
+		child.once("exit", (code, signal) => {
 			this.exited = true;
 			this.exitCode = code;
+			this.exitSignal = signal;
 			this.timer = setTimeout(() => {
 				destroySpawnedChildStreams(child);
 				this.finish();
 			}, EXIT_STDIO_GRACE_MS);
 			this.timer.unref();
 		});
-		child.once("close", (code) => {
+		child.once("close", (code, signal) => {
+			this.exitSignal = signal ?? this.exitSignal;
 			this.finish(code);
 		});
 	}
@@ -111,10 +120,12 @@ class ChildCompletion {
 			resolveSpawnedChildExitCode({
 				closeCode,
 				exitCode: this.exitCode,
+				exitSignal: this.exitSignal,
 				useExitFallback: this.exited,
 				timedOut: context.timedOut,
 				spawnError: context.spawnError,
 			}),
+			this.exitSignal ?? undefined,
 		);
 	}
 	clear(): void {
@@ -130,6 +141,7 @@ class BrowserChild {
 	private agentBrowserStarted = false;
 	private settled = false;
 	private spawnError: Error | undefined;
+	private exitSignal: NodeJS.Signals | undefined;
 	private stderr = "";
 	private readonly stdout = new ProcessStdout();
 	private pendingTermination: Promise<void> | undefined;
@@ -186,8 +198,8 @@ class BrowserChild {
 		});
 		this.completion = new ChildCompletion(
 			child,
-			(code) => {
-				this.finish(code);
+			(code, signal) => {
+				this.finish(code, signal);
 			},
 			() => ({ timedOut: this.timedOut, spawnError: this.spawnError }),
 		);
@@ -263,11 +275,12 @@ class BrowserChild {
 			this.child.stdin.destroy();
 		}
 	}
-	private finish(exitCode: number): void {
+	private finish(exitCode: number, exitSignal?: NodeJS.Signals): void {
 		if (this.settled) {
 			return;
 		}
 		this.settled = true;
+		this.exitSignal = exitSignal;
 		if (this.abortListener) {
 			this.options.signal?.removeEventListener("abort", this.abortListener);
 			this.abortListener = undefined;
@@ -304,6 +317,7 @@ class BrowserChild {
 			aborted: this.aborted,
 			agentBrowserStarted: this.agentBrowserStarted,
 			exitCode,
+			exitSignal: this.exitSignal,
 			spawnError: this.spawnError,
 			stderr: this.stderr,
 			stdout,
