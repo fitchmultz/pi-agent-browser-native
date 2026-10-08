@@ -94,18 +94,32 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 });
 
 test("compact eager fallback bounds prompt size when AGENT_BROWSER_COMPACT_FALLBACK is set", async () => {
-	await withPatchedEnv({ AGENT_BROWSER_COMPACT_FALLBACK: "true" }, async () => {
-		const harness = createExtensionHarness({ cwd: process.cwd() });
-		await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-		const fallback = await getBrowserInstructions(harness);
-		assert.ok(fallback.startsWith(PROJECT_RULE_PROMPT));
-		assert.ok(fallback.includes("Use agent_browser for real browser or live web content."));
-		for (const line of SHARED_BROWSER_PLAYBOOK_GUIDELINES) {
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(!fallback.includes(line), `compact fallback must omit long playbook line: ${line}`);
-		}
-		assert.ok(fallback.length < 5000, `compact fallback must stay bounded: got ${fallback.length}`);
-	});
+	await withPatchedEnv(
+		{
+			AGENT_BROWSER_COMPACT_FALLBACK: "true",
+			PI_AGENT_BROWSER_CONFIG: undefined,
+			EXA_API_KEY: undefined,
+			BRAVE_API_KEY: undefined,
+		},
+		async () => {
+			const harness = createExtensionHarness({ cwd: process.cwd() });
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			const fallback = await getBrowserInstructions(harness);
+			assert.ok(fallback.startsWith(PROJECT_RULE_PROMPT));
+			assert.ok(fallback.includes("Use agent_browser for real browser or live web content."));
+			for (const line of SHARED_BROWSER_PLAYBOOK_GUIDELINES) {
+				// oxlint-disable-next-line node-test/no-conditional-assertion
+				assert.ok(
+					!fallback.includes(line),
+					`compact fallback must omit long playbook line: ${line}`,
+				);
+			}
+			assert.ok(
+				fallback.length < 5000,
+				`compact fallback must stay bounded: got ${fallback.length}`,
+			);
+		},
+	);
 });
 
 test("full instructions retain trusted config and late web-search guidance without legacy metadata", async () => {
