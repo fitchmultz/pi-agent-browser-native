@@ -26,9 +26,9 @@ const { isolatedEnvironment, writeJson } = await import(
 const { prepareHost, selectDevelopmentHost } = await import(
 	pathToFileURL(join(automation, "scripts/hosts.mjs"))
 );
-// Install-mode links outlive this process; the caller owns their isolated source cleanup.
+// Install-mode links stay external and outlive this process; the caller owns fixture cleanup.
 // Full/smoke test sockets retain the pinned qualifier's short temporary root.
-const rootParent = mode === "install" ? join(source, ".artifacts") : "/tmp";
+const rootParent = mode === "install" ? resolve(source, "..", ".artifacts") : "/tmp";
 mkdirSync(rootParent, { recursive: true });
 const root = mkdtempSync(join(rootParent, "pc-"));
 const env = isolatedEnvironment(root);
