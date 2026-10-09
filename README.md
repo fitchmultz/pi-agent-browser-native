@@ -703,7 +703,7 @@ npm run build
 npm run verify -- startup-profile --samples 3
 ```
 
-Reports are written to `.artifacts/startup-profile/latest.json` and include a safety block confirming no Pi, tmux, mise, npm, browser, or `agent-browser` subprocesses were launched.
+Reports are written to `.artifacts/startup-profile/latest.json` even when the budget fails; `--json` still prints the complete report, and failure retains a nonzero exit. Each sample records its fresh child PID, aggregate and main-thread CPU time, child-lifetime resource counters, hardware allocation, post-sample load, and compiled-entrypoint/measurement-owner/selected SDK and CLI fingerprints when available. CPU baselines enclose the unchanged import/factory clock; resource, hardware, load and fingerprint collection happens afterward. Aggregate CPU includes worker threads and can exceed wall time, so do not subtract it from wall time or treat these observations as proof of contention. The existing regression test emits all three receipts before enforcing the unchanged maximum below 250 ms. Reports retain the safety block confirming no Pi, tmux, mise, npm, browser, or `agent-browser` subprocesses were launched.
 
 The opt-in real-upstream suite is separate because it drives a real browser installation:
 
