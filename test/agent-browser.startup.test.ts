@@ -24,7 +24,7 @@ async function getPackageExtensionEntrypoint(): Promise<string> {
 	return readString(entrypoint);
 }
 
-test("agent_browser cold startup stays below the issue #84 regression budget", async () => {
+test("agent_browser cold startup stays below the issue #84 regression budget", async (t) => {
 	const entrypoint = await getPackageExtensionEntrypoint();
 	assert.equal(entrypoint, "./dist/extensions/agent-browser/index.js");
 	// Measure one cold Pi extension load at a time on every platform. Parallel
@@ -37,6 +37,12 @@ test("agent_browser cold startup stays below the issue #84 regression budget", a
 	];
 	const totals = measurements.map((measurement) => measurement.totalMs);
 	const maxTotal = Math.max(...totals);
+	t.diagnostic(`Cold startup evidence: ${JSON.stringify(measurements)}`);
+	assert.equal(
+		new Set(measurements.map((measurement) => measurement.diagnostics.pid)).size,
+		3,
+		"all three cold samples must use distinct fresh children",
+	);
 
 	for (const measurement of measurements) {
 		// Every fresh sample must register handlers; the sample count is asserted separately.
