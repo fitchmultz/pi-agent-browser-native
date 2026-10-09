@@ -23,13 +23,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PI_AUTOMATION_REF: 9b08d65d70a01c74c4e01477ccf9473e86be33ee # main
+  PI_AUTOMATION_REF: 54c687228d840506555801b9db038373e697d901 # main
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@9b08d65d70a01c74c4e01477ccf9473e86be33ee # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@54c687228d840506555801b9db038373e697d901 # main
     with:
-      automation-ref: 9b08d65d70a01c74c4e01477ccf9473e86be33ee # main
+      automation-ref: 54c687228d840506555801b9db038373e697d901 # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
@@ -68,6 +68,7 @@ jobs:
       - name: Qualify latest official Pi
         working-directory: extension
         env:
+          GH_TOKEN: ${{ github.token }}
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
           PI_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/official-evidence
         run: |
@@ -181,6 +182,7 @@ jobs:
       - name: Load the packed package in latest Pi
         working-directory: extension
         env:
+          GH_TOKEN: ${{ github.token }}
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
           PI_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/macos-evidence
         run: |
