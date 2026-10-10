@@ -14,7 +14,7 @@ on:
         type: string
         default: ""
       native-qualification:
-        description: Run the declared native platform matrix instead of the routine package checks
+        description: Run this repository's pinned fleet entry instead of the routine package checks
         type: boolean
         default: false
   workflow_call:

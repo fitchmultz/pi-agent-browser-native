@@ -51,7 +51,7 @@ async function main() {
 		}
 		throw error;
 	}
-	// Retain emitted workers and CLI modules; bundle the extension's reachable modules with host peers external.
+	// Retain emitted workers and CLI modules; bundle the extension's reachable modules with package imports external.
 	const entrypoint = join(process.cwd(), "dist", "extensions", "agent-browser", "index.js");
 	await build({
 		allowOverwrite: true,
