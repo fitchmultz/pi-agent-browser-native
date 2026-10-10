@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Produce the compiled runtime files that the published Pi package loads.
- * Responsibilities: Remove stale dist output, run TypeScript emit, and fail with clear build output.
+ * Responsibilities: Remove stale dist output, emit runtime assets, bundle the native entrypoint, and fail with clear build output.
  * Scope: Maintainer/package build only; runtime behavior remains in extensions/agent-browser TypeScript sources.
  * Usage: `npm run build` before package verification, lifecycle validation, and npm pack/publish.
  * Invariants/Assumptions: `node_modules` provides `typescript`; Termux supplies Android-native `tsgo` on PATH. `dist/` is generated output.
@@ -12,6 +12,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
+import { build } from "esbuild";
 
 const execFile = promisify(execFileCallback);
 const binSuffix = process.platform === "win32" ? ".cmd" : "";
@@ -50,6 +51,18 @@ async function main() {
 		}
 		throw error;
 	}
+	// Retain emitted workers and CLI modules; only the extension's cold import graph is bundled.
+	const entrypoint = join(process.cwd(), "dist", "extensions", "agent-browser", "index.js");
+	await build({
+		allowOverwrite: true,
+		bundle: true,
+		entryPoints: [entrypoint],
+		format: "esm",
+		outfile: entrypoint,
+		packages: "external",
+		platform: "node",
+		target: "node24.21",
+	});
 }
 
 main().catch((error) => {
