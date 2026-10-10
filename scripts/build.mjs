@@ -4,7 +4,7 @@
  * Responsibilities: Remove stale dist output, emit runtime assets, bundle the native entrypoint, and fail with clear build output.
  * Scope: Maintainer/package build only; runtime behavior remains in extensions/agent-browser TypeScript sources.
  * Usage: `npm run build` before package verification, lifecycle validation, and npm pack/publish.
- * Invariants/Assumptions: `node_modules` provides `typescript`; Termux supplies Android-native `tsgo` on PATH. `dist/` is generated output.
+ * Invariants/Assumptions: `node_modules` provides `typescript` and `esbuild`; Termux supplies Android-native `tsgo` on PATH. `dist/` is generated output.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
