@@ -48,7 +48,9 @@ jobs:
 
   native-qualification:
     needs: resolve
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.native-qualification }}
+    if: >-
+      !cancelled() && needs.resolve.result == 'success' &&
+      github.event_name == 'workflow_dispatch' && inputs.native-qualification
     uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@54c687228d840506555801b9db038373e697d901 # main
     with:
       automation-ref: 54c687228d840506555801b9db038373e697d901 # main
