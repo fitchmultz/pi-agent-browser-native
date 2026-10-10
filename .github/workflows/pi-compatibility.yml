@@ -4,6 +4,19 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      official-version:
+        description: Official stable version; blank resolves latest
+        type: string
+        default: ""
+      fork-ref:
+        description: Exact maintained fork commit; blank resolves main
+        type: string
+        default: ""
+      native-qualification:
+        description: Run this repository's pinned fleet entry instead of the routine package checks
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       official-version:
@@ -33,9 +46,21 @@ jobs:
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
+  native-qualification:
+    needs: resolve
+    if: >-
+      !cancelled() && needs.resolve.result == 'success' &&
+      github.event_name == 'workflow_dispatch' && inputs.native-qualification
+    uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@54c687228d840506555801b9db038373e697d901 # main
+    with:
+      automation-ref: 54c687228d840506555801b9db038373e697d901 # main
+      source-ref: ${{ github.sha }}
+      official-version: ${{ needs.resolve.outputs.official-version }}
+      fork-ref: ${{ needs.resolve.outputs.fork-ref }}
+
   official:
     needs: resolve
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.native-qualification }}
     name: Official Pi / Node 24
     runs-on: ubuntu-26.04
     timeout-minutes: 30
@@ -85,7 +110,7 @@ jobs:
 
   fork:
     needs: resolve
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.native-qualification }}
     name: Fork Pi / Node 24
     runs-on: ubuntu-26.04
     timeout-minutes: 30
@@ -153,7 +178,7 @@ jobs:
 
   macos:
     needs: resolve
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.native-qualification }}
     name: macOS package smoke
     runs-on: macos-latest
     timeout-minutes: 8

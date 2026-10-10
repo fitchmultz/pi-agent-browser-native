@@ -71,7 +71,7 @@ export function injectLifecycleSentinelSource(source, token) {
 		"",
 	);
 	const marker =
-		/export default function agentBrowserExtension\(pi,\s*\{\s*beforeExecute\s*,?\s*\}\s*=\s*\{\s*\}\s*\)\s*\{/;
+		/function agentBrowserExtension\(pi,\s*\{\s*beforeExecute\s*,?\s*\}\s*=\s*\{\s*\}\s*\)\s*\{/;
 	const snippet = `
 	${SENTINEL_MARKER_START}
 	pi.registerCommand(${JSON.stringify(lifecycleSentinelCommand(token))}, {

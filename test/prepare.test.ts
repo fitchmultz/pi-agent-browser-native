@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 const buildModules = [
 	"typescript",
+	"esbuild",
 	"typebox",
 	"@earendil-works/pi-coding-agent",
 	"@earendil-works/pi-tui",
@@ -21,6 +22,7 @@ const buildModules = [
 for (const [description, missingPath] of [
 	["builds without installing when import-only dependencies exist", undefined],
 	["installs before building when a dependency is missing", "node_modules/typescript"],
+	["installs before building when the bundler is missing", "node_modules/esbuild"],
 	[
 		"installs before building when an exported target is missing",
 		"node_modules/@earendil-works/pi-coding-agent/index.js",
