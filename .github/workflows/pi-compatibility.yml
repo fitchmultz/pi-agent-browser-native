@@ -36,13 +36,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PI_AUTOMATION_REF: 54c687228d840506555801b9db038373e697d901 # main
+  PI_AUTOMATION_REF: 4bdc3d292095a7f04fbf034323cee05c8b3b8641 # main
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@54c687228d840506555801b9db038373e697d901 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@4bdc3d292095a7f04fbf034323cee05c8b3b8641 # main
     with:
-      automation-ref: 54c687228d840506555801b9db038373e697d901 # main
+      automation-ref: 4bdc3d292095a7f04fbf034323cee05c8b3b8641 # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
@@ -51,9 +51,9 @@ jobs:
     if: >-
       !cancelled() && needs.resolve.result == 'success' &&
       github.event_name == 'workflow_dispatch' && inputs.native-qualification
-    uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@54c687228d840506555801b9db038373e697d901 # main
+    uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@4bdc3d292095a7f04fbf034323cee05c8b3b8641 # main
     with:
-      automation-ref: 54c687228d840506555801b9db038373e697d901 # main
+      automation-ref: 4bdc3d292095a7f04fbf034323cee05c8b3b8641 # main
       source-ref: ${{ github.sha }}
       official-version: ${{ needs.resolve.outputs.official-version }}
       fork-ref: ${{ needs.resolve.outputs.fork-ref }}
