@@ -173,9 +173,18 @@ function packedPathExists(packedPaths, targetPath) {
 	return false;
 }
 
+function isRepositoryReadmeArtwork(sourcePath, markdownLink, targetPath) {
+	return (
+		sourcePath === "README.md" &&
+		markdownLink.startsWith("![") &&
+		/^\.github\/readme\/[^/]+\.png$/.test(targetPath)
+	);
+}
+
 export async function collectPackedMarkdownLinkFailures(options) {
 	const { cwd = process.cwd(), packedPaths } = options;
 	const failures = [];
+	const repositoryArtwork = new Set();
 	const markdownPaths = [...packedPaths].filter((path) => path.endsWith(".md")).sort();
 	for (const sourcePath of markdownPaths) {
 		let text;
@@ -195,11 +204,21 @@ export async function collectPackedMarkdownLinkFailures(options) {
 			if (!targetPath || packedPathExists(packedPaths, targetPath)) {
 				continue;
 			}
+			// README artwork is hosted by GitHub; verify it in the repo while keeping it out of npm.
+			if (isRepositoryReadmeArtwork(sourcePath, match[0], targetPath)) {
+				repositoryArtwork.add(targetPath);
+				continue;
+			}
 			failures.push(
 				`Packed Markdown link ${sourcePath} -> ${rawTarget} resolves to missing packed file ${targetPath}.`,
 			);
 		}
 	}
+	failures.push(
+		...(await collectMissingPaths(repositoryArtwork, cwd)).map(
+			(path) => `README artwork is missing from the repository: ${path}.`,
+		),
+	);
 	return failures;
 }
 

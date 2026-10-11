@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="620" viewBox="0 0 1600 620" role="img" aria-labelledby="title desc">
+  <title id="title">From your Pi prompt to a real browser</title>
+  <desc id="desc">A person describes a task to Pi. Native browser tools run the separately installed agent-browser CLI, which controls a browser. Page observations and file artifacts return through agent-browser to Pi.</desc>
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#060A12"/><stop offset="0.52" stop-color="#0B1120"/><stop offset="1" stop-color="#080C16"/></linearGradient>
+    <radialGradient id="blueBloom" cx="0.28" cy="0.25" r="0.8"><stop stop-color="#2563EB" stop-opacity="0.18"/><stop offset="1" stop-color="#2563EB" stop-opacity="0"/></radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#172238" stop-opacity="0.96"/><stop offset="1" stop-color="#0E1525" stop-opacity="0.98"/></linearGradient>
+    <linearGradient id="focus" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#172554" stop-opacity="0.82"/><stop offset="1" stop-color="#312E81" stop-opacity="0.58"/></linearGradient>
+    <pattern id="dotGrid" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.2" fill="#94A3B8" fill-opacity="0.08"/></pattern>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="150%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#02040A" flood-opacity="0.44"/></filter>
+    <marker id="arrowBlue" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto"><path d="M1 1 11 6 1 11Z" fill="#60A5FA"/></marker>
+    <marker id="arrowGreen" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto"><path d="M1 1 11 6 1 11Z" fill="#34D399"/></marker>
+    <style>
+      .sans { font-family: Inter, ui-sans-serif, Arial, sans-serif; }
+      .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+      .title { font-size: 32px; font-weight: 650; fill: #F8FAFC; }
+      .body { font-size: 26px; font-weight: 450; fill: #B0BED2; }
+      .chip { font-size: 20px; font-weight: 600; fill: #BFDBFE; }
+      .connector { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+  <!-- Solid canvas and restrained starter-token depth. -->
+  <rect width="1600" height="620" fill="url(#canvas)"/>
+  <rect width="1600" height="620" fill="url(#blueBloom)"/>
+  <rect width="1600" height="620" fill="url(#dotGrid)"/>
+  <g class="sans">
+    <text x="64" y="84" font-size="48" font-weight="700" letter-spacing="-1" fill="#F8FAFC">From your prompt to a real browser</text>
+    <text x="64" y="129" font-size="28" fill="#91A0B8">Describe the task. Keep the browser work inside your Pi conversation.</text>
+  </g>
+  <!-- Forward execution lane; the return lane carries observations via the CLI. -->
+  <g class="connector" stroke="#60A5FA" marker-end="url(#arrowBlue)">
+    <path d="M340 318H394"/>
+    <path d="M834 318H904"/>
+    <path d="M1224 318H1294"/>
+  </g>
+  <path d="M1420 426V514H632V426" class="connector" stroke="#34D399" marker-end="url(#arrowGreen)"/>
+  <!-- Unequal emphasis makes the native Pi integration the visual subject. -->
+  <g class="sans" filter="url(#shadow)">
+    <g transform="translate(64 210)">
+      <rect width="276" height="216" rx="24" fill="url(#glass)" stroke="#2A3851"/>
+      <path d="M30 32h40v27H43l-13 10Z" fill="none" stroke="#93C5FD" stroke-width="2.5" stroke-linejoin="round"/>
+      <text x="28" y="109" class="title">Your request</text>
+      <text x="28" y="152" class="body">“Test this page.”</text>
+      <text x="28" y="184" class="body">“Screenshot it.”</text>
+    </g>
+    <g transform="translate(400 186)">
+      <rect width="434" height="240" rx="28" fill="url(#focus)" stroke="#6D7DFF" stroke-opacity="0.6"/>
+      <text x="30" y="58" class="title" font-size="38">Pi + native tools</text>
+      <rect x="30" y="83" width="264" height="36" rx="18" fill="#0C1425" stroke="#38517A"/>
+      <text x="47" y="108" class="mono chip">agent_browser</text>
+      <text x="30" y="162" class="body">Commands, batches, or code</text>
+      <text x="30" y="201" class="body">Same browser across calls</text>
+    </g>
+    <g transform="translate(910 210)">
+      <rect width="314" height="216" rx="24" fill="url(#glass)" stroke="#4A3563"/>
+      <text x="28" y="58" class="title">agent-browser</text>
+      <text x="28" y="105" class="body">Runs commands</text>
+      <rect x="28" y="140" width="258" height="42" rx="21" fill="#211B36" stroke="#51426F"/>
+      <text x="157" y="168" text-anchor="middle" font-size="24" fill="#D8B4FE">Installed separately</text>
+    </g>
+    <g transform="translate(1300 210)">
+      <rect width="236" height="216" rx="24" fill="url(#glass)" stroke="#285064"/>
+      <rect x="28" y="28" width="52" height="36" rx="4" fill="none" stroke="#6EE7B7" stroke-width="2.5"/>
+      <path d="M28 39h52" stroke="#6EE7B7" stroke-width="2.5"/>
+      <text x="28" y="108" class="title">Browser</text>
+      <text x="28" y="151" class="body">Sites &amp; apps</text>
+      <text x="28" y="185" class="body">Headed option</text>
+    </g>
+  </g>
+  <g class="sans">
+    <rect x="745" y="486" width="598" height="56" rx="18" fill="#0D201F" stroke="#24534A"/>
+    <text x="1044" y="523" text-anchor="middle" font-size="26" fill="#A7F3D0">Page observations + files, via agent-browser</text>
+    <text x="64" y="584" font-size="24" fill="#91A0B8">Back in Pi: compact snapshots, screenshots, saved files, and recovery actions.</text>
+  </g>
+</svg>

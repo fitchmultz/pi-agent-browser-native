@@ -13,7 +13,7 @@ import { readRecord } from "./helpers/assertions.js";
 
 const CONFIG_SCRIPT = join(process.cwd(), "scripts", "config.mjs");
 const DOCUMENTED_CONFIG_HELPER_PREFIX =
-	"npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config";
+	"npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config";
 const LOCAL_PACKAGE_SPEC = process.cwd();
 const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm";
 
@@ -178,7 +178,7 @@ function documentedNpmExecArgs(command: string): {
 	assert.notEqual(packageIndex, -1, `documented command must use --package: ${command}`);
 	assert.equal(
 		tokens[packageIndex + 1],
-		"pi-agent-browser-native@latest",
+		"pi-agent-browser-native",
 		`documented command must use the published package spec: ${command}`,
 	);
 	tokens[packageIndex + 1] = LOCAL_PACKAGE_SPEC;
