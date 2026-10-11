@@ -338,12 +338,16 @@ test("collectPackedMarkdownLinkFailures reports local links absent from the pack
 	try {
 		await writeFile(
 			join(tempDir, "README.md"),
-			"[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n",
+			"[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n" +
+				"![art](.github/readme/flow.png) ![missing art](.github/readme/missing.png) " +
+				"[ordinary link](.github/readme/flow.png) ![other image](docs/missing.png)\n",
 			"utf8",
 		);
 		await writeFile(join(tempDir, "CHANGELOG.md"), "[root](README.md)\n", "utf8");
 		await mkdir(join(tempDir, "docs"));
 		await writeFile(join(tempDir, "docs", "TOOL_CONTRACT.md"), "# Contract\n", "utf8");
+		await mkdir(join(tempDir, ".github", "readme"), { recursive: true });
+		await writeFile(join(tempDir, ".github", "readme", "flow.png"), "repo-only artwork", "utf8");
 
 		const failures = await collectPackedMarkdownLinkFailures({
 			cwd: tempDir,
@@ -352,6 +356,9 @@ test("collectPackedMarkdownLinkFailures reports local links absent from the pack
 
 		assert.deepEqual(failures, [
 			"Packed Markdown link README.md -> docs/support-notes.md resolves to missing packed file docs/support-notes.md.",
+			"Packed Markdown link README.md -> .github/readme/flow.png resolves to missing packed file .github/readme/flow.png.",
+			"Packed Markdown link README.md -> docs/missing.png resolves to missing packed file docs/missing.png.",
+			"README artwork is missing from the repository: .github/readme/missing.png.",
 		]);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -389,6 +396,7 @@ test("evaluatePackResult rejects private paths and tarballs without rejecting ne
 		[".crabbox/lease.json", [".crabbox/"]],
 		[".crabbox/.lease", [".crabbox/"]],
 		[".debug/log.txt", [".debug/"]],
+		[".github/readme/flow.png", [".github/readme/"]],
 		[".debug/.hidden/log.txt", [".debug/"]],
 		[".platform-smoke-runs/report.json", [".platform-smoke-runs/"]],
 		[".platform-smoke-runs/.receipt", [".platform-smoke-runs/"]],

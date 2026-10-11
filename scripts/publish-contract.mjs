@@ -22,6 +22,7 @@ export const FORBIDDEN_PACKED_FILES = Object.freeze([
 	".artifacts/",
 	".crabbox/",
 	".debug/",
+	".github/readme/",
 	".platform-smoke-runs/",
 	".env*",
 	"**/*.tgz",

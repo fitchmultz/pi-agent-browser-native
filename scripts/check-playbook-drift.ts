@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Purpose: Prevent drift between the canonical agent_browser playbook and checked-in README/docs fragments.
+ * Purpose: Prevent drift between the canonical agent_browser playbook and checked-in reference fragments.
  * Responsibilities: Render marked Markdown blocks from canonical playbook constants, update them in write mode, and fail verification when checked-in docs are stale.
  * Scope: Documentation synchronization only; it does not inspect upstream agent-browser help or execute browser commands.
  * Usage: Run `npm run docs -- playbook check` in local verification or `npm run docs -- playbook write` after editing the canonical playbook.
@@ -24,7 +24,7 @@ type Target = {
 };
 
 const TARGETS: Target[] = [
-	{ path: "README.md", blocks: ["inspection", "wrapper-tab-recovery"] },
+	{ path: "docs/REFERENCE.md", blocks: ["inspection", "wrapper-tab-recovery"] },
 	{ path: "docs/COMMAND_REFERENCE.md", blocks: ["inspection", "wrapper-tab-recovery"] },
 	{
 		path: "docs/TOOL_CONTRACT.md",
