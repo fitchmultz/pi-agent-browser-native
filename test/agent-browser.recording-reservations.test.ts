@@ -142,7 +142,7 @@ test("recording reservations distinguish namespace plus session identity", () =>
 	);
 });
 
-test("recording reservation branch entries survive bounded manifest eviction and retire exactly", () => {
+test("recording reservation journal ignores unrelated bounded manifests and retires exact identities", () => {
 	const appended: Array<{ customType: string; data: unknown }> = [];
 	const appendEntry = (customType: string, data: unknown) => {
 		appended.push({ customType, data });

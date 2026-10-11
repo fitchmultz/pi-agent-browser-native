@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import { watch } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 
 import { recoverRecordingStop } from "../extensions/agent-browser/lib/orchestration/browser-run/recording-recovery.js";
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
@@ -80,8 +81,9 @@ function execute(row) {
     if (mode === 'no-receipt' || mode === 'no-recording-no-receipt') state.last = null;
     if (mode === 'stale-batch') state.last.capture.startedAt = new Date(Date.now() - 60000).toISOString();
     save();
-    if (['no-recording', 'no-recording-no-receipt', 'old-receipt', 'mixed-failure'].includes(mode)) throw new Error('No recording in progress');
+    fs.writeFileSync(${JSON.stringify(join(root, "stop-ready"))}, 'ready');
     if (mode === 'encode-failed') return state.last;
+    if (!['timeout', 'timeout-native-failed', 'stale-batch'].includes(mode)) throw new Error('No recording in progress');
     setInterval(() => {}, 1000); return undefined;
   }
   return { url: 'https://recording.test/', title: 'Recording fixture' };
@@ -158,6 +160,57 @@ if (output !== undefined && (tokens[0] !== 'batch' || mode === 'mixed-failure'))
 	}
 }
 
+async function executeWithRecordingTimeout(
+	t: TestContext,
+	root: string,
+	harness: Readonly<Pick<ReturnType<typeof createExtensionHarness>, "tool" | "ctx">>,
+	params: {
+		readonly args: readonly string[];
+		readonly stdin?: string;
+		readonly outputPath: string;
+	},
+): Promise<Awaited<ReturnType<typeof executeRegisteredTool>>> {
+	const controller = new AbortController();
+	let markReady!: () => void;
+	const ready = new Promise<void>((resolve) => {
+		markReady = resolve;
+	});
+	const watcher = watch(root, (_event, filename) => {
+		if (filename === "stop-ready") {
+			markReady();
+		}
+	});
+	let timeout: NodeJS.Timeout | undefined;
+	const watchdog = new Promise<never>((_resolve, reject) => {
+		timeout = setTimeout(() => reject(new Error("record stop must reach native dispatch")), 5_000);
+	});
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const pending = executeRegisteredTool(
+		harness.tool,
+		harness.ctx,
+		{ ...params, timeoutMs: 200 },
+		controller.signal,
+	);
+	try {
+		await Promise.race([
+			ready,
+			watchdog,
+			pending.then(() => {
+				throw new Error("record stop completed before the controlled timeout");
+			}),
+		]);
+		assert.equal(await readFile(join(root, "stop-ready"), "utf8"), "ready");
+		t.mock.timers.tick(200);
+		return await pending;
+	} finally {
+		t.mock.timers.reset();
+		watcher.close();
+		clearTimeout(timeout);
+		controller.abort();
+		await Promise.allSettled([pending]);
+	}
+}
+
 test("code-mode recording recovery retains receipt data without rendering", async () => {
 	await withRecorder("no-recording", async ({ root, harness, prefix }) => {
 		const path = join(root, "code.webm");
@@ -195,19 +248,19 @@ test("code-mode recording recovery retains receipt data without rendering", asyn
 	});
 });
 
-for (const outputPrefix of ["", "@"]) {
-	test(
-		`record stop rejects recording outputPath alias: ${outputPrefix.length === 0 ? "exact" : outputPrefix}`,
-		{ concurrency: false },
-		async () => {
-			await withRecorder("no-recording", async ({ root, logPath, harness, prefix }) => {
-				const path = join(root, "capture.webm"),
-					media = "recording bytes written before stop";
-				const started = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: [...prefix, "record", "start", path],
-				});
-				assert.equal(started.isError, false, started.content[0]?.text);
-				await writeFile(path, media);
+test("record stop rejects recording outputPath aliases without dispatch", async (t) => {
+	await withRecorder("no-recording", async ({ root, logPath, harness, prefix }) => {
+		const path = join(root, "capture.webm"),
+			media = "recording bytes written before stop";
+		const started = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: [...prefix, "record", "start", path],
+		});
+		assert.equal(started.isError, false, started.content[0]?.text);
+		await writeFile(path, media);
+		for (const outputPrefix of ["", "@"]) {
+			// Both alias rejections share an unchanged live reservation; finish each no-dispatch proof before the next.
+			// oxlint-disable-next-line no-await-in-loop
+			await t.test(outputPrefix.length === 0 ? "exact" : outputPrefix, async () => {
 				await writeFile(logPath, "");
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, "record", "stop"],
@@ -219,9 +272,9 @@ for (const outputPrefix of ["", "@"]) {
 				assert.equal(await readFile(path, "utf8"), media);
 				assert.equal(readRecord(result.details).outputFile, undefined);
 			});
-		},
-	);
-}
+		}
+	});
+});
 
 for (const mode of [
 	"timeout",
@@ -238,7 +291,7 @@ for (const mode of [
 	"timeout-native-failed",
 	"encode-failed",
 ]) {
-	test(`record stop receipt recovery: ${mode}`, { concurrency: false }, async () => {
+	test(`record stop receipt recovery: ${mode}`, { concurrency: false }, async (t) => {
 		await withRecorder(mode, async ({ root, logPath, harness: initialHarness, prefix, reload }) => {
 			let harness = initialHarness;
 			const started = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -256,11 +309,14 @@ for (const mode of [
 			}
 			await writeFile(logPath, "");
 			const outputPath = join(root, "receipt.json");
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+			const params = {
 				args: [...prefix, "--json", "record", "stop"],
-				timeoutMs: 200,
 				outputPath,
-			});
+			};
+			const timedOut = ["timeout", "timeout-native-failed"].includes(mode);
+			const result = timedOut
+				? await executeWithRecordingTimeout(t, root, harness, params)
+				: await executeRegisteredTool(harness.tool, harness.ctx, params);
 			const healed = ["timeout", "no-recording", "old-receipt"].includes(mode);
 			const text = readString(readRecord(result.content[0]).text);
 			assert.equal(result.isError, !healed, text);
@@ -269,18 +325,19 @@ for (const mode of [
 			const exported = readRecord(JSON.parse(await readFile(outputPath, "utf8")));
 			assert.equal(exported.success, healed);
 			assert.equal(readRecord(exported.attempt).success, false);
+			assert.equal(readRecord(exported.attempt).timedOut, timedOut);
 			assert.equal(readRecord(readArray(exported.artifacts)[0]).exists, true);
 			const recovery = exported.recordingRecovery;
 			const artifact = readRecord(readArray(exported.artifacts)[0]);
 			const verification = readRecord(exported.artifactVerification);
 			if (mode !== "encode-failed") {
-				// All timeout-recovery variants require this receipt; common outcomes are asserted above.
+				// All receipt-recovery variants require this evidence; common outcomes are asserted above.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.equal(readRecord(recovery).healed, healed);
 				const calls = (await readInvocationLog(logPath)).map((row) =>
 					extractUpstreamCommandTokens(row.args),
 				);
-				// Every timeout-recovery variant must perform exactly one bounded recovery lookup.
+				// Every receipt-recovery variant must perform exactly one bounded recovery lookup.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.deepEqual(
 					calls,
@@ -336,9 +393,9 @@ for (const mode of [
 				// Each declared missing/mismatched identity variant must reject the unrelated receipt.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.equal(readRecord(recovery).receipt, undefined);
-				// Each mismatched-receipt fixture must retain the original timeout failure.
+				// Each mismatched-receipt fixture must retain the original native no-recording failure.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(readRecord(result.details).failureCategory, "timeout");
+				assert.equal(readRecord(result.details).failureCategory, "upstream-error");
 			}
 			if (mode === "no-recording-no-receipt") {
 				// The no-recording/no-receipt fixture cannot prove an existing file is a valid take.
@@ -507,17 +564,16 @@ for (const mode of ["timeout", "stale-batch"]) {
 	test(
 		`timed-out raw recording batch keeps receipt evidence without claiming other steps succeeded: ${mode}`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			await withRecorder(mode, async ({ root, logPath, harness, prefix }) => {
 				const path = join(root, "raw.webm"),
 					outputPath = join(root, "batch-receipt.json");
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				const result = await executeWithRecordingTimeout(t, root, harness, {
 					args: [...prefix, "batch", `record start ${JSON.stringify(path)}`, "record stop"],
 					stdin: JSON.stringify([
 						["record", "start", join(root, "ignored.webm")],
 						["record", "stop"],
 					]),
-					timeoutMs: 200,
 					outputPath,
 				});
 				assert.equal(
@@ -531,6 +587,7 @@ for (const mode of ["timeout", "stale-batch"]) {
 					JSON.stringify(result),
 				);
 				const exported = readRecord(JSON.parse(await readFile(outputPath, "utf8")));
+				assert.equal(readRecord(exported.attempt).timedOut, true);
 				assert.equal(
 					readRecord(readRecord(exported.recordingRecovery).expected).absolutePath,
 					path,

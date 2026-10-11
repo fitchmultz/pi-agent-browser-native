@@ -38,6 +38,28 @@ test("queued browser cancellation withdraws waiting work without releasing the a
 	assert.equal(laterStarted, true);
 });
 
+test("reentrant keyed browser work respects cancellation without abandoning the active owner", async () => {
+	const queue = new KeyedAsyncExecutionQueue();
+	const key = getAgentBrowserSessionIdentityKey("shared", "team");
+	const controller = new AbortController();
+	const reason = new Error("inner operation cancelled");
+	await queue.run(key, "team", async () => {
+		controller.abort(reason);
+		await assert.rejects(
+			() =>
+				queue.run(
+					key,
+					"team",
+					async () => assert.fail("cancelled reentrant action dispatched"),
+					controller.signal,
+				),
+			(error: unknown) => error === reason,
+		);
+		assert.equal(await queue.run(key, "team", async () => "still active"), "still active");
+	});
+	assert.equal(await queue.run(key, "team", async () => "released"), "released");
+});
+
 test("KeyedAsyncExecutionQueue drains same-namespace work without deadlocking late arrivals", async () => {
 	const queue = new KeyedAsyncExecutionQueue();
 	const key = getAgentBrowserSessionIdentityKey("shared", "team");
