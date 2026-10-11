@@ -138,7 +138,7 @@ Android support currently uses Termux's system Chromium rather than Chrome for T
 ```bash
 pkg install tur-repo x11-repo
 pkg install chromium ffmpeg which
-npm install -g --ignore-scripts agent-browser@0.36.0
+npm install -g --ignore-scripts agent-browser
 ln -sfn "$(npm root -g)/agent-browser/bin/agent-browser-linux-musl-arm64" \
   "$(npm prefix -g)/bin/agent-browser"
 ln -sfn "$PREFIX/lib/chromium/chromium-launcher.sh" "$PREFIX/bin/chromium"
@@ -175,12 +175,6 @@ pi --no-extensions -e npm:pi-agent-browser-native
 `--no-extensions` disables automatic extension loading, not Pi settings, configured package resolution, skills, prompts, themes, or context files.
 
 Pi may ask whether to trust projects with trust-gated settings or resources. This extension follows Pi's trust decision when loading its project-local config. `--no-approve` skips that config and Pi's trust-gated project resources; context files such as `AGENTS.md` still load unless context loading is separately disabled.
-
-For a specific published version:
-
-```bash
-pi --no-extensions -e npm:pi-agent-browser-native@<version>
-```
 
 To install directly from source instead of npm:
 
@@ -232,8 +226,8 @@ In a Linux user namespace, `/` may report an unmapped owner. Socket checks trust
 Inspect paths/status with the helper when available on `PATH`, or through npm:
 
 ```bash
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config paths
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config show
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config paths
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config show
 ```
 
 The optional `agent_browser_web_search` companion tool is available when a usable Exa or Brave credential source is configured or resolvable from startup config or trusted session config. It is not an `agent_browser` input mode and does not launch a browser; prefer it for current/live external web facts and URL discovery, then use `agent_browser` when the page itself needs interaction, screenshots, authenticated/profile content, or DOM inspection. Prefer it over automating public search-engine forms such as Google in headless browser jobs: those flows may be redirected to anti-bot or CAPTCHA pages, and this wrapper does not provide or recommend CAPTCHA bypass. If both keys are available, the default provider is Exa because its `/search` endpoint returns agent-friendly highlights and search modes; set `webSearch.preferredProvider` to `"brave"` when you prefer Brave Search.
@@ -262,18 +256,18 @@ JSON
 
 ```bash
 # Store env-var references in global config.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env EXA_API_KEY --global
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --global
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-env EXA_API_KEY --global
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-env BRAVE_API_KEY --global
 
 # Store an env-var reference in project config.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env EXA_API_KEY --project
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-env EXA_API_KEY --project
 
 # Prefer Brave when both Exa and Brave keys are available, or clear with "auto".
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search prefer brave --global
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search prefer brave --global
 
 # Disable this package's built-in web-search tool in global config even if API keys are in the environment.
 # Global disable applies to normal runs unless a project config or PI_AGENT_BROWSER_CONFIG override explicitly re-enables it.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search disable --global
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search disable --global
 
 # Hard-disable web search for one run, regardless of project config, by using the highest-priority override layer.
 cat > /tmp/pi-agent-browser-disable-web-search.json <<'JSON'
@@ -282,10 +276,10 @@ JSON
 PI_AGENT_BROWSER_CONFIG=/tmp/pi-agent-browser-disable-web-search.json pi
 
 # Store a plaintext key in Pi-scoped user config; output stays redacted.
-printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --provider exa --stdin
+printf '%s' "$EXA_API_KEY" | npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-key --provider exa --stdin
 
 # Store a secret-manager command source. Add --project when you want the repo config to own the source.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-command "op read 'op://Private/Brave Search/API Key'" --provider brave --global
 ```
 
 Config merges in this order: global → project → `PI_AGENT_BROWSER_CONFIG` override. The globally installed or CLI-loaded extension still loads project-local `.pi/config/pi-agent-browser-native/config.json` when Pi trust allows that project layer; it skips that project layer when Pi reports the project is untrusted or when Pi is launched with `--no-approve`. `webSearch.enabled` is evaluated after the loaded layers merge. Use `web-search disable --global` for a user default, `web-search disable --project` for one repo, and a `PI_AGENT_BROWSER_CONFIG` override with `{ "webSearch": { "enabled": false } }` when web search must stay off even if project config exists. Loaded config may use plaintext, custom environment aliases, interpolation literals, malformed-or-late-bound `$` values, and `!command` credential sources; the resolved secret is passed to the provider request while tool content, details, status output, and docs examples stay redacted. `web-search set-key`, `set-command`, and `clear` require `--provider`; `set-env` infers Exa/Brave from `EXA_API_KEY` or `BRAVE_API_KEY` unless you pass `--provider`.
@@ -317,10 +311,10 @@ The same config file can record conservative browser defaults such as a profile 
 
 ```bash
 # Ask the agent to use this profile for signed-in/account-specific work.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile set "Profile 1" --policy authenticated-only
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser profile set "Profile 1" --policy authenticated-only
 
 # Ask the agent to launch a different Chromium-compatible browser executable.
-npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable set "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser executable set "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 ```
 
 Profile hints with `authenticated-only` remain advisory. Global/override profile names with `policy: "always"` and executable defaults bootstrap inactive automatic root browsers only when the effective engine is Chrome; active roots and unrelated explicit sessions retain their native settings. Configure profile/executable guidance globally, in trusted project config, or through `PI_AGENT_BROWSER_CONFIG`. Ask the agent to run `agent_browser` with `args: ["profiles"]` and `args: ["doctor"]` when profile resolution fails. The upstream `profiles` command lists Chrome profiles from Chrome's user data directory; `Default` is not canonical on every machine. Use the displayed profile directory name, a full profile/user-data directory path when upstream accepts one, or a configured `browser.executablePath` plus `sessionMode: "fresh"` for a different Chromium-compatible browser.
@@ -342,7 +336,7 @@ Local Chrome startup uses stock `--args --no-startup-window` to suppress Chrome'
 
 ### Opt-in Lightpanda
 
-Chrome remains the default. Install [Lightpanda](https://github.com/lightpanda-io/browser/releases/tag/1.0.0) separately on supported macOS/Linux hosts, put `lightpanda` on `PATH`, then select it explicitly:
+Chrome remains the default. Install [Lightpanda](https://github.com/lightpanda-io/browser/releases/latest) separately on supported macOS/Linux hosts, put `lightpanda` on `PATH`, then select it explicitly:
 
 ```json
 { "args": ["--engine", "lightpanda", "open", "https://example.com"], "sessionMode": "fresh" }
@@ -775,7 +769,7 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
-Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` (for example `npx -y npm@12.2.0 install`) so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.0.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.0.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
 
 Checkout-only extension smoke test:
 
@@ -801,7 +795,7 @@ Installed-package validation after publish:
 
 ```bash
 npm run verify -- package-pi
-pi --no-extensions -e npm:pi-agent-browser-native@<version>
+pi --no-extensions -e npm:pi-agent-browser-native
 ```
 
 ## Generated native-tool playbook notes

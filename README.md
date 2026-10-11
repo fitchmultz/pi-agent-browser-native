@@ -13,7 +13,7 @@ Use Node 24.21.0 or later and Pi 1.0.0 or later. This extension requires a separ
 The recommended agent-browser version is 0.38.1. This extension accepts stable versions 0.35.0 or later.
 
 ```bash
-npm install -g agent-browser@0.38.1
+npm install -g agent-browser
 agent-browser install
 pi install npm:pi-agent-browser-native
 pi
