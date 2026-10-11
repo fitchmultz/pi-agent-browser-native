@@ -4,8 +4,6 @@ pi-agent-browser-native adds browser tools to [Pi](https://pi.dev). Use it to re
 
 ![A prompt in Pi becomes a native browser tool call. The separately installed agent-browser CLI controls a browser and returns page observations and file artifacts.](.github/readme/browser-flow.png)
 
-_Pi sends your task to the browser and returns page snapshots, screenshots, and saved files._
-
 ## Install and start
 
 Use Node 24.21.0 or later and Pi 1.0.0 or later. This extension requires a separate agent-browser installation.
@@ -94,7 +92,7 @@ npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
 
 It checks the browser CLI, supported versions, and duplicate Pi package sources. It does not change settings.
 
-This is a pre-1.0 package. Windows qualification has a waiver. Android remains outside the release-blocking platform matrix. See the [support matrix](docs/SUPPORT_MATRIX.md) for details.
+This is a pre-1.0 package. Windows has unresolved browser session-locking and restored Electron cleanup test failures. Release tests do not cover Android. Electron desktop tools do not apply to Android apps. See the [support matrix](docs/SUPPORT_MATRIX.md) for details.
 
 For recordings, install `ffmpeg` with the encoder for your WebM or MP4 output. Verify the completed file after you stop the recording.
 
