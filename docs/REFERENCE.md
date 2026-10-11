@@ -133,7 +133,7 @@ syscall blocked by Android. Build/type-check scripts therefore use native `tsgo`
 on Termux; macOS/Linux continue using the package-local pinned `tsc`.
 Published precompiled npm packages do not require a compiler at runtime.
 
-Android support currently uses Termux's system Chromium rather than Chrome for Testing. Upstream issue [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks native Android packaging; until upstream ships an Android launcher, install the packaged Linux-musl arm64 binary without lifecycle scripts and point the global command at it. The last locally validated Android setup used 0.36.0:
+Android support currently uses Termux's system Chromium rather than Chrome for Testing. Upstream issue [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks native Android packaging; until upstream ships an Android launcher, install the packaged Linux-musl arm64 binary without lifecycle scripts and point the global command at it. The commands below install the current agent-browser release. The last locally validated Android release was 0.36.0; later releases are not yet qualified on Android.
 
 ```bash
 pkg install tur-repo x11-repo
