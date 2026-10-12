@@ -17,6 +17,7 @@
 - Render web-search text, details, and structured output from one redacted result.
 - Preserve quoted empty and whitespace-only operands in copyable native skill calls.
 - Honor already-aborted signals in reentrant keyed execution-queue work.
+- Keep an uncontended browser-coordination claim when opportunistic cleanup of stale claims runs past the wait budget on a loaded host, instead of failing the call as "coordination is unavailable or busy"; contended waits and cancellation still fail as before.
 - Keep failed artifact evictions in the spill-budget accounting; clean up failed temporary-root allocations and allow allocation retries.
 
 ### Changed
