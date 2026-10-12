@@ -14,6 +14,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
 	acquireManagedSessionPolicyLock,
@@ -308,6 +309,51 @@ test("unrelated lock acquisitions bound and rotate GC without reclaiming live, y
 			// oxlint-disable-next-line no-await-in-loop
 			await rm(path, { force: true, recursive: true });
 		}
+	}
+});
+
+test("an uncontended acquisition survives opportunistic GC that outlasts its wait budget", async (t) => {
+	await mkdir(testOrphanPath, { mode: 0o700 });
+	await writeFile(
+		join(testOrphanPath, "owner.json"),
+		JSON.stringify({
+			pid: 2_147_483_647,
+			startIdentity: "dead",
+			token: "orphan",
+			sessionNames: null,
+			version: 4,
+		}),
+		{ mode: 0o600 },
+	);
+	// Loaded hosts can make native GC probes outlast the default wait; model that with a slow
+	// inspection of one unrelated orphan, longer than the requested budget.
+	const nativeLstat = fs.lstat;
+	const gc = { orphanInspected: false };
+	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
+		if (String(args[0]) === testOrphanPath) {
+			gc.orphanInspected = true;
+			await delay(150);
+		}
+		return nativeLstat(...args);
+	});
+	syncBuiltinESMExports();
+	try {
+		// GC rotates through at most eight shared candidates per acquisition.
+		for (let attempt = 0; attempt < 16 && !gc.orphanInspected; attempt += 1) {
+			// Each acquisition advances the shared GC cursor before the next attempt.
+			// oxlint-disable-next-line no-await-in-loop
+			const lock = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 });
+			// Every uncontended pass must acquire, including the one whose GC overran the budget.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.ok(lock, "opportunistic GC must not revoke an uncontended acquisition");
+			// Release before the next GC pass.
+			// oxlint-disable-next-line no-await-in-loop
+			await lock.release();
+		}
+		assert.equal(gc.orphanInspected, true, "GC must reach the slow orphan");
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
 	}
 });
 
