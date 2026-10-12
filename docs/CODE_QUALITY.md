@@ -34,8 +34,8 @@ are never converted to success by these commands.
 
 ### Test scheduling
 
-`npm test` builds once, then runs `tsx --test "test/**/!(*.serial).test.ts"`
-with Node's default file concurrency, followed by
+`npm test` builds once and prepares the corrected checker once, then runs
+`tsx --test "test/**/!(*.serial).test.ts"` with Node's default file concurrency, followed by
 `tsx --test --test-concurrency=1 "test/**/*.serial.test.ts"`.
 The default/quality verification gates use the same two stages. File isolation
 keeps environment patches process-local; the shared browser harness supplies a

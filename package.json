@@ -114,7 +114,7 @@
 		"smoke:platform:all": "npm run smoke:platform:doctor && node scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native",
 		"check:compat": "node scripts/compat-host.mjs && npm run typecheck && npm test && node scripts/verify-package.mjs --smoke-pi",
 		"typecheck": "node ./scripts/project.mjs verify typecheck",
-		"test": "node ./scripts/build.mjs && tsx --test --test-reporter=tap \"test/**/!(*.serial).test.ts\" && tsx --test --test-reporter=tap --test-concurrency=1 \"test/**/*.serial.test.ts\"",
+		"test": "node ./scripts/build.mjs && node ./scripts/prepare-quality-checker.mjs && tsx --test --test-reporter=tap \"test/**/!(*.serial).test.ts\" && tsx --test --test-reporter=tap --test-concurrency=1 \"test/**/*.serial.test.ts\"",
 		"verify": "node ./scripts/project.mjs verify",
 		"prepublishOnly": "npm run verify -- release && npm pack --dry-run",
 		"build": "node ./scripts/build.mjs",

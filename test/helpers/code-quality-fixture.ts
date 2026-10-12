@@ -4,8 +4,12 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync, cpSync } fr
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestContext } from "node:test";
+import { prepareQualityChecker } from "../../scripts/prepare-quality-checker.mjs";
 
 export const root = path.resolve(import.meta.dirname, "../..");
+
+// Lint spawns below have a 30 s budget; a cold checker build must finish before any of them.
+await prepareQualityChecker();
 
 export function fixture(t: TestContext): string {
 	const directory = mkdtempSync(path.join(tmpdir(), "piab-quality-"));
