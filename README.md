@@ -80,6 +80,8 @@ To enable web search, set `EXA_API_KEY` or `BRAVE_API_KEY` before you start Pi. 
 
 Set provider preferences and browser defaults in `~/.pi/config/pi-agent-browser-native/config.json`. Trusted projects can use `.pi/config/pi-agent-browser-native/config.json`. `PI_AGENT_BROWSER_CONFIG` selects an override file.
 
+Malformed config files and search-provider JSON report errors without parser previews that could expose credentials.
+
 Read [configuration examples](docs/REFERENCE.md#optional-package-config-and-web-search) for secret references, provider selection, and profile defaults.
 
 ## Troubleshooting and limits
@@ -98,7 +100,7 @@ For recordings, install `ffmpeg` with the encoder for your WebM or MP4 output. V
 
 For remote browsers, use a URL that the browser host can reach. `localhost` refers to the browser host.
 
-For stale references or unexpected tabs, follow the returned recovery actions. Take a fresh snapshot before another interaction.
+For stale references or unexpected tabs, follow the returned recovery actions. Take a fresh snapshot before another interaction. A snapshot inside a batch does not protect refs used after a later page-changing step; add another snapshot after that step or split the batch.
 
 ## More documentation
 

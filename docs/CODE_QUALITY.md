@@ -43,10 +43,11 @@ private short socket directory unless `PI_AGENT_BROWSER_SOCKET_DIR` is already s
 The harness also clears inherited Pi/delegation identity variables; root-default
 tests set their identities explicitly after import. No in-file concurrency is enabled.
 
-The serial lane contains startup and prompt-policy wall-clock budgets, plus
-managed-session-policy-lock tests that plant fixtures in the shared policy
-collector directory. Their timing and global-GC contracts must not compete with
-the parallel lane. Build/pack fixtures must use disposable source trees rather
+The serial lane contains `test/agent-browser.startup.serial.test.ts` and
+`test/agent-browser.prompt-policy.serial.test.ts` for wall-clock budgets, plus
+`test/agent-browser.managed-session-policy-lock.serial.test.ts` for fixtures in
+the shared policy collector directory. Their timing and global-GC contracts must
+not compete with the parallel lane. Build/pack fixtures must use disposable source trees rather
 than rewriting this checkout's `dist/` while other files consume it.
 `platform-target` retains its explicit serial subset; `quality:probes` remains a
 focused serial checker suite. The allowance-isolation mutation must fail in the
@@ -173,9 +174,13 @@ Non-generic TS/JSDoc array aliases retain exact declared identity without introd
 wrapper types. Built-in browser `URL` and Node's `node:url` `URL` have distinct
 origins; the filesystem `PathLike` contract requires the Node-qualified allowance.
 
-`test/code-quality.test.ts` exercises actual language/compiler scope, consumer
-resolution, test-role boundaries, framework diagnostics, declaration isolation,
-mutable intersections, suppression policy, and formatting idempotence. Probes
+The real-CLI probes are split by contract: `test/code-quality.test.ts` covers
+framework diagnostics and qualified registration isolation;
+`test/code-quality-scope.test.ts` covers language/compiler scope, consumer resolution,
+test-role boundaries, suppression policy, and formatting idempotence;
+`test/code-quality-subtests.test.ts` covers subtest promise ownership and nested
+registration; `test/code-quality-readonly.test.ts` covers declaration isolation and
+mutable additions/intersections. `npm run quality:probes` runs all four files. Probes
 check expected rule identities; setup/configuration/parser failures are not valid
 negative evidence. Keep minimal unsuppressed checker reproductions when upgrading
 the backend and retire the patch only after the same controls pass.

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Reject stale-ref batch plans after a snapshot too: a later page-changing step requires another snapshot before guarded refs can be reused, even when no refs precede the first snapshot.
+- Preserve surplus scroll operands for native validation instead of dropping them in page or CSS-container scroll shims.
+- Match the whole recorded Electron profile operand before signaling a restored PID, including Windows quoted forms; require a nonempty browser identifier for CDP readiness and debug-port liveness.
+- Exclude control values under hidden or transparent ancestors from QA visible-text assertions.
+- Apply explicit-filter-wins scope to network-source failed-request and initiator analysis, ignore unrelated initiators, and count repeated request IDs once without collapsing distinct same-URL requests.
+- Omit parser previews and causes from malformed config and search-provider JSON errors so partial credentials cannot leak.
+- Preserve quoted empty and whitespace-only operands in copyable native skill calls.
+- Honor already-aborted signals in reentrant keyed execution-queue work.
+- Keep failed artifact evictions in the spill-budget accounting; clean up failed temporary-root allocations and allow allocation retries.
+
+### Changed
+
+- Remove low-value and duplicate tests, consolidate retained contracts into stronger keepers, repair weak assertions, and replace forced waits with observed completion controls.
+- Run ordinary test files at Node's default file concurrency, followed by a serial lane for timing budgets and shared policy-collector fixtures. Isolate browser sockets and inherited Pi identity per harness process; build/pack fixtures no longer rewrite shared checkout output.
+- Include the previously unselected native-text declaration plus batch-fidelity and overlay suites in real-upstream verification.
+- Remove test-only production seams for schema builders, provider adapters, request timing, and temporary-root debug state, plus unused exports/helpers.
+
 ## 0.9.4 - 2026-10-10
 
 ### Changed
