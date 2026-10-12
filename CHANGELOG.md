@@ -5,6 +5,7 @@
 ### Fixed
 
 - Reject stale-ref batch plans after a snapshot too: a later page-changing step requires another snapshot before guarded refs can be reused, even when no refs precede the first snapshot.
+- Keep refs from filtered, searched, diff, and viewport snapshots usable after an in-page URL change instead of rejecting them as stale; the snapshot now advances the session tab target like an ordinary snapshot, and genuine page drift is still rejected.
 - Preserve surplus scroll operands for native validation instead of dropping them in page or CSS-container scroll shims.
 - Require the process start identity recorded at launch before signaling a restored Electron PID; missing, unreadable, or mismatched identities fail closed instead of trusting the flattened process command line. Require a nonempty browser identifier for CDP readiness and debug-port liveness.
 - Exclude control values under `display: none` or transparent ancestors from QA visible-text assertions while counting text and controls inside `display: contents` wrappers or `visibility: visible` overrides.
