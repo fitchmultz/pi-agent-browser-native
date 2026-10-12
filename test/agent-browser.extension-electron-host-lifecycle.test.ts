@@ -545,6 +545,99 @@ test(
 );
 
 test(
+	"agentBrowserExtension compares full Electron URLs while keeping status and probe displays bounded",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-long-url-"));
+		const launchLogPath = join(tempDir, "electron-launch.log");
+		const upstreamLogPath = join(tempDir, "agent-browser.log");
+		const url = `app://demo/${"path".repeat(100)}?target=one`;
+		const otherUrl = url.replace("target=one", "target=two");
+		const displayUrl = `${url.slice(0, 297)}...`;
+		const basePath = process.env.PATH ?? "";
+		try {
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir: tempDir,
+				bundleId: "com.example.LongUrl",
+				launchLogPath,
+				name: "Long URL Electron",
+			});
+			await writeFile(
+				app.scriptPath,
+				(await readFile(app.scriptPath, "utf8")).replace('"app://demo"', JSON.stringify(url)),
+			);
+			const upstream = fakeAgentBrowserLifecycleScript(upstreamLogPath, {
+				sessionUrl: url,
+				snapshotUrl: url,
+				tabUrl: url,
+			});
+			await writeFakeAgentBrowserBinary(tempDir, upstream);
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const launched = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
+				});
+				assert.equal(launched.isError, false, launched.content[0].text);
+				const record = readRecord(readRecord(launched.details?.electron).launch);
+				const launchId = readString(record.launchId);
+				const status = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "status", launchId },
+				});
+				assert.equal(status.isError, false);
+				const statusElectron = readRecord(status.details?.electron);
+				assert.equal(statusElectron.sessionMismatch, undefined, status.content[0].text);
+				assert.equal(readRecord(statusElectron.managedSession).url, displayUrl);
+				assert.equal(
+					readArray(status.details?.nextActions)
+						.map(readRecord)
+						.some((action) => action.id === "reattach-electron-launch"),
+					false,
+				);
+				const probe = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "probe", launchId },
+				});
+				assert.equal(probe.isError, false);
+				const probeElectron = readRecord(probe.details?.electron);
+				assert.equal(probeElectron.sessionMismatch, undefined, probe.content[0].text);
+				assert.equal(readRecord(probeElectron.probe).url, displayUrl);
+				assert.equal(
+					readString(readRecord(readRecord(probeElectron.probe).activeTab).url).length,
+					240,
+				);
+				assert.equal(readRecord(probe.details?.sessionTabTarget).url, url);
+				const followup = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["get", "title"],
+				});
+				assert.equal(followup.isError, false, followup.content[0].text);
+				await writeFakeAgentBrowserBinary(tempDir, upstream.replaceAll(url, otherUrl));
+				const drifted = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "status", launchId },
+				});
+				const mismatch = readRecord(readRecord(drifted.details?.electron).sessionMismatch);
+				assert.equal(mismatch.reason, "managed-session-target-not-in-launch-status");
+				assert.equal(readRecord(mismatch.managedSession).url, displayUrl);
+				assert.equal(readRecord(mismatch.liveTarget).url, url);
+				assert.ok(
+					readArray(drifted.details?.nextActions)
+						.map(readRecord)
+						.some((action) => action.id === "reattach-electron-launch"),
+				);
+				const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "cleanup", launchId },
+				});
+				assert.equal(cleaned.isError, false, cleaned.content[0].text);
+				assert.equal(await waitForTestPidExit(readNumber(record.pid)), true);
+				await assert.rejects(stat(readString(record.userDataDir)), { code: "ENOENT" });
+			});
+		} finally {
+			await cleanupLoggedElectronApps(launchLogPath);
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test(
 	"agentBrowserExtension targets Electron webviews and keeps host cleanup after close failures",
 	{ concurrency: false },
 	async () => {

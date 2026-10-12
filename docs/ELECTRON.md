@@ -131,7 +131,19 @@ Returns app metadata under `details.electron.apps`: `name`, optional `bundleId`/
 
 ### `electron.launch` — launch and attach
 
-Pass **exactly one** target: `appPath`, `appName`, `bundleId`, or `executablePath`. The wrapper resolves the target, verifies Electron framework evidence, applies optional caller-owned `allow` / `deny` policy, creates an isolated temp `userDataDir`, launches with `--remote-debugging-port=0` plus safe defaults, reads `DevToolsActivePort`, then attaches through upstream `connect` as a fresh managed session.
+Pass **exactly one** target: `appPath`, `appName`, `bundleId`, or `executablePath`. The wrapper resolves the target, verifies Electron runtime and app payload evidence, applies optional caller-owned `allow` / `deny` policy, creates an isolated temp `userDataDir`, launches with `--remote-debugging-port=0` plus safe defaults, reads `DevToolsActivePort`, then attaches through upstream `connect` as a fresh managed session.
+
+Payload evidence accepts `app.asar`, an `app/` directory, or the stock npm Electron runtime's `default_app.asar`. macOS also requires `Contents/Frameworks/Electron Framework.framework`; Linux/Windows require the existing Chromium resource evidence. These checks apply to discovery and explicit paths alike, and remain a correctness gate rather than a security boundary.
+
+For an unpackaged development app, point `executablePath` at the stock Electron binary and put the app directory in `appArgs`:
+
+```json
+{
+	"action": "launch",
+	"executablePath": "/path/to/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+	"appArgs": ["/path/to/fixture-app"]
+}
+```
 
 ```json
 {
@@ -171,6 +183,8 @@ Read-only inspection of one or more tracked launches. Without `launchId` or `all
 ```
 
 Reports `cleanupState`, current debug-port and PID liveness, bounded CDP targets, and freshly measured `userDataDirState` under `details.electron.statuses`. An explicit `launchId` can inspect a **historical cleaned launch record**; default and `all: true` selection exclude cleaned records. Cleanup history does not determine current liveness. The tracked profile path is `present`, `absent` (only native `lstat` ENOENT), or `unknown` (other filesystem errors); a dangling symlink is present. This measures that path only, not all app residue, and is not stored in the launch record. Its managed-session title/URL reads hold the normal daemon-policy lock and owned restore context. Mismatch fields surface when the current managed session or tab no longer matches a live wrapper launch target — typically the cue to follow `reattach-electron-launch` before trusting old refs.
+
+Status and probe compare complete URLs before shortening them for display. Managed-session/probe URL summaries remain capped at 300 characters (probe tab URLs at 240); probe page-target/ref state retains the full URL.
 
 ### `electron.probe` — compact state read
 
@@ -333,6 +347,11 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 - On macOS, apps installed outside `/Applications` and `~/Applications` are not scanned in v1. Pass `appPath` or `executablePath` explicitly.
 - Windows hosts report `platform: "unsupported"` from `electron.list`; always pass `executablePath` (or a resolvable `appPath`) for `launch`.
 
+### Launch rejects the target as non-Electron
+
+- Verify both runtime resources and an app payload (`app.asar`, `app/`, or `default_app.asar`) exist beside the executable. On macOS, the Electron Framework is also required; Chromium paks alone do not establish an Electron target.
+- The stock npm Electron runtime is supported without repackaging. Pass its binary as `executablePath` and your unpackaged app directory as an `appArgs` operand.
+
 ### Attach succeeds but `snapshot -i` returns no refs
 
 - Some Electron apps take a beat to render. The default `handoff: "snapshot"` already retries briefly; if it still reports no refs, run `tab list`, select the intended stable `t<N>` app tab, then run `snapshot -i` again.
@@ -358,6 +377,7 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 
 ### Mismatch between `status` and the active session
 
+- A shortened URL ending in `...` is display-only; long URLs alone do not cause mismatch or reattach guidance. Status/probe compare full normalized URLs.
 - `electron.status` may report a live wrapper launch while the managed session has drifted to `about:blank`. Follow `reattach-electron-launch`, then refresh refs before reusing old `@e…` handles. For non-wrapper tab drift where `details.nextActions` names `select-intended-tab-after-drift`, use that stable `t<N>` action plus `snapshot-after-tab-recovery` before continuing.
 
 ## Code and shared-session coordination

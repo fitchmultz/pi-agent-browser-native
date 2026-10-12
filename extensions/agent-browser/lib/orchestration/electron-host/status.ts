@@ -26,6 +26,7 @@ import type {
 import { selectElectronRecords } from "./branch.js";
 import type { ElectronHostObservationInput } from "./contracts.js";
 import { collectOwnedElectronManagedSessionTarget } from "./policy.js";
+import { presentElectronManagedSessionTarget } from "../browser-run/final-result-electron.js";
 
 function pidStatusText(pidAlive: boolean | undefined): string {
 	if (pidAlive === undefined) {
@@ -115,6 +116,7 @@ function statusNextActions(
 }
 function buildElectronStatusResult(options: StatusObservation): AgentBrowserToolResult {
 	const nextActions = statusNextActions(options);
+	const managedSessions = options.managedSessions.map(presentElectronManagedSessionTarget);
 	const soleRecord = options.records.length === 1 ? options.records[0] : undefined;
 	const details = {
 		args: [],
@@ -125,8 +127,8 @@ function buildElectronStatusResult(options: StatusObservation): AgentBrowserTool
 				options.records.length > 1 ? options.records.map(buildElectronIdentifiers) : undefined,
 			identifiers: soleRecord ? buildElectronIdentifiers(soleRecord) : undefined,
 			launches: options.records,
-			managedSession: options.managedSessions.length === 1 ? options.managedSessions[0] : undefined,
-			managedSessions: options.managedSessions.length > 0 ? options.managedSessions : undefined,
+			managedSession: managedSessions.length === 1 ? managedSessions[0] : undefined,
+			managedSessions: managedSessions.length > 0 ? managedSessions : undefined,
 			sessionMismatch: options.mismatches.length === 1 ? options.mismatches[0] : undefined,
 			sessionMismatches: options.mismatches.length > 1 ? options.mismatches : undefined,
 			status: "succeeded" as const,

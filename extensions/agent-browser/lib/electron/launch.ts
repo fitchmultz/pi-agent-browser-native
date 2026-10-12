@@ -162,7 +162,7 @@ function launchFailureMessage(
 		case "aborted":
 			return `Electron launch was aborted${target ? ` before ${label} finished starting` : " before the app started"}.`;
 		case "non-electron-target":
-			return `Electron launch rejected: ${label} does not have Electron framework evidence.`;
+			return `Electron launch rejected: ${label} does not have the required Electron runtime and app payload evidence.`;
 		case "policy-blocked":
 			return detail ?? `Electron launch blocked by caller policy for ${label}.`;
 		case "single-instance-conflict":

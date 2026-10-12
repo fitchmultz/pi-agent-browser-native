@@ -406,11 +406,15 @@ Enable `electron`. Inputs are flat `{ action, ...fields, outputPath? }`; caller 
 
 `appArgs` cannot override user-data-dir/debug lifecycle flags or include bare `--`. Caller `allow`/`deny` substring policies match app names/IDs/paths, with deny winning. Likely-sensitive discovery annotations are advisory. Non-Electron executables fail validation.
 
+Electron payload evidence accepts `app.asar`, `app/`, or the stock runtime's `default_app.asar`, alongside platform runtime resources (including Electron Framework on macOS). Stock npm Electron can launch an unpackaged app by passing its binary as `executablePath` and the app directory in `appArgs`; discovery and explicit paths share the same evidence check.
+
 Timeouts are per action: launch readiness defaults to 15 seconds, capped at 120 seconds after discovery; status/probe use the normal 35-second subprocess budget per read (or configured override); cleanup applies its default 35-second managed-close budget separately to close and initial process-exit wait. Local CDP HTTP probes use one second. There is no combined end-to-end teardown deadline. Cancellation before spawn opens nothing; cancellation during launch cleans the new process/profile.
 
 `details.electron` retains action-specific `apps`, `launch`, `statuses`, `targets`, `probe`, `cleanup`, and failure diagnostics; `compiledElectron` retains the action plan. `launchId` identifies host lifecycle; `sessionName` identifies browser commands. `userDataDirState` measures the tracked path as present, absent (ENOENT), or unknown; it does not audit all app residue. Failed startup output includes redacted last-4096-byte stdout/stderr tails; private profile-local files follow profile ownership, not a lifetime byte cap. Failed cleanup preserves live profiles. Launch records the app process start identity. Before signaling a live restored PID without a tracked child handle, cleanup requires that recorded identity to match the live process; a missing (including records from older versions), unreadable, or mismatched identity leaves the process/profile intact. Reload preserves current branch-visible launches and cleans off-branch owned launches; quit cleans owned launches. Restored attachments must match live endpoint/PID/profile evidence before reuse.
 
 Post-command process/target loss fails as `tab-drift`; fill verification and broad-shell-text diagnostics remain available. Recovery actions use `agent_browser_electron` with flat params for status/probe/cleanup and `agent_browser` for native tab/URL/ref operations. If inactive, enable `electron` first. Manually launched apps and explicit saved artifacts remain host-owned.
+
+Status/probe mismatch checks and probe page-target state use complete URLs, not display previews. Managed-session/probe URL summaries remain capped at 300 characters and probe tab URLs at 240; shortened output does not itself imply drift. Probe `sessionTabTarget` and `refSnapshot` retain full target identity for follow-up commands and replay.
 
 ### `agent_browser_source`
 
