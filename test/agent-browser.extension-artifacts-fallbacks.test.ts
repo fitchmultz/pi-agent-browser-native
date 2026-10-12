@@ -51,7 +51,7 @@ if (args.includes("download")) {
 				{ PATH: `${tempDir}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_TEST_PAGE_URL: url },
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
-					const path = join(tempDir, "downloads", "report.csv");
+					const path = join(tempDir, "downloads", new URL(url).hostname + ".csv");
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["download", "#export", path],
 					});
@@ -310,7 +310,8 @@ test(
 		const restoreKey = `piab-r2-${"a".repeat(32)}`;
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`process.stdout.write("x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
+			`const fs = require("node:fs");
+process.stdout.write("invalid-json " + fs.readFileSync(0, "utf8") + " " + "x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
 		);
 
 		try {
@@ -321,7 +322,8 @@ test(
 				const beforeSpools = new Set(await readdir(spoolRoot));
 
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["state", "show", "caller-owned.json"],
+					args: ["auth", "save", "demo", "--password-stdin"],
+					stdin: "super-secret-password",
 				});
 
 				assert.equal(result.isError, true);
@@ -333,6 +335,7 @@ test(
 				);
 				assert.equal(result.details?.artifactManifest, undefined);
 				assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
+				assert.doesNotMatch(JSON.stringify(result), /super-secret-password/);
 				assert.doesNotMatch(JSON.stringify(result), /piab-r2-[a-f\d]{32}/);
 				assert.deepEqual(
 					(await readdir(spoolRoot)).filter(
