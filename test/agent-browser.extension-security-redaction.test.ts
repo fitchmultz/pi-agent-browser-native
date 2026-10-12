@@ -731,11 +731,16 @@ test(
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-confirm-"));
+		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`process.stdout.write(JSON.stringify({ success: false, data: { confirmation_required: true, confirmation_id: "c_sensitive", action: "POST https://user:pass@example.com/delete?token=secret Authorization: Bearer raw-token" } }));
-process.exit(1);`,
+			`const fs=require('node:fs'), args=process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)},JSON.stringify({args})+'\\n');
+if(args.includes('confirm')) process.stdout.write(JSON.stringify({success:true,data:'Action confirmed'}));
+else if(args.includes('deny')) process.stdout.write(JSON.stringify({success:true,data:'Action denied'}));
+else if(args.includes('click')) {process.stdout.write(JSON.stringify({ success: false, data: { confirmation_required: true, confirmation_id: "c_sensitive", action: "POST https://user:pass@example.com/delete?token=secret Authorization: Bearer raw-token" } })); process.exitCode=1;}
+else process.stdout.write(JSON.stringify({success:true,data:{url:'https://example.com/'}}));`,
 		);
 
 		try {
@@ -777,59 +782,43 @@ process.exit(1);`,
 					);
 					assert.doesNotMatch(JSON.stringify(result.content), /user:pass|raw-token|token=secret/);
 					assert.doesNotMatch(JSON.stringify(result.details), /user:pass|raw-token|token=secret/);
+					const confirmed = await executeRegisteredTool(
+						harness.tool,
+						harness.ctx,
+						readRecord(nextActions[0].params),
+					);
+					assert.equal(confirmed.isError, false, JSON.stringify(confirmed));
+					assert.match(readString(readRecord(confirmed.content[0]).text), /Action confirmed/);
+					const denied = await executeRegisteredTool(
+						harness.tool,
+						harness.ctx,
+						readRecord(nextActions[1].params),
+					);
+					assert.equal(denied.isError, false, JSON.stringify(denied));
+					assert.match(readString(readRecord(denied.content[0]).text), /Action denied/);
+					const implicitConfirm = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["confirm", "c_demo"],
+					});
+					assert.equal(implicitConfirm.isError, false);
+					assert.match(readString(readRecord(implicitConfirm.content[0]).text), /Action confirmed/);
+					const implicitDeny = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["deny", "c_demo"],
+					});
+					assert.equal(implicitDeny.isError, false);
+					assert.match(readString(readRecord(implicitDeny.content[0]).text), /Action denied/);
+					assert.deepEqual(
+						(await readInvocationLog(logPath))
+							.filter((entry) => ["confirm", "deny"].includes(entry.args.at(-2) ?? ""))
+							.map((entry) => entry.args),
+						[
+							["--json", "--session", result.details.sessionName, "confirm", "c_sensitive"],
+							["--json", "--session", result.details.sessionName, "deny", "c_sensitive"],
+							["--json", "--session", implicitConfirm.details?.sessionName, "confirm", "c_demo"],
+							["--json", "--session", implicitDeny.details?.sessionName, "deny", "c_demo"],
+						],
+					);
 				},
 			);
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension passes confirm and deny recovery calls through to upstream",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-confirm-deny-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-if (args.includes("confirm")) process.stdout.write(JSON.stringify({ success: true, data: "Action confirmed" }));
-else if (args.includes("deny")) process.stdout.write(JSON.stringify({ success: true, data: "Action denied" }));
-else process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const confirmed = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["confirm", "c_demo"],
-				});
-				assert.equal(confirmed.isError, false);
-				assert.match(readString(readRecord(confirmed.content[0]).text), /Action confirmed/);
-
-				const denied = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["deny", "c_demo"],
-				});
-				assert.equal(denied.isError, false);
-				assert.match(readString(readRecord(denied.content[0]).text), /Action denied/);
-
-				const invocations = await readInvocationLog(logPath);
-				assert.deepEqual(
-					invocations
-						.filter((entry) => ["confirm", "deny"].includes(entry.args.at(-2) ?? ""))
-						.map((entry) => entry.args.slice(-2)),
-					[
-						["confirm", "c_demo"],
-						["deny", "c_demo"],
-					],
-				);
-			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}

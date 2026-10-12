@@ -35,25 +35,21 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 export class WebSearchRequestGate {
 	private lastRequestStartedAt = 0;
 	private tail: Promise<unknown> = Promise.resolve();
-	constructor(
-		private readonly now: () => number = Date.now,
-		private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void> = sleepWithAbort,
-	) {}
 
 	run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
 		const runTask = async () => {
 			const elapsedMs =
 				this.lastRequestStartedAt === 0
 					? WEB_SEARCH_MIN_REQUEST_INTERVAL_MS
-					: this.now() - this.lastRequestStartedAt;
+					: Date.now() - this.lastRequestStartedAt;
 			const waitMs = Math.max(0, WEB_SEARCH_MIN_REQUEST_INTERVAL_MS - elapsedMs);
 			if (waitMs > 0) {
-				await this.sleep(waitMs, signal);
+				await sleepWithAbort(waitMs, signal);
 			}
 			if (signal?.aborted === true) {
 				signal.throwIfAborted();
 			}
-			this.lastRequestStartedAt = this.now();
+			this.lastRequestStartedAt = Date.now();
 			return task();
 		};
 		const result = this.tail.then(runTask, runTask);
@@ -125,11 +121,9 @@ export async function fetchSearchJson(options: {
 		}
 		try {
 			return JSON.parse(text);
-		} catch (error) {
-			throw new Error(
-				`${options.invalidJsonMessage}: ${error instanceof Error ? error.message : "Unknown JSON parse failure"}`,
-				{ cause: error },
-			);
+		} catch {
+			// Parser messages and causes can include partial credentials from the response body.
+			throw new Error(options.invalidJsonMessage);
 		}
 	} finally {
 		clearTimeout(timeout);

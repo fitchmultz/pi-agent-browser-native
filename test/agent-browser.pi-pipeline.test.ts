@@ -5,6 +5,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { readRecord, readString, readArray, readBoolean } from "./helpers/assertions.js";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -382,7 +383,7 @@ async function runPipelinePrompt(options: {
 					settingsManager: SettingsManager.inMemory(),
 					resourceLoader,
 					sessionManager: SessionManager.create(tempDir, sessionDir, {
-						id: "piab-pipeline-session",
+						id: randomUUID(),
 					}),
 					tools: options.discoveryStream
 						? undefined
@@ -631,7 +632,7 @@ test("Pi pipeline captures the owner cwd before an awaited browser policy withou
 			agentBrowserExtension(pi, {
 				async beforeExecute(_id, ctx) {
 					assert.notEqual(ctx.cwd, selected, "Pi's project context is unchanged");
-					await delay(25);
+					await Promise.resolve();
 					selected = ctx.cwd;
 				},
 			});
@@ -661,50 +662,94 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 });
 
-test("Pi pipeline awaits beforeExecute after earlier sibling writes and before browser effects", async () => {
-	const capturedIds: string[] = [];
-	const pipeline = await runPipelinePrompt({
-		priorCalls: [{ type: "toolCall", id: "writer", name: "write_fixture", arguments: {} }],
-		toolArguments: { args: ["open", "https://fixture.example.test/"] },
-		extensionFactory(pi) {
-			pi.registerTool({
-				name: "write_fixture",
-				label: "Write fixture",
-				description: "Write a file in two stages.",
-				parameters: Type.Object({}),
-				async execute(_id, _params, signal, _update, ctx) {
-					await writeFile(join(ctx.cwd, "writer.txt"), "partial");
-					await delay(100, undefined, { signal });
-					await writeFile(join(ctx.cwd, "writer.txt"), "complete");
-					return { content: [{ type: "text", text: "Written." }], details: {} };
-				},
-			});
-			agentBrowserExtension(pi, {
-				async beforeExecute(id, ctx) {
-					capturedIds.push(id);
-					assert.ok(ctx.signal instanceof AbortSignal);
-					assert.equal(await readFile(join(ctx.cwd, "writer.txt"), "utf8"), "complete");
-					await delay(100, undefined, { signal: ctx.signal });
-					await writeFile(join(ctx.cwd, "captured.txt"), id);
-				},
-			});
-		},
-		fakeScript: `const fs = require("node:fs");
+test(
+	"Pi pipeline awaits beforeExecute after earlier sibling writes and before browser effects",
+	{ timeout: 15_000 },
+	async () => {
+		const capturedIds: string[] = [];
+		const writerEntered = Promise.withResolvers<undefined>();
+		const writerRelease = Promise.withResolvers<undefined>();
+		const captureEntered = Promise.withResolvers<string>();
+		const captureRelease = Promise.withResolvers<undefined>();
+		const pipeline = await runPipelinePrompt({
+			priorCalls: [{ type: "toolCall", id: "writer", name: "write_fixture", arguments: {} }],
+			toolArguments: { args: ["open", "https://fixture.example.test/"] },
+			extensionFactory(pi) {
+				pi.registerTool({
+					name: "write_fixture",
+					label: "Write fixture",
+					description: "Write a file in two stages.",
+					parameters: Type.Object({}),
+					async execute(_id, _params, _signal, _update, ctx) {
+						await writeFile(join(ctx.cwd, "writer.txt"), "partial");
+						writerEntered.resolve(undefined);
+						await writerRelease.promise;
+						await writeFile(join(ctx.cwd, "writer.txt"), "complete");
+						return { content: [{ type: "text", text: "Written." }], details: {} };
+					},
+				});
+				agentBrowserExtension(pi, {
+					async beforeExecute(id, ctx) {
+						capturedIds.push(id);
+						assert.ok(ctx.signal instanceof AbortSignal);
+						assert.equal(await readFile(join(ctx.cwd, "writer.txt"), "utf8"), "complete");
+						captureEntered.resolve(ctx.cwd);
+						await captureRelease.promise;
+						await writeFile(join(ctx.cwd, "captured.txt"), id);
+					},
+				});
+			},
+			async runPrompt(session) {
+				const pending = session.prompt("Use agent_browser once.");
+				try {
+					await Promise.race([
+						writerEntered.promise,
+						pending.then(() => assert.fail("writer must dispatch")),
+					]);
+					await new Promise<void>((resolveTurn) => {
+						setImmediate(resolveTurn);
+					});
+					assert.deepEqual(
+						capturedIds,
+						[],
+						"browser capture must await the unfinished earlier writer",
+					);
+					writerRelease.resolve(undefined);
+					const cwd = await Promise.race([
+						captureEntered.promise,
+						pending.then(() => assert.fail("capture must run")),
+					]);
+					await new Promise<void>((resolveTurn) => {
+						setImmediate(resolveTurn);
+					});
+					assert.deepEqual(
+						await readInvocationLog(join(cwd, "invocations.log")),
+						[],
+						"no browser effect may precede capture completion",
+					);
+				} finally {
+					writerRelease.resolve(undefined);
+					captureRelease.resolve(undefined);
+					await pending;
+				}
+			},
+			fakeScript: `const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args.includes("open")) {
   if (fs.readFileSync("writer.txt", "utf8") !== "complete" || fs.readFileSync("captured.txt", "utf8") !== "call_agent_browser_pipeline") throw Error("Effect preceded capture");
 }
 process.stdout.write(JSON.stringify({ success: true, data: { title: "Fixture", url: "https://fixture.example.test/" } }));`,
-	});
-	assert.deepEqual(capturedIds, ["call_agent_browser_pipeline"]);
-	assert.equal(
-		pipeline.inMemoryResult.isError,
-		false,
-		JSON.stringify(pipeline.inMemoryResult.content),
-	);
-	assert.equal(pipeline.persistedResult.isError, false);
-	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
-});
+		});
+		assert.deepEqual(capturedIds, ["call_agent_browser_pipeline"]);
+		assert.equal(
+			pipeline.inMemoryResult.isError,
+			false,
+			JSON.stringify(pipeline.inMemoryResult.content),
+		);
+		assert.equal(pipeline.persistedResult.isError, false);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
+	},
+);
 
 test("Pi pipeline captures code-created files before the next inner dispatch using the outer call ID", async () => {
 	const capturedIds: string[] = [];

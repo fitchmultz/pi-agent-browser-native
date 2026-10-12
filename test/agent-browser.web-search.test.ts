@@ -4,10 +4,12 @@
 
 import assert from "node:assert/strict";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
-import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { inspect } from "node:util";
 
 import {
 	AGENT_BROWSER_CONFIG_ENV,
@@ -25,7 +27,6 @@ import {
 	decodeHtmlEntities,
 	fetchBraveSearchJson,
 	fetchExaSearchJson,
-	getWebSearchProviderAdapter,
 	normalizeExaSearchResult,
 	normalizeBraveSearchResult,
 } from "../extensions/agent-browser/lib/web-search.js";
@@ -62,8 +63,9 @@ async function pathExists(path: string): Promise<boolean> {
 	);
 }
 
-async function createFixture() {
+async function createFixture(t: TestContext) {
 	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-web-search-test-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
 	const home = join(root, "home");
 	const cwd = join(root, "repo");
 	await mkdir(home, { recursive: true });
@@ -96,8 +98,8 @@ async function withTemporaryArgv<T>(argv: readonly string[], run: () => Promise<
 	}
 }
 
-test("does not register agent_browser_web_search without env or config credential", async () => {
-	const fixture = await createFixture();
+test("does not register agent_browser_web_search without env or config credential", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
@@ -118,8 +120,8 @@ test("does not register agent_browser_web_search without env or config credentia
 	);
 });
 
-test("trusted project web-search config registers the companion tool on session start", async () => {
-	const fixture = await createFixture();
+test("trusted project web-search config registers the companion tool on session start", async (t) => {
+	const fixture = await createFixture(t);
 	await writeJson(fixture.projectConfigPath, {
 		version: 1,
 		webSearch: { braveApiKey: "plaintext-project-secret" },
@@ -180,8 +182,8 @@ test("trusted project web-search config registers the companion tool on session 
 	);
 });
 
-test("untrusted project web-search config does not register the companion tool on session start", async () => {
-	const fixture = await createFixture();
+test("untrusted project web-search config does not register the companion tool on session start", async (t) => {
+	const fixture = await createFixture(t);
 	await writeJson(fixture.projectConfigPath, {
 		version: 1,
 		webSearch: { braveApiKey: "plaintext-project-secret" },
@@ -203,8 +205,8 @@ test("untrusted project web-search config does not register the companion tool o
 	);
 });
 
-test("project config can disable web-search execution despite env fallback", async () => {
-	const fixture = await createFixture();
+test("project config can disable web-search execution despite env fallback", async (t) => {
+	const fixture = await createFixture(t);
 	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false } });
 	await withPatchedEnv(
 		{
@@ -232,8 +234,8 @@ test("project config can disable web-search execution despite env fallback", asy
 	);
 });
 
-test("project web-search plaintext config passes through at execution without exposing the key", async () => {
-	const fixture = await createFixture();
+test("project web-search plaintext config passes through at execution without exposing the key", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
@@ -291,8 +293,8 @@ test("project web-search plaintext config passes through at execution without ex
 	);
 });
 
-test("--no-approve prevents project config from disabling env-backed agent_browser_web_search execution", async () => {
-	const fixture = await createFixture();
+test("--no-approve prevents project config from disabling env-backed agent_browser_web_search execution", async (t) => {
+	const fixture = await createFixture(t);
 	await writeJson(fixture.projectConfigPath, { version: 1, webSearch: { enabled: false } });
 	await withPatchedEnv(
 		{
@@ -352,8 +354,8 @@ test("--no-approve prevents project config from disabling env-backed agent_brows
 	);
 });
 
-test("agent_browser_web_search registration and execution ignore project config when project config is not approved", async () => {
-	const fixture = await createFixture();
+test("agent_browser_web_search registration and execution ignore project config when project config is not approved", async (t) => {
+	const fixture = await createFixture(t);
 	await writeJson(fixture.projectConfigPath, {
 		version: 1,
 		webSearch: { enabled: false, preferredProvider: "brave" },
@@ -367,7 +369,7 @@ test("agent_browser_web_search registration and execution ignore project config 
 		},
 		async () => {
 			await withTemporaryCwd(fixture.cwd, async () => {
-				await withTemporaryArgv(["node", "pi", "--no-approve"], async () => {
+				await withTemporaryArgv(["node", "pi", "--approve"], async () => {
 					const harness = createExtensionHarness({ cwd: fixture.cwd, projectTrusted: false });
 					const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 					assert.ok(tool);
@@ -394,7 +396,9 @@ test("agent_browser_web_search registration and execution ignore project config 
 								provider: "auto",
 								count: 1,
 							});
+							assert.equal(result.isError, false, JSON.stringify(result));
 							assert.equal(readRecord(result.details).provider, "exa");
+							assert.match(result.content.at(0)?.text ?? "", /Trusted Exa/);
 						},
 					);
 				});
@@ -403,8 +407,8 @@ test("agent_browser_web_search registration and execution ignore project config 
 	);
 });
 
-test("registers agent_browser_web_search with actionable search-type and rate-limit guidance", async () => {
-	const fixture = await createFixture();
+test("registers agent_browser_web_search with actionable search-type and rate-limit guidance", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
@@ -459,8 +463,8 @@ test("registers agent_browser_web_search with actionable search-type and rate-li
 	);
 });
 
-test("auto provider uses Brave when only BRAVE_API_KEY is configured", async () => {
-	const fixture = await createFixture();
+test("auto provider uses Brave when only BRAVE_API_KEY is configured", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
@@ -477,6 +481,12 @@ test("auto provider uses Brave when only BRAVE_API_KEY is configured", async () 
 					const url = new URL(input instanceof Request ? input.url : input.toString());
 					assert.equal(url.origin + url.pathname, "https://api.search.brave.com/res/v1/web/search");
 					assert.equal(url.searchParams.get("q"), "brave only");
+					assert.equal(url.searchParams.get("count"), "1");
+					assert.equal(url.searchParams.get("offset"), "0");
+					assert.equal(url.searchParams.get("country"), "US");
+					assert.equal(url.searchParams.get("search_lang"), "en-US");
+					assert.equal(url.searchParams.get("safesearch"), "moderate");
+					assert.equal(url.searchParams.get("freshness"), "pw");
 					assert.equal(new Headers(init?.headers).get("X-Subscription-Token"), "brave-secret");
 					return new Response(
 						JSON.stringify({
@@ -500,6 +510,10 @@ test("auto provider uses Brave when only BRAVE_API_KEY is configured", async () 
 						provider: "auto",
 						count: 1,
 						searchType: "deep",
+						country: "us",
+						searchLang: "en-US",
+						safesearch: "moderate",
+						freshness: "pw",
 					});
 					const text = result.content.at(0)?.text ?? "";
 					assert.match(text, /Brave web search results/);
@@ -525,8 +539,8 @@ test("auto provider uses Brave when only BRAVE_API_KEY is configured", async () 
 	);
 });
 
-test("registers command-sourced config without executing command until search execution", async () => {
-	const fixture = await createFixture();
+test("registers command-sourced config without executing command until search execution", async (t) => {
+	const fixture = await createFixture(t);
 	const fixtureRoot = dirname(fixture.overrideConfigPath);
 	const markerPath = join(fixtureRoot, "credential-command.marker");
 	const commandScriptPath = join(fixtureRoot, "credential-command.cjs");
@@ -601,8 +615,8 @@ test("registers command-sourced config without executing command until search ex
 	);
 });
 
-test("uses the configured default Exa search type when the call omits it", async () => {
-	const fixture = await createFixture();
+test("uses the configured default Exa search type when the call omits it", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
@@ -652,6 +666,7 @@ test("uses the configured default Exa search type when the call omits it", async
 					assert.equal(readRecord(result.details).provider, "exa");
 					assert.equal(readRecord(result.details).searchType, "deep-lite");
 					assert.equal(readRecord(result.details).requestId, "req-default");
+					assert.equal(readRecord(result.details).returnedQuery, "research defaults");
 					assert.doesNotMatch(JSON.stringify(result), /exa-secret/);
 				},
 			);
@@ -659,8 +674,8 @@ test("uses the configured default Exa search type when the call omits it", async
 	);
 });
 
-test("per-call Exa search type overrides the configured default and normalizes highlights", async () => {
-	const fixture = await createFixture();
+test("per-call Exa search type overrides the configured default and normalizes highlights", async (t) => {
+	const fixture = await createFixture(t);
 	await writeJson(fixture.overrideConfigPath, {
 		version: 1,
 		webSearch: { defaultSearchType: "deep-lite" },
@@ -730,14 +745,19 @@ test("per-call Exa search type overrides the configured default and normalizes h
 					assert.equal(readRecord(result.details).provider, "exa");
 					assert.equal(readRecord(result.details).searchType, "fast");
 					assert.equal(readRecord(result.details).requestId, "req-123");
+					assert.equal(readRecord(result.details).returnedQuery, "pi browser docs");
+					assert.deepEqual(
+						readArray(readRecord(result.details).results).map((item) => readRecord(item).title),
+						["Exa Pi"],
+					);
 				},
 			);
 		},
 	);
 });
 
-test("search execution removes exact normalized URL duplicates without collapsing distinct query URLs", async () => {
-	const fixture = await createFixture();
+test("search execution removes exact normalized URL duplicates without collapsing distinct query URLs", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
@@ -789,75 +809,8 @@ test("search execution removes exact normalized URL duplicates without collapsin
 	);
 });
 
-test("provider adapters expose provider-agnostic request and normalization contracts", () => {
-	const brave = getWebSearchProviderAdapter("brave");
-	const braveRequest = brave.buildRequest({ count: 1, offset: 2, query: "adapter brave" });
-	assert.ok(braveRequest instanceof URL);
-	assert.equal(braveRequest.searchParams.get("q"), "adapter brave");
-	const braveNormalized = brave.normalizeResponse(
-		{
-			query: { original: "adapter brave" },
-			web: {
-				results: [
-					{ title: "Skip 1", url: "https://example.com/skip1" },
-					{ title: "Skip 2", url: "https://example.com/skip2" },
-					{ title: "Brave", url: "https://example.com/brave" },
-				],
-			},
-		},
-		{ count: 1, offset: 2, query: "adapter brave" },
-	);
-	assert.equal(braveNormalized.returnedQuery, "adapter brave");
-	assert.deepEqual(
-		braveNormalized.results.map((result) => result.title),
-		["Brave"],
-	);
-
-	const exa = getWebSearchProviderAdapter("exa");
-	const exaRequest = exa.buildRequest({
-		count: 1,
-		offset: 1,
-		query: "adapter exa",
-		searchType: "deep",
-	});
-	assert.equal(readRecord(readRecord(exaRequest).body).query, "adapter exa");
-	assert.equal(readRecord(readRecord(exaRequest).body).type, "deep");
-	assert.equal(readRecord(exaRequest).timeoutMs, 60_000);
-	const deepLiteRequest = exa.buildRequest({
-		count: 1,
-		offset: 0,
-		query: "adapter exa",
-		searchType: "deep-lite",
-	});
-	const deepReasoningRequest = exa.buildRequest({
-		count: 1,
-		offset: 0,
-		query: "adapter exa",
-		searchType: "deep-reasoning",
-	});
-	assert.equal(readRecord(deepLiteRequest).timeoutMs, 45_000);
-	assert.equal(readRecord(deepReasoningRequest).timeoutMs, 90_000);
-	const exaNormalized = exa.normalizeResponse(
-		{
-			requestId: "req",
-			searchType: "deep",
-			results: [
-				{ title: "Skip", url: "https://example.com/skip" },
-				{ title: "Exa", url: "https://example.com/exa" },
-			],
-		},
-		{ count: 1, offset: 1, query: "adapter exa", searchType: "deep" },
-	);
-	assert.equal(exaNormalized.returnedQuery, "adapter exa");
-	assert.equal(exaNormalized.extraDetails?.requestId, "req");
-	assert.deepEqual(
-		exaNormalized.results.map((result) => result.title),
-		["Exa"],
-	);
-});
-
-test("disabled web search config prevents registration despite environment keys", async () => {
-	const fixture = await createFixture();
+test("disabled web search config prevents registration despite environment keys", async (t) => {
+	const fixture = await createFixture(t);
 	await writeJson(fixture.overrideConfigPath, { version: 1, webSearch: { enabled: false } });
 	await withPatchedEnv(
 		{
@@ -873,61 +826,119 @@ test("disabled web search config prevents registration despite environment keys"
 	);
 });
 
-test("Brave pagination skips results rather than pages, including partial pages and short responses", () => {
-	const brave = getWebSearchProviderAdapter("brave");
-	const rankedResults = Array.from({ length: 20 }, (_, index) => ({
-		title: `Result ${index + 1}`,
-		url: `https://example.com/${index + 1}`,
-	}));
-	for (const [count, offset, available, expected] of [
-		[5, 0, 20, [1, 2, 3, 4, 5]],
-		[5, 5, 20, [6, 7, 8, 9, 10]],
-		[5, 3, 20, [4, 5, 6, 7, 8]],
-		[10, 9, 20, [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]],
-		[5, 5, 7, [6, 7]],
-		[5, 5, 3, []],
-	] as const) {
-		const params = { query: "pagination", count, offset };
-		const request = brave.buildRequest(params);
-		// Every fixed pagination boundary must produce a native URL.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(request instanceof URL);
-		// Every boundary must request enough results for its local window.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(request.searchParams.get("count"), String(count + offset));
-		// Every boundary must keep upstream offset zero.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(request.searchParams.get("offset"), "0");
-		const response = {
-			web: { results: rankedResults.slice(0, Math.min(count + offset, available)) },
-		};
-		// Every fixed boundary must normalize exactly its expected result window.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(
-			brave.normalizeResponse(response, params).results.map((result) => result.title),
-			expected.map((rank) => `Result ${rank}`),
+for (const [count, offset, available, expected] of [
+	[5, 0, 20, [1, 2, 3, 4, 5]],
+	[5, 5, 20, [6, 7, 8, 9, 10]],
+	[5, 3, 20, [4, 5, 6, 7, 8]],
+	[10, 9, 20, [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]],
+	[5, 5, 7, [6, 7]],
+	[5, 5, 3, []],
+] as const) {
+	test(`Brave pagination skips results rather than pages: count ${count}, offset ${offset}, available ${available}`, async (t) => {
+		const fixture = await createFixture(t);
+		const rankedResults = Array.from({ length: available }, (_, index) => ({
+			title: `Result ${index + 1}`,
+			url: `https://example.com/${index + 1}`,
+		}));
+		await withPatchedEnv(
+			{
+				HOME: fixture.home,
+				[AGENT_BROWSER_CONFIG_ENV]: undefined,
+				[BRAVE_API_KEY_ENV]: "brave-secret",
+				[EXA_API_KEY_ENV]: undefined,
+			},
+			async () => {
+				const harness = createExtensionHarness({ cwd: fixture.cwd });
+				const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+				assert.ok(tool);
+				await withFakeFetch(
+					(input) => {
+						const url = new URL(input instanceof Request ? input.url : input.toString());
+						assert.equal(url.searchParams.get("q"), "pagination");
+						assert.equal(url.searchParams.get("count"), String(count + offset));
+						assert.equal(url.searchParams.get("offset"), "0");
+						return new Response(
+							JSON.stringify({
+								query: { original: "pagination" },
+								web: { results: rankedResults.slice(0, count + offset) },
+							}),
+						);
+					},
+					async () => {
+						const result = await executeRegisteredTool(tool, harness.ctx, {
+							query: "pagination",
+							count,
+							offset,
+						});
+						assert.equal(result.isError, false, JSON.stringify(result));
+						assert.equal(readRecord(result.details).returnedQuery, "pagination");
+						assert.deepEqual(
+							readArray(readRecord(result.details).results).map((item) => readRecord(item).title),
+							expected.map((rank) => `Result ${rank}`),
+						);
+					},
+				);
+			},
 		);
-	}
-});
-
-test("builds Brave search URL parameters", () => {
-	const url = buildBraveSearchUrl({
-		query: "agent browser",
-		count: 3,
-		offset: 2,
-		country: "us",
-		searchLang: "en-US",
-		safesearch: "moderate",
-		freshness: "pw",
 	});
-	assert.equal(url.searchParams.get("q"), "agent browser");
-	assert.equal(url.searchParams.get("count"), "3");
-	assert.equal(url.searchParams.get("offset"), "2");
-	assert.equal(url.searchParams.get("country"), "US");
-	assert.equal(url.searchParams.get("search_lang"), "en-US");
-	assert.equal(url.searchParams.get("safesearch"), "moderate");
-	assert.equal(url.searchParams.get("freshness"), "pw");
-});
+}
+
+for (const [searchType, timeoutMs] of [
+	["deep-lite", 45_000],
+	["deep", 60_000],
+	["deep-reasoning", 90_000],
+] as const) {
+	test(`registered Exa ${searchType} times out at ${timeoutMs}ms`, async (t) => {
+		const fixture = await createFixture(t);
+		await withPatchedEnv(
+			{
+				HOME: fixture.home,
+				[AGENT_BROWSER_CONFIG_ENV]: undefined,
+				[BRAVE_API_KEY_ENV]: undefined,
+				[EXA_API_KEY_ENV]: "exa-secret",
+			},
+			async () => {
+				const harness = createExtensionHarness({ cwd: fixture.cwd });
+				const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+				assert.ok(tool);
+				const entered = Promise.withResolvers<AbortSignal>();
+				t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+				await withFakeFetch(
+					(_input, init) => {
+						const signal = init?.signal;
+						assert.ok(signal);
+						entered.resolve(signal);
+						return new Promise<Response>((_resolve, reject) =>
+							signal.addEventListener(
+								"abort",
+								() => {
+									const reason: unknown = signal.reason;
+									reject(reason instanceof Error ? reason : new Error("Search aborted"));
+								},
+								{ once: true },
+							),
+						);
+					},
+					async () => {
+						const pending = executeRegisteredTool(tool, harness.ctx, {
+							query: "timeout research",
+							searchType,
+						});
+						const signal = await entered.promise;
+						t.mock.timers.tick(timeoutMs - 1);
+						assert.equal(signal.aborted, false, "must retain the full provider timeout");
+						t.mock.timers.tick(1);
+						assert.equal(signal.aborted, true);
+						const result = await pending;
+						assert.equal(result.isError, true);
+						assert.equal(readRecord(result.details).failureCategory, "upstream-error");
+						assert.match(readString(readRecord(result.details).error), /Exa search timed out/);
+					},
+				);
+			},
+		);
+	});
+}
 
 test("builds Exa search request body with highlights and provider-compatible options", () => {
 	const body = buildExaSearchRequestBody(
@@ -1052,30 +1063,49 @@ test("normalizes Brave results and strips unsafe or noisy values", () => {
 	);
 });
 
-test("WebSearchRequestGate serializes and spaces searches", async () => {
-	let now = 1_000;
-	const waits: number[] = [];
+test("WebSearchRequestGate serializes and spaces searches", async (t) => {
+	t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
 	const starts: number[] = [];
-	const gate = new WebSearchRequestGate(
-		() => now,
-		async (ms) => {
-			waits.push(ms);
-			now += ms;
-		},
-	);
-
+	const entered = Promise.withResolvers<undefined>();
+	const release = Promise.withResolvers<undefined>();
+	const gate = new WebSearchRequestGate();
+	const minimumInterval = 1100;
 	const first = gate.run(undefined, async () => {
-		starts.push(now);
+		starts.push(Date.now());
+		entered.resolve(undefined);
+		await release.promise;
 		return "first";
 	});
+	await entered.promise;
 	const second = gate.run(undefined, async () => {
-		starts.push(now);
+		starts.push(Date.now());
 		return "second";
 	});
-
-	assert.deepEqual(await Promise.all([first, second]), ["first", "second"]);
-	assert.deepEqual(starts, [1_000, 1_000 + WEB_SEARCH_MIN_REQUEST_INTERVAL_MS]);
-	assert.deepEqual(waits, [WEB_SEARCH_MIN_REQUEST_INTERVAL_MS]);
+	t.mock.timers.tick(minimumInterval * 2);
+	await nextTurn();
+	assert.deepEqual(starts, [1000], "second cannot start while the first request remains active");
+	release.resolve(undefined);
+	assert.equal(await first, "first");
+	assert.equal(await second, "second");
+	assert.deepEqual(starts, [1000, 1000 + minimumInterval * 2]);
+	const failed = assert.rejects(
+		gate.run(undefined, async () => {
+			starts.push(Date.now());
+			throw new Error("provider failed");
+		}),
+		/provider failed/,
+	);
+	await nextTurn();
+	t.mock.timers.tick(minimumInterval - 1);
+	await nextTurn();
+	assert.equal(starts.length, 2, "request spacing must not be shortened");
+	t.mock.timers.tick(1);
+	await failed;
+	assert.deepEqual(starts, [1000, 1000 + minimumInterval * 2, 1000 + minimumInterval * 3]);
+	const recovered = gate.run(undefined, async () => "recovered");
+	await nextTurn();
+	t.mock.timers.tick(minimumInterval);
+	assert.equal(await recovered, "recovered", "a failed request must release the queue");
 });
 
 test("provider fetch helpers do not call fetch when already aborted", async () => {
@@ -1129,22 +1159,20 @@ test("provider fetch helpers do not call fetch when already aborted", async () =
 });
 
 test("search execution reports API and JSON failures without leaking key", async (t) => {
-	const fixture = await createFixture();
+	t.mock.timers.enable({ apis: ["Date"], now: 1000 });
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
 			[AGENT_BROWSER_CONFIG_ENV]: undefined,
-			[BRAVE_API_KEY_ENV]: "secret-that-must-not-leak",
-			[EXA_API_KEY_ENV]: undefined,
+			[BRAVE_API_KEY_ENV]: "skey7",
+			[EXA_API_KEY_ENV]: "skey7",
 		},
 		async () => {
 			const harness = createExtensionHarness({ cwd: fixture.cwd });
 			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 			assert.ok(tool);
-			for (const responseBody of [
-				"upstream failed secret-that-must-not-leak",
-				"upstream failed secret&#45;that&#45;must&#45;not&#45;leak",
-			]) {
+			for (const responseBody of ["upstream failed skey7", "upstream failed skey&#55;"]) {
 				// The fetch stub is process-global; finish one response case before replacing it.
 				// oxlint-disable-next-line no-await-in-loop
 				await t.test(responseBody, async () => {
@@ -1155,7 +1183,7 @@ test("search execution reports API and JSON failures without leaking key", async
 								() =>
 									fetchBraveSearchJson(
 										buildBraveSearchUrl({ query: "rate limit", count: 1, offset: 0 }),
-										"secret-that-must-not-leak",
+										"skey7",
 									),
 								(error: unknown) => {
 									assert.ok(error instanceof Error);
@@ -1164,7 +1192,7 @@ test("search execution reports API and JSON failures without leaking key", async
 										error.message,
 										/Do not issue parallel or repeated agent_browser_web_search calls/,
 									);
-									assert.doesNotMatch(error.message, /secret-that-must-not-leak/);
+									assert.doesNotMatch(error.message, /skey7/);
 									return true;
 								},
 							);
@@ -1172,7 +1200,7 @@ test("search execution reports API and JSON failures without leaking key", async
 								() =>
 									fetchExaSearchJson(
 										{ query: "rate limit", contents: { highlights: true } },
-										"secret-that-must-not-leak",
+										"skey7",
 									),
 								(error: unknown) => {
 									assert.ok(error instanceof Error);
@@ -1181,64 +1209,92 @@ test("search execution reports API and JSON failures without leaking key", async
 										error.message,
 										/Do not issue parallel or repeated agent_browser_web_search calls/,
 									);
-									assert.doesNotMatch(error.message, /secret-that-must-not-leak/);
+									assert.doesNotMatch(error.message, /skey7/);
 									return true;
 								},
 							);
 							const result = await executeRegisteredTool(tool, harness.ctx, {
 								query: "rate limit",
 								count: 1,
+								provider: "brave",
 							});
 							assert.equal(result.isError, true);
 							assert.match(
 								JSON.stringify(result.structuredContent),
 								/"success":false.*Brave search rate limit exceeded/,
 							);
-							assert.doesNotMatch(JSON.stringify(result), /secret-that-must-not-leak/);
+							assert.doesNotMatch(JSON.stringify(result), /skey7/);
 						},
 					);
 				});
+				t.mock.timers.setTime(Date.now() + WEB_SEARCH_MIN_REQUEST_INTERVAL_MS);
 			}
-			await withFakeFetch(
-				() => new Response("invalid JSON", { status: 200 }),
-				async () => {
-					const result = await executeRegisteredTool(tool, harness.ctx, {
-						query: "bad JSON",
-						count: 1,
-					});
-					assert.equal(result.isError, true);
-					assert.equal(readRecord(result.structuredContent).success, false);
-				},
-			);
+			for (const provider of ["brave", "exa"] as const) {
+				// Each malformed response must finish before replacing the process-global fetch stub.
+				// oxlint-disable-next-line no-await-in-loop
+				await t.test(`${provider} invalid JSON`, async () => {
+					await withFakeFetch(
+						() => new Response("skey7", { status: 200 }),
+						async () => {
+							const fetchJson =
+								provider === "brave"
+									? () =>
+											fetchBraveSearchJson(
+												buildBraveSearchUrl({ query: "bad JSON", count: 1, offset: 0 }),
+												"skey7",
+											)
+									: () => fetchExaSearchJson({ query: "bad JSON" }, "skey7");
+							await assert.rejects(fetchJson, (error: unknown) => {
+								assert.ok(error instanceof Error);
+								assert.match(error.message, /search returned invalid JSON/);
+								assert.doesNotMatch(
+									inspect(error),
+									/skey7/,
+									"source-bearing causes must not leak either",
+								);
+								return true;
+							});
+							const result = await executeRegisteredTool(tool, harness.ctx, {
+								query: "bad JSON",
+								count: 1,
+								provider,
+							});
+							assert.equal(result.isError, true);
+							assert.equal(readRecord(result.structuredContent).success, false);
+							assert.match(JSON.stringify(result), /search returned invalid JSON/);
+							assert.doesNotMatch(JSON.stringify(result), /skey7/);
+						},
+					);
+				});
+				t.mock.timers.setTime(Date.now() + WEB_SEARCH_MIN_REQUEST_INTERVAL_MS);
+			}
 			for (const { provider, response } of [
 				{ provider: "brave", response: { web: { results: "invalid" } } },
 				{ provider: "brave", response: { web: { results: [{ profile: [] }] } } },
-
 				{ provider: "exa", response: { results: 42 } },
 			]) {
 				// Provider cases share the global fetch stub and credential environment.
 				// oxlint-disable-next-line no-await-in-loop
 				await t.test(`${provider}: ${JSON.stringify(response)}`, async () => {
-					await withPatchedEnv({ [EXA_API_KEY_ENV]: "secret-that-must-not-leak" }, () =>
-						withFakeFetch(
-							() => new Response(JSON.stringify(response), { status: 200 }),
-							async () => {
-								const result = await executeRegisteredTool(tool, harness.ctx, {
-									query: "malformed success",
-									count: 1,
-									provider,
-								});
-								assert.equal(result.isError, true);
-								assert.equal(readRecord(result.details).failureCategory, "upstream-error");
-								const observation = readRecord(result.structuredContent);
-								assert.equal(observation.success, false);
-								assert.equal(observation.resultCategory, "failure");
-								assert.match(readString(observation.error), /invalid result structure/i);
-								assert.doesNotMatch(JSON.stringify(result), /secret-that-must-not-leak/);
-							},
-						),
+					await withFakeFetch(
+						() => new Response(JSON.stringify(response), { status: 200 }),
+						async () => {
+							const result = await executeRegisteredTool(tool, harness.ctx, {
+								query: "malformed success",
+								count: 1,
+								provider,
+							});
+							assert.equal(result.isError, true);
+							assert.equal(readRecord(result.details).failureCategory, "upstream-error");
+							const observation = readRecord(result.structuredContent);
+							assert.equal(observation.success, false);
+							assert.equal(observation.resultCategory, "failure");
+							assert.match(readString(observation.error), /invalid result structure/i);
+							assert.doesNotMatch(JSON.stringify(result), /skey7/);
+						},
 					);
 				});
+				t.mock.timers.setTime(Date.now() + WEB_SEARCH_MIN_REQUEST_INTERVAL_MS);
 			}
 			const controller = new AbortController();
 			controller.abort(new Error("cancelled search"));
@@ -1260,8 +1316,8 @@ test("search execution reports API and JSON failures without leaking key", async
 	);
 });
 
-test("large search results keep formatted prose inline and compact only the structured observation", async () => {
-	const fixture = await createFixture();
+test("large search results keep formatted prose inline and compact only the structured observation", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,
@@ -1318,8 +1374,8 @@ test("large search results keep formatted prose inline and compact only the stru
 	);
 });
 
-test("local validation failures report validation-error while provider failures stay upstream-error", async () => {
-	const fixture = await createFixture();
+test("local validation failures report validation-error while provider failures stay upstream-error", async (t) => {
+	const fixture = await createFixture(t);
 	await withPatchedEnv(
 		{
 			HOME: fixture.home,

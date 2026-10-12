@@ -306,6 +306,15 @@ test("native Pi registration keeps advanced tools discoverable and activation ad
 				"agent_browser_tools",
 			],
 		);
+		for (const name of all().filter((toolName) => toolName.startsWith("agent_browser"))) {
+			const tool = session.getToolDefinition(name);
+			// The exact nonempty inventory above requires every registered tool to publish an object root.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.ok(tool, `registered ${name}`);
+			// Strict providers reject schemas whose roots lack type: object.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.equal(readRecord(tool.parameters).type, "object", `${name} root schema type`);
+		}
 		assert.deepEqual(active().sort(), [...baseTools].sort());
 		assert.equal(session.getCallableToolNames().includes("agent_browser_qa"), false);
 		const inventory = await call("agent_browser_tools", {});
@@ -329,13 +338,13 @@ test("native Pi registration keeps advanced tools discoverable and activation ad
 });
 
 test("native defaultTools survives startup and initial resume restoration is additive", async () => {
-	const managerWithRestored = (tool: "action" | "qa"): SessionManager => {
+	const managerWithRestored = (...tools: readonly ("action" | "qa")[]): SessionManager => {
 		const manager = SessionManager.inMemory();
 		manager.appendMessage({
 			role: "system",
 			content: "",
 			timestamp: 1,
-			toolsAdded: [
+			toolsAdded: tools.map((tool) =>
 				tool === "action"
 					? {
 							name: "agent_browser_action",
@@ -343,10 +352,17 @@ test("native defaultTools survives startup and initial resume restoration is add
 							parameters: AGENT_BROWSER_ACTION_PARAMS,
 						}
 					: { name: "agent_browser_qa", description: "QA", parameters: AGENT_BROWSER_QA_PARAMS },
-			],
+			),
 		});
 		return manager;
 	};
+	const removed = managerWithRestored("qa", "action");
+	removed.appendMessage({
+		role: "system",
+		content: "",
+		timestamp: 2,
+		toolsRemoved: [{ name: "agent_browser_action" }],
+	});
 	const cases: Array<{
 		label: string;
 		options: { defaultTools?: string[]; sessionManager?: SessionManager };
@@ -367,6 +383,11 @@ test("native defaultTools survives startup and initial resume restoration is add
 		{
 			label: "transcript-restored qa without default tools",
 			options: { sessionManager: managerWithRestored("qa") },
+			restoredTool: "agent_browser_qa",
+		},
+		{
+			label: "transcript removal overrides addition without default tools",
+			options: { sessionManager: removed },
 			restoredTool: "agent_browser_qa",
 		},
 		{ label: "plain registration without default tools or restoration", options: {} },
@@ -597,35 +618,6 @@ test("advanced wrappers normalize into one executor while code keeps explicit id
 	});
 });
 
-test("startup preserves native transcript activation and honors native removals", async () => {
-	const manager = SessionManager.inMemory();
-	manager.appendMessage({
-		role: "system",
-		content: "",
-		timestamp: 1,
-		toolsAdded: [
-			{ name: "agent_browser_qa", description: "QA", parameters: AGENT_BROWSER_QA_PARAMS },
-			{
-				name: "agent_browser_action",
-				description: "Action",
-				parameters: AGENT_BROWSER_ACTION_PARAMS,
-			},
-		],
-	});
-	manager.appendMessage({
-		role: "system",
-		content: "",
-		timestamp: 2,
-		toolsRemoved: [{ name: "agent_browser_action" }],
-	});
-	await withSurface(
-		async ({ active }) => {
-			assert.deepEqual(active().sort(), [...baseTools, "agent_browser_qa"].sort());
-		},
-		{ sessionManager: manager },
-	);
-});
-
 test("explicit native CLI tool selection stays active and the loader cannot override unavailable tools", async () => {
 	const original = process.argv;
 	try {
@@ -821,23 +813,6 @@ test("Electron action schemas preserve field boundaries through native Pi valida
 			// Fixture transitions and their assertions run in order against this test's shared state.
 			// oxlint-disable-next-line no-await-in-loop
 			await rejection;
-		}
-	});
-});
-
-test("every registered browser tool exposes an object-rooted parameter schema", async () => {
-	await withSurface(async ({ all, session }) => {
-		const browserTools = all().filter((toolName) => toolName.startsWith("agent_browser"));
-		assert.ok(browserTools.length > 0, "browser tools must be registered");
-		for (const name of browserTools) {
-			const tool = session.getToolDefinition(name);
-			// The asserted nonempty registered browser-tool set checks every object-rooted schema.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(tool, `registered ${name}`);
-			// Strict providers reject a schema whose root lacks `type: "object"`.
-			// The asserted nonempty registered browser-tool set checks every object-rooted schema.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(readRecord(tool.parameters).type, "object", `${name} root schema type`);
 		}
 	});
 });

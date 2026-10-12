@@ -3,10 +3,10 @@
  */
 
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import { spawn } from "cross-spawn";
 import { readRecord } from "./helpers/assertions.js";
@@ -32,8 +32,13 @@ async function runProcess(
 			const child = spawn(command, args, {
 				cwd: options.cwd ?? process.cwd(),
 				env: options.env ?? process.env,
-				stdio: ["pipe", "pipe", "pipe"],
+				stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 			});
+			if (child.stdout === null || child.stderr === null) {
+				child.kill();
+				reject(new Error("Config CLI fixture requires piped stdout and stderr"));
+				return;
+			}
 			let stdout = "";
 			let stderr = "";
 			child.stdout.setEncoding("utf8");
@@ -45,6 +50,16 @@ async function runProcess(
 				stderr += chunk;
 			});
 			child.on("error", reject);
+			// A short-lived command may close stdin before consuming caller input.
+			// Only a successful exit may make that EPIPE harmless.
+			let stdinError: Readonly<NodeJS.ErrnoException> | undefined;
+			child.stdin?.on("error", (error: Readonly<NodeJS.ErrnoException>) => {
+				if (error.code === "EPIPE") {
+					stdinError = error;
+				} else {
+					reject(error);
+				}
+			});
 			child.on("close", (code) => {
 				if (code === 0) {
 					resolve({ stdout, stderr });
@@ -56,12 +71,13 @@ async function runProcess(
 								code,
 								stdout,
 								stderr,
+								cause: stdinError,
 							},
 						),
 					);
 				}
 			});
-			child.stdin.end(options.input ?? "");
+			child.stdin?.end(options.input);
 		},
 	);
 }
@@ -80,8 +96,9 @@ async function runConfig(
 	});
 }
 
-async function createFixture() {
+async function createFixture(t: TestContext) {
 	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-config-cli-test-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
 	const cwd = join(root, "repo");
 	const home = join(root, "home");
 	const npmCache = join(root, "npm-cache");
@@ -174,6 +191,7 @@ function documentedNpmExecArgs(command: string): {
 	}
 	const tokens = tokenizeDocumentedCommand(executable);
 	assert.equal(tokens[0], "npm", `documented command must start with npm exec: ${command}`);
+	assert.equal(tokens[tokens.indexOf("--") + 1], "pi-agent-browser-config");
 	const packageIndex = tokens.indexOf("--package");
 	assert.notEqual(packageIndex, -1, `documented command must use --package: ${command}`);
 	assert.equal(
@@ -185,8 +203,8 @@ function documentedNpmExecArgs(command: string): {
 	return { args: tokens.slice(1), input };
 }
 
-test("config CLI prints Pi-scoped paths and pass-through setup help", async () => {
-	const fixture = await createFixture();
+test("config CLI prints Pi-scoped paths and pass-through setup help", async (t) => {
+	const fixture = await createFixture(t);
 	const { stdout } = await runConfig(["paths"], { cwd: fixture.cwd, env: fixture.env });
 	assert.ok(stdout.includes(fixture.globalPath), stdout);
 	assert.ok(stdout.includes(fixture.projectPath), stdout);
@@ -199,8 +217,8 @@ test("config CLI prints Pi-scoped paths and pass-through setup help", async () =
 	assert.doesNotMatch(help, /^  pi-agent-browser-config/m);
 });
 
-test("config CLI executes from paths requiring file URL encoding", async () => {
-	const fixture = await createFixture();
+test("config CLI executes from paths requiring file URL encoding", async (t) => {
+	const fixture = await createFixture(t);
 	const packageRoot = join(fixture.root, "package space # ü");
 	const script = join(packageRoot, "scripts", "config.mjs");
 	const policy = join(packageRoot, "extensions", "agent-browser", "lib", "config-policy.js");
@@ -228,8 +246,8 @@ test("config CLI executes from paths requiring file URL encoding", async () => {
 	);
 });
 
-test("config module imports without invoking the CLI or inspecting the caller operand", async () => {
-	const fixture = await createFixture();
+test("config module imports without invoking the CLI or inspecting the caller operand", async (t) => {
+	const fixture = await createFixture(t);
 	const moduleUrl = JSON.stringify(pathToFileURL(CONFIG_SCRIPT).href);
 	const { stdout, stderr } = await runProcess(
 		process.execPath,
@@ -264,8 +282,8 @@ test("published package config docs only use npm-exec helper examples", async ()
 	assert.deepEqual(violations, []);
 });
 
-test("documented npm-exec package config examples execute against an isolated config", async () => {
-	const fixture = await createFixture();
+test("documented npm-exec package config examples execute against an isolated config", async (t) => {
+	const fixture = await createFixture(t);
 	const documentedCommands = new Map<string, string>();
 	const markdown = await Promise.all(
 		["README.md", "docs/COMMAND_REFERENCE.md"].map(async (path) => ({
@@ -281,21 +299,40 @@ test("documented npm-exec package config examples execute against an isolated co
 		}
 	}
 	assert.notEqual(documentedCommands.size, 0);
+	// Resolve npm's installed bin directory once; each example still invokes the installed helper.
+	const { stdout: helperPath } = await runProcess(
+		NPM_COMMAND,
+		[
+			"exec",
+			"--yes",
+			"--package",
+			LOCAL_PACKAGE_SPEC,
+			"--",
+			process.execPath,
+			"-e",
+			"process.stdout.write(process.env.PATH)",
+		],
+		{
+			cwd: fixture.cwd,
+			env: { ...fixture.env, NPM_CONFIG_IGNORE_SCRIPTS: "true" },
+		},
+	);
 	for (const [command, path] of documentedCommands) {
 		const { args, input } = documentedNpmExecArgs(command);
-		// Each documented command mutates the same isolated configuration; retain documented execution order.
+		const helperIndex = args.indexOf("--") + 1;
+		// Each installed helper command mutates the same isolated configuration in documented order.
 		// oxlint-disable-next-line no-await-in-loop
-		await runProcess(NPM_COMMAND, args, {
+		await runProcess(args[helperIndex], args.slice(helperIndex + 1), {
 			cwd: fixture.cwd,
-			env: { ...fixture.env, EXA_API_KEY: "doc-secret-exa-key" },
+			env: { ...fixture.env, PATH: helperPath, EXA_API_KEY: "doc-secret-exa-key" },
 			input,
 			label: `${path} documented npm-exec config example`,
 		});
 	}
 });
 
-test("config CLI writes and redacts global plaintext Brave key", async () => {
-	const fixture = await createFixture();
+test("config CLI writes and redacts global plaintext Brave key", async (t) => {
+	const fixture = await createFixture(t);
 	await runConfig(["web-search", "set-key", "--provider", "brave", "--stdin"], {
 		cwd: fixture.cwd,
 		env: fixture.env,
@@ -314,8 +351,18 @@ test("config CLI writes and redacts global plaintext Brave key", async () => {
 	}
 });
 
-test("config CLI requires providers for ambiguous credential writes", async () => {
-	const fixture = await createFixture();
+test("config CLI parse diagnostics do not expose malformed credential values", async (t) => {
+	const fixture = await createFixture(t);
+	await mkdir(dirname(fixture.projectPath), { recursive: true });
+	await writeFile(fixture.projectPath, '{"webSearch":{"braveApiKey":cfgkey7}}');
+	const { stdout, stderr } = await runConfig(["show"], { cwd: fixture.cwd, env: fixture.env });
+	assert.match(stdout, /Validation errors:/);
+	assert.match(stdout, /Could not parse project config .*config\.json/);
+	assert.doesNotMatch(stdout + stderr, /cfgkey7/);
+});
+
+test("config CLI requires providers for ambiguous credential writes", async (t) => {
+	const fixture = await createFixture(t);
 	await assert.rejects(
 		() =>
 			runConfig(["web-search", "set-key", "--stdin"], {
@@ -339,8 +386,8 @@ test("config CLI requires providers for ambiguous credential writes", async () =
 	);
 });
 
-test("config CLI writes project-local Brave key sources and redacts status", async () => {
-	const fixture = await createFixture();
+test("config CLI writes project-local Brave key sources and redacts status", async (t) => {
+	const fixture = await createFixture(t);
 	await runConfig(["web-search", "set-key", "--provider", "brave", "--stdin", "--project"], {
 		cwd: fixture.cwd,
 		env: fixture.env,
@@ -372,8 +419,8 @@ test("config CLI writes project-local Brave key sources and redacts status", asy
 	assert.match(stdout, /configured via command \(project\)/);
 });
 
-test("config CLI writes project env source, project profile, and project executable path", async () => {
-	const fixture = await createFixture();
+test("config CLI writes project env source, project profile, and project executable path", async (t) => {
+	const fixture = await createFixture(t);
 	await runConfig(["web-search", "set-env", "BRAVE_API_KEY", "--project"], {
 		cwd: fixture.cwd,
 		env: fixture.env,
@@ -428,45 +475,36 @@ test("config CLI writes project env source, project profile, and project executa
 	);
 });
 
-test("config CLI status accepts project-local custom web-search env aliases", async () => {
-	const fixture = await createFixture();
-	await mkdir(dirname(fixture.projectPath), { recursive: true });
-	await writeFile(
-		fixture.projectPath,
-		JSON.stringify(
-			{ version: 1, webSearch: { braveApiKey: "$MY_BRAVE_ALIAS", defaultSearchType: "deep-lite" } },
-			null,
-			2,
-		),
-	);
-	const { stdout } = await runConfig(["show"], {
-		cwd: fixture.cwd,
-		env: { ...fixture.env, MY_BRAVE_ALIAS: "alias-secret" },
+for (const [provider, alias] of [
+	["exa", "AWS_SECRET_ACCESS_KEY"],
+	["brave", "MY_BRAVE_ALIAS"],
+] as const) {
+	test(`config CLI writes project-local custom ${provider} env aliases and preserves search defaults`, async (t) => {
+		const fixture = await createFixture(t);
+		await mkdir(dirname(fixture.projectPath), { recursive: true });
+		await writeFile(
+			fixture.projectPath,
+			JSON.stringify({ version: 1, webSearch: { defaultSearchType: "deep-lite" } }),
+		);
+		await runConfig(["web-search", "set-env", alias, "--provider", provider, "--project"], {
+			cwd: fixture.cwd,
+			env: fixture.env,
+		});
+		const raw = readRecord(JSON.parse(await readFile(fixture.projectPath, "utf8")));
+		assert.equal(readRecord(raw.webSearch)[`${provider}ApiKey`], `$${alias}`);
+		assert.equal(readRecord(raw.webSearch).defaultSearchType, "deep-lite");
+		const { stdout } = await runConfig(["show"], {
+			cwd: fixture.cwd,
+			env: { ...fixture.env, [alias]: "alias-secret" },
+		});
+		assert.doesNotMatch(stdout, /Validation errors:/);
+		assert.match(stdout, /webSearch\.defaultSearchType: deep-lite/);
+		assert.match(
+			stdout,
+			new RegExp(
+				`webSearch\\.${provider}ApiKey: configured via environment interpolation \\(project\\)`,
+			),
+		);
+		assert.doesNotMatch(stdout, /alias-secret/);
 	});
-	assert.doesNotMatch(stdout, /Validation errors:/);
-	assert.match(stdout, /webSearch\.defaultSearchType: deep-lite/);
-	assert.match(
-		stdout,
-		/webSearch\.braveApiKey: configured via environment interpolation \(project\)/,
-	);
-	assert.doesNotMatch(stdout, /alias-secret/);
-});
-
-test("config CLI writes project-local custom web-search env aliases", async () => {
-	const fixture = await createFixture();
-	await runConfig(
-		["web-search", "set-env", "AWS_SECRET_ACCESS_KEY", "--provider", "exa", "--project"],
-		{ cwd: fixture.cwd, env: fixture.env },
-	);
-	const raw = await readFile(fixture.projectPath, "utf8");
-	assert.match(raw, /AWS_SECRET_ACCESS_KEY/);
-	const { stdout } = await runConfig(["show"], {
-		cwd: fixture.cwd,
-		env: { ...fixture.env, AWS_SECRET_ACCESS_KEY: "aws-secret" },
-	});
-	assert.match(
-		stdout,
-		/webSearch\.exaApiKey: configured via environment interpolation \(project\)/,
-	);
-	assert.doesNotMatch(stdout, /aws-secret/);
-});
+}

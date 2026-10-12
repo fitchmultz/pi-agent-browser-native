@@ -40,8 +40,6 @@ export {
 	buildExaSearchRequestBody,
 	fetchBraveSearchJson,
 	fetchExaSearchJson,
-	getWebSearchProviderAdapter,
-	type WebSearchProviderAdapter,
 } from "./web-search-providers.js";
 export {
 	cleanSearchText,

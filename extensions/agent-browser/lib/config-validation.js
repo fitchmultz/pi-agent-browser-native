@@ -225,10 +225,9 @@ export function parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings)
 	let parsed;
 	try {
 		parsed = JSON.parse(raw);
-	} catch (error) {
-		errors.push(
-			`Could not parse ${scope} config ${path}: ${error instanceof Error ? error.message : describeUnknownError(error)}`,
-		);
+	} catch {
+		// Native parser previews can expose plaintext credentials, including partial values.
+		errors.push(`Could not parse ${scope} config ${path}: Invalid JSON.`);
 		return;
 	}
 	const config = validateAgentBrowserConfig(parsed, path, errors, warnings);
