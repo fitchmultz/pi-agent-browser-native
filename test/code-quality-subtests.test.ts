@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, cpSync, rmSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fixture, lint } from "./helpers/code-quality-fixture.js";
@@ -99,7 +99,7 @@ describe('suite', defineCases);
 		path.join(directory, "foreign", "unrelated.ts"),
 		"export { defineCases } from '../suite.js';\nexport const source = 'foreign';\n",
 	);
-	for (const consumer of [
+	const consumers = [
 		"import * as suite from './suite.js';\nconst { defineCases } = suite;\ntest('parent', () => { assert.equal(1 + 1, 2); defineCases(); });",
 		"test('parent', async () => { assert.equal(1 + 1, 2); const { defineCases } = await import('./suite.js'); defineCases(); });",
 		"test('parent', async () => { assert.equal(1 + 1, 2); const suite = await import('./suite.js'); suite['defineCases'](); });",
@@ -119,14 +119,27 @@ describe('suite', defineCases);
 		"import vm from 'node:vm';\nconst { native: { runInThisContext } } = { native: vm };\ntest('parent', () => { assert.equal(1 + 1, 2); runInThisContext(\"process.getBuiltinModule('node:module').createRequire(\" + JSON.stringify(import.meta.url) + \")('./suite.ts').defineCases()\"); });",
 		"import vm from 'node:vm';\ntest('parent', () => { assert.equal(1 + 1, 2); for (const { runInThisContext } of [vm]) { runInThisContext(\"process.getBuiltinModule('node:module').createRequire(\" + JSON.stringify(import.meta.url) + \")('./suite.ts').defineCases()\"); } });",
 		"import vm from 'node:vm';\ntest('parent', () => { assert.equal(1 + 1, 2); [vm].forEach(({ runInThisContext }) => { runInThisContext(\"process.getBuiltinModule('node:module').createRequire(\" + JSON.stringify(import.meta.url) + \")('./suite.ts').defineCases()\"); }); });",
-	]) {
-		writeFileSync(file, `${imports}${consumer}\n`);
-		const importedReuse = lint(directory, ["typescript(no-floating-promises)"]);
-		// oxlint-disable-next-line node-test/no-conditional-assertion -- Each module-reference form must expose the exact unowned registration in the exported suite.
-		assert.deepEqual(importedReuse.diagnosticLocations, [
-			{ code: "typescript(no-floating-promises)", filename: "suite.ts", line: 5 },
-		]);
+	];
+	const consumerRoot = path.join(directory, "consumers");
+	for (const [index, consumer] of consumers.entries()) {
+		const caseDirectory = path.join(consumerRoot, `case-${index}`);
+		mkdirSync(caseDirectory, { recursive: true });
+		// Opaque loads revoke exports program-wide; each variant needs its own program.
+		writeFileSync(
+			path.join(caseDirectory, "tsconfig.json"),
+			'{"extends":"../../tsconfig.json","include":["*.ts"]}\n',
+		);
+		for (const name of ["suite.ts", "unrelated.ts", "foreign"]) {
+			cpSync(path.join(directory, name), path.join(caseDirectory, name), { recursive: true });
+		}
+		writeFileSync(path.join(caseDirectory, "subtests.test.ts"), `${imports}${consumer}\n`);
 	}
+	const importedReuse = lint(directory, ["typescript(no-floating-promises)"]);
+	assert.deepEqual(
+		importedReuse.diagnosticLocations.map(({ filename, line }) => `${filename}:${line}`).sort(),
+		consumers.map((_consumer, index) => `consumers/case-${index}/suite.ts:5`).sort(),
+	);
+	rmSync(consumerRoot, { recursive: true });
 	writeFileSync(
 		path.join(directory, "package.json"),
 		'{"name":"owned-suite","type":"module","exports":{"types":"./types.d.ts","require":"./runtime.mjs","default":"./runtime.mjs"}}\n',
