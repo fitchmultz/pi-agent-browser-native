@@ -224,7 +224,7 @@ Before calling the first implementation usable, verify at minimum:
 - explicit `--session` passthrough works
 - configured-source `/reload` preserves runtime continuity
 - full restart + exact `--session-id` relaunch or `/resume` picks up changed compiled extension code
-- when `electron.*`, attached-session diagnostics, or `qa.attached` change: exercise `electron.list` → `electron.launch` → browser commands → `electron.cleanup` on a local Electron app (see [`docs/RELEASE.md`](docs/RELEASE.md) and [`docs/ELECTRON.md`](docs/ELECTRON.md))
+- when `electron.*`, attached-session diagnostics, or `qa.attached` change: exercise `electron.list` → `electron.launch` → browser commands → `electron.cleanup` on a disposable fixture Electron app built from the stock `electron` npm package, never the operator's installed desktop apps (see [`docs/RELEASE.md`](docs/RELEASE.md) and [`docs/ELECTRON.md`](docs/ELECTRON.md))
 
 ## Cursor Cloud
 
