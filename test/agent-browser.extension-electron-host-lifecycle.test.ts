@@ -1553,14 +1553,16 @@ test("Electron status requires browser version metadata from a live HTTP endpoin
 
 test("restored Electron cleanup round-trips a matching start identity and removes a spaces-and-Unicode profile", async () => {
 	const userDataDir = await createSecureTempDirectory("electron-profile-space é-");
-	const child = spawn(
+	const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+	const refusalChild = spawn(
 		process.execPath,
 		["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${userDataDir}`],
 		{ stdio: "ignore" },
 	);
 	try {
-		await once(child, "spawn");
+		await Promise.all([once(child, "spawn"), once(refusalChild, "spawn")]);
 		assert.ok(child.pid !== undefined && child.pid > 0);
+		assert.ok(refusalChild.pid !== undefined && refusalChild.pid > 0);
 		const startIdentity = await readProcessStartIdentity(child.pid);
 		assert.ok(startIdentity !== undefined && startIdentity.length > 0);
 		const record: ElectronLaunchRecord = {
@@ -1578,9 +1580,9 @@ test("restored Electron cleanup round-trips a matching start identity and remove
 		};
 		const assertRefusedIdentity = async (recordedIdentity: string | undefined) => {
 			const refused = await cleanupElectronLaunchResources({
-				record: { ...record, startIdentity: recordedIdentity },
+				record: { ...record, pid: refusalChild.pid, startIdentity: recordedIdentity },
 			});
-			assert.equal(isTestPidAlive(child.pid), true, "unverified PID must not be signaled");
+			assert.equal(isTestPidAlive(refusalChild.pid), true, "unverified PID must not be signaled");
 			assert.equal(refused.partial, true);
 			assert.equal(refused.steps.find((step) => step.resource === "process")?.state, "failed");
 			assert.match(
@@ -1613,7 +1615,7 @@ test("restored Electron cleanup round-trips a matching start identity and remove
 		assert.equal(await waitForTestPidExit(child.pid), true);
 		await assert.rejects(stat(userDataDir), { code: "ENOENT" });
 	} finally {
-		await stopChildProcess(child);
+		await Promise.all([stopChildProcess(child), stopChildProcess(refusalChild)]);
 		await rm(userDataDir, { force: true, recursive: true });
 	}
 });
