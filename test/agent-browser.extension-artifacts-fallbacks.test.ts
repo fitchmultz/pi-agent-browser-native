@@ -322,8 +322,7 @@ process.stdout.write("invalid-json " + fs.readFileSync(0, "utf8") + " " + "x".re
 				const beforeSpools = new Set(await readdir(spoolRoot));
 
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["auth", "save", "demo", "--password-stdin"],
-					stdin: "super-secret-password",
+					args: ["state", "show", "caller-owned.json"],
 				});
 
 				assert.equal(result.isError, true);
@@ -335,7 +334,6 @@ process.stdout.write("invalid-json " + fs.readFileSync(0, "utf8") + " " + "x".re
 				);
 				assert.equal(result.details?.artifactManifest, undefined);
 				assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
-				assert.doesNotMatch(JSON.stringify(result), /super-secret-password/);
 				assert.doesNotMatch(JSON.stringify(result), /piab-r2-[a-f\d]{32}/);
 				assert.deepEqual(
 					(await readdir(spoolRoot)).filter(
@@ -355,6 +353,17 @@ process.stdout.write("invalid-json " + fs.readFileSync(0, "utf8") + " " + "x".re
 						.map((file) => readFile(join(file.parentPath, file.name), "utf8")),
 				);
 				assert.doesNotMatch(persisted.join("\n"), new RegExp(sentinel));
+
+				const authResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["auth", "save", "demo", "--password-stdin"],
+					stdin: "super-secret-password",
+				});
+				assert.equal(authResult.details?.fullOutputPath, undefined);
+				assert.match(
+					readString(authResult.details?.fullOutputUnavailable ?? ""),
+					/discarded because it may contain sensitive browser data/,
+				);
+				assert.doesNotMatch(JSON.stringify(authResult), /super-secret-password/);
 				await runExtensionEvent(harness.handlers, "session_shutdown");
 			});
 		} finally {

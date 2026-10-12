@@ -1217,7 +1217,7 @@ test("provider fetch helpers do not call fetch when already aborted", async () =
 	);
 });
 
-test("search execution reports API and JSON failures without leaking key", async (t) => {
+test("search execution reports invalid JSON, malformed structures, and abort without leaking key", async (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now: 1000 });
 	const fixture = await createFixture(t);
 	await withPatchedEnv(
@@ -1326,13 +1326,13 @@ for (const [provider, status, body, hint] of [
 		"brave",
 		429,
 		"upstream failed skey&#55;",
-		/Do not issue parallel or repeated agent_browser_web_search calls/,
+		/rate limit exceeded \(HTTP 429\)\. Do not issue parallel or repeated agent_browser_web_search calls/,
 	],
 	[
 		"exa",
 		429,
 		"provider-body-preview skey7",
-		/Do not issue parallel or repeated agent_browser_web_search calls/,
+		/rate limit exceeded \(HTTP 429\)\. Do not issue parallel or repeated agent_browser_web_search calls/,
 	],
 	["brave", 500, "provider-body-preview skey7", /provider unavailable/i],
 ] as const) {

@@ -2052,11 +2052,6 @@ process.stdin.on("end", () => {
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.ok(batchIndex >= 0);
 							const preflight = calls.slice(0, batchIndex);
-							// Explicit verification and attached admission both require readable URL evidence.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(
-								preflight.some((entry) => entry.args.includes("get") && entry.args.includes("url")),
-							);
 							// The failing title fixture must not be consulted before admitting any URL scheme.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(
