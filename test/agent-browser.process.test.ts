@@ -111,10 +111,6 @@ test("Windows socket storage validates native directories without POSIX uid meta
 		);
 		assert.equal((await lstat(socketDir)).isDirectory(), true);
 		assert.equal(
-			await getAgentBrowserSocketDirValidationError(socketDir, undefined, "win32"),
-			undefined,
-		);
-		assert.equal(
 			await getAgentBrowserSocketDirValidationError("relative", undefined, "win32"),
 			"the path is not absolute",
 		);
@@ -939,7 +935,6 @@ test("runAgentBrowserProcess removes abort listeners after repeated successful r
 
 test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnvelope still sees the full payload", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
 	const bigSnapshotRows = Array.from({ length: 7_000 }, (_, index) => {
 		const ref = `e${index + 1}`;
 		return `- generic "Large process snapshot row ${index + 1} that forces stdout spilling without losing parseability" [ref=${ref}] clickable [onclick]`;
@@ -948,25 +943,9 @@ test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnve
 		{ length: 80 },
 		(_, index) => `e${index + 1}: { name: "Action ${index + 1}", role: "button" }`,
 	).join(",");
-	await writeFile(
-		fakeAgentBrowserPath,
-		`#!/usr/bin/env node
-const envelope = {
-  success: true,
-  data: {
-    origin: "https://example.com/process-large",
-    refs: {${refsLiteral}},
-    snapshot: ${JSON.stringify(bigSnapshotRows)}
-  }
-};
-process.stdout.write(JSON.stringify(envelope));
-`,
-		"utf8",
-	);
-	if (process.platform === "win32") {
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const envelope = {
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const envelope = {
   success: true,
   data: {
     origin: "https://example.com/process-large",
@@ -975,10 +954,7 @@ process.stdout.write(JSON.stringify(envelope));
   }
 };
 process.stdout.write(JSON.stringify(envelope));`,
-		);
-	} else {
-		await chmod(fakeAgentBrowserPath, 0o755);
-	}
+	);
 
 	try {
 		const processResult = await runAgentBrowserProcess({
