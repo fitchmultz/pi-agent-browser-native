@@ -2,14 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
-import { chosenUrl, hashRouteUrl, withPage } from "./helpers/cold-boundaries-fixture.js";
+import { chosenUrl, hashRouteUrl, withPage, withPages } from "./helpers/cold-boundaries-fixture.js";
 
-for (const args of [["reload"], ["back"], ["forward"], ["pushstate", "/route"]]) {
-	test(
-		`cold current-page command reopens before ${args.join(" ")}`,
-		{ concurrency: false },
-		async () => {
-			await withPage(async (page) => {
+test("cold current-page commands reopen before dispatch", { concurrency: false }, async () => {
+	await withPages(async (withRow) => {
+		const check = (args: readonly string[]) =>
+			withRow(async (page) => {
 				const result = await page.call({ args });
 				assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
 				const commands = (await page.calls()).map((row) => extractUpstreamCommandTokens(row.args));
@@ -23,77 +21,93 @@ for (const args of [["reload"], ["back"], ["forward"], ["pushstate", "/route"]])
 					[["open", page.url]],
 				);
 			});
-		},
-	);
-}
+		for (const args of [["reload"], ["back"], ["forward"], ["pushstate", "/route"]]) {
+			// Each row resets branch/native state and completes shutdown before the next.
+			// oxlint-disable-next-line no-await-in-loop
+			await check(args);
+		}
+	});
+});
 
-for (const prefix of [
-	["tab", "list"],
-	["read", "--timeout", "100", chosenUrl],
-	["session", "info"],
-	["console", "--clear"],
-]) {
-	test(
-		`cold batch finds the page dependency after ${prefix.join(" ")}`,
-		{ concurrency: false },
-		async () => {
-			await withPage(async (page) => {
-				const stdin = JSON.stringify([prefix, ["snapshot", "-i"]]);
-				const result = await page.call({ args: ["batch", "--bail"], stdin });
-				assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
-				assert.equal(
-					readRecord(readRecord(readArray(readRecord(result.details).data).at(-1)).result).origin,
-					page.url,
-				);
-				const calls = await page.calls();
-				assert.equal(calls.filter((row) => row.args.includes("batch")).length, 1);
-				assert.equal(calls.find((row) => row.args.includes("batch"))?.stdin, stdin);
-				assert.deepEqual(
-					calls
-						.filter((row) => row.args.includes("open"))
-						.map((row) => extractUpstreamCommandTokens(row.args)),
-					[["open", page.url]],
-				);
-			});
-		},
-	);
-}
-
-for (const params of [
-	{ args: ["snapshot", "-i"] },
-	{
-		args: ["batch", "--bail"],
-		stdin: JSON.stringify([
-			["tab", "list"],
-			["snapshot", "-i"],
-		]),
-	},
-]) {
-	test(
-		`cold hash-router URL is reopened intact for ${params.args.join(" ")}`,
-		{ concurrency: false },
-		async () => {
-			await withPage(
-				async (page) => {
-					const result = await page.call(params);
+test(
+	"cold batch finds the page dependency after non-page prefixes",
+	{ concurrency: false },
+	async () => {
+		await withPages(async (withRow) => {
+			const check = (prefix: readonly string[]) =>
+				withRow(async (page) => {
+					const stdin = JSON.stringify([prefix, ["snapshot", "-i"]]);
+					const result = await page.call({ args: ["batch", "--bail"], stdin });
 					assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
-					assert.equal((await page.state()).url, hashRouteUrl);
-					assert.deepEqual(
-						(await page.calls())
-							.filter((row) => extractUpstreamCommandTokens(row.args)[0] === "open")
-							.map((row) => extractUpstreamCommandTokens(row.args)),
-						[["open", hashRouteUrl]],
-					);
 					assert.equal(
-						readRecord(readRecord(readRecord(result.details).refSnapshot).target).url,
-						hashRouteUrl,
+						readRecord(readRecord(readArray(readRecord(result.details).data).at(-1)).result).origin,
+						page.url,
 					);
-				},
-				{ url: hashRouteUrl },
-			);
-		},
-	);
-}
+					const calls = await page.calls();
+					assert.equal(calls.filter((row) => row.args.includes("batch")).length, 1);
+					assert.equal(calls.find((row) => row.args.includes("batch"))?.stdin, stdin);
+					assert.deepEqual(
+						calls
+							.filter((row) => row.args.includes("open"))
+							.map((row) => extractUpstreamCommandTokens(row.args)),
+						[["open", page.url]],
+					);
+				});
+			for (const prefix of [
+				["tab", "list"],
+				["read", "--timeout", "100", chosenUrl],
+				["session", "info"],
+				["console", "--clear"],
+			]) {
+				// Each row resets branch/native state and completes shutdown before the next.
+				// oxlint-disable-next-line no-await-in-loop
+				await check(prefix);
+			}
+		});
+	},
+);
+
+test(
+	"cold hash-router URL is reopened intact for direct and batch snapshots",
+	{ concurrency: false },
+	async () => {
+		await withPages(
+			async (withRow) => {
+				const check = (params: { readonly args: readonly string[]; readonly stdin?: string }) =>
+					withRow(async (page) => {
+						const result = await page.call(params);
+						assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
+						assert.equal((await page.state()).url, hashRouteUrl);
+						assert.deepEqual(
+							(await page.calls())
+								.filter((row) => extractUpstreamCommandTokens(row.args)[0] === "open")
+								.map((row) => extractUpstreamCommandTokens(row.args)),
+							[["open", hashRouteUrl]],
+						);
+						assert.equal(
+							readRecord(readRecord(readRecord(result.details).refSnapshot).target).url,
+							hashRouteUrl,
+						);
+					});
+				for (const params of [
+					{ args: ["snapshot", "-i"] },
+					{
+						args: ["batch", "--bail"],
+						stdin: JSON.stringify([
+							["tab", "list"],
+							["snapshot", "-i"],
+						]),
+					},
+				]) {
+					// Each row resets branch/native state and completes shutdown before the next.
+					// oxlint-disable-next-line no-await-in-loop
+					await check(params);
+				}
+			},
+			{ url: hashRouteUrl },
+		);
+	},
+);
 
 test(
 	"cold current-URL network filtering reopens before its helper and persists ref invalidation",

@@ -174,62 +174,68 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 	);
 }
 
-for (const prefix of [
-	["tab", "list"],
-	["read", "--timeout", "100", chosenUrl],
-	["console", "--clear"],
-]) {
-	test(
-		`cold reopen persists through non-page ${prefix.join(" ")} and transcript replay`,
-		{ concurrency: false },
-		async () => {
-			await withPage(async (page) => {
-				const first = await page.call({ args: prefix });
-				assert.equal(first.isError, false, readString(readRecord(first.content[0]).text));
-				assert.equal(
-					(await page.state()).active,
-					prefix[0] !== "read",
-					"HTTP reads leave the cold managed daemon untouched",
-				);
-				assert.equal((await page.state()).browser, prefix[0] !== "read");
-				assert.equal(
-					(await page.state()).url,
-					prefix[0] === "read" ? "about:blank" : new URL(page.url).origin + "/",
-				);
-				assert.equal(
-					readRecord(first.details).sessionTabReopenPending,
-					prefix[0] === "read" ? undefined : true,
-				);
-				assert.equal(
-					readRecord(first.details?.sessionTabTarget ?? {}).url,
-					prefix[0] === "read" ? undefined : page.url,
-				);
-				assert.equal(
-					readRecord(first.details?.refSnapshotInvalidation ?? {}).reason,
-					prefix[0] === "read" ? undefined : "page-transition",
-				);
-				assert.equal(
-					(await page.calls()).some((row) => row.args.includes("open")),
-					false,
-				);
-				await page.tree();
-				await page.reload();
-				const result = await page.call({ args: ["get", "url"] });
-				assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
-				assert.equal(readRecord(readRecord(result.details).data).url, page.url);
-				const snapshot = await page.call({ args: ["snapshot", "-i"] });
-				assert.equal(snapshot.isError, false, readString(readRecord(snapshot.content[0]).text));
-				assert.equal(readRecord(readRecord(snapshot.details).data).origin, page.url);
-				assert.deepEqual(
-					(await page.calls())
-						.filter((row) => row.args.includes("open"))
-						.map((row) => extractUpstreamCommandTokens(row.args)),
-					[["open", page.url]],
-				);
-			});
-		},
-	);
-}
+test(
+	"cold reopen persists through non-page commands and transcript replay",
+	{ concurrency: false },
+	async () => {
+		await withPages(async (withRow) => {
+			const check = (prefix: readonly string[]) =>
+				withRow(async (page) => {
+					const first = await page.call({ args: prefix });
+					assert.equal(first.isError, false, readString(readRecord(first.content[0]).text));
+					assert.equal(
+						(await page.state()).active,
+						prefix[0] !== "read",
+						"HTTP reads leave the cold managed daemon untouched",
+					);
+					assert.equal((await page.state()).browser, prefix[0] !== "read");
+					assert.equal(
+						(await page.state()).url,
+						prefix[0] === "read" ? "about:blank" : new URL(page.url).origin + "/",
+					);
+					assert.equal(
+						readRecord(first.details).sessionTabReopenPending,
+						prefix[0] === "read" ? undefined : true,
+					);
+					assert.equal(
+						readRecord(first.details?.sessionTabTarget ?? {}).url,
+						prefix[0] === "read" ? undefined : page.url,
+					);
+					assert.equal(
+						readRecord(first.details?.refSnapshotInvalidation ?? {}).reason,
+						prefix[0] === "read" ? undefined : "page-transition",
+					);
+					assert.equal(
+						(await page.calls()).some((row) => row.args.includes("open")),
+						false,
+					);
+					await page.tree();
+					await page.reload();
+					const result = await page.call({ args: ["get", "url"] });
+					assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
+					assert.equal(readRecord(readRecord(result.details).data).url, page.url);
+					const snapshot = await page.call({ args: ["snapshot", "-i"] });
+					assert.equal(snapshot.isError, false, readString(readRecord(snapshot.content[0]).text));
+					assert.equal(readRecord(readRecord(snapshot.details).data).origin, page.url);
+					assert.deepEqual(
+						(await page.calls())
+							.filter((row) => row.args.includes("open"))
+							.map((row) => extractUpstreamCommandTokens(row.args)),
+						[["open", page.url]],
+					);
+				});
+			for (const prefix of [
+				["tab", "list"],
+				["read", "--timeout", "100", chosenUrl],
+				["console", "--clear"],
+			]) {
+				// Each row resets branch/native state and completes shutdown before the next.
+				// oxlint-disable-next-line no-await-in-loop
+				await check(prefix);
+			}
+		});
+	},
+);
 
 for (const options of [{ explicit: true }, { attached: true }, { restoreDisabled: true }]) {
 	test(
