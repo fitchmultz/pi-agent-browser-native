@@ -1118,14 +1118,14 @@ test(
 const fs = require("node:fs");
 const path = require("node:path");
 const userDataDir = process.argv.find((arg) => arg.startsWith("--user-data-dir=")).slice("--user-data-dir=".length);
-// Publish atomically: the test polls this receipt and parses it as soon as it exists.
-fs.writeFileSync(${JSON.stringify(`${launchLogPath}.tmp`)}, JSON.stringify({ pid: process.pid, userDataDir }));
-fs.renameSync(${JSON.stringify(`${launchLogPath}.tmp`)}, ${JSON.stringify(launchLogPath)});
 if (process.argv.includes("--break-marker")) {
 	const marker = path.join(path.dirname(userDataDir), ".pi-agent-browser-owner.json");
 	fs.unlinkSync(marker);
 	fs.mkdirSync(marker);
 }
+// Publish atomically after any marker damage: the host's denied kill and the test both wait for this receipt.
+fs.writeFileSync(${JSON.stringify(`${launchLogPath}.tmp`)}, JSON.stringify({ pid: process.pid, userDataDir }));
+fs.renameSync(${JSON.stringify(`${launchLogPath}.tmp`)}, ${JSON.stringify(launchLogPath)});
 setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-live\\n"); }, 20);
 `,
 		);
@@ -1138,6 +1138,7 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 					async () => {
 						const script = `
 				import { ChildProcess } from "node:child_process";
+				import { existsSync } from "node:fs";
 				import { stat } from "node:fs/promises";
 				import { launchElectronApp } from "./extensions/agent-browser/lib/electron/launch.ts";
 				import { cleanupSecureTempArtifacts, writeSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
@@ -1147,7 +1148,12 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 				const kill = ChildProcess.prototype.kill;
 				// The process is real; only its kill request is denied at the OS boundary.
 				ChildProcess.prototype.kill = function (signal) {
-					if ([${JSON.stringify(app.executablePath)}, ${JSON.stringify(launchedExecutablePath)}].includes(this.spawnfile)) throw new Error("fixture: child.kill denied");
+					if ([${JSON.stringify(app.executablePath)}, ${JSON.stringify(launchedExecutablePath)}].includes(this.spawnfile)) {
+						// Deny only a started writer, so the short launch timeout cannot outrun a slow app spawn.
+						const pause = new Int32Array(new SharedArrayBuffer(4));
+						for (let waited = 0; !existsSync(${JSON.stringify(launchLogPath)}) && waited < 15_000; waited += 10) Atomics.wait(pause, 0, 0, 10);
+						throw new Error("fixture: child.kill denied");
+					}
 					return kill.call(this, signal);
 				};
 				const result = await launchElectronApp({ appPath: ${JSON.stringify(app.appPath)}, appArgs: ${JSON.stringify([...app.appArgs, ...(breakMarker ? ["--break-marker"] : [])])}, timeoutMs: 500 });
