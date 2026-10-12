@@ -32,6 +32,8 @@ function canOperateWithoutVerifiedPage(command: string | undefined, subcommand?:
 			return subcommand !== undefined && subcommand !== "new";
 		case "get":
 			return subcommand === "url";
+		case "session":
+			return subcommand === undefined;
 		case "webmcp":
 			return ["result", "cancel"].includes(subcommand ?? "");
 		case "record":

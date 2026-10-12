@@ -12,6 +12,10 @@
 - Publish only the compiled runtime entrypoints and worker while retaining complete checkout output. Run the existing strict quality policy once per facade invocation.
 - Add an opt-in `npm run performance-profile` with checked workloads, raw measurements, and source/fixture identities; document captured baselines and measurement limits in `docs/PERFORMANCE.md`.
 
+### Fixed
+
+- Report the current session name for bare `session` without first verifying the page target; the unneeded `get url` probe could launch native daemons that nothing closed.
+
 ## 0.9.5 - 2026-10-12
 
 ### Fixed
