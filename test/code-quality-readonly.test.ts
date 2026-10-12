@@ -77,9 +77,8 @@ function nativeCase(from: string, packageName: unknown, item: unknown) {
 
 test("readonly allowances retain origin and mutable-addition isolation", (t) => {
 	const directory = fixture(t);
-	const file = path.join(directory, "readonly.ts");
 	writeFileSync(
-		file,
+		path.join(directory, "native.ts"),
 		`import type * as fs from "node:fs/promises";
 export function accept(value: URL): URL { return value; }
 export function rename(...args: Readonly<Parameters<typeof fs.rename>>): unknown { return args; }
@@ -88,60 +87,47 @@ export function readFile(...args: Readonly<Parameters<typeof fs.readFile>>): unk
 export function open(...args: Readonly<Parameters<typeof fs.open>>): unknown { return args; }
 `,
 	);
+	writeFileSync(
+		path.join(directory, "containers.ts"),
+		`export function acceptMap(value: ReadonlyMap<string, number>): ReadonlyMap<string, number> { return value; }
+export function acceptSet(value: ReadonlySet<string>): ReadonlySet<string> { return value; }
+`,
+	);
 	assert.equal(lint(directory).status, 0);
 	writeFileSync(
-		file,
+		path.join(directory, "local.ts"),
 		"interface URL { mutable: string; }\nexport function accept(value: URL): URL { return value; }\n",
 	);
-	const local = lint(directory, ["typescript(prefer-readonly-parameter-types)"]);
-	assert.equal(local.status, 1);
-	assert.match(local.stdout, /typescript\(prefer-readonly-parameter-types\)/u);
 	writeFileSync(
-		file,
-		"export function accept(value: URL & { mutable: string }): URL { return value; }\n",
+		path.join(directory, "mutable.ts"),
+		`export function acceptUrl(value: URL & { mutable: string }): URL { return value; }
+export function acceptNestedMap(value: ReadonlyMap<string, { mutable: number }>): unknown { return value; }
+export function acceptMap(value: Map<string, number>): unknown { return value; }
+export function acceptNestedSet(value: ReadonlySet<{ mutable: string }>): unknown { return value; }
+export function acceptSet(value: Set<string>): unknown { return value; }
+`,
 	);
-	const intersection = lint(directory, ["typescript(prefer-readonly-parameter-types)"]);
-	assert.equal(intersection.status, 1);
-	assert.match(intersection.stdout, /typescript\(prefer-readonly-parameter-types\)/u);
-	writeFileSync(
-		file,
-		"export function accept(value: ReadonlyMap<string, number>): ReadonlyMap<string, number> { return value; }\n",
+	const mutable = lint(directory, ["typescript(prefer-readonly-parameter-types)"]);
+	const mutableLocations = ["local.ts:2", ...[1, 2, 3, 4, 5].map((line) => `mutable.ts:${line}`)];
+	assert.deepEqual(
+		mutable.diagnosticLocations.map(({ filename, line }) => `${filename}:${line}`).sort(),
+		mutableLocations,
 	);
-	assert.equal(lint(directory).status, 0);
+	// Augmentation runs only after the nested/container negatives have failed independently.
 	writeFileSync(
-		file,
-		"export function accept(value: ReadonlyMap<string, { mutable: number }>): unknown { return value; }\n",
-	);
-	assert.equal(lint(directory, ["typescript(prefer-readonly-parameter-types)"]).status, 1);
-	writeFileSync(
-		file,
-		"export function accept(value: Map<string, number>): unknown { return value; }\n",
-	);
-	assert.equal(lint(directory, ["typescript(prefer-readonly-parameter-types)"]).status, 1);
-	writeFileSync(
-		file,
-		"export function accept(value: ReadonlySet<string>): ReadonlySet<string> { return value; }\n",
-	);
-	assert.equal(lint(directory).status, 0);
-	writeFileSync(
-		file,
-		"export function accept(value: ReadonlySet<{ mutable: string }>): unknown { return value; }\n",
-	);
-	assert.equal(lint(directory, ["typescript(prefer-readonly-parameter-types)"]).status, 1);
-	writeFileSync(file, "export function accept(value: Set<string>): unknown { return value; }\n");
-	assert.equal(lint(directory, ["typescript(prefer-readonly-parameter-types)"]).status, 1);
-	writeFileSync(
-		file,
+		path.join(directory, "augmentation.ts"),
 		`declare global {
 	interface ReadonlyMap<K, V> { counter: number; readonly probe?: (key: K, value: V) => readonly [K, V]; }
 	interface ReadonlySet<T> { counter: number; readonly probe?: (first: T, second: T) => T; }
 }
-export function acceptMap(value: ReadonlyMap<string, number>): unknown { return value; }
-export function acceptSet(value: ReadonlySet<string>): unknown { return value; }
+export const augmented = true;
 `,
 	);
 	const augmented = lint(directory, ["typescript(prefer-readonly-parameter-types)"]);
-	assert.equal(augmented.diagnosticCount, 2);
+	assert.deepEqual(
+		augmented.diagnosticLocations.map(({ filename, line }) => `${filename}:${line}`).sort(),
+		["containers.ts:1", "containers.ts:2", ...mutableLocations],
+	);
 });
 
 test("readonly branded primitive inputs remain readonly without exempting mutable brands", (t) => {

@@ -170,27 +170,6 @@ test("doctor reports duplicate package and checkout sources with remediation", a
 	assert.match(text, /keep exactly one active source/i);
 });
 
-test("doctor passes the source check when exactly one configured source is active", async () => {
-	const settingsByPath = new Map([
-		[
-			resolve("/agent/settings.json"),
-			JSON.stringify({ packages: ["npm:pi-agent-browser-native"] }),
-		],
-	]);
-	const report = await evaluateDoctorWithPi({
-		agentDir: "/agent",
-		cwd: "/repo",
-		pathExists: async (path: string) => settingsByPath.has(path),
-		readText: async (path: string) => settingsByPath.get(path),
-		runAgentBrowser: async () => passingVersion(),
-	});
-	const text = formatDoctorReport(report);
-
-	assert.equal(report.failures.length, 0);
-	assert.match(text, /No duplicate pi-agent-browser-native sources detected/);
-	assert.match(text, /Detected source: npm:pi-agent-browser-native/);
-});
-
 test("doctor resolves relative sources from their settings file directory", async () => {
 	// The compiled `dist/` entrypoint row protects packaged installs whose configured source points at build output.
 	for (const [settingsKey, source] of [
@@ -265,6 +244,9 @@ test("doctor invokes upstream only for the read-only version probe", async () =>
 	});
 
 	assert.equal(report.failures.length, 0);
+	const text = formatDoctorReport(report);
+	assert.match(text, /No duplicate pi-agent-browser-native sources detected/);
+	assert.match(text, /Detected source: npm:pi-agent-browser-native/);
 	// The only agent-browser invocation is the read-only --version probe: the doctor never shells out
 	// to `agent-browser doctor` or any fix/write command through the injected seam.
 	assert.deepEqual(
