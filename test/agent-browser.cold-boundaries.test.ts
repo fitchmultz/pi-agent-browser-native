@@ -24,7 +24,10 @@ const chosenUrl = "http://127.0.0.1:43210/chosen";
 const hashRouteUrl = "http://127.0.0.1:43210/app#/reports/weekly?range=7d";
 
 type Page = {
-	readonly call: (params: AgentBrowserToolParams) => ReturnType<typeof executeRegisteredTool>;
+	readonly call: (
+		params: AgentBrowserToolParams,
+		signal?: AbortSignal,
+	) => ReturnType<typeof executeRegisteredTool>;
 	readonly calls: () => ReturnType<typeof readInvocationLog>;
 	readonly patch: (patch: Readonly<Record<string, unknown>>) => Promise<void>;
 	readonly reload: () => Promise<void>;
@@ -37,8 +40,8 @@ type Page = {
 	readonly url: string;
 };
 
-async function withPage(
-	run: (page: Page) => Promise<void>,
+async function withPages(
+	run: (row: (run: (page: Page) => Promise<void>) => Promise<void>) => Promise<void>,
 	options: {
 		readonly live?: boolean;
 		readonly url?: string;
@@ -141,21 +144,26 @@ process.exitCode = failed ? 1 : 0;
 				PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
 			},
 			async () => {
-				let branch: unknown[] = [];
+				const bootstrapBranch: unknown[] = [];
 				const prefix = [
 					"--namespace",
 					"cold",
 					...(options.explicit === true ? ["--session", "caller"] : []),
 				];
-				let harness = createExtensionHarness({ branch, cwd });
-				const call = async (params: AgentBrowserToolParams) => {
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
-					branch.push(
+				const bootstrap = createExtensionHarness({ branch: bootstrapBranch, cwd });
+				const bootstrapCall = async (params: AgentBrowserToolParams) => {
+					const result = await executeRegisteredTool(bootstrap.tool, bootstrap.ctx, params);
+					bootstrapBranch.push(
 						createToolBranchEntry({ details: readRecord(result.details), isError: result.isError }),
 					);
 					return result;
 				};
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				await runExtensionEvent(
+					bootstrap.handlers,
+					"session_start",
+					{ reason: "new" },
+					bootstrap.ctx,
+				);
 				for (const args of [
 					[...prefix, ...(options.attached === true ? ["connect", "9222"] : ["open", url])],
 					...(options.attached === true ? [[...prefix, "get", "url"]] : []),
@@ -163,68 +171,99 @@ process.exitCode = failed ? 1 : 0;
 				]) {
 					// These dependent calls reuse the same page, restore state, and shutdown ownership.
 					// oxlint-disable-next-line no-await-in-loop
-					const result = await call({
+					const result = await bootstrapCall({
 						args,
 						...(args.includes("open") ? { sessionMode: "fresh" as const } : {}),
 					});
 					assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
 				}
-				const restore = async (reason: "quit" | "reload") => {
-					await runExtensionEvent(harness.handlers, "session_shutdown", { reason }, harness.ctx);
-					branch = structuredClone(harness.ctx.sessionManager.getBranch());
-					harness = createExtensionHarness({ branch, cwd });
+				await runExtensionEvent(
+					bootstrap.handlers,
+					"session_shutdown",
+					{ reason: options.live === true ? "reload" : "quit" },
+					bootstrap.ctx,
+				);
+				const baselineBranch = structuredClone(bootstrap.ctx.sessionManager.getBranch());
+				const baselineNative = await readFile(statePath, "utf8");
+				await run(async (runRow) => {
+					let branch = structuredClone(baselineBranch);
+					await writeFile(statePath, baselineNative);
+					let harness = createExtensionHarness({ branch, cwd });
+					const call = async (params: AgentBrowserToolParams, signal?: AbortSignal) => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, params, signal);
+						branch.push(
+							createToolBranchEntry({
+								details: readRecord(result.details),
+								isError: result.isError,
+							}),
+						);
+						return result;
+					};
+					const restore = async (reason: "quit" | "reload") => {
+						await runExtensionEvent(harness.handlers, "session_shutdown", { reason }, harness.ctx);
+						branch = structuredClone(harness.ctx.sessionManager.getBranch());
+						harness = createExtensionHarness({ branch, cwd });
+						await runExtensionEvent(
+							harness.handlers,
+							"session_start",
+							{ reason: "resume" },
+							harness.ctx,
+						);
+					};
 					await runExtensionEvent(
 						harness.handlers,
 						"session_start",
 						{ reason: "resume" },
 						harness.ctx,
 					);
-				};
-				await restore(options.live === true ? "reload" : "quit");
-				await writeFile(logPath, "");
-				try {
-					await run({
-						call:
-							options.explicit === true
-								? (params) =>
-										call({
-											...params,
-											args: [...prefix, ...readArray(params.args).map(readString)],
-										})
-								: call,
-						calls: () => readInvocationLog(logPath),
-						patch: async (patch) =>
-							writeFile(
-								statePath,
-								JSON.stringify({
-									...readRecord(JSON.parse(await readFile(statePath, "utf8"))),
-									...patch,
-								}),
-							),
-						reload: () => restore("reload"),
-						state: async () => {
-							const state = readRecord(JSON.parse(await readFile(statePath, "utf8")));
-							return {
-								...state,
-								active: readBoolean(state.active),
-								browser: readBoolean(state.browser),
-								url: readString(state.url),
-							};
-						},
-						tree: async () => {
-							harness.setBranch(structuredClone(branch));
-							await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
-						},
-						url,
-					});
-				} finally {
-					await runExtensionEvent(
-						harness.handlers,
-						"session_shutdown",
-						{ reason: "quit" },
-						harness.ctx,
-					);
-				}
+					await writeFile(logPath, "");
+					try {
+						await runRow({
+							call:
+								options.explicit === true
+									? (params, signal) =>
+											call(
+												{
+													...params,
+													args: [...prefix, ...readArray(params.args).map(readString)],
+												},
+												signal,
+											)
+									: call,
+							calls: () => readInvocationLog(logPath),
+							patch: async (patch) =>
+								writeFile(
+									statePath,
+									JSON.stringify({
+										...readRecord(JSON.parse(await readFile(statePath, "utf8"))),
+										...patch,
+									}),
+								),
+							reload: () => restore("reload"),
+							state: async () => {
+								const state = readRecord(JSON.parse(await readFile(statePath, "utf8")));
+								return {
+									...state,
+									active: readBoolean(state.active),
+									browser: readBoolean(state.browser),
+									url: readString(state.url),
+								};
+							},
+							tree: async () => {
+								harness.setBranch(structuredClone(branch));
+								await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
+							},
+							url,
+						});
+					} finally {
+						await runExtensionEvent(
+							harness.handlers,
+							"session_shutdown",
+							{ reason: "quit" },
+							harness.ctx,
+						);
+					}
+				});
 			},
 		);
 	} finally {
@@ -233,11 +272,24 @@ process.exitCode = failed ? 1 : 0;
 	}
 }
 
+async function withPage(
+	run: (page: Page) => Promise<void>,
+	options: {
+		readonly live?: boolean;
+		readonly url?: string;
+		readonly explicit?: boolean;
+		readonly attached?: boolean;
+		readonly restoreDisabled?: boolean;
+	} = {},
+): Promise<void> {
+	await withPages((row) => row(run), options);
+}
+
 for (const state of ["cold", "known", "unknown", "reopen"]) {
 	test(
 		`session info timeout preserves ${state} state without browser recovery`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			await withPage(
 				async (page) => {
 					const initialArgs = {
@@ -275,11 +327,33 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 					const nativeBefore = await page.state();
 					const offset = (await page.calls()).length;
 					await page.patch({ timeoutInfo: true });
+					const realSetTimeout = setTimeout;
+					t.mock.timers.enable({ apis: ["setTimeout"] });
+					const controller = new AbortController();
+					const pending = page.call({ args, timeoutMs: 800 }, controller.signal);
 					let timedOut;
 					try {
-						timedOut = await page.call({ args, timeoutMs: 800 });
+						const deadline = Date.now() + 15_000;
+						// Observe actual subprocess startup before advancing its timeout.
+						// oxlint-disable-next-line no-await-in-loop
+						while ((await page.calls()).length === offset) {
+							if (Date.now() > deadline) {
+								throw new Error("session info child did not dispatch");
+							}
+							// Native I/O must progress while only the wrapper watchdog is controlled.
+							// oxlint-disable-next-line no-await-in-loop
+							await new Promise<void>((resolve) => {
+								realSetTimeout(resolve, 5);
+							});
+						}
+						t.mock.timers.tick(800);
+						t.mock.timers.reset();
+						timedOut = await pending;
 					} finally {
+						t.mock.timers.reset();
+						controller.abort();
 						await page.patch({ timeoutInfo: false });
+						await Promise.allSettled([pending]);
 					}
 					assert.equal(timedOut.isError, true);
 					assert.equal(
@@ -381,49 +455,7 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 	);
 }
 
-for (const prefix of [
-	["tab", "list"],
-	["read", chosenUrl],
-]) {
-	test(
-		`cold reopen survives ${prefix.join(" ")} before snapshot`,
-		{ concurrency: false },
-		async () => {
-			await withPage(async (page) => {
-				const first = await page.call({ args: prefix });
-				assert.equal(first.isError, false, readString(readRecord(first.content[0]).text));
-				assert.equal((await page.state()).active, prefix[0] !== "read");
-				assert.equal((await page.state()).browser, prefix[0] === "tab");
-				assert.equal(
-					(await page.state()).url,
-					prefix[0] === "tab" ? new URL(page.url).origin + "/" : "about:blank",
-				);
-				assert.equal(
-					(await page.calls()).some((row) => row.args.includes("open")),
-					false,
-				);
-				const snapshot = await page.call({ args: ["snapshot", "-i"] });
-				assert.equal(snapshot.isError, false, readString(readRecord(snapshot.content[0]).text));
-				assert.equal(readRecord(readRecord(snapshot.details).data).origin, page.url);
-				assert.deepEqual(
-					(await page.calls())
-						.filter((row) => row.args.includes("open"))
-						.map((row) => extractUpstreamCommandTokens(row.args)),
-					[["open", page.url]],
-				);
-			});
-		},
-	);
-}
-
-for (const args of [
-	["get", "url"],
-	["get", "title"],
-	["reload"],
-	["back"],
-	["forward"],
-	["pushstate", "/route"],
-]) {
+for (const args of [["reload"], ["back"], ["forward"], ["pushstate", "/route"]]) {
 	test(
 		`cold current-page command reopens before ${args.join(" ")}`,
 		{ concurrency: false },
@@ -462,6 +494,23 @@ for (const prefix of [
 					(await page.state()).active,
 					prefix[0] !== "read",
 					"HTTP reads leave the cold managed daemon untouched",
+				);
+				assert.equal((await page.state()).browser, prefix[0] !== "read");
+				assert.equal(
+					(await page.state()).url,
+					prefix[0] === "read" ? "about:blank" : new URL(page.url).origin + "/",
+				);
+				assert.equal(
+					readRecord(first.details).sessionTabReopenPending,
+					prefix[0] === "read" ? undefined : true,
+				);
+				assert.equal(
+					readRecord(first.details?.sessionTabTarget ?? {}).url,
+					prefix[0] === "read" ? undefined : page.url,
+				);
+				assert.equal(
+					readRecord(first.details?.refSnapshotInvalidation ?? {}).reason,
+					prefix[0] === "read" ? undefined : "page-transition",
 				);
 				assert.equal(
 					(await page.calls()).some((row) => row.args.includes("open")),
@@ -665,41 +714,46 @@ const explicitDestinations = [
 	["window", "new"],
 	["record", "start", "chosen.webm", chosenUrl],
 ];
-for (const command of explicitDestinations) {
-	for (const batch of [false, true]) {
-		test(
-			`live missing tab permits explicit destination ${command.join(" ")} (batch=${batch})`,
-			{ concurrency: false },
-			async () => {
-				await withPage(
-					async (page) => {
-						await page.patch({ url: "http://127.0.0.1:43210/other" });
-						const args = batch ? ["batch"] : command;
-						const stdin = batch ? JSON.stringify([command]) : undefined;
-						const result = await page.call({ args, stdin });
-						assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
-						const calls = await page.calls();
-						const userCalls = calls.filter(
-							(row) => extractUpstreamCommandTokens(row.args)[0] === args[0],
-						);
-						assert.equal(userCalls.length, 1, "the requested command must actually dispatch");
-						assert.deepEqual(extractUpstreamCommandTokens(userCalls[0].args), args);
-						if (batch) {
-							// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(userCalls[0].stdin, stdin);
-						}
-						assert.equal(
-							calls.some((row) => extractUpstreamCommandTokens(row.args)[0] === "open"),
-							false,
-						);
-					},
-					{ live: true },
-				);
-			},
-		);
-	}
-}
+test("live explicit-destination classification", { concurrency: false }, async (t) => {
+	await withPages(
+		async (withRow) => {
+			for (const command of explicitDestinations) {
+				for (const batch of [false, true]) {
+					// Each row owns a fresh replay harness and native state, and completes cleanup before the next.
+					// oxlint-disable-next-line no-await-in-loop
+					await t.test(
+						`live missing tab permits explicit destination ${command.join(" ")} (batch=${batch})`,
+						async () => {
+							await withRow(async (page) => {
+								await page.patch({ url: "http://127.0.0.1:43210/other" });
+								const args = batch ? ["batch"] : command;
+								const stdin = batch ? JSON.stringify([command]) : undefined;
+								const result = await page.call({ args, stdin });
+								assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
+								const calls = await page.calls();
+								const userCalls = calls.filter(
+									(row) => extractUpstreamCommandTokens(row.args)[0] === args[0],
+								);
+								assert.equal(userCalls.length, 1, "the requested command must actually dispatch");
+								assert.deepEqual(extractUpstreamCommandTokens(userCalls[0].args), args);
+								if (batch) {
+									// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
+									// oxlint-disable-next-line node-test/no-conditional-assertion
+									assert.equal(userCalls[0].stdin, stdin);
+								}
+								assert.equal(
+									calls.some((row) => extractUpstreamCommandTokens(row.args)[0] === "open"),
+									false,
+								);
+							});
+						},
+					);
+				}
+			}
+		},
+		{ live: true },
+	);
+});
 
 test(
 	"live raw explicit URL read ignores unused stdin without old-tab recovery",
@@ -733,74 +787,95 @@ test(
 	},
 );
 
-for (const command of [
-	["network", "requests", "--current-url"],
-	["read", "--filter", chosenUrl],
-	["read", "--llms", "full"],
-	["a11y", "--selector", chosenUrl],
-	["a11y", "--tags", "wcag2a"],
-	["vitals"],
-	["diff", "snapshot"],
-	["record", "start", "chosen.webm"],
-	["reload"],
-	["pushstate", "/route"],
-	["fill", "#name", "text"],
-]) {
-	test(
-		`live page-dependent ${command.join(" ")} still protects a missing tab`,
-		{ concurrency: false },
-		async () => {
-			await withPage(
-				async (page) => {
-					await page.patch({ url: "http://127.0.0.1:43210/other" });
-					for (const params of [
-						{ args: command },
-						{ args: ["batch"], stdin: JSON.stringify([["read", chosenUrl], command]) },
-					]) {
-						// These dependent calls reuse the same page, restore state, and shutdown ownership.
-						// oxlint-disable-next-line no-await-in-loop
-						const result = await page.call(params);
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(result.details).failureCategory, "tab-drift");
-					}
-					assert.equal(
-						(await page.calls()).some(
-							(row) => !["session", "tab"].includes(extractUpstreamCommandTokens(row.args)[0]),
-						),
-						false,
-						"neither page actions nor unsolicited navigation may run",
-					);
-				},
-				{ live: true },
-			);
+test("live page-dependent classification", { concurrency: false }, async (t) => {
+	await withPages(
+		async (withRow) => {
+			for (const command of [
+				["network", "requests", "--current-url"],
+				["read", "--filter", chosenUrl],
+				["read", "--llms", "full"],
+				["a11y", "--selector", chosenUrl],
+				["a11y", "--tags", "wcag2a"],
+				["vitals"],
+				["diff", "snapshot"],
+				["record", "start", "chosen.webm"],
+				["reload"],
+				["pushstate", "/route"],
+				["fill", "#name", "text"],
+			]) {
+				// Each row owns a fresh replay harness and native state, and completes cleanup before the next.
+				// oxlint-disable-next-line no-await-in-loop
+				await t.test(
+					`live page-dependent ${command.join(" ")} still protects a missing tab`,
+					async () => {
+						await withRow(async (page) => {
+							await page.patch({ url: "http://127.0.0.1:43210/other" });
+							for (const params of [
+								{ args: command },
+								{ args: ["batch"], stdin: JSON.stringify([["read", chosenUrl], command]) },
+							]) {
+								// These dependent calls reuse the same page, restore state, and shutdown ownership.
+								// oxlint-disable-next-line no-await-in-loop
+								const result = await page.call(params);
+								// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
+								// oxlint-disable-next-line node-test/no-conditional-assertion
+								assert.equal(readRecord(result.details).failureCategory, "tab-drift");
+							}
+							assert.equal(
+								(await page.calls()).some(
+									(row) => !["session", "tab"].includes(extractUpstreamCommandTokens(row.args)[0]),
+								),
+								false,
+								"neither page actions nor unsolicited navigation may run",
+							);
+						});
+					},
+				);
+			}
 		},
+		{ live: true },
 	);
-}
+});
 
 for (const options of [{ explicit: true }, { attached: true }, { restoreDisabled: true }]) {
 	test(
 		`cold boundary does not navigate outside automatic restore: ${JSON.stringify(options)}`,
 		{ concurrency: false },
-		async () => {
-			for (const inspectFirst of [false, true]) {
-				// These dependent calls reuse the same page, restore state, and shutdown ownership.
-				// oxlint-disable-next-line no-await-in-loop
-				await withPage(async (page) => {
-					if (inspectFirst) {
-						await page.call({ args: ["tab", "list"] });
-					}
-					await page.call({ args: ["snapshot", "-i"] });
-					// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						(await page.calls()).some(
-							(row) => extractUpstreamCommandTokens(row.args)[0] === "open",
-						),
-						false,
+		async (t) => {
+			await withPages(async (withRow) => {
+				for (const inspectFirst of [false, true]) {
+					// Each ownership variant needs independent native state and replay before inspecting.
+					// oxlint-disable-next-line no-await-in-loop
+					await t.test(`inspect first=${inspectFirst}`, () =>
+						withRow(async (page) => {
+							const inspected = inspectFirst
+								? await page.call({ args: ["tab", "list"] })
+								: undefined;
+							assert.equal(
+								inspected?.isError,
+								inspectFirst ? false : undefined,
+								JSON.stringify(inspected),
+							);
+							const snapshot = await page.call({ args: ["snapshot", "-i"] });
+							assert.equal(snapshot.isError, !("explicit" in options), JSON.stringify(snapshot));
+							assert.equal(
+								readRecord(snapshot.details).failureCategory,
+								"explicit" in options ? undefined : "tab-drift",
+								JSON.stringify(snapshot),
+							);
+							const commands = new Set(
+								(await page.calls()).map((row) => extractUpstreamCommandTokens(row.args)[0]),
+							);
+							assert.equal(
+								commands.has("snapshot"),
+								"explicit" in options,
+								"only a verified caller-owned live page may dispatch the snapshot",
+							);
+							assert.equal(commands.has("open"), false);
+						}),
 					);
-				}, options);
-			}
+				}
+			}, options);
 		},
 	);
 }
@@ -822,8 +897,32 @@ for (const reachedNavigation of [false, true]) {
 					]),
 				});
 				assert.equal(result.isError, true);
+
+				assert.deepEqual(
+					readArray(readRecord(result.details).batchSteps).map((row) => ({
+						command: readRecord(row).command,
+						success: readRecord(row).success,
+					})),
+					reachedNavigation
+						? [
+								{ command: ["console", "--clear"], success: true },
+								{ command: ["open", chosenUrl], success: false },
+							]
+						: [{ command: ["console", "--clear"], success: false }],
+				);
 				await page.reload();
-				await page.call({ args: ["snapshot", "-i"] });
+				const snapshot = await page.call({ args: ["snapshot", "-i"] });
+				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+				const expectedUrl = reachedNavigation ? new URL(page.url).origin + "/" : page.url;
+				assert.equal(readRecord(readRecord(snapshot.details).data).origin, expectedUrl);
+				assert.equal(readRecord(readRecord(snapshot.details).sessionTabTarget).url, expectedUrl);
+				assert.equal(
+					(await page.calls()).filter(
+						(row) => extractUpstreamCommandTokens(row.args)[0] === "snapshot",
+					).length,
+					1,
+					"the follow-up capture must dispatch against the verified resulting target",
+				);
 				assert.equal(
 					(await page.calls()).filter((row) => extractUpstreamCommandTokens(row.args)[0] === "open")
 						.length,

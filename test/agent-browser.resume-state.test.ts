@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setImmediate } from "node:timers/promises";
 
 import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
 
@@ -41,29 +42,6 @@ function delay(ms: number): Promise<void> {
 	});
 }
 
-async function waitForCloseArgs(
-	logPath: string,
-	expectedCount: number,
-	timeoutMs = 3_000,
-): Promise<string[][]> {
-	const deadline = Date.now() + timeoutMs;
-	let closeArgs: string[][] = [];
-	while (Date.now() <= deadline) {
-		// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-		// oxlint-disable-next-line no-await-in-loop
-		closeArgs = (await readInvocationLog(logPath))
-			.map((entry) => entry.args)
-			.filter((args) => args.includes("close"));
-		if (closeArgs.length >= expectedCount) {
-			return closeArgs;
-		}
-		// Wait between receipt polls so the fixture process can advance before the next observation.
-		// oxlint-disable-next-line no-await-in-loop
-		await delay(25);
-	}
-	return closeArgs;
-}
-
 async function withConcurrencyTestTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
 	let timeout: NodeJS.Timeout | undefined;
 	const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -76,6 +54,24 @@ async function withConcurrencyTestTimeout<T>(promise: Promise<T>, message: strin
 			clearTimeout(timeout);
 		}
 	}
+}
+
+async function waitForInvocation(
+	logPath: string,
+	match: (entry: { readonly args: readonly string[]; readonly event?: string }) => boolean,
+): Promise<void> {
+	const deadline = Date.now() + CONCURRENCY_TEST_TIMEOUT_MS;
+	while (Date.now() <= deadline) {
+		// Observe real dispatch before proceeding with the dependent race.
+		// oxlint-disable-next-line no-await-in-loop
+		if ((await readInvocationLog(logPath)).some(match)) {
+			return;
+		}
+		// Yield between receipt polls; the deadline also covers preflight failures.
+		// oxlint-disable-next-line no-await-in-loop
+		await delay(10);
+	}
+	throw new Error("The gated child did not dispatch before the watchdog deadline");
 }
 
 function ownedSessionDetails(sessionName: string, sessionMode: "auto" | "fresh" = "auto") {
@@ -323,65 +319,6 @@ process.stdout.write(JSON.stringify(envelope));`,
 );
 
 test(
-	"agentBrowserExtension closes managed sessions owned before a session_tree branch switch",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tree-owned-cleanup-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const envelope = args.includes("close")
-  ? { success: true, data: { closed: true } }
-  : { success: true, data: { title: "Example Domain", url: args[args.length - 1] } };
-process.stdout.write(JSON.stringify(envelope));`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const open = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "https://example.com/branch-a"],
-					sessionMode: "fresh",
-				});
-				assert.equal(open.isError, false, JSON.stringify(open));
-				const sessionName = open.details?.sessionName;
-				assert.equal(typeof sessionName, "string");
-
-				harness.setBranch([]);
-				await runExtensionEvent(
-					harness.handlers,
-					"session_tree",
-					{ newLeafId: null, oldLeafId: "branch-a" },
-					harness.ctx,
-				);
-				await runExtensionEvent(
-					harness.handlers,
-					"session_shutdown",
-					{ reason: "quit" },
-					harness.ctx,
-				);
-
-				const invocations = await readInvocationLog(logPath);
-				assert.ok(
-					invocations.some(
-						(entry) =>
-							entry.args.join("\0") === ["--session", readString(sessionName), "close"].join("\0"),
-					),
-				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
 	"agentBrowserExtension closes all branch-owned managed sessions on quit",
 	{ concurrency: false },
 	async () => {
@@ -434,7 +371,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					harness.ctx,
 				);
 
-				const closeArgs = await waitForCloseArgs(logPath, 2);
+				const closeArgs = (await readInvocationLog(logPath))
+					.map((entry) => entry.args)
+					.filter((args) => args.includes("close"));
 				const sortCloseArgs = (rows: readonly (readonly string[])[]) =>
 					[...rows].sort((left, right) => left[1].localeCompare(right[1]));
 				assert.deepEqual(
@@ -750,61 +689,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					harness.ctx,
 				);
 
-				const closeArgs = await waitForCloseArgs(logPath, 1);
-				assert.deepEqual(closeArgs, [["--session", sessionName, "close"]]);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension does not double-close an explicitly closed owned managed session",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-close-owned-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
-		);
-		const ownedName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({
-					branch: [
-						createToolBranchEntry({ details: ownedSessionDetails(ownedName), isError: false }),
-					],
-					cwd: tempDir,
-				});
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-
-				const close = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", ownedName, "close"],
-				});
-				assert.equal(close.isError, false, JSON.stringify(close));
-				await runExtensionEvent(
-					harness.handlers,
-					"session_shutdown",
-					{ reason: "quit" },
-					harness.ctx,
-				);
-
 				const closeArgs = (await readInvocationLog(logPath))
 					.map((entry) => entry.args)
 					.filter((args) => args.includes("close"));
-				assert.deepEqual(closeArgs, [["--json", "--session", ownedName, "close"]]);
+				assert.deepEqual(closeArgs, [["--session", sessionName, "close"]]);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -932,6 +820,23 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					"tab",
 					"list",
 				]);
+				await runExtensionEvent(
+					harness.handlers,
+					"session_shutdown",
+					{ reason: "quit" },
+					harness.ctx,
+				);
+				assert.deepEqual(
+					(await readInvocationLog(logPath))
+						.filter((entry) => entry.args.includes("close"))
+						.map((entry) => entry.args),
+					[
+						["--json", "--session", firstSessionName, "close"],
+						["--json", "--session", firstFreshSessionName, "close"],
+						["--session", finalFreshSessionName, "close"],
+					],
+					"explicitly closed owners must not be closed again at quit",
+				);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -1323,57 +1228,64 @@ if (args.includes("snapshot")) {
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-				const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["snapshot", "-i"],
-				});
-				while (
-					// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-					// oxlint-disable-next-line no-await-in-loop
-					!(await readInvocationLog(logPath)).some((entry) => entry.event === "snapshot-start")
-				) {
-					// Wait between receipt polls so the fixture process can advance before the next observation.
-					// oxlint-disable-next-line no-await-in-loop
-					await delay(10);
+				const pending: Promise<unknown>[] = [];
+				try {
+					const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "resume" },
+						harness.ctx,
+					);
+					const completionOrder: string[] = [];
+					const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["snapshot", "-i"],
+					}).then((result) => {
+						completionOrder.push("snapshot");
+						return result;
+					});
+					pending.push(snapshotPromise);
+					await waitForInvocation(logPath, (entry) => entry.event === "snapshot-start");
+
+					harness.setBranch(branchB);
+					const treePromise = runExtensionEvent(
+						harness.handlers,
+						"session_tree",
+						{ newLeafId: "branch-b", oldLeafId: "branch-a" },
+						harness.ctx,
+					).then(() => completionOrder.push("tree"));
+					pending.push(treePromise);
+					await setImmediate();
+					assert.deepEqual(
+						completionOrder,
+						[],
+						"branch restore must remain queued while the managed command is gated",
+					);
+					await writeFile(releasePath, "go");
+					const [snapshot] = await withConcurrencyTestTimeout(
+						Promise.all([snapshotPromise, treePromise]),
+						"session_tree did not wait for the in-flight snapshot to finish",
+					);
+					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+					assert.deepEqual(completionOrder, ["snapshot", "tree"]);
+
+					const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "url"],
+					});
+					assert.equal(followUp.isError, false, JSON.stringify(followUp));
+					assert.equal(followUp.details?.sessionName, branchFreshOne);
+
+					const nextFresh = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["open", "https://example.com/fresh-after-tree"],
+						sessionMode: "fresh",
+					});
+					assert.equal(nextFresh.isError, false, JSON.stringify(nextFresh));
+					assert.notEqual(nextFresh.details?.sessionName, branchFreshOne);
+					assert.notEqual(nextFresh.details?.sessionName, branchFreshTwo);
+				} finally {
+					await writeFile(releasePath, "go", "utf8");
+					await Promise.allSettled(pending);
 				}
-
-				harness.setBranch(branchB);
-				const treePromise = runExtensionEvent(
-					harness.handlers,
-					"session_tree",
-					{ newLeafId: "branch-b", oldLeafId: "branch-a" },
-					harness.ctx,
-				);
-				await delay(50);
-				assert.equal(
-					(await readInvocationLog(logPath)).some((entry) => entry.event === "snapshot-done"),
-					false,
-				);
-				await writeFile(releasePath, "go");
-				await withConcurrencyTestTimeout(
-					Promise.all([snapshotPromise, treePromise]),
-					"session_tree did not wait for the in-flight snapshot to finish",
-				);
-
-				const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(followUp.isError, false, JSON.stringify(followUp));
-				assert.equal(followUp.details?.sessionName, branchFreshOne);
-
-				const nextFresh = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "https://example.com/fresh-after-tree"],
-					sessionMode: "fresh",
-				});
-				assert.equal(nextFresh.isError, false, JSON.stringify(nextFresh));
-				assert.notEqual(nextFresh.details?.sessionName, branchFreshOne);
-				assert.notEqual(nextFresh.details?.sessionName, branchFreshTwo);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -1423,53 +1335,56 @@ if (args.includes("snapshot") && sessionName === "named-user-session") {
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-				const explicitSnapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", "named-user-session", "snapshot", "-i"],
-				});
-				while (
-					// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-					// oxlint-disable-next-line no-await-in-loop
-					!(await readInvocationLog(logPath)).some(
-						(entry) => entry.event === "explicit-snapshot-start",
-					)
-				) {
-					// Wait between receipt polls so the fixture process can advance before the next observation.
-					// oxlint-disable-next-line no-await-in-loop
-					await delay(10);
+				const pending: Promise<unknown>[] = [];
+				try {
+					const harness = createExtensionHarness({ branch: branchA, cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "resume" },
+						harness.ctx,
+					);
+					const explicitSnapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", "named-user-session", "snapshot", "-i"],
+					});
+					pending.push(explicitSnapshotPromise);
+					await waitForInvocation(logPath, (entry) => entry.event === "explicit-snapshot-start");
+
+					harness.setBranch(branchB);
+					const treePromise = runExtensionEvent(
+						harness.handlers,
+						"session_tree",
+						{ newLeafId: "branch-b", oldLeafId: "branch-a" },
+						harness.ctx,
+					);
+					pending.push(treePromise);
+					await withConcurrencyTestTimeout(
+						treePromise,
+						"branch restore was blocked by an unrelated caller-owned command",
+					);
+					assert.equal(
+						(await readInvocationLog(logPath)).some(
+							(entry) => entry.event === "explicit-snapshot-done",
+						),
+						false,
+						"the branch switch must finish while the old explicit command is still gated",
+					);
+					await writeFile(releasePath, "go");
+					const [explicitSnapshot] = await withConcurrencyTestTimeout(
+						Promise.all([explicitSnapshotPromise, treePromise]),
+						"explicit command and session_tree branch switch did not settle",
+					);
+					assert.equal(explicitSnapshot.isError, false, JSON.stringify(explicitSnapshot));
+
+					const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "url"],
+					});
+					assert.equal(followUp.isError, false, JSON.stringify(followUp));
+					assert.equal(followUp.details?.sessionName, branchBSession);
+				} finally {
+					await writeFile(releasePath, "go", "utf8");
+					await Promise.allSettled(pending);
 				}
-
-				harness.setBranch(branchB);
-				const treePromise = runExtensionEvent(
-					harness.handlers,
-					"session_tree",
-					{ newLeafId: "branch-b", oldLeafId: "branch-a" },
-					harness.ctx,
-				);
-				await delay(50);
-				assert.equal(
-					(await readInvocationLog(logPath)).some(
-						(entry) => entry.event === "explicit-snapshot-done",
-					),
-					false,
-				);
-				await writeFile(releasePath, "go");
-				await withConcurrencyTestTimeout(
-					Promise.all([explicitSnapshotPromise, treePromise]),
-					"explicit command and session_tree branch switch did not settle",
-				);
-
-				const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(followUp.isError, false, JSON.stringify(followUp));
-				assert.equal(followUp.details?.sessionName, branchBSession);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -1508,54 +1423,52 @@ if (args.includes("snapshot")) {
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({
-					branch: [
-						createToolBranchEntry({ details: ownedSessionDetails(currentSession), isError: false }),
-					],
-					cwd: tempDir,
-				});
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-				const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["snapshot", "-i"],
-				});
-				while (
-					// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-					// oxlint-disable-next-line no-await-in-loop
-					!(await readInvocationLog(logPath)).some((entry) => entry.event === "snapshot-start")
-				) {
-					// Wait between receipt polls so the fixture process can advance before the next observation.
-					// oxlint-disable-next-line no-await-in-loop
-					await delay(10);
+				const pending: Promise<unknown>[] = [];
+				try {
+					const harness = createExtensionHarness({
+						branch: [
+							createToolBranchEntry({
+								details: ownedSessionDetails(currentSession),
+								isError: false,
+							}),
+						],
+						cwd: tempDir,
+					});
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "resume" },
+						harness.ctx,
+					);
+					const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["snapshot", "-i"],
+					});
+					pending.push(snapshotPromise);
+					await waitForInvocation(logPath, (entry) => entry.event === "snapshot-start");
+
+					const closePromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", currentSession, "close"],
+					});
+					pending.push(closePromise);
+					await writeFile(releasePath, "go");
+					const [snapshot, close] = await withConcurrencyTestTimeout(
+						Promise.all([snapshotPromise, closePromise]),
+						"explicit close did not wait behind in-flight managed command",
+					);
+					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+					assert.equal(close.isError, false, JSON.stringify(close));
+
+					const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "url"],
+					});
+					assert.equal(followUp.isError, false, JSON.stringify(followUp));
+					assert.notEqual(followUp.details?.sessionName, currentSession);
+					const events = (await readInvocationLog(logPath)).map((entry) => entry.event);
+					assert.ok(events.indexOf("close") > events.indexOf("snapshot-done"));
+				} finally {
+					await writeFile(releasePath, "go", "utf8");
+					await Promise.allSettled(pending);
 				}
-
-				const closePromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", currentSession, "close"],
-				});
-				await delay(50);
-				assert.equal(
-					(await readInvocationLog(logPath)).some((entry) => entry.event === "close"),
-					false,
-				);
-				await writeFile(releasePath, "go");
-				const [snapshot, close] = await withConcurrencyTestTimeout(
-					Promise.all([snapshotPromise, closePromise]),
-					"explicit close did not wait behind in-flight managed command",
-				);
-				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-				assert.equal(close.isError, false, JSON.stringify(close));
-
-				const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(followUp.isError, false, JSON.stringify(followUp));
-				assert.notEqual(followUp.details?.sessionName, currentSession);
-				const events = (await readInvocationLog(logPath)).map((entry) => entry.event);
-				assert.ok(events.indexOf("close") > events.indexOf("snapshot-done"));
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -2680,13 +2593,13 @@ test(
 			tempDir,
 			`const fs = require("node:fs");
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS ?? null }) + "\\n");
 if (args.includes("session") && args.includes("info")) {
   process.stdout.write(JSON.stringify({ success: true, data: { active: false } }));
 } else if (args.includes("batch")) {
   process.stdout.write(JSON.stringify([
-    { command: ["open", "https://example.com/fresh"], data: { title: "Fresh", url: "https://example.com/fresh" }, success: true },
-    { command: ["assert", "text", "missing"], error: "missing", success: false }
+    { command: ["open", "https://example.com/fresh"], result: { title: "Fresh", url: "https://example.com/fresh" }, success: true },
+    { command: ["wait", "--text", "missing"], error: "missing", success: false }
   ]));
 } else if (args.at(-1) === "close") {
   process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
@@ -2696,54 +2609,104 @@ if (args.includes("session") && args.includes("info")) {
 		);
 
 		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				const oldOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "https://example.com/old"],
-					sessionMode: "fresh",
-				});
-				assert.equal(oldOpen.isError, false, JSON.stringify(oldOpen));
-				const oldSessionName = oldOpen.details?.sessionName;
-				assertIsString(oldSessionName);
-				const freshFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["batch", "--bail"],
-					stdin: JSON.stringify([
-						["open", "https://example.com/fresh"],
-						["wait", "--text", "missing"],
-					]),
-					sessionMode: "fresh",
-				});
-				assert.equal(freshFailure.isError, true, JSON.stringify(freshFailure));
-				assert.equal(readRecord(freshFailure.details?.managedSessionOutcome).status, "replaced");
-				assert.equal(
-					readRecord(freshFailure.details?.managedSessionOutcome).replacedSessionClosed,
-					true,
-				);
+			await withPatchedEnv(
+				{
+					PATH: `${tempDir}:${basePath}`,
+					AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined,
+					AGENT_BROWSER_HEADED: undefined,
+				},
+				async () => {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
+					const oldOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--headed", "open", "https://example.com/old"],
+						sessionMode: "fresh",
+					});
+					assert.equal(oldOpen.isError, false, JSON.stringify(oldOpen));
+					assert.equal(oldOpen.details?.managedSessionHeadedAutosaveInterval, "0");
+					const oldSessionName = oldOpen.details.sessionName;
+					assertIsString(oldSessionName);
+					const freshFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["batch", "--bail"],
+						stdin: JSON.stringify([
+							["open", "https://example.com/fresh"],
+							["wait", "--text", "missing"],
+						]),
+						sessionMode: "fresh",
+					});
+					assert.equal(freshFailure.isError, true, JSON.stringify(freshFailure));
+					assert.equal(readRecord(freshFailure.details?.managedSessionOutcome).status, "replaced");
+					assert.equal(
+						readRecord(freshFailure.details?.managedSessionOutcome).replacedSessionClosed,
+						true,
+					);
 
-				const resumedHarness = createExtensionHarness({
-					branch: harness.ctx.sessionManager.getBranch().slice(),
-					cwd: tempDir,
-				});
-				await runExtensionEvent(
-					resumedHarness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					resumedHarness.ctx,
-				);
-				const oldFollowUp = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
-					args: ["--session", oldSessionName, "get", "url"],
-				});
-				assert.equal(oldFollowUp.isError, false, JSON.stringify(oldFollowUp));
-				const invocations = await readInvocationLog(logPath);
-				assert.equal(
-					invocations.some(
+					const replacementSessionName = freshFailure.details?.sessionName;
+					assertIsString(replacementSessionName);
+					assert.notEqual(replacementSessionName, oldSessionName);
+					assert.deepEqual(
+						readArray(freshFailure.details?.batchSteps).map((row) => readRecord(row).command),
+						[
+							["open", "https://example.com/fresh"],
+							["wait", "--text", "missing"],
+						],
+					);
+					const resumedHarness = createExtensionHarness({
+						branch: harness.ctx.sessionManager.getBranch().slice(),
+						cwd: tempDir,
+					});
+					await runExtensionEvent(
+						resumedHarness.handlers,
+						"session_start",
+						{ reason: "resume" },
+						resumedHarness.ctx,
+					);
+					const oldFollowUp = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+						args: ["--session", oldSessionName, "get", "url"],
+					});
+					assert.equal(oldFollowUp.isError, false, JSON.stringify(oldFollowUp));
+					assert.equal(oldFollowUp.details?.managedSessionHeadedAutosaveInterval, undefined);
+					const inspection = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+						args: ["--session", oldSessionName, "session", "info"],
+					});
+					assert.equal(inspection.isError, false, inspection.content[0]?.text);
+					assert.equal(readRecord(inspection.details?.data).piCleanupOwnership, "caller-owned");
+					const current = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+						args: ["get", "url"],
+					});
+					assert.equal(current.isError, false, current.content[0]?.text);
+					assert.equal(current.details?.sessionName, replacementSessionName);
+					await runExtensionEvent(
+						resumedHarness.handlers,
+						"session_shutdown",
+						{ reason: "quit" },
+						resumedHarness.ctx,
+					);
+					const invocations = await readInvocationLog(logPath);
+					const oldGetter = invocations.find(
 						(entry) => entry.args.includes(oldSessionName) && entry.args.includes("get"),
-					),
-					true,
-					JSON.stringify(invocations),
-				);
-			});
+					);
+					assert.ok(oldGetter, "the retired identity remains available as a caller-owned session");
+					assert.equal(
+						oldGetter.autosave,
+						null,
+						"retired managed launch policy must not be reapplied",
+					);
+					assert.deepEqual(
+						invocations.filter((entry) => entry.args.includes("close")).map((entry) => entry.args),
+						[
+							["--session", oldSessionName, "close"],
+							["--session", replacementSessionName, "close"],
+						],
+						"resume must not reconstruct the replaced owner or close it twice",
+					);
+				},
+			);
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -2887,17 +2850,39 @@ process.stdout.write(JSON.stringify(envelope));`,
 					assert.equal(afterFirstOpen[0].args.includes("--session"), true);
 					assert.equal(afterFirstOpen[0].idleTimeout, "1234");
 
-					const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--profile", "Default", "open", "https://example.com/profile"],
-					});
-					assert.equal(blocked.isError, true);
-					assert.match(readString(blocked.details?.validationError ?? ""), /launch-scoped flags/i);
-					assert.equal(blocked.details?.sessionMode, "auto");
-					assert.equal(
-						readRecord(blocked.details.sessionRecoveryHint).recommendedSessionMode,
-						"fresh",
-					);
-					assert.equal((await readInvocationLog(logPath)).length, 2);
+					for (const args of [
+						["--profile", "Default", "open", "https://example.com/profile"],
+						["--state", join(tempDir, "auth.json"), "open", "https://example.com/state"],
+						["--auto-connect", "open", "https://example.com/auto"],
+					]) {
+						// Ordered rejection rows share the same active browser; none may dispatch.
+						// oxlint-disable-next-line no-await-in-loop
+						const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+						// Every launch-flag variant must return the same recovery contract.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.equal(blocked.isError, true, `expected ${args[0]} to be blocked`);
+						// Every launch-flag variant must return the same recovery contract.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.match(
+							readString(blocked.details?.validationError ?? ""),
+							/launch-scoped flags/i,
+						);
+						// Every launch-flag variant must return the same recovery contract.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.equal(blocked.details?.sessionMode, "auto");
+						// Every launch-flag variant must return the same recovery contract.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.equal(
+							readRecord(blocked.details.sessionRecoveryHint).recommendedSessionMode,
+							"fresh",
+						);
+						// Rejection receipts must be observed before the next variant runs.
+						// oxlint-disable-next-line no-await-in-loop
+						const invocationCount = (await readInvocationLog(logPath)).length;
+						// Every launch-flag variant must be rejected before spawning.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.equal(invocationCount, 2);
+					}
 
 					const closeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["close"],
@@ -3129,6 +3114,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(firstFresh.isError, false, JSON.stringify(firstFresh));
 				const firstFreshSessionName = firstFresh.details?.sessionName;
 				assert.equal(typeof firstFreshSessionName, "string");
+				const firstBranch = structuredClone(harness.ctx.sessionManager.getBranch());
 				const secondFresh = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["open", "https://example.com/fresh-2"],
 					sessionMode: "fresh",
@@ -3138,11 +3124,11 @@ process.stdout.write(JSON.stringify(envelope));`,
 				assert.equal(typeof secondFreshSessionName, "string");
 				assert.notEqual(secondFreshSessionName, firstFreshSessionName);
 
-				harness.setBranch(harness.ctx.sessionManager.getBranch().slice());
+				harness.setBranch(firstBranch);
 				await runExtensionEvent(
 					harness.handlers,
 					"session_tree",
-					{ newLeafId: "branch-second", oldLeafId: "branch-current" },
+					{ newLeafId: "branch-first", oldLeafId: "branch-current" },
 					harness.ctx,
 				);
 
@@ -3154,6 +3140,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 				const thirdFreshSessionName = thirdFresh.details?.sessionName;
 				assert.equal(typeof thirdFreshSessionName, "string");
 				assert.notEqual(thirdFreshSessionName, secondFreshSessionName);
+				assert.notEqual(thirdFreshSessionName, firstFreshSessionName);
 				const invocations = await readInvocationLog(logPath);
 				assert.ok(
 					invocations.some(
@@ -3194,6 +3181,7 @@ if (args.includes("https://example.com/slow-base")) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
 }
+if (args.includes("https://example.com/slow-base")) fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event: "first-done" }) + "\\n");
 const envelope = args.includes("close")
   ? { success: true, data: { closed: true } }
   : { success: true, data: { title: args.includes("--profile") ? "Profiled" : "Base", url: args[args.length - 1] } };
@@ -3202,65 +3190,86 @@ process.stdout.write(JSON.stringify(envelope));`,
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const pending: Promise<unknown>[] = [];
+				try {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
 
-				const basePromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "https://example.com/slow-base"],
-				});
-				await delay(25);
-				const freshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--profile", "Default", "open", "https://example.com/fast-fresh"],
-					sessionMode: "fresh",
-				});
-				await delay(25);
-				const invocationsBeforeRelease = await readInvocationLog(logPath);
-				assert.equal(
-					invocationsBeforeRelease.some((entry) =>
-						entry.args.includes("https://example.com/fast-fresh"),
-					),
-					false,
-				);
+					const basePromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["open", "https://example.com/slow-base"],
+					});
+					pending.push(basePromise);
+					await waitForInvocation(logPath, (entry) =>
+						entry.args.includes("https://example.com/slow-base"),
+					);
+					const freshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--profile", "Default", "open", "https://example.com/fast-fresh"],
+						sessionMode: "fresh",
+					});
+					pending.push(freshPromise);
+					await setImmediate();
+					const invocationsBeforeRelease = await readInvocationLog(logPath);
+					assert.equal(
+						invocationsBeforeRelease.some((entry) =>
+							entry.args.includes("https://example.com/fast-fresh"),
+						),
+						false,
+					);
 
-				await writeFile(gatePath, "go", "utf8");
-				const [baseResult, freshResult] = await withConcurrencyTestTimeout(
-					Promise.all([basePromise, freshPromise]),
-					"overlapping base/fresh calls did not complete after releasing the base gate",
-				);
-				assert.equal(baseResult.isError, false, JSON.stringify(baseResult));
-				assert.equal(freshResult.isError, false, JSON.stringify(freshResult));
+					await writeFile(gatePath, "go", "utf8");
+					const [baseResult, freshResult] = await withConcurrencyTestTimeout(
+						Promise.all([basePromise, freshPromise]),
+						"overlapping base/fresh calls did not complete after releasing the base gate",
+					);
+					assert.equal(baseResult.isError, false, JSON.stringify(baseResult));
+					assert.equal(freshResult.isError, false, JSON.stringify(freshResult));
 
-				const freshSessionName = freshResult.details?.sessionName;
-				assert.equal(typeof freshSessionName, "string");
+					const freshSessionName = freshResult.details?.sessionName;
+					assert.equal(typeof freshSessionName, "string");
 
-				const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["snapshot", "-i"],
-				});
-				assert.equal(followUp.isError, false, JSON.stringify(followUp));
-				assert.equal(followUp.details?.sessionName, freshSessionName);
+					const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["snapshot", "-i"],
+					});
+					assert.equal(followUp.isError, false, JSON.stringify(followUp));
+					assert.equal(followUp.details?.sessionName, freshSessionName);
 
-				const invocations = await readInvocationLog(logPath);
-				assert.equal(
-					invocations.some(
-						(entry) =>
-							entry.args[0] === "--session" &&
-							entry.args[1] === readString(freshSessionName) &&
-							entry.args[2] === "close",
-					),
-					false,
-				);
-				assert.deepEqual(invocations.at(-1)?.args, [
-					"--json",
-					"--session",
-					readString(freshSessionName),
-					"snapshot",
-					"-i",
-				]);
+					const invocations = await readInvocationLog(logPath);
+					const firstDone = invocations.findIndex((entry) => entry.event === "first-done");
+					assert.ok(
+						firstDone >= 0 &&
+							firstDone <
+								invocations.findIndex((entry) =>
+									entry.args.includes("https://example.com/fast-fresh"),
+								),
+						"the second launch must dispatch only after the first native command finished",
+					);
+					assert.equal(
+						invocations.some(
+							(entry) =>
+								entry.args[0] === "--session" &&
+								entry.args[1] === readString(freshSessionName) &&
+								entry.args[2] === "close",
+						),
+						false,
+					);
+					assert.deepEqual(invocations.at(-1)?.args, [
+						"--json",
+						"--session",
+						readString(freshSessionName),
+						"snapshot",
+						"-i",
+					]);
+				} finally {
+					await writeFile(gatePath, "go", "utf8");
+					await Promise.allSettled(pending);
+				}
 			});
 		} finally {
-			await writeFile(gatePath, "go", "utf8").catch(() => {
-				// Teardown may already have removed this gate; the pending calls retain their own failure assertions.
-			});
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -3308,63 +3317,73 @@ process.stdout.write(JSON.stringify(envelope));`,
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const pending: Promise<unknown>[] = [];
+				try {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
 
-				const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "https://example.com/base"],
-					sessionMode: "fresh",
-				});
-				assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
-				const baseSessionName = firstOpen.details?.sessionName;
-				assert.equal(typeof baseSessionName, "string");
+					const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["open", "https://example.com/base"],
+						sessionMode: "fresh",
+					});
+					assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
+					const baseSessionName = firstOpen.details?.sessionName;
+					assert.equal(typeof baseSessionName, "string");
 
-				const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["snapshot", "-i"],
-				});
-				await delay(25);
-				const freshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--profile", "Default", "open", "https://example.com/fresh"],
-					sessionMode: "fresh",
-				});
-				await delay(25);
-				const invocationsBeforeRelease = await readInvocationLog(logPath);
-				assert.equal(
-					invocationsBeforeRelease.some(
+					const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["snapshot", "-i"],
+					});
+					pending.push(snapshotPromise);
+					await waitForInvocation(logPath, (entry) => entry.args.includes("snapshot"));
+					const freshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--profile", "Default", "open", "https://example.com/fresh"],
+						sessionMode: "fresh",
+					});
+					pending.push(freshPromise);
+					await setImmediate();
+					const invocationsBeforeRelease = await readInvocationLog(logPath);
+					assert.equal(
+						invocationsBeforeRelease.some(
+							(entry) => entry.event === "close-done" && entry.sessionName === baseSessionName,
+						),
+						false,
+						"fresh rotation must not close the base session while the snapshot is still gated",
+					);
+
+					await writeFile(snapshotGatePath, "go", "utf8");
+					const [snapshotResult, freshResult] = await withConcurrencyTestTimeout(
+						Promise.all([snapshotPromise, freshPromise]),
+						"overlapping snapshot/fresh calls did not complete after releasing the snapshot gate",
+					);
+					assert.equal(snapshotResult.isError, false, JSON.stringify(snapshotResult));
+					assert.equal(freshResult.isError, false, JSON.stringify(freshResult));
+
+					const invocations = await readInvocationLog(logPath);
+					const snapshotDoneIndex = invocations.findIndex(
+						(entry) => entry.event === "snapshot-done" && entry.sessionName === baseSessionName,
+					);
+					const closeBaseIndex = invocations.findIndex(
 						(entry) => entry.event === "close-done" && entry.sessionName === baseSessionName,
-					),
-					false,
-					"fresh rotation must not close the base session while the snapshot is still gated",
-				);
-
-				await writeFile(snapshotGatePath, "go", "utf8");
-				const [snapshotResult, freshResult] = await withConcurrencyTestTimeout(
-					Promise.all([snapshotPromise, freshPromise]),
-					"overlapping snapshot/fresh calls did not complete after releasing the snapshot gate",
-				);
-				assert.equal(snapshotResult.isError, false, JSON.stringify(snapshotResult));
-				assert.equal(freshResult.isError, false, JSON.stringify(freshResult));
-
-				const invocations = await readInvocationLog(logPath);
-				const snapshotDoneIndex = invocations.findIndex(
-					(entry) => entry.event === "snapshot-done" && entry.sessionName === baseSessionName,
-				);
-				const closeBaseIndex = invocations.findIndex(
-					(entry) => entry.event === "close-done" && entry.sessionName === baseSessionName,
-				);
-				assert.ok(
-					snapshotDoneIndex >= 0,
-					"snapshot should finish against the original managed session",
-				);
-				assert.ok(
-					closeBaseIndex > snapshotDoneIndex,
-					"base close should happen after the overlapping snapshot finishes",
-				);
+					);
+					assert.ok(
+						snapshotDoneIndex >= 0,
+						"snapshot should finish against the original managed session",
+					);
+					assert.ok(
+						closeBaseIndex > snapshotDoneIndex,
+						"base close should happen after the overlapping snapshot finishes",
+					);
+				} finally {
+					await writeFile(snapshotGatePath, "go", "utf8");
+					await Promise.allSettled(pending);
+				}
 			});
 		} finally {
-			await writeFile(snapshotGatePath, "go", "utf8").catch(() => {
-				// Teardown may already have removed this gate; the pending snapshot retains its own failure assertions.
-			});
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -3388,6 +3407,7 @@ if (args.includes("https://example.com/fresh-a")) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
 }
+if (args.includes("https://example.com/fresh-a")) fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event: "first-done" }) + "\\n");
 const envelope = args.includes("close")
   ? { success: true, data: { closed: true } }
   : { success: true, data: { title: "Fresh", url: args[args.length - 1] } };
@@ -3396,60 +3416,81 @@ process.stdout.write(JSON.stringify(envelope));`,
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const pending: Promise<unknown>[] = [];
+				try {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
 
-				const firstFreshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--profile", "Default", "open", "https://example.com/fresh-a"],
-					sessionMode: "fresh",
-				});
-				await delay(25);
-				const secondFreshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--profile", "Default", "open", "https://example.com/fresh-b"],
-					sessionMode: "fresh",
-				});
-				await delay(25);
-				const invocationsBeforeRelease = await readInvocationLog(logPath);
-				assert.equal(
-					invocationsBeforeRelease.some((entry) =>
-						entry.args.includes("https://example.com/fresh-b"),
-					),
-					false,
-				);
-
-				await writeFile(firstGatePath, "go", "utf8");
-				const [firstFresh, secondFresh] = await withConcurrencyTestTimeout(
-					Promise.all([firstFreshPromise, secondFreshPromise]),
-					"overlapping fresh calls did not complete after releasing the first fresh gate",
-				);
-				assert.equal(firstFresh.isError, false, JSON.stringify(firstFresh));
-				assert.equal(secondFresh.isError, false, JSON.stringify(secondFresh));
-				assert.equal(typeof firstFresh.details?.sessionName, "string");
-				assert.equal(typeof secondFresh.details?.sessionName, "string");
-				assert.notEqual(firstFresh.details?.sessionName, secondFresh.details?.sessionName);
-
-				const firstSessionName = readString(firstFresh.details?.sessionName);
-				const secondSessionName = readString(secondFresh.details?.sessionName);
-				const invocations = await readInvocationLog(logPath);
-				assert.ok(
-					invocations.some(
-						(entry) =>
-							entry.args.includes(firstSessionName) &&
-							entry.args.includes("https://example.com/fresh-a"),
-					),
-				);
-				assert.ok(
-					invocations.some(
-						(entry) =>
-							entry.args.includes(secondSessionName) &&
+					const firstFreshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--profile", "Default", "open", "https://example.com/fresh-a"],
+						sessionMode: "fresh",
+					});
+					pending.push(firstFreshPromise);
+					await waitForInvocation(logPath, (entry) =>
+						entry.args.includes("https://example.com/fresh-a"),
+					);
+					const secondFreshPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--profile", "Default", "open", "https://example.com/fresh-b"],
+						sessionMode: "fresh",
+					});
+					pending.push(secondFreshPromise);
+					await setImmediate();
+					const invocationsBeforeRelease = await readInvocationLog(logPath);
+					assert.equal(
+						invocationsBeforeRelease.some((entry) =>
 							entry.args.includes("https://example.com/fresh-b"),
-					),
-				);
+						),
+						false,
+					);
+
+					await writeFile(firstGatePath, "go", "utf8");
+					const [firstFresh, secondFresh] = await withConcurrencyTestTimeout(
+						Promise.all([firstFreshPromise, secondFreshPromise]),
+						"overlapping fresh calls did not complete after releasing the first fresh gate",
+					);
+					assert.equal(firstFresh.isError, false, JSON.stringify(firstFresh));
+					assert.equal(secondFresh.isError, false, JSON.stringify(secondFresh));
+					assert.equal(typeof firstFresh.details?.sessionName, "string");
+					assert.equal(typeof secondFresh.details?.sessionName, "string");
+					assert.notEqual(firstFresh.details?.sessionName, secondFresh.details?.sessionName);
+
+					const firstSessionName = readString(firstFresh.details?.sessionName);
+					const secondSessionName = readString(secondFresh.details?.sessionName);
+					const invocations = await readInvocationLog(logPath);
+					const firstDone = invocations.findIndex((entry) => entry.event === "first-done");
+					assert.ok(
+						firstDone >= 0 &&
+							firstDone <
+								invocations.findIndex((entry) =>
+									entry.args.includes("https://example.com/fresh-b"),
+								),
+						"the second launch must dispatch only after the first native command finished",
+					);
+					assert.ok(
+						invocations.some(
+							(entry) =>
+								entry.args.includes(firstSessionName) &&
+								entry.args.includes("https://example.com/fresh-a"),
+						),
+					);
+					assert.ok(
+						invocations.some(
+							(entry) =>
+								entry.args.includes(secondSessionName) &&
+								entry.args.includes("https://example.com/fresh-b"),
+						),
+					);
+				} finally {
+					await writeFile(firstGatePath, "go", "utf8");
+					await Promise.allSettled(pending);
+				}
 			});
 		} finally {
-			await writeFile(firstGatePath, "go", "utf8").catch(() => {
-				// Teardown may already have removed this gate; the pending fresh launches retain their own failure assertions.
-			});
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -4291,66 +4332,6 @@ process.exit(shouldFail ? 1 : 0);`,
 					"tab",
 					"list",
 				]);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension blocks launch-scoped --state and --auto-connect flags after an implicit session is active",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: args[args.length - 1] } }));`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
-					sessionMode: "fresh",
-					args: ["open", "https://example.com"],
-				});
-				assert.equal(firstOpen.isError, false);
-
-				for (const args of [
-					["--state", "/tmp/auth.json", "open", "https://example.com/state"],
-					["--auto-connect", "open", "https://example.com/auto"],
-				] as const) {
-					// Restore scenarios share environment and browser ownership; complete each transition and cleanup in order.
-					// oxlint-disable-next-line no-await-in-loop
-					const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: [...args],
-					});
-					// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(blocked.isError, true, `expected ${args[0]} to be blocked`);
-					// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(readString(blocked.details?.validationError ?? ""), /launch-scoped flags/i);
-					// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(blocked.details?.sessionMode, "auto");
-					// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						readRecord(blocked.details.sessionRecoveryHint).recommendedSessionMode,
-						"fresh",
-					);
-				}
-
-				assert.equal((await readInvocationLog(logPath)).length, 2);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
