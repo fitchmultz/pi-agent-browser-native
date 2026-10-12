@@ -2176,7 +2176,8 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 				{
 					PATH: `${tempDir}:${basePath}`,
 					PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/",
-					PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "50",
+					// Real helper probes such as the live `get url` check also use this base budget.
+					PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "10000",
 				},
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
@@ -2188,19 +2189,18 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 					);
 
 					const batchWaitStdin = JSON.stringify([
-						["wait", "--text", "42", "--timeout", "1000"],
-						["wait", "1000"],
+						["wait", "--text", "42", "--timeout", "5000"],
+						["wait", "5000"],
 					]);
+					// Past the 10 s base watchdog, before every extended wait budget (15 s or more).
+					const elapsed = 12_000;
 					const cases = [
-						{ params: { args: ["wait", "31000"] }, elapsed: 100 },
-						{
-							params: { args: ["wait", "--download", outputPath, "--timeout", "30000"] },
-							elapsed: 100,
-						},
-						{ params: { args: ["batch"], stdin: batchWaitStdin }, elapsed: 6500 },
+						{ args: ["wait", "31000"] },
+						{ args: ["wait", "--download", outputPath, "--timeout", "30000"] },
+						{ args: ["batch"], stdin: batchWaitStdin },
 					];
 					const realSetTimeout = setTimeout;
-					for (const [index, { params, elapsed }] of cases.entries()) {
+					for (const [index, params] of cases.entries()) {
 						// Fixture transitions and their assertions run in order against this test's shared state.
 						// oxlint-disable-next-line no-await-in-loop
 						await rm(releasePath, { force: true });
