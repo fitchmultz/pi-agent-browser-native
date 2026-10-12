@@ -1551,55 +1551,13 @@ test("Electron status requires browser version metadata from a live HTTP endpoin
 	}
 });
 
-for (const identityMode of ["missing", "mismatched"] as const) {
-	test(`restored Electron cleanup refuses a ${identityMode} start identity despite an exact profile operand`, async () => {
-		const userDataDir = await createSecureTempDirectory("electron-profile-pid-reuse-");
-		const child = spawn(
-			process.execPath,
-			["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${userDataDir}`],
-			{ stdio: "ignore" },
-		);
-		try {
-			await once(child, "spawn");
-			assert.ok(child.pid !== undefined && child.pid > 0);
-			const currentIdentity = await readProcessStartIdentity(child.pid);
-			assert.ok(currentIdentity !== undefined && currentIdentity.length > 0);
-			const record: ElectronLaunchRecord = {
-				appName: "PID reuse",
-				cleanupState: "active",
-				createdAtMs: Date.now(),
-				executablePath: process.execPath,
-				launchId: `electron-${identityMode}-identity`,
-				launchedByWrapper: true,
-				pid: child.pid,
-				port: 9,
-				userDataDir,
-				version: 1,
-				...(identityMode === "mismatched" ? { startIdentity: `${currentIdentity}-stale` } : {}),
-			};
-			const refused = await cleanupElectronLaunchResources({ record });
-			assert.equal(isTestPidAlive(child.pid), true, "unverified PID must not be signaled");
-			assert.equal(refused.partial, true);
-			assert.equal(refused.steps.find((step) => step.resource === "process")?.state, "failed");
-			assert.match(
-				refused.steps.find((step) => step.resource === "process")?.error ?? "",
-				/start identity.*refusing to signal a restored PID/i,
-			);
-			assert.equal(
-				refused.steps.find((step) => step.resource === "user-data-dir")?.state,
-				"skipped",
-			);
-			await stat(userDataDir);
-		} finally {
-			await stopChildProcess(child);
-			await rm(userDataDir, { force: true, recursive: true });
-		}
-	});
-}
-
 test("restored Electron cleanup round-trips a matching start identity and removes a spaces-and-Unicode profile", async () => {
 	const userDataDir = await createSecureTempDirectory("electron-profile-space é-");
-	const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+	const child = spawn(
+		process.execPath,
+		["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${userDataDir}`],
+		{ stdio: "ignore" },
+	);
 	try {
 		await once(child, "spawn");
 		assert.ok(child.pid !== undefined && child.pid > 0);
@@ -1618,6 +1576,25 @@ test("restored Electron cleanup round-trips a matching start identity and remove
 			version: 1,
 			startIdentity,
 		};
+		const assertRefusedIdentity = async (recordedIdentity: string | undefined) => {
+			const refused = await cleanupElectronLaunchResources({
+				record: { ...record, startIdentity: recordedIdentity },
+			});
+			assert.equal(isTestPidAlive(child.pid), true, "unverified PID must not be signaled");
+			assert.equal(refused.partial, true);
+			assert.equal(refused.steps.find((step) => step.resource === "process")?.state, "failed");
+			assert.match(
+				refused.steps.find((step) => step.resource === "process")?.error ?? "",
+				/start identity.*refusing to signal a restored PID/i,
+			);
+			assert.equal(
+				refused.steps.find((step) => step.resource === "user-data-dir")?.state,
+				"skipped",
+			);
+			await stat(userDataDir);
+		};
+		await assertRefusedIdentity(undefined);
+		await assertRefusedIdentity(`${startIdentity}-stale`);
 		const harness = createExtensionHarness({
 			cwd: userDataDir,
 			branch: [
