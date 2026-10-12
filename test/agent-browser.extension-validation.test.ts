@@ -47,10 +47,12 @@ import {
 import {
 	PLAIN_RENDER_THEME,
 	createRenderContext,
+	isTestPidAlive,
 } from "./helpers/extension-validation-fixtures.js";
 
-test("agentBrowserExtension keeps full browser guidance and installed doc pointers in its prompt section", async () => {
+test("agentBrowserExtension keeps full browser guidance and installed doc pointers in its prompt section", async (t) => {
 	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-guidance-test-"));
+	t.after(async () => await rm(isolatedHome, { force: true, recursive: true }));
 	await withPatchedEnv(
 		{
 			BRAVE_API_KEY: "demo-key",
@@ -303,33 +305,6 @@ test(
 	},
 );
 
-test("agentBrowserExtension includes configured browser executable guidance", async () => {
-	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-executable-guidance-test-"));
-	const configPath = join(isolatedHome, ".pi", "config", "pi-agent-browser-native", "config.json");
-	await mkdir(dirname(configPath), { recursive: true });
-	await writeFile(
-		configPath,
-		JSON.stringify(
-			{
-				version: 1,
-				browser: {
-					executablePath: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-				},
-			},
-			null,
-			2,
-		),
-		"utf8",
-	);
-	await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
-		const harness = createExtensionHarness({ cwd: process.cwd() });
-		const guidelineText = await getBrowserInstructions(harness);
-		assert.match(guidelineText, /browser\.executablePath/);
-		assert.match(guidelineText, /--executable-path/);
-		assert.match(guidelineText, /profiles lists Chrome profiles only/);
-	});
-});
-
 test("agentBrowserExtension uses project browser launch guidance when project config shadows global", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-agent-browser-project-shadow-guidance-test-"));
 	try {
@@ -360,6 +335,18 @@ test("agentBrowserExtension uses project browser launch guidance when project co
 			),
 			"utf8",
 		);
+		await withPatchedEnv({ HOME: isolatedHome, PI_AGENT_BROWSER_CONFIG: undefined }, async () => {
+			const globalHarness = createExtensionHarness({ cwd });
+			const globalGuidance = await getBrowserInstructions(globalHarness);
+			assert.match(globalGuidance, /Global Profile/);
+			assert.match(
+				globalGuidance,
+				/\/Applications\/Global Browser\.app\/Contents\/MacOS\/Global Browser/,
+			);
+			assert.match(globalGuidance, /browser\.executablePath/);
+			assert.match(globalGuidance, /--executable-path/);
+			assert.match(globalGuidance, /profiles lists Chrome profiles only/);
+		});
 		await writeFile(
 			projectConfigPath,
 			JSON.stringify(
@@ -411,89 +398,54 @@ test("agentBrowserExtension uses project browser launch guidance when project co
 test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	const harness = createExtensionHarness({ cwd: process.cwd() });
 	const schema = harness.tool.parameters;
-
-	assert.equal(Check(schema, { args: ["open", "https://example.test/"], unknown: true }), false);
+	const direct = {
+		args: ["open", "https://example.test/"],
+		outputPath: "logs/page.json",
+		timeoutMs: 35_000,
+	};
+	assert.equal(Check(schema, direct), true);
+	assert.equal(Check(schema, { ...direct, unknown: true }), false);
+	assert.equal(Check(schema, { ...direct, outputPath: "" }), false);
+	assert.equal(Check(schema, { ...direct, timeoutMs: 0 }), false);
 	assert.equal(
 		Check(schema, {
-			semanticAction: {
-				action: "click",
-				locator: "role",
-				role: "button",
-				name: "Open",
-				unknown: true,
-			},
+			...direct,
+			semanticAction: { action: "click", locator: "text", value: "Open" },
 		}),
 		false,
 	);
-	assert.equal(Check(schema, { sourceLookup: { selector: "main", unknown: true } }), false);
+	assert.equal(Check(schema, { ...direct, sourceLookup: { selector: "main" } }), false);
 	assert.equal(
-		Check(schema, { networkSourceLookup: { url: "https://example.test/api", unknown: true } }),
+		Check(schema, { ...direct, networkSourceLookup: { url: "https://example.test/api" } }),
 		false,
 	);
 	assert.equal(
 		Check(schema, {
-			job: { steps: [{ action: "open", url: "https://example.test/" }], unknown: true },
-		}),
-		false,
-	);
-	assert.equal(
-		Check(schema, {
-			job: { steps: [{ action: "open", url: "https://example.test/", unknown: true }] },
+			...direct,
+			job: { steps: [{ action: "open", url: "https://example.test/" }] },
 		}),
 		false,
 	);
 
-	assert.equal(
-		Check(schema, {
-			args: ["open", "https://example.test/"],
-			outputPath: "logs/page.json",
-			timeoutMs: 35_000,
-		}),
-		true,
-	);
-	assert.equal(Check(schema, { args: ["open", "https://example.test/"], outputPath: "" }), false);
-	assert.equal(Check(schema, { args: ["open", "https://example.test/"], timeoutMs: 0 }), false);
 	const actionTool = harness.getTool("agent_browser_action");
 	const sourceTool = harness.getTool("agent_browser_source");
 	const networkTool = harness.getTool("agent_browser_network_source");
 	assert.ok(actionTool);
 	assert.ok(sourceTool);
 	assert.ok(networkTool);
-	assert.equal(
-		Check(actionTool.parameters, {
-			action: "click",
-			locator: "role",
-			role: "button",
-			name: "Open",
-		}),
-		true,
-	);
-	assert.equal(
-		Check(schema, {
-			semanticAction: { action: "click", locator: "text", value: "Open", values: ["nope"] },
-		}),
-		false,
-	);
-	assert.equal(
-		Check(actionTool.parameters, {
-			action: "select",
-			selector: "#flavor",
-			value: "chocolate",
-		}),
-		true,
-	);
-	assert.equal(Check(sourceTool.parameters, { selector: "main" }), true);
-	assert.equal(
-		Check(networkTool.parameters, {
-			namespace: "review",
-			url: "https://example.test/api",
-		}),
-		true,
-	);
-	assert.equal(
-		Check(schema, { job: { steps: [{ action: "open", url: "https://example.test/" }] } }),
-		false,
-	);
+	const click = { action: "click", locator: "role", role: "button", name: "Open" };
+	const select = { action: "select", selector: "#flavor", value: "chocolate" };
+	const source = { selector: "main" };
+	const network = { namespace: "review", url: "https://example.test/api" };
+	assert.equal(Check(actionTool.parameters, click), true);
+	assert.equal(Check(actionTool.parameters, { ...click, unknown: true }), false);
+	assert.equal(Check(actionTool.parameters, { ...click, values: ["nope"] }), false);
+	assert.equal(Check(actionTool.parameters, select), true);
+	assert.equal(Check(actionTool.parameters, { ...select, values: ["chocolate"] }), true);
+	assert.equal(Check(sourceTool.parameters, source), true);
+	assert.equal(Check(sourceTool.parameters, { ...source, unknown: true }), false);
+	assert.equal(Check(networkTool.parameters, network), true);
+	assert.equal(Check(networkTool.parameters, { ...network, unknown: true }), false);
 });
 
 test(
@@ -501,34 +453,52 @@ test(
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-press-validation-"));
+		const logPath = join(tempDir, "invocations.log");
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: {} }));`,
+		);
 		try {
-			const harness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+			await withPatchedEnv(
+				{ PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` },
+				async () => {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
 
-			const topLevel = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["press", "@e1", "Enter"],
-			});
-			assert.equal(topLevel.isError, true);
-			assert.match(
-				readString(readRecord(topLevel.content.at(0)).text),
-				/accepts exactly one key argument/,
-			);
-			assert.equal(
-				readRecord(topLevel.details).validationError,
-				topLevel.content.at(0)?.text?.split("\n\nObservation:")[0],
-			);
+					const topLevel = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["press", "@e1", "Enter"],
+					});
+					assert.equal(topLevel.isError, true);
+					assert.match(
+						readString(readRecord(topLevel.content.at(0)).text),
+						/accepts exactly one key argument/,
+					);
+					assert.equal(
+						readRecord(topLevel.details).validationError,
+						topLevel.content.at(0)?.text?.split("\n\nObservation:")[0],
+					);
 
-			const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["batch"],
-				stdin: JSON.stringify([
-					["fill", "#todo", "alpha"],
-					["key", "#todo", "Return"],
-				]),
-			});
-			assert.equal(batch.isError, true);
-			assert.match(
-				readString(readRecord(batch.content.at(0)).text),
-				/Unsupported batch step 2: agent-browser key\/press accepts exactly one key argument/,
+					const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["batch"],
+						stdin: JSON.stringify([
+							["fill", "#todo", "alpha"],
+							["key", "#todo", "Return"],
+						]),
+					});
+					assert.equal(batch.isError, true);
+					assert.match(
+						readString(readRecord(batch.content.at(0)).text),
+						/Unsupported batch step 2: agent-browser key\/press accepts exactly one key argument/,
+					);
+					assert.deepEqual(await readInvocationLog(logPath), []);
+				},
 			);
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -1110,8 +1080,10 @@ else process.stdout.write(JSON.stringify({ success: true, data: { title: "Modal"
 test(
 	"agentBrowserExtension bounds dialog recovery commands and exposes recovery actions",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-dialog-timeout-"));
+		const logPath = join(tempDir, "invocations.log");
+		const pidPath = join(tempDir, "pid");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -1120,11 +1092,12 @@ const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm"))) {
   setInterval(() => {}, 60_000);
+  fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
 }`,
 		);
-
 		try {
 			await withPatchedEnv(
 				{
@@ -1141,10 +1114,71 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 						{ reason: "new" },
 						harness.ctx,
 					);
-
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["dialog", "status"],
-					});
+					const realNow = Date.now;
+					const realSetTimeout = setTimeout;
+					const realClearTimeout = clearTimeout;
+					const runTimedOut = async (params: AgentBrowserToolParams, timeoutMs: number) => {
+						const before = (await readInvocationLog(logPath)).length;
+						const controller = new AbortController();
+						// Freeze coordination deadlines while native dispatch and child liveness remain real.
+						t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realNow() });
+						let settled = false;
+						const pending = executeRegisteredTool(
+							harness.tool,
+							harness.ctx,
+							params,
+							controller.signal,
+						).then((result) => {
+							settled = true;
+							return result;
+						});
+						try {
+							const deadline = realNow() + 5000;
+							// The child must read stdin and enter the hang before the parent watchdog advances.
+							// oxlint-disable-next-line no-await-in-loop
+							while ((await readInvocationLog(logPath)).length <= before) {
+								if (realNow() >= deadline) {
+									throw new Error("dialog fixture did not dispatch");
+								}
+								// Observe real dispatch I/O without advancing the mocked watchdog.
+								// oxlint-disable-next-line no-await-in-loop
+								await new Promise((resolveDelay) => {
+									realSetTimeout(resolveDelay, 5);
+								});
+							}
+							t.mock.timers.tick(timeoutMs - 1);
+							await new Promise((resolveDelay) => {
+								realSetTimeout(resolveDelay, 0);
+							});
+							assert.equal(settled, false, "dialog must remain pending before its selected budget");
+							t.mock.timers.tick(1);
+							let deadlineTimer: NodeJS.Timeout | undefined;
+							try {
+								const result = await Promise.race([
+									pending,
+									new Promise<never>((_resolve, reject) => {
+										deadlineTimer = realSetTimeout(
+											() => reject(new Error("dialog watchdog did not settle")),
+											5000,
+										);
+									}),
+								]);
+								assert.equal(
+									isTestPidAlive(Number(await readFile(pidPath, "utf8"))),
+									false,
+									"timed-out child must be reaped",
+								);
+								return result;
+							} finally {
+								realClearTimeout(deadlineTimer);
+							}
+						} finally {
+							t.mock.timers.reset();
+							controller.abort();
+							await Promise.allSettled([pending]);
+						}
+					};
+					const result = await runTimedOut({ args: ["dialog", "status"] }, 50);
 					assert.equal(result.isError, true);
 					assert.equal(readRecord(result.details).failureCategory, "timeout");
 					assert.equal(readRecord(result.details).timeoutMs, 50);
@@ -1159,28 +1193,34 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 						),
 					);
 
-					const explicitTimeoutResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["dialog", "status"],
-						timeoutMs: 75,
-					});
-					assert.equal(explicitTimeoutResult.isError, true);
-					assert.equal(
-						readRecord(explicitTimeoutResult.details).timeoutMs,
-						75,
-						JSON.stringify(explicitTimeoutResult),
-					);
+					const explicit = await runTimedOut({ args: ["dialog", "status"], timeoutMs: 75 }, 75);
+					assert.equal(explicit.isError, true);
+					assert.equal(readRecord(explicit.details).failureCategory, "timeout");
+					assert.equal(readRecord(explicit.details).timeoutMs, 75);
 
-					const evalResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["eval", "--stdin"],
-						stdin: "confirm('Continue?')",
-					});
-					assert.equal(evalResult.isError, true);
-					assert.equal(readRecord(evalResult.details).failureCategory, "timeout");
-					assert.equal(readRecord(evalResult.details).timeoutMs, 60);
-					const evalNextActions = readArray(readRecord(evalResult.details).nextActions).map(
-						readRecord,
+					const triggered = await runTimedOut(
+						{ args: ["eval", "--stdin"], stdin: "confirm('Continue?')" },
+						60,
 					);
-					assert.ok(evalNextActions.some((action) => action.id === "inspect-dialog-after-timeout"));
+					assert.equal(triggered.isError, true);
+					assert.equal(readRecord(triggered.details).failureCategory, "timeout");
+					assert.equal(readRecord(triggered.details).timeoutMs, 60);
+					assert.ok(
+						readArray(readRecord(triggered.details).nextActions)
+							.map(readRecord)
+							.some((action) => action.id === "inspect-dialog-after-timeout"),
+					);
+					assert.deepEqual(
+						(await readInvocationLog(logPath)).map((entry) => ({
+							args: entry.args.slice(-2),
+							stdin: entry.stdin,
+						})),
+						[
+							{ args: ["dialog", "status"], stdin: "" },
+							{ args: ["dialog", "status"], stdin: "" },
+							{ args: ["eval", "--stdin"], stdin: "confirm('Continue?')" },
+						],
+					);
 				},
 			);
 		} finally {
@@ -1254,75 +1294,24 @@ process.stdin.on("end", () => {
 						false,
 					);
 					assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
-				},
-			);
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
 
-test(
-	"agentBrowserExtension handles scroll to end before upstream page scroll",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-page-scroll-end-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-let stdin = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { stdin += chunk; });
-process.stdin.on("end", () => {
-  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-  if (args.includes("eval") && stdin.includes('target = "end"')) {
-    process.stdout.write(JSON.stringify({ success: true, data: { result: {
-      status: "scrolled",
-      target: "end",
-      before: { scrollTop: 0, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 },
-      after: { scrollTop: 4500, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 }
-    } } }));
-    return;
-  }
-  if (args.includes("scroll")) {
-    process.stdout.write(JSON.stringify({ success: true, data: { scrolled: "unexpected-page-scroll" } }));
-    return;
-  }
-  process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
-});`,
-		);
-
-		try {
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["scroll", "to", "end"],
+					const surplus = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["scroll", "#virtualList", "down", "100", "unexpected"],
 					});
-					assert.equal(result.isError, false, JSON.stringify(result));
-					assert.match(readString(readRecord(result.content.at(0)).text), /Scrolled page to end/);
-					assert.equal(readRecord(readRecord(result.details).data).status, "scrolled");
+					assert.equal(surplus.isError, false);
+					assert.equal(readRecord(surplus.details).scrollContainer, undefined);
 					assert.equal(
-						readRecord(readRecord(readRecord(result.details).scrollPage).request).target,
-						"end",
+						readRecord(readRecord(surplus.details).data).scrolled,
+						"unexpected-page-scroll",
 					);
-					const invocations = await readInvocationLog(logPath);
-					assert.equal(
-						invocations.some((entry) => entry.args.includes("scroll")),
-						false,
+					const afterSurplus = await readInvocationLog(logPath);
+					assert.deepEqual(
+						afterSurplus
+							.filter((entry) => entry.args.includes("scroll"))
+							.map((entry) => entry.args.slice(3)),
+						[["scroll", "#virtualList", "down", "100", "unexpected"]],
 					);
-					assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+					assert.equal(afterSurplus.filter((entry) => entry.args.includes("eval")).length, 1);
 				},
 			);
 		} finally {
@@ -1347,6 +1336,14 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+  if (args.includes("eval") && stdin.includes('target = "end"')) {
+    process.stdout.write(JSON.stringify({ success: true, data: { result: {
+      status: "scrolled", target: "end",
+      before: { scrollTop: 0, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 },
+      after: { scrollTop: 4500, scrollLeft: 0, scrollHeight: 5000, clientHeight: 500, scrollWidth: 800, clientWidth: 800 }
+    } } }));
+    return;
+  }
   if (args.includes("eval") && stdin.includes('direction = "down"')) {
     process.stdout.write(JSON.stringify({ success: true, data: { result: {
       status: "scrolled",
@@ -1392,6 +1389,42 @@ process.stdin.on("end", () => {
 						"down",
 					);
 
+					const end = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["scroll", "to", "end"],
+					});
+					assert.equal(end.isError, false, JSON.stringify(end));
+					assert.equal(readRecord(end.details).successCategory, "completed");
+					assert.match(readString(readRecord(end.content.at(0)).text), /Scrolled page to end/);
+					assert.equal(readRecord(readRecord(end.details).data).status, "scrolled");
+					assert.equal(
+						readRecord(readRecord(readRecord(end.details).scrollPage).request).target,
+						"end",
+					);
+					assert.equal(
+						(await readInvocationLog(logPath)).filter((entry) => entry.args.includes("scroll"))
+							.length,
+						0,
+					);
+
+					const endSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["scroll", "to", "end", "--selector", "#panel"],
+					});
+					assert.equal(endSelector.isError, false);
+					assert.equal(
+						readRecord(readRecord(endSelector.details).data).scrolled,
+						"unexpected-page-scroll",
+					);
+					const endTail = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["scroll", "to", "end", "unexpected"],
+					});
+					assert.equal(endTail.isError, false);
+					assert.equal(readRecord(endTail.details).scrollPage, undefined);
+					const topTail = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["scroll", "to", "top", "unexpected"],
+					});
+					assert.equal(topTail.isError, false);
+					assert.equal(readRecord(topTail.details).scrollPage, undefined);
+
 					const selectorScroll = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["scroll", "down", "250", "--selector", "#panel"],
 					});
@@ -1406,8 +1439,19 @@ process.stdin.on("end", () => {
 					assert.equal(trailingTokenScroll.isError, false);
 
 					const invocations = await readInvocationLog(logPath);
-					assert.equal(invocations.filter((entry) => entry.args.includes("scroll")).length, 2);
-					assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+					assert.deepEqual(
+						invocations
+							.filter((entry) => entry.args.includes("scroll"))
+							.map((entry) => entry.args.slice(3)),
+						[
+							["scroll", "to", "end", "--selector", "#panel"],
+							["scroll", "to", "end", "unexpected"],
+							["scroll", "to", "top", "unexpected"],
+							["scroll", "down", "250", "--selector", "#panel"],
+							["scroll", "down", "250", "unexpected"],
+						],
+					);
+					assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 2);
 				},
 			);
 		} finally {
@@ -2524,6 +2568,17 @@ process.stdout.write(JSON.stringify(command === "batch"
 	},
 );
 
+// These PDFs deliberately do not create files: the native receipt proves admission, not artifact success.
+function assertReleasedPdf(result: {
+	readonly isError?: boolean;
+	readonly details?: Readonly<Record<string, unknown>>;
+}): void {
+	assert.equal(result.isError, true);
+	const details = readRecord(result.details);
+	assert.equal(details.failureCategory, "artifact-missing");
+	assert.equal(readRecord(details.data).command, "pdf");
+}
+
 // Each recording contract gets isolated state, an ffmpeg-free PATH, and a one-row manifest cap.
 type RecordingReservationHarnessView = Pick<
 	ReturnType<typeof createExtensionHarness>,
@@ -2698,12 +2753,14 @@ test(
 			"Record a browser workflow.",
 			async (harness, { tempDir }) => {
 				await mkdir(join(tempDir, "ffmpeg"));
-				await executeRegisteredTool(harness.tool, harness.ctx, {
+				const globalOne = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["--session", "global-one", "record", "start", "global-one.webm"],
 				});
-				await executeRegisteredTool(harness.tool, harness.ctx, {
+				assert.equal(globalOne.isError, false, globalOne.content.at(0)?.text);
+				const globalTwo = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["--session", "global-two", "record", "start", "global-two.webm"],
 				});
+				assert.equal(globalTwo.isError, false, globalTwo.content.at(0)?.text);
 				const otherNamespaceRecording = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [
 						"--namespace",
@@ -2732,14 +2789,8 @@ test(
 				const releasedGlobalTwo = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["pdf", "global-two.webm"],
 				});
-				assert.doesNotMatch(
-					readString(readRecord(releasedGlobalOne.content.at(0)).text),
-					/reserved by an active recording/,
-				);
-				assert.doesNotMatch(
-					readString(readRecord(releasedGlobalTwo.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedGlobalOne);
+				assertReleasedPdf(releasedGlobalTwo);
 				const retainedOtherNamespace = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["pdf", "global-three.webm"],
 				});
@@ -2897,10 +2948,7 @@ test(
 					resumedHarness.ctx,
 					{ args: ["pdf", "present.webm"] },
 				);
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterResume.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterResume);
 			},
 		);
 	},
@@ -3166,6 +3214,10 @@ test(
 					false,
 				);
 
+				const releasedAfterDirectClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["pdf", "demo.webm"],
+				});
+				assertReleasedPdf(releasedAfterDirectClose);
 				const batchRecording = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["record", "start", "batch-close.webm"],
 				});
@@ -3178,10 +3230,7 @@ test(
 				const releasedAfterBatchClose = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["pdf", "batch-close.webm"],
 				});
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterBatchClose.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterBatchClose);
 				assert.notEqual(
 					readRecord(releasedAfterBatchClose.details).sessionName,
 					readRecord(batchRecording.details).sessionName,
@@ -3200,10 +3249,7 @@ test(
 					harness.ctx,
 					{ args: ["pdf", "batch-argument-close.webm"] },
 				);
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterArgumentBatchClose.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterArgumentBatchClose);
 			},
 		);
 	},
@@ -3247,10 +3293,7 @@ test(
 					harness.ctx,
 					{ args: ["pdf", "batch-close-stream.webm"] },
 				);
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterDiagnosticClose.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterDiagnosticClose);
 				assert.notEqual(
 					readRecord(releasedAfterDiagnosticClose.details).sessionName,
 					readRecord(diagnosticBatchRecording.details).sessionName,
@@ -3326,10 +3369,7 @@ test(
 					harness.ctx,
 					{ args: ["pdf", "batch-start-close.webm"] },
 				);
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterCombinedStartClose.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterCombinedStartClose);
 				const combinedManifest = readRecord(
 					readRecord(combinedStartClose.details).artifactManifest ?? {},
 				);
@@ -3396,10 +3436,9 @@ test(
 					replayHarness.ctx,
 					{ args: ["--headed", "open", "https://example.test/"] },
 				);
-				assert.doesNotMatch(
-					readString(readRecord(replayFreshLaunch.content.at(0)).text),
-					/launch-scoped flags would be ignored/i,
-				);
+				assert.equal(replayFreshLaunch.isError, false, replayFreshLaunch.content.at(0)?.text);
+				assert.equal(readRecord(replayFreshLaunch.details).resultCategory, "success");
+				assert.equal(readRecord(readRecord(replayFreshLaunch.details).data).command, "open");
 
 				for (const subcommand of ["start", "restart"]) {
 					// Validation attempts share one native session and invocation log.
@@ -3466,10 +3505,7 @@ test(
 					harness.ctx,
 					{ args: ["pdf", "stale-recording.webm"] },
 				);
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterDefinitiveStopFailure.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterDefinitiveStopFailure);
 
 				const staleBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["record", "start", "stale-batch-recording.webm"],
@@ -3497,10 +3533,7 @@ test(
 					harness.ctx,
 					{ args: ["pdf", "stale-batch-recording.webm"] },
 				);
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterDefinitiveBatchStopFailure.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterDefinitiveBatchStopFailure);
 
 				const orderedBatchRecording = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["record", "start", "ordered-old.webm"],
@@ -3541,10 +3574,7 @@ test(
 				const releasedOrderedOld = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["pdf", "ordered-old.webm"],
 				});
-				assert.doesNotMatch(
-					readString(readRecord(releasedOrderedOld.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedOrderedOld);
 				const reservedOrderedNew = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["pdf", "ordered-new.webm"],
 				});
@@ -3577,10 +3607,7 @@ test(
 				const releasedAfterReplacement = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["pdf", "concurrent.webm"],
 				});
-				assert.doesNotMatch(
-					readString(readRecord(releasedAfterReplacement.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(releasedAfterReplacement);
 				assert.equal(
 					(await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] })).isError,
 					false,
@@ -3686,10 +3713,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				const released = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["pdf", "two.webm"],
 				});
-				assert.doesNotMatch(
-					readString(readRecord(released.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(released);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -3815,10 +3839,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				const released = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
 					args: ["pdf", "branch.webm"],
 				});
-				assert.doesNotMatch(
-					readString(readRecord(released.content.at(0)).text),
-					/reserved by an active recording/,
-				);
+				assertReleasedPdf(released);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -3959,7 +3980,11 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(wideCollapsedText, /<syntaxVariable>"origin"<\/syntaxVariable>/);
 	assert.match(wideCollapsedText, /<syntaxString>"https:\/\/example\.com\/"<\/syntaxString>/);
 	assert.doesNotMatch(collapsedText, /item-24/);
-	assert.match(longText, /item-24/, "renderer must not mutate model-facing content");
+	assert.deepEqual(
+		longResult.content,
+		[{ type: "text", text: longText }],
+		"renderer must not mutate model-facing content",
+	);
 
 	const longFailureText = Array.from({ length: 20 }, (_, index) => `failure-line-${index}`).join(
 		"\n",
@@ -3986,9 +4011,9 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	);
 	assert.match(failedCollapsedText, /failure-line-0/);
 	assert.doesNotMatch(failedCollapsedText, /failure-line-19/);
-	assert.match(
-		longFailureText,
-		/failure-line-19/,
+	assert.deepEqual(
+		failedResult.content,
+		[{ type: "text", text: longFailureText }],
 		"renderer must not mutate failed model-facing content",
 	);
 
@@ -4128,8 +4153,9 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	assert.match(fallbackText, /<success>summary ok<\/success>/);
 });
 
-test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt, env, or package dev cwd explicitly allows it", async () => {
+test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt, env, or package dev cwd explicitly allows it", async (t) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bash-policy-"));
+	t.after(async () => await rm(tempDir, { force: true, recursive: true }));
 	const defaultHarness = createExtensionHarness({
 		cwd: tempDir,
 		prompt: "Open a page and summarize it.",
@@ -4291,6 +4317,7 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 	});
 
 	const packageDevDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-dev-"));
+	t.after(async () => await rm(packageDevDir, { force: true, recursive: true }));
 	await writeFile(
 		join(packageDevDir, "package.json"),
 		JSON.stringify({ name: "pi-agent-browser-native" }),
@@ -4307,9 +4334,6 @@ test("agentBrowserExtension blocks direct and wrapped agent-browser bash unless 
 		packageDevHarness.ctx,
 	);
 	assert.deepEqual(packageDevAllowed, []);
-
-	await rm(tempDir, { force: true, recursive: true });
-	await rm(packageDevDir, { force: true, recursive: true });
 });
 
 test("agentBrowserExtension keeps the page verified after a failed eval by probing the live URL", async () => {

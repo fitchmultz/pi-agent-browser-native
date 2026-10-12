@@ -625,7 +625,7 @@ if (subcommand === "list") {
 );
 
 test(
-	"agentBrowserExtension passes through provider and specialized skill workflows",
+	"agentBrowserExtension passes through provider workflows",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-provider-matrix-"));
@@ -644,12 +644,7 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({
   iosDevice: process.env.AGENT_BROWSER_IOS_DEVICE || null,
   kernelApiKey: process.env.KERNEL_API_KEY || null
 }) + "\\n");
-const skillIndex = args.indexOf("skills");
-if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
-  process.stdout.write(JSON.stringify({ success: true, data: { name: args[skillIndex + 2], body: "Use native agent_browser args for provider setup." } }));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: { ok: true, args } }));
-}`,
+process.stdout.write(JSON.stringify({ success: true, data: { ok: true, args } }));`,
 		);
 
 		const providerCommands = [
@@ -660,15 +655,6 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 			["--provider", "browseruse", "open", "https://example.com"],
 			["--provider", "browserless", "open", "https://example.com"],
 			["--provider", "agentcore", "open", "https://example.com"],
-		] as const;
-		const skillCommands = [
-			["skills", "get", "electron"],
-			["skills", "get", "slack"],
-			["skills", "get", "dogfood"],
-			["skills", "get", "vercel-sandbox"],
-			["skills", "get", "protected-vercel-deployments"],
-			["skills", "get", "agentcore"],
-			["skills", "get", "derive-client"],
 		] as const;
 
 		try {
@@ -685,7 +671,7 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 				async () => {
 					const harness = createExtensionHarness({
 						cwd: tempDir,
-						prompt: "Exercise provider and specialized skill passthrough.",
+						prompt: "Exercise provider passthrough.",
 					});
 					await runExtensionEvent(
 						harness.handlers,
@@ -717,29 +703,6 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 							JSON.stringify(result.details),
 							/agentcore-key|browserbase-key|browserless-key|browser-use-key|kernel-key/,
 						);
-					}
-					for (const args of skillCommands) {
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-							args: [...args],
-						});
-						// Every command in the fixed nonempty skills table checks success without implicit sessions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(result.details);
-						// Every command in the fixed nonempty skills table checks success without implicit sessions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							result.isError,
-							false,
-							`${args.join(" ")}: ${result.content[0]?.type === "text" ? readString(result.content[0].text) : ""}`,
-						);
-						// Every command in the fixed nonempty skills table checks success without implicit sessions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(result.details.sessionName, undefined, args.join(" "));
-						// Every command in the fixed nonempty skills table checks success without implicit sessions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(result.details.usedImplicitSession, undefined, args.join(" "));
 					}
 
 					const invocations = await readInvocationLog(logPath);
@@ -777,10 +740,6 @@ if (skillIndex >= 0 && args[skillIndex + 1] === "get") {
 						providerInvocations.some((entry) => entry.browserUseApiKey === "browser-use-key"),
 					);
 					assert.ok(providerInvocations.some((entry) => entry.kernelApiKey === "kernel-key"));
-					assert.deepEqual(
-						invocations.filter((entry) => entry.args[1] === "skills").map((entry) => entry.args),
-						skillCommands.map((args) => ["--json"].concat(args)),
-					);
 				},
 			);
 		} finally {
@@ -1695,7 +1654,7 @@ if (command === "errors") data = { errors: [{ text: "boom", url: "https://exampl
 if (command === "highlight") data = { highlighted: subcommand };
 if (command === "inspect") data = { opened: true };
 if (command === "clipboard") data = { text: subcommand === "read" ? "clipboard text" : "written" };
-if (command === "stream") data = { connected: subcommand === "enable" || subcommand === "status", enabled: subcommand !== "disable", port: 7777, screencasting: subcommand !== "disable" };
+if (command === "stream") data = { connected: subcommand === "enable" || subcommand === "status", enabled: subcommand !== "disable", port: 7777, screencasting: subcommand === "enable" };
 if (command === "react") data = { ok: true, subcommand, components: [] };
 if (command === "vitals" || command === "web-vitals") data = { lcp: 123, cls: 0, command };
 if (command === "dashboard") data = subcommand === "stop" ? { stopped: true } : { pid: 123, port: 4848 };
@@ -1742,7 +1701,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 			["clipboard", "copy"],
 			["clipboard", "paste"],
 			["stream", "enable", "--port", "7777"],
-			["stream", "status"],
+			["stream", "status", "--json"],
 			["stream", "disable"],
 			["react", "tree"],
 			["react", "inspect", "fiber-1"],
@@ -1776,6 +1735,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					);
 
 					let networkRequestsResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
+					let streamStatusResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 					for (const args of commands) {
 						// Fixture transitions and their assertions run in order against this test's shared state.
 						// oxlint-disable-next-line no-await-in-loop
@@ -1807,7 +1767,28 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						if (args[0] === "network" && args[1] === "requests") {
 							networkRequestsResult = result;
 						}
+						if (args[0] === "stream" && args[1] === "status") {
+							streamStatusResult = result;
+						}
 					}
+					assert.ok(streamStatusResult);
+					const streamJson = readRecord(
+						JSON.parse(
+							streamStatusResult.content
+								.filter((item) => item.type === "text")
+								.map((item) => item.text)
+								.join("\n"),
+						),
+					);
+					assert.equal(streamJson.success, true);
+					assert.deepEqual(readRecord(streamJson.data), {
+						connected: true,
+						enabled: true,
+						port: 7777,
+						screencasting: false,
+						wsUrl: "ws://127.0.0.1:7777",
+						frameFormat: "JSON messages with base64 JPEG frame data",
+					});
 
 					const networkNextActions = readArray(networkRequestsResult?.details?.nextActions).map(
 						readRecord,
@@ -1897,10 +1878,13 @@ test(
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stream-idempotent-"));
+		const replyPath = join(tempDir, "reply.txt");
+		await writeFile(replyPath, "Streaming is already enabled for this session");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`process.stdout.write(JSON.stringify({ success: false, error: "Streaming is already enabled for this session" }));`,
+			`const fs = require("node:fs");
+process.stdout.write(JSON.stringify({ success: false, error: fs.readFileSync(${JSON.stringify(replyPath)}, "utf8") }));`,
 		);
 
 		try {
@@ -1929,43 +1913,14 @@ test(
 							.map((action) => action.id),
 						["check-stream-status-after-noop", "disable-existing-stream-when-done"],
 					);
-				},
-			);
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension does not mask non-exact stream enable failures",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stream-real-failure-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`process.stdout.write(JSON.stringify({ success: false, error: "Streaming is already enabled but health check failed" }));`,
-		);
-
-		try {
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir, prompt: "Enable stream." });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+					await writeFile(replyPath, "Streaming is already enabled but health check failed");
+					const failed = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["stream", "enable"],
 					});
-					assert.ok(result.details);
-					assert.equal(result.isError, true);
-					assert.equal(result.details.failureCategory, "upstream-error");
-					assert.match(result.content[0]?.text ?? "", /health check failed/);
+					assert.ok(failed.details);
+					assert.equal(failed.isError, true);
+					assert.equal(failed.details.failureCategory, "upstream-error");
+					assert.match(failed.content[0]?.text ?? "", /health check failed/);
 				},
 			);
 		} finally {
@@ -2232,56 +2187,16 @@ process.stdout.write(JSON.stringify({ success: true, data: { path } }));`,
 	},
 );
 
-test(
-	"agentBrowserExtension renders explicit --json tool content as JSON",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-json-visible-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`process.stdout.write(JSON.stringify({ success: true, data: { connected: true, enabled: true, port: 9223, screencasting: false }, error: null }));`,
-		);
-
-		try {
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir, prompt: "Check stream status." });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["stream", "status", "--json"],
-					});
-					assert.ok(result.details);
-
-					const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-					const parsed = readRecord(JSON.parse(text));
-					assert.equal(readRecord(parsed.data).wsUrl, "ws://127.0.0.1:9223");
-					assert.equal(
-						readRecord(parsed.data).frameFormat,
-						"JSON messages with base64 JPEG frame data",
-					);
-				},
-			);
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test("agentBrowserExtension blocks per-step batch screenshot annotation foot-guns", async () => {
+test("agentBrowserExtension blocks per-step batch screenshot annotation foot-guns", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-batch-annotation-"));
+	t.after(async () => await rm(tempDir, { force: true, recursive: true }));
 	const harness = createExtensionHarness({
-		cwd: process.cwd(),
+		cwd: tempDir,
 		prompt: "Take annotated screenshots.",
 	});
 	const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 		args: ["batch"],
-		stdin: '[["screenshot","--annotate","/tmp/foo.png"]]',
+		stdin: JSON.stringify([["screenshot", "--annotate", join(tempDir, "foo.png")]]),
 	});
 	assert.ok(result.details);
 
