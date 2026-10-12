@@ -46,7 +46,7 @@ function buildQaVisibleTextPredicate(text: string): string {
   let visitedElements = 0;
   for (let node = elementWalker.nextNode(); node && visitedElements < 3000; node = elementWalker.nextNode(), visitedElements += 1) {
     const element = node;
-    if (!isVisibleElement(element) || !("value" in element)) continue;
+    if (!isVisibleElement(element) || !hasVisibleAncestors(element) || !("value" in element)) continue;
     if (normalize(element.value).includes(expected)) return true;
   }
   return false;

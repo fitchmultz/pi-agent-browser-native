@@ -877,7 +877,7 @@ if (args.includes("snapshot")) {
 );
 
 test(
-	"agentBrowserExtension observes live URL after href-less CSS clicks",
+	"agentBrowserExtension observes live URL after CSS and semantic clicks without claiming unobserved changes",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-css-click-url-"));
@@ -892,6 +892,8 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("open")) {
   fs.writeFileSync(${JSON.stringify(urlPath)}, "https://shop.example/login");
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Login", url: "https://shop.example/login" } }));
+} else if (args.includes("find")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "[data-agent-browser-located='true']" } }));
 } else if (args.includes("click")) {
   fs.writeFileSync(${JSON.stringify(urlPath)}, "https://shop.example/inventory");
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args[args.length - 1] } }));
@@ -936,11 +938,49 @@ if (args.includes("open")) {
 					"https://shop.example/inventory",
 				);
 
-				const invocations = await readInvocationLog(logPath);
-				assert.equal(invocations.filter((entry) => entry.args.includes("click")).length, 1);
+				const callStart = (await readInvocationLog(logPath)).length;
+				const semanticClick = await executeRegisteredTool(harness.tool, harness.ctx, {
+					semanticAction: {
+						action: "click",
+						locator: "text",
+						value: "Close",
+						session: "semantic-probe",
+					},
+				});
+				assert.equal(semanticClick.isError, false);
+				const semanticText = readString(readRecord(semanticClick.content[0]).text);
+				assert.match(semanticText, /Clicked: text "Close"/);
+				assert.doesNotMatch(semanticText, /data-agent-browser-located/);
+				assert.match(semanticText, /Current page:\nInventory\nhttps:\/\/shop\.example\/inventory/);
+				assert.match(readString(readRecord(semanticClick.details).summary), /click → Inventory/);
+				assert.deepEqual(readRecord(semanticClick.details).navigationSummary, {
+					title: "Inventory",
+					url: "https://shop.example/inventory",
+					urlChanged: false,
+				});
+				const pageChange = readRecord(readRecord(semanticClick.details).pageChangeSummary);
+				assert.equal(pageChange.command, "click");
+				assert.equal(pageChange.changeType, "mutation");
+				assert.equal(pageChange.observed, false);
+				assert.match(semanticText, /Action dispatched; application change unverified/);
 				assert.ok(
-					invocations.some((entry) => entry.args.includes("get") && entry.args.includes("url")),
+					readArray(readRecord(semanticClick.details).nextActions).some(
+						(action) => readRecord(action).id === "inspect-after-mutation",
+					),
 				);
+
+				const invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.at(-2) === "click").length, 1);
+				assert.equal(invocations.filter((entry) => entry.args.includes("find")).length, 1);
+				const semanticCalls = invocations.slice(callStart);
+				const urlIndex = semanticCalls.findIndex(
+					(entry) => entry.args.slice(-2).join(" ") === "get url",
+				);
+				const titleIndex = semanticCalls.findIndex(
+					(entry) => entry.args.slice(-2).join(" ") === "get title",
+				);
+				assert.ok(urlIndex >= 0, "semantic call must observe URL, not reuse the earlier CSS probe");
+				assert.ok(titleIndex > urlIndex, "title lookup follows URL verification within this call");
 				assert.equal(
 					invocations.some((entry) => entry.args.includes("eval")),
 					false,

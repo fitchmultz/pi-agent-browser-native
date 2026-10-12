@@ -1,6 +1,6 @@
 /**
  * Purpose: Verify clipboard permission-denial redaction at the extension entrypoint.
- * Responsibilities: Assert denied clipboard write payloads are removed from prose, details, batch rows, and parse-failure surfaces.
+ * Responsibilities: Assert denied clipboard write payloads are removed from prose, details, and batch rows.
  * Scope: Focused fake-upstream coverage for clipboard permission failures.
  * Usage: Run with `npx tsx --test test/agent-browser.extension-clipboard-permissions.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: Tests use fake agent-browser binaries and isolated env/temp directories to avoid relying on upstream browser behavior.

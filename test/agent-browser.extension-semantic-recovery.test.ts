@@ -127,7 +127,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				);
 				assert.equal(readRecord(selectWithLocator.details).failureCategory, "validation-error");
 
-				const invocations = await readInvocationLog(logPath).catch(() => []);
+				const invocations = await readInvocationLog(logPath);
 				assert.deepEqual(invocations, []);
 			});
 		} finally {

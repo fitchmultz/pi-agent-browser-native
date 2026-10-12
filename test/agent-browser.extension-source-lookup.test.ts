@@ -22,6 +22,71 @@ import {
 } from "./helpers/agent-browser-harness.js";
 import { writeFakeLaunchableElectronApp } from "./helpers/extension-validation-fixtures.js";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import {
+	analyzeNetworkSourceLookupResults,
+	compileAgentBrowserNetworkSourceLookup,
+} from "../extensions/agent-browser/lib/input-modes/lookups.js";
+
+test("network source lookup counts request identities once and correlates only matching failures", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-evidence-"));
+	try {
+		const compiled = compileAgentBrowserNetworkSourceLookup({
+			filter: "/api/fail",
+			url: "/ignored",
+		}).compiled;
+		assert.ok(compiled);
+		const matching = {
+			id: "req-1",
+			status: 500,
+			url: "https://app.test/api/fail",
+			initiator: "src/api.ts:1:2",
+		};
+		const unrelated = {
+			id: "req-other",
+			status: 500,
+			url: "https://app.test/other",
+			initiator: "src/other.ts:1:2",
+		};
+		const lookup = await analyzeNetworkSourceLookupResults(
+			[
+				{ success: true, result: matching },
+				{ success: true, result: { requests: [matching, unrelated] } },
+			],
+			compiled,
+			tempDir,
+		);
+		assert.deepEqual(
+			lookup.candidates.map((candidate) => candidate.file),
+			["src/api.ts"],
+		);
+		assert.equal(lookup.failedRequests.length, 1);
+		assert.match(lookup.summary, /found 1 failed request\(s\)/);
+		const separate = await analyzeNetworkSourceLookupResults(
+			[
+				{
+					success: true,
+					result: {
+						requests: [
+							matching,
+							{ requestId: "req-2", status: 500, url: matching.url },
+							{ status: 500, url: matching.url },
+							{ status: 500, url: matching.url },
+						],
+					},
+				},
+			],
+			compiled,
+			tempDir,
+		);
+		assert.equal(
+			separate.failedRequests.length,
+			4,
+			"same URL is not a request identity; anonymous rows stay distinct",
+		);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
 
 test(
 	"agentBrowserExtension compiles experimental source lookups and reports candidate evidence",
@@ -94,12 +159,7 @@ process.stdin.on("end", () => {
 							["react", "tree"],
 						],
 					);
-					assert.deepEqual(
-						JSON.parse(readString(compiledSourceLookup.stdin ?? "[]")),
-						readArray(compiledSourceLookup.steps)
-							.map(readRecord)
-							.map((step) => step.args),
-					);
+
 					const sourceLookup = readRecord(result.details?.sourceLookup);
 					assert.equal(sourceLookup.status, "candidates-found");
 					assert.ok(
@@ -137,6 +197,12 @@ process.stdin.on("end", () => {
 					);
 					const invocations = await readInvocationLog(logPath);
 					assert.deepEqual(invocations[0].args.slice(-1), ["batch"]);
+					assert.deepEqual(JSON.parse(invocations[0].stdin ?? "[]"), [
+						["is", "visible", "#save"],
+						["get", "html", "#save"],
+						["react", "inspect", "2"],
+						["react", "tree"],
+					]);
 				},
 			);
 		} finally {
@@ -406,6 +472,7 @@ process.stdin.on("end", () => {
     if (command[0] === "network" && command[1] === "requests") {
       return { command, success: true, result: { requests: [
         { id: "req-1", method: "GET", url: "https://user:pass@app.test/api/fail?token=secret&ok=1", status: 500, initiator: { stack: "at load (src/api.ts:1:22)" } },
+        { id: "req-other", method: "GET", url: "https://app.test/other", status: 500, initiator: { stack: "at other (src/other.ts:1:22)" } },
         { id: "req-ok", method: "GET", url: "https://app.test/api/ok", status: 200, initiator: { stack: "at ok (src/ok.ts:1:22)" } }
       ] } };
     }
@@ -458,6 +525,7 @@ process.stdin.on("end", () => {
 				);
 				const lookup = readRecord(result.details?.networkSourceLookup);
 				assert.equal(lookup.status, "failed-requests-found");
+				assert.equal(readArray(lookup.failedRequests).length, 1);
 				assert.equal(readArray(lookup.failedRequests).map(readRecord)[0].status, 500);
 				assert.doesNotMatch(JSON.stringify(lookup), /secret|user:pass|ok=1/);
 				assert.doesNotMatch(JSON.stringify(result), /secret|user:pass|ok=1/);
@@ -488,6 +556,7 @@ process.stdin.on("end", () => {
 						.some(
 							(candidate) =>
 								candidate.file === "src/ok.ts" ||
+								candidate.file === "src/other.ts" ||
 								(candidate.file !== undefined &&
 									readString(candidate.file).endsWith(join("src", "ok.ts"))),
 						),
