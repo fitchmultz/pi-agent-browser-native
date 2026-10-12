@@ -19,7 +19,6 @@ import {
 import { readRecord, readArray, readString, readBoolean } from "./helpers/assertions.js";
 import {
 	CONCURRENCY_TEST_TIMEOUT_MS,
-	delay,
 	withConcurrencyTestTimeout,
 	waitForInvocation,
 	ownedSessionDetails,
@@ -533,21 +532,7 @@ if (command === "session") {
 								args: ["--session", oldSession, "wait", "1"],
 							});
 							pending.push(wait);
-							const waitDeadline = Date.now() + CONCURRENCY_TEST_TIMEOUT_MS;
-							while (
-								Date.now() <= waitDeadline &&
-								// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-								// oxlint-disable-next-line no-await-in-loop
-								!(await readEvents()).some((entry) => entry.event === "wait-start")
-							) {
-								// Wait between receipt polls so the fixture process can advance before the next observation.
-								// oxlint-disable-next-line no-await-in-loop
-								await delay(10);
-							}
-							assert.ok(
-								(await readEvents()).some((entry) => entry.event === "wait-start"),
-								"older owned wait did not dispatch",
-							);
+							await waitForInvocation(logPath, (entry) => entry.event === "wait-start");
 							const current = executeRegisteredTool(harness.tool, harness.ctx, {
 								args: ["snapshot", "-i"],
 							});
@@ -1079,7 +1064,7 @@ if (args.includes("tab") && args.includes("list")) {
 );
 
 test(
-	"agentBrowserExtension rejects unsupported stdin before resumed explicit-session tab planning",
+	"agentBrowserExtension rejects unsupported or malformed stdin before resumed explicit-session tab planning",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
@@ -1116,25 +1101,62 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Wrong", url
 					{ reason: "resume" },
 					resumedHarness.ctx,
 				);
-
-				const result = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
-					args: ["--session", "named", "click", "@e9"],
-					stdin: "oops",
-				});
-
-				assert.equal(result.isError, true, JSON.stringify(result));
-				assert.match(readString(result.details?.validationError ?? ""), /stdin/i);
-				assert.match(readString(result.details?.validationError ?? ""), /batch/i);
-				assert.match(readString(result.details?.validationError ?? ""), /eval --stdin/i);
-				assert.match(
-					readString(result.details?.validationError ?? ""),
-					/auth save --password-stdin/i,
-				);
-				assert.match(readString(readRecord(result.content[0]).text ?? ""), /stdin/i);
-				assert.equal(result.details?.sessionName, "named");
-
-				const invocations = await readInvocationLog(logPath);
-				assert.deepEqual(invocations, []);
+				const scenarios = [
+					{
+						name: "unsupported stdin",
+						command: ["click", "@e9"],
+						stdin: "oops",
+						errorPatterns: [/stdin/i, /batch/i, /eval --stdin/i, /auth save --password-stdin/i],
+					},
+					{
+						name: "invalid JSON",
+						command: ["batch"],
+						stdin: "not-json",
+						errorPatterns: [/could not be parsed as JSON/i],
+					},
+					{
+						name: "non-array step",
+						command: ["batch"],
+						stdin: JSON.stringify([{ oops: 1 }]),
+						errorPatterns: [/step 0 must be an array of string command tokens/i],
+					},
+					{
+						name: "non-string token",
+						command: ["batch"],
+						stdin: JSON.stringify([["click", 123]]),
+						errorPatterns: [/step 0 token 1 must be a string/i],
+					},
+				];
+				for (const scenario of scenarios) {
+					// Every rejected input shares the unchanged resumed branch and must finish before advancing.
+					// oxlint-disable-next-line no-await-in-loop
+					const result = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
+						args: ["--session", "named", ...scenario.command],
+						stdin: scenario.stdin,
+					});
+					// Each existing invalid-input row must reject for its specific error, not a later page guard.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.equal(result.isError, true, `${scenario.name}: ${JSON.stringify(result)}`);
+					for (const pattern of scenario.errorPatterns) {
+						// Every row's existing error guidance remains required.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.match(readString(result.details?.validationError ?? ""), pattern, scenario.name);
+					}
+					if (scenario.name === "unsupported stdin") {
+						// Carry the unsupported-command case's existing visible error and identity assertions.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.match(readString(readRecord(result.content[0]).text ?? ""), /stdin/i);
+						// Carry the unsupported-command case's existing visible error and identity assertions.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.equal(result.details?.sessionName, "named");
+					}
+					// Observe no helper/action dispatch before the next invalid-input row.
+					// oxlint-disable-next-line no-await-in-loop
+					const invocations = await readInvocationLog(logPath);
+					// Every existing row rejects before tab planning or execution.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.deepEqual(invocations, [], scenario.name);
+				}
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -1252,112 +1274,6 @@ if (args.includes("batch")) {
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension rejects malformed resumed explicit-session batch stdin before tab planning or execution",
-	{ concurrency: false },
-	async () => {
-		const scenarios = [
-			{
-				name: "invalid JSON",
-				stdin: "not-json",
-				errorPattern: /could not be parsed as JSON/i,
-			},
-			{
-				name: "non-array step",
-				stdin: JSON.stringify([{ oops: 1 }]),
-				errorPattern: /step 0 must be an array of string command tokens/i,
-			},
-			{
-				name: "non-string token",
-				stdin: JSON.stringify([["click", 123]]),
-				errorPattern: /step 0 token 1 must be a string/i,
-			},
-		] as const;
-
-		for (const scenario of scenarios) {
-			// Restore scenarios share environment and browser ownership; complete each transition and cleanup in order.
-			// oxlint-disable-next-line no-await-in-loop
-			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-			const logPath = join(tempDir, "invocations.log");
-			const basePath = process.env.PATH ?? "";
-			// Restore scenarios share environment and browser ownership; complete each transition and cleanup in order.
-			// oxlint-disable-next-line no-await-in-loop
-			await writeFakeAgentBrowserBinary(
-				tempDir,
-				`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const stdin = fs.readFileSync(0, "utf8");
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-if (args.includes("batch")) {
-  process.stdout.write(JSON.stringify({ success: true, data: [{ command: ["batch"], success: true, result: "should not run" }] }));
-} else if (args.includes("tab") && args.includes("list")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-    { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: false },
-    { tabId: "t2", title: "Google Gemini", url: "https://gemini.google.com/glic?hl=en", active: true }
-  ] } }));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "Unexpected", url: "https://unexpected.example/" } }));
-}`,
-			);
-
-			try {
-				// Restore scenarios share environment and browser ownership; complete each transition and cleanup in order.
-				// oxlint-disable-next-line no-await-in-loop
-				await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-					const resumedHarness = createExtensionHarness({
-						branch: [
-							createToolBranchEntry({
-								details: {
-									args: ["--session", "named", "open", "https://example.com"],
-									command: "open",
-									sessionName: "named",
-									sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
-								},
-								isError: false,
-							}),
-						],
-						cwd: tempDir,
-					});
-					await runExtensionEvent(
-						resumedHarness.handlers,
-						"session_start",
-						{ reason: "resume" },
-						resumedHarness.ctx,
-					);
-
-					const batchResult = await executeRegisteredTool(resumedHarness.tool, resumedHarness.ctx, {
-						args: ["--session", "named", "batch"],
-						stdin: scenario.stdin,
-					});
-					// The nonempty scenario fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						batchResult.isError,
-						true,
-						`${scenario.name}: ${JSON.stringify(batchResult)}`,
-					);
-					// The nonempty scenario fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(batchResult.details?.validationError ?? ""),
-						scenario.errorPattern,
-						scenario.name,
-					);
-
-					const invocations = await readInvocationLog(logPath);
-					// The nonempty scenario fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(invocations.length, 0, scenario.name);
-				});
-			} finally {
-				// Restore scenarios share environment and browser ownership; complete each transition and cleanup in order.
-				// oxlint-disable-next-line no-await-in-loop
-				await rm(tempDir, { force: true, recursive: true });
-			}
 		}
 	},
 );
