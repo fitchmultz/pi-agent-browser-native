@@ -214,6 +214,24 @@ export function validateAgentBrowserConfig(value, path, errors, warnings) {
 	};
 }
 
+/** Parse config without retaining native token previews or source-bearing error causes.
+ * @param {string} raw
+ * @returns {{ readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly error: string }} */
+export function parseAgentBrowserConfigJson(raw) {
+	try {
+		return { ok: true, value: JSON.parse(raw) };
+	} catch (error) {
+		const location =
+			error instanceof Error
+				? error.message.match(/at position \d+(?: \(line \d+ column \d+\))?/)?.[0]
+				: undefined;
+		return {
+			ok: false,
+			error: location === undefined ? "Invalid JSON." : `Invalid JSON ${location}.`,
+		};
+	}
+}
+
 /** @param {string} raw
  * @param {string} path
  * @param {ConfigLayerScope} scope
@@ -221,16 +239,12 @@ export function validateAgentBrowserConfig(value, path, errors, warnings) {
  * @param {ConfigDiagnostics} warnings
  * @returns {ConfigLayer | undefined} */
 export function parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings) {
-	/** @type {unknown} */
-	let parsed;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		// Native parser previews can expose plaintext credentials, including partial values.
-		errors.push(`Could not parse ${scope} config ${path}: Invalid JSON.`);
+	const parsed = parseAgentBrowserConfigJson(raw);
+	if (!parsed.ok) {
+		errors.push(`Could not parse ${scope} config ${path}: ${parsed.error}`);
 		return;
 	}
-	const config = validateAgentBrowserConfig(parsed, path, errors, warnings);
+	const config = validateAgentBrowserConfig(parsed.value, path, errors, warnings);
 	return config ? { config, path, scope } : undefined;
 }
 

@@ -6,7 +6,11 @@ import {
 	finalizeAgentBrowserNativeResult,
 } from "./native-output.js";
 import { redactSensitiveText } from "./runtime.js";
+import { isRecord } from "./parsing.js";
+import { isStringArray } from "./results/presentation/content.js";
+import { redactPresentationData } from "./results/presentation/diagnostic-redaction.js";
 import {
+	isWebSearchProvider,
 	resolvePreferredWebSearchCredential,
 	type AgentBrowserConfigState,
 	type WebSearchProvider,
@@ -194,11 +198,21 @@ async function runWebSearch(
 }
 
 async function presentSearchSuccess(
-	details: WebSearchToolDetails,
+	rawDetails: WebSearchToolDetails,
 	params: AgentBrowserWebSearchParamsInput,
 ): Promise<AgentToolResult<Record<string, unknown>>> {
+	const details = redactPresentationData({ command: "web-search" }, rawDetails);
+	if (
+		!isRecord(details) ||
+		!isWebSearchProvider(details.provider) ||
+		typeof details.returnedQuery !== "string" ||
+		!Array.isArray(details.results) ||
+		!details.results.every(isNormalizedSearchResult)
+	) {
+		throw new Error("Web search presentation has invalid result structure.");
+	}
 	const duplicateNotice =
-		details.duplicatesRemoved !== undefined
+		typeof details.duplicatesRemoved === "number"
 			? `\n\nDuplicate URLs removed: ${details.duplicatesRemoved}.`
 			: "";
 	const result: AgentToolResult<Record<string, unknown>> = await finalizeAgentBrowserNativeResult(
@@ -218,6 +232,18 @@ async function presentSearchSuccess(
 	return finalizedManifest === undefined
 		? { ...result, details }
 		: { ...result, details: { ...details, artifactManifest: finalizedManifest } };
+}
+
+function isNormalizedSearchResult(value: unknown): value is NormalizedSearchResult {
+	if (!isRecord(value) || typeof value.title !== "string" || typeof value.url !== "string") {
+		return false;
+	}
+	return (
+		["description", "source", "age", "pageDate", "language"].every(
+			(field) => value[field] === undefined || typeof value[field] === "string",
+		) &&
+		(value.highlights === undefined || isStringArray(value.highlights))
+	);
 }
 
 function failureCategory(

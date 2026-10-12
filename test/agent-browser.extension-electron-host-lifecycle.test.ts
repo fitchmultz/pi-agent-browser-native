@@ -39,8 +39,10 @@ import {
 	type ElectronLaunchRecord,
 } from "../extensions/agent-browser/lib/electron/launch.js";
 import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
+import { readProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
 import {
 	createExtensionHarness,
+	createToolBranchEntry,
 	executeRegisteredTool,
 	readInvocationLog,
 	readChildStdoutJsonLine,
@@ -1448,98 +1450,123 @@ test("Electron status requires browser version metadata from a live HTTP endpoin
 	}
 });
 
-test(
-	"restored Electron cleanup verifies native command-line profile ownership with spaces and Unicode",
-	{ concurrency: false },
-	async (t) =>
-		withPatchedEnv(
-			{
-				// macOS ps renders non-ASCII bytes as M-… in the isolated runner's C locale.
-				LC_ALL: process.platform === "darwin" ? "en_US.UTF-8" : "C.UTF-8",
-			},
-			async () => {
-				const userDataDir = await createSecureTempDirectory("electron-profile-space é-");
-				const otherProfile = await createSecureTempDirectory("electron-profile-other-");
-				const actualProfile = `${userDataDir}-other`;
-				await mkdir(actualProfile);
-				const child = spawn(
-					process.execPath,
-					[
-						"-e",
-						"setInterval(() => {}, 1000)",
-						"--",
-						`--user-data-dir=${actualProfile}`,
-						`--note=--user-data-dir=${otherProfile}`,
-					],
-					{ stdio: "ignore" },
-				);
-				try {
-					await once(child, "spawn");
-					assert.ok(child.pid !== undefined && child.pid > 0);
-					const record: ElectronLaunchRecord = {
-						appName: "Native ownership",
-						cleanupState: "active",
-						createdAtMs: Date.now(),
-						executablePath: process.execPath,
-						launchId: "electron-native-ownership",
-						launchedByWrapper: true,
-						pid: child.pid,
-						port: 9,
-						userDataDir: actualProfile,
-						version: 1,
-					};
-					// Prefix collisions and a profile flag embedded in another operand are not ownership.
-					// No child handle is supplied: every decision inspects the real OS command line.
-					for (const [name, wrongProfile] of [
-						["profile prefix", userDataDir],
-						["embedded operand", otherProfile],
-					] as const) {
-						// Verify both negatives against the same live child before exact-profile cleanup.
-						// oxlint-disable-next-line no-await-in-loop
-						await t.test(name, async () => {
-							const refused = await cleanupElectronLaunchResources({
-								record: { ...record, userDataDir: wrongProfile },
-							});
-							assert.equal(refused.partial, true, JSON.stringify(refused));
-							assert.equal(
-								refused.steps.find((step) => step.resource === "process")?.state,
-								"failed",
-							);
-							assert.deepEqual([...refused.remainingResources].sort(), [
-								"process",
-								"user-data-dir",
-							]);
-							assert.match(
-								refused.steps.find((step) => step.resource === "process")?.error ?? "",
-								/command line does not include wrapper-owned user data dir/,
-							);
-							assert.equal(
-								refused.steps.find((step) => step.resource === "user-data-dir")?.state,
-								"skipped",
-							);
-							assert.equal(isTestPidAlive(child.pid), true);
-						});
-					}
-					await stat(userDataDir);
-					await stat(otherProfile);
-					await stat(actualProfile);
+for (const identityMode of ["missing", "mismatched"] as const) {
+	test(`restored Electron cleanup refuses a ${identityMode} start identity despite an exact profile operand`, async () => {
+		const userDataDir = await createSecureTempDirectory("electron-profile-pid-reuse-");
+		const child = spawn(
+			process.execPath,
+			["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${userDataDir}`],
+			{ stdio: "ignore" },
+		);
+		try {
+			await once(child, "spawn");
+			assert.ok(child.pid !== undefined && child.pid > 0);
+			const currentIdentity = await readProcessStartIdentity(child.pid);
+			assert.ok(currentIdentity !== undefined && currentIdentity.length > 0);
+			const record: ElectronLaunchRecord = {
+				appName: "PID reuse",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: `electron-${identityMode}-identity`,
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				userDataDir,
+				version: 1,
+				...(identityMode === "mismatched" ? { startIdentity: `${currentIdentity}-stale` } : {}),
+			};
+			const refused = await cleanupElectronLaunchResources({ record });
+			assert.equal(isTestPidAlive(child.pid), true, "unverified PID must not be signaled");
+			assert.equal(refused.partial, true);
+			assert.equal(refused.steps.find((step) => step.resource === "process")?.state, "failed");
+			assert.match(
+				refused.steps.find((step) => step.resource === "process")?.error ?? "",
+				/start identity.*refusing to signal a restored PID/i,
+			);
+			assert.equal(
+				refused.steps.find((step) => step.resource === "user-data-dir")?.state,
+				"skipped",
+			);
+			await stat(userDataDir);
+		} finally {
+			await stopChildProcess(child);
+			await rm(userDataDir, { force: true, recursive: true });
+		}
+	});
+}
 
-					const cleaned = await cleanupElectronLaunchResources({ record });
-					assert.equal(cleaned.partial, false, JSON.stringify(cleaned));
-					assert.equal(cleaned.steps.find((step) => step.resource === "process")?.state, "removed");
-					assert.equal(await waitForTestPidExit(child.pid), true);
-					await assert.rejects(stat(actualProfile), { code: "ENOENT" });
-					await stat(userDataDir);
-					await stat(otherProfile);
-				} finally {
-					await stopChildProcess(child);
-					await rm(userDataDir, { force: true, recursive: true });
-					await rm(otherProfile, { force: true, recursive: true });
-					await rm(actualProfile, { force: true, recursive: true });
-				}
-			},
-		),
-);
+test("restored Electron cleanup round-trips a matching start identity and removes a spaces-and-Unicode profile", async () => {
+	const userDataDir = await createSecureTempDirectory("electron-profile-space é-");
+	const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+	try {
+		await once(child, "spawn");
+		assert.ok(child.pid !== undefined && child.pid > 0);
+		const startIdentity = await readProcessStartIdentity(child.pid);
+		assert.ok(startIdentity !== undefined && startIdentity.length > 0);
+		const record: ElectronLaunchRecord = {
+			appName: "Start identity ownership",
+			cleanupState: "active",
+			createdAtMs: Date.now(),
+			executablePath: process.execPath,
+			launchId: "electron-matching-start-identity",
+			launchedByWrapper: true,
+			pid: child.pid,
+			port: 9,
+			userDataDir,
+			version: 1,
+			startIdentity,
+		};
+		const harness = createExtensionHarness({
+			cwd: userDataDir,
+			branch: [
+				createToolBranchEntry({ details: { electron: { launch: record } }, isError: false }),
+			],
+		});
+		await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+		const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
+			electron: { action: "cleanup", launchId: record.launchId },
+		});
+		assert.equal(cleaned.isError, false, JSON.stringify(cleaned));
+		const cleanup = readRecord(readRecord(cleaned.details?.electron).cleanup);
+		const restoredRecord = readRecord(readArray(cleanup.records)[0]);
+		assert.equal(restoredRecord.startIdentity, startIdentity);
+		assert.equal(restoredRecord.cleanupState, "cleaned");
+		assert.equal(await waitForTestPidExit(child.pid), true);
+		await assert.rejects(stat(userDataDir), { code: "ENOENT" });
+	} finally {
+		await stopChildProcess(child);
+		await rm(userDataDir, { force: true, recursive: true });
+	}
+});
+
+test("Electron transcript restore rejects a malformed start identity", async () => {
+	const record = {
+		appName: "Malformed identity",
+		cleanupState: "active",
+		createdAtMs: Date.now(),
+		executablePath: process.execPath,
+		launchId: "electron-malformed-start-identity",
+		launchedByWrapper: true,
+		port: 9,
+		userDataDir: "",
+		version: 1,
+		startIdentity: 42,
+	};
+	const harness = createExtensionHarness({
+		cwd: process.cwd(),
+		branch: [createToolBranchEntry({ details: { electron: { launch: record } }, isError: false })],
+	});
+	await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+	const status = await executeRegisteredTool(harness.tool, harness.ctx, {
+		electron: { action: "status", launchId: record.launchId },
+	});
+	assert.equal(status.isError, true);
+	assert.match(
+		status.content.at(0)?.text ?? "",
+		/No wrapper-tracked Electron launch found for launchId electron-malformed-start-identity/,
+	);
+});
 
 test(
 	"agentBrowserExtension restores Electron launch records and cleans them on shutdown",

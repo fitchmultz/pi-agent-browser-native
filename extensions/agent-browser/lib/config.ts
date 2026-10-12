@@ -43,6 +43,7 @@ export {
 	isWebSearchProvider,
 	loadAgentBrowserConfigStateSync,
 	mergeAgentBrowserConfig,
+	parseAgentBrowserConfigJson,
 	parseAgentBrowserConfigLayer,
 	resolveEnvInterpolations,
 	summarizeConfigFiles,

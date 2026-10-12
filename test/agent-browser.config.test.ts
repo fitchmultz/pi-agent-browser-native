@@ -74,6 +74,23 @@ test("loads Pi-scoped global config and env fallback without leaking secret summ
 	);
 });
 
+for (const [malformed, diagnostic] of [
+	['{"webSearch":{"exaApiKey":cfgkey7}}', "Invalid JSON."],
+	['{"a":1,}', "Invalid JSON at position 7 (line 1 column 8)."],
+]) {
+	test(`config load reports only a content-free parse diagnostic: ${diagnostic}`, async (t) => {
+		const fixture = await createConfigFixture(t);
+		await mkdir(dirname(fixture.globalPath), { recursive: true });
+		await writeFile(fixture.globalPath, malformed);
+		const state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env: fixture.env });
+		assert.deepEqual(state.errors, [
+			`Could not parse global config ${fixture.globalPath}: ${diagnostic}`,
+		]);
+		assert.doesNotMatch(state.errors.join("\n"), /cfgkey7|"a"|Expected property name/);
+		assert.equal(canRegisterWebSearchTool(state, fixture.env), false);
+	});
+}
+
 test("uses project config over global config and allows project-local provider credential sources", async (t) => {
 	const fixture = await createConfigFixture(t);
 	await writeJson(fixture.globalPath, {

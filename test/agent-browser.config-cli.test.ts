@@ -361,6 +361,52 @@ test("config CLI parse diagnostics do not expose malformed credential values", a
 	assert.doesNotMatch(stdout + stderr, /cfgkey7/);
 });
 
+for (const args of [
+	["web-search", "clear", "--global", "--provider", "all"],
+	["web-search", "disable", "--global"],
+]) {
+	test(`config CLI rejects malformed credentials without disclosure or mutation: ${args[1]}`, async (t) => {
+		const fixture = await createFixture(t);
+		const malformed = '{"webSearch":{"exaApiKey":cfgkey7}}';
+		await mkdir(dirname(fixture.globalPath), { recursive: true });
+		await writeFile(fixture.globalPath, malformed);
+		await assert.rejects(
+			runConfig(args, { cwd: fixture.cwd, env: fixture.env }),
+			(error: { readonly code?: number; readonly stdout?: string; readonly stderr?: string }) => {
+				assert.equal(error.code, 1);
+				assert.doesNotMatch((error.stdout ?? "") + (error.stderr ?? ""), /cfgkey7/);
+				assert.ok((error.stderr ?? "").includes(`${fixture.globalPath}: Invalid JSON.`));
+				return true;
+			},
+		);
+		assert.equal(await readFile(fixture.globalPath, "utf8"), malformed);
+	});
+}
+
+test("config CLI reports content-free JSON locations without overwriting malformed config", async (t) => {
+	const fixture = await createFixture(t);
+	const malformed = '{"a":1,}';
+	await mkdir(dirname(fixture.globalPath), { recursive: true });
+	await writeFile(fixture.globalPath, malformed);
+	await assert.rejects(
+		runConfig(["web-search", "set-env", "EXA_API_KEY", "--global"], {
+			cwd: fixture.cwd,
+			env: fixture.env,
+		}),
+		(error: { readonly code?: number; readonly stderr?: string }) => {
+			assert.equal(error.code, 1);
+			assert.ok(
+				(error.stderr ?? "").includes(
+					`${fixture.globalPath}: Invalid JSON at position 7 (line 1 column 8).`,
+				),
+			);
+			assert.doesNotMatch(error.stderr ?? "", /"a"|Expected property name/);
+			return true;
+		},
+	);
+	assert.equal(await readFile(fixture.globalPath, "utf8"), malformed);
+});
+
 test("config CLI requires providers for ambiguous credential writes", async (t) => {
 	const fixture = await createFixture(t);
 	await assert.rejects(

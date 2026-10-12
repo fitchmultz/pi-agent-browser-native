@@ -1,7 +1,5 @@
-import { execFile, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { lstat, rm } from "node:fs/promises";
-import { win32 } from "node:path";
-import { promisify } from "node:util";
 
 import {
 	fetchCdpJson,
@@ -13,15 +11,12 @@ import {
 import { ELECTRON_PROFILE_DIR_PREFIX, type ElectronLaunchRecord } from "./launch-types.js";
 import { pathExists } from "../fs-utils.js";
 import { isRecord } from "../parsing.js";
+import { readProcessStartIdentity, processStartIdentitiesMatch } from "../process-identity.js";
 import { stringifyUnknown } from "../results/text.js";
 import { getSecureTempChildDirectoryValidationError } from "../temp.js";
 
 const ELECTRON_CLEANUP_DEFAULT_TIMEOUT_MS = 5_000;
 const ELECTRON_CLEANUP_POLL_INTERVAL_MS = 100;
-const RESTORED_PROCESS_COMMAND_TIMEOUT_MS = 1_000;
-// Node's callback-style execFile returns a ChildProcess; promisify owns its completion callback, not that return value.
-// oxlint-disable-next-line typescript/strict-void-return
-const execFileAsync = promisify(execFile);
 
 export interface ElectronLaunchStatus {
 	readonly cleanupState: ElectronLaunchRecord["cleanupState"];
@@ -130,64 +125,19 @@ async function waitForProcessExit(
 	return hasProcessExited(child, pid);
 }
 
-async function readPidCommandLine(pid: number): Promise<string | undefined> {
-	if (!Number.isSafeInteger(pid) || pid <= 0) {
-		return undefined;
-	}
-	try {
-		// Win32_Process.CommandLine is the native ownership evidence; process
-		// start time (used by daemon-policy locks) cannot prove profile ownership.
-		const systemRoot = process.env.SystemRoot;
-		const windowsRoot =
-			systemRoot !== undefined && systemRoot.length > 0 && win32.isAbsolute(systemRoot)
-				? systemRoot
-				: "C:\\Windows";
-		const file =
-			process.platform === "win32"
-				? win32.join(windowsRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-				: "ps";
-		const args =
-			process.platform === "win32"
-				? [
-						"-NoProfile",
-						"-NonInteractive",
-						"-Command",
-						`[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); $p = [wmi]"Win32_Process.Handle='${pid}'"; [Console]::WriteLine($p.CommandLine)`,
-					]
-				: ["-ww", "-p", String(pid), "-o", "command="];
-		const { stdout } = await execFileAsync(file, args, {
-			timeout: RESTORED_PROCESS_COMMAND_TIMEOUT_MS,
-		});
-		const commandLine = stdout.trim();
-		return commandLine.length === 0 ? undefined : commandLine;
-	} catch {
-		return undefined;
-	}
-}
-
-function restoredLaunchCommandMatchesRecord(
-	record: ElectronLaunchRecord,
-	commandLine: string | undefined,
-): boolean {
-	const profile = record.userDataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	// Match a complete native operand, including Windows' two quoted forms, not
-	// a prefix or a flag embedded in another operand. ps flattens POSIX argv;
-	// ponytail: it cannot disambiguate spaces inside a different operand. Use
-	// native argv inspection if that ambiguity becomes an observed ownership risk.
-	return new RegExp(
-		`(?:^|\\s)(?:"--user-data-dir=${profile}"|--user-data-dir="${profile}"|--user-data-dir=${profile})(?=\\s|$)`,
-	).test(commandLine ?? "");
-}
-
 async function getRestoredProcessVerificationError(
 	record: ElectronLaunchRecord,
 ): Promise<string | undefined> {
-	const commandLine = record.pid === undefined ? undefined : await readPidCommandLine(record.pid);
-	if (commandLine === undefined || commandLine.length === 0) {
-		return `PID ${String(record.pid)} is alive, but this session has no tracked child handle and its command line could not be inspected; refusing to signal a restored PID that may have been reused.`;
+	if (record.startIdentity === undefined || record.startIdentity.length === 0) {
+		return `PID ${String(record.pid)} is alive, but this session has no tracked child handle or recorded start identity; refusing to signal a restored PID that may have been reused.`;
 	}
-	if (!restoredLaunchCommandMatchesRecord(record, commandLine)) {
-		return `PID ${String(record.pid)} is alive, but this session has no tracked child handle and its command line does not include wrapper-owned user data dir ${record.userDataDir}; refusing to signal a restored PID that may have been reused.`;
+	const currentIdentity =
+		record.pid === undefined ? undefined : await readProcessStartIdentity(record.pid);
+	if (currentIdentity === undefined) {
+		return `PID ${String(record.pid)} is alive, but its current start identity could not be inspected; refusing to signal a restored PID that may have been reused.`;
+	}
+	if (!processStartIdentitiesMatch(record.startIdentity, currentIdentity)) {
+		return `PID ${String(record.pid)} is alive, but its start identity does not match the wrapper launch record; refusing to signal a restored PID that may have been reused.`;
 	}
 	return undefined;
 }
@@ -261,6 +211,10 @@ async function cleanupRestoredProcess(
 	}
 	if (await waitForProcessExit(undefined, record.pid, deadlineMs)) {
 		return { resource: "process", state: "removed" };
+	}
+	const killVerificationError = await getRestoredProcessVerificationError(record);
+	if (killVerificationError !== undefined) {
+		return { error: killVerificationError, resource: "process", state: "failed" };
 	}
 	signalRestoredLaunchProcess(record, "SIGKILL");
 	if (await waitForProcessExit(undefined, record.pid, Date.now() + 1_000)) {

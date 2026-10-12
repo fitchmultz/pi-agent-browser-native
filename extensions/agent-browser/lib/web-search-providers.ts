@@ -127,7 +127,6 @@ export async function fetchBraveSearchJson(
 	signal?: AbortSignal,
 ): Promise<BraveWebSearchResponse> {
 	const data = await fetchSearchJson({
-		apiKey,
 		cancelMessage: "Brave search cancelled",
 		init: { headers: { Accept: "application/json", "X-Subscription-Token": apiKey } },
 		invalidJsonMessage: "Brave search returned invalid JSON",
@@ -174,7 +173,6 @@ export async function fetchExaSearchJson(
 	timeoutMs = SEARCH_REQUEST_TIMEOUT_MS,
 ): Promise<ExaWebSearchResponse> {
 	const data = await fetchSearchJson({
-		apiKey,
 		cancelMessage: "Exa search cancelled",
 		init: {
 			body: JSON.stringify(body),

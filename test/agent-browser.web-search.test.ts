@@ -756,6 +756,65 @@ test("per-call Exa search type overrides the configured default and normalizes h
 	);
 });
 
+test("search success consistently redacts credentials across every public output", async (t) => {
+	const fixture = await createFixture(t);
+	await withPatchedEnv(
+		{
+			HOME: fixture.home,
+			[AGENT_BROWSER_CONFIG_ENV]: undefined,
+			[BRAVE_API_KEY_ENV]: undefined,
+			[EXA_API_KEY_ENV]: "exa-secret",
+		},
+		async () => {
+			const harness = createExtensionHarness({ cwd: fixture.cwd });
+			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+			assert.ok(tool);
+			await withFakeFetch(
+				() =>
+					new Response(
+						JSON.stringify({
+							results: [
+								{
+									title: "Useful docs",
+									url: "https://example.com/docs?view=current",
+									text: "password=resultcanary",
+								},
+							],
+						}),
+					),
+				async () => {
+					const result = await executeRegisteredTool(tool, harness.ctx, {
+						query: "current docs",
+						count: 1,
+					});
+					assert.equal(result.isError, false);
+					assert.doesNotMatch(JSON.stringify(result.content), /resultcanary/);
+					assert.doesNotMatch(JSON.stringify(result.details), /resultcanary/);
+					assert.doesNotMatch(JSON.stringify(result.structuredContent), /resultcanary/);
+					assert.match(result.content.at(0)?.text ?? "", /Useful docs/);
+					assert.match(result.content.at(0)?.text ?? "", /current docs/);
+					const expectedResults = [
+						{
+							title: "Useful docs",
+							url: "https://example.com/docs?view=current",
+							description: "password=[REDACTED]",
+							source: "example.com",
+						},
+					];
+					assert.deepEqual(
+						readRecord(JSON.parse(JSON.stringify(result.details))).results,
+						expectedResults,
+					);
+					assert.deepEqual(
+						readRecord(readRecord(result.structuredContent).data).results,
+						expectedResults,
+					);
+				},
+			);
+		},
+	);
+});
+
 test("search execution removes exact normalized URL duplicates without collapsing distinct query URLs", async (t) => {
 	const fixture = await createFixture(t);
 	await withPatchedEnv(
@@ -1315,6 +1374,53 @@ test("search execution reports API and JSON failures without leaking key", async
 		},
 	);
 });
+
+for (const [provider, status, body, hint] of [
+	["brave", 401, "", /credential|permission/i],
+	["exa", 403, "Bearer bodycanary", /credential|permission/i],
+	["brave", 400, '{"key":"sk\\u0065y7"}', /request rejected/i],
+	["exa", 429, "provider-body-preview skey7", /Do not issue parallel or repeated/],
+	["brave", 500, "provider-body-preview skey7", /provider unavailable/i],
+] as const) {
+	test(`${provider} HTTP ${status} diagnostics never echo provider-controlled text`, async (t) => {
+		const fixture = await createFixture(t);
+		await withPatchedEnv(
+			{
+				HOME: fixture.home,
+				[AGENT_BROWSER_CONFIG_ENV]: undefined,
+				[BRAVE_API_KEY_ENV]: "skey7",
+				[EXA_API_KEY_ENV]: "skey7",
+			},
+			async () => {
+				const harness = createExtensionHarness({ cwd: fixture.cwd });
+				const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
+				assert.ok(tool);
+				await withFakeFetch(
+					() => new Response(body, { status, statusText: "statuscanary skey7" }),
+					async () => {
+						const result = await executeRegisteredTool(tool, harness.ctx, {
+							query: "HTTP failure",
+							provider,
+						});
+						assert.equal(result.isError, true);
+						assert.equal(readRecord(result.details).failureCategory, "upstream-error");
+						assert.doesNotMatch(
+							JSON.stringify(result),
+							/skey|u0065y7|bodycanary|statuscanary|provider-body-preview|Upstream details/,
+						);
+						const diagnostic = readString(readRecord(result.details).error);
+						assert.match(
+							diagnostic,
+							new RegExp(`${provider === "brave" ? "Brave" : "Exa"} search`),
+						);
+						assert.match(diagnostic, new RegExp(`HTTP ${status}`));
+						assert.match(diagnostic, hint);
+					},
+				);
+			},
+		);
+	});
+}
 
 test("large search results keep formatted prose inline and compact only the structured observation", async (t) => {
 	const fixture = await createFixture(t);
