@@ -17,6 +17,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { readProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
 import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
 import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
 
@@ -36,6 +37,12 @@ import { isTestPidAlive as pidIsAlive } from "./helpers/extension-validation-fix
 
 function assertIsString(value: unknown): asserts value is string {
 	assert.equal(typeof value, "string");
+}
+
+async function readFixtureStartIdentity(child: ChildProcess): Promise<string> {
+	const identity = await readProcessStartIdentity(readNumber(child.pid));
+	assertIsString(identity);
+	return identity;
 }
 
 function spawnElectronFixtureProcess(userDataDir: string): ChildProcess {
@@ -155,6 +162,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 						launchId: `electron-branch-${shutdownReason}`,
 						launchedByWrapper: true,
 						pid: child.pid,
+						startIdentity: await readFixtureStartIdentity(child),
 						port: 9,
 						processGroupId: child.pid,
 						sessionName: electronSessionName,
@@ -258,6 +266,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					launchId: "electron-cleaned-shutdown",
 					launchedByWrapper: true,
 					pid: child.pid,
+					startIdentity: await readFixtureStartIdentity(child),
 					port: 9,
 					processGroupId: child.pid,
 					sessionName: electronSessionName,
@@ -440,6 +449,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					launchId: "electron-stale-cleanup",
 					launchedByWrapper: true,
 					pid: child.pid,
+					startIdentity: await readFixtureStartIdentity(child),
 					port: 9,
 					processGroupId: child.pid,
 					sessionName: electronSessionName,
@@ -567,6 +577,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					launchId: "electron-a",
 					launchedByWrapper: true,
 					pid: childA.pid,
+					startIdentity: await readFixtureStartIdentity(childA),
 					port: 9,
 					processGroupId: childA.pid,
 					sessionName: sessionNameA,
@@ -581,6 +592,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					launchId: "electron-b",
 					launchedByWrapper: true,
 					pid: childB.pid,
+					startIdentity: await readFixtureStartIdentity(childB),
 					port: 10,
 					processGroupId: childB.pid,
 					sessionName: sessionNameB,
@@ -697,6 +709,7 @@ if (args.includes("close")) {
 					launchId: "electron-failed",
 					launchedByWrapper: true,
 					pid: child.pid,
+					startIdentity: await readFixtureStartIdentity(child),
 					port: 9,
 					processGroupId: child.pid,
 					sessionName: electronSessionName,
@@ -802,6 +815,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 					launchId: "electron-off-branch-status",
 					launchedByWrapper: true,
 					pid: child.pid,
+					startIdentity: await readFixtureStartIdentity(child),
 					port: 9,
 					processGroupId: child.pid,
 					sessionName: electronSessionName,
@@ -906,6 +920,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 						launchId: "electron-resumed-headed",
 						launchedByWrapper: true,
 						pid: child.pid,
+						startIdentity: await readFixtureStartIdentity(child),
 						port: 9,
 						processGroupId: child.pid,
 						sessionName: electronSessionName,
@@ -1274,6 +1289,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					launchId: "electron-reload-active",
 					launchedByWrapper: true,
 					pid: child.pid,
+					startIdentity: await readFixtureStartIdentity(child),
 					port: 9,
 					processGroupId: child.pid,
 					sessionName: electronSessionName,
@@ -1412,6 +1428,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						launchedByWrapper: true,
 						namespace: "reload-team",
 						pid: child.pid,
+						startIdentity: await readFixtureStartIdentity(child),
 						port,
 						processGroupId: child.pid,
 						sessionName,
@@ -1729,6 +1746,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 						launchId: `electron-${shutdownReason}-partial`,
 						launchedByWrapper: true,
 						pid: child.pid,
+						startIdentity: await readFixtureStartIdentity(child),
 						port,
 						processGroupId: child.pid,
 						sessionName: electronSessionName,
@@ -1830,6 +1848,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					launchId: "electron-target-a",
 					launchedByWrapper: true,
 					pid: childA.pid,
+					startIdentity: await readFixtureStartIdentity(childA),
 					port: 9,
 					processGroupId: childA.pid,
 					sessionName: sessionA,
@@ -1844,6 +1863,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					launchId: "electron-unrelated-b",
 					launchedByWrapper: true,
 					pid: childB.pid,
+					startIdentity: await readFixtureStartIdentity(childB),
 					port: 9,
 					processGroupId: childB.pid,
 					sessionName: sessionB,
