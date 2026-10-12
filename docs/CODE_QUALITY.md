@@ -32,6 +32,26 @@ Review fixes before committing; dangerous fixes and suggestion fixes are not par
 `lint:fix`. Run formatting after reviewed lint fixes and rerun acceptance. Failures
 are never converted to success by these commands.
 
+### Test scheduling
+
+`npm test` builds once, then runs `tsx --test "test/**/!(*.serial).test.ts"`
+with Node's default file concurrency, followed by
+`tsx --test --test-concurrency=1 "test/**/*.serial.test.ts"`.
+The default/quality verification gates use the same two stages. File isolation
+keeps environment patches process-local; the shared browser harness supplies a
+private short socket directory unless `PI_AGENT_BROWSER_SOCKET_DIR` is already set.
+The harness also clears inherited Pi/delegation identity variables; root-default
+tests set their identities explicitly after import. No in-file concurrency is enabled.
+
+The serial lane contains startup and prompt-policy wall-clock budgets, plus
+managed-session-policy-lock tests that plant fixtures in the shared policy
+collector directory. Their timing and global-GC contracts must not compete with
+the parallel lane. Build/pack fixtures must use disposable source trees rather
+than rewriting this checkout's `dist/` while other files consume it.
+`platform-target` retains its explicit serial subset; `quality:probes` remains a
+focused serial checker suite. The allowance-isolation mutation must fail in the
+parallel stage with its named `code-quality.test.ts` diagnostic.
+
 ## Language and role scope
 
 The root `.oxlintrc.json` enables type-aware rules and compiler diagnostics. The

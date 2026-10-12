@@ -41,7 +41,7 @@ const mutations = [
 	{
 		name: "allowance-isolation",
 		file: ".oxlintrc.json",
-		stage: /\/tsx(?:\.cmd)? --test --test-concurrency=1 test\/\*\*\/\*\.test\.ts$/u,
+		stage: /\/tsx(?:\.cmd)? --test test\/\*\*\/!\(\*\.serial\)\.test\.ts$/u,
 		diagnostic:
 			/^(?:not ok \d+ - |✖ )qualified registration allowance cannot exempt shadows, other declarations or ordinary work(?: \([\d.]+ms\))?$/mu,
 		evidencePath: "test/code-quality.test.ts",

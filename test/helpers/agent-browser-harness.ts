@@ -33,6 +33,11 @@ import { convertBrowserEntries } from "../../extensions/agent-browser/lib/browse
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../../scripts/agent-browser-target.mjs";
 import { hasErrorCode } from "./assertions.js";
 
+// Fixtures use their own Pi identity. Root-default tests can opt into delegation explicitly.
+delete process.env.PI_SUBAGENT_CHILD;
+delete process.env.PI_SUBAGENT_ROOT_SESSION_ID;
+delete process.env.PI_SESSION_ID;
+
 export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
 export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
 export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contract.txt";
@@ -53,6 +58,16 @@ export function createShortPrivateSocketDir(fallbackRoot: string): string {
 		}
 	}
 	return join(fallbackRoot, "s");
+}
+
+// File workers must not coordinate through the operator's live browser socket pool.
+// PI_AGENT_BROWSER_SOCKET_DIR wins over inherited AGENT_BROWSER_SOCKET_DIR for owned and caller
+// sessions; explicit per-call native env still wins. Keep caller-supplied PI overrides intact.
+if (process.env.PI_AGENT_BROWSER_SOCKET_DIR === undefined) {
+	const socketDir = createShortPrivateSocketDir(journalFixtures);
+	mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+	process.env.PI_AGENT_BROWSER_SOCKET_DIR = socketDir;
+	process.once("exit", () => rmSync(socketDir, { recursive: true, force: true }));
 }
 
 export interface FixtureServer {

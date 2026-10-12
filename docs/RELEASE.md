@@ -290,13 +290,13 @@ Manual validation remains useful for release confidence and installed-package ch
 
 ### Real upstream contract validation
 
-The default `npm test` and `npm run verify` paths use fast deterministic tests and fake binaries. For a focused single-file rerun, use `npx tsx --test test/<file>.test.ts`; `npm test -- test/<file>.test.ts` still runs the package script's full glob. When a change touches upstream command planning, result presentation, managed-session behavior, or the canonical capability baseline, also run the opt-in real-upstream contract suite:
+The default `npm test` and `npm run verify` paths use deterministic tests and fake binaries in two stages: `tsx --test "test/**/!(*.serial).test.ts"` at Node's default file concurrency, then `tsx --test --test-concurrency=1 "test/**/*.serial.test.ts"` for strict timing budgets and shared policy-collector fixtures. The browser harness isolates each process's socket root; build/pack fixtures use disposable source trees so parallel consumers retain immutable checkout `dist/`. For a focused single-file rerun, use `npx tsx --test test/<file>.test.ts`; `npm test -- test/<file>.test.ts` still runs the package script's full glob. When a change touches upstream command planning, result presentation, managed-session behavior, or the canonical capability baseline, also run the opt-in real-upstream contract suite:
 
 ```bash
 npm run verify -- real-upstream
 ```
 
-That npm script sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1` for the test process. To run `test/agent-browser.real-upstream-contract.test.ts` directly (for example with `node --test` and `tsx`), set the same variable yourself; the suite is skipped when it is unset.
+That npm script sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1`, runs the sessionless plugin probe first in its own fail-fast process, then all other declarations in the contract file (including standalone/compound/opaque native text), followed by native batch fidelity and the real overlay-click suite. Each stage uses `--test-force-exit`; a failed plugin probe stops the workflow before browser work. To run `test/agent-browser.real-upstream-contract.test.ts` directly (for example with `node --test` and `tsx`), set the same variable yourself; the suite is skipped when it is unset.
 
 This suite requires the installed stable `agent-browser --version` to meet the minimum in `scripts/agent-browser-target.mjs`; the output-shape fixture and command-reference verifier remain aligned to the current recommended baseline. It serves fixture pages from localhost and checks stable `details`/`data` keys via `test/fixtures/agent-browser-real-output-shapes.json`. Coverage groups:
 
