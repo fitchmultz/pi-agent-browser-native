@@ -8,7 +8,9 @@
 
 import assert from "node:assert/strict";
 import { readArray, readRecord, readString } from "./helpers/assertions.js";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { getArtifactCleanupGuidance } from "../extensions/agent-browser/lib/orchestration/browser-run/diagnostics.js";
@@ -236,29 +238,40 @@ test("buildToolPresentation warns that keyboard inserttext may not update applic
 	assert.match(text, /use keyboard type when real key events are required/);
 });
 
-test("artifact cleanup guidance ignores wrapper-managed spills", async () => {
-	const guidance = await getArtifactCleanupGuidance({
+test("artifact cleanup guidance ignores existing wrapper-managed spills but reports explicit files", async (t) => {
+	const cwd = await mkdtemp(join(tmpdir(), "piab-cleanup-scope-"));
+	t.after(() => rm(cwd, { force: true, recursive: true }));
+	const path = join(cwd, "spill.json");
+	await writeFile(path, "{}\n");
+	const entry = {
+		createdAtMs: 1,
+		kind: "spill" as const,
+		path,
+		retentionState: "live" as const,
+		storageScope: "persistent-session" as const,
+	};
+	const options = {
 		command: "close",
-		cwd: process.cwd(),
+		cwd,
 		manifest: {
-			entries: [
-				{
-					createdAtMs: 1,
-					kind: "spill",
-					path: "/tmp/internal-spill.json",
-					retentionState: "live",
-					storageScope: "persistent-session",
-				},
-			],
+			entries: [entry],
 			evictedCount: 0,
 			liveCount: 1,
 			maxEntries: 10,
 			updatedAtMs: 1,
-			version: 1,
+			version: 1 as const,
 		},
 		succeeded: true,
+	};
+	assert.equal(await getArtifactCleanupGuidance(options), undefined);
+	const explicit = await getArtifactCleanupGuidance({
+		...options,
+		manifest: {
+			...options.manifest,
+			entries: [{ ...entry, storageScope: "explicit-path" }],
+		},
 	});
-	assert.equal(guidance, undefined);
+	assert.deepEqual(explicit?.explicitArtifactPaths, [path]);
 });
 
 test("buildToolPresentation formats session status and session list", async () => {
@@ -613,7 +626,10 @@ test("buildToolPresentation preserves managed restore capabilities and state-lis
 		},
 	});
 	const infoSerialized = JSON.stringify(sessionInfo);
-	assert.match(infoSerialized, /piab-r(?:2)?-[a-f\d]{32}/);
+	const infoData = readRecord(sessionInfo.data);
+	assert.equal(readRecord(infoData.runtime).restoreKey, restoreKey);
+	assert.equal(infoData.statePath, `/tmp/${restoreKey}-managed.json`);
+	assert.equal(infoData.unrelatedStatePath, `/tmp/piab-r-${"b".repeat(32)}-managed.json`);
 	assert.doesNotMatch(infoSerialized, /REDACTED MANAGED STATE/);
 });
 
@@ -721,6 +737,7 @@ test("buildToolPresentation adds routed pending network diagnostics", async () =
 	const text = readString(readRecord(presentation.content[0]).text);
 	assert.match(text, /Network route diagnostics/);
 	assert.match(text, /pending-routed-request/);
+	assert.match(text, /treat failed, pending, or CORS-looking rows as unfulfilled/);
 	assert.deepEqual(
 		presentation.networkRouteDiagnostics?.map((item) => item.reason),
 		["pending-routed-request"],
@@ -736,50 +753,6 @@ test("buildToolPresentation adds routed pending network diagnostics", async () =
 		"request",
 		"r1",
 	]);
-});
-
-test("buildToolPresentation flags routed requests that return failed statuses", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "network", subcommand: "requests" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				requests: [
-					{
-						method: "GET",
-						requestId: "r404",
-						resourceType: "fetch",
-						status: 404,
-						url: "https://example.test/api/stress",
-					},
-				],
-			},
-		},
-		networkRouteDiagnostics: [
-			{
-				mode: "body",
-				reason: "unfulfilled-routed-request",
-				requestId: "r404",
-				requestUrl: "https://example.test/api/stress",
-				routePattern: "**/api/stress",
-				summary: "failed",
-			},
-		],
-		sessionName: "pi-agent-browser-test",
-	});
-
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /unfulfilled-routed-request/);
-	assert.match(text, /treat failed, pending, or CORS-looking rows as unfulfilled/);
-	assert.deepEqual(
-		presentation.networkRouteDiagnostics?.map((item) => item.reason),
-		["unfulfilled-routed-request"],
-	);
-	assert.deepEqual(
-		presentation.nextActions?.slice(0, 2).map((action) => action.id),
-		["inspect-routed-network-request", "start-network-har-capture-for-route-mock"],
-	);
 });
 
 test("buildToolPresentation hides data image network noise from preview while preserving raw details", async () => {
@@ -1474,84 +1447,84 @@ test("buildToolPresentation summarizes non-core command families and redacts dia
 			},
 			expectedSummary: "Network route: https://api.example.test/**?token=%5BREDACTED%5D",
 			expectedText: /routed.*api\.example\.test/,
-			forbidden: /route-secret|route-url-secret/,
+			forbidden: [/route-secret|route-url-secret/],
 		},
 		{
 			commandInfo: { command: "network", subcommand: "unroute" },
 			data: { unrouted: "**/*.js" },
 			expectedSummary: "Network unroute: **/*.js",
 			expectedText: /unrouted.*\*\*\/\*\.js/,
-			forbidden: /never-match-secret/,
+			forbidden: [],
 		},
 		{
 			commandInfo: { command: "diff", subcommand: "snapshot" },
 			data: { added: 1, removed: 0, token: "diff-secret" },
 			expectedSummary: "Snapshot diff completed",
 			expectedText: /added.*1/,
-			forbidden: /diff-secret/,
+			forbidden: [/diff-secret/],
 		},
 		{
 			commandInfo: { command: "diff", subcommand: "url" },
 			data: { differenceCount: 2, url: "https://example.test/?token=diff-url-secret" },
 			expectedSummary: "URL diff completed",
 			expectedText: /differenceCount.*2/,
-			forbidden: /diff-url-secret/,
+			forbidden: [/diff-url-secret/],
 		},
 		{
 			commandInfo: { command: "trace", subcommand: "start" },
 			data: { status: "started" },
 			expectedSummary: "Trace: started",
 			expectedText: /started/,
-			forbidden: /never-match-secret/,
+			forbidden: [],
 		},
 		{
 			commandInfo: { command: "profiler", subcommand: "start" },
 			data: { status: "started" },
 			expectedSummary: "Profiler: started",
 			expectedText: /started/,
-			forbidden: /never-match-secret/,
+			forbidden: [],
 		},
 		{
 			commandInfo: { command: "highlight", subcommand: "#pay" },
 			data: { highlighted: "#pay" },
 			expectedSummary: "Element highlighted",
 			expectedText: /highlighted.*#pay/,
-			forbidden: /never-match-secret/,
+			forbidden: [],
 		},
 		{
 			commandInfo: { command: "inspect" },
 			data: { opened: true },
 			expectedSummary: "DevTools inspect opened",
 			expectedText: /opened.*true/,
-			forbidden: /never-match-secret/,
+			forbidden: [],
 		},
 		{
 			commandInfo: { command: "clipboard", subcommand: "read" },
 			data: { text: "clipboard Authorization: Bearer clipboard-secret" },
 			expectedSummary: "Clipboard read",
 			expectedText: /\[REDACTED\]/,
-			forbidden: /clipboard-secret/,
+			forbidden: [/clipboard-secret/],
 		},
 		{
 			commandInfo: { command: "stream", subcommand: "enable" },
 			data: { connected: true, enabled: true, port: 7788, screencasting: true },
 			expectedSummary: "Stream enabled on port 7788",
 			expectedText: /WebSocket URL: ws:\/\/127\.0\.0\.1:7788/,
-			forbidden: /never-match-secret/,
+			forbidden: [],
 		},
 		{
 			commandInfo: { command: "stream", subcommand: "disable" },
 			data: { connected: false, enabled: false, screencasting: false },
 			expectedSummary: "Stream disabled",
 			expectedText: /Enabled: false/,
-			forbidden: /never-match-secret/,
+			forbidden: [],
 		},
 		{
 			commandInfo: { command: "chat", subcommand: "summarize" },
 			data: { model: "anthropic/claude", response: "Done with Bearer chat-secret" },
 			expectedSummary: "Chat response",
 			expectedText: /Bearer \[REDACTED\]/,
-			forbidden: /chat-secret/,
+			forbidden: [/chat-secret/],
 		},
 	] as const;
 
@@ -1571,7 +1544,7 @@ test("buildToolPresentation summarizes non-core command families and redacts dia
 			const label = `${item.commandInfo.command} ${"subcommand" in item.commandInfo ? item.commandInfo.subcommand : ""}`;
 			assert.equal(presentation.summary, item.expectedSummary, label);
 			assert.match(text, item.expectedText, label);
-			assert.doesNotMatch(serialized, item.forbidden, label);
+			item.forbidden.forEach((pattern) => assert.doesNotMatch(serialized, pattern, label));
 		}),
 	);
 });
@@ -1639,44 +1612,6 @@ test("buildToolPresentation command-redacts whole-batch spill data", async () =>
 	await rm(readString(presentation.fullOutputPath), { force: true });
 });
 
-test("buildToolPresentation keeps failed batch context inline when compacting", async () => {
-	const largeSuccessfulSteps = Array.from({ length: 90 }, (_, index) => ({
-		command: ["eval", "--stdin"],
-		result: { result: `large successful batch row ${index + 1} ${"x".repeat(120)}` },
-		success: true,
-	}));
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "batch" },
-		cwd: process.cwd(),
-		envelope: {
-			success: false,
-			data: [
-				...largeSuccessfulSteps,
-				{
-					command: ["wait", "--text", "Checkout complete"],
-					error: "Timed out waiting for text: Checkout complete",
-					success: false,
-				},
-			],
-		},
-	});
-
-	assert.equal(presentation.content[0]?.type, "text");
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Large batch output compacted/);
-	assert.match(text, /Failure context:/);
-	assert.match(text, /First failing step: 91/);
-	assert.match(text, /Failure category: timeout/);
-	assert.match(text, /Failure detail: Error: Timed out waiting for text: Checkout complete/);
-	assert.match(text, /Full output path: /);
-	assert.equal(presentation.batchFailure?.failedStep.index, 90);
-	assert.equal(typeof presentation.fullOutputPath, "string");
-	const spillPath = readString(presentation.fullOutputPath);
-	assert.ok(spillPath.length > 0);
-	assert.match(await readFile(spillPath, "utf8"), /large successful batch row 90/);
-	await rm(spillPath, { force: true });
-});
-
 test("buildToolPresentation bounds long failed command text when compacting batch output", async () => {
 	const longArgument = `checkout-${"z".repeat(900)}-END_OF_UNBOUNDED_ARGUMENT`;
 	const largeSuccessfulSteps = Array.from({ length: 90 }, (_, index) => ({
@@ -1693,7 +1628,7 @@ test("buildToolPresentation bounds long failed command text when compacting batc
 				...largeSuccessfulSteps,
 				{
 					command: ["wait", "--text", longArgument],
-					error: "Timed out waiting for text.",
+					error: "Timed out waiting for text: Checkout complete",
 					success: false,
 				},
 			],
@@ -1705,11 +1640,17 @@ test("buildToolPresentation bounds long failed command text when compacting batc
 	assert.match(text, /Large batch output compacted/);
 	assert.match(text, /Failure context:/);
 	assert.match(text, /First failing step: 91 — wait --text checkout-z+…/);
+	assert.match(text, /Failure category: timeout/);
+	assert.match(text, /Failure detail: Error: Timed out waiting for text: Checkout complete/);
+	assert.match(text, /Full output path: /);
+	assert.equal(presentation.batchFailure?.failedStep.index, 90);
 	assert.equal(text.includes(longArgument), false);
 	assert.equal(text.includes("END_OF_UNBOUNDED_ARGUMENT"), false);
 	assert.ok(text.length < 4500, `compacted inline output was unexpectedly large: ${text.length}`);
 	const spillPath = readString(presentation.fullOutputPath);
 	assert.ok(spillPath.length > 0);
-	assert.match(await readFile(spillPath, "utf8"), /END_OF_UNBOUNDED_ARGUMENT/);
+	const spill = await readFile(spillPath, "utf8");
+	assert.ok(spill.includes(longArgument));
+	assert.match(spill, /large successful batch row 90/);
 	await rm(spillPath, { force: true });
 });

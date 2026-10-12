@@ -274,10 +274,14 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 	}
 });
 
-test("buildToolPresentation does not classify state load paths as saved artifacts", async () => {
+test("buildToolPresentation does not classify state load paths as saved artifacts", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-state-load-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+	await writeFile(join(tempDir, "auth-state.json"), "{}");
+
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "state", subcommand: "load" },
-		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		cwd: tempDir,
 		envelope: { success: true, data: { path: "auth-state.json" } },
 	});
 
@@ -362,10 +366,13 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.deepEqual(presentation.nextActions[0].params?.args, ["record", "stop"]);
 });
 
-test("buildToolPresentation renders record restart as a pending lifecycle state", async () => {
+test("buildToolPresentation renders record restart as a pending lifecycle state", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-record-restart-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "record", subcommand: "restart" },
-		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		cwd: tempDir,
 		envelope: { success: true, data: { path: "recording-restart.webm" } },
 	});
 
@@ -866,7 +873,7 @@ test("buildToolPresentation scopes artifact verification to current-result artif
 				{
 					createdAtMs: Date.now() - 1,
 					kind: "spill",
-					path: "/tmp/old-spill.txt",
+					path: join(tempDir, "old-spill.txt"),
 					retentionState: "evicted",
 					storageScope: "persistent-session",
 				},
@@ -1087,14 +1094,17 @@ test("artifact manifest evicts oldest metadata entries at the configured recent 
 	);
 });
 
-test("buildToolPresentation reports the configured artifact manifest recent window", async () => {
+test("buildToolPresentation reports the configured artifact manifest recent window", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-artifact-window-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+
 	await withPatchedEnv(
 		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3" },
 		async () => {
 			const presentation = await buildToolPresentation({
 				commandInfo: { command: "screenshot" },
-				cwd: process.cwd(),
-				envelope: { success: true, data: { path: "dogfood-shot.png" } },
+				cwd: tempDir,
+				envelope: { success: true, data: { path: "screenshot.png" } },
 			});
 
 			assert.equal(presentation.artifactManifest?.maxEntries, 3);
@@ -1429,7 +1439,7 @@ test("buildToolPresentation does not re-append old artifact retention noise for 
 				createdAtMs: 1_000,
 				evictedAtMs: 2_000,
 				kind: "spill",
-				path: "/tmp/old-spill.json",
+				path: join(tempDir, "old-spill.json"),
 				retentionState: "evicted",
 				storageScope: "persistent-session",
 			},
@@ -1508,10 +1518,13 @@ test("buildToolPresentation reuses standalone inline screenshot rendering inside
 	}
 });
 
-test("buildToolPresentation preserves non-screenshot file artifacts inside batch output", async () => {
+test("buildToolPresentation preserves non-screenshot file artifacts inside batch output", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-batch-artifacts-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "batch" },
-		cwd: "/tmp/pi-agent-browser-batch-artifacts",
+		cwd: tempDir,
 		envelope: {
 			success: true,
 			data: [

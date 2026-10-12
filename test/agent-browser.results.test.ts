@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-	AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS,
 	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
 	getAgentBrowserRichInputRecoveryNextActionId,
 	getAgentBrowserRichInputRecoveryNextActionIds,
@@ -147,21 +146,6 @@ test("recording manifests keep namespace identities distinct on the same path", 
 		"close-abandoned",
 	);
 	assert.equal(retired.entries.find((entry) => entry.namespace === "two")?.subcommand, "start");
-});
-
-test("AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS locks documented recovery action ids", () => {
-	assert.deepEqual(AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS, {
-		aboutBlankListTabs: "list-tabs-for-about-blank-recovery",
-		connectedSessionGetUrl: "verify-connected-session-url",
-		connectedSessionListTabs: "list-connected-session-tabs",
-		genericTabDriftListTabs: "list-tabs-for-recovery",
-		noActivePageListTabs: "list-tabs-after-no-active-page",
-		selectIntendedTabAfterDrift: "select-intended-tab-after-drift",
-		snapshotAfterTabRecovery: "snapshot-after-tab-recovery",
-		tabDriftListTabs: "list-tabs-for-tab-drift-recovery",
-		tabGoneListTabs: "list-tabs-after-tab-gone",
-		tabGoneNewTab: "open-tab-after-tab-gone",
-	});
 });
 
 test("rich input recovery nextAction id helpers lock exact ids", () => {
@@ -823,15 +807,15 @@ test("buildAgentBrowserNextActions preserves mutation, confirmation and missing-
 		buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-drift" })?.map(
 			(action) => ({ id: action.id, args: action.params?.args }),
 		),
-		[{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.genericTabDriftListTabs, args: ["tab", "list"] }],
+		[{ id: "list-tabs-for-recovery", args: ["tab", "list"] }],
 	);
 	assert.deepEqual(
 		buildAgentBrowserNextActions({ resultCategory: "failure", failureCategory: "tab-gone" })?.map(
 			(action) => ({ id: action.id, args: action.params?.args }),
 		),
 		[
-			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneListTabs, args: ["tab", "list"] },
-			{ id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneNewTab, args: ["tab", "new"] },
+			{ id: "list-tabs-after-tab-gone", args: ["tab", "list"] },
+			{ id: "open-tab-after-tab-gone", args: ["tab", "new"] },
 		],
 	);
 });
@@ -845,11 +829,11 @@ test("buildAgentBrowserNextActions keeps connected and restored tab target recov
 		})?.map((action) => ({ id: action.id, args: action.params?.args })),
 		[
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.connectedSessionGetUrl,
+				id: "verify-connected-session-url",
 				args: ["--session", "named", "get", "url"],
 			},
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.connectedSessionListTabs,
+				id: "list-connected-session-tabs",
 				args: ["--session", "named", "tab", "list"],
 			},
 		],
@@ -861,7 +845,7 @@ test("buildAgentBrowserNextActions keeps connected and restored tab target recov
 		})?.map((action) => ({ id: action.id, args: action.params?.args })),
 		[
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.noActivePageListTabs,
+				id: "list-tabs-after-no-active-page",
 				args: ["--session", "named", "tab", "list"],
 			},
 		],
@@ -877,7 +861,7 @@ test("buildAgentBrowserNextActions keeps connected and restored tab target recov
 		})),
 		[
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.noActivePageListTabs,
+				id: "list-tabs-after-no-active-page",
 				args: ["--session", "named", "tab", "list"],
 				stdin: undefined,
 			},
@@ -901,17 +885,17 @@ test("buildAgentBrowserNextActions keeps connected and restored tab target recov
 		})),
 		[
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.aboutBlankListTabs,
+				id: "list-tabs-for-about-blank-recovery",
 				args: ["--session", "named", "tab", "list"],
 				stdin: undefined,
 			},
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.selectIntendedTabAfterDrift,
+				id: "select-intended-tab-after-drift",
 				args: ["--session", "named", "tab", "t2"],
 				stdin: undefined,
 			},
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.snapshotAfterTabRecovery,
+				id: "snapshot-after-tab-recovery",
 				args: ["--session", "named", "batch", "--bail"],
 				stdin: '[["tab","t2"],["get","url"],["snapshot","-i"]]',
 			},
@@ -936,17 +920,17 @@ test("buildAgentBrowserNextActions keeps connected and restored tab target recov
 		})),
 		[
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.aboutBlankListTabs,
+				id: "list-tabs-for-about-blank-recovery",
 				args: ["--session", "named", "tab", "list"],
 				stdin: undefined,
 			},
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.selectIntendedTabAfterDrift,
+				id: "select-intended-tab-after-drift",
 				args: ["--session", "named", "tab", "t2"],
 				stdin: undefined,
 			},
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.snapshotAfterTabRecovery,
+				id: "snapshot-after-tab-recovery",
 				args: ["--session", "named", "snapshot", "-i"],
 				stdin: undefined,
 			},
@@ -969,7 +953,7 @@ test("buildAgentBrowserNextActions retains tab drift and unverified download rec
 		})?.map((action) => ({ id: action.id, args: action.params?.args })),
 		[
 			{
-				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabDriftListTabs,
+				id: "list-tabs-for-tab-drift-recovery",
 				args: ["--session", "named", "tab", "list"],
 			},
 		],
@@ -1267,10 +1251,7 @@ test("buildToolPresentation classifies tab_gone envelopes and recommends tab rec
 	assert.equal(presentation.failureCategory, "tab-gone");
 	assert.deepEqual(
 		presentation.nextActions?.map((action) => action.id),
-		[
-			AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneListTabs,
-			AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.tabGoneNewTab,
-		],
+		["list-tabs-after-tab-gone", "open-tab-after-tab-gone"],
 	);
 });
 
@@ -1337,7 +1318,7 @@ test("parseAgentBrowserEnvelope accepts valid object envelopes with boolean succ
 	);
 
 	assert.equal(parsed.parseError, undefined);
-	assert.equal(parsed.envelope?.success, true);
+	assert.deepEqual(parsed.envelope, { success: true, data: { title: "ok" } });
 });
 
 test("parseAgentBrowserEnvelope treats top-level success responses as data when data is omitted", async () => {
@@ -1555,7 +1536,7 @@ test("getAgentBrowserErrorText prefers spill/write failures over downstream pars
 	assert.equal(errorText, "pi-agent-browser temp spill budget exceeded");
 });
 
-test("extractQaPageContext prefers batch open title over compiled checks url", async () => {
+test("extractQaPageContext prefers native batch page over compiled checks url", async () => {
 	const { extractQaPageContext } =
 		await import("../extensions/agent-browser/lib/input-modes/job.js");
 	const page = extractQaPageContext({
@@ -1575,7 +1556,7 @@ test("extractQaPageContext prefers batch open title over compiled checks url", a
 				diagnosticsResetAtStart: true,
 				expectedText: [],
 				loadState: "domcontentloaded",
-				url: "https://example.test/",
+				url: "https://compiled.example.test/requested",
 			},
 			steps: [],
 			args: ["batch"],

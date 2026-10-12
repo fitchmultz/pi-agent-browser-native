@@ -115,6 +115,11 @@ test("buildToolPresentation adapts quoted and heredoc skill examples to native t
 					"",
 					"```bash",
 					'agent-browser open "https://example.com/a b?q=hello world" --profile "Default Profile"',
+					'agent-browser storage local get ""',
+					"agent-browser storage session get ''",
+					'agent-browser --namespace "" snapshot -i',
+					'agent-browser get text "   "',
+					'agent-browser get text ""#literal',
 					"agent-browser eval --stdin <<JS",
 					"document.title",
 					"JS",
@@ -131,6 +136,11 @@ test("buildToolPresentation adapts quoted and heredoc skill examples to native t
 		text,
 		/agent_browser \{ "args": \["open","https:\/\/example\.com\/a b\?q=hello world","--profile","Default Profile"\] \}/,
 	);
+	assert.ok(text.includes('agent_browser { "args": ["storage","local","get",""] }'));
+	assert.ok(text.includes('agent_browser { "args": ["storage","session","get",""] }'));
+	assert.ok(text.includes('agent_browser { "args": ["--namespace","","snapshot","-i"] }'));
+	assert.ok(text.includes('agent_browser { "args": ["get","text","   "] }'));
+	assert.ok(text.includes('agent_browser { "args": ["get","text","#literal"] }'));
 	assert.match(
 		text,
 		/agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.title" \}/,
