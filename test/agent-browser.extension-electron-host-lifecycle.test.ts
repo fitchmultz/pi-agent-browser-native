@@ -397,7 +397,7 @@ test(
 					] as const) {
 						// Handoff cases share one native executable and invocation log.
 						// oxlint-disable-next-line no-await-in-loop
-						await t.test(handoff, async () => {
+						await t.test(handoff, async (handoffTest) => {
 							await rm(upstreamLogPath, { force: true });
 							const harness = createExtensionHarness({ cwd: tempDir });
 							await runExtensionEvent(
@@ -436,6 +436,69 @@ test(
 								args: ["get", "url"],
 							});
 							assert.equal(selected.isError, false, selected.content.at(0)?.text);
+							if (handoff === "connect") {
+								await handoffTest.test(
+									"packaged source lookup preserves launch context and recovery",
+									async () => {
+										const launch = readRecord(
+											readRecord(readRecord(result.details).electron).launch,
+										);
+										assert.equal(launch.appPath, app.appPath);
+										const lookup = await executeRegisteredTool(harness.tool, harness.ctx, {
+											sourceLookup: {
+												componentName: "MissingPackagedComponent",
+												selector: "#save",
+											},
+										});
+										assert.equal(lookup.isError, false, JSON.stringify(lookup));
+										const text = lookup.content[0].text ?? "";
+										assert.match(text, /Source lookup found no candidate locations/);
+										assert.match(text, /workspace scan was limited/);
+										assert.match(text, /packaged Electron app code may live outside/);
+										const source = readRecord(lookup.details?.sourceLookup);
+										assert.equal(source.status, "no-candidates");
+										assert.equal(source.workspaceRoot, tempDir);
+										assert.deepEqual(source.electronContext, {
+											appName: "Handoff Electron",
+											appPath: app.appPath,
+											executablePath: launch.executablePath,
+											launchId,
+											sessionName: launch.sessionName,
+											url: "app://demo",
+										});
+										const limitations = readArray(source.limitations).map(readString).join("\n");
+										assert.match(limitations, /captured execution directory/);
+										assert.match(limitations, /app\.asar/);
+										const actions = readArray(lookup.details?.nextActions).map(readRecord);
+										assert.deepEqual(
+											actions
+												.filter((action) =>
+													[
+														"snapshot-electron-session",
+														"probe-electron-launch",
+														"list-electron-tabs",
+													].includes(readString(action.id)),
+												)
+												.map(({ id, params }) => ({ id, params })),
+											[
+												{
+													id: "snapshot-electron-session",
+													params: {
+														args: ["--session", launch.sessionName, "snapshot", "-i"],
+													},
+												},
+												{ id: "probe-electron-launch", params: { action: "probe", launchId } },
+												{
+													id: "list-electron-tabs",
+													params: {
+														args: ["--session", launch.sessionName, "tab", "list"],
+													},
+												},
+											],
+										);
+									},
+								);
+							}
 							await writeFile(upstreamLogPath, "");
 							await withPatchedEnv({ AGENT_BROWSER_CONFIRM_ACTIONS: "tab_new" }, async () => {
 								const inspections =

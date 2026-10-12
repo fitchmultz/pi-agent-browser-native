@@ -3,7 +3,7 @@
  * Responsibilities: Build fake pi extension contexts, run registered extension events/tools, patch process env safely, create fake agent-browser binaries, read invocation logs, and manage child-process fixtures.
  * Scope: Test-only utilities for `test/agent-browser.*.test.ts`; production code must not import this module.
  * Usage: Import focused helpers from `./helpers/agent-browser-harness.js` inside Node test-runner suites.
- * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd`; its default virtual daemon retains launch/close and process-generation metadata. Stateful daemon tests set `PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO=1`; pass `platform: "win32"` to assert Windows launcher layout from non-Windows hosts (spawn/PATHEXT behavior still needs a real Windows runner).
+ * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd`; its default virtual daemon retains launch/close and process-generation metadata. Stateful daemon tests set `PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO=1`; spawn/PATHEXT behavior still needs a real Windows runner.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";

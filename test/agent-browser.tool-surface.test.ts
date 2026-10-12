@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { Check } from "typebox/value";
 import {
 	InMemoryCredentialStore,
 	normalizeContext,
@@ -729,7 +730,15 @@ test("prompt routing is compact and preserves browser authority, recovery, and i
 });
 
 test("Electron action schemas preserve field boundaries through native Pi validation", async () => {
-	await withSurface(async ({ call, calls }) => {
+	await withSurface(async ({ call, calls, session }) => {
+		const electron = session.getToolDefinition("agent_browser_electron");
+		assert.ok(electron);
+		assert.equal(Check(electron.parameters, { action: "list", query: 42 }), false);
+		assert.equal(Check(electron.parameters, { action: "list", maxResults: "10" }), false);
+		await call("agent_browser_electron", { action: "list", query: 42 });
+		assert.deepEqual(calls.at(-1)?.electron, { action: "list", query: "42" });
+		await call("agent_browser_electron", { action: "list", maxResults: "10" });
+		assert.deepEqual(calls.at(-1)?.electron, { action: "list", maxResults: 10 });
 		await call("agent_browser_electron", { action: "list", appPath: null, maxResults: null });
 		assert.deepEqual(calls.at(-1)?.electron, { action: "list" });
 		const fields: JsonObject = {
@@ -802,17 +811,30 @@ test("Electron action schemas preserve field boundaries through native Pi valida
 			{ action: "launch", handoff: "invalid" },
 			{ action: "list", maxResults: 0 },
 			{ action: "list", query: "" },
+			{ action: "list", maxResults: 1.5 },
+			{ action: "launch", allow: [""] },
+			{ action: "status", all: false },
+			{ action: "cleanup", all: false },
+			{ action: "probe", timeoutMs: 0 },
 			{ action: "unknown" },
 			{ action: "list", unknown: true },
 			{},
 		];
 		for (const input of invalid) {
-			// All nine literal invalid Electron inputs must reject at native schema validation.
+			const before = calls.length;
+			// Every literal invalid Electron input must reject at native schema validation.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
-			const rejection = assert.rejects(call("agent_browser_electron", input), /Validation failed/);
+			const rejection = assert.rejects(
+				call("agent_browser_electron", input),
+				/Validation failed/,
+				JSON.stringify(input),
+			);
 			// Fixture transitions and their assertions run in order against this test's shared state.
 			// oxlint-disable-next-line no-await-in-loop
 			await rejection;
+			// Every invalid Electron input must fail before the executor receives it.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.equal(calls.length, before, JSON.stringify(input));
 		}
 	});
 });

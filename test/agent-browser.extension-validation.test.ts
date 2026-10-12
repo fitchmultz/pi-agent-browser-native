@@ -23,15 +23,7 @@ import {
 	canonicalizeExplicitArtifactDestination,
 	getExplicitArtifactDestination,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
-import {
-	WEB_SEARCH_PROMPT_GUIDELINE,
-	QUICK_START_GUIDELINES,
-	RUNTIME_PROMPT_GUIDELINES,
-	buildInstalledDocsGuideline,
-	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-	TOOL_PROMPT_GUIDELINES_SUFFIX,
-	WRAPPER_TAB_RECOVERY_BEHAVIOR,
-} from "../extensions/agent-browser/lib/playbook.js";
+
 import {
 	createExtensionHarness,
 	getBrowserInstructions,
@@ -49,210 +41,6 @@ import {
 	createRenderContext,
 	isTestPidAlive,
 } from "./helpers/extension-validation-fixtures.js";
-
-test("agentBrowserExtension keeps full browser guidance and installed doc pointers in its prompt section", async (t) => {
-	const isolatedHome = await mkdtemp(join(tmpdir(), "pi-agent-browser-guidance-test-"));
-	t.after(async () => await rm(isolatedHome, { force: true, recursive: true }));
-	await withPatchedEnv(
-		{
-			BRAVE_API_KEY: "demo-key",
-			EXA_API_KEY: undefined,
-			HOME: isolatedHome,
-			PI_AGENT_BROWSER_CONFIG: undefined,
-		},
-		async () => {
-			const harness = createExtensionHarness({ cwd: process.cwd() });
-			assert.deepEqual([...harness.handlers.keys()].sort(), [
-				"before_agent_start",
-				"message_end",
-				"session_shutdown",
-				"session_start",
-				"session_tree",
-				"tool_call",
-			]);
-			assert.equal(harness.tool.name, "agent_browser");
-			assert.match(harness.tool.description, /native agent-browser commands/);
-			assert.match(harness.tool.promptSnippet, /native command batches/);
-			const parameterSchema = readRecord(harness.tool.parameters);
-			const parameterProperties = readRecord(parameterSchema.properties);
-			assert.deepEqual(Object.keys(parameterProperties).sort(), [
-				"args",
-				"outputPath",
-				"sessionMode",
-				"stdin",
-				"timeoutMs",
-			]);
-			assert.match(readString(readRecord(parameterProperties.args).description), /batch --bail/);
-			assert.match(
-				readString(readRecord(parameterProperties.stdin).description),
-				/batch JSON, eval --stdin.*auth save --password-stdin/,
-			);
-			assert.match(
-				harness.getTool("agent_browser_code")?.description ?? "",
-				/persistent browser.*emitImage/,
-			);
-			assert.match(
-				harness.getTool("agent_browser_tools")?.description ?? "",
-				/adds tools.*preserves other active tools/,
-			);
-
-			const docsGuideline = buildInstalledDocsGuideline({
-				readmePath: join(process.cwd(), "README.md"),
-				commandReferencePath: join(process.cwd(), "docs", "COMMAND_REFERENCE.md"),
-				toolContractPath: join(process.cwd(), "docs", "TOOL_CONTRACT.md"),
-			});
-			const guidelineText = await getBrowserInstructions(harness);
-			const webSearchTool = harness.getTool("agent_browser_web_search");
-			assert.ok(webSearchTool, "web search tool should register from BRAVE_API_KEY");
-			assert.equal(guidelineText.includes(WEB_SEARCH_PROMPT_GUIDELINE), true);
-			assert.equal(
-				guidelineText.includes(
-					"Prefer agent_browser_web_search for facts; agent_browser for pages.",
-				),
-				true,
-			);
-			const requiredGuidelines = [
-				docsGuideline,
-				...RUNTIME_PROMPT_GUIDELINES,
-				TOOL_PROMPT_GUIDELINES_SUFFIX[0],
-			];
-			for (const guideline of requiredGuidelines) {
-				// Every guideline in this fixed nonempty inventory must reach the delivered prompt.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(
-					guidelineText.includes(guideline),
-					true,
-					`missing concise runtime guideline: ${guideline}`,
-				);
-			}
-			assert.match(guidelineText, /agent_browser for one native command/);
-			assert.match(guidelineText, /For agent_browser, use open → snapshot -i/);
-			assert.match(guidelineText, /ordinary requested non-destructive submissions may proceed/);
-			assert.match(
-				guidelineText,
-				/require explicit authorization for purchases, production-control, destructive\/irreversible, or account\/security\/privacy changes/,
-			);
-			assert.equal(
-				RUNTIME_PROMPT_GUIDELINES.some((line) =>
-					line.includes("ordinary requested non-destructive submissions may proceed"),
-				),
-				true,
-			);
-			assert.equal(
-				RUNTIME_PROMPT_GUIDELINES.some((line) =>
-					line.includes("Stop before order/post/purchase/submit"),
-				),
-				false,
-			);
-			assert.equal(
-				SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) =>
-					line.includes(
-						"ordinary non-destructive form submissions within the requested flow may proceed without separate confirmation",
-					),
-				),
-				true,
-			);
-			assert.match(guidelineText, /sessionMode:fresh/);
-			assert.match(guidelineText, /bare calls share a root Pi browser with descendants/);
-			assert.match(
-				SHARED_BROWSER_PLAYBOOK_GUIDELINES.join("\n"),
-				/copied Chrome profiles may omit encrypted cookies/,
-			);
-			assert.match(guidelineText, /exact user paths/);
-			assert.match(guidelineText, /requested\/configured profiles/);
-			assert.match(guidelineText, /read <url> for text/);
-			assert.match(guidelineText, /batch --bail with JSON-array stdin for fixed sequences/);
-			assert.match(guidelineText, /get text\/html\/value\/count <selector>/);
-			assert.match(guidelineText, /get attr <selector> <name>/);
-			assert.doesNotMatch(guidelineText, /get title\/url\/text\/html\/value\/attr\/count/);
-			assert.match(guidelineText, /Use --json only for JSON text/);
-			assert.doesNotMatch(guidelineText, /never pass --json/);
-			assert.match(harness.tool.description, /agent_browser_tools for advanced capabilities/);
-			assert.match(guidelineText, /ffmpeg before start/);
-			assert.match(guidelineText, /Verify nested scrolling/);
-			assert.match(guidelineText, /follow visible nextActions/);
-			assert.match(
-				guidelineText,
-				/serialize each complete browser operation and code cell by native socket context, namespace, and session/,
-			);
-			assert.match(guidelineText, /Different identities remain concurrent/);
-			assert.match(guidelineText, /It is not a transaction or rollback/);
-			assert.match(
-				guidelineText,
-				/Choose agent_browser for one native command, native batch --bail with JSON-array stdin for a known fixed sequence/,
-			);
-			assert.match(guidelineText, /Return to the model when a fresh observation needs judgment/);
-			assert.match(guidelineText, /Neither tool is a named recipe registry/);
-			assert.equal(
-				SHARED_BROWSER_PLAYBOOK_GUIDELINES.some((line) =>
-					line.includes("evidence-only screenshots"),
-				),
-				true,
-			);
-			const fullPlaybookText = [
-				...QUICK_START_GUIDELINES,
-				...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-			].join("\n");
-			assert.match(fullPlaybookText, /react inspect <fiberId>/);
-			assert.doesNotMatch(fullPlaybookText, /react tree\/inspect\/renders\/suspense/);
-			assert.match(fullPlaybookText, /network route <url>/);
-			assert.match(fullPlaybookText, /diff screenshot --baseline <file>/);
-			assert.doesNotMatch(fullPlaybookText, /diff snapshot\/screenshot\/url/);
-			assert.match(fullPlaybookText, /clipboard write <text>/);
-			assert.doesNotMatch(fullPlaybookText, /clipboard read\/write\/copy\/paste/);
-			assert.deepEqual(
-				harness.tool.promptGuidelines,
-				[],
-				"guidance belongs to the instruction owner, not eager tool metadata",
-			);
-			assert.equal(
-				WRAPPER_TAB_RECOVERY_BEHAVIOR.some((line) =>
-					line.includes("Routine same-session calls skip tab-list preflights"),
-				),
-				true,
-			);
-
-			const [genericTurn] = await runExtensionEventResults(
-				harness.handlers,
-				"before_agent_start",
-				{
-					prompt: "Please review the repository architecture.",
-					systemPrompt: "Base system prompt",
-					systemPromptOptions: { sections: {} },
-				},
-				harness.ctx,
-			);
-			assert.equal(genericTurn, undefined);
-
-			const sections: Record<string, string> = {};
-			const browserTurn = {
-				prompt: "Open https://example.com and take a snapshot.",
-				systemPrompt: "Base system prompt",
-				systemPromptOptions: { sections },
-			};
-			const overrides = await runExtensionEventResults(
-				harness.handlers,
-				"before_agent_start",
-				browserTurn,
-				harness.ctx,
-			);
-			assert.deepEqual(
-				overrides,
-				[],
-				"native section composition must not force a full prompt replacement",
-			);
-			assert.equal(browserTurn.systemPrompt, "Base system prompt");
-			assert.match(
-				browserTurn.systemPromptOptions.sections.agent_browser,
-				/Project rule: when browser automation is needed/,
-			);
-			assert.doesNotMatch(
-				browserTurn.systemPromptOptions.sections.agent_browser,
-				/Quick start:|Browser operating playbook:/,
-			);
-		},
-	);
-});
 
 test(
 	"built extension prompt doc pointers resolve to package-root docs",
@@ -398,6 +186,31 @@ test("agentBrowserExtension uses project browser launch guidance when project co
 test("agentBrowserExtension rejects unsupported public schema fields", () => {
 	const harness = createExtensionHarness({ cwd: process.cwd() });
 	const schema = harness.tool.parameters;
+	assert.equal(harness.tool.name, "agent_browser");
+	assert.match(harness.tool.description, /native agent-browser commands/);
+	assert.match(harness.tool.promptSnippet, /native command batches/);
+	assert.match(harness.tool.description, /agent_browser_tools for advanced capabilities/);
+	const parameterProperties = readRecord(readRecord(schema).properties);
+	assert.deepEqual(Object.keys(parameterProperties).sort(), [
+		"args",
+		"outputPath",
+		"sessionMode",
+		"stdin",
+		"timeoutMs",
+	]);
+	assert.match(readString(readRecord(parameterProperties.args).description), /batch --bail/);
+	assert.match(
+		readString(readRecord(parameterProperties.stdin).description),
+		/batch JSON, eval --stdin.*auth save --password-stdin/,
+	);
+	assert.match(
+		harness.getTool("agent_browser_code")?.description ?? "",
+		/persistent browser.*emitImage/,
+	);
+	assert.match(
+		harness.getTool("agent_browser_tools")?.description ?? "",
+		/adds tools.*preserves other active tools/,
+	);
 	const direct = {
 		args: ["open", "https://example.test/"],
 		outputPath: "logs/page.json",

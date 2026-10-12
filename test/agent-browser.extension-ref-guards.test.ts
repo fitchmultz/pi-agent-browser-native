@@ -1259,6 +1259,34 @@ if (args.includes("snapshot")) {
 					false,
 				);
 
+				for (const args of [
+					...["text", "html", "value", "box", "styles"].map((getter) => ["get", getter, "e999"]),
+					["get", "attr", "e999", "id"],
+					["diff", "screenshot", "--baseline", join(tempDir, "unused.png"), "--selector", "e999"],
+				]) {
+					// Each absent-ref command must be rejected against the same successful snapshot.
+					// oxlint-disable-next-line no-await-in-loop
+					const missing = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+					// Every fixed getter/diff variant must fail for missing snapshot membership, not native errors.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.equal(missing.isError, true, JSON.stringify(missing));
+					// Every fixed getter/diff variant must fail for missing snapshot membership, not native errors.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.equal(missing.details?.failureCategory, "stale-ref");
+					// Every fixed getter/diff variant must fail for missing snapshot membership, not native errors.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.match(
+						readString(missing.content[0].text),
+						/Ref @e999 was not present in the latest snapshot/,
+					);
+					// Every fixed getter/diff variant must be rejected before native dispatch.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.equal(missing.details.exitCode, undefined);
+				}
+				const absentRefInvocations = await readInvocationLog(logPath);
+				assert.equal(absentRefInvocations.filter((entry) => entry.args.includes("e999")).length, 0);
+				assert.equal(absentRefInvocations.filter((entry) => entry.args.includes("diff")).length, 0);
+
 				const emptySnapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["snapshot", "-i"],
 				});

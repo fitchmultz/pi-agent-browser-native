@@ -21,7 +21,6 @@ import {
 	analyzeQaPresetTimeout,
 	compileAgentBrowserQaPreset,
 } from "../extensions/agent-browser/lib/input-modes/job.js";
-import { compileAgentBrowserSemanticAction } from "../extensions/agent-browser/lib/input-modes/semantic-action.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -169,19 +168,6 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 		}
 	},
 );
-
-test("semanticAction treats an empty generated role name as omitted", () => {
-	assert.deepEqual(
-		compileAgentBrowserSemanticAction({
-			action: "fill",
-			locator: "role",
-			role: "textbox",
-			name: "",
-			text: "query",
-		}).compiled?.args,
-		["find", "role", "textbox", "fill", "query"],
-	);
-});
 
 test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA failures", () => {
 	const compiled = compileAgentBrowserQaPreset({

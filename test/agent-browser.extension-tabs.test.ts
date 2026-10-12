@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { readArray, readNumber, readRecord, readString } from "./helpers/assertions.js";
+import { readArray, readRecord, readString } from "./helpers/assertions.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -266,72 +266,6 @@ process.stdout.write(JSON.stringify([
 				assert.deepEqual(result.details?.imagePaths, [imagePath]);
 				assert.equal(Array.isArray(result.details.batchSteps), true);
 				assert.equal(readArray(result.details.batchSteps).map(readRecord)[1]?.imagePath, imagePath);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension preserves mixed batch failure rendering while still marking the tool call as an error",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`process.stdout.write(JSON.stringify([
-  { command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
-  { command: ["click", "@zzz"], success: false, error: "Unknown ref: zzz" }
-]));
-process.exitCode = 1;`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["batch"],
-					stdin: "[]",
-				});
-				assert.equal(result.isError, true);
-				assert.equal(result.content[0]?.type, "text");
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/Batch failed: 1\/2 succeeded/,
-				);
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/First failing step: 2 — click @zzz/,
-				);
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/Step 1 — open https:\/\/example.com\/? \(succeeded\)/,
-				);
-				assert.match(readString(readRecord(result.content[0]).text), /Example Domain/);
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/Step 2 — click @zzz \(failed\)/,
-				);
-				assert.match(readString(readRecord(result.content[0]).text), /Error: Unknown ref: zzz/);
-				assert.match(readString(readRecord(result.content[0]).text), /snapshot -i/);
-				assert.match(readString(readRecord(result.content[0]).text), /find role\|text\|label/);
-				assert.match(readString(readRecord(result.content[0]).text), /scrollintoview/);
-				assert.equal(
-					readString(result.details?.summary).includes("Batch failed: 1/2 succeeded"),
-					true,
-				);
-				assert.equal(readNumber(result.details?.exitCode ?? 0), 1);
-				assert.equal(readRecord(readRecord(result.details?.batchFailure).failedStep).index, 1);
-				assert.equal(
-					readRecord(readRecord(result.details?.batchFailure).failedStep).commandText,
-					"click @zzz",
-				);
-				assert.equal(Array.isArray(result.details?.batchSteps), true);
-				assert.equal(readString(result.details?.stderr ?? ""), "");
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });

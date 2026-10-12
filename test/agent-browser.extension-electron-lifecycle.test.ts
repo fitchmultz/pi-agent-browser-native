@@ -15,8 +15,6 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { readRecord, readArray, readString, readNumber } from "./helpers/assertions.js";
 
-import { Check } from "typebox/value";
-
 import { compileAgentBrowserElectron } from "../extensions/agent-browser/lib/input-modes/electron.js";
 
 import { getBrowserRecord } from "../extensions/agent-browser/lib/browser-transcript.js";
@@ -82,63 +80,6 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 		try {
 			await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir });
-				const tool = harness.getTool("agent_browser_electron");
-				assert.ok(tool !== undefined);
-				const schema = tool.parameters;
-				assert.equal(Check(schema, { action: "list" }), true);
-				assert.equal(Check(schema, { action: "list", maxResults: 10, query: "code" }), true);
-				assert.equal(
-					Check(schema, {
-						action: "launch",
-						allow: ["Code"],
-						appArgs: ["--safe-mode"],
-						appName: "Code",
-						deny: ["Slack"],
-						handoff: "tabs",
-						targetType: "webview",
-						timeoutMs: 1_000,
-					}),
-					true,
-				);
-				assert.equal(
-					Check(schema, { action: "status", launchId: "launch-1", timeoutMs: 1_000 }),
-					true,
-				);
-				assert.equal(Check(schema, { action: "status", timeoutMs: 1_000 }), true);
-				assert.equal(Check(schema, { action: "cleanup", all: true, timeoutMs: 1_000 }), true);
-				assert.equal(Check(schema, { action: "status", all: true, launchId: "launch-1" }), false);
-				assert.equal(Check(schema, { action: "cleanup", all: true, launchId: "launch-1" }), false);
-				assert.equal(Check(schema, { action: "status", all: false }), false);
-				assert.equal(Check(schema, { action: "cleanup", all: false }), false);
-				assert.equal(Check(schema, {}), false);
-				assert.equal(Check(schema, { action: "probe" }), true);
-				assert.equal(
-					Check(schema, { action: "probe", launchId: "launch-1", timeoutMs: 1_000 }),
-					true,
-				);
-				assert.equal(Check(schema, { action: "probe", timeoutMs: 0 }), false);
-				assert.equal(Check(schema, { action: "probe", handoff: "tabs" }), false);
-				assert.equal(Check(schema, { action: "status", handoff: "tabs" }), false);
-				assert.equal(Check(schema, { action: "cleanup", handoff: "tabs" }), false);
-				assert.equal(Check(schema, { action: "list", launchId: "launch-1" }), false);
-				assert.equal(Check(schema, { action: "list", query: 42 }), false);
-				assert.equal(Check(schema, { action: "list", query: "" }), false);
-				assert.equal(Check(schema, { action: "list", maxResults: "10" }), false);
-				assert.equal(Check(schema, { action: "list", maxResults: 1.5 }), false);
-				assert.equal(Check(schema, { action: "launch", allow: [""] }), false);
-				assert.equal(
-					Check(schema, {
-						action: "launch",
-						appName: "Code",
-						appPath: "/Applications/Visual Studio Code.app",
-					}),
-					true,
-				);
-				assert.equal(
-					Check(schema, { action: "launch", appName: "Code", launchId: "launch-1" }),
-					false,
-				);
-
 				const listResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					electron: { action: "list", maxResults: 1, query: "__piab_no_matching_electron_app__" },
 				});

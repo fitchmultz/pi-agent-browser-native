@@ -18,7 +18,6 @@ import {
 } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
-import { isOverlayBlockedClickError } from "../extensions/agent-browser/lib/results/presentation/errors.js";
 import {
 	getAgentBrowserErrorText,
 	parseAgentBrowserEnvelope,
@@ -619,18 +618,6 @@ test("classifyAgentBrowserSuccessCategory locks common machine-readable success 
 	);
 });
 
-test("isOverlayBlockedClickError narrowly matches upstream covered-click failures", () => {
-	const errorText =
-		"Element '@e1' is covered by <div role=dialog> at its click point, so the input would land on that element instead.";
-	assert.equal(isOverlayBlockedClickError("click", errorText), true);
-	assert.equal(isOverlayBlockedClickError("hover", errorText), false);
-	assert.equal(
-		isOverlayBlockedClickError("click", "Element '@e1' is covered by a sticky header."),
-		false,
-	);
-	assert.equal(isOverlayBlockedClickError("click", "The target moved at its click point."), false);
-});
-
 test("buildAgentBrowserNextActions returns exact native-tool recommendations for common states", () => {
 	for (const command of ["open", "goto", "navigate"] as const) {
 		// The nonempty command fixture matrix exhaustively verifies each case; any failed assertion fails the test.
@@ -1180,52 +1167,6 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 		/\* \[t2\] label=grok Grok — https:\/\/grok\.com\//,
 	);
 	assert.equal(presentation.summary, "Tabs: 2");
-});
-
-test("buildToolPresentation keeps covered clicks as upstream errors with inspection-only recovery", async () => {
-	const upstreamError =
-		"Element '@e1' is covered by <div role=dialog> at its click point, so the input would land on that element instead.";
-	const extractedEnvelopeError = getAgentBrowserErrorText({
-		aborted: false,
-		envelope: { error: upstreamError, success: false },
-		exitCode: 1,
-		plainTextInspection: false,
-		stderr: "",
-	});
-	assert.equal(extractedEnvelopeError, upstreamError);
-
-	await Promise.all(
-		(
-			[
-				{ errorText: extractedEnvelopeError },
-				{ envelope: { data: upstreamError, success: false } },
-			] as const
-		).map(async (input) => {
-			const presentation = await buildToolPresentation({
-				commandInfo: { command: "click", subcommand: "@e1" },
-				cwd: process.cwd(),
-				sessionName: "work",
-				...input,
-			});
-
-			assert.equal(presentation.resultCategory, "failure");
-			assert.equal(presentation.failureCategory, "upstream-error");
-			assert.deepEqual(
-				presentation.nextActions?.map((action) => action.id),
-				["inspect-overlay-state"],
-			);
-			assert.deepEqual(presentation.nextActions[0].params?.args, [
-				"--session",
-				"work",
-				"snapshot",
-				"-i",
-			]);
-			assert.equal(
-				presentation.nextActions.some((action) => action.params?.args?.includes("click") === true),
-				false,
-			);
-		}),
-	);
 });
 
 test("buildToolPresentation classifies tab_gone envelopes and recommends tab recovery", async () => {

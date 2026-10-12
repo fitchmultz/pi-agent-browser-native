@@ -1014,6 +1014,57 @@ test(
 				);
 			},
 		);
+		await withPatchedEnv(
+			{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "20" },
+			async () => {
+				const older: SessionArtifactManifestEntry = {
+					absolutePath: "/tmp/older.webm",
+					command: "record",
+					createdAtMs: 1,
+					cwd: "/tmp",
+					kind: "video",
+					namespace: "scope",
+					path: "older.webm",
+					retentionState: "live",
+					session: "shared",
+					storageScope: "explicit-path",
+					subcommand: "start",
+				};
+				const newer = {
+					...older,
+					absolutePath: "/tmp/newer.webm",
+					createdAtMs: 2,
+					path: "newer.webm",
+				};
+				const incremental = mergeSessionArtifactManifest({
+					base: mergeSessionArtifactManifest({ entries: [older] }),
+					entries: [newer],
+				});
+				assert.deepEqual(
+					incremental?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["newer.webm", "start"]],
+				);
+				const newestFirst = mergeSessionArtifactManifest({ entries: [newer, older] });
+				assert.deepEqual(
+					newestFirst?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["newer.webm", "start"]],
+				);
+				const sameTimestamp = mergeSessionArtifactManifest({
+					entries: [older, { ...newer, createdAtMs: older.createdAtMs }],
+				});
+				assert.deepEqual(
+					sameTimestamp?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["newer.webm", "start"]],
+				);
+				const stopped = mergeSessionArtifactManifest({
+					entries: [older, { ...older, subcommand: "stop" }],
+				});
+				assert.deepEqual(
+					stopped?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["older.webm", "stop"]],
+				);
+			},
+		);
 	},
 );
 

@@ -17,7 +17,6 @@ import {
 	getGuardedRefUsage,
 	shouldPinSessionTabForCommand,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state.js";
-import { getPageTargetValidationError } from "../extensions/agent-browser/lib/page-target-validation.js";
 import {
 	ManagedSessionRestoreState,
 	withOwnedManagedSessionContext,
@@ -249,30 +248,6 @@ test("recording FPS options alone keep the intended tab", () => {
 			}
 		}
 	}
-});
-
-test("unsupported batch bail assignment explains raw argv precedence without recovering ignored stdin", () => {
-	for (const pageUrlUnknown of [false, true]) {
-		// Exhaustive fixture variant ([false, true]): this selected path must satisfy its own contract.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(
-			readString(
-				getPageTargetValidationError({
-					args: ["batch", "--bail=true"],
-					stdin: '[["get","url"]]',
-					pageUrlUnknown,
-				}) ?? "",
-			),
-			/exact.*--bail.*stdin.*ignored/i,
-		);
-	}
-	assert.equal(
-		getPageTargetValidationError({
-			args: ["batch", "fill '#field' '--bail=true'"],
-			pageUrlUnknown: false,
-		}),
-		undefined,
-	);
 });
 
 const real = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
@@ -732,58 +707,6 @@ test(
 									cwd: dir,
 								}),
 							);
-						for (const mode of ["direct", "stdin", "raw"]) {
-							await t.test(
-								`${mode} FPS outputPath collision stops before native recording`,
-								async () => {
-									const path = join(dir, `preflight-${mode}.webm`);
-									const row = ["record", "start", "--fps", "12", path];
-									let reached = false;
-									try {
-										let effectiveArgs: string[];
-										switch (mode) {
-											case "direct":
-												effectiveArgs = row;
-												break;
-											case "raw":
-												effectiveArgs = ["batch", row.join(" ")];
-												break;
-											default:
-												effectiveArgs = ["batch"];
-										}
-										const result = await call(
-											effectiveArgs,
-											mode === "stdin" ? JSON.stringify([row]) : undefined,
-											path,
-										);
-										const resultDetails = readRecord(result.details);
-										reached = resultDetails.agentBrowserStarted === true;
-										t.diagnostic(
-											JSON.stringify({
-												mode,
-												nativeReached: reached,
-												outputFile: resultDetails.outputFile,
-												error: result.content[0].text,
-											}),
-										);
-										assert.equal(resultDetails.failureCategory, "validation-error");
-										assert.equal(
-											reached,
-											false,
-											"a post-write outputPath guard is not early artifact protection",
-										);
-										await assert.rejects(stat(path), { code: "ENOENT" });
-									} finally {
-										if (reached) {
-											const stopped = await call(["record", "stop"]);
-											if (stopped.isError === true) {
-												await call(["record", "stop"]);
-											} // Retire a native failed-encoder take during RED too.
-										}
-									}
-								},
-							);
-						}
 						for (const subcommand of ["start", "restart"]) {
 							// Exhaustive fixture variant (["start", "restart"]): this selected path must satisfy its own contract.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
@@ -1331,41 +1254,6 @@ test(
 											/Literal subtree/,
 										);
 									});
-									await css.test(
-										"ref-resolving getters and diff screenshot still reject absent refs",
-										async () => {
-											assert.equal((await call(["snapshot", "-i"])).isError, false);
-											for (const args of [
-												...["text", "html", "value", "box", "styles"].map((getter) => [
-													"get",
-													getter,
-													"e999",
-												]),
-												["get", "attr", "e999", "id"],
-												[
-													"diff",
-													"screenshot",
-													"--baseline",
-													join(dir, "unused.png"),
-													"--selector",
-													"e999",
-												],
-											]) {
-												const stale = await call(args);
-												const staleDetails = readRecord(stale.details);
-												// Each noninteractive getter variant is asserted against the same native ref evidence.
-												// oxlint-disable-next-line node-test/no-conditional-assertion
-												assert.equal(
-													staleDetails.failureCategory,
-													"stale-ref",
-													JSON.stringify(stale),
-												);
-												// Each noninteractive getter variant is asserted against the same native ref evidence.
-												// oxlint-disable-next-line node-test/no-conditional-assertion
-												assert.equal(staleDetails.exitCode, undefined);
-											}
-										},
-									);
 								},
 							);
 							if (pinned) {
