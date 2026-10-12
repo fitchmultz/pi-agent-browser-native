@@ -588,7 +588,7 @@ test(
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stateful-matrix-"));
 		const logPath = join(tempDir, "invocations.log");
-		const statePath = join(tempDir, "state.json");
+		const statePath = join(tempDir, "missing", "parents", "state.json");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -606,7 +606,7 @@ for (let index = 0; index < args.length; index += 1) {
 }
 const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
-if (command === "state" && subcommand === "save") fs.writeFileSync(args[commandIndex + 2], "{}");
+if (command === "state" && subcommand === "save") fs.writeFileSync(args[commandIndex + 2], JSON.stringify({ ok: true }));
 const data = command === "get" && subcommand === "url" ? { result: "https://example.test/current", url: "https://example.test/current" }
   : command === "auth" && subcommand === "list" ? { profiles: [{ name: "demo" }] }
   : command === "auth" && subcommand === "show" ? { name: "demo", url: "https://example.test", username: "user@example.test" }
@@ -699,6 +699,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				}
 				assert.match(readString(readRecord(storageSetResult?.content[0]).text), /theme: dark/);
 				assert.match(JSON.stringify(storageSetResult?.details), /"value":"dark"/);
+				assert.equal(await readFile(statePath, "utf8"), JSON.stringify({ ok: true }));
 
 				const jsonResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [
@@ -850,72 +851,6 @@ if (args.includes("get") && args.includes("url")) {
 );
 
 test(
-	"agentBrowserExtension creates parent directories for state save artifacts",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-state-save-path-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const path = args[args.length - 1];
-fs.writeFileSync(path, JSON.stringify({ ok: true }));
-process.stdout.write(JSON.stringify({ success: true, data: { path } }));`,
-		);
-
-		try {
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir, prompt: "Save browser state." });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					const statePath = join(tempDir, "missing", "parents", "fixture-state.json");
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["state", "save", statePath],
-					});
-					assert.ok(result.details);
-
-					assert.equal(result.isError, false, JSON.stringify(result));
-					assert.equal(await readFile(statePath, "utf8"), JSON.stringify({ ok: true }));
-					const [invocation] = await readInvocationLog(logPath);
-					assert.equal(invocation.args.at(-1), statePath);
-				},
-			);
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test("agentBrowserExtension blocks per-step batch screenshot annotation foot-guns", async (t) => {
-	const tempDir = await mkdtemp(join(tmpdir(), "piab-batch-annotation-"));
-	t.after(async () => await rm(tempDir, { force: true, recursive: true }));
-	const harness = createExtensionHarness({
-		cwd: tempDir,
-		prompt: "Take annotated screenshots.",
-	});
-	const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-		args: ["batch"],
-		stdin: JSON.stringify([["screenshot", "--annotate", join(tempDir, "foo.png")]]),
-	});
-	assert.ok(result.details);
-
-	assert.equal(result.isError, true);
-	assert.match(
-		result.content[0]?.type === "text" ? result.content[0].text : "",
-		/put --annotate in top-level args/i,
-	);
-});
-
-test(
 	"agentBrowserExtension normalizes and repairs batch screenshot artifact paths",
 	{ concurrency: false },
 	async () => {
@@ -952,6 +887,14 @@ process.stdin.on("end", () => {
 						{ reason: "new" },
 						harness.ctx,
 					);
+					const rejected = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["batch"],
+						stdin: JSON.stringify([["screenshot", "--annotate", join(tempDir, "foo.png")]]),
+					});
+					assert.ok(rejected.details);
+					assert.equal(rejected.isError, true);
+					assert.match(rejected.content[0]?.text ?? "", /put --annotate in top-level args/i);
+
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["--annotate", "batch"],
 						stdin: '[["screenshot",".dogfood/run/good-batch.png"]]',
