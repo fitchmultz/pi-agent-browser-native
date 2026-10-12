@@ -198,7 +198,9 @@ if (args.includes("close") && process.env.FAIL_CLOSE === "1") {
 }
 const finish = () => console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "about:blank" } }));
 if (args.includes("open") && !fs.existsSync(${JSON.stringify(releasePath)})) {
-  fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
+  // Publish atomically: a directory watcher can fire on file creation before its content lands.
+  fs.writeFileSync(${JSON.stringify(`${startedPath}.tmp`)}, "started");
+  fs.renameSync(${JSON.stringify(`${startedPath}.tmp`)}, ${JSON.stringify(startedPath)});
   const timer = setInterval(() => {
     if (fs.existsSync(${JSON.stringify(releasePath)})) { clearInterval(timer); finish(); }
   }, 5);
