@@ -80,7 +80,7 @@ PLATFORM_SMOKE_WINDOWS_WORK_ROOT="C:\\crabbox\\pi-agent-browser-native"
 PLATFORM_SMOKE_AUTH_ENV=""
 ```
 
-The Ubuntu target image is derived from `node:24-bookworm`, installs the `agent-browser` version from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs), installs Debian Chromium plus the upstream Linux WebGPU/Xvfb runtime packages (`libvulkan1`, `mesa-vulkan-drivers`, and `xvfb`) through apt, creates a non-root `circleci` user, and sets `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`. Rebuild it after upstream rebaselining, or override `PLATFORM_SMOKE_UBUNTU_IMAGE` with an equivalent prepared local image. Do not install `agent-browser` ad hoc inside the Ubuntu smoke command; a missing tool is image/template drift.
+The Ubuntu target image is derived from `node:24-bookworm`, installs the `agent-browser` version from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs), installs Debian Chromium plus the upstream Linux WebGPU/Xvfb runtime packages (`libvulkan1`, `mesa-vulkan-drivers`, and `xvfb`) through apt, copies the official Go 1.27.1 toolchain onto `PATH` so `platform-target` can build the [corrected quality checker](CODE_QUALITY.md), creates a non-root `circleci` user, and sets `AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium`. Rebuild it after upstream rebaselining, or override `PLATFORM_SMOKE_UBUNTU_IMAGE` with an equivalent prepared local image. Do not install `agent-browser` ad hoc inside the Ubuntu smoke command; a missing tool is image/template drift.
 
 The configured upstream `agent-browser` baseline is imported from [`scripts/agent-browser-capability-baseline.mjs`](../scripts/agent-browser-capability-baseline.mjs). Target-local browser suites verify that exact `agent-browser` version before running. Bake the exact upstream CLI and browser runtime into the Windows template/snapshot for speed and reproducibility; missing or stale Windows `agent-browser` / browser readiness is a blocked setup, not something the smoke command repairs. The Windows browser suite checks the preinstalled browser cache and prewarms one short loopback HTTP URL before the extension harness runs.
 
@@ -89,7 +89,7 @@ The configured upstream `agent-browser` baseline is imported from [`scripts/agen
 Crabbox does not install project runtime tools. The macOS host, Ubuntu image, and Windows template must already provide:
 
 - Node/npm at or above the full Node version declared by `package.json` `engines.node` and used by [`platform-smoke.config.mjs`](../platform-smoke.config.mjs).
-- Git and `tar`.
+- Git, `tar`, and Go (the version `scripts/prepare-quality-checker.mjs` selects) for the `platform-target` corrected-checker build.
 - Upstream `agent-browser` matching this wrapper’s capability baseline. The Ubuntu target gets it from [`scripts/platform-smoke/linux-image/Dockerfile`](../scripts/platform-smoke/linux-image/Dockerfile); the Windows template gets it from the shared `pi-extension-windows-template` snapshot named in [`platform-smoke.config.mjs`](../platform-smoke.config.mjs) (currently `crabbox-ready-ab-0.33.0`, a child of the shared `crabbox-ready` base used by other projects' linked clones).
 - Browser/runtime dependencies needed by upstream `agent-browser`.
 - Native PowerShell and OpenSSH Server on Windows.
