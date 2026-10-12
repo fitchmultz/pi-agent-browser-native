@@ -28,6 +28,7 @@ import type {
 	LegacyProjectionState,
 	LegacyContext,
 } from "./browser-legacy-types.js";
+import { BrowserConversionBranches } from "./browser-conversion-branches.js";
 export type { LegacyProjection } from "./browser-legacy-types.js";
 export const emptyProjection = (): LegacyProjectionState => ({ pages: new Map(), nextIndex: 0 });
 
@@ -354,11 +355,11 @@ export function convertLegacyBrowserEntry(
 }
 function archiveParent(
 	value: Readonly<Record<string, unknown>>,
-	states: ReadonlyMap<string, LegacyProjection>,
+	branches: Readonly<Pick<BrowserConversionBranches, "get">>,
 	linear: LegacyProjection,
 ): LegacyProjection {
 	if (typeof value.parentId === "string") {
-		return states.get(value.parentId) ?? emptyProjection();
+		return branches.get(value.parentId) ?? emptyProjection();
 	}
 	return Object.hasOwn(value, "parentId") ? emptyProjection() : linear;
 }
@@ -367,7 +368,9 @@ export function convertBrowserEntries(
 	entries: readonly unknown[],
 	ownerSessionId?: string,
 ): unknown[] {
-	const states = new Map<string, LegacyProjection>();
+	const branches = new BrowserConversionBranches(
+		entries.map((value) => (isRecord(value) ? value.parentId : undefined)),
+	);
 	let linear: LegacyProjection = emptyProjection();
 	return entries.map((value, index) => {
 		if (!isRecord(value)) {
@@ -380,10 +383,10 @@ export function convertBrowserEntries(
 		};
 		const converted = convertLegacyBrowserEntry(
 			entry,
-			archiveParent(value, states, linear),
+			archiveParent(value, branches, linear),
 			ownerSessionId,
 		);
-		states.set(entry.id, converted.projection);
+		branches.advance(entry.id, value.parentId, converted.projection);
 		linear = converted.projection;
 		return converted.record
 			? {

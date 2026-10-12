@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Reduce large-result redaction, snapshot-summary, batch-metadata, and artifact-manifest work without changing visible output or credential masking.
+- Reuse an identity-qualified native daemon inspection within one helper-free preparation phase; keep live generation checks across calls, after captures, and after attachment verification.
+- Overlap independent artifact observations after a timeout while retaining per-path retries, plan order, and unknown execution outcomes.
+- Release offline conversion branch projections after their final source child and use the upstream raw JSON tokenizer without per-record Node stream pipelines. Preserve complete JSON/UTF-8 validation and separate-copy publication.
+- Overlap bounded filesystem inspection for artifact retention, and skip Electron payload inspection when its required framework is absent.
+- Publish only the compiled runtime entrypoints and worker while retaining complete checkout output. Run the existing strict quality policy once per facade invocation.
+- Add an opt-in `npm run performance-profile` with checked workloads, raw measurements, and source/fixture identities; document captured baselines and measurement limits in `docs/PERFORMANCE.md`.
+
 ## 0.9.5 - 2026-10-12
 
 ### Fixed

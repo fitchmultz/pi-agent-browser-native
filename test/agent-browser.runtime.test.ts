@@ -2794,6 +2794,27 @@ test("redactSensitiveText finds embedded secrets after malformed JSON prefixes",
 	}
 });
 
+test("redactSensitiveText preserves untouched spans around successive embedded JSON groups", () => {
+	const prefix = "🔎 Visible prose.\r\n".repeat(100);
+	const middle = ' [not-json {"count":9007199254740993}] {] \t';
+	const suffix = '\n"quoted prose" 😀 trailing [unfinished';
+	const source =
+		prefix +
+		'{"apiKey":"first","label":"escaped \\"quote\\" and } ]","count":-0}' +
+		middle +
+		'[{"password":false},{"apiKey":"second","apiKey":"third"}]' +
+		suffix;
+	const expected =
+		prefix +
+		'{"apiKey":"[REDACTED]","label":"escaped \\"quote\\" and } ]","count":-0}' +
+		middle +
+		'[{"password":"[REDACTED]"},{"apiKey":"[REDACTED]","apiKey":"[REDACTED]"}]' +
+		suffix;
+	assert.equal(redactSensitiveText(source), expected);
+	assert.equal(redactSensitiveText(expected), expected);
+	assert.equal(redactSensitiveText(prefix + middle + suffix), prefix + middle + suffix);
+});
+
 test("redactInvocationArgs masks sensitive flags and auth-bearing urls", () => {
 	assert.deepEqual(
 		redactInvocationArgs([

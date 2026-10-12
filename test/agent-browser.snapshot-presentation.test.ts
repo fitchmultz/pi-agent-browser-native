@@ -14,8 +14,37 @@ import test from "node:test";
 import { readArray, readRecord, readString } from "./helpers/assertions.js";
 
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
+import {
+	formatRawSnapshotText,
+	formatSnapshotSummary,
+} from "../extensions/agent-browser/lib/results/snapshot.js";
 import { cleanupSecureTempArtifacts } from "../extensions/agent-browser/lib/temp.js";
 import { TEST_SESSION_ID, withPatchedEnv } from "./helpers/agent-browser-harness.js";
+
+for (const data of [
+	{ snapshot: "Visible tree", refs: { e10: null, e2: {}, custom: false } },
+	{
+		snapshot: {
+			kind: "full",
+			tree: "Visible tree",
+			refs: { e10: null, e2: {}, custom: false },
+		},
+		refs: { ignoredOuterRef: {} },
+	},
+]) {
+	test(`snapshot formatting counts every ref key in ${typeof data.snapshot === "string" ? "ordinary" : "native full"} snapshots`, () => {
+		assert.equal(formatSnapshotSummary(data), "Snapshot: 3 refs on page");
+		assert.equal(formatRawSnapshotText(data), "Origin: (unknown origin)\nRefs: 3\n\nVisible tree");
+	});
+}
+
+test("snapshot formatting treats non-record refs as an empty set", () => {
+	assert.equal(formatSnapshotSummary({ refs: [] }), "Snapshot: 0 refs on page");
+	assert.equal(
+		formatRawSnapshotText({ refs: null }),
+		"Origin: (unknown origin)\nRefs: 0\n\n(no interactive elements)",
+	);
+});
 
 test("buildToolPresentation compacts oversized snapshots and spills a redacted snapshot to a private temp file", async () => {
 	const refs = Object.fromEntries(

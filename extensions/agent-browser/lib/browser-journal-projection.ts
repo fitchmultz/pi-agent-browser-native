@@ -1,8 +1,5 @@
-import { Readable, Writable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import type { Token } from "stream-json/parser.js";
 import { isRecord } from "./parsing.js";
-import { normalizeProcessError } from "./process-errors.js";
 
 const ENVELOPE_MAX_BYTES = 16 * 1024 * 1024;
 type ProjectionFields = readonly (readonly string[])[];
@@ -210,33 +207,27 @@ export async function projectJson(
 	fields: ProjectionFields,
 	maxBytes = ENVELOPE_MAX_BYTES,
 ): Promise<Record<string, unknown> | undefined> {
-	const { parser } = await import("stream-json/parser.js");
-	async function* decode(): AsyncGenerator<string> {
-		const decoder = new TextDecoder("utf-8", { fatal: true });
-		for await (const chunk of input) {
-			yield decoder.decode(chunk, { stream: true });
-		}
-		const tail = decoder.decode();
-		if (tail.length > 0) {
-			yield tail;
-		}
-	}
+	const { jsonParser } = await import("stream-json/core/parser.js");
+	const chain = await import("stream-chain/defs.js");
+	const tokenize = jsonParser({ packValues: false, streamValues: true });
 	const projection = new JsonProjection(fields, maxBytes);
-	const sink = new Writable({
-		objectMode: true,
-		write(token: Token, _encoding, done) {
-			try {
+	const decoder = new TextDecoder("utf-8", { fatal: true });
+	const consume = (text: string | typeof chain.none): void => {
+		const tokens = tokenize(text);
+		if (tokens !== chain.none) {
+			for (const token of chain.getManyValues(tokens)) {
 				projection.consume(token);
-				done();
-			} catch (error) {
-				done(normalizeProcessError(error));
 			}
-		},
-	});
-	await pipeline(
-		Readable.from(decode()),
-		parser.asStream({ packValues: false, streamValues: true }),
-		sink,
-	);
+		}
+	};
+	for await (const chunk of input) {
+		consume(decoder.decode(chunk, { stream: true }));
+	}
+	const tail = decoder.decode();
+	if (tail.length > 0) {
+		consume(tail);
+	}
+	// The raw tokenizer requires an explicit flush to reject incomplete discarded values.
+	consume(chain.none);
 	return projection.result();
 }

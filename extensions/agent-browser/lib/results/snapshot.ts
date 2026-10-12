@@ -7,7 +7,7 @@ import {
 	formatSnapshotSummary,
 	getSnapshotText,
 } from "./snapshot-content.js";
-import { getSnapshotRefEntries } from "./snapshot-refs.js";
+import { getSnapshotRefRecord } from "./snapshot-refs.js";
 import {
 	applySnapshotArtifactManifest,
 	writeSnapshotSpillFile,
@@ -21,7 +21,7 @@ function shouldCompactSnapshot(rawText: string, data: Readonly<Record<string, un
 	return (
 		rawText.length > 6_000 ||
 		countLines(getSnapshotText(data) ?? "") > 80 ||
-		getSnapshotRefEntries(data).length > 60
+		Object.keys(getSnapshotRefRecord(data) ?? {}).length > 60
 	);
 }
 

@@ -109,6 +109,7 @@ For stale references or unexpected tabs, follow the returned recovery actions. T
 - [Electron guide](docs/ELECTRON.md): desktop discovery, isolated launch, and cleanup.
 - [Session storage](docs/SESSION_STORAGE.md): replay, large histories, and session conversion.
 - [Architecture](docs/ARCHITECTURE.md): extension design.
+- [Performance](docs/PERFORMANCE.md): measured baselines, improvements, and reproducible profiling.
 - [Code quality](docs/CODE_QUALITY.md) and [release process](docs/RELEASE.md): maintainer procedures.
 
 ## License

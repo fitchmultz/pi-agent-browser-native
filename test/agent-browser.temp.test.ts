@@ -22,6 +22,7 @@ import fs, {
 import type { PathLike, RmOptions } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { readRecord, readArray, readString, readNumber } from "./helpers/assertions.js";
 
@@ -34,12 +35,62 @@ import {
 	writeSecureTempFile,
 	writeSecureTempRootOwnershipMarker,
 } from "../extensions/agent-browser/lib/temp.js";
+import { listArtifactFiles } from "../extensions/agent-browser/lib/temp-artifact-budget.js";
 import {
 	readChildStdoutJsonLine,
 	stopChildProcess,
 	TEST_SESSION_ID,
 	withPatchedEnv,
 } from "./helpers/agent-browser-harness.js";
+
+test("artifact file scans preserve order, exclusions and stat failures with bounded filesystem work", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "piab-artifact-scan-"));
+	try {
+		const names = ["a", "b", "c", "d", "e", "ignored", "failed"];
+		await Promise.all(
+			names.map((name, index) => writeFile(join(root, name), "x".repeat(index + 1))),
+		);
+		await mkdir(join(root, "directory"));
+		const expectedOrder = (await readdir(root)).filter(
+			(name) => !["directory", "ignored", "failed"].includes(name),
+		);
+		const nativeStat = fs.stat;
+		let active = 0;
+		let peak = 0;
+		t.mock.method(fs, "stat", async (path: PathLike) => {
+			active++;
+			peak = Math.max(peak, active);
+			try {
+				await delay(String(path).endsWith("a") ? 10 : 1);
+				if (String(path).endsWith("failed")) {
+					throw Object.assign(new Error("disappearing file"), { code: "ENOENT" });
+				}
+				return await nativeStat(path);
+			} finally {
+				active--;
+			}
+		});
+		syncBuiltinESMExports();
+		try {
+			const files = await listArtifactFiles(root, new Set(["ignored"]));
+			assert.deepEqual(
+				files.map((file) => file.path),
+				expectedOrder.map((name) => join(root, name)),
+			);
+			assert.deepEqual(
+				files.map((file) => file.size),
+				expectedOrder.map((name) => names.indexOf(name) + 1),
+			);
+			assert.ok(peak <= 4, "directory size must not create an unbounded stat fan-out");
+			assert.equal(active, 0);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+		}
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
 
 test("persistent session artifact budget accepts zero without changing bounded defaults", () => {
 	const defaultBytes = 32 * 1_024 * 1_024;

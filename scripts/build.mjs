@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Produce the compiled runtime files that the published Pi package loads.
- * Responsibilities: Remove stale dist output, emit runtime assets, bundle the native entrypoint, and fail with clear build output.
+ * Responsibilities: Remove stale dist output, emit all checkout runtime assets, bundle the packaged entrypoints, and fail with clear build output.
  * Scope: Maintainer/package build only; runtime behavior remains in extensions/agent-browser TypeScript sources.
  * Usage: `npm run build` before package verification, lifecycle validation, and npm pack/publish.
  * Invariants/Assumptions: `node_modules` provides `typescript` and `esbuild`; Termux supplies Android-native `tsgo` on PATH. `dist/` is generated output.
@@ -51,14 +51,25 @@ async function main() {
 		}
 		throw error;
 	}
-	// Retain emitted workers and CLI modules; bundle the extension's reachable modules with package imports external.
-	const entrypoint = join(process.cwd(), "dist", "extensions", "agent-browser", "index.js");
+	// Raw checkout libraries share module-owned state; package-only bundles must not overwrite them.
+	const distDirectory = join(process.cwd(), "dist");
+	const runtimeDirectory = join(process.cwd(), "dist", "extensions", "agent-browser");
 	await build({
 		allowOverwrite: true,
 		bundle: true,
-		entryPoints: [entrypoint],
+		entryPoints: [
+			{ in: join(runtimeDirectory, "index.js"), out: "extensions/agent-browser/index" },
+			...[
+				"lib/config-policy",
+				"lib/browser-session-conversion",
+				"lib/parsing",
+				"lib/playbook",
+				"lib/results/snapshot",
+				"lib/runtime",
+			].map((path) => ({ in: join(runtimeDirectory, `${path}.js`), out: `packaged/${path}` })),
+		],
 		format: "esm",
-		outfile: entrypoint,
+		outdir: distDirectory,
 		packages: "external",
 		platform: "node",
 		target: "node24.21",

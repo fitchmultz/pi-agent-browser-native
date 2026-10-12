@@ -16,6 +16,16 @@ The package install path is the primary product path. Local checkout development
 
 Runtime graphs that use Pi host APIs are statically imported through Pi's extension loader, which supplies the host-peer mapping. Native ESM lazy imports must not bypass that mapping: a runtime-only global package does not install its optional Pi peers. The browser runner and observation/image publication retain Pi's native image primitives without a package-owned resolver or bundled host.
 
+The build keeps the complete emitted checkout tree, with its shared module-owned
+process environment and temporary-artifact cleanup state. Only the canonical
+`dist/extensions/agent-browser/index.js` is replaced by its bundle; the worker and
+all emitted libraries remain untouched. Six private package-only helper bundles
+live under `dist/packaged/lib/`: config policy, offline session conversion, parsing,
+playbook, snapshot, and runtime. npm publishes those helpers, the canonical extension,
+and the unchanged permissioned worker through exact `package.json` paths. CLI imports
+use the private packaged helpers; package imports stay external, including optional
+Pi peers. GitHub/source installs retain the same `prepare` build.
+
 ## Chosen shape
 
 ### Compact tools and native discovery

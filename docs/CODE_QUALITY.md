@@ -32,6 +32,12 @@ Review fixes before committing; dangerous fixes and suggestion fixes are not par
 `lint:fix`. Run formatting after reviewed lint fixes and rerun acceptance. Failures
 are never converted to success by these commands.
 
+The default, quality, pre-pr, platform-target, and release facades run scope and
+suppression-policy validation once through `lint`, before the corrected checker.
+Standalone `quality:policy` and `quality:scope` remain available for focused
+inspection and intentional scope regeneration; running them separately in the
+facade would repeat the same validation without adding coverage.
+
 ### Test scheduling
 
 `npm test` builds once and prepares the corrected checker once, then runs
@@ -52,6 +58,11 @@ than rewriting this checkout's `dist/` while other files consume it.
 `platform-target` retains its explicit serial subset; `quality:probes` remains a
 focused serial checker suite. The allowance-isolation mutation must fail in the
 parallel stage with its named `code-quality.test.ts` diagnostic.
+
+The real prepare/pack fixture in `test/verify-package.test.ts` also runs a plain
+Node child against emitted checkout modules. It verifies shared process-environment
+session/namespace propagation and snapshot-spill cleanup through the imported temp
+owner; source-loaded tests cannot detect bundles overwriting these shared modules.
 
 ## Language and role scope
 

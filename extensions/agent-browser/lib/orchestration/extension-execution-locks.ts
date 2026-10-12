@@ -8,6 +8,7 @@ import {
 	scanUpstreamGlobalFlagOccurrences,
 } from "../argv-grammar.js";
 import { getAgentBrowserProcessTimeoutMs } from "../process.js";
+import { isCloseCommand } from "../command-taxonomy.js";
 import { getCommandAwareProcessTimeoutMs } from "./browser-run/prepare/wait-timeouts.js";
 import { withAgentBrowserProcessEnvironment } from "../process-environment.js";
 import { buildValidationFailureResult } from "./input-plan.js";
@@ -77,8 +78,10 @@ class BrowserCommandCoordinator {
 	execute(signal: AbortSignal | undefined): Promise<AgentBrowserToolResult> {
 		return this.call.withLaunchDefaults
 			? this.call.withLaunchDefaults(
-					(inactive) => runBrowserCommand(this.runtime, this.call, inactive, signal),
+					(observation) => runBrowserCommand(this.runtime, this.call, observation, signal),
 					signal,
+					!isCloseCommand(this.plan.commandInfo.command) &&
+						(this.runtime.sessions.pages.get(this.key).refSnapshot?.refIds.length ?? 0) > 0,
 				)
 			: runBrowserCommand(this.runtime, this.call, undefined, signal);
 	}
