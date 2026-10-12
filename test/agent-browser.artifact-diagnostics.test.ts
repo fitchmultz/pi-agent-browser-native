@@ -47,6 +47,7 @@ async function withFixture(
 		root,
 		`const fs = require('node:fs'), path = require('node:path');
 const args = process.argv.slice(2), stdin = fs.readFileSync(0, 'utf8'), tokens = [];
+const activeTake = ${JSON.stringify(join(root, "active-take"))};
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, stdin }) + '\\n');
 for (let i = 0; i < args.length; i++) {
   if (['--session', '--namespace', '--user-agent'].includes(args[i])) i++;
@@ -57,7 +58,10 @@ function execute(row) {
   if (command === 'wait' && row.includes('Never')) throw new Error('Timed out waiting for Never');
   if (command === 'record') {
     if (row[2]?.includes('fail')) throw new Error('Recording already active');
+    // Native restart finalizes the active take now, so its file must change inside this command window.
+    if (subcommand === 'restart' && fs.existsSync(activeTake)) fs.writeFileSync(fs.readFileSync(activeTake, 'utf8'), 'recording bytes');
     fs.writeFileSync(row[2], 'recording bytes');
+    fs.writeFileSync(activeTake, path.resolve(row[2]));
     return { path: row[2], restarted: subcommand === 'restart' };
   }
   if (command === 'screenshot' || command === 'download' || command === 'network') {
