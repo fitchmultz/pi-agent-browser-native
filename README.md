@@ -80,7 +80,7 @@ To enable web search, set `EXA_API_KEY` or `BRAVE_API_KEY` before you start Pi. 
 
 Set provider preferences and browser defaults in `~/.pi/config/pi-agent-browser-native/config.json`. Trusted projects can use `.pi/config/pi-agent-browser-native/config.json`. `PI_AGENT_BROWSER_CONFIG` selects an override file.
 
-Malformed config files and search-provider JSON report errors without parser previews that could expose credentials.
+Malformed config files and search-provider JSON report errors without parser previews that could expose credentials, and search-provider HTTP failures report only the status with a fixed hint.
 
 Read [configuration examples](docs/REFERENCE.md#optional-package-config-and-web-search) for secret references, provider selection, and profile defaults.
 

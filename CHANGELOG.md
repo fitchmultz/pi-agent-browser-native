@@ -6,10 +6,12 @@
 
 - Reject stale-ref batch plans after a snapshot too: a later page-changing step requires another snapshot before guarded refs can be reused, even when no refs precede the first snapshot.
 - Preserve surplus scroll operands for native validation instead of dropping them in page or CSS-container scroll shims.
-- Match the whole recorded Electron profile operand before signaling a restored PID, including Windows quoted forms; require a nonempty browser identifier for CDP readiness and debug-port liveness.
+- Require the process start identity recorded at launch before signaling a restored Electron PID; missing, unreadable, or mismatched identities fail closed instead of trusting the flattened process command line. Require a nonempty browser identifier for CDP readiness and debug-port liveness.
 - Exclude control values under hidden or transparent ancestors from QA visible-text assertions.
 - Apply explicit-filter-wins scope to network-source failed-request and initiator analysis, ignore unrelated initiators, and count repeated request IDs once without collapsing distinct same-URL requests.
-- Omit parser previews and causes from malformed config and search-provider JSON errors so partial credentials cannot leak.
+- Omit parser previews and causes from malformed config (extension loading and the config CLI) and search-provider JSON errors so partial credentials cannot leak; keep only the numeric JSON location.
+- Report search-provider HTTP failures with the status and a fixed hint instead of echoing provider status text or response bodies.
+- Render web-search text, details, and structured output from one redacted result.
 - Preserve quoted empty and whitespace-only operands in copyable native skill calls.
 - Honor already-aborted signals in reentrant keyed execution-queue work.
 - Keep failed artifact evictions in the spill-budget accounting; clean up failed temporary-root allocations and allow allocation retries.
