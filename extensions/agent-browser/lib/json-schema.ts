@@ -82,5 +82,4 @@ const nativeJsonSchemaBuilder = {
 };
 
 export const JsonSchema: Readonly<typeof nativeJsonSchemaBuilder> = nativeJsonSchemaBuilder;
-export type JsonSchemaBuilder = typeof JsonSchema;
 export type { TSchema, TSchemaOptions, TUnsafe };

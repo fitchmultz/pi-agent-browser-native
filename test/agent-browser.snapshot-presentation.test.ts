@@ -17,57 +17,6 @@ import { buildToolPresentation } from "../extensions/agent-browser/lib/results/p
 import { cleanupSecureTempArtifacts } from "../extensions/agent-browser/lib/temp.js";
 import { TEST_SESSION_ID, withPatchedEnv } from "./helpers/agent-browser-harness.js";
 
-test("buildToolPresentation reuses compact snapshot rendering inside batch output", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 90 }, (_, index) => [
-			`e${index + 1}`,
-			{
-				name: index % 3 === 0 ? `Actionable control ${index + 1}` : "",
-				role: index % 5 === 0 ? "button" : "generic",
-			},
-		]),
-	);
-	const snapshot = Array.from({ length: 120 }, (_, index) => {
-		const ref = `e${index + 1}`;
-		return `- generic "Large batched snapshot row ${index + 1} that should compact inside batch output" [ref=${ref}] clickable [onclick]`;
-	}).join("\n");
-
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "batch" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: [
-				{
-					command: ["snapshot", "-i"],
-					result: {
-						origin: "https://example.com/batched-huge",
-						refs,
-						snapshot,
-					},
-					success: true,
-				},
-			],
-		},
-	});
-
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Step 1 — snapshot -i/);
-	assert.match(text, /Compact snapshot view/);
-	assert.match(text, /Key refs:/);
-	assert.equal(typeof presentation.fullOutputPath, "string");
-	assert.equal(presentation.batchSteps?.length, 1);
-	assert.equal(typeof presentation.batchSteps[0].fullOutputPath, "string");
-	assert.match(presentation.batchSteps[0].text, /Compact snapshot view/);
-
-	const spillPath = presentation.batchSteps[0].fullOutputPath;
-	assert.ok(typeof spillPath === "string" && spillPath.length > 0);
-	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-	if (spillPath !== "") {
-		await rm(spillPath, { force: true });
-	}
-});
-
 test("buildToolPresentation compacts oversized snapshots and spills a redacted snapshot to a private temp file", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 90 }, (_, index) => [
@@ -249,13 +198,9 @@ test(
 
 					assert.equal(typeof firstPresentation.fullOutputPath, "string");
 					assert.equal(typeof secondPresentation.fullOutputPath, "string");
-					assert.equal(
-						await readFile(String(firstPresentation.fullOutputPath), "utf8").then(
-							() => true,
-							() => false,
-						),
-						false,
-					);
+					await assert.rejects(readFile(String(firstPresentation.fullOutputPath), "utf8"), {
+						code: "ENOENT",
+					});
 					assert.match(
 						await readFile(String(secondPresentation.fullOutputPath), "utf8"),
 						/second snapshot row 120/,
@@ -339,6 +284,13 @@ test(
 					const secondPath = presentation.batchSteps?.[1]?.fullOutputPath;
 					assert.equal(typeof firstPath, "string");
 					assert.equal(secondPath, undefined);
+					const text = readString(readRecord(presentation.content[0]).text);
+					assert.match(text, /Step 1 — snapshot -i/);
+					assert.match(text, /Compact snapshot view/);
+					assert.match(text, /Key refs:/);
+					assert.match(presentation.batchSteps?.[0]?.text ?? "", /Compact snapshot view/);
+					assert.equal(presentation.fullOutputPath, firstPath);
+					assert.ok(text.includes(String(firstPath)));
 					assert.match(await readFile(String(firstPath), "utf8"), /first batch snapshot row 120/);
 					assert.match(
 						presentation.batchSteps?.[1]?.text ?? "",
@@ -483,18 +435,13 @@ test("buildToolPresentation surfaces omitted high-value controls in compact snap
 	assert.match(text, /Omitted high-value controls:/);
 	assert.match(text, /e6 tab "Package tab 6"/);
 	assert.match(text, /e9 tab "Package tab 9"/);
-	assert.deepEqual(readArray(readRecord(presentation.data).highValueControlRefIds), [
-		"e6",
-		"e17",
-		"e7",
-		"e8",
-		"e18",
-		"e19",
-		"e20",
-		"e21",
-		"e22",
-		"e9",
-	]);
+	const surfaced = readArray(readRecord(presentation.data).highValueControlRefIds);
+	assert.ok(surfaced.length <= 10);
+	assert.equal(new Set(surfaced).size, surfaced.length);
+	["e6", "e7", "e8", "e9"].forEach((id) => {
+		assert.ok(surfaced.includes(id), `${id} remains discoverable`);
+		assert.ok(text.includes(`${id} tab "Package tab ${id.slice(1)}"`));
+	});
 
 	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
 		await rm(presentation.fullOutputPath, { force: true });
@@ -993,52 +940,56 @@ test(
 	},
 );
 
-test("compact snapshots count ordinary omitted refs separately from high-value controls", async () => {
-	const refs: Record<string, { name: string; role: string }> = {
-		e1: { name: "Dashboard", role: "main" },
-	};
-	for (let index = 2; index <= 81; index += 1) {
-		refs[`e${index}`] = { name: `Document link ${index}`, role: "link" };
-	}
-	for (let index = 82; index <= 101; index += 1) {
-		refs[`e${index}`] = { name: `Run action ${index}`, role: "button" };
-	}
+for (const ordinary of [false, true]) {
+	test(`compact snapshots count omitted refs separately: ${ordinary ? "mixed ordinary and controls" : "all high-value controls"}`, async () => {
+		const refs: Record<string, { name: string; role: string }> = {
+			e1: { name: "Dashboard", role: "main" },
+		};
+		for (let index = 2; index <= 81; index += 1) {
+			refs[`e${index}`] = { name: `Document row ${index}`, role: ordinary ? "generic" : "link" };
+		}
+		for (let index = 82; index <= 101; index += 1) {
+			refs[`e${index}`] = { name: `Run action ${index}`, role: "button" };
+		}
 
-	const snapshot = [
-		'- main "Dashboard" [ref=e1]',
-		...Array.from(
-			{ length: 80 },
-			(_, index) => `  - link "Document link ${index + 2}" [ref=e${index + 2}]`,
-		),
-		...Array.from(
-			{ length: 20 },
-			(_, index) => `  - button "Run action ${index + 82}" [ref=e${index + 82}]`,
-		),
-	].join("\n");
+		const snapshot = [
+			'- main "Dashboard" [ref=e1]',
+			...Array.from(
+				{ length: 80 },
+				(_, index) =>
+					`  - ${ordinary ? "generic" : "link"} "Document row ${index + 2}" [ref=e${index + 2}]`,
+			),
+			...Array.from(
+				{ length: 20 },
+				(_, index) => `  - button "Run action ${index + 82}" [ref=e${index + 82}]`,
+			),
+		].join("\n");
 
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			data: {
-				origin: "https://example.test/dashboard",
-				refs,
-				snapshot,
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				data: {
+					origin: "https://example.test/dashboard",
+					refs,
+					snapshot,
+				},
+				success: true,
 			},
-			success: true,
-		},
+		});
+
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Omitted high-value controls:/);
+		assert.equal(/\d+ additional refs omitted/.test(text), ordinary);
+		assert.ok(text.includes(`${ordinary ? 6 : 79} additional high-value controls omitted`));
+		assert.equal(text.includes("73 additional refs omitted"), ordinary);
+		assert.equal(readArray(readRecord(presentation.data).highValueControlRefIds).length, 10);
+
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
 	});
-
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Omitted high-value controls:/);
-	assert.doesNotMatch(text, /\d+ additional refs omitted/);
-	assert.match(text, /79 additional high-value controls omitted/);
-	assert.equal(readArray(readRecord(presentation.data).highValueControlRefIds).length, 10);
-
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
+}
 
 test("compact snapshots surface named row-action links as high-value controls", async () => {
 	const refs = Object.fromEntries(

@@ -1,5 +1,5 @@
-import { JsonSchema, type JsonSchemaBuilder, type TSchema, type TUnsafe } from "../json-schema.js";
-import { StringEnum as localStringEnum, type StringEnumBuilder } from "../string-enum-schema.js";
+import { JsonSchema as Type, type TSchema, type TUnsafe } from "../json-schema.js";
+import { StringEnum } from "../string-enum-schema.js";
 import {
 	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,
 	ELECTRON_DISCOVERY_MAX_RESULTS,
@@ -93,7 +93,7 @@ export interface AgentBrowserToolsParams {
 	enable?: AgentBrowserAdvancedTool[];
 }
 
-function outputProperties(Type: JsonSchemaBuilder): { outputPath: TSchema; timeoutMs: TSchema } {
+function outputProperties(): { outputPath: TSchema; timeoutMs: TSchema } {
 	return {
 		outputPath: Type.Optional(
 			Type.String({
@@ -107,7 +107,7 @@ function outputProperties(Type: JsonSchemaBuilder): { outputPath: TSchema; timeo
 	};
 }
 
-function sessionModeProperty(Type: JsonSchemaBuilder, StringEnum: StringEnumBuilder): TSchema {
+function sessionModeProperty(): TSchema {
 	return Type.Optional(
 		StringEnum(["auto", "fresh"] as const, {
 			description:
@@ -118,10 +118,7 @@ function sessionModeProperty(Type: JsonSchemaBuilder, StringEnum: StringEnumBuil
 }
 
 // Keep the always-on schemas small; specialized guidance belongs to each advanced tool.
-export function createAgentBrowserParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TUnsafe<AgentBrowserParams> {
+export function createAgentBrowserParamsSchema(): TUnsafe<AgentBrowserParams> {
 	return Type.Unsafe<AgentBrowserParams>(
 		Type.Object(
 			{
@@ -136,17 +133,15 @@ export function createAgentBrowserParamsSchema(
 							"Native batch JSON, eval --stdin source, or auth save --password-stdin text.",
 					}),
 				),
-				...outputProperties(Type),
-				sessionMode: sessionModeProperty(Type, StringEnum),
+				...outputProperties(),
+				sessionMode: sessionModeProperty(),
 			},
 			{ additionalProperties: false },
 		),
 	);
 }
 
-export function createAgentBrowserCodeParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-): TUnsafe<AgentBrowserCodeParams> {
+export function createAgentBrowserCodeParamsSchema(): TUnsafe<AgentBrowserCodeParams> {
 	return Type.Unsafe<AgentBrowserCodeParams>(
 		Type.Object(
 			{
@@ -167,7 +162,7 @@ export function createAgentBrowserCodeParamsSchema(
 						description: "Native namespace; empty string selects the default namespace.",
 					}),
 				),
-				...outputProperties(Type),
+				...outputProperties(),
 				timeoutMs: Type.Optional(
 					Type.Integer({ minimum: 1, maximum: AGENT_BROWSER_CODE_MAX_TIMEOUT_MS }),
 				),
@@ -177,10 +172,7 @@ export function createAgentBrowserCodeParamsSchema(
 	);
 }
 
-export function createAgentBrowserActionParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TUnsafe<AgentBrowserActionParams> {
+export function createAgentBrowserActionParamsSchema(): TUnsafe<AgentBrowserActionParams> {
 	return Type.Unsafe<AgentBrowserActionParams>(
 		Type.Object(
 			{
@@ -208,7 +200,7 @@ export function createAgentBrowserActionParamsSchema(
 				),
 				name: Type.Optional(Type.String({ description: "Accessible name." })),
 				session: Type.Optional(Type.String({ description: "Upstream session name." })),
-				...outputProperties(Type),
+				...outputProperties(),
 			},
 			{
 				additionalProperties: false,
@@ -231,10 +223,7 @@ export function createAgentBrowserActionParamsSchema(
 	);
 }
 
-export function createAgentBrowserQaParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TUnsafe<AgentBrowserQaParams> {
+export function createAgentBrowserQaParamsSchema(): TUnsafe<AgentBrowserQaParams> {
 	return Type.Unsafe<AgentBrowserQaParams>(
 		Type.Object(
 			{
@@ -247,8 +236,8 @@ export function createAgentBrowserQaParamsSchema(
 				checkErrors: Type.Optional(Type.Boolean()),
 				checkNetwork: Type.Optional(Type.Boolean()),
 				loadState: Type.Optional(StringEnum(AGENT_BROWSER_QA_LOAD_STATES)),
-				...outputProperties(Type),
-				sessionMode: sessionModeProperty(Type, StringEnum),
+				...outputProperties(),
+				sessionMode: sessionModeProperty(),
 			},
 			{
 				additionalProperties: false,
@@ -267,11 +256,8 @@ export function createAgentBrowserQaParamsSchema(
 	);
 }
 
-export function createAgentBrowserElectronParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TUnsafe<AgentBrowserElectronParams> {
-	const common = { outputPath: outputProperties(Type).outputPath };
+export function createAgentBrowserElectronParamsSchema(): TUnsafe<AgentBrowserElectronParams> {
+	const common = { outputPath: outputProperties().outputPath };
 	const timeoutMs = Type.Optional(Type.Integer({ minimum: 1 }));
 	const list = {
 		query: Type.Optional(
@@ -336,10 +322,7 @@ export function createAgentBrowserElectronParamsSchema(
 	);
 }
 
-export function createAgentBrowserSourceParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TUnsafe<AgentBrowserSourceParams> {
+export function createAgentBrowserSourceParamsSchema(): TUnsafe<AgentBrowserSourceParams> {
 	return Type.Unsafe<AgentBrowserSourceParams>(
 		Type.Object(
 			{
@@ -360,18 +343,15 @@ export function createAgentBrowserSourceParamsSchema(
 						maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
 					}),
 				),
-				...outputProperties(Type),
-				sessionMode: sessionModeProperty(Type, StringEnum),
+				...outputProperties(),
+				sessionMode: sessionModeProperty(),
 			},
 			{ additionalProperties: false },
 		),
 	);
 }
 
-export function createAgentBrowserNetworkSourceParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TUnsafe<AgentBrowserNetworkSourceParams> {
+export function createAgentBrowserNetworkSourceParamsSchema(): TUnsafe<AgentBrowserNetworkSourceParams> {
 	return Type.Unsafe<AgentBrowserNetworkSourceParams>(
 		Type.Object(
 			{
@@ -387,18 +367,15 @@ export function createAgentBrowserNetworkSourceParamsSchema(
 						maximum: SOURCE_LOOKUP_MAX_WORKSPACE_FILES,
 					}),
 				),
-				...outputProperties(Type),
-				sessionMode: sessionModeProperty(Type, StringEnum),
+				...outputProperties(),
+				sessionMode: sessionModeProperty(),
 			},
 			{ additionalProperties: false },
 		),
 	);
 }
 
-export function createAgentBrowserToolsParamsSchema(
-	Type: JsonSchemaBuilder = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TUnsafe<AgentBrowserToolsParams> {
+export function createAgentBrowserToolsParamsSchema(): TUnsafe<AgentBrowserToolsParams> {
 	return Type.Unsafe<AgentBrowserToolsParams>(
 		Type.Object(
 			{

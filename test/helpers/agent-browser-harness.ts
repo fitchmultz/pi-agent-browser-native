@@ -3,7 +3,7 @@
  * Responsibilities: Build fake pi extension contexts, run registered extension events/tools, patch process env safely, create fake agent-browser binaries, read invocation logs, and manage child-process fixtures.
  * Scope: Test-only utilities for `test/agent-browser.*.test.ts`; production code must not import this module.
  * Usage: Import focused helpers from `./helpers/agent-browser-harness.js` inside Node test-runner suites.
- * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd`; its default virtual daemon retains launch/close and process-generation metadata. Stateful daemon tests set `PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO=1`; pass `platform: "win32"` to assert Windows launcher layout from non-Windows hosts (spawn/PATHEXT behavior still needs a real Windows runner).
+ * Invariants/Assumptions: Helpers preserve caller-owned cleanup responsibilities and restore patched environment variables after each run. `writeFakeAgentBrowserBinary` installs a Unix shell-script launcher or a Windows `agent-browser.cmd`; its default virtual daemon retains launch/close and process-generation metadata. Stateful daemon tests set `PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO=1`; spawn/PATHEXT behavior still needs a real Windows runner.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -33,6 +33,11 @@ import { convertBrowserEntries } from "../../extensions/agent-browser/lib/browse
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../../scripts/agent-browser-target.mjs";
 import { hasErrorCode } from "./assertions.js";
 
+// Fixtures use their own Pi identity. Root-default tests can opt into delegation explicitly.
+delete process.env.PI_SUBAGENT_CHILD;
+delete process.env.PI_SUBAGENT_ROOT_SESSION_ID;
+delete process.env.PI_SESSION_ID;
+
 export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
 export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
 export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contract.txt";
@@ -53,6 +58,16 @@ export function createShortPrivateSocketDir(fallbackRoot: string): string {
 		}
 	}
 	return join(fallbackRoot, "s");
+}
+
+// File workers must not coordinate through the operator's live browser socket pool.
+// PI_AGENT_BROWSER_SOCKET_DIR wins over inherited AGENT_BROWSER_SOCKET_DIR for owned and caller
+// sessions; explicit per-call native env still wins. Keep caller-supplied PI overrides intact.
+if (process.env.PI_AGENT_BROWSER_SOCKET_DIR === undefined) {
+	const socketDir = createShortPrivateSocketDir(journalFixtures);
+	mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+	process.env.PI_AGENT_BROWSER_SOCKET_DIR = socketDir;
+	process.once("exit", () => rmSync(socketDir, { recursive: true, force: true }));
 }
 
 export interface FixtureServer {

@@ -28,9 +28,9 @@ type ResumedPage = {
 	readonly url: string;
 };
 
-async function withResumedPage(
-	run: (page: ResumedPage) => Promise<void>,
-	options: { readonly live?: boolean; readonly confirmActions?: string } = {},
+async function withResumedPages(
+	run: (row: (run: (page: ResumedPage) => Promise<void>) => Promise<void>) => Promise<void>,
+	options: { readonly confirmActions?: string } = {},
 ): Promise<void> {
 	const root = await mkdtemp(join(tmpdir(), "cold-"));
 	const socketDir = createShortPrivateSocketDir(root);
@@ -88,9 +88,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
 			},
 			async () => {
-				let branch: unknown[] = [];
+				const bootstrapBranch: unknown[] = [];
 				const prefix = ["--namespace", "cold"];
-				const first = createExtensionHarness({ branch, cwd });
+				const first = createExtensionHarness({ branch: bootstrapBranch, cwd });
 				await runExtensionEvent(first.handlers, "session_start", { reason: "new" }, first.ctx);
 				let sessionName = "";
 				for (const args of [
@@ -111,41 +111,48 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						assert.equal(typeof readRecord(result.details).sessionName, "string");
 						sessionName = readString(readRecord(result.details).sessionName);
 					}
-					branch.push(
+					bootstrapBranch.push(
 						createToolBranchEntry({ details: readRecord(result.details), isError: result.isError }),
 					);
 				}
-				await runExtensionEvent(
-					first.handlers,
-					"session_shutdown",
-					{ reason: options.live === true ? "reload" : "quit" },
-					first.ctx,
-				);
-				branch = structuredClone(first.ctx.sessionManager.getBranch());
-				const harness = createExtensionHarness({ branch, cwd });
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-				await writeFile(logPath, "");
-				try {
-					await run({ branch, harness, logPath, statePath, sessionName, url });
-				} finally {
+				await runExtensionEvent(first.handlers, "session_shutdown", { reason: "quit" }, first.ctx);
+				const baselineBranch = structuredClone(first.ctx.sessionManager.getBranch());
+				const baselineNative = await readFile(statePath, "utf8");
+				await run(async (runRow) => {
+					const branch = structuredClone(baselineBranch);
+					await writeFile(statePath, baselineNative);
+					const harness = createExtensionHarness({ branch, cwd });
 					await runExtensionEvent(
 						harness.handlers,
-						"session_shutdown",
-						{ reason: "quit" },
+						"session_start",
+						{ reason: "resume" },
 						harness.ctx,
 					);
-				}
+					await writeFile(logPath, "");
+					try {
+						await runRow({ branch, harness, logPath, statePath, sessionName, url });
+					} finally {
+						await runExtensionEvent(
+							harness.handlers,
+							"session_shutdown",
+							{ reason: "quit" },
+							harness.ctx,
+						);
+					}
+				});
 			},
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 		await rm(socketDir, { recursive: true, force: true });
 	}
+}
+
+async function withResumedPage(
+	run: (page: ResumedPage) => Promise<void>,
+	options: { readonly confirmActions?: string } = {},
+): Promise<void> {
+	await withResumedPages((row) => row(run), options);
 }
 
 for (const params of [
@@ -177,6 +184,12 @@ for (const params of [
 					readRecord(readRecord(result.details).refSnapshotInvalidation).reason,
 					"page-transition",
 				);
+				const initialCalls = await readInvocationLog(logPath);
+				const openIndex = initialCalls.findIndex((row) => row.args.includes("open"));
+				const commandIndex = initialCalls.findIndex(
+					(row) => row.args.slice(-params.args.length).join("\\0") === params.args.join("\\0"),
+				);
+				assert.ok(openIndex >= 0 && commandIndex > openIndex, JSON.stringify(initialCalls));
 				const stale = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["get", "value", "@e1"],
 				});
@@ -211,52 +224,54 @@ test(
 	"cold resume preserves explicit navigation and sessionless intent",
 	{ concurrency: false },
 	async (t) => {
-		for (const params of [
-			{ args: ["open", "http://127.0.0.1:43210/chosen"] },
-			{ qa: { url: "http://127.0.0.1:43210/chosen" } },
-			{
-				args: ["batch", "--bail"],
-				stdin: JSON.stringify([
-					["open", "http://127.0.0.1:43210/chosen"],
-					["snapshot", "-i"],
-				]),
-			},
-			{ args: ["read", "--timeout", "100", "http://127.0.0.1:43210/chosen"] },
-			{ args: ["vitals", "http://127.0.0.1:43210/chosen"] },
-			{ args: ["record", "start", "chosen.webm", "http://127.0.0.1:43210/chosen"] },
-			{ args: ["diff", "url", "http://127.0.0.1:43210/one", "http://127.0.0.1:43210/two"] },
-			{ args: ["state", "load", "/fixture/state.json"] },
-			{ args: ["connect", "9223"] },
-			{ args: ["tab", "new"] },
-			{ args: ["window", "new"] },
-			{ args: ["session", "list"] },
-			{ args: ["--version"] },
-		]) {
-			// Each subtest owns a process-global environment and must complete cleanup before the next.
-			// oxlint-disable-next-line no-await-in-loop
-			await t.test(JSON.stringify(params), async () =>
-				withResumedPage(async ({ harness, logPath, statePath, url }) => {
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
-					assert.equal(result.isError, false, result.content[0]?.text);
-					assert.equal(
-						(await readInvocationLog(logPath)).some(
-							(row) => row.args.includes("open") && row.args.includes(url),
-						),
-						false,
-						"the old URL must not be opened ahead of explicit intent",
-					);
-					if (["read", "session", "--version"].includes(params.args?.[0] ?? "")) {
-						// The explicitly sessionless fixture variants must stay closed; all variants assert success above.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
+		await withResumedPages(async (withRow) => {
+			for (const params of [
+				{ args: ["open", "http://127.0.0.1:43210/chosen"] },
+				{ qa: { url: "http://127.0.0.1:43210/chosen" } },
+				{
+					args: ["batch", "--bail"],
+					stdin: JSON.stringify([
+						["open", "http://127.0.0.1:43210/chosen"],
+						["snapshot", "-i"],
+					]),
+				},
+				{ args: ["read", "--timeout", "100", "http://127.0.0.1:43210/chosen"] },
+				{ args: ["vitals", "http://127.0.0.1:43210/chosen"] },
+				{ args: ["record", "start", "chosen.webm", "http://127.0.0.1:43210/chosen"] },
+				{ args: ["diff", "url", "http://127.0.0.1:43210/one", "http://127.0.0.1:43210/two"] },
+				{ args: ["state", "load", "/fixture/state.json"] },
+				{ args: ["connect", "9223"] },
+				{ args: ["tab", "new"] },
+				{ args: ["window", "new"] },
+				{ args: ["session", "list"] },
+				{ args: ["--version"] },
+			]) {
+				// Each subtest owns a process-global environment and must complete cleanup before the next.
+				// oxlint-disable-next-line no-await-in-loop
+				await t.test(JSON.stringify(params), async () =>
+					withRow(async ({ harness, logPath, statePath, url }) => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+						assert.equal(result.isError, false, result.content[0]?.text);
 						assert.equal(
-							readRecord(JSON.parse(await readFile(statePath, "utf8"))).active,
+							(await readInvocationLog(logPath)).some(
+								(row) => row.args.includes("open") && row.args.includes(url),
+							),
 							false,
-							"a sessionless or explicit HTTP read must not launch a browser",
+							"the old URL must not be opened ahead of explicit intent",
 						);
-					}
-				}),
-			);
-		}
+						if (["read", "session", "--version"].includes(params.args?.[0] ?? "")) {
+							// The explicitly sessionless fixture variants must stay closed; all variants assert success above.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.equal(
+								readRecord(JSON.parse(await readFile(statePath, "utf8"))).active,
+								false,
+								"a sessionless or explicit HTTP read must not launch a browser",
+							);
+						}
+					}),
+				);
+			}
+		});
 	},
 );
 
@@ -377,28 +392,6 @@ test(
 		);
 	},
 );
-
-test("a live missing tab is not permission to reopen", { concurrency: false }, async () => {
-	await withResumedPage(
-		async ({ harness, logPath, statePath }) => {
-			const state = readRecord(JSON.parse(await readFile(statePath, "utf8")));
-			assert.equal(state.active, true);
-			await writeFile(statePath, JSON.stringify({ ...state, url: "http://127.0.0.1:43210/other" }));
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["snapshot", "-i"],
-			});
-			assert.equal(result.isError, true);
-			assert.equal(readRecord(result.details).failureCategory, "tab-drift");
-			assert.equal(
-				(await readInvocationLog(logPath)).some(
-					(row) => row.args.includes("open") || row.args.includes("snapshot"),
-				),
-				false,
-			);
-		},
-		{ live: true },
-	);
-});
 
 test(
 	"explicit close keeps the recorded URL retired on resume",

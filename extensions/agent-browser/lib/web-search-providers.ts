@@ -27,7 +27,7 @@ export type NormalizedProviderResponse = {
 	readonly results: readonly NormalizedSearchResult[];
 	readonly returnedQuery: string;
 };
-export interface WebSearchProviderAdapter<Request = unknown, Response = unknown> {
+interface WebSearchProviderAdapter<Request, Response> {
 	readonly buildRequest: (params: WebSearchExecutionParams) => Request;
 	readonly fetchJson: (request: Request, apiKey: string, signal?: AbortSignal) => Promise<Response>;
 	readonly normalizeResponse: (
@@ -127,7 +127,6 @@ export async function fetchBraveSearchJson(
 	signal?: AbortSignal,
 ): Promise<BraveWebSearchResponse> {
 	const data = await fetchSearchJson({
-		apiKey,
 		cancelMessage: "Brave search cancelled",
 		init: { headers: { Accept: "application/json", "X-Subscription-Token": apiKey } },
 		invalidJsonMessage: "Brave search returned invalid JSON",
@@ -174,7 +173,6 @@ export async function fetchExaSearchJson(
 	timeoutMs = SEARCH_REQUEST_TIMEOUT_MS,
 ): Promise<ExaWebSearchResponse> {
 	const data = await fetchSearchJson({
-		apiKey,
 		cancelMessage: "Exa search cancelled",
 		init: {
 			body: JSON.stringify(body),
@@ -246,47 +244,6 @@ const EXA_WEB_SEARCH_ADAPTER: WebSearchProviderAdapter<ExaSearchRequest, ExaWebS
 		};
 	},
 };
-// Dynamic public callers supply unknown inputs; validate them before entering typed providers.
-const WEB_SEARCH_PROVIDER_ADAPTERS: Readonly<Record<WebSearchProvider, WebSearchProviderAdapter>> =
-	{
-		brave: {
-			provider: "brave",
-			buildRequest: BRAVE_WEB_SEARCH_ADAPTER.buildRequest,
-			fetchJson(request, apiKey, signal) {
-				if (!(request instanceof URL)) {
-					throw new Error("Brave search request must be a URL");
-				}
-				return BRAVE_WEB_SEARCH_ADAPTER.fetchJson(request, apiKey, signal);
-			},
-			normalizeResponse(response, params) {
-				return BRAVE_WEB_SEARCH_ADAPTER.normalizeResponse(
-					parseBraveSearchResponse(response),
-					params,
-				);
-			},
-		},
-		exa: {
-			provider: "exa",
-			buildRequest: EXA_WEB_SEARCH_ADAPTER.buildRequest,
-			fetchJson(request, apiKey, signal) {
-				if (
-					!isRecord(request) ||
-					!isRecord(request.body) ||
-					typeof request.timeoutMs !== "number"
-				) {
-					throw new Error("Exa search request must contain a body and timeout");
-				}
-				return fetchExaSearchJson(request.body, apiKey, signal, request.timeoutMs);
-			},
-			normalizeResponse(response, params) {
-				return EXA_WEB_SEARCH_ADAPTER.normalizeResponse(parseExaSearchResponse(response), params);
-			},
-		},
-	};
-export function getWebSearchProviderAdapter(provider: WebSearchProvider): WebSearchProviderAdapter {
-	return WEB_SEARCH_PROVIDER_ADAPTERS[provider];
-}
-
 /** Build before queueing so local validation fails without consuming a request slot. */
 export function prepareWebSearchRequest(
 	provider: WebSearchProvider,

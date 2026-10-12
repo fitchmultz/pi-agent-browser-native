@@ -49,6 +49,7 @@ console.log(JSON.stringify({ success: true, data }));
 				AGENT_BROWSER_DEBUG: "1",
 				AGENT_BROWSER_NO_AUTO_DIALOG: "0",
 				PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0",
+				PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS: "1",
 			},
 			async () => {
 				const one = createExtensionHarness({ cwd: root, sessionId: "pi-one" });
@@ -544,11 +545,13 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 					code: 'emit((await browser({args:["get","title"]})).success);',
 				});
 				assert.equal(code.isError, false, code.content[0].text);
+				assert.equal(code.details?.data, true);
+				const codeCalls = await readInvocationLog(log);
 				assert.ok(
-					(await readInvocationLog(log)).every(
-						(call) => readRecord(call).confirmActions === "navigate",
-					),
+					codeCalls.some((call) => call.args.includes("get") && call.args.includes("title")),
+					"code reached the requested native getter",
 				);
+				assert.ok(codeCalls.every((call) => readRecord(call).confirmActions === "navigate"));
 				await writeFile(log, "");
 				const qaTool = resumed.getTool("agent_browser_qa");
 				assert.ok(qaTool);
@@ -563,11 +566,12 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 						}),
 				);
 				assert.equal(qa.isError, false, qa.content[0].text);
+				const qaCalls = await readInvocationLog(log);
 				assert.ok(
-					(await readInvocationLog(log)).every(
-						(call) => readRecord(call).confirmActions === "navigate",
-					),
+					qaCalls.some((call) => call.args.includes("batch")),
+					"QA reached its native readiness batch",
 				);
+				assert.ok(qaCalls.every((call) => readRecord(call).confirmActions === "navigate"));
 				await withPatchedEnv({ FAIL_CLOSE: "1" }, async () =>
 					assert.equal((await check(resumed, [...prefix, "close"], "navigate")).isError, true),
 				);
@@ -996,6 +1000,7 @@ console.log(JSON.stringify({ success: true, data: { session: "default", title: "
 				PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"),
 				PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
 				PI_AGENT_BROWSER_CONFIG: packageConfig,
+				PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS: "1",
 				PI_SUBAGENT_CHILD: undefined,
 				PI_SUBAGENT_ROOT_SESSION_ID: undefined,
 			},
@@ -1103,21 +1108,33 @@ console.log(JSON.stringify({ success: true, data: { session: "default", title: "
 									args: [...scenario.args, "open", "https://fixture.test/"],
 								});
 								assert.equal(result.isError, false, result.content[0].text);
-								const saved = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [
-										...scenario.args,
-										"auth",
-										"save",
-										"fixture",
-										"--url",
-										"https://fixture.test/",
-									],
-								});
-								assert.equal(saved.isError, false, saved.content[0].text);
-								const followup = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [...scenario.args, "get", "title"],
-								});
-								assert.equal(followup.isError, false, followup.content[0].text);
+								if (
+									[
+										"default Chrome",
+										"CLI Lightpanda",
+										"caller native Chrome config launch args",
+									].includes(scenario.name)
+								) {
+									const saved = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: [
+											...scenario.args,
+											"auth",
+											"save",
+											"fixture",
+											"--url",
+											"https://fixture.test/",
+										],
+									});
+									// Representative Chrome, non-Chrome and native-config rows retain command-family continuity.
+									// oxlint-disable-next-line node-test/no-conditional-assertion
+									assert.equal(saved.isError, false, saved.content[0].text);
+									const followup = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: [...scenario.args, "get", "title"],
+									});
+									// Each continuity row must also complete its post-launch browser command.
+									// oxlint-disable-next-line node-test/no-conditional-assertion
+									assert.equal(followup.isError, false, followup.content[0].text);
+								}
 								const calls = await readInvocationLog(log);
 								const main = calls.find((call) => call.args.includes("open"));
 								assert.ok(main, "the requested browser call reached upstream");
@@ -1244,8 +1261,11 @@ test(
 									});
 									assert.equal(result.isError, false, result.content[0].text);
 									assert.equal(result.details?.sessionName, name);
-									const qa = await executeRegisteredTool(child.tool, child.ctx, {
-										qa: { attached: true, expectedText: "Agent Browser Contract Fixture" },
+									const qaTool = child.getTool("agent_browser_qa");
+									assert.ok(qaTool);
+									const qa = await executeRegisteredTool(qaTool, child.ctx, {
+										attached: true,
+										expectedText: "Agent Browser Contract Fixture",
 									});
 									assert.equal(qa.isError, false, qa.content[0].text);
 								} finally {

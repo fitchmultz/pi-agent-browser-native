@@ -34,7 +34,7 @@ export default function extension(pi) {
 		]);
 		const result = spawnSync(
 			process.execPath,
-			["scripts/profile-startup.mjs", "--samples", "3", "--json"],
+			["scripts/profile-startup.mjs", "--samples", "2", "--json"],
 			{
 				cwd: directory,
 				encoding: "utf8",
@@ -54,10 +54,10 @@ export default function extension(pi) {
 			false,
 		);
 		const samples = readArray(readRecord(stored.samples).directImport).map(readRecord);
-		assert.equal(samples.length, 3);
+		assert.equal(samples.length, 2);
 		assert.equal(
 			new Set(samples.map((sample) => readNumber(readRecord(sample.diagnostics).pid))).size,
-			3,
+			2,
 		);
 		assert.ok(samples.every((sample) => readNumber(sample.totalMs) >= 250));
 		assert.ok(

@@ -21,11 +21,7 @@ import {
 } from "./suite-evidence.mjs";
 
 export { buildBrowserDogfoodCommand, buildPlatformBuildCommand } from "./commands.mjs";
-export {
-	createLeaseCleanupFailureResult,
-	createLeaseCleanupResult,
-	createLeaseWarmupFailureResult,
-} from "./lease-evidence.mjs";
+export { createLeaseCleanupResult, createLeaseWarmupFailureResult } from "./lease-evidence.mjs";
 export { nodeVersionAtLeast } from "./suite-checks.mjs";
 export { platformFor } from "./suite-evidence.mjs";
 

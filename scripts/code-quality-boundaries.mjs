@@ -290,8 +290,13 @@ export const readonlyBoundaries = [
 		reason: "Next-action assembly deliberately appends to the owned output accumulator.",
 	},
 	{
-		files: ["test/agent-browser.read-confirmation.test.ts"],
-		declaration: "./test/agent-browser.read-confirmation.test.ts",
+		files: [
+			"test/helpers/read-confirmation-fixture.ts",
+			"test/agent-browser.read-confirmation-routing.test.ts",
+			"test/agent-browser.read-confirmation-capture-replay.test.ts",
+			"test/agent-browser.read-confirmation-capture-actions.test.ts",
+		],
+		declaration: "./test/helpers/read-confirmation-fixture.ts",
 		names: ["ConfirmationFixture"],
 		reason: "The confirmation fixture deliberately mutates its shared branch replay state.",
 	},

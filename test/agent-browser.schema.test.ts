@@ -1,17 +1,15 @@
 /**
  * Purpose: Guard public agent_browser tool schema compatibility while production startup uses lightweight JSON-schema builders.
- * Responsibilities: Compare production schema output against the canonical TypeBox/StringEnum builder shape without importing heavy builders on the extension cold path.
- * Scope: Schema parity and semantic compiler agreement; browser behavior remains in extension input-mode tests.
+ * Responsibilities: Independently validate public input constraints and native Pi null normalization.
+ * Scope: Schema and semantic compiler agreement; browser behavior remains in extension input-mode tests.
  */
 
 import assert from "node:assert/strict";
-import { readRecord, readArray } from "./helpers/assertions.js";
+import { readRecord } from "./helpers/assertions.js";
 import { test } from "node:test";
 
-import { StringEnum } from "@earendil-works/pi-ai/compat";
 import { convertResponsesTools } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import { Check } from "typebox/value";
 
 import {
@@ -26,20 +24,7 @@ import {
 } from "../extensions/agent-browser/lib/input-modes/params.js";
 import { compileAgentBrowserSemanticAction } from "../extensions/agent-browser/lib/input-modes/semantic-action.js";
 import { AGENT_BROWSER_SEMANTIC_LOCATORS } from "../extensions/agent-browser/lib/input-modes/types.js";
-import type { JsonSchemaBuilder } from "../extensions/agent-browser/lib/json-schema.js";
-import type { StringEnumBuilder } from "../extensions/agent-browser/lib/string-enum-schema.js";
 import { createAgentBrowserWebSearchParamsSchema } from "../extensions/agent-browser/lib/web-search.js";
-
-function stableJson(value: unknown): string {
-	return JSON.stringify(value, (_key, nestedValue: unknown) => {
-		if (nestedValue === null || typeof nestedValue !== "object" || Array.isArray(nestedValue)) {
-			return nestedValue;
-		}
-		return Object.fromEntries(
-			Object.entries(nestedValue).sort(([left], [right]) => left.localeCompare(right)),
-		);
-	});
-}
 
 test("agent_browser exposes only compact native command input", async (t) => {
 	const schema = createAgentBrowserParamsSchema();
@@ -54,6 +39,21 @@ test("agent_browser exposes only compact native command input", async (t) => {
 	]);
 	assert.equal(Check(schema, { args: ["batch", "--bail"], stdin: '[["get","title"]]' }), true);
 	assert.equal(Check(schema, {}), false);
+	for (const input of [
+		{ args: [] },
+		{ args: [42] },
+		{ args: ["get", "url"], timeoutMs: 0 },
+		{ args: ["get", "url"], timeoutMs: 1.5 },
+		{ args: ["get", "url"], outputPath: "" },
+		{ args: ["get", "url"], sessionMode: "reuse" },
+	]) {
+		// Each fixed malformed public command input must fail schema validation.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(Check(schema, input), false, JSON.stringify(input));
+	}
+	const sessionMode = readRecord(properties.sessionMode);
+	assert.equal(sessionMode.default, "auto");
+	assert.equal(Check(schema, { args: ["get", "url"], sessionMode: sessionMode.default }), true);
 	for (const mode of [
 		"script",
 		"job",
@@ -72,10 +72,9 @@ test("agent_browser exposes only compact native command input", async (t) => {
 	assert.ok(Buffer.byteLength(JSON.stringify(schema)) < 1400);
 });
 
-test("semantic schema keeps optional properties visible to Pi null normalization", async (t) => {
-	const semantic = readRecord(createAgentBrowserActionParamsSchema());
-	const properties = readRecord(semantic.properties);
-	const required = readArray(semantic.required ?? []);
+test("semantic schema normalizes every optional null through Pi before compilation", async (t) => {
+	const schema = createAgentBrowserActionParamsSchema();
+	const tool = { name: "agent_browser_action", description: "Browser", parameters: schema };
 	for (const field of [
 		"locator",
 		"value",
@@ -86,14 +85,24 @@ test("semantic schema keeps optional properties visible to Pi null normalization
 		"name",
 		"session",
 	]) {
-		// Report each public optional field independently, retaining declaration order.
+		// Each public optional field must survive native SDK normalization independently.
 		// oxlint-disable-next-line no-await-in-loop
 		await t.test(field, () => {
-			assert.ok(
-				properties[field] !== undefined,
-				`${field} must remain visible to Pi's optional-null normalization`,
-			);
-			assert.equal(required.includes(field), false);
+			const base: Readonly<Record<string, string>> =
+				field === "selector"
+					? { action: "click", locator: "text", value: "Target" }
+					: { action: "click", selector: "#target" };
+			const args =
+				field === "selector" ? ["find", "text", "Target", "click"] : ["click", "#target"];
+			assert.equal(Check(schema, base), true);
+			const validated: unknown = validateToolArguments(tool, {
+				type: "toolCall",
+				id: "null",
+				name: tool.name,
+				arguments: { ...base, [field]: null },
+			});
+			assert.deepEqual(validated, base);
+			assert.deepEqual(compileAgentBrowserSemanticAction(validated).compiled?.args, args);
 		});
 	}
 });
@@ -128,6 +137,16 @@ test("semantic schema rejects non-select values and select text like the compile
 		/text is not supported for select/,
 	);
 	assert.equal(Check(schema, semanticAction), false);
+	for (const input of [
+		{ action: "unknown", selector: "#target" },
+		{ action: "click", locator: "unknown", value: "Target" },
+		{ action: "select", selector: "#flavor", values: [] },
+		{ action: "select", selector: "#flavor", values: [42] },
+	]) {
+		// Each independent action/locator/option violation must fail the public action schema.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(Check(schema, input), false, JSON.stringify(input));
+	}
 });
 
 test("semantic schema keeps supported locators, role aliases, selectors and select options", () => {
@@ -303,42 +322,35 @@ test("advanced schemas keep host timeouts and bounded scanner controls", () => {
 	assert.equal(Check(loader, { disable: ["qa"] }), false);
 });
 
-test("production JSON-schema builder matches TypeBox shape for public tool schemas", async (t) => {
-	const typeBox: JsonSchemaBuilder = Type;
-	const typeBoxStringEnum: StringEnumBuilder = (values, options) => {
-		const defaultValue = options?.default;
-		const matchedDefault = values.find((value) => value === defaultValue);
-		assert.ok(
-			defaultValue === undefined || matchedDefault !== undefined,
-			"enum default must name an enum value",
-		);
-		return StringEnum(values, { ...options, default: matchedDefault });
-	};
-	for (const createSchema of [
-		createAgentBrowserParamsSchema,
-		createAgentBrowserActionParamsSchema,
-		createAgentBrowserQaParamsSchema,
-		createAgentBrowserElectronParamsSchema,
-		createAgentBrowserSourceParamsSchema,
-		createAgentBrowserNetworkSourceParamsSchema,
-		createAgentBrowserToolsParamsSchema,
+test("code and web-search schemas enforce source and filter bounds independently", () => {
+	const code = createAgentBrowserCodeParamsSchema();
+	assert.equal(Check(code, { code: "x".repeat(65_536), timeoutMs: 300_000 }), true);
+	assert.equal(Check(code, { code: "x".repeat(65_537) }), false);
+	assert.equal(Check(code, { code: "emit(1)", timeoutMs: 300_001 }), false);
+	const search = createAgentBrowserWebSearchParamsSchema();
+	assert.equal(
+		Check(search, {
+			query: "Pi",
+			country: "US",
+			includeDomains: ["example.com"],
+			count: 10,
+			offset: 9,
+		}),
+		true,
+	);
+	for (const filters of [
+		{ country: "USA" },
+		{ includeDomains: [] },
+		{ includeDomains: [""] },
+		{ includeDomains: Array.from({ length: 21 }, () => "example.com") },
+		{ count: 0 },
+		{ count: 11 },
+		{ offset: -1 },
+		{ offset: 10 },
+		{ searchType: "unknown" },
 	]) {
-		// Each builder has a separate schema parity contract.
-		// oxlint-disable-next-line no-await-in-loop
-		await t.test(createSchema.name, () => {
-			assert.equal(
-				stableJson(createSchema()),
-				stableJson(createSchema(typeBox, typeBoxStringEnum)),
-				createSchema.name,
-			);
-		});
+		// Each independent filter bound/enum violation must fail the public search schema.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(Check(search, { query: "Pi", ...filters }), false, JSON.stringify(filters));
 	}
-	assert.equal(
-		stableJson(createAgentBrowserCodeParamsSchema()),
-		stableJson(createAgentBrowserCodeParamsSchema(typeBox)),
-	);
-	assert.equal(
-		stableJson(createAgentBrowserWebSearchParamsSchema()),
-		stableJson(createAgentBrowserWebSearchParamsSchema(typeBox, typeBoxStringEnum)),
-	);
 });

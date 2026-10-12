@@ -5,14 +5,25 @@ import type {
 	ElectronLaunchRecord,
 } from "../../electron/launch.js";
 import type { CompiledAgentBrowserElectron } from "../../input-modes/types.js";
+import { boundElectronProbeString } from "../../electron/cdp.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { redactSensitiveText } from "../../runtime-redaction.js";
 import { redactToolDetails } from "./final-result-redaction.js";
-import type { ManagedSessionOutcome } from "./types.js";
+import type { ElectronManagedSessionTarget, ManagedSessionOutcome } from "./types.js";
 import type {
 	PublicationInput as FinalResultInput,
 	PublicationToolResult as AgentBrowserToolResult,
 } from "./final-result-contracts.js";
+
+export function presentElectronManagedSessionTarget(
+	target: ElectronManagedSessionTarget,
+): ElectronManagedSessionTarget {
+	return {
+		...target,
+		title: boundElectronProbeString(target.title, 160),
+		url: boundElectronProbeString(target.url, 300),
+	};
+}
 
 export function getElectronLaunchFailureCategory(
 	failure: Pick<ElectronLaunchFailure, "reason">,

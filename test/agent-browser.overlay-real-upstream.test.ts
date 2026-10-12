@@ -108,7 +108,7 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 								["find", "nth", "0", "button"],
 							];
 							for (const params of [
-								...commands.map((args) => ({ args: [...prefix, ...args] })),
+								{ args: [...prefix, "click", "#target"] },
 								{ args: [...prefix, "--json", "click", "#target"] },
 								{ args: [...prefix, "batch"], stdin: JSON.stringify(commands) },
 								...(mode === "empty-namespace"
@@ -177,11 +177,19 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 									// oxlint-disable-next-line node-test/no-conditional-assertion
 									assert.match(text, /inspect-overlay-state/);
 								}
-								const rows = readArray(readRecord(result.details).batchSteps ?? []);
-								const isBatch = "args" in params && params.args?.includes("batch") === true;
-								// Every fixed batch input must return rows; direct inputs may legitimately have no batch receipts.
+								const rows = readArray(readRecord(result.details).batchSteps ?? []).map(readRecord);
+								const expectedCommands =
+									"stdin" in params
+										? readArray(JSON.parse(readString(params.stdin))).map((row) =>
+												readArray(row).map(readString),
+											)
+										: [];
+								// Every declared batch must retain all native failures in input order; direct calls have no rows.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(!isBatch || rows.length > 0);
+								assert.deepEqual(
+									rows.map((row) => ({ command: row.command, success: row.success })),
+									expectedCommands.map((command) => ({ command, success: false })),
+								);
 								for (const row of rows) {
 									// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
 									// oxlint-disable-next-line node-test/no-conditional-assertion

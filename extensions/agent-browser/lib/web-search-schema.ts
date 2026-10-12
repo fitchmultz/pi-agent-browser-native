@@ -1,5 +1,5 @@
-import { JsonSchema, type JsonSchemaBuilder, type TSchema } from "./json-schema.js";
-import { StringEnum as localStringEnum, type StringEnumBuilder } from "./string-enum-schema.js";
+import { JsonSchema as Type, type TSchema } from "./json-schema.js";
+import { StringEnum } from "./string-enum-schema.js";
 import {
 	DEFAULT_WEB_SEARCH_PROVIDER,
 	EXA_SEARCH_TYPES,
@@ -45,10 +45,7 @@ export type WebSearchExecutionParams = AgentBrowserWebSearchParamsInput & {
 	readonly offset: number;
 };
 
-function createExaFilterProperties(
-	Type: Readonly<JsonSchemaBuilder>,
-	StringEnum: StringEnumBuilder,
-): Record<string, TSchema> {
+function createExaFilterProperties(): Record<string, TSchema> {
 	return {
 		includeDomains: Type.Optional(
 			Type.Array(Type.String({ minLength: 1 }), {
@@ -86,10 +83,7 @@ function createExaFilterProperties(
 	};
 }
 
-export function createAgentBrowserWebSearchParamsSchema(
-	Type: Readonly<JsonSchemaBuilder> = JsonSchema,
-	StringEnum: StringEnumBuilder = localStringEnum,
-): TSchema {
+export function createAgentBrowserWebSearchParamsSchema(): TSchema {
 	return Type.Object(
 		{
 			query: Type.String({
@@ -107,7 +101,7 @@ export function createAgentBrowserWebSearchParamsSchema(
 						"Exa mode; omitted uses webSearch.defaultSearchType, then auto. instant (~250ms) is only for trivial lookups; fast (~450ms) favors latency; auto (~1s) is balanced. Pass searchType: deep-lite (~4s) for research before implementation unless config already defaults it; do not assume auto is deep enough. deep (4–15s) handles hard multi-source research; deep-reasoning (12–40s) is only for the hardest work. Brave ignores this field.",
 				}),
 			),
-			...createExaFilterProperties(Type, StringEnum),
+			...createExaFilterProperties(),
 			count: Type.Optional(
 				Type.Integer({
 					minimum: 1,

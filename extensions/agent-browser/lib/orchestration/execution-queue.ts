@@ -66,7 +66,7 @@ export class KeyedAsyncExecutionQueue {
 	): Promise<T> {
 		const entry = this.entries.get(key) ?? { queue: new AsyncExecutionQueue(), users: 0 };
 		if (entry.queue.isCurrent()) {
-			return work();
+			return entry.queue.run(work, signal);
 		}
 		const barrier =
 			this.barriers.get(getAgentBrowserSessionIdentityKey("", namespace)) ?? Promise.resolve();

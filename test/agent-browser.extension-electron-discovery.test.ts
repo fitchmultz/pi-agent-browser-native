@@ -7,14 +7,15 @@
  */
 
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import test from "node:test";
 
 import {
 	discoverElectronApps,
-	ELECTRON_DISCOVERY_MAX_RESULTS,
+	inspectElectronAppPath,
+	inspectElectronExecutablePath,
 } from "../extensions/agent-browser/lib/electron/discovery.js";
 
 import {
@@ -131,6 +132,64 @@ test("electron discovery annotates likely sensitive apps without blocking discov
 	}
 });
 
+test("electron discovery and explicit paths accept the stock macOS runtime payload", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-stock-macos-"));
+	try {
+		const app = await writeFakeMacElectronApp({
+			applicationsDir: tempDir,
+			bundleId: "com.github.Electron",
+			name: "Electron",
+		});
+		const resources = join(app.appPath, "Contents", "Resources");
+		await rename(join(resources, "app.asar"), join(resources, "default_app.asar"));
+		const discovered = await discoverElectronApps({
+			locations: { darwinApplicationDirectories: [tempDir] },
+			platform: "darwin",
+		});
+		assert.deepEqual(electronAppNames(discovered.apps), ["Electron"]);
+		assert.equal(
+			(await inspectElectronAppPath(app.appPath, "darwin"))?.executablePath,
+			app.executablePath,
+		);
+		assert.equal(
+			(await inspectElectronExecutablePath(app.executablePath, "darwin"))?.appPath,
+			await realpath(app.appPath),
+		);
+		const framework = join(app.appPath, "Contents", "Frameworks", "Electron Framework.framework");
+		await rm(framework, { recursive: true });
+		assert.equal(await inspectElectronAppPath(app.appPath, "darwin"), undefined);
+		await mkdir(framework);
+		await rm(join(resources, "default_app.asar"));
+		assert.equal(await inspectElectronAppPath(app.appPath, "darwin"), undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
+for (const platform of ["linux", "win32"] as const) {
+	test(`electron explicit paths accept the stock ${platform} runtime but not bare Chromium paks`, async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-stock-${platform}-`));
+		try {
+			const executable = await writeFakeLinuxElectronBinary(tempDir, "electron");
+			const resources = join(dirname(executable), "resources");
+			await rename(join(resources, "app.asar"), join(resources, "default_app.asar"));
+			const expectedExecutable = await realpath(executable);
+			assert.equal(
+				(await inspectElectronExecutablePath(executable, platform))?.executablePath,
+				expectedExecutable,
+			);
+			assert.equal(
+				(await inspectElectronAppPath(executable, platform))?.executablePath,
+				expectedExecutable,
+			);
+			await rm(join(resources, "default_app.asar"));
+			assert.equal(await inspectElectronExecutablePath(executable, platform), undefined);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	});
+}
+
 // Use Linux separators for simulated desktop entries, then escape both the
 // Exec token and desktop string layers. Keep actual filesystem assertions native.
 function quoteDesktopExecPath(path: string): string {
@@ -145,6 +204,8 @@ test("electron discovery scans Linux desktop files and applies Electron evidence
 		const appRoot = join(tempDir, "opt with space\\literal");
 		await mkdir(desktopDir, { recursive: true });
 		const electronExecutable = await writeFakeLinuxElectronBinary(appRoot, "demo-electron");
+		const resources = join(dirname(electronExecutable), "resources");
+		await rename(join(resources, "app.asar"), join(resources, "default_app.asar"));
 		const realElectronExecutable = await realpath(electronExecutable);
 		const plainExecutable = join(appRoot, "plain", "plain");
 		await mkdir(dirname(plainExecutable), { recursive: true });
@@ -268,7 +329,7 @@ test("electron discovery caps results, clamps maxResults, and reports omittedCou
 	try {
 		const applicationsDir = join(tempDir, "Applications");
 		await mkdir(applicationsDir, { recursive: true });
-		for (let index = 0; index < ELECTRON_DISCOVERY_MAX_RESULTS + 2; index += 1) {
+		for (let index = 0; index < 202; index += 1) {
 			const suffix = String(index).padStart(3, "0");
 			// Create bundles serially to bound the fixture's simultaneous filesystem work.
 			// oxlint-disable-next-line no-await-in-loop
@@ -282,11 +343,11 @@ test("electron discovery caps results, clamps maxResults, and reports omittedCou
 
 		const clamped = await discoverElectronApps({
 			locations: { darwinApplicationDirectories: [applicationsDir] },
-			maxResults: ELECTRON_DISCOVERY_MAX_RESULTS + 1_000,
+			maxResults: 1_200,
 			platform: "darwin",
 		});
-		assert.equal(clamped.maxResults, ELECTRON_DISCOVERY_MAX_RESULTS);
-		assert.equal(clamped.apps.length, ELECTRON_DISCOVERY_MAX_RESULTS);
+		assert.equal(clamped.maxResults, 200);
+		assert.equal(clamped.apps.length, 200);
 		assert.equal(clamped.omittedCount, 2);
 
 		const smallCap = await discoverElectronApps({
@@ -295,7 +356,7 @@ test("electron discovery caps results, clamps maxResults, and reports omittedCou
 			platform: "darwin",
 		});
 		assert.equal(smallCap.apps.length, 3);
-		assert.equal(smallCap.omittedCount, ELECTRON_DISCOVERY_MAX_RESULTS - 1);
+		assert.equal(smallCap.omittedCount, 199);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

@@ -4315,7 +4315,12 @@
 			}
 		},
 		{
-			"files": ["test/agent-browser.read-confirmation.test.ts"],
+			"files": [
+				"test/helpers/read-confirmation-fixture.ts",
+				"test/agent-browser.read-confirmation-routing.test.ts",
+				"test/agent-browser.read-confirmation-capture-replay.test.ts",
+				"test/agent-browser.read-confirmation-capture-actions.test.ts"
+			],
 			"rules": {
 				"typescript/prefer-readonly-parameter-types": [
 					"error",
@@ -4431,7 +4436,7 @@
 							},
 							{
 								"from": "file",
-								"path": "./test/agent-browser.read-confirmation.test.ts",
+								"path": "./test/helpers/read-confirmation-fixture.ts",
 								"name": ["ConfirmationFixture"]
 							}
 						]

@@ -27,8 +27,12 @@ export function parseCdpVersion(value: unknown): ElectronCdpVersion | undefined 
 	if (!isRecord(value)) {
 		return undefined;
 	}
+	const browser = asString(value.Browser) ?? asString(value.browser);
+	if (browser === undefined) {
+		return undefined;
+	}
 	return {
-		browser: asString(value.Browser) ?? asString(value.browser),
+		browser,
 		protocolVersion: asString(value["Protocol-Version"]) ?? asString(value.protocolVersion),
 		userAgent: asString(value["User-Agent"]) ?? asString(value.userAgent),
 		v8Version: asString(value["V8-Version"]) ?? asString(value.v8Version),

@@ -95,7 +95,13 @@ export async function prunePersistentSessionArtifactsToBudget(
 		}
 		// Evict oldest first and stop immediately once the required budget is available.
 		// oxlint-disable-next-line no-await-in-loop
-		await rm(file.path, { force: true }).catch(() => undefined);
+		const removed = await rm(file.path, { force: true }).then(
+			() => true,
+			() => false,
+		);
+		if (!removed) {
+			continue;
+		}
 		evictedArtifacts.push({ mtimeMs: file.mtimeMs, path: file.path, sizeBytes: file.size });
 		totalBytes -= file.size;
 		if (totalBytes + additionalBytes <= maxBytes) {

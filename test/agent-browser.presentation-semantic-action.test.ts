@@ -7,24 +7,13 @@ import { readRecord, readString } from "./helpers/assertions.js";
 import test from "node:test";
 
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
-import {
-	formatSemanticActionPresentationText,
-	shouldCaptureSemanticActionNavigationSummary,
-} from "../extensions/agent-browser/lib/results/presentation/semantic-action.js";
+import { shouldCaptureSemanticActionNavigationSummary } from "../extensions/agent-browser/lib/results/presentation/semantic-action.js";
 
 const semanticClick = {
 	action: "click" as const,
 	locator: "text" as const,
 	args: ["find", "text", "Close", "click"],
 };
-
-test("formatSemanticActionPresentationText prefers compact action line over located selector", () => {
-	const text = formatSemanticActionPresentationText(semanticClick, {
-		clicked: "[data-agent-browser-located='true']",
-	});
-	assert.match(text ?? "", /Clicked: text "Close"/);
-	assert.doesNotMatch(text ?? "", /data-agent-browser-located/);
-});
 
 test("shouldCaptureSemanticActionNavigationSummary probes find click without title or url", () => {
 	assert.equal(
@@ -71,6 +60,7 @@ test("buildToolPresentation enriches semanticAction find click like direct click
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = readRecord(presentation.content[0]).text;
 	assert.match(readString(text), /Clicked: text "Close"/);
+	assert.doesNotMatch(readString(text), /data-agent-browser-located/);
 	assert.match(readString(text), /Current page:/);
 	assert.match(readString(text), /Destination Docs/);
 	assert.match(readString(text), /https:\/\/example.com\/docs/);

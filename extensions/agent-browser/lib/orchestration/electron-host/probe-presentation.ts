@@ -1,4 +1,5 @@
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
+import { boundElectronProbeString } from "../../electron/cdp.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
 import type { CompiledAgentBrowserElectron } from "../../input-modes/types.js";
 import { buildAgentBrowserNextActions } from "../../results/action-recommendations.js";
@@ -18,7 +19,20 @@ import type {
 	ElectronProbeContext,
 	ElectronProbeFocusedElement,
 	ElectronProbeResult,
+	ElectronProbeTab,
 } from "./contracts.js";
+
+function presentProbeTab(tab: ElectronProbeTab): ElectronProbeTab {
+	return { ...tab, url: boundElectronProbeString(tab.url) };
+}
+function presentProbe(probe: ElectronProbeResult): ElectronProbeResult {
+	return {
+		...probe,
+		activeTab: probe.activeTab ? presentProbeTab(probe.activeTab) : undefined,
+		tabs: probe.tabs ? { ...probe.tabs, shown: probe.tabs.shown.map(presentProbeTab) } : undefined,
+		url: boundElectronProbeString(probe.url, 300),
+	};
+}
 
 interface ProbePresentation {
 	readonly compiledElectron: CompiledAgentBrowserElectron;
@@ -186,7 +200,8 @@ function probeNextActions(
 		: appendUniqueAgentBrowserNextActions([...base], mismatch);
 }
 export function buildElectronProbeResult(options: ProbePresentation): AgentBrowserToolResult {
-	const { refSnapshot: _refSnapshot, ...boundedProbe } = options.probe;
+	const probe = presentProbe(options.probe);
+	const { refSnapshot: _refSnapshot, ...boundedProbe } = probe;
 	const nextActions = probeNextActions(options);
 	const details = {
 		args: [],
@@ -214,7 +229,12 @@ export function buildElectronProbeResult(options: ProbePresentation): AgentBrows
 		usedImplicitSession: options.probeContext.mode === "current-managed-session",
 	};
 	return {
-		content: [{ type: "text", text: redactSensitiveText(formatElectronProbeVisibleText(options)) }],
+		content: [
+			{
+				type: "text",
+				text: redactSensitiveText(formatElectronProbeVisibleText({ ...options, probe })),
+			},
+		],
 		details: redactToolDetails(details, []),
 		isError: false,
 	};

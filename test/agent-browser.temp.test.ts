@@ -7,7 +7,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import {
+import { syncBuiltinESMExports } from "node:module";
+import fs, {
 	chmod,
 	mkdir,
 	mkdtemp,
@@ -18,6 +19,7 @@ import {
 	utimes,
 	writeFile,
 } from "node:fs/promises";
+import type { PathLike, RmOptions } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -26,7 +28,6 @@ import { readRecord, readArray, readString, readNumber } from "./helpers/asserti
 import {
 	cleanupSecureTempArtifacts,
 	getPersistentSessionArtifactMaxBytes,
-	getSecureTempDebugState,
 	getSecureTempRootMaxBytes,
 	openSecureTempFile,
 	writePersistentSessionArtifactFile,
@@ -104,6 +105,61 @@ test(
 	},
 );
 
+test("failed artifact eviction does not claim space or publish a deletion receipt", async (t) => {
+	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-eviction-"));
+	try {
+		await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: "10" }, async () => {
+			const store = { sessionDir, sessionId: TEST_SESSION_ID };
+			const earlier = await writePersistentSessionArtifactFile({
+				content: "12345678",
+				prefix: "earlier",
+				suffix: ".txt",
+				store,
+			});
+			const nativeRm = fs.rm;
+			t.mock.method(fs, "rm", (path: PathLike, options?: Readonly<RmOptions>) => {
+				if (String(path) === earlier.path) {
+					return Promise.reject(Object.assign(new Error("held artifact"), { code: "EPERM" }));
+				}
+				return nativeRm(path, options);
+			});
+			syncBuiltinESMExports();
+			try {
+				await assert.rejects(
+					writePersistentSessionArtifactFile({
+						content: "abcde",
+						prefix: "latest",
+						suffix: ".txt",
+						store,
+					}),
+					/persisted spill budget exceeded \(13 bytes > 10 byte limit\)/,
+				);
+				assert.equal(await readFile(earlier.path, "utf8"), "12345678");
+				assert.deepEqual(await readdir(dirname(earlier.path)), [
+					earlier.path.split(/[\\/]/).at(-1),
+				]);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+			const latest = await writePersistentSessionArtifactFile({
+				content: "abcde",
+				prefix: "latest",
+				suffix: ".txt",
+				store,
+			});
+			assert.deepEqual(
+				latest.evictedArtifacts.map(({ path, sizeBytes }) => ({ path, sizeBytes })),
+				[{ path: earlier.path, sizeBytes: 8 }],
+			);
+			await assert.rejects(stat(earlier.path), { code: "ENOENT" });
+			assert.equal(await readFile(latest.path, "utf8"), "abcde");
+		});
+	} finally {
+		await rm(sessionDir, { recursive: true, force: true });
+	}
+});
+
 const originalTempEnv = {
 	TMPDIR: process.env.TMPDIR,
 	TEMP: process.env.TEMP,
@@ -137,11 +193,10 @@ test(
 		const firstFile = await openSecureTempFile("debug-a", ".txt");
 		await firstFile.fileHandle.close();
 		const firstRoot = dirname(firstFile.path);
-		assert.equal((await getSecureTempDebugState()).currentTempRoot, firstRoot);
+		assert.equal((await stat(firstRoot)).isDirectory(), true);
 
 		await cleanupSecureTempArtifacts();
 		await assert.rejects(stat(firstRoot), { code: "ENOENT" });
-		assert.deepEqual((await getSecureTempDebugState()).ownedTempRoots, []);
 
 		const secondFile = await openSecureTempFile("debug-b", ".txt");
 		await secondFile.fileHandle.close();
@@ -151,13 +206,49 @@ test(
 		const marker = readRecord(JSON.parse(await readFile(markerPath, "utf8")));
 		assert.equal(marker.version, 2);
 
-		const debugState = await getSecureTempDebugState();
-		assert.equal(debugState.currentTempRoot, secondRoot);
-		assert.deepEqual(debugState.ownedTempRoots, [secondRoot]);
-
 		await cleanupSecureTempArtifacts();
+		await assert.rejects(stat(secondRoot), { code: "ENOENT" });
 	},
 );
+
+test("temp allocation removes a failed ownership root and retries after marker failure", async (t) => {
+	await cleanupSecureTempArtifacts();
+	const nativeMkdtemp = fs.mkdtemp;
+	let failedRoot = "";
+	t.mock.method(fs, "mkdtemp", async (prefix: string) => {
+		const root = await nativeMkdtemp(prefix);
+		if (failedRoot === "") {
+			failedRoot = root;
+			// A real exclusive-marker write will fail on this task-owned planted directory.
+			await mkdir(join(root, ".pi-agent-browser-owner.json"));
+		}
+		return root;
+	});
+	syncBuiltinESMExports();
+	try {
+		await assert.rejects(openSecureTempFile("failed", ".txt"), { code: "EEXIST" });
+		assert.notEqual(failedRoot, "", "failure must occur after allocating the root");
+		await assert.rejects(stat(failedRoot), { code: "ENOENT" });
+		await cleanupSecureTempArtifacts();
+		const recovered = await openSecureTempFile("recovered", ".txt");
+		await recovered.fileHandle.close();
+		assert.notEqual(dirname(recovered.path), failedRoot);
+		assert.equal(
+			readRecord(
+				JSON.parse(
+					await readFile(join(dirname(recovered.path), ".pi-agent-browser-owner.json"), "utf8"),
+				),
+			).version,
+			2,
+		);
+		await cleanupSecureTempArtifacts();
+		await assert.rejects(stat(dirname(recovered.path)), { code: "ENOENT" });
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		await cleanupSecureTempArtifacts();
+	}
+});
 
 test("stale temp pruning only removes explicitly owned roots", { concurrency: false }, async () => {
 	await cleanupSecureTempArtifacts();
@@ -225,8 +316,6 @@ for (const shortLived of [false, true]) {
 							const child = spawn(
 								process.execPath,
 								[
-									"--import",
-									"tsx",
 									"--input-type=module",
 									"-e",
 									`
@@ -242,7 +331,7 @@ for (const shortLived of [false, true]) {
 							return readFile(...args);
 						};
 						syncBuiltinESMExports();
-						const { openSecureTempFile, cleanupSecureTempArtifacts } = await import("./extensions/agent-browser/lib/temp.ts");
+						const { openSecureTempFile, cleanupSecureTempArtifacts } = await import("./dist/extensions/agent-browser/lib/temp.js");
 						const file = await openSecureTempFile("bounded-gc", ".txt");
 						await file.fileHandle.close();
 						await cleanupSecureTempArtifacts();
@@ -357,20 +446,16 @@ test(
 		const staleTime = new Date(Date.now() - 25 * 60 * 60 * 1_000);
 		const childScript = `
 		import { dirname } from "node:path";
-		import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+		import { openSecureTempFile } from "./dist/extensions/agent-browser/lib/temp.js";
 		const tempFile = await openSecureTempFile("live-root", ".txt");
 		await tempFile.fileHandle.close();
 		console.log(JSON.stringify({ root: dirname(tempFile.path) }));
 		setInterval(() => undefined, 1_000);
 	`;
-		const childA = spawn(
-			process.execPath,
-			["--import", "tsx", "--input-type=module", "-e", childScript],
-			{
-				cwd: process.cwd(),
-				stdio: ["ignore", "pipe", "pipe"],
-			},
-		);
+		const childA = spawn(process.execPath, ["--input-type=module", "-e", childScript], {
+			cwd: process.cwd(),
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 
 		let liveRoot: string | undefined;
 		try {
@@ -394,19 +479,15 @@ test(
 			);
 
 			const childBScript = `
-			import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+			import { openSecureTempFile } from "./dist/extensions/agent-browser/lib/temp.js";
 			const tempFile = await openSecureTempFile("prune-trigger", ".txt");
 			await tempFile.fileHandle.close();
 			console.log(JSON.stringify({ done: true }));
 		`;
-			const childB = spawn(
-				process.execPath,
-				["--import", "tsx", "--input-type=module", "-e", childBScript],
-				{
-					cwd: process.cwd(),
-					stdio: ["ignore", "pipe", "pipe"],
-				},
-			);
+			const childB = spawn(process.execPath, ["--input-type=module", "-e", childBScript], {
+				cwd: process.cwd(),
+				stdio: ["ignore", "pipe", "pipe"],
+			});
 			const childBExit = once(childB, "exit");
 			readRecord(await readChildStdoutJsonLine(childB));
 			const [childBExitCode] = readArray(await childBExit);
@@ -436,7 +517,7 @@ test(
 		const childScript = `
 		import { dirname, join } from "node:path";
 		import { writeFile } from "node:fs/promises";
-		import { cleanupSecureTempArtifacts, createSecureTempDirectory, writeSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+		import { cleanupSecureTempArtifacts, createSecureTempDirectory, writeSecureTempFile } from "./dist/extensions/agent-browser/lib/temp.js";
 		const profile = await createSecureTempDirectory("electron-profile-");
 		await writeFile(join(profile, "profile-state.txt"), "keep", "utf8");
 		const spill = await writeSecureTempFile({ content: "delete", prefix: "spill", suffix: ".txt" });
@@ -444,14 +525,10 @@ test(
 		await cleanupSecureTempArtifacts({ preservePaths: [profile] });
 		console.log(JSON.stringify({ profile, root, spill }));
 	`;
-		const child = spawn(
-			process.execPath,
-			["--import", "tsx", "--input-type=module", "-e", childScript],
-			{
-				cwd: process.cwd(),
-				stdio: ["ignore", "pipe", "pipe"],
-			},
-		);
+		const child = spawn(process.execPath, ["--input-type=module", "-e", childScript], {
+			cwd: process.cwd(),
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 		let root: string | undefined;
 		try {
 			const childExit = once(child, "exit");
@@ -459,7 +536,10 @@ test(
 			root = readString(result.root);
 			const [exitCode] = readArray(await childExit);
 			assert.equal(exitCode, 0);
-			await stat(readString(result.profile));
+			assert.equal(
+				await readFile(join(readString(result.profile), "profile-state.txt"), "utf8"),
+				"keep",
+			);
 			await assert.rejects(stat(readString(result.spill)), { code: "ENOENT" });
 		} finally {
 			await stopChildProcess(child);
@@ -480,21 +560,17 @@ test(
 		const childAScript = `
 		import { dirname, join } from "node:path";
 		import { writeFile } from "node:fs/promises";
-		import { cleanupSecureTempArtifacts, createSecureTempDirectory } from "./extensions/agent-browser/lib/temp.ts";
+		import { cleanupSecureTempArtifacts, createSecureTempDirectory } from "./dist/extensions/agent-browser/lib/temp.js";
 		const profile = await createSecureTempDirectory("electron-profile-");
 		await writeFile(join(profile, "profile-state.txt"), "keep", "utf8");
 		const root = dirname(profile);
 		await cleanupSecureTempArtifacts({ preservePaths: [profile] });
 		console.log(JSON.stringify({ profile, root }));
 	`;
-		const childA = spawn(
-			process.execPath,
-			["--import", "tsx", "--input-type=module", "-e", childAScript],
-			{
-				cwd: process.cwd(),
-				stdio: ["ignore", "pipe", "pipe"],
-			},
-		);
+		const childA = spawn(process.execPath, ["--input-type=module", "-e", childAScript], {
+			cwd: process.cwd(),
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 		let root: string | undefined;
 		let childB: ReturnType<typeof spawn> | undefined;
 		try {
@@ -503,7 +579,10 @@ test(
 			root = readString(result.root);
 			const [childAExitCode] = readArray(await childAExit);
 			assert.equal(childAExitCode, 0);
-			await stat(readString(result.profile));
+			assert.equal(
+				await readFile(join(readString(result.profile), "profile-state.txt"), "utf8"),
+				"keep",
+			);
 
 			const markerPath = join(readString(result.root), ".pi-agent-browser-owner.json");
 			const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
@@ -521,25 +600,24 @@ test(
 			await utimes(readString(result.root), staleTime, staleTime);
 
 			const childBScript = `
-			import { openSecureTempFile } from "./extensions/agent-browser/lib/temp.ts";
+			import { openSecureTempFile } from "./dist/extensions/agent-browser/lib/temp.js";
 			const tempFile = await openSecureTempFile("prune-trigger", ".txt");
 			await tempFile.fileHandle.close();
 			console.log(JSON.stringify({ done: true }));
 		`;
-			childB = spawn(
-				process.execPath,
-				["--import", "tsx", "--input-type=module", "-e", childBScript],
-				{
-					cwd: process.cwd(),
-					stdio: ["ignore", "pipe", "pipe"],
-				},
-			);
+			childB = spawn(process.execPath, ["--input-type=module", "-e", childBScript], {
+				cwd: process.cwd(),
+				stdio: ["ignore", "pipe", "pipe"],
+			});
 			const childBExit = once(childB, "exit");
 			readRecord(await readChildStdoutJsonLine(childB));
 			const [childBExitCode] = readArray(await childBExit);
 			assert.equal(childBExitCode, 0);
 
-			await stat(readString(result.profile));
+			assert.equal(
+				await readFile(join(readString(result.profile), "profile-state.txt"), "utf8"),
+				"keep",
+			);
 			await assert.rejects(stat(join(readString(result.root), "unprotected-spill.txt")), {
 				code: "ENOENT",
 			});

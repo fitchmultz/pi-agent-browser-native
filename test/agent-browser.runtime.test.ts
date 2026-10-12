@@ -19,6 +19,19 @@ import {
 	GLOBAL_VALUE_FLAGS,
 	isBooleanFlagEnabled,
 } from "../extensions/agent-browser/lib/argv-grammar.js";
+import { parseCommandInfo } from "../extensions/agent-browser/lib/argv-descriptor.js";
+import {
+	isCloseCommand,
+	isKnownCommandToken,
+	isOpenNavigationCommand,
+	isPageChangeSummaryCommand,
+	isPageMutationCommand,
+	isRecordPageTransitionCommand,
+	isRefGuardedCommand,
+	isRefInvalidatingBatchCommand,
+	isUnverifiedPageTransitionCommand,
+} from "../extensions/agent-browser/lib/command-taxonomy.js";
+
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { LAUNCH_SCOPED_FLAGS } from "../extensions/agent-browser/lib/launch-scoped-flags.js";
 import {
@@ -153,6 +166,24 @@ test("Android managed session names retain full identity entropy within namespac
 	const socketDir = getAgentBrowserSocketDir("android", 10_589, "com.termux");
 
 	assert.match(base, /^piab-[a-f0-9]{20}$/);
+	assert.notEqual(
+		base,
+		createImplicitSessionName(
+			"12345678-1234-5678-9abc-def012345679",
+			"/data/data/com.termux/files/home/project",
+			"ignored",
+			"android",
+		),
+	);
+	assert.notEqual(
+		base,
+		createImplicitSessionName(
+			"12345678-1234-5678-9abc-def012345678",
+			"/data/data/com.termux/files/home/other/project",
+			"ignored",
+			"android",
+		),
+	);
 	assert.equal(
 		getAgentBrowserSocketPathValidationError({
 			args: ["--namespace", "termux", "--session", fresh, "open", "about:blank"],
@@ -1175,12 +1206,13 @@ test("restoreManagedSessionStateFromBranch keeps cwd isolation by ignoring sessi
 });
 
 test("buildExecutionPlan injects --json and the implicit session when needed", () => {
-	const plan = buildExecutionPlan(["open", "https://example.com"], {
+	const options = {
 		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
 		managedSessionActive: false,
 		managedSessionName: "piab-demo-123",
-		sessionMode: "auto",
-	});
+		sessionMode: "auto" as const,
+	};
+	const plan = buildExecutionPlan(["open", "https://example.com"], options);
 
 	assert.deepEqual(plan.effectiveArgs, [
 		"--json",
@@ -1196,12 +1228,7 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 
 	const namespaced = buildExecutionPlan(
 		["--namespace", "Review Team!", "open", "https://example.com"],
-		{
-			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
-			managedSessionActive: false,
-			managedSessionName: "piab-demo-123",
-			sessionMode: "auto",
-		},
+		options,
 	);
 	assert.deepEqual(namespaced.effectiveArgs, [
 		"--json",
@@ -1213,33 +1240,29 @@ test("buildExecutionPlan injects --json and the implicit session when needed", (
 		"https://example.com",
 	]);
 	assert.equal(namespaced.namespace, "review-team");
-});
 
-test("buildExecutionPlan treats upstream close aliases as managed-session closes", () => {
 	for (const command of ["close", "quit", "exit"] as const) {
-		const plan = buildExecutionPlan([command], {
-			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		const closePlan = buildExecutionPlan([command], {
+			...options,
 			managedSessionActive: true,
-			managedSessionName: "piab-demo-123",
-			sessionMode: "auto",
 		});
 
 		// Every declared close alias must preserve exact upstream argv.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.deepEqual(
-			plan.effectiveArgs,
+			closePlan.effectiveArgs,
 			["--json", "--session", "piab-demo-123", command],
 			command,
 		);
 		// Every close alias must retain managed identity until its close executes.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(plan.managedSessionName, "piab-demo-123", command);
+		assert.equal(closePlan.managedSessionName, "piab-demo-123", command);
 		// Every close alias must target the managed session.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(plan.sessionName, "piab-demo-123", command);
+		assert.equal(closePlan.sessionName, "piab-demo-123", command);
 		// Every close alias must retain implicit routing in this fixed matrix.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(plan.usedImplicitSession, true, command);
+		assert.equal(closePlan.usedImplicitSession, true, command);
 	}
 });
 
@@ -1909,7 +1932,7 @@ test("buildExecutionPlan allows optional wait download path to be omitted", () =
 	);
 });
 
-test("buildExecutionPlan parses restore and namespace globals before command discovery", () => {
+test("parseArgvDescriptor parses restore and namespace globals before command discovery", () => {
 	for (const { args, command, subcommand } of [
 		{ args: ["--namespace", "review", "session", "info"], command: "session", subcommand: "info" },
 		{
@@ -2023,13 +2046,13 @@ test("launch-scoped flag metadata is reflected in playbook and command reference
 });
 
 test("buildExecutionPlan blocks startup-scoped flags from silently reusing an active implicit session", () => {
-	for (const { args, flag } of [
-		{ args: ["--profile", "Default", "open", "https://example.com"], flag: "--profile" },
-		{ args: ["--engine", "chrome", "open", "https://example.com"], flag: "--engine" },
-		{ args: ["--engine", "lightpanda", "open", "https://example.com"], flag: "--engine" },
+	for (const { args, flags } of [
+		{ args: ["--profile", "Default", "open", "https://example.com"], flags: ["--profile"] },
+		{ args: ["--engine", "chrome", "open", "https://example.com"], flags: ["--engine"] },
+		{ args: ["--engine", "lightpanda", "open", "https://example.com"], flags: ["--engine"] },
 		{
 			args: ["--allowed-domains", "example.com", "open", "https://example.com"],
-			flag: "--allowed-domains",
+			flags: ["--allowed-domains"],
 		},
 		{
 			args: [
@@ -2038,51 +2061,60 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 				"open",
 				"https://example.com",
 			],
-			flag: "--executable-path",
+			flags: ["--executable-path"],
 		},
-		{ args: ["--namespace", "review", "open", "https://example.com"], flag: "--namespace" },
+		{ args: ["--namespace", "review", "open", "https://example.com"], flags: ["--namespace"] },
 		{
 			args: ["--session-name", "saved-auth", "open", "https://example.com"],
-			flag: "--session-name",
+			flags: ["--session-name"],
 		},
-		{ args: ["--restore", "open", "https://example.com"], flag: "--restore" },
-		{ args: ["--restore=auth", "open", "https://example.com"], flag: "--restore" },
-		{ args: ["--restore-save", "never", "open", "https://example.com"], flag: "--restore-save" },
+		{ args: ["--restore", "open", "https://example.com"], flags: ["--restore"] },
+		{ args: ["--restore=auth", "open", "https://example.com"], flags: ["--restore"] },
+		{ args: ["--restore-save", "never", "open", "https://example.com"], flags: ["--restore-save"] },
 		{
 			args: ["--restore-check-url", "**/dashboard", "open", "https://example.com"],
-			flag: "--restore-check-url",
+			flags: ["--restore-check-url"],
 		},
 		{
 			args: ["--restore-check-text", "Dashboard", "open", "https://example.com"],
-			flag: "--restore-check-text",
+			flags: ["--restore-check-text"],
 		},
 		{
 			args: ["--restore-check-fn", "!!localStorage.length", "open", "https://example.com"],
-			flag: "--restore-check-fn",
+			flags: ["--restore-check-fn"],
 		},
 		{
 			args: ["--cdp", "ws://127.0.0.1:9222/devtools/browser/demo", "open", "https://example.com"],
-			flag: "--cdp",
+			flags: ["--cdp"],
 		},
-		{ args: ["--ca-cert", "/tmp/proxy-ca.pem", "open", "https://example.com"], flag: "--ca-cert" },
-		{ args: ["--no-ca-cert", "open", "https://example.com"], flag: "--no-ca-cert" },
-		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flag: "--state" },
-		{ args: ["--auto-connect", "open", "https://example.com"], flag: "--auto-connect" },
-		{ args: ["--auto-connect", "true", "open", "https://example.com"], flag: "--auto-connect" },
-		{ args: ["--webgpu", "open", "https://example.com"], flag: "--webgpu" },
-		{ args: ["--webgpu", "false", "open", "https://example.com"], flag: "--webgpu" },
-		{ args: ["--no-webmcp", "open", "https://example.com"], flag: "--no-webmcp" },
-		{ args: ["--no-webmcp", "false", "open", "https://example.com"], flag: "--no-webmcp" },
-		{ args: ["open", "--enable", "react-devtools", "https://example.com"], flag: "--enable" },
+		{
+			args: ["--ca-cert", "/tmp/proxy-ca.pem", "open", "https://example.com"],
+			flags: ["--ca-cert"],
+		},
+		{ args: ["--no-ca-cert", "open", "https://example.com"], flags: ["--no-ca-cert"] },
+		{ args: ["--state", "/tmp/auth.json", "open", "https://example.com"], flags: ["--state"] },
+		{ args: ["--auto-connect", "open", "https://example.com"], flags: ["--auto-connect"] },
+		{ args: ["--auto-connect", "true", "open", "https://example.com"], flags: ["--auto-connect"] },
+		{ args: ["--webgpu", "open", "https://example.com"], flags: ["--webgpu"] },
+		{ args: ["--webgpu", "false", "open", "https://example.com"], flags: ["--webgpu"] },
+		{ args: ["--no-webmcp", "open", "https://example.com"], flags: ["--no-webmcp"] },
+		{ args: ["--no-webmcp", "false", "open", "https://example.com"], flags: ["--no-webmcp"] },
+		{ args: ["open", "--enable", "react-devtools", "https://example.com"], flags: ["--enable"] },
 		{
 			args: ["open", "--init-script", "/tmp/setup.js", "https://example.com"],
-			flag: "--init-script",
+			flags: ["--init-script"],
 		},
-		{ args: ["--idle-timeout", "5000", "open", "https://example.com"], flag: "--idle-timeout" },
-		{ args: ["--args", "--disable-gpu", "open", "https://example.com"], flag: "--args" },
-		{ args: ["--user-agent", "Custom/1", "open", "https://example.com"], flag: "--user-agent" },
-		{ args: ["--headed", "open", "https://example.com"], flag: "--headed" },
-		{ args: ["--headed", "false", "open", "https://example.com"], flag: "--headed" },
+		{ args: ["--idle-timeout", "5000", "open", "https://example.com"], flags: ["--idle-timeout"] },
+		{ args: ["--args", "--disable-gpu", "open", "https://example.com"], flags: ["--args"] },
+		{ args: ["--user-agent", "Custom/1", "open", "https://example.com"], flags: ["--user-agent"] },
+		{ args: ["--headed", "open", "https://example.com"], flags: ["--headed"] },
+		{ args: ["--headed", "false", "open", "https://example.com"], flags: ["--headed"] },
+		{ args: ["-p", "ios", "open", "https://example.com"], flags: ["-p"] },
+		{ args: ["--provider", "browserbase", "open", "https://example.com"], flags: ["--provider"] },
+		{
+			args: ["-p", "ios", "--device", "iPhone 15 Pro", "open", "https://example.com"],
+			flags: ["--device", "-p"],
+		},
 	] as const) {
 		const plan = buildExecutionPlan([...args], {
 			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
@@ -2094,12 +2126,9 @@ test("buildExecutionPlan blocks startup-scoped flags from silently reusing an ac
 		// Every fixed active-session launch-flag fixture must reject ignored launch options.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.match(plan.validationError ?? "", /launch-scoped flags/i);
-		// Every fixed launch-flag fixture has exactly one startup option.
+		// Each fixed launch fixture must identify every ignored option, including compound provider/device input.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(plan.startupScopedFlags.length, 1);
-		// Every fixed launch-flag fixture must identify its own option.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(plan.startupScopedFlags[0], flag);
+		assert.deepEqual(plan.startupScopedFlags, flags);
 		// Every local/inspection or invalid-argv fixture must avoid implicit injection.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.equal(plan.usedImplicitSession, false);
@@ -2256,28 +2285,6 @@ test("buildExecutionPlan treats pin-tab as a sticky global boolean, not launch-s
 			{ command: "open", subcommand: "https://example.com" },
 			args.join(" "),
 		);
-	}
-});
-
-test("buildExecutionPlan treats provider and iOS device flags as launch-scoped", () => {
-	for (const args of [
-		["-p", "ios", "open", "https://example.com"],
-		["--provider", "browserbase", "open", "https://example.com"],
-		["-p", "ios", "--device", "iPhone 15 Pro", "open", "https://example.com"],
-	] as const) {
-		const plan = buildExecutionPlan([...args], {
-			freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
-			managedSessionActive: true,
-			managedSessionName: "piab-demo-123",
-			sessionMode: "auto",
-		});
-
-		// Every fixed provider-selection fixture must reject active-session relaunch flags.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(plan.validationError ?? "", /launch-scoped flags/i, args.join(" "));
-		// Every fixed provider fixture must recommend a genuinely fresh launch.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(plan.recoveryHint?.recommendedSessionMode, "fresh", args.join(" "));
 	}
 });
 
@@ -3177,4 +3184,352 @@ test("redactSensitiveValue masks obvious secret-bearing object keys", () => {
 			status: { code: "ERR_BLOCKED_BY_CLIENT", key: "Enter" },
 		},
 	);
+});
+
+test("parseCommandInfo recognizes representative current command families", () => {
+	for (const { args, expected } of [
+		{
+			args: ["open", "https://example.com"],
+			expected: { command: "open", subcommand: "https://example.com" },
+		},
+		{
+			args: ["find", "role", "button", "click", "--name", "Export"],
+			expected: { command: "find", subcommand: "role" },
+		},
+		{
+			args: ["wait", "--download", "/tmp/report.csv", "--timeout", "25000"],
+			expected: { command: "wait", subcommand: "--download" },
+		},
+		{
+			args: ["wait", "@button", "--state", "hidden"],
+			expected: { command: "wait", subcommand: "@button" },
+		},
+		{
+			args: ["network", "route", "**/*.js", "--resource-type", "script"],
+			expected: { command: "network", subcommand: "route" },
+		},
+		{
+			args: ["cookies", "set", "--curl", "/tmp/cookies.txt", "--domain", "example.com"],
+			expected: { command: "cookies", subcommand: "set" },
+		},
+		{
+			args: ["auth", "save", "demo", "--password-stdin"],
+			expected: { command: "auth", subcommand: "save" },
+		},
+		{
+			args: ["dashboard", "start", "--port", "4567"],
+			expected: { command: "dashboard", subcommand: "start" },
+		},
+		{
+			args: ["doctor", "--offline", "--quick"],
+			expected: { command: "doctor", subcommand: undefined },
+		},
+		{
+			args: ["install", "--with-deps"],
+			expected: { command: "install", subcommand: "--with-deps" },
+		},
+		{ args: ["upgrade"], expected: { command: "upgrade", subcommand: undefined } },
+		{
+			args: ["chat", "Summarize", "--model", "gpt-5.1"],
+			expected: { command: "chat", subcommand: "Summarize" },
+		},
+		{
+			args: ["react", "renders", "stop", "--json"],
+			expected: { command: "react", subcommand: "renders" },
+		},
+		{
+			args: ["vitals", "https://example.com", "--json"],
+			expected: { command: "vitals", subcommand: "https://example.com" },
+		},
+		{
+			args: ["stream", "enable", "--port", "7777"],
+			expected: { command: "stream", subcommand: "enable" },
+		},
+		{
+			args: ["webmcp", "invoke", "search", "--params", "{}", "--frame", "main"],
+			expected: { command: "webmcp", subcommand: "invoke" },
+		},
+		{
+			args: ["tab", "new", "--label", "Docs", "https://example.com"],
+			expected: { command: "tab", subcommand: "new" },
+		},
+		{
+			args: ["--session", "named", "--profile", "./profile", "tab", "list"],
+			expected: { command: "tab", subcommand: "list" },
+		},
+		{
+			args: [
+				"--user-agent",
+				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+				"--args",
+				"--disable-gpu,--lang=en-US",
+				"open",
+				"https://example.com",
+			],
+			expected: { command: "open", subcommand: "https://example.com" },
+		},
+	] as const) {
+		// Every command-family row is checked against its explicit expected parse result.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.deepEqual(parseCommandInfo([...args]), expected);
+	}
+});
+
+test("parseCommandInfo recognizes open targets after command-scoped init flags", () => {
+	assert.deepEqual(
+		parseCommandInfo(["open", "--enable", "react-devtools", "https://example.com"]),
+		{
+			command: "open",
+			subcommand: "https://example.com",
+		},
+	);
+	assert.deepEqual(
+		parseCommandInfo(["open", "--init-script", "/tmp/setup.js", "https://example.com"]),
+		{
+			command: "open",
+			subcommand: "https://example.com",
+		},
+	);
+	assert.deepEqual(
+		parseCommandInfo(["--enable", "react-devtools", "open", "https://example.com"]),
+		{
+			command: "open",
+			subcommand: "https://example.com",
+		},
+	);
+});
+
+test("parseCommandInfo skips optional boolean flag values before commands", () => {
+	assert.deepEqual(parseCommandInfo(["--headed", "false", "open", "https://chatgpt.com"]), {
+		command: "open",
+		subcommand: "https://chatgpt.com",
+	});
+	assert.deepEqual(parseCommandInfo(["--debug", "true", "tab", "list"]), {
+		command: "tab",
+		subcommand: "list",
+	});
+	assert.deepEqual(parseCommandInfo(["--webgpu", "false", "open", "https://example.com"]), {
+		command: "open",
+		subcommand: "https://example.com",
+	});
+	assert.deepEqual(parseCommandInfo(["--no-webmcp", "false", "webmcp", "list"]), {
+		command: "webmcp",
+		subcommand: "list",
+	});
+	assert.deepEqual(
+		parseCommandInfo([
+			"--ca-cert",
+			"/tmp/proxy-ca.pem",
+			"--no-ca-cert",
+			"false",
+			"open",
+			"https://example.com",
+		]),
+		{
+			command: "open",
+			subcommand: "https://example.com",
+		},
+	);
+});
+
+test("command taxonomy resolves aliases through capability predicates", () => {
+	assert.equal(isCloseCommand("quit"), true);
+	assert.equal(isCloseCommand("exit"), true);
+	assert.equal(isOpenNavigationCommand("goto"), true);
+	assert.equal(isOpenNavigationCommand("navigate"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["key"]), true);
+	assert.equal(isRefGuardedCommand("scrollinto"), true);
+	assert.equal(isCloseCommand("unknown-command"), false);
+});
+
+test("command taxonomy keeps independent capability dimensions explicit", () => {
+	assert.equal(isRefGuardedCommand("fill"), true);
+	assert.equal(isPageMutationCommand("fill"), true);
+	assert.equal(isPageChangeSummaryCommand("fill"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["fill"]), false);
+
+	assert.equal(isRefGuardedCommand("download"), true);
+	assert.equal(isPageMutationCommand("download"), false);
+	assert.equal(isPageChangeSummaryCommand("download"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["download"]), false);
+
+	assert.equal(isRefGuardedCommand("scrollintoview"), true);
+	assert.equal(isPageMutationCommand("scrollintoview"), true);
+	assert.equal(isPageChangeSummaryCommand("scrollintoview"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["scrollintoview"]), true);
+});
+
+test("command taxonomy guards exactly the upstream ref-resolving selector commands", () => {
+	// Complete guarded set from COMMAND_CAPABILITIES, aliases such as `scrollinto` included. The
+	// unguarded list covers every other command token the wrapper knows, so dropping `guardsPageRefs`
+	// from a real command or adding it to an unrelated one (for example `pdf`) both fail here.
+	const guardedCommands = [
+		"check",
+		"click",
+		"dblclick",
+		"diff",
+		"download",
+		"drag",
+		"fill",
+		"focus",
+		"frame",
+		"get",
+		"highlight",
+		"hover",
+		"is",
+		"screenshot",
+		"scroll",
+		"scrollinto",
+		"scrollintoview",
+		"select",
+		"tap",
+		"type",
+		"uncheck",
+		"upload",
+	];
+	const unguardedCommands = [
+		"a11y",
+		"auth",
+		"back",
+		"batch",
+		"chat",
+		"clipboard",
+		"close",
+		"confirm",
+		"connect",
+		"console",
+		"cookies",
+		"dashboard",
+		"deny",
+		"device",
+		"dialog",
+		"doctor",
+		"errors",
+		"eval",
+		"exit",
+		"find",
+		"forward",
+		"goto",
+		"inspect",
+		"install",
+		"key",
+		"keyboard",
+		"keydown",
+		"keyup",
+		"mcp",
+		"mouse",
+		"navigate",
+		"network",
+		"open",
+		"pdf",
+		"plugin",
+		"plugins",
+		"press",
+		"profiler",
+		"profiles",
+		"pushstate",
+		"quit",
+		"react",
+		"read",
+		"record",
+		"reload",
+		"removeinitscript",
+		"session",
+		"set",
+		"skills",
+		"snapshot",
+		"state",
+		"storage",
+		"stream",
+		"swipe",
+		"tab",
+		"trace",
+		"upgrade",
+		"vitals",
+		"wait",
+		"web-vitals",
+		"webmcp",
+		"window",
+	];
+	const knownCommands = [...guardedCommands, ...unguardedCommands];
+	assert.equal(
+		new Set(knownCommands).size,
+		knownCommands.length,
+		"guarded and unguarded lists must stay disjoint",
+	);
+	for (const command of knownCommands) {
+		// Exhaustive fixture variant (knownCommands): this selected path must satisfy its own contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(isKnownCommandToken(command), true, `${command} is not a known command token`);
+	}
+	// diff guarding is deliberately command-level: diff screenshot resolves refs while diff snapshot's
+	// selector is CSS-only, but the wrapper's stale-ref guidance is a clearer failure than upstream's
+	// invalid-selector error and subcommand precision buys nothing observable.
+	assert.deepEqual(
+		knownCommands.filter(isRefGuardedCommand),
+		guardedCommands,
+		"guarded set must match the complete ref-resolving list",
+	);
+	// Upstream passes these selectors/operands through literally and never resolves @e refs for them,
+	// so guarding would falsely reject literal tokens such as `wait --text @e1` or `find text @e1 click`.
+	for (const command of ["a11y", "find", "wait"]) {
+		// Exhaustive fixture variant (["a11y", "find", "wait"]): this selected path must satisfy its own contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(isRefGuardedCommand(command), false, command);
+	}
+});
+
+test("WebMCP mutation commands invalidate refs while list remains read-only", () => {
+	assert.equal(isPageMutationCommand("webmcp", "list"), false);
+	assert.equal(isPageMutationCommand("webmcp", "invoke"), true);
+	assert.equal(isPageChangeSummaryCommand("webmcp", "result"), true);
+	assert.equal(isUnverifiedPageTransitionCommand("webmcp", "cancel"), true);
+	assert.equal(isRefInvalidatingBatchCommand(["webmcp", "list"]), false);
+	assert.equal(isRefInvalidatingBatchCommand(["webmcp", "invoke", "set_message"]), true);
+});
+
+test("recording FPS without a URL preserves restart refs", () => {
+	// `out.webm` is the bare path-operand form without Chromium-style flags.
+	for (const operands of [
+		["take.webm", "--fps", "30"],
+		["--fps", "+24", "take.webm"],
+		["--fps", "12", "take.webm", "--fps", "24"],
+		["out.webm"],
+	]) {
+		// Every FPS position and start/restart variant must preserve the recording operand contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(isRecordPageTransitionCommand(["record", "restart", ...operands]), false);
+		// Every FPS position and start/restart variant must preserve the recording operand contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(isRefInvalidatingBatchCommand(["record", "restart", ...operands]), false);
+		// Every FPS position and start/restart variant must preserve the recording operand contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			isRecordPageTransitionCommand(["record", "start", ...operands]),
+			true,
+			"older native starts replace the page even on failure",
+		);
+		// Every FPS position and start/restart variant must preserve the recording operand contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			isRefInvalidatingBatchCommand(["record", "start", ...operands]),
+			true,
+			"older native starts still need conservative ref protection",
+		);
+		// Every FPS position and start/restart variant must preserve the recording operand contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			isRecordPageTransitionCommand(["record", "restart", ...operands, "https://example.com"]),
+			true,
+		);
+		// Every FPS position and start/restart variant must preserve the recording operand contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			isRefInvalidatingBatchCommand(["record", "restart", ...operands, "https://example.com"]),
+			true,
+			"a navigating restart replaces the page",
+		);
+	}
+	assert.equal(isRecordPageTransitionCommand(["record", "stop"]), false);
+	assert.equal(isRefInvalidatingBatchCommand(["record", "stop"]), false);
 });

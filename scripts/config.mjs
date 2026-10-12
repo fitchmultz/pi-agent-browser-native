@@ -35,6 +35,7 @@ const {
 	getWebSearchProviderLabel,
 	isWebSearchProvider,
 	loadAgentBrowserConfigStateSync,
+	parseAgentBrowserConfigJson,
 	summarizeConfigFiles,
 } = await loadConfigPolicyModule();
 
@@ -111,11 +112,14 @@ function readConfig(path) {
 	if (!existsSync(path)) {
 		return { ...DEFAULT_CONFIG };
 	}
-	const parsed = JSON.parse(readFileSync(path, "utf8"));
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+	const parsed = parseAgentBrowserConfigJson(readFileSync(path, "utf8"));
+	if (!parsed.ok) {
+		throw new Error(`${path}: ${parsed.error}`);
+	}
+	if (!parsed.value || typeof parsed.value !== "object" || Array.isArray(parsed.value)) {
 		throw new Error(`${path} must contain a JSON object.`);
 	}
-	return { ...DEFAULT_CONFIG, ...parsed };
+	return { ...DEFAULT_CONFIG, ...parsed.value };
 }
 
 function writeConfig(path, config) {

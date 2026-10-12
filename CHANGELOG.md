@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Reject stale-ref batch plans after a snapshot too: a later page-changing step requires another snapshot before guarded refs can be reused, even when no refs precede the first snapshot.
+- Keep refs from filtered, searched, diff, and viewport snapshots usable after an in-page URL change instead of rejecting them as stale; the snapshot now advances the session tab target like an ordinary snapshot, and genuine page drift is still rejected.
+- Preserve surplus scroll operands for native validation instead of dropping them in page or CSS-container scroll shims.
+- Require the process start identity recorded at launch before signaling a restored Electron PID; missing, unreadable, or mismatched identities fail closed instead of trusting the flattened process command line. Require a nonempty browser identifier for CDP readiness and debug-port liveness.
+- Accept the stock npm Electron runtime (`default_app.asar`) as Electron evidence so `electron.launch` can run an unpackaged app passed through `appArgs`; non-Electron targets are still rejected.
+- Compare complete page URLs in `electron.status` and `electron.probe` so URLs longer than the 300-character display preview no longer report a false session mismatch; probe page-target state keeps the full URL.
+- Exclude control values under `display: none` or transparent ancestors from QA visible-text assertions while counting text and controls inside `display: contents` wrappers or `visibility: visible` overrides.
+- Apply explicit-filter-wins scope to network-source failed-request and initiator analysis, ignore unrelated initiators, and count repeated request IDs once without collapsing distinct same-URL requests.
+- Omit parser previews and causes from malformed config (extension loading and the config CLI) and search-provider JSON errors so partial credentials cannot leak; keep only the numeric JSON location.
+- Report search-provider HTTP failures with the status and a fixed hint instead of echoing provider status text or response bodies.
+- Render web-search text, details, and structured output from one redacted result.
+- Preserve quoted empty and whitespace-only operands in copyable native skill calls.
+- Honor already-aborted signals in reentrant keyed execution-queue work.
+- Keep an uncontended browser-coordination claim when opportunistic cleanup of stale claims runs past the wait budget on a loaded host, instead of failing the call as "coordination is unavailable or busy"; contended waits and cancellation still fail as before.
+- Keep failed artifact evictions in the spill-budget accounting; clean up failed temporary-root allocations and allow allocation retries.
+
+### Changed
+
+- Remove low-value and duplicate tests, consolidate retained contracts into stronger keepers, repair weak assertions, and replace forced waits with observed completion controls.
+- Prepare the corrected lint checker once, then run ordinary test files at Node's default file concurrency, followed by a serial lane for timing budgets and shared policy-collector fixtures. Isolate browser sockets and inherited Pi identity per harness process; build/pack fixtures no longer rewrite shared checkout output.
+- Include the previously unselected native-text declaration plus batch-fidelity and overlay suites in real-upstream verification.
+- Provide the Go toolchain in the Ubuntu platform-smoke image so its target-local gate can build the corrected lint checker.
+- Remove test-only production seams for schema builders, provider adapters, request timing, and temporary-root debug state, plus unused exports/helpers.
+
 ## 0.9.4 - 2026-10-10
 
 ### Changed

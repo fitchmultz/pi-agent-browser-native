@@ -57,6 +57,7 @@ function execute(row) {
   if (command === 'wait' && row.includes('Never')) throw new Error('Timed out waiting for Never');
   if (command === 'record') {
     if (row[2]?.includes('fail')) throw new Error('Recording already active');
+    fs.writeFileSync(row[2], 'recording bytes');
     return { path: row[2], restarted: subcommand === 'restart' };
   }
   if (command === 'screenshot' || command === 'download' || command === 'network') {
@@ -106,46 +107,49 @@ if (tokens[0] === 'batch') {
 	}
 }
 
-for (const command of ["screenshot", "download"]) {
-	for (const mode of ["direct", "stdin", "raw"]) {
-		test(
-			`artifact mkdir failure is structured before dispatch: ${command}/${mode}`,
-			{ concurrency: false },
-			async () => {
-				await withFixture(async (root, harness, log) => {
-					const parent = join(root, "not-a-directory");
-					await writeFile(parent, "existing file");
-					const step =
-						command === "screenshot"
-							? [command, "not-a-directory/out.png"]
-							: [command, "#download", "not-a-directory/out.txt"];
-					let params: { readonly args: readonly string[]; readonly stdin?: string };
-					if (mode === "direct") {
-						params = { args: ["--json", ...step] };
-					} else if (mode === "stdin") {
-						params = { args: ["batch"], stdin: JSON.stringify([step]) };
-					} else {
-						params = { args: ["batch", step.join(" ")] };
-					}
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
-					assert.equal(result.isError, true);
-					assert.equal(readRecord(result.details).failureCategory, "validation-error");
-					assert.equal(readRecord(result.details).agentBrowserStarted, false);
-					assert.ok(readString(readRecord(result.details).validationError).includes(parent));
-					assert.match(result.content[0]?.text ?? "", /writable.*director/i);
-					assert.deepEqual(
-						readArray(readRecord(result.details).nextActions)
-							.map(readRecord)
-							.map(({ artifactPath, id }) => ({ artifactPath, id })),
-						[{ artifactPath: parent, id: "verify-artifact-path" }],
-					);
-					assert.deepEqual(await readInvocationLog(log), []);
-					assert.equal(await readFile(parent, "utf8"), "existing file");
-				});
-			},
-		);
-	}
-}
+test("artifact mkdir failures reject direct, stdin and raw commands before dispatch", async (t) => {
+	await withFixture(async (root, harness, log) => {
+		const parent = join(root, "not-a-directory");
+		await writeFile(parent, "existing file");
+		for (const command of ["screenshot", "download"]) {
+			for (const mode of ["direct", "stdin", "raw"]) {
+				// Each subtest observes the same protected file only after the preceding preflight finishes.
+				// oxlint-disable-next-line no-await-in-loop
+				await t.test(
+					`artifact mkdir failure is structured before dispatch: ${command}/${mode}`,
+					async () => {
+						const step =
+							command === "screenshot"
+								? [command, "not-a-directory/out.png"]
+								: [command, "#download", "not-a-directory/out.txt"];
+						let params: { readonly args: readonly string[]; readonly stdin?: string };
+						if (mode === "direct") {
+							params = { args: ["--json", ...step] };
+						} else if (mode === "stdin") {
+							params = { args: ["batch"], stdin: JSON.stringify([step]) };
+						} else {
+							params = { args: ["batch", step.join(" ")] };
+						}
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+						assert.equal(result.isError, true);
+						assert.equal(readRecord(result.details).failureCategory, "validation-error");
+						assert.equal(readRecord(result.details).agentBrowserStarted, false);
+						assert.ok(readString(readRecord(result.details).validationError).includes(parent));
+						assert.match(result.content[0]?.text ?? "", /writable.*director/i);
+						assert.deepEqual(
+							readArray(readRecord(result.details).nextActions)
+								.map(readRecord)
+								.map(({ artifactPath, id }) => ({ artifactPath, id })),
+							[{ artifactPath: parent, id: "verify-artifact-path" }],
+						);
+						assert.deepEqual(await readInvocationLog(log), []);
+						assert.equal(await readFile(parent, "utf8"), "existing file");
+					},
+				);
+			}
+		}
+	});
+});
 
 test(
 	"artifact preparation errors keep credential-like path text redacted",
@@ -602,72 +606,78 @@ test(
 	},
 );
 
-for (const batch of [false, true]) {
-	for (const [subcommand, withUrl, fails] of [
-		["start", false, false],
-		["start", false, true],
-		["restart", true, false],
-		["restart", true, true],
-		["restart", false, false],
-		["restart", false, true],
-	] as const) {
-		test(
-			`recording transition warning follows dispatch: ${batch ? "batch" : "direct"}/${subcommand}/${withUrl}/${fails}`,
-			{ concurrency: false },
-			async () => {
-				await withFixture(async (_root, harness) => {
-					await executeRegisteredTool(harness.tool, harness.ctx, { args: ["open", pageUrl] });
-					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["snapshot", "-i"],
-					});
-					assert.equal(snapshot.isError, false);
-					const step = [
-						"record",
-						subcommand,
-						fails ? "fail.webm" : "ok.webm",
-						...(withUrl ? [pageUrl] : []),
-					];
-					const result = await executeRegisteredTool(
-						harness.tool,
-						harness.ctx,
-						batch ? { args: ["batch", "--bail"], stdin: JSON.stringify([step]) } : { args: step },
-					);
-					const text = readString(readRecord(result.content[0]).text);
-					assert.equal(result.isError, fails, text);
-					const transitions = subcommand === "start" || withUrl;
-					assert.equal((text.match(/Page state:/g) ?? []).length, transitions ? 1 : 0);
-					if (transitions) {
-						// Transitioning recording fixtures require conservative ref invalidation; all variants check page-state count above.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(text, /conservatively.*fresh snapshot/i);
-						const invalidation = readRecord(readRecord(result.details).refSnapshotInvalidation);
-						// Each declared transitioning recording fixture must retain structured invalidation.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(invalidation.reason, "page-transition");
-						// Each transitioning fixture must distinguish conservative invalidation from observed navigation.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(readString(invalidation.summary), /conservatively/);
-						// Each transitioning fixture must avoid claiming unobserved page replacement.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(
-							`${text}\n${readString(invalidation.summary)}`,
-							/replaced or navigated|fresh active page|state may not carry over/,
+test("recording transition warnings and ref lifecycles follow all reached native variants", async (t) => {
+	await withFixture(async (_root, harness) => {
+		const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+			args: ["open", pageUrl],
+		});
+		assert.equal(opened.isError, false, opened.content[0]?.text);
+		for (const batch of [false, true]) {
+			for (const [subcommand, withUrl, fails] of [
+				["start", false, false],
+				["start", false, true],
+				["restart", true, false],
+				["restart", true, true],
+				["restart", false, false],
+				["restart", false, true],
+			] as const) {
+				// Fresh native snapshots and unique recording paths isolate each ordered lifecycle variant.
+				// oxlint-disable-next-line no-await-in-loop
+				await t.test(
+					`recording transition warning follows dispatch: ${batch ? "batch" : "direct"}/${subcommand}/${withUrl}/${fails}`,
+					async () => {
+						const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["snapshot", "-i"],
+						});
+						assert.equal(snapshot.isError, false);
+						const step = [
+							"record",
+							subcommand,
+							`take-${batch}-${subcommand}-${withUrl}-${fails ? "fail" : "ok"}.webm`,
+							...(withUrl ? [pageUrl] : []),
+						];
+						const result = await executeRegisteredTool(
+							harness.tool,
+							harness.ctx,
+							batch ? { args: ["batch", "--bail"], stdin: JSON.stringify([step]) } : { args: step },
 						);
-					}
-					const read = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["get", "value", "@e1"],
-					});
-					assert.equal(read.isError, transitions, read.content[0]?.text);
-					if (transitions) {
-						// Transitioning fixtures must classify the guarded follow-up; all variants check its error flag above.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(read.details?.failureCategory, "stale-ref");
-					}
-				});
-			},
-		);
-	}
-}
+						const text = readString(readRecord(result.content[0]).text);
+						assert.equal(result.isError, fails, text);
+						const transitions = subcommand === "start" || withUrl;
+						assert.equal((text.match(/Page state:/g) ?? []).length, transitions ? 1 : 0);
+						if (transitions) {
+							// Transitioning recording fixtures require conservative ref invalidation; all variants check page-state count above.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.match(text, /conservatively.*fresh snapshot/i);
+							const invalidation = readRecord(readRecord(result.details).refSnapshotInvalidation);
+							// Each declared transitioning recording fixture must retain structured invalidation.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.equal(invalidation.reason, "page-transition");
+							// Each transitioning fixture must distinguish conservative invalidation from observed navigation.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.match(readString(invalidation.summary), /conservatively/);
+							// Each transitioning fixture must avoid claiming unobserved page replacement.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.doesNotMatch(
+								`${text}\n${readString(invalidation.summary)}`,
+								/replaced or navigated|fresh active page|state may not carry over/,
+							);
+						}
+						const read = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["get", "value", "@e1"],
+						});
+						assert.equal(read.isError, transitions, read.content[0]?.text);
+						if (transitions) {
+							// Transitioning fixtures must classify the guarded follow-up; all variants check its error flag above.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.equal(read.details?.failureCategory, "stale-ref");
+						}
+					},
+				);
+			}
+		}
+	});
+});
 
 test(
 	"recording transition warning stays parseable in explicit JSON failures",

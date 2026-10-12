@@ -20,12 +20,6 @@ const harness = readRecord(
 		sessionId: `execution-order-${actor}`,
 		sessionFile: join(root, `session-${actor}.jsonl`),
 		prompt: "Use only the loopback execution-order fixture and its harmless counters.",
-		onAppendEntry(customType: string, data: unknown): void {
-			appendFileSync(
-				join(root, `session-${actor}.jsonl`),
-				`${JSON.stringify({ type: "custom", customType, data })}\n`,
-			);
-		},
 	}),
 );
 const { handlers, ctx, tools } = harness;
