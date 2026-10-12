@@ -81,7 +81,9 @@ function execute(row) {
     if (mode === 'no-receipt' || mode === 'no-recording-no-receipt') state.last = null;
     if (mode === 'stale-batch') state.last.capture.startedAt = new Date(Date.now() - 60000).toISOString();
     save();
-    fs.writeFileSync(${JSON.stringify(join(root, "stop-ready"))}, 'ready');
+    // Publish atomically: a directory watcher can fire on file creation before its content lands.
+    fs.writeFileSync(${JSON.stringify(join(root, "stop-ready.tmp"))}, 'ready');
+    fs.renameSync(${JSON.stringify(join(root, "stop-ready.tmp"))}, ${JSON.stringify(join(root, "stop-ready"))});
     if (mode === 'encode-failed') return state.last;
     if (!['timeout', 'timeout-native-failed', 'stale-batch'].includes(mode)) throw new Error('No recording in progress');
     setInterval(() => {}, 1000); return undefined;

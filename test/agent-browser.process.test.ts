@@ -696,7 +696,7 @@ for (const mode of ["timeout", "abort"] as const) {
 		const timeoutExitCode = process.platform === "win32" ? 1 : 124;
 		await writeFakeAgentBrowserBinary(
 			root,
-			`const fs = require("node:fs"); const stdin = fs.readFileSync(0, "utf8"); fs.writeFileSync(${JSON.stringify(receiptPath)}, JSON.stringify({pid:process.pid,stdin})); setInterval(() => {}, 1000);`,
+			`const fs = require("node:fs"); const stdin = fs.readFileSync(0, "utf8"); fs.writeFileSync(${JSON.stringify(`${receiptPath}.tmp`)}, JSON.stringify({pid:process.pid,stdin})); fs.renameSync(${JSON.stringify(`${receiptPath}.tmp`)}, ${JSON.stringify(receiptPath)}); setInterval(() => {}, 1000);`,
 		);
 		t.mock.timers.enable({ apis: ["setTimeout"] });
 		const pending = runAgentBrowserProcess({

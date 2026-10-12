@@ -1118,7 +1118,9 @@ test(
 const fs = require("node:fs");
 const path = require("node:path");
 const userDataDir = process.argv.find((arg) => arg.startsWith("--user-data-dir=")).slice("--user-data-dir=".length);
-fs.writeFileSync(${JSON.stringify(launchLogPath)}, JSON.stringify({ pid: process.pid, userDataDir }));
+// Publish atomically: the test polls this receipt and parses it as soon as it exists.
+fs.writeFileSync(${JSON.stringify(`${launchLogPath}.tmp`)}, JSON.stringify({ pid: process.pid, userDataDir }));
+fs.renameSync(${JSON.stringify(`${launchLogPath}.tmp`)}, ${JSON.stringify(launchLogPath)});
 if (process.argv.includes("--break-marker")) {
 	const marker = path.join(path.dirname(userDataDir), ".pi-agent-browser-owner.json");
 	fs.unlinkSync(marker);
