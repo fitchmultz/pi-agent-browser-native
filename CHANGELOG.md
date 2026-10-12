@@ -8,6 +8,8 @@
 - Keep refs from filtered, searched, diff, and viewport snapshots usable after an in-page URL change instead of rejecting them as stale; the snapshot now advances the session tab target like an ordinary snapshot, and genuine page drift is still rejected.
 - Preserve surplus scroll operands for native validation instead of dropping them in page or CSS-container scroll shims.
 - Require the process start identity recorded at launch before signaling a restored Electron PID; missing, unreadable, or mismatched identities fail closed instead of trusting the flattened process command line. Require a nonempty browser identifier for CDP readiness and debug-port liveness.
+- Accept the stock npm Electron runtime (`default_app.asar`) as Electron evidence so `electron.launch` can run an unpackaged app passed through `appArgs`; non-Electron targets are still rejected.
+- Compare complete page URLs in `electron.status` and `electron.probe` so URLs longer than the 300-character display preview no longer report a false session mismatch; probe page-target state keeps the full URL.
 - Exclude control values under `display: none` or transparent ancestors from QA visible-text assertions while counting text and controls inside `display: contents` wrappers or `visibility: visible` overrides.
 - Apply explicit-filter-wins scope to network-source failed-request and initiator analysis, ignore unrelated initiators, and count repeated request IDs once without collapsing distinct same-URL requests.
 - Omit parser previews and causes from malformed config (extension loading and the config CLI) and search-provider JSON errors so partial credentials cannot leak; keep only the numeric JSON location.
