@@ -78,7 +78,7 @@ function execute(row) {
     if (mode === 'old-receipt') fs.utimesSync(receipt.path, new Date(ended), new Date(ended));
     if (mode === 'pending-reused-path') { state.last = { ...state.last, recordingId: 'older-take', capturedFrames: 999 }; state.current = { ...receipt, capturedFrames: 0 }; }
     else state.current = null;
-    if (mode === 'no-receipt' || mode === 'no-recording-no-receipt') state.last = null;
+    if (mode === 'no-recording-no-receipt') state.last = null;
     if (mode === 'stale-batch') state.last.capture.startedAt = new Date(Date.now() - 60000).toISOString();
     save();
     // Publish atomically: a directory watcher can fire on file creation before its content lands.
@@ -288,7 +288,6 @@ for (const mode of [
 	"namespace-mismatch",
 	"path-mismatch",
 	"file-mismatch",
-	"no-receipt",
 	"query-failed",
 	"timeout-native-failed",
 	"encode-failed",
@@ -385,7 +384,7 @@ for (const mode of [
 					"id-mismatch",
 					"namespace-mismatch",
 					"path-mismatch",
-					"no-receipt",
+					"no-recording-no-receipt",
 					"query-failed",
 				].includes(mode)
 			) {
