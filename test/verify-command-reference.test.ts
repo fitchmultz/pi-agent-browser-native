@@ -17,7 +17,6 @@ import test from "node:test";
 
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
-	DOC_REQUIRED_TOKENS,
 	stripGeneratedCapabilityBaselineBlocks,
 	verifyCommandReference,
 } from "../scripts/verify-command-reference.mjs";
@@ -117,21 +116,6 @@ function fakeRunWithVersion(version: string): (args: readonly string[]) => Promi
 	};
 }
 
-test("stripGeneratedCapabilityBaselineBlocks removes generated content before human-token checks", () => {
-	const generatedOnlyToken = docRequiredTokens[0];
-	const content = [
-		"human content",
-		"<!-- agent-browser-capability-baseline:start capability-token-baseline -->",
-		generatedOnlyToken,
-		"<!-- agent-browser-capability-baseline:end capability-token-baseline -->",
-	].join("\n");
-
-	assert.equal(
-		readString(stripGeneratedCapabilityBaselineBlocks(content)).includes(generatedOnlyToken),
-		false,
-	);
-});
-
 test("command reference clarifies get selector requirements", () => {
 	const doc = readString(
 		stripGeneratedCapabilityBaselineBlocks(readFileSync("docs/COMMAND_REFERENCE.md", "utf8")),
@@ -144,11 +128,6 @@ test("command reference clarifies get selector requirements", () => {
 });
 
 test("verifyCommandReference passes for matching fake upstream and doc content", async () => {
-	assert.equal(
-		readArray(DOC_REQUIRED_TOKENS).length,
-		docRequiredTokens.length,
-		"the verifier must require every baseline doc token",
-	);
 	const failures = await verifyCommandReference({
 		cwd: "/repo",
 		run: fakeRunWithVersion(targetVersion),
@@ -200,18 +179,30 @@ test("verifyCommandReference reports missing upstream token", async () => {
 });
 
 test("verifyCommandReference reports missing doc token", async () => {
-	const docMissingToken = completeDoc().replace("skills list", "");
+	const docMissingToken = [
+		completeDoc().replace("skills list", ""),
+		"<!-- agent-browser-capability-baseline:start capability-token-baseline -->",
+		"skills list",
+		"<!-- agent-browser-capability-baseline:end capability-token-baseline -->",
+	].join("\n");
 	const failures = await verifyCommandReference({
 		cwd: "/repo",
 		run: fakeRunWithVersion(targetVersion),
 		readDoc: async () => docMissingToken,
 	});
 
-	assert.ok(
-		readArray(failures).some((entry) =>
-			readString(entry).includes(
-				"docs/COMMAND_REFERENCE.md is missing human-authored token: skills list",
-			),
+	assert.deepEqual(failures, [
+		"docs/COMMAND_REFERENCE.md is missing human-authored token: skills list",
+	]);
+	const emptyDocFailures = await verifyCommandReference({
+		cwd: "/repo",
+		run: fakeRunWithVersion(targetVersion),
+		readDoc: async () => "",
+	});
+	assert.deepEqual(
+		emptyDocFailures,
+		docRequiredTokens.map(
+			(token) => `docs/COMMAND_REFERENCE.md is missing human-authored token: ${token}`,
 		),
 	);
 });

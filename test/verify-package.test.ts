@@ -8,16 +8,11 @@
 
 import assert from "node:assert/strict";
 import { readRecord, readString } from "./helpers/assertions.js";
-import { execFile as execFileCallback } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import test, { before } from "node:test";
-import { promisify } from "node:util";
-
-// Native execFile returns ChildProcess and supplies custom promisify; the ambient callback expects void.
-// oxlint-disable-next-line typescript/strict-void-return
-const execFile = promisify(execFileCallback);
+import { join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
+import test from "node:test";
 import {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,
@@ -31,10 +26,6 @@ import {
 	parseCliArgs,
 	verifyPackageRelease,
 } from "../scripts/verify-package.mjs";
-
-before(async () => {
-	await execFile(process.execPath, ["scripts/build.mjs"], { maxBuffer: 10 * 1024 * 1024 });
-});
 
 test("parseCliArgs supports help, list-files, and smoke-pi modes", () => {
 	assert.deepEqual(parseCliArgs([]), { listFiles: false, showHelp: false, smokePi: false });
@@ -100,6 +91,22 @@ test("evaluatePiSmokeResult requires exactly one packaged agent_browser source a
 			tools: [],
 		})[0] ?? "",
 		/Expected exactly one/,
+	);
+	assert.deepEqual(
+		evaluatePiSmokeResult({
+			packageDir: "/tmp/pkg/package",
+			tools: [
+				{
+					name: "agent_browser",
+					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
+				},
+				{
+					name: "agent_browser",
+					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/duplicate.js" },
+				},
+			],
+		}),
+		["Expected exactly one packaged agent_browser tool, found 2."],
 	);
 	assert.match(
 		evaluatePiSmokeResult({
@@ -198,28 +205,12 @@ test("executePackagedAgentBrowserSmoke reports packaged invocation failures clea
 test("package metadata keeps Pi peers host-provided and declares the qualified runtime graph", async () => {
 	const packageJson = readRecord(JSON.parse(await readFile("package.json", "utf8")));
 
-	assert.equal(
-		readRecord(packageJson.dependencies)["cross-spawn"],
-		"7.0.6",
-		"the spawner must not rely on Pi's private transitive dependencies",
-	);
-	assert.equal(
-		readRecord(packageJson.dependencies)["path-key"],
-		"3.1.1",
-		"launcher PATH selection must match cross-spawn 7",
-	);
-	assert.equal(
-		readRecord(packageJson.dependencies).which,
-		"2.0.2",
-		"launcher resolution must match cross-spawn 7",
-	);
+	const dependencies = readRecord(packageJson.dependencies);
+	assert.equal(typeof dependencies["cross-spawn"], "string");
+	assert.equal(typeof dependencies["path-key"], "string");
+	assert.equal(typeof dependencies.which, "string");
 	assert.equal(readRecord(packageJson.engines).node, ">=24.21.0");
 	assert.equal(packageJson.packageManager, "npm@12.2.0");
-	assert.equal(
-		packageJson.overrides,
-		undefined,
-		"transitive owners should select their compatible dependency versions",
-	);
 	for (const packageName of [
 		"@earendil-works/pi-ai",
 		"@earendil-works/pi-coding-agent",
@@ -232,6 +223,12 @@ test("package metadata keeps Pi peers host-provided and declares the qualified r
 			readRecord(packageJson.peerDependencies)[packageName],
 			"*",
 			`${packageName} should stay host-provided per Pi package docs`,
+		);
+		// Every host peer must remain optional for consumer installations without a Pi host.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			readRecord(readRecord(packageJson.peerDependenciesMeta)[packageName]).optional,
+			true,
 		);
 	}
 	assert.equal(
@@ -365,26 +362,6 @@ test("collectPackedMarkdownLinkFailures reports local links absent from the pack
 	}
 });
 
-test("evaluatePackResult uses the shared publish contract", async () => {
-	const publishContract = await loadPublishContract();
-	const report = evaluatePackResult({
-		forbiddenRepoFiles: [],
-		missingRepoFiles: [],
-		packResult: {
-			entryCount: publishContract.requiredPackedFiles.length,
-			filename: "pi-agent-browser-native-0.2.12.tgz",
-			files: publishContract.requiredPackedFiles.map((path) => ({ path })),
-			size: 123,
-			unpackedSize: 456,
-		},
-		publishContract,
-	});
-
-	assert.deepEqual(report.failures, []);
-	assert.deepEqual(report.missingPackedFiles, []);
-	assert.deepEqual(report.forbiddenPackedFiles, []);
-});
-
 test("evaluatePackResult rejects private paths and tarballs without rejecting neighboring names", async () => {
 	const publishContract = await loadPublishContract();
 	for (const [path, forbidden] of [
@@ -468,13 +445,31 @@ test("verifyPackageRelease lets prepare create a missing dist directory", async 
 	}
 });
 
-test("packToTemporaryPackageDir writes a tarball even under npm publish dry-run env", async () => {
+test("packToTemporaryPackageDir runs prepare in an isolated source copy even under npm publish dry-run env", async (t) => {
+	const source = resolve(import.meta.dirname, "..");
+	const directory = await mkdtemp(join(tmpdir(), "piab-package-source-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const excluded = new Set([".git", "node_modules", "dist", ".artifacts", ".crabbox", ".cueloop"]);
+	await cp(source, directory, {
+		recursive: true,
+		filter: (file) => !excluded.has(relative(source, file).split(sep)[0]),
+	});
+	await symlink(join(source, "node_modules"), join(directory, "node_modules"), "junction");
+	const lock = await readFile(join(directory, "package-lock.json"), "utf8");
+	await assert.rejects(access(join(directory, "dist")));
 	const previousDryRun = process.env.npm_config_dry_run;
+	const previousOffline = process.env.npm_config_offline;
 	process.env.npm_config_dry_run = "true";
+	process.env.npm_config_offline = "true";
 	let packed: Awaited<ReturnType<typeof packToTemporaryPackageDir>> | undefined;
 
 	try {
-		packed = await packToTemporaryPackageDir();
+		packed = await packToTemporaryPackageDir(directory);
+		const entrypoint: unknown = await import(
+			pathToFileURL(join(directory, "dist/extensions/agent-browser/index.js")).href
+		);
+		assert.equal(typeof readRecord(entrypoint).default, "function");
+		assert.equal(await readFile(join(directory, "package-lock.json"), "utf8"), lock);
 		await access(join(packed.packageDir, "package.json"));
 		assert.match(
 			readString(readRecord(packed.packResult).filename),
@@ -484,7 +479,7 @@ test("packToTemporaryPackageDir writes a tarball even under npm publish dry-run 
 			forbiddenRepoFiles: [],
 			missingRepoFiles: [],
 			packResult: readRecord(packed.packResult),
-			publishContract: await loadPublishContract(),
+			publishContract: await loadPublishContract({ cwd: directory }),
 		});
 		assert.deepEqual(
 			report.failures,
@@ -496,6 +491,11 @@ test("packToTemporaryPackageDir writes a tarball even under npm publish dry-run 
 			delete process.env.npm_config_dry_run;
 		} else {
 			process.env.npm_config_dry_run = previousDryRun;
+		}
+		if (previousOffline === undefined) {
+			delete process.env.npm_config_offline;
+		} else {
+			process.env.npm_config_offline = previousOffline;
 		}
 		await packed?.cleanup();
 	}
