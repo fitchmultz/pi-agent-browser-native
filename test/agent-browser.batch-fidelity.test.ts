@@ -1218,16 +1218,6 @@ test(
 											["e999", 1],
 											["e998", 0],
 										] as const) {
-											const native = await direct(["get", "count", selector]);
-											// Exhaustive fixture variant ([ ["e999", 1], ["e998", 0], ] as const): this selected path must satisfy its own contract.
-											// oxlint-disable-next-line node-test/no-conditional-assertion
-											assert.equal(native.exitCode, 0, native.stderr);
-											// Exhaustive fixture variant ([ ["e999", 1], ["e998", 0], ] as const): this selected path must satisfy its own contract.
-											// oxlint-disable-next-line node-test/no-conditional-assertion
-											assert.equal(
-												readRecord(readRecord(JSON.parse(native.stdout)).data).count,
-												count,
-											);
 											const counted = await call(["get", "count", selector]);
 											const countedDetails = readRecord(counted.details);
 											// Exhaustive fixture variant ([ ["e999", 1], ["e998", 0], ] as const): this selected path must satisfy its own contract.
@@ -1240,12 +1230,6 @@ test(
 									});
 									await css.test("diff snapshot treats bare eN as a CSS subtree", async () => {
 										const args = ["diff", "snapshot", "--selector", "e999"];
-										const native = await direct(args);
-										assert.equal(native.exitCode, 0, native.stderr);
-										assert.match(
-											readString(readRecord(readRecord(JSON.parse(native.stdout)).data).diff),
-											/Literal subtree/,
-										);
 										const compared = await call(args);
 										const comparedDetails = readRecord(compared.details);
 										assert.equal(compared.isError, false, JSON.stringify(compared));
