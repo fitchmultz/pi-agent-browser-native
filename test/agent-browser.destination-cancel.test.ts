@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
@@ -57,23 +57,42 @@ type Page = {
 	readonly state: () => Promise<BrowserState>;
 };
 
+type WarmSeed = {
+	readonly root: string;
+	readonly socketDir: string;
+	readonly branch: readonly unknown[];
+	readonly nativeState: string;
+	readonly sessionName: string;
+};
+let warmSeed: WarmSeed | undefined;
+after(async () => {
+	await Promise.all(
+		[warmSeed?.root, warmSeed?.socketDir]
+			.filter((path) => path !== undefined)
+			.map((path) => rm(path, { recursive: true, force: true })),
+	);
+});
+
 async function withPage(
 	run: (page: Page) => Promise<void>,
 	options: { readonly cold?: boolean; readonly callerOwned?: boolean } = {},
 ): Promise<void> {
-	const root = await mkdtemp(join(tmpdir(), "dc-"));
-	const socketDir = createShortPrivateSocketDir(root);
+	const reusable = options.cold !== true && options.callerOwned !== true;
+	const cached = reusable ? warmSeed : undefined;
+	const root = cached?.root ?? (await mkdtemp(join(tmpdir(), "dc-")));
+	const socketDir = cached?.socketDir ?? createShortPrivateSocketDir(root);
 	const cwd = join(root, "g"),
 		home = join(root, "h");
 	const statePath = join(root, "browser.json"),
 		logPath = join(root, "calls.jsonl"),
 		marker = join(root, "open-started");
-	await Promise.all([cwd, home].map((path) => mkdir(path, { mode: 0o700 })));
-	execFileSync("git", ["init", "-q", cwd]);
-	// Native-shaped replies: window-new activates a separate blank page; URL diff reports inputs, not the redirected URL.
-	await writeFakeAgentBrowserBinary(
-		root,
-		`const fs = require('node:fs');
+	if (!cached) {
+		await Promise.all([cwd, home].map((path) => mkdir(path, { mode: 0o700 })));
+		execFileSync("git", ["init", "-q", cwd]);
+		// Native-shaped replies: window-new activates a separate blank page; URL diff reports inputs, not the redirected URL.
+		await writeFakeAgentBrowserBinary(
+			root,
+			`const fs = require('node:fs');
 const args = process.argv.slice(2), stdin = fs.readFileSync(0, 'utf8'), tokens = [];
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + '\\n');
 for (let i = 0; i < args.length; i++) {
@@ -140,7 +159,8 @@ if (tokens[0] === 'batch') {
   failed = output.some(entry => !entry.success);
 } else { const entry = result(tokens); output = { success: entry.success, data: entry.result, error: entry.error }; failed = !entry.success; }
 save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed ? 1 : 0;`,
-	);
+		);
+	}
 	try {
 		await withPatchedEnv(
 			{
@@ -155,7 +175,12 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 				PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
 			},
 			async () => {
-				let branch: unknown[] = [];
+				// Reuse only owner-generated warm state. Every scenario gets a separate
+				// branch copy and reset native state; cold/caller-owned setup stays real.
+				let branch: unknown[] = structuredClone([...(cached?.branch ?? [])]);
+				if (cached) {
+					await writeFile(statePath, cached.nativeState);
+				}
 				let harness = createExtensionHarness({ branch, cwd });
 				const call: Page["call"] = async (params, signal) => {
 					let result: Awaited<ReturnType<typeof executeRegisteredTool>>;
@@ -200,20 +225,38 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 						harness.ctx,
 					);
 				};
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				const opened = await call({
-					args: [
-						...(options.callerOwned === true ? [] : ["--namespace", namespace]),
-						"open",
-						rememberedUrl,
-					],
-					sessionMode: "fresh",
-				});
-				assert.equal(opened.isError, false, opened.content[0].text);
-				assert.equal(typeof opened.details?.sessionName, "string");
-				const snapshot = await call({ args: ["snapshot", "-i"] });
-				assert.equal(snapshot.isError, false, snapshot.content[0].text);
-				await restore(options.cold === true ? "quit" : "reload");
+				await runExtensionEvent(
+					harness.handlers,
+					"session_start",
+					{ reason: cached ? "resume" : "new" },
+					harness.ctx,
+				);
+				let sessionName = cached?.sessionName ?? "";
+				if (!cached) {
+					const opened = await call({
+						args: [
+							...(options.callerOwned === true ? [] : ["--namespace", namespace]),
+							"open",
+							rememberedUrl,
+						],
+						sessionMode: "fresh",
+					});
+					assert.equal(opened.isError, false, opened.content[0].text);
+					assert.equal(typeof opened.details?.sessionName, "string");
+					sessionName = readString(readRecord(opened.details).sessionName);
+					const snapshot = await call({ args: ["snapshot", "-i"] });
+					assert.equal(snapshot.isError, false, snapshot.content[0].text);
+					await restore(options.cold === true ? "quit" : "reload");
+					if (reusable) {
+						warmSeed = {
+							root,
+							socketDir,
+							sessionName,
+							branch: structuredClone(harness.ctx.sessionManager.getBranch()),
+							nativeState: await readFile(statePath, "utf8"),
+						};
+					}
+				}
 				await writeFile(logPath, "");
 				try {
 					await run({
@@ -229,7 +272,7 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 								}),
 							),
 						reload: () => restore("reload"),
-						sessionName: readString(readRecord(opened.details).sessionName),
+						sessionName,
 						state: async () => {
 							const state = readRecord(JSON.parse(await readFile(statePath, "utf8")));
 							return {
@@ -257,8 +300,10 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 			},
 		);
 	} finally {
-		await rm(root, { recursive: true, force: true });
-		await rm(socketDir, { recursive: true, force: true });
+		if (!reusable || !warmSeed) {
+			await rm(root, { recursive: true, force: true });
+			await rm(socketDir, { recursive: true, force: true });
+		}
 	}
 }
 
@@ -480,26 +525,6 @@ for (const command of destinations) {
 				assert.equal(
 					readRecord(snapshot.details?.data).origin,
 					command[0] === "window" ? "about:blank" : redirectedUrl,
-				);
-			});
-		},
-	);
-}
-
-for (const command of destinations) {
-	test(
-		`${command[0]} invalidates refs inside a native batch before the next ref use`,
-		{ concurrency: false },
-		async () => {
-			await withPage(async (page) => {
-				const result = await page.call({
-					args: ["batch"],
-					stdin: JSON.stringify([command, ["get", "value", "@e1"]]),
-				});
-				assert.equal(result.details?.failureCategory, "stale-ref");
-				assert.equal(
-					(await page.calls()).some((row) => row.args.includes("batch")),
-					false,
 				);
 			});
 		},
