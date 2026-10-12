@@ -21,7 +21,6 @@ import type {
 	SessionArtifactManifestEntry,
 } from "../extensions/agent-browser/lib/results/contracts.js";
 import {
-	DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
 	getSessionArtifactManifestMaxEntries,
 	mergeSessionArtifactManifest,
 } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
@@ -1068,57 +1067,24 @@ test(
 	},
 );
 
-test("artifact manifest defaults to a QA-friendly recent window", () => {
-	assert.equal(
-		getSessionArtifactManifestMaxEntries({}),
-		DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-	);
-	assert.equal(DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES, 100);
-});
-
-test("artifact manifest recent window is configurable and ignores invalid values", async () => {
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3" },
-		async () => {
-			assert.equal(getSessionArtifactManifestMaxEntries(), 3);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "0" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "-1" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3.5" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "not-a-number" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
+test("artifact manifest recent window is configurable and ignores invalid values", () => {
+	for (const [value, expected] of [
+		[undefined, 100],
+		["3", 3],
+		["0", 100],
+		["-1", 100],
+		["3.5", 100],
+		["not-a-number", 100],
+	] as const) {
+		// Every fixed valid/default/invalid environment value must independently satisfy the window contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			getSessionArtifactManifestMaxEntries({
+				PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: value,
+			}),
+			expected,
+		);
+	}
 });
 
 test("artifact manifest evicts oldest metadata entries at the configured recent window", async () => {
@@ -1200,35 +1166,6 @@ test("buildToolPresentation compacts oversized generic outputs and prints the ac
 	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	assert.match(await readFile(spillPath, "utf8"), /Large eval row 220/);
 	await rm(spillPath, { force: true });
-});
-
-test("buildToolPresentation formats batch output for the model", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "batch" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: [
-				{
-					command: ["open", "https://developer.mozilla.org"],
-					success: true,
-					result: { title: "MDN Web Docs" },
-				},
-				{ command: ["get", "title"], success: true, result: { title: "MDN Web Docs" } },
-			],
-		},
-	});
-
-	assert.equal(presentation.content[0].type, "text");
-	assert.match(
-		readString(readRecord(presentation.content[0]).text),
-		/Step 1 — open https:\/\/developer.mozilla.org/,
-	);
-	assert.match(readString(readRecord(presentation.content[0]).text), /MDN Web Docs/);
-	assert.equal(Array.isArray(presentation.data), true);
-	assert.equal(presentation.batchSteps?.length, 2);
-	assert.equal(presentation.batchSteps[0].commandText, "open https://developer.mozilla.org");
-	assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
 });
 
 test("buildToolPresentation preserves partial batch results when a later step fails", async () => {
@@ -1552,6 +1489,10 @@ test("buildToolPresentation reuses standalone inline screenshot rendering inside
 		assert.match(text, /Step 1 — open https:\/\/example.com/);
 		assert.match(text, /Example Domain/);
 		assert.match(text, /Step 2 — screenshot/);
+		assert.equal(Array.isArray(presentation.data), true);
+		assert.equal(presentation.batchSteps?.length, 2);
+		assert.equal(presentation.batchSteps[0].commandText, "open https://example.com");
+		assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
 		assert.match(text, /Saved image: batched.png/);
 		assert.match(text, /1 inline image attachment below/);
 		assert.equal(presentation.content[1].type, "image");
@@ -1562,7 +1503,7 @@ test("buildToolPresentation reuses standalone inline screenshot rendering inside
 		assert.equal(presentation.artifacts[0].absolutePath, imagePath);
 		assert.equal(presentation.artifacts[0].mediaType, "image/png");
 		assert.equal(presentation.artifacts[0].exists, true);
-		assert.equal(presentation.batchSteps?.[1]?.imagePath, imagePath);
+		assert.equal(presentation.batchSteps[1].imagePath, imagePath);
 		assert.equal(presentation.batchSteps[1].artifacts?.[0]?.kind, "image");
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
