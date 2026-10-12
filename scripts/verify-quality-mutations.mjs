@@ -48,6 +48,15 @@ const mutations = [
 	},
 ];
 
+// GitHub Actions stops showing a step log after one very long line, such as the
+// policy inventory JSON; shorten such lines wherever child output is printed.
+function forLog(text) {
+	return text.replace(
+		/^.{2001,}$/gmu,
+		(line) => `${line.slice(0, 2000)}… [${line.length - 2000} more characters]`,
+	);
+}
+
 function runNode(directory, args) {
 	const result = spawnSync(process.execPath, args, {
 		cwd: directory,
@@ -56,7 +65,9 @@ function runNode(directory, args) {
 		maxBuffer: 64 * 1024 * 1024,
 	});
 	if (result.error !== undefined || result.signal !== null || result.status === null) {
-		console.error(stripVTControlCharacters(`${result.stdout ?? ""}\n${result.stderr ?? ""}`));
+		console.error(
+			forLog(stripVTControlCharacters(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)),
+		);
 		throw result.error ?? new Error(`Quality child did not complete: ${result.signal}`);
 	}
 	return {
@@ -88,7 +99,7 @@ function applyMutation(directory, mutation) {
 			mutation.file,
 		]);
 		if (formatter.status !== 0) {
-			throw new Error(`Mutation formatting failed:\n${formatter.output}`);
+			throw new Error(`Mutation formatting failed:\n${forLog(formatter.output)}`);
 		}
 	}
 }
@@ -104,7 +115,7 @@ function verifyRejection(result, mutation) {
 		!stageOutput.replaceAll("\\", "/").includes(mutation.evidencePath ?? mutation.file)
 	) {
 		throw new Error(
-			`${mutation.name} did not fail at its expected stage/diagnostic:\n${result.output}`,
+			`${mutation.name} did not fail at its expected stage/diagnostic:\n${forLog(result.output)}`,
 		);
 	}
 }
@@ -141,9 +152,11 @@ Exit codes: 0 all controls verified/help; 1 baseline or mutation failure.`);
 	}
 	const baseline = acceptance(root);
 	if (baseline.status !== 0) {
-		throw new Error(`Clean acceptance must pass before mutation proof:\n${baseline.output}`);
+		throw new Error(
+			`Clean acceptance must pass before mutation proof:\n${forLog(baseline.output)}`,
+		);
 	}
-	console.log(baseline.output);
+	console.log(forLog(baseline.output));
 	for (const mutation of mutations) {
 		verifyMutation(mutation);
 	}
