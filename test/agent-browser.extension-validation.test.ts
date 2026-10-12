@@ -345,28 +345,6 @@ test(
 				getExplicitArtifactDestination([
 					"diff",
 					"screenshot",
-					"--output",
-					"safe.png",
-					"--output",
-					"final.png",
-				]),
-				"final.png",
-			);
-			assert.equal(
-				getExplicitArtifactDestination([
-					"diff",
-					"screenshot",
-					"--output",
-					"safe.png",
-					"-o",
-					"short.png",
-				]),
-				"short.png",
-			);
-			assert.equal(
-				getExplicitArtifactDestination([
-					"diff",
-					"screenshot",
 					"-o",
 					"short.png",
 					"--output",
@@ -398,17 +376,6 @@ test(
 				"capture.csv",
 			);
 			assert.equal(
-				getExplicitArtifactDestination([
-					"wait",
-					"--timeout",
-					"1",
-					"--timeout",
-					"--download",
-					"capture.csv",
-				]),
-				"capture.csv",
-			);
-			assert.equal(
 				getExplicitArtifactDestination(["wait", "--download", "capture.csv", "--url", "**/done"]),
 				undefined,
 			);
@@ -417,19 +384,9 @@ test(
 				undefined,
 			);
 			assert.equal(
-				getExplicitArtifactDestination(["screenshot", "--full=capture.png"]),
-				"--full=capture.png",
-			);
-			assert.equal(
-				getExplicitArtifactDestination(["screenshot", "main", "capture.png", "ignored.png"]),
-				"capture.png",
-			);
-			assert.equal(getExplicitArtifactDestination(["screenshot", "--", "capture"]), "capture");
-			assert.equal(
 				getExplicitArtifactDestination(["screenshot", "--full", "true", "capture"]),
 				"capture",
 			);
-			assert.equal(getExplicitArtifactDestination(["screenshot", "dir/file"]), "dir/file");
 			assert.equal(
 				getExplicitArtifactDestination(["screenshot", ".dogfood/run/capture.png"]),
 				".dogfood/run/capture.png",

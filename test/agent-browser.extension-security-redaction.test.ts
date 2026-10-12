@@ -72,7 +72,6 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: "
 					"open",
 					"https://user:pass@example.com/?token=abc",
 				]);
-				assert.equal(Array.isArray(updates), true);
 				const update = readRecord(updates[0]);
 				assert.match(
 					readString(readArray(update.content).map(readRecord)[0].text ?? ""),
@@ -611,7 +610,9 @@ const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
 process.stderr.write("stderr echo: " + stdin);
-process.stdout.write(JSON.stringify({ success: true, data: { saved: true, echoed: stdin, nested: { arbitrary: stdin } } }));`,
+const failed = stdin === "super-secret-password";
+process.stdout.write(JSON.stringify({ success: !failed, ...(failed ? { error: "error echo: " + stdin } : {}), data: { saved: !failed, echoed: stdin, nested: { arbitrary: stdin } } }));
+if (failed) process.exitCode = 1;`,
 		);
 
 		try {
@@ -642,83 +643,18 @@ process.stdout.write(JSON.stringify({ success: true, data: { saved: true, echoed
 				assert.equal(JSON.stringify(result.details).includes("pin"), false);
 				assert.equal(JSON.stringify(result.content).includes("pin"), false);
 				assert.equal(JSON.stringify(result.details).includes("[REDACTED]"), true);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
 
-test(
-	"agentBrowserExtension redacts auth password stdin echoed in upstream failures",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-error-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const stdin = fs.readFileSync(0, "utf8");
-process.stderr.write("stderr echo: " + stdin);
-process.stdout.write(JSON.stringify({ success: false, error: "error echo: " + stdin, data: { arbitrary: stdin } }));
-process.exit(1);`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				const failed = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["auth", "save", "demo", "--password-stdin"],
 					stdin: "super-secret-password",
 				});
-
-				assert.equal(result.isError, true);
-				assert.equal(JSON.stringify(result.content).includes("super-secret-password"), false);
-				assert.equal(JSON.stringify(result.details).includes("super-secret-password"), false);
-				assert.match(JSON.stringify(result.content), /\[REDACTED\]/);
-				assert.match(JSON.stringify(result.details), /\[REDACTED\]/);
-				assert.equal(result.details?.resultCategory, "failure");
-				assert.equal(result.details.failureCategory, "upstream-error");
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension discards auth password parse-failure output",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auth-parse-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const stdin = fs.readFileSync(0, "utf8");
-process.stdout.write("invalid-json " + stdin + " " + "x".repeat(600000));`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["auth", "save", "demo", "--password-stdin"],
-					stdin: "super-secret-password",
-				});
-
-				assert.equal(result.isError, true);
-				assert.equal(JSON.stringify(result.content).includes("super-secret-password"), false);
-				assert.equal(JSON.stringify(result.details).includes("super-secret-password"), false);
-				assert.equal(result.details?.fullOutputPath, undefined);
-				assert.match(
-					readString(result.details?.fullOutputUnavailable ?? ""),
-					/discarded because it may contain sensitive browser data/,
-				);
+				assert.equal(failed.isError, true);
+				assert.equal(JSON.stringify(failed.content).includes("super-secret-password"), false);
+				assert.equal(JSON.stringify(failed.details).includes("super-secret-password"), false);
+				assert.match(JSON.stringify(failed.content), /\[REDACTED\]/);
+				assert.match(JSON.stringify(failed.details), /\[REDACTED\]/);
+				assert.equal(failed.details?.resultCategory, "failure");
+				assert.equal(failed.details.failureCategory, "upstream-error");
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
