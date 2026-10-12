@@ -7,7 +7,7 @@
 - Reject stale-ref batch plans after a snapshot too: a later page-changing step requires another snapshot before guarded refs can be reused, even when no refs precede the first snapshot.
 - Preserve surplus scroll operands for native validation instead of dropping them in page or CSS-container scroll shims.
 - Require the process start identity recorded at launch before signaling a restored Electron PID; missing, unreadable, or mismatched identities fail closed instead of trusting the flattened process command line. Require a nonempty browser identifier for CDP readiness and debug-port liveness.
-- Exclude control values under hidden or transparent ancestors from QA visible-text assertions.
+- Exclude control values under `display: none` or transparent ancestors from QA visible-text assertions while counting text and controls inside `display: contents` wrappers or `visibility: visible` overrides.
 - Apply explicit-filter-wins scope to network-source failed-request and initiator analysis, ignore unrelated initiators, and count repeated request IDs once without collapsing distinct same-URL requests.
 - Omit parser previews and causes from malformed config (extension loading and the config CLI) and search-provider JSON errors so partial credentials cannot leak; keep only the numeric JSON location.
 - Report search-provider HTTP failures with the status and a fixed hint instead of echoing provider status text or response bodies.
