@@ -514,7 +514,7 @@ test(
 										["pdf", pdf, "ignored.pdf"],
 										["download", "#direct-download", download, "ignored.bin"],
 										["pdf", "--quick", "ignored.pdf"],
-										["wait", "8000"],
+										["wait", "3000"],
 									];
 									const result = await call(
 										raw ? ["batch", ...steps.map((step) => step.join(" "))] : ["batch"],
@@ -523,6 +523,7 @@ test(
 									);
 									const resultDetails = readRecord(result.details);
 									assert.equal(resultDetails.timedOut, true, result.content[0].text);
+									assert.equal(resultDetails.agentBrowserStarted, true);
 									assert.equal((await readFile(join(dir, pdf))).subarray(0, 5).toString(), "%PDF-");
 									assert.equal(
 										await readFile(join(dir, download), "utf8"),
@@ -561,6 +562,7 @@ test(
 									);
 									const timedOutDetails = readRecord(timedOut.details);
 									assert.equal(timedOutDetails.timedOut, true, timedOut.content[0].text);
+									assert.equal(timedOutDetails.agentBrowserStarted, true);
 									const retry = readArray(timedOutDetails.nextActions)
 										.map((value) => readRecord(value))
 										.find((action) => action.id === "retry-timeout-step");
@@ -1064,7 +1066,7 @@ test(
 								},
 							);
 							await t.test(
-								`${label}: mixed failures retain rows, failure category and native Pi hook`,
+								`${label}: mixed failures retain rows, category and returned tool failure`,
 								async () => {
 									for (const bail of [false, true]) {
 										if (pinned) {
@@ -1112,7 +1114,6 @@ test(
 										// Exhaustive fixture variant ([false, true]): this selected path must satisfy its own contract.
 										// oxlint-disable-next-line node-test/no-conditional-assertion
 										assert.match(readString(result.content[0].text ?? ""), /Batch failed:/);
-										// Canonical failure projection: the returned result already carries isError; the removed tool_result patch hook is covered by the handler-list contract.
 										// Exhaustive fixture variant ([false, true]): this selected path must satisfy its own contract.
 										// oxlint-disable-next-line node-test/no-conditional-assertion
 										assert.equal(
