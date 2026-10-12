@@ -12,10 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import test from "node:test";
 
-import {
-	discoverElectronApps,
-	ELECTRON_DISCOVERY_MAX_RESULTS,
-} from "../extensions/agent-browser/lib/electron/discovery.js";
+import { discoverElectronApps } from "../extensions/agent-browser/lib/electron/discovery.js";
 
 import {
 	electronAppNames,
@@ -268,7 +265,7 @@ test("electron discovery caps results, clamps maxResults, and reports omittedCou
 	try {
 		const applicationsDir = join(tempDir, "Applications");
 		await mkdir(applicationsDir, { recursive: true });
-		for (let index = 0; index < ELECTRON_DISCOVERY_MAX_RESULTS + 2; index += 1) {
+		for (let index = 0; index < 202; index += 1) {
 			const suffix = String(index).padStart(3, "0");
 			// Create bundles serially to bound the fixture's simultaneous filesystem work.
 			// oxlint-disable-next-line no-await-in-loop
@@ -282,11 +279,11 @@ test("electron discovery caps results, clamps maxResults, and reports omittedCou
 
 		const clamped = await discoverElectronApps({
 			locations: { darwinApplicationDirectories: [applicationsDir] },
-			maxResults: ELECTRON_DISCOVERY_MAX_RESULTS + 1_000,
+			maxResults: 1_200,
 			platform: "darwin",
 		});
-		assert.equal(clamped.maxResults, ELECTRON_DISCOVERY_MAX_RESULTS);
-		assert.equal(clamped.apps.length, ELECTRON_DISCOVERY_MAX_RESULTS);
+		assert.equal(clamped.maxResults, 200);
+		assert.equal(clamped.apps.length, 200);
 		assert.equal(clamped.omittedCount, 2);
 
 		const smallCap = await discoverElectronApps({
@@ -295,7 +292,7 @@ test("electron discovery caps results, clamps maxResults, and reports omittedCou
 			platform: "darwin",
 		});
 		assert.equal(smallCap.apps.length, 3);
-		assert.equal(smallCap.omittedCount, ELECTRON_DISCOVERY_MAX_RESULTS - 1);
+		assert.equal(smallCap.omittedCount, 199);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}

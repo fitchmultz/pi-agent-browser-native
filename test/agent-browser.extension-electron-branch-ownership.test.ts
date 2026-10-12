@@ -11,12 +11,12 @@ import { readNumber, readRecord, readString } from "./helpers/assertions.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, readFile, rm, watch, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, watch, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
-import { directoryExists } from "../extensions/agent-browser/lib/fs-utils.js";
 import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
 import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
 
@@ -27,24 +27,15 @@ import {
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
+	stopChildProcess,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
+import { isTestPidAlive as pidIsAlive } from "./helpers/extension-validation-fixtures.js";
+
 function assertIsString(value: unknown): asserts value is string {
 	assert.equal(typeof value, "string");
-}
-
-function pidIsAlive(pid: number | undefined): boolean {
-	if (pid === undefined || pid === 0) {
-		return false;
-	}
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 function spawnElectronFixtureProcess(userDataDir: string): ChildProcess {
@@ -68,12 +59,6 @@ async function listenOnLoopback(server: Server): Promise<number> {
 	const address = server.address();
 	assert.ok(address !== null && typeof address === "object");
 	return address.port;
-}
-
-function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
 }
 
 function electronManagedSessionDetails(
@@ -231,8 +216,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					assert.equal(pidIsAlive(child.pid), false);
 				});
 			} finally {
-				if (pidIsAlive(child?.pid)) {
-					child?.kill("SIGKILL");
+				if (child) {
+					await stopChildProcess(child);
 				}
 				await rm(tempDir, { force: true, recursive: true });
 			}
@@ -333,8 +318,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 				assert.equal(pidIsAlive(child.pid), true);
 			});
 		} finally {
-			if (pidIsAlive(child?.pid)) {
-				child?.kill("SIGKILL");
+			if (child) {
+				await stopChildProcess(child);
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -534,8 +519,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				assert.equal(pidIsAlive(child.pid), false);
 			});
 		} finally {
-			if (pidIsAlive(child?.pid)) {
-				child?.kill("SIGKILL");
+			if (child) {
+				await stopChildProcess(child);
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -662,11 +647,11 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				assert.equal(pidIsAlive(childB.pid), true);
 			});
 		} finally {
-			if (pidIsAlive(childA?.pid)) {
-				childA?.kill("SIGKILL");
+			if (childA) {
+				await stopChildProcess(childA);
 			}
-			if (pidIsAlive(childB?.pid)) {
-				childB?.kill("SIGKILL");
+			if (childB) {
+				await stopChildProcess(childB);
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -739,6 +724,16 @@ if (args.includes("close")) {
 					args: ["--session", electronSessionName, "get", "url"],
 				});
 				assert.equal(failedCmd.isError, true, "Command should have failed");
+				assert.equal(failedCmd.details?.failureCategory, "upstream-error");
+				assert.match(failedCmd.content[0]?.text ?? "", /upstream error/);
+				assert.ok(
+					(await readInvocationLog(logPath)).some(
+						(entry) =>
+							entry.sessionName === electronSessionName &&
+							entry.args.slice(-2).join(" ") === "get url",
+					),
+					"ownership assertions require an actual failed session-qualified dispatch",
+				);
 
 				harness.setBranch(branchCleaned);
 				await runExtensionEvent(
@@ -765,8 +760,8 @@ if (args.includes("close")) {
 				assert.equal(pidIsAlive(child.pid), true);
 			});
 		} finally {
-			if (pidIsAlive(child?.pid)) {
-				child?.kill("SIGKILL");
+			if (child) {
+				await stopChildProcess(child);
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -861,8 +856,8 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 				assert.equal(pidIsAlive(child.pid), false);
 			});
 		} finally {
-			if (pidIsAlive(child?.pid)) {
-				child?.kill("SIGKILL");
+			if (child) {
+				await stopChildProcess(child);
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -1014,82 +1009,9 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 				},
 			);
 		} finally {
-			if (pidIsAlive(child?.pid)) {
-				child?.kill("SIGKILL");
+			if (child) {
+				await stopChildProcess(child);
 			}
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension does not reuse current Electron managed session after cleanup",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-current-cleanup-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close"), result: "ok", url: "app://current-cleanup" } }));`,
-		);
-		const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
-		const electronSessionName = `${baseSessionName}-fresh-electron-current-cleanup`;
-		const electronRecord = {
-			appName: "Current Cleanup Electron",
-			cleanupState: "active",
-			createdAtMs: Date.now(),
-			executablePath: process.execPath,
-			launchId: "electron-current-cleanup",
-			launchedByWrapper: true,
-			port: 9,
-			sessionName: electronSessionName,
-			userDataDir: join(tempDir, "electron-profile-current-cleanup"),
-			version: 1,
-		};
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({
-					branch: [
-						createToolBranchEntry({
-							details: electronManagedSessionDetails(electronSessionName, electronRecord),
-							isError: false,
-						}),
-					],
-					cwd: tempDir,
-				});
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-				const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, {
-					electron: { action: "cleanup", launchId: electronRecord.launchId },
-				});
-				assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
-
-				const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(followUp.isError, false, JSON.stringify(followUp));
-				const followUpSessionName = followUp.details?.sessionName;
-				assertIsString(followUpSessionName);
-				assert.match(followUpSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
-				assert.notEqual(followUpSessionName, electronSessionName);
-				const invocations = await readInvocationLog(logPath);
-				assert.deepEqual(invocations[0]?.args, ["--session", electronSessionName, "close"]);
-				assert.deepEqual(
-					invocations.map((entry) => entry.sessionName),
-					[electronSessionName, followUpSessionName, followUpSessionName],
-				);
-			});
-		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -1146,6 +1068,25 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 				assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
 				const cleanupBranch = harness.ctx.sessionManager.getBranch().slice();
 
+				const immediateRead = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["get", "url"],
+				});
+				assert.equal(immediateRead.isError, false, JSON.stringify(immediateRead));
+				const immediateSessionName = immediateRead.details?.sessionName;
+				assertIsString(immediateSessionName);
+				assert.match(immediateSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+				assert.notEqual(immediateSessionName, electronSessionName);
+				const immediateInvocations = await readInvocationLog(logPath);
+				assert.deepEqual(immediateInvocations[0]?.args, [
+					"--session",
+					electronSessionName,
+					"close",
+				]);
+				assert.deepEqual(
+					immediateInvocations.map((entry) => entry.sessionName),
+					[electronSessionName, immediateSessionName, immediateSessionName],
+				);
+
 				harness.setBranch(cleanupBranch);
 				await runExtensionEvent(
 					harness.handlers,
@@ -1193,6 +1134,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					invocations.map((entry) => entry.sessionName),
 					[
 						electronSessionName,
+						immediateSessionName,
+						immediateSessionName,
 						firstFollowUpSessionName,
 						firstFollowUpSessionName,
 						firstFollowUpSessionName,
@@ -1357,7 +1300,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					harness.ctx,
 				);
 				assert.equal(pidIsAlive(child.pid), true);
-				assert.equal(await directoryExists(userDataDir), true);
+				assert.equal((await stat(userDataDir)).isDirectory(), true);
 				assert.equal(
 					(await readInvocationLog(logPath)).some((entry) => entry.args.includes("close")),
 					false,
@@ -1382,11 +1325,11 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					reloadedHarness.ctx,
 				);
 				assert.equal(pidIsAlive(child.pid), false);
-				assert.equal(await directoryExists(userDataDir), false);
+				await assert.rejects(stat(userDataDir), { code: "ENOENT" });
 			});
 		} finally {
-			if (pidIsAlive(child?.pid)) {
-				child?.kill("SIGKILL");
+			if (child) {
+				await stopChildProcess(child);
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -1501,7 +1444,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						previous.ctx,
 					);
 					assert.equal(pidIsAlive(child.pid), true);
-					assert.equal(await directoryExists(userDataDir), true);
+					assert.equal((await stat(userDataDir)).isDirectory(), true);
 
 					for (const mismatch of ["browser-instance", "connection", "namespace"]) {
 						liveBrowserEndpoint =
@@ -1640,7 +1583,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						);
 						const controller = new AbortController();
 						const ready = (async () => {
-							for await (const event of watch(tempDir, { signal: controller.signal })) {
+							for await (const event of watch(tempDir, {
+								signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
+							})) {
 								if (event.filename === marker) {
 									return;
 								}
@@ -1712,7 +1657,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						lastHarness.ctx,
 					);
 					assert.equal(pidIsAlive(child.pid), false);
-					assert.equal(await directoryExists(userDataDir), false);
+					await assert.rejects(stat(userDataDir), { code: "ENOENT" });
 				},
 			);
 		} finally {
@@ -1826,21 +1771,21 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					);
 					assert.ok(versionProbeCount > 0);
 					assert.equal(pidIsAlive(child.pid), false);
-					assert.equal(await directoryExists(userDataDir), true);
+					assert.equal((await stat(userDataDir)).isDirectory(), true);
 					await runExtensionEvent(
 						harness.handlers,
 						"session_shutdown",
 						{ reason: shutdownReason },
 						harness.ctx,
 					);
-					assert.equal(await directoryExists(userDataDir), true);
+					assert.equal((await stat(userDataDir)).isDirectory(), true);
 				});
 			} finally {
 				await new Promise<void>((resolve) => {
 					server.close(() => resolve());
 				});
-				if (pidIsAlive(child?.pid)) {
-					child?.kill("SIGKILL");
+				if (child) {
+					await stopChildProcess(child);
 				}
 				if (preservedUserDataDir !== undefined) {
 					await rm(preservedUserDataDir, { force: true, recursive: true });
@@ -1944,8 +1889,8 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 				});
 				assert.equal(cleanupA.isError, false, JSON.stringify(cleanupA));
 				assert.equal(pidIsAlive(childA.pid), false);
-				assert.equal(await directoryExists(userDataDirA), false);
-				assert.equal(await directoryExists(userDataDirB), true);
+				await assert.rejects(stat(userDataDirA), { code: "ENOENT" });
+				assert.equal((await stat(userDataDirB)).isDirectory(), true);
 
 				await runExtensionEvent(
 					harness.handlers,
@@ -1960,14 +1905,14 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					),
 				);
 				assert.equal(pidIsAlive(childB.pid), false);
-				assert.equal(await directoryExists(userDataDirB), false);
+				await assert.rejects(stat(userDataDirB), { code: "ENOENT" });
 			});
 		} finally {
-			if (pidIsAlive(childA?.pid)) {
-				childA?.kill("SIGKILL");
+			if (childA) {
+				await stopChildProcess(childA);
 			}
-			if (pidIsAlive(childB?.pid)) {
-				childB?.kill("SIGKILL");
+			if (childB) {
+				await stopChildProcess(childB);
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -2034,34 +1979,53 @@ if (args.includes("snapshot")) {
 					{ reason: "resume" },
 					harness.ctx,
 				);
-				const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["snapshot", "-i"],
-				});
-				while (
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					!(await readInvocationLog(logPath)).some((entry) => entry.event === "snapshot-start")
-				) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					await delay(10);
-				}
-
-				const cleanupPromise = executeRegisteredTool(harness.tool, harness.ctx, {
-					electron: { action: "cleanup", launchId: electronRecord.launchId },
-				});
-				await delay(50);
-				assert.equal(
-					(await readInvocationLog(logPath)).some((entry) => entry.event === "close"),
-					false,
+				const controller = new AbortController();
+				const snapshotPromise = executeRegisteredTool(
+					harness.tool,
+					harness.ctx,
+					{ args: ["snapshot", "-i"] },
+					controller.signal,
 				);
-				await writeFile(releasePath, "go");
-				const [snapshot, cleanup] = await Promise.all([snapshotPromise, cleanupPromise]);
-				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-				assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
-				const events = (await readInvocationLog(logPath)).map((entry) => entry.event);
-				assert.ok(events.indexOf("snapshot-done") >= 0);
-				assert.ok(events.indexOf("close") > events.indexOf("snapshot-done"));
+				let cleanupPromise: ReturnType<typeof executeRegisteredTool> | undefined;
+				try {
+					const deadline = Date.now() + 5_000;
+					while (Date.now() < deadline) {
+						// Observe the real dispatch before permitting cleanup to race it.
+						// oxlint-disable-next-line no-await-in-loop
+						const started = (await readInvocationLog(logPath)).some(
+							(entry) => entry.event === "snapshot-start",
+						);
+						if (started) {
+							break;
+						}
+						// Bound missing-dispatch retries; a broken fixture must fail instead of hanging.
+						// oxlint-disable-next-line no-await-in-loop
+						await delay(10);
+					}
+					assert.ok(
+						(await readInvocationLog(logPath)).some((entry) => entry.event === "snapshot-start"),
+						"snapshot must dispatch before the cleanup ordering check",
+					);
+					cleanupPromise = executeRegisteredTool(harness.tool, harness.ctx, {
+						electron: { action: "cleanup", launchId: electronRecord.launchId },
+					});
+					await delay(50);
+					assert.equal(
+						(await readInvocationLog(logPath)).some((entry) => entry.event === "close"),
+						false,
+					);
+					await writeFile(releasePath, "go");
+					const [snapshot, cleanup] = await Promise.all([snapshotPromise, cleanupPromise]);
+					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+					assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
+					const events = (await readInvocationLog(logPath)).map((entry) => entry.event);
+					assert.ok(events.indexOf("snapshot-done") >= 0);
+					assert.ok(events.indexOf("close") > events.indexOf("snapshot-done"));
+				} finally {
+					controller.abort();
+					await writeFile(releasePath, "go");
+					await Promise.allSettled([snapshotPromise, cleanupPromise]);
+				}
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });

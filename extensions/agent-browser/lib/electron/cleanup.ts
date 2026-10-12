@@ -169,7 +169,14 @@ function restoredLaunchCommandMatchesRecord(
 	record: ElectronLaunchRecord,
 	commandLine: string | undefined,
 ): boolean {
-	return commandLine?.includes(`--user-data-dir=${record.userDataDir}`) === true;
+	const profile = record.userDataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	// Match a complete native operand, including Windows' two quoted forms, not
+	// a prefix or a flag embedded in another operand. ps flattens POSIX argv;
+	// ponytail: it cannot disambiguate spaces inside a different operand. Use
+	// native argv inspection if that ambiguity becomes an observed ownership risk.
+	return new RegExp(
+		`(?:^|\\s)(?:"--user-data-dir=${profile}"|--user-data-dir="${profile}"|--user-data-dir=${profile})(?=\\s|$)`,
+	).test(commandLine ?? "");
 }
 
 async function getRestoredProcessVerificationError(

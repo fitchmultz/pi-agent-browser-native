@@ -8,8 +8,9 @@
 
 import assert from "node:assert/strict";
 import { readRecord, readString, readNumber, readArray } from "./helpers/assertions.js";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import fsPromises, {
 	lstat,
 	mkdir,
@@ -33,7 +34,10 @@ import {
 	cleanupElectronLaunchResources,
 	inspectElectronLaunchStatus,
 } from "../extensions/agent-browser/lib/electron/cleanup.js";
-import type { ElectronLaunchRecord } from "../extensions/agent-browser/lib/electron/launch.js";
+import {
+	launchElectronApp,
+	type ElectronLaunchRecord,
+} from "../extensions/agent-browser/lib/electron/launch.js";
 import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
 import {
 	createExtensionHarness,
@@ -56,6 +60,27 @@ import {
 	writeFakeElectronProcessApp,
 } from "./helpers/extension-validation-fixtures.js";
 
+async function waitForLoggedCommand(
+	logPath: string,
+	command: string,
+	timeoutMs = 5_000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		// Poll the observed dispatch/exit state before waiting again; parallel polls would race cancellation.
+		// oxlint-disable-next-line no-await-in-loop
+		if ((await readInvocationLog(logPath)).some((entry) => entry.args.includes(command))) {
+			return;
+		}
+		// Poll the observed dispatch/exit state before waiting again; parallel polls would race cancellation.
+		// oxlint-disable-next-line no-await-in-loop
+		await new Promise<void>((resolve) => {
+			setTimeout(resolve, 10);
+		});
+	}
+	throw new Error(`Timed out waiting for ${command} invocation.`);
+}
+
 function assertPostHostExitLogLifetime(beforeSize: number, afterSize: number): void {
 	if (process.platform === "win32") {
 		assert.equal(
@@ -66,6 +91,277 @@ function assertPostHostExitLogLifetime(beforeSize: number, afterSize: number): v
 	} else {
 		assert.ok(afterSize > beforeSize, "detached app must still write after the host exits");
 	}
+}
+
+async function cleanupLoggedElectronApps(logPath: string): Promise<void> {
+	const launches = await readOptionalFakeElectronLaunchLog(logPath);
+	await Promise.all(
+		launches.map(async (launch) => {
+			await stopTestPid(launch.pid);
+			await rm(launch.userDataDir, { force: true, recursive: true });
+		}),
+	);
+}
+
+test(
+	"agentBrowserExtension cleans Electron after post-launch managed policy rejection",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-policy-reject-"));
+		const applicationsDir = join(tempDir, "Applications");
+		const upstreamLogPath = join(tempDir, "agent-browser.log");
+		const launchLogPath = join(tempDir, "electron-launch.log");
+		const basePath = process.env.PATH ?? "";
+		let launchPid: number | undefined;
+		try {
+			await mkdir(applicationsDir, { recursive: true });
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir,
+				bundleId: "com.example.PolicyReject",
+				launchLogPath,
+				name: "Policy Reject",
+			});
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(upstreamLogPath)}, JSON.stringify({ args }) + "\\n");
+if (args.includes("session") && args.includes("info")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { active: true, runtime: { restoreKey: "foreign-policy" } } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "unexpected", url: "about:blank" } }));
+}`,
+			);
+			await withPatchedEnv(
+				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" },
+				async () => {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+						electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
+					});
+					assert.equal(result.isError, true, JSON.stringify(result));
+					assert.match(
+						readString(readRecord(result.content[0]).text),
+						/does not match the requested managed-restore policy/,
+					);
+					const launch = readRecord(JSON.parse((await readFile(launchLogPath, "utf8")).trim()));
+					launchPid = readNumber(launch.pid);
+					await waitForTestPidExit(readNumber(launch.pid));
+					await assert.rejects(stat(readString(launch.userDataDir)));
+					const invocations = await readInvocationLog(upstreamLogPath);
+					assert.equal(
+						invocations.some((entry) => entry.args.includes("connect")),
+						false,
+					);
+				},
+			);
+		} finally {
+			if (launchPid !== undefined && launchPid !== 0) {
+				await stopTestPid(launchPid);
+			}
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test(
+	"agentBrowserExtension allows local Electron snapshot handoff",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-protected-handoff-"));
+		const applicationsDir = join(tempDir, "Applications");
+		const upstreamLogPath = join(tempDir, "agent-browser.log");
+		const launchLogPath = join(tempDir, "electron-launch.log");
+		const protectedUrl = `file://${join(tempDir, ".agent-browser", "sessions", "auth.html")}`;
+		const basePath = process.env.PATH ?? "";
+		let launchPid: number | undefined;
+		try {
+			await mkdir(applicationsDir, { recursive: true });
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir,
+				bundleId: "com.example.ProtectedHandoff",
+				launchLogPath,
+				name: "Protected Handoff",
+			});
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				fakeAgentBrowserLifecycleScript(upstreamLogPath, {
+					sessionUrl: protectedUrl,
+					snapshotTitle: "SECRET LOCAL CONTENT",
+					snapshotUrl: protectedUrl,
+				}),
+			);
+			await withPatchedEnv(
+				{ AGENT_BROWSER_SESSION: "shared-default", PATH: `${tempDir}:${basePath}` },
+				async () => {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+						electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
+					});
+					assert.equal(result.isError, false, JSON.stringify(result));
+					assert.match(JSON.stringify(result), /SECRET LOCAL CONTENT/);
+					const invocations = await readInvocationLog(upstreamLogPath);
+					assert.equal(
+						invocations.some(
+							(entry) => entry.args.includes("snapshot") || entry.args.includes("tab"),
+						),
+						true,
+					);
+					const launch = readRecord(JSON.parse((await readFile(launchLogPath, "utf8")).trim()));
+					launchPid = readNumber(launch.pid);
+					assert.match(readString(readRecord(result.details).sessionName), /^piab-/);
+					assert.equal(
+						invocations.some((entry) => entry.args.includes("shared-default")),
+						false,
+						"Electron's owned launch must not attach the shared default browser session",
+					);
+					const launchId = readRecord(
+						readRecord(readRecord(result.details).electron).identifiers,
+					).launchId;
+					assert.ok(typeof launchId === "string" && launchId.length > 0);
+					const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, {
+						electron: { action: "cleanup", launchId },
+					});
+					assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
+					assert.equal(await waitForTestPidExit(readNumber(launch.pid)), true);
+					await assert.rejects(stat(readString(launch.userDataDir)));
+				},
+			);
+		} finally {
+			if (launchPid !== undefined && launchPid !== 0) {
+				await stopTestPid(launchPid);
+			}
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test(
+	"agentBrowserExtension cleans an Electron launch canceled during snapshot handoff",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-canceled-handoff-"));
+		const applicationsDir = join(tempDir, "Applications");
+		const upstreamLogPath = join(tempDir, "agent-browser.log");
+		const launchLogPath = join(tempDir, "electron-launch.log");
+		const basePath = process.env.PATH ?? "";
+		let launchPid: number | undefined;
+		try {
+			await mkdir(applicationsDir, { recursive: true });
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir,
+				bundleId: "com.example.CanceledHandoff",
+				launchLogPath,
+				name: "Canceled Handoff",
+			});
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(upstreamLogPath)}, JSON.stringify({ args }) + "\\n");
+const commandIndex = args.findIndex((arg) => ["close", "connect", "get", "snapshot", "tab"].includes(arg));
+const command = args[commandIndex];
+const subcommand = args[commandIndex + 1];
+if (command === "snapshot") setInterval(() => {}, 1000);
+else {
+  const data = command === "get" && subcommand === "url"
+    ? { result: "app://safe", url: "app://safe" }
+    : command === "tab" ? { tabs: [{ active: true, tabId: "t1", url: "app://safe" }] }
+      : command === "connect" ? { connected: true } : { closed: true };
+  process.stdout.write(JSON.stringify({ success: true, data }));
+}`,
+			);
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const controller = new AbortController();
+				const resultPromise = executeRegisteredTool(
+					harness.tool,
+					harness.ctx,
+					{ electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs } },
+					controller.signal,
+				);
+				await waitForLoggedCommand(upstreamLogPath, "snapshot");
+				controller.abort();
+				const result = await resultPromise;
+				assert.equal(result.isError, true, JSON.stringify(result));
+				assert.equal(readRecord(result.details).failureCategory, "aborted");
+				const launch = readRecord(JSON.parse((await readFile(launchLogPath, "utf8")).trim()));
+				launchPid = readNumber(launch.pid);
+				assert.equal(await waitForTestPidExit(readNumber(launch.pid)), true);
+				await assert.rejects(stat(readString(launch.userDataDir)));
+			});
+		} finally {
+			if (launchPid !== undefined && launchPid !== 0) {
+				await stopTestPid(launchPid);
+			}
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+for (const terminateBeforeCleanup of [false, true]) {
+	test(
+		`Electron cleanup awaits tracked child exit before removing owned resources (already signaled: ${terminateBeforeCleanup})`,
+		{ concurrency: false },
+		async () => {
+			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-exit-"));
+			let child: ChildProcess | undefined;
+			try {
+				const app = await writeFakeLaunchableElectronApp({
+					applicationsDir: tempDir,
+					bundleId: "com.example.CleanupExit",
+					launchLogPath: join(tempDir, "launch.json"),
+					name: "Cleanup Exit",
+				});
+				const launched = await launchElectronApp({ appPath: app.appPath, appArgs: app.appArgs });
+				assert.equal(launched.ok, true, launched.ok ? undefined : JSON.stringify(launched.failure));
+				child = launched.value.child;
+				let exited = false;
+				child.once("exit", () => {
+					exited = true;
+				});
+				if (terminateBeforeCleanup) {
+					child.kill("SIGTERM");
+				}
+				const cleanup = await cleanupElectronLaunchResources({
+					child,
+					record: launched.value.record,
+				});
+				assert.equal(cleanup.partial, false, JSON.stringify(cleanup));
+				assert.equal(
+					exited,
+					true,
+					"tracked process must exit before cleanup returns, not merely stop responding to PID probes",
+				);
+				assert.throws(() => process.kill(readNumber(launched.value.record.pid), 0), {
+					code: "ESRCH",
+				});
+				await assert.rejects(stat(launched.value.record.userDataDir), { code: "ENOENT" });
+				// In particular, Windows must release the running executable without rm retries.
+				await rm(app.executablePath);
+			} finally {
+				if (child && child.exitCode === null && child.signalCode === null) {
+					const exited = once(child, "exit", { signal: AbortSignal.timeout(2_000) });
+					child.kill("SIGKILL");
+					await exited;
+				}
+				await rm(tempDir, { force: true, recursive: true });
+			}
+		},
+	);
 }
 
 test(
@@ -142,11 +438,15 @@ test(
 							assert.equal(selected.isError, false, selected.content.at(0)?.text);
 							await writeFile(upstreamLogPath, "");
 							await withPatchedEnv({ AGENT_BROWSER_CONFIRM_ACTIONS: "tab_new" }, async () => {
-								for (const electron of [
-									{ action: "status", launchId },
-									{ action: "probe", launchId },
-									{ action: "probe" },
-								] as const) {
+								const inspections =
+									handoff === "connect"
+										? ([
+												{ action: "status", launchId },
+												{ action: "probe", launchId },
+												{ action: "probe" },
+											] as const)
+										: [];
+								for (const electron of inspections) {
 									// Status/probe calls share one launch before its final cleanup.
 									// oxlint-disable-next-line no-await-in-loop
 									const inspected = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -156,12 +456,14 @@ test(
 									// oxlint-disable-next-line node-test/no-conditional-assertion
 									assert.equal(inspected.isError, false, inspected.content.at(0)?.text);
 								}
-								await executeRegisteredTool(harness.tool, harness.ctx, {
+								const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
 									electron: { action: "cleanup", launchId },
 								});
+								assert.equal(cleaned.isError, false, cleaned.content.at(0)?.text);
 							});
 							const helpers = await readInvocationLog(upstreamLogPath);
 							assert.ok(helpers.length > 0);
+							assert.ok(helpers.some((call) => call.args.includes("close")));
 							assert.ok(
 								helpers.every((call) => call.confirmActions === "click"),
 								"status, both probe selectors, and cleanup retain the target's selected setting",
@@ -171,6 +473,7 @@ test(
 				},
 			);
 		} finally {
+			await cleanupLoggedElectronApps(launchLogPath);
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -250,6 +553,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }
 				assert.equal(isTestPidAlive(readNumber(launchRecord.pid)), false);
 			});
 		} finally {
+			await cleanupLoggedElectronApps(launchLogPath);
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -260,6 +564,8 @@ test(
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-abort-"));
+		let midLaunch: AbortController | undefined;
+		let pendingResult: ReturnType<typeof executeRegisteredTool> | undefined;
 		const applicationsDir = join(tempDir, "Applications");
 		const launchLogPath = join(tempDir, "electron-launch.log");
 		try {
@@ -286,8 +592,8 @@ test(
 			assert.equal(preLaunchResult.details?.failureCategory, "aborted");
 			assert.deepEqual(await readOptionalFakeElectronLaunchLog(launchLogPath), []);
 
-			const midLaunch = new AbortController();
-			const pendingResult = executeRegisteredTool(
+			midLaunch = new AbortController();
+			pendingResult = executeRegisteredTool(
 				harness.tool,
 				harness.ctx,
 				{
@@ -295,13 +601,13 @@ test(
 						action: "launch",
 						appPath: app.appPath,
 						appArgs: app.appArgs,
-						timeoutMs: 10_000,
+						timeoutMs: 30_000,
 					},
 				},
 				midLaunch.signal,
 			);
 			let launch = (await readOptionalFakeElectronLaunchLog(launchLogPath)).at(0);
-			for (let attempt = 0; launch === undefined && attempt < 100; attempt += 1) {
+			for (let attempt = 0; launch === undefined && attempt < 750; attempt += 1) {
 				// Wait between native launch-receipt observations.
 				// oxlint-disable-next-line no-await-in-loop
 				await delay(20);
@@ -321,6 +627,9 @@ test(
 			await assert.rejects(stat(launch.userDataDir));
 			assert.equal(isTestPidAlive(launch.pid), false);
 		} finally {
+			midLaunch?.abort();
+			await pendingResult;
+			await cleanupLoggedElectronApps(launchLogPath);
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -362,6 +671,7 @@ test(
 				await assert.rejects(readFile(launchLogPath, "utf8"));
 			});
 		} finally {
+			await cleanupLoggedElectronApps(launchLogPath);
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -371,18 +681,32 @@ test(
 	"agentBrowserExtension cleans Electron resources when launch fails before upstream attach",
 	{ concurrency: false },
 	async (t) => {
-		for (const { expectedCategory, mode, timeoutMs, writeLaunchLog } of [
-			{ expectedCategory: "timeout", mode: "no-port-file", timeoutMs: 500, writeLaunchLog: false },
+		for (const { expectedCategory, mode, jsonBody, timeoutMs, writeLaunchLog } of [
+			{
+				expectedCategory: "timeout",
+				mode: "no-port-file",
+				jsonBody: undefined,
+				timeoutMs: 500,
+				writeLaunchLog: false,
+			},
 			{
 				expectedCategory: "upstream-error",
 				mode: "invalid-cdp",
+				jsonBody: undefined,
+				timeoutMs: 5_000,
+				writeLaunchLog: true,
+			},
+			{
+				expectedCategory: "upstream-error",
+				mode: "invalid-cdp",
+				jsonBody: "{}",
 				timeoutMs: 5_000,
 				writeLaunchLog: true,
 			},
 		] as const) {
 			// Native timer and filesystem mocks must be restored before the next launch.
 			// oxlint-disable-next-line no-await-in-loop
-			await t.test(mode, async () => {
+			await t.test(jsonBody === undefined ? mode : "invalid-cdp-object", async () => {
 				const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-failed-${mode}-`));
 				const applicationsDir = join(tempDir, "Applications");
 				const launchLogPath = join(tempDir, "electron-launch.log");
@@ -396,10 +720,19 @@ test(
 						name: `Failed ${mode}`,
 						writeLaunchLog,
 					});
+					if (jsonBody !== undefined) {
+						await writeFile(
+							app.scriptPath,
+							(await readFile(app.scriptPath, "utf8")).replace(
+								'response.end("not-json");',
+								`response.end(${JSON.stringify(jsonBody)});`,
+							),
+						);
+					}
+					t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
 					if (mode === "no-port-file") {
 						// This case tests a missing port file, not how quickly native spawn/capture
 						// setup completes. Expire the unchanged budget after the first real read.
-						t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
 						const nativeReadFile = fsPromises.readFile;
 						t.mock.method(
 							fsPromises,
@@ -418,6 +751,29 @@ test(
 							},
 						);
 						syncBuiltinESMExports();
+					} else {
+						const nativeFetch = globalThis.fetch;
+						t.mock.method(
+							globalThis,
+							"fetch",
+							async (...args: Readonly<Parameters<typeof fetch>>) => {
+								const response = await nativeFetch(...args);
+								const input = args[0];
+								const url = input instanceof Request ? input.url : String(input);
+								if (url.endsWith("/json/version")) {
+									const nativeJson = response.json.bind(response);
+									t.mock.method(response, "json", async () => {
+										try {
+											return (await nativeJson()) as unknown;
+										} finally {
+											// Only a real response from the launched app's port expires readiness.
+											t.mock.timers.tick(timeoutMs + 1);
+										}
+									});
+								}
+								return response;
+							},
+						);
 					}
 					await withPatchedEnv({ PATH: dirname(process.execPath) }, async () => {
 						const harness = createExtensionHarness({ cwd: tempDir });
@@ -691,23 +1047,15 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 								"preserving a profile must not sweep siblings",
 							);
 							assert.equal(isTestPidAlive(launch.pid), true);
-							for (const stream of ["stdout", "stderr"]) {
-								const path = join(launch.userDataDir, `${stream}.log`);
-								// Observe each log before its ordered growth window.
-								// oxlint-disable-next-line no-await-in-loop
-								const before = await stat(path);
-								// Retain the same live child during this growth window.
-								// oxlint-disable-next-line no-await-in-loop
-								await delay(60);
-								// Both fixed native logs must grow after denied kill and cleanup.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(
-									// Re-observe this log only after its growth window.
-									// oxlint-disable-next-line no-await-in-loop
-									(await stat(path)).size > before.size,
-									"live app must still write after kill denial and temp cleanup",
-								);
-							}
+							const profile = launch.userDataDir;
+							const paths = ["stdout", "stderr"].map((stream) => join(profile, `${stream}.log`));
+							const before = await Promise.all(paths.map((path) => stat(path)));
+							await delay(60);
+							const after = await Promise.all(paths.map((path) => stat(path)));
+							assert.ok(
+								after.every((stats, index) => stats.size > before[index].size),
+								"both live logs must grow after kill denial and temp cleanup",
+							);
 							const exited = once(host, "exit", { signal: AbortSignal.timeout(5_000) });
 							host.send("exit");
 							assert.equal((await exited)[0], 0, "preserved output must not wedge host exit");
@@ -722,19 +1070,12 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 								// oxlint-disable-next-line node-test/no-conditional-assertion
 								assert.equal(isTestPidAlive(launch.pid), true);
 							}
-							for (const stream of ["stdout", "stderr"]) {
-								const path = join(launch.userDataDir, `${stream}.log`);
-								// Observe each retained log before its post-host-exit window.
-								// oxlint-disable-next-line no-await-in-loop
-								const before = await stat(path);
-								// Each native stream needs its ordered post-exit observation window.
-								// oxlint-disable-next-line no-await-in-loop
-								await delay(60);
-								// Observe this stream after its window before advancing.
-								// oxlint-disable-next-line no-await-in-loop
-								const after = await stat(path);
-								assertPostHostExitLogLifetime(before.size, after.size);
-							}
+							const beforeExit = await Promise.all(paths.map((path) => stat(path)));
+							await delay(60);
+							const afterExit = await Promise.all(paths.map((path) => stat(path)));
+							afterExit.forEach((stats, index) =>
+								assertPostHostExitLogLifetime(beforeExit[index].size, stats.size),
+							);
 							const markerPath = join(dirname(launch.userDataDir), ".pi-agent-browser-owner.json");
 							if (breakMarker) {
 								// The fixed broken-marker variant must report preservation.
@@ -999,10 +1340,55 @@ test("Electron profile status measures the current path without changing the lau
 	}
 });
 
+test("Electron status requires browser version metadata from a live HTTP endpoint", async (t) => {
+	let payload: unknown;
+	const server = createServer((request, response) => {
+		response.writeHead(200, { "content-type": "application/json", connection: "close" });
+		response.end(JSON.stringify(request.url === "/json/version" ? payload : []));
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const address = server.address();
+	assert.ok(address !== null && typeof address === "object");
+	const record: ElectronLaunchRecord = {
+		appName: "Metadata status",
+		cleanupState: "active",
+		createdAtMs: Date.now(),
+		executablePath: process.execPath,
+		launchId: "electron-metadata-status",
+		launchedByWrapper: true,
+		port: address.port,
+		userDataDir: "",
+		version: 1,
+	};
+	try {
+		for (const [name, body, portAlive] of [
+			["empty object", {}, false],
+			["unrelated JSON", { ok: true }, false],
+			["blank browser", { Browser: " " }, false],
+			["minimal browser", { Browser: "Electron/Test" }, true],
+			["lowercase browser", { browser: "Electron/Test" }, true],
+		] as const) {
+			payload = body;
+			// Each real HTTP response must finish before changing the server's metadata.
+			// oxlint-disable-next-line no-await-in-loop
+			await t.test(name, async () => {
+				const status = await inspectElectronLaunchStatus(record);
+				assert.equal(status.portAlive, portAlive);
+				assert.equal(status.version?.browser, portAlive ? "Electron/Test" : undefined);
+			});
+		}
+	} finally {
+		await new Promise<void>((resolve) => {
+			server.close(() => resolve());
+		});
+	}
+});
+
 test(
 	"restored Electron cleanup verifies native command-line profile ownership with spaces and Unicode",
 	{ concurrency: false },
-	async () =>
+	async (t) =>
 		withPatchedEnv(
 			{
 				// macOS ps renders non-ASCII bytes as M-… in the isolated runner's C locale.
@@ -1011,9 +1397,17 @@ test(
 			async () => {
 				const userDataDir = await createSecureTempDirectory("electron-profile-space é-");
 				const otherProfile = await createSecureTempDirectory("electron-profile-other-");
+				const actualProfile = `${userDataDir}-other`;
+				await mkdir(actualProfile);
 				const child = spawn(
 					process.execPath,
-					["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${userDataDir}`],
+					[
+						"-e",
+						"setInterval(() => {}, 1000)",
+						"--",
+						`--user-data-dir=${actualProfile}`,
+						`--note=--user-data-dir=${otherProfile}`,
+					],
 					{ stdio: "ignore" },
 				);
 				try {
@@ -1028,38 +1422,57 @@ test(
 						launchedByWrapper: true,
 						pid: child.pid,
 						port: 9,
-						userDataDir,
+						userDataDir: actualProfile,
 						version: 1,
 					};
-					// No child handle is supplied: both decisions must inspect the real OS command line.
-					const refused = await cleanupElectronLaunchResources({
-						record: { ...record, userDataDir: otherProfile },
-					});
-					assert.equal(refused.partial, true, JSON.stringify(refused));
-					assert.equal(refused.steps.find((step) => step.resource === "process")?.state, "failed");
-					assert.deepEqual([...refused.remainingResources].sort(), ["process", "user-data-dir"]);
-					assert.match(
-						refused.steps.find((step) => step.resource === "process")?.error ?? "",
-						/command line does not include wrapper-owned user data dir/,
-					);
-					assert.equal(
-						refused.steps.find((step) => step.resource === "user-data-dir")?.state,
-						"skipped",
-					);
-					assert.equal(isTestPidAlive(child.pid), true);
+					// Prefix collisions and a profile flag embedded in another operand are not ownership.
+					// No child handle is supplied: every decision inspects the real OS command line.
+					for (const [name, wrongProfile] of [
+						["profile prefix", userDataDir],
+						["embedded operand", otherProfile],
+					] as const) {
+						// Verify both negatives against the same live child before exact-profile cleanup.
+						// oxlint-disable-next-line no-await-in-loop
+						await t.test(name, async () => {
+							const refused = await cleanupElectronLaunchResources({
+								record: { ...record, userDataDir: wrongProfile },
+							});
+							assert.equal(refused.partial, true, JSON.stringify(refused));
+							assert.equal(
+								refused.steps.find((step) => step.resource === "process")?.state,
+								"failed",
+							);
+							assert.deepEqual([...refused.remainingResources].sort(), [
+								"process",
+								"user-data-dir",
+							]);
+							assert.match(
+								refused.steps.find((step) => step.resource === "process")?.error ?? "",
+								/command line does not include wrapper-owned user data dir/,
+							);
+							assert.equal(
+								refused.steps.find((step) => step.resource === "user-data-dir")?.state,
+								"skipped",
+							);
+							assert.equal(isTestPidAlive(child.pid), true);
+						});
+					}
 					await stat(userDataDir);
 					await stat(otherProfile);
+					await stat(actualProfile);
 
 					const cleaned = await cleanupElectronLaunchResources({ record });
 					assert.equal(cleaned.partial, false, JSON.stringify(cleaned));
 					assert.equal(cleaned.steps.find((step) => step.resource === "process")?.state, "removed");
 					assert.equal(await waitForTestPidExit(child.pid), true);
-					await assert.rejects(stat(userDataDir), { code: "ENOENT" });
+					await assert.rejects(stat(actualProfile), { code: "ENOENT" });
+					await stat(userDataDir);
 					await stat(otherProfile);
 				} finally {
 					await stopChildProcess(child);
 					await rm(userDataDir, { force: true, recursive: true });
 					await rm(otherProfile, { force: true, recursive: true });
+					await rm(actualProfile, { force: true, recursive: true });
 				}
 			},
 		),
