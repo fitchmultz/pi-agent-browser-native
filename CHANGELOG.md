@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.5 - 2026-10-12
 
 ### Fixed
 
@@ -26,6 +26,7 @@
 - Prepare the corrected lint checker once, then run ordinary test files at Node's default file concurrency, followed by a serial lane for timing budgets and shared policy-collector fixtures. Isolate browser sockets and inherited Pi identity per harness process; build/pack fixtures no longer rewrite shared checkout output.
 - Include the previously unselected native-text declaration plus batch-fidelity and overlay suites in real-upstream verification.
 - Provide the Go toolchain in the Ubuntu platform-smoke image so its target-local gate can build the corrected lint checker.
+- Shorten over-long lines when the quality-mutation harness prints child output, so CI logs keep test and mutation results after the policy inventory.
 - Remove test-only production seams for schema builders, provider adapters, request timing, and temporary-root debug state, plus unused exports/helpers.
 
 ## 0.9.4 - 2026-10-10
