@@ -343,8 +343,6 @@ test("short-lived lock processes randomize GC past retained removal artifacts", 
 			const child = spawn(
 				process.execPath,
 				[
-					"--import",
-					"tsx",
 					"--input-type=module",
 					"-e",
 					`
@@ -353,7 +351,7 @@ test("short-lived lock processes randomize GC past retained removal artifacts", 
 				// Control the random draw; assert actual reclamation below.
 				crypto.randomInt = (max) => max - 1;
 				syncBuiltinESMExports();
-				const { acquireManagedSessionPolicyLock } = await import("./extensions/agent-browser/lib/managed-session-policy-lock.ts");
+				const { acquireManagedSessionPolicyLock } = await import("./dist/extensions/agent-browser/lib/managed-session-policy-lock.js");
 				const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} });
 				if (!lock) throw new Error("unrelated acquisition failed");
 				await lock.release();
@@ -427,25 +425,6 @@ test("managed session policy lock fails closed without repairing unsafe owner me
 	await stat(claimPath);
 });
 
-test("managed session policy lock serializes concurrent contenders", async () => {
-	let active = 0;
-	let maxActive = 0;
-	await Promise.all(
-		Array.from({ length: 8 }, async () => {
-			const lock = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 1_000 });
-			assert.ok(lock);
-			active += 1;
-			maxActive = Math.max(maxActive, active);
-			await new Promise((resolveDelay) => {
-				setTimeout(resolveDelay, 5);
-			});
-			active -= 1;
-			await lock.release();
-		}),
-	);
-	assert.equal(maxActive, 1);
-});
-
 for (const publicationRead of [1, 2]) {
 	test(`managed session policy lock refreshes a choosing ticket published after missing read ${publicationRead}`, async (t) => {
 		// Obtain real native owner identity, then model another live claim choosing
@@ -513,11 +492,7 @@ for (const holdMs of [0, 1_100]) {
 		const lock = await acquireManagedSessionPolicyLock({ sessionName });
 		assert.ok(lock);
 		// A protected native close can outlast the default 1,000 ms acquisition wait.
-		if (holdMs > 0) {
-			await new Promise((resolveDelay) => {
-				setTimeout(resolveDelay, holdMs);
-			});
-		}
+		t.mock.timers.enable({ apis: ["Date"], now: Date.now() + holdMs });
 		const claimPath = await onlyClaimPath();
 		const reader = await fs.open(join(claimPath, "owner.json"), "r");
 		const nativeRename = fs.rename;
@@ -551,40 +526,64 @@ for (const holdMs of [0, 1_100]) {
 	});
 }
 
-test("managed session policy lock excludes a live owner in another process", async () => {
+test("managed session policy lock replaces only a proven-dead claim and excludes its live successor", async (t) => {
 	const moduleUrl = new URL(
-		"../extensions/agent-browser/lib/managed-session-policy-lock.ts",
+		"../dist/extensions/agent-browser/lib/managed-session-policy-lock.js",
 		import.meta.url,
 	).href;
-	const script = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2); process.stdout.write("acquired\\n"); await new Promise((resolve) => process.stdin.once("data", resolve)); await lock.release();`;
+	const acquire = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
+	const stale = spawn(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`${acquire} console.log(JSON.stringify({ acquired: true }));`,
+		],
+		{ stdio: ["ignore", "pipe", "pipe"] },
+	);
+	t.after(async () => {
+		await stopChildProcess(stale);
+	});
+	const staleExit = once(stale, "exit");
+	assert.deepEqual(await readChildStdoutJsonLine(stale), { acquired: true });
+	assert.equal(readArray(await staleExit)[0], 0);
+	const staleClaimPath = await onlyClaimPath();
 	const child = spawn(
 		process.execPath,
-		["--import", "tsx", "--input-type=module", "--eval", script],
+		[
+			"--input-type=module",
+			"--eval",
+			`${acquire} console.log(JSON.stringify({ acquired: true })); await new Promise((resolve) => process.stdin.once("data", resolve)); await lock.release();`,
+		],
 		{ stdio: ["pipe", "pipe", "pipe"] },
 	);
-	const [chunk] = readArray(await once(child.stdout, "data"));
-	assert.ok(Buffer.isBuffer(chunk));
-	assert.equal(chunk.toString("utf8"), "acquired\n");
+	t.after(async () => {
+		await stopChildProcess(child);
+	});
+	const childExit = once(child, "exit");
+	assert.deepEqual(await readChildStdoutJsonLine(child), { acquired: true });
+	const liveClaimPath = await onlyClaimPath();
+	assert.notEqual(liveClaimPath, staleClaimPath);
+	await assert.rejects(stat(staleClaimPath), { code: "ENOENT" });
 	assert.equal(await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 }), undefined);
+	assert.deepEqual(await claimPaths(), [liveClaimPath]);
 	child.stdin.end("release");
-	const [code] = readArray(await once(child, "exit"));
-	assert.equal(code, 0);
+	assert.equal(readArray(await childExit)[0], 0);
 	const recovered = await acquireManagedSessionPolicyLock({ sessionName });
 	assert.ok(recovered);
 	await recovered.release();
+	assert.deepEqual(await claimPaths(), []);
 });
 
-test("competing cross-process reclaimers stay serialized after a stale claim", async () => {
+test("competing cross-process reclaimers stay serialized after a stale claim", async (t) => {
 	const moduleUrl = new URL(
-		"../extensions/agent-browser/lib/managed-session-policy-lock.ts",
+		"../dist/extensions/agent-browser/lib/managed-session-policy-lock.js",
 		import.meta.url,
 	).href;
 	const staleScript = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
-	const stale = spawn(
-		process.execPath,
-		["--import", "tsx", "--input-type=module", "--eval", staleScript],
-		{ stdio: "ignore" },
-	);
+	const stale = spawn(process.execPath, ["--input-type=module", "--eval", staleScript], {
+		stdio: "ignore",
+	});
 	const [staleCode] = readArray(await once(stale, "exit"));
 	assert.equal(staleCode, 0);
 	await onlyClaimPath();
@@ -593,15 +592,16 @@ test("competing cross-process reclaimers stay serialized after a stale claim", a
 	const contenderScript = `import fs from "node:fs"; import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)}, timeoutMs: 1000 }); if (!lock) process.exit(2); fs.appendFileSync(${JSON.stringify(logPath)}, "start:" + process.pid + "\\n"); await new Promise((resolve) => setTimeout(resolve, 25)); fs.appendFileSync(${JSON.stringify(logPath)}, "end:" + process.pid + "\\n"); await lock.release();`;
 	try {
 		const contenders = Array.from({ length: 4 }, () => {
-			const child = spawn(
-				process.execPath,
-				["--import", "tsx", "--input-type=module", "--eval", contenderScript],
-				{ stdio: ["ignore", "ignore", "pipe"] },
-			);
+			const child = spawn(process.execPath, ["--input-type=module", "--eval", contenderScript], {
+				stdio: ["ignore", "ignore", "pipe"],
+			});
 			let stderr = "";
 			child.stderr.on("data", (chunk: unknown) => {
 				assert.ok(Buffer.isBuffer(chunk));
 				stderr += chunk.toString("utf8");
+			});
+			t.after(async () => {
+				await stopChildProcess(child);
 			});
 			return { child, exit: once(child, "exit"), getStderr: () => stderr };
 		});
@@ -628,39 +628,4 @@ test("competing cross-process reclaimers stay serialized after a stale claim", a
 	} finally {
 		await rm(logPath, { force: true });
 	}
-});
-
-test("managed session policy lock reclaims only the proven-dead immutable claim", async () => {
-	const moduleUrl = new URL(
-		"../extensions/agent-browser/lib/managed-session-policy-lock.ts",
-		import.meta.url,
-	).href;
-	const script = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2); process.stdout.write("acquired");`;
-	const child = spawn(
-		process.execPath,
-		["--import", "tsx", "--input-type=module", "--eval", script],
-		{ stdio: ["ignore", "pipe", "pipe"] },
-	);
-	let stdout = "";
-	let stderr = "";
-	child.stdout.on("data", (chunk: unknown) => {
-		assert.ok(Buffer.isBuffer(chunk));
-		stdout += chunk.toString("utf8");
-	});
-	child.stderr.on("data", (chunk: unknown) => {
-		assert.ok(Buffer.isBuffer(chunk));
-		stderr += chunk.toString("utf8");
-	});
-	const [code] = readArray(await once(child, "exit"));
-	assert.equal(code, 0, stderr);
-	assert.equal(stdout, "acquired");
-	const staleClaimPath = await onlyClaimPath();
-
-	const recovered = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 250 });
-	assert.ok(recovered);
-	const liveClaimPath = await onlyClaimPath();
-	assert.notEqual(liveClaimPath, staleClaimPath);
-	assert.equal(await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 }), undefined);
-	assert.deepEqual(await claimPaths(), [liveClaimPath]);
-	await recovered.release();
 });

@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
-import { readArray, readString } from "./helpers/assertions.js";
+import { hasErrorCode, readArray, readString } from "./helpers/assertions.js";
 
 import {
 	closeManagedSession,
@@ -14,6 +14,38 @@ import { acquireManagedSessionPolicyLock } from "../extensions/agent-browser/lib
 import { ManagedSessionRestoreState } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getImplicitSessionCloseTimeoutMs } from "../extensions/agent-browser/lib/runtime.js";
 import { withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
+
+const realSetTimeout = setTimeout;
+async function waitForDispatch(path: string): Promise<void> {
+	const deadline = Date.now() + 10_000;
+	for (;;) {
+		try {
+			// Advance parent deadlines only after the real child publishes readiness.
+			// oxlint-disable-next-line no-await-in-loop
+			await readFile(path);
+			return;
+		} catch (error) {
+			if (!hasErrorCode(error, "ENOENT") || Date.now() >= deadline) {
+				throw error;
+			}
+			// Child startup/filesystem polling stays on the real clock.
+			// oxlint-disable-next-line no-await-in-loop
+			await new Promise((resolve) => {
+				realSetTimeout(resolve, 5);
+			});
+		}
+	}
+}
+function heldChild(tempDir: string, data: Readonly<Record<string, unknown>>): string {
+	return `const fs = require("node:fs");
+fs.readFileSync(0, "utf8");
+const watcher = fs.watch(${JSON.stringify(tempDir)}, () => {
+  if (!fs.existsSync(${JSON.stringify(join(tempDir, "release"))})) return;
+  watcher.close();
+  process.stdout.write(JSON.stringify({ success: true, data: ${JSON.stringify(data)} }));
+});
+fs.writeFileSync(${JSON.stringify(join(tempDir, "ready"))}, String(process.pid));`;
+}
 
 test(
 	"getRunningHeadedAutosavePolicyChangeError rejects live timer changes but allows close",
@@ -46,10 +78,10 @@ for (const stalledPhase of ["daemon inspection", "native close"]) {
 	test(
 		`cleanup reports its own deadline during ${stalledPhase} without retiring the session`,
 		{ concurrency: false },
-		async () => {
-			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-close-timeout-"));
+		async (t) => {
+			const tempDir = await mkdtemp(join(tmpdir(), "pd-"));
 			const logPath = join(tempDir, "calls.jsonl");
-			const sessionName = `piab-timeout-${stalledPhase.replaceAll(" ", "-")}`;
+			const sessionName = `t-${process.pid}-${stalledPhase === "native close" ? "c" : "i"}`;
 			const restoreState = new ManagedSessionRestoreState();
 			restoreState.disable(sessionName, "");
 			restoreState.recordDaemonRestoreKey(sessionName, "", null);
@@ -60,47 +92,64 @@ const args = process.argv.slice(2);
 const inspection = args.includes("info");
 require("node:fs").appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(args) + "\\n");
 if (inspection === ${JSON.stringify(stalledPhase === "daemon inspection")}) {
+  require("node:fs").writeFileSync(${JSON.stringify(join(tempDir, "ready"))}, String(process.pid));
   setTimeout(() => process.exit(1), 10000);
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { active: true, runtime: { restoreKey: null } } }));
 }
 `,
 			);
-			// Acquire normally before starting the command deadline, avoiding host process-probe startup in this phase-specific test.
-			const policyLock = await acquireManagedSessionPolicyLock({ sessionName, namespace: "" });
-			assert.ok(policyLock);
 			try {
-				const error = await withPatchedEnv(
+				await withPatchedEnv(
 					{
 						PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
+						PI_AGENT_BROWSER_SOCKET_DIR: tempDir,
 						PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
 					},
-					() =>
-						closeManagedSession({
+					async () => {
+						// Acquire normally so process identity discovery is outside the controlled command budget.
+						const policyLock = await acquireManagedSessionPolicyLock({
+							sessionName,
+							namespace: "",
+						});
+						assert.ok(policyLock);
+						t.mock.timers.enable({ apis: ["setTimeout"] });
+						const pending = closeManagedSession({
 							cwd: tempDir,
 							namespace: "",
 							policyLock,
 							restoreState,
 							sessionName,
 							timeoutMs: 1500,
-						}),
-				);
-				assert.match(
-					error ?? "",
-					new RegExp(`cleanup timed out after 1500 ms during ${stalledPhase}`),
-				);
-				assert.equal(restoreState.isDisabled(sessionName, ""), true);
-				assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), true);
-				const calls = (await readFile(logPath, "utf8"))
-					.trim()
-					.split("\n")
-					.map((line) => readArray(JSON.parse(line)).map(readString));
-				assert.equal(
-					calls.filter((args) => args.at(-1) === "close").length,
-					stalledPhase === "native close" ? 1 : 0,
+						});
+						try {
+							await waitForDispatch(join(tempDir, "ready"));
+							t.mock.timers.tick(1500);
+							// Native exit/close and subprocess drain stay real after the parent deadline fires.
+							t.mock.timers.reset();
+							const error = await pending;
+							assert.match(
+								error ?? "",
+								new RegExp(`cleanup timed out after 1500 ms during ${stalledPhase}`),
+							);
+							assert.equal(restoreState.isDisabled(sessionName, ""), true);
+							assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), true);
+							const calls = (await readFile(logPath, "utf8"))
+								.trim()
+								.split("\n")
+								.map((line) => readArray(JSON.parse(line)).map(readString));
+							assert.equal(
+								calls.filter((args) => args.at(-1) === "close").length,
+								stalledPhase === "native close" ? 1 : 0,
+							);
+						} finally {
+							t.mock.timers.reset();
+							await pending;
+							await policyLock.release();
+						}
+					},
 				);
 			} finally {
-				await policyLock.release();
 				await rm(tempDir, { force: true, recursive: true });
 			}
 		},
@@ -110,30 +159,44 @@ if (inspection === ${JSON.stringify(stalledPhase === "daemon inspection")}) {
 test(
 	"default cleanup allows the native five-second browser shutdown grace",
 	{ concurrency: false, timeout: 15_000 },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-close-grace-"));
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pd-"));
 		const restoreState = new ManagedSessionRestoreState();
-		const sessionName = "piab-native-close-grace";
+		const sessionName = `g-${process.pid}`;
 		restoreState.disable(sessionName, "");
 		restoreState.recordDaemonRestoreKey(sessionName, "", null);
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`
-// Native ChromeProcess.wait_or_kill permits five seconds before close can return.
-setTimeout(() => process.stdout.write(JSON.stringify({ success: true, data: { closed: true } })), 5000);
-`,
-		);
+		await writeFakeAgentBrowserBinary(tempDir, heldChild(tempDir, { closed: true }));
 		try {
 			const error = await withPatchedEnv(
-				{ PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` },
-				() =>
-					closeManagedSession({
+				{
+					PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
+					PI_AGENT_BROWSER_SOCKET_DIR: tempDir,
+				},
+				async () => {
+					const policyLock = await acquireManagedSessionPolicyLock({ sessionName, namespace: "" });
+					assert.ok(policyLock);
+					t.mock.timers.enable({ apis: ["setTimeout"] });
+					const pending = closeManagedSession({
 						cwd: tempDir,
 						namespace: "",
 						restoreState,
 						sessionName,
+						policyLock,
 						timeoutMs: getImplicitSessionCloseTimeoutMs({}),
-					}),
+					});
+					try {
+						await waitForDispatch(join(tempDir, "ready"));
+						// ChromeProcess.wait_or_kill permits five seconds before native close returns.
+						t.mock.timers.tick(5250);
+						await writeFile(join(tempDir, "release"), "release");
+						return await pending;
+					} finally {
+						t.mock.timers.reset();
+						await writeFile(join(tempDir, "release"), "release");
+						await pending;
+						await policyLock.release();
+					}
+				},
 			);
 			assert.equal(error, undefined);
 			assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), false);
@@ -147,9 +210,9 @@ test(
 	"pending native cleanup keeps the managed restore identity",
 	{ concurrency: false },
 	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "piab-close-pending-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "pd-"));
 		const restoreState = new ManagedSessionRestoreState();
-		const sessionName = "piab-close-pending";
+		const sessionName = `p-${process.pid}`;
 		restoreState.disable(sessionName, "");
 		restoreState.recordDaemonRestoreKey(sessionName, "", null);
 		await writeFakeAgentBrowserBinary(
@@ -163,7 +226,10 @@ console.log(JSON.stringify({ success: true, data }));
 		);
 		try {
 			const error = await withPatchedEnv(
-				{ PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` },
+				{
+					PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
+					PI_AGENT_BROWSER_SOCKET_DIR: tempDir,
+				},
 				() =>
 					closeManagedSession({
 						cwd: tempDir,
@@ -185,26 +251,40 @@ console.log(JSON.stringify({ success: true, data }));
 test(
 	"inspectManagedSessionDaemon waits through a temporarily busy daemon",
 	{ concurrency: false, timeout: 15_000 },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-daemon-policy-"));
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pd-"));
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`
-Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5250);
-process.stdout.write(JSON.stringify({ success: true, data: { active: false, runtime: null } }));
-`,
+			heldChild(tempDir, { active: false, runtime: null }),
 		);
-
 		try {
 			const result = await withPatchedEnv(
 				{
 					PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
 					PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "50",
 					PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
+					PI_AGENT_BROWSER_SOCKET_DIR: tempDir,
 				},
-				() => inspectManagedSessionDaemon({ cwd: tempDir, sessionName: "piab-slow" }),
+				async () => {
+					t.mock.timers.enable({ apis: ["setTimeout"] });
+					const controller = new AbortController();
+					const pending = inspectManagedSessionDaemon({
+						cwd: tempDir,
+						sessionName: `i-${process.pid}`,
+						signal: controller.signal,
+					});
+					try {
+						await waitForDispatch(join(tempDir, "ready"));
+						t.mock.timers.tick(5250);
+						await writeFile(join(tempDir, "release"), "release");
+						return await pending;
+					} finally {
+						t.mock.timers.reset();
+						controller.abort();
+						await pending;
+					}
+				},
 			);
-
 			assert.deepEqual(result, { status: "inactive" });
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
