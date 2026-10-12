@@ -2213,6 +2213,12 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 							params,
 							controller.signal,
 						);
+						// A result before the held child starts is a preflight failure; report it immediately.
+						const early: { result?: string } = {};
+						const settled = Promise.allSettled([pending]).then(([outcome]) => {
+							early.result = JSON.stringify(outcome);
+							return outcome;
+						});
 						try {
 							// Preflight and native process startup use real I/O. Advance the
 							// watchdog only once the requested command is running and held.
@@ -2220,6 +2226,9 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 							// Fixture transitions and their assertions run in order against this test's shared state.
 							// oxlint-disable-next-line no-await-in-loop
 							while ((await readInvocationLog(logPath)).length <= index) {
+								// This polling guard fails stalled startup; an already-started child needs no polling iteration.
+								// oxlint-disable-next-line node-test/no-conditional-assertion
+								assert.equal(early.result, undefined, "tool settled before the wait child started");
 								// This polling guard fails stalled startup; an already-started child needs no polling iteration.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
 								assert.ok(Date.now() < deadline, "controlled wait child must start");
@@ -2258,7 +2267,7 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 							controller.abort();
 							// Fixture transitions and their assertions run in order against this test's shared state.
 							// oxlint-disable-next-line no-await-in-loop
-							await Promise.allSettled([pending]);
+							await settled;
 						}
 					}
 					const invocations = await readInvocationLog(logPath);
