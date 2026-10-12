@@ -185,7 +185,7 @@ test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA fai
 	assert.match(analysis.summary, /QA preset failed/);
 });
 
-test("QA visible-text predicates exclude value controls hidden by an ancestor", () => {
+test("QA visible-text predicates follow computed visibility without requiring ancestor boxes", async (t) => {
 	class Element {
 		readonly tagName: string;
 		readonly parentElement: Readonly<Element> | null;
@@ -198,26 +198,41 @@ test("QA visible-text predicates exclude value controls hidden by an ancestor", 
 		constructor(
 			value: string,
 			parentElement: Readonly<Element> | null = null,
-			opacity = "1",
+			style: Partial<Element["style"]> = {},
 			tagName = "INPUT",
 		) {
 			this.tagName = tagName;
 			this.parentElement = parentElement;
 			this.value = value;
-			this.style = { display: "block", visibility: "visible", opacity };
+			this.style = { display: "block", visibility: "visible", opacity: "1", ...style };
 		}
 		getClientRects() {
-			return [{}];
+			return this.style.display === "contents" || this.style.display === "none" ? [] : [{}];
 		}
 	}
-	const root = new Element("", null, "1", "BODY");
-	const transparentParent = new Element("", root, "0", "DIV");
+	const root = new Element("", null, {}, "BODY");
+	const transparentParent = new Element("", root, { opacity: "0" }, "DIV");
+	const contentsParent = new Element("", root, { display: "contents" }, "DIV");
+	const invisibleParent = new Element("", root, { visibility: "hidden" }, "DIV");
+	const undisplayedParent = new Element("", root, { display: "none" }, "DIV");
 	const visibleInput = new Element("Visible control", root);
 	const hiddenInput = new Element("Hidden control", transparentParent);
+	const contentsInput = new Element("Contents control", contentsParent);
+	const overriddenInput = new Element("Overridden control", invisibleParent, {
+		visibility: "visible",
+	});
+	const undisplayedInput = new Element("Undisplayed control", undisplayedParent);
 	const nodes = [
 		{ parentElement: root, nodeValue: "Visible   heading" },
 		{ parentElement: transparentParent, nodeValue: "Hidden heading" },
+		{ parentElement: contentsParent, nodeValue: "Contents text" },
+		{ parentElement: invisibleParent, nodeValue: "Invisible text" },
+		{ parentElement: undisplayedParent, nodeValue: "Undisplayed text" },
+		{ parentElement: new Element("", root, {}, "SCRIPT"), nodeValue: "Script text" },
+		{ parentElement: new Element("", root, {}, "STYLE"), nodeValue: "Style text" },
+		{ parentElement: new Element("", root, {}, "SVG"), nodeValue: "Svg text" },
 	];
+	const elements = [visibleInput, hiddenInput, contentsInput, overriddenInput, undisplayedInput];
 	const context = {
 		HTMLElement: Element,
 		NodeFilter: { SHOW_TEXT: 4, SHOW_ELEMENT: 1 },
@@ -225,26 +240,40 @@ test("QA visible-text predicates exclude value controls hidden by an ancestor", 
 		document: {
 			body: root,
 			createTreeWalker: (_root: unknown, whatToShow: number) => {
-				const iterator = (whatToShow === 4 ? nodes : [visibleInput, hiddenInput])[
-					Symbol.iterator
-				]();
+				const iterator = (whatToShow === 4 ? nodes : elements)[Symbol.iterator]();
 				return { nextNode: () => iterator.next().value ?? null };
 			},
 		},
 	};
+	const cases = [
+		{ text: "Visible heading", visible: true },
+		{ text: "Visible control", visible: true },
+		{ text: "Hidden heading", visible: false },
+		{ text: "Hidden control", visible: false },
+		{ text: "Contents control", visible: true },
+		{ text: "Overridden control", visible: true },
+		{ text: "Contents text", visible: true },
+		{ text: "Invisible text", visible: false },
+		{ text: "Undisplayed control", visible: false },
+		{ text: "Undisplayed text", visible: false },
+		{ text: "Script text", visible: false },
+		{ text: "Style text", visible: false },
+		{ text: "Svg text", visible: false },
+	];
 	const compiled = compileAgentBrowserQaPreset({
 		attached: true,
-		expectedText: ["Visible heading", "Visible control", "Hidden heading", "Hidden control"],
+		expectedText: cases.map(({ text }) => text),
 	}).compiled;
 	assert.ok(compiled);
 	const predicates = compiled.steps.filter((step) => step.action === "assertText");
-	assert.equal(predicates.length, 4);
-	assert.deepEqual(
-		predicates.map((step) => {
-			const observed: unknown = runInNewContext(step.args[2], context);
-			return observed;
-		}),
-		[true, true, false, false],
+	assert.equal(predicates.length, cases.length);
+	await Promise.all(
+		cases.map(({ text, visible }, index) =>
+			t.test(text, () => {
+				const observed: unknown = runInNewContext(predicates[index].args[2], context);
+				assert.equal(observed, visible);
+			}),
+		),
 	);
 });
 

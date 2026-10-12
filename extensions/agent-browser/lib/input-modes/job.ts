@@ -29,9 +29,10 @@ function buildQaVisibleTextPredicate(text: string): string {
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
     return element.getClientRects().length > 0;
   };
-  const hasVisibleAncestors = (node) => {
+  const ancestorsAllowVisibility = (node) => {
     for (let element = node.parentElement; element; element = element.parentElement) {
-      if (!isVisibleElement(element)) return false;
+      const style = window.getComputedStyle(element);
+      if (style.display === "none" || Number(style.opacity) === 0) return false;
       if (element === root) break;
     }
     return true;
@@ -39,14 +40,16 @@ function buildQaVisibleTextPredicate(text: string): string {
   const textWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let visitedText = 0;
   for (let node = textWalker.nextNode(); node && visitedText < 6000; node = textWalker.nextNode(), visitedText += 1) {
-    if (!hasVisibleAncestors(node)) continue;
+    const parent = node.parentElement;
+    if (!(parent instanceof HTMLElement) || skipTags.has(parent.tagName)) continue;
+    if (window.getComputedStyle(parent).visibility === "hidden" || !ancestorsAllowVisibility(node)) continue;
     if (normalize(node.nodeValue).includes(expected)) return true;
   }
   const elementWalker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   let visitedElements = 0;
   for (let node = elementWalker.nextNode(); node && visitedElements < 3000; node = elementWalker.nextNode(), visitedElements += 1) {
     const element = node;
-    if (!isVisibleElement(element) || !hasVisibleAncestors(element) || !("value" in element)) continue;
+    if (!isVisibleElement(element) || !ancestorsAllowVisibility(element) || !("value" in element)) continue;
     if (normalize(element.value).includes(expected)) return true;
   }
   return false;
