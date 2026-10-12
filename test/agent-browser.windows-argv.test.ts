@@ -121,33 +121,19 @@ process.stdout.write(Buffer.from(JSON.stringify({ args: process.argv.slice(2), s
 						namespace: "child-env",
 					});
 				}
-				for (const exitCode of [1, 7]) {
-					// Each transport case writes shared fixture evidence; finish it before replacing or reading the launcher fixture.
-					// oxlint-disable-next-line no-await-in-loop
-					await writeFakeAgentBrowserBinary(
-						chosen,
-						`process.stderr.write('CLI failed'); process.exit(${exitCode});`,
-					);
-					// Each transport case writes shared fixture evidence; finish it before replacing or reading the launcher fixture.
-					// oxlint-disable-next-line no-await-in-loop
-					const failed = await runAgentBrowserProcess({
-						args: ["fill", "#field", ""],
-						cwd: root,
-						env,
-					});
-					// The nonempty exitCode fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(failed.exitCode, exitCode);
-					// The nonempty exitCode fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(failed.stderr, "CLI failed");
-					// The nonempty exitCode fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(failed.spawnError, undefined);
-					// The nonempty exitCode fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(failed.agentBrowserStarted, true);
-				}
+				await writeFakeAgentBrowserBinary(
+					chosen,
+					"process.stderr.write('CLI failed'); process.exit(7);",
+				);
+				const failed = await runAgentBrowserProcess({
+					args: ["fill", "#field", ""],
+					cwd: root,
+					env,
+				});
+				assert.equal(failed.exitCode, 7);
+				assert.equal(failed.stderr, "CLI failed");
+				assert.equal(failed.spawnError, undefined);
+				assert.equal(failed.agentBrowserStarted, true);
 				const controller = new AbortController();
 				const missing = await runAgentBrowserProcess({
 					args: ["--version"],

@@ -562,10 +562,10 @@ test(
 );
 
 test(
-	"secure temp process-exit cleanup preserves protected child directories",
+	"stale temp pruning preserves profile children protected by prior process metadata",
 	{ concurrency: false },
 	async () => {
-		const childScript = `
+		const childAScript = `
 		import { dirname, join } from "node:path";
 		import { writeFile } from "node:fs/promises";
 		import { cleanupSecureTempArtifacts, createSecureTempDirectory, writeSecureTempFile } from "./dist/extensions/agent-browser/lib/temp.js";
@@ -575,48 +575,6 @@ test(
 		const root = dirname(profile);
 		await cleanupSecureTempArtifacts({ preservePaths: [profile] });
 		console.log(JSON.stringify({ profile, root, spill }));
-	`;
-		const child = spawn(process.execPath, ["--input-type=module", "-e", childScript], {
-			cwd: process.cwd(),
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		let root: string | undefined;
-		try {
-			const childExit = once(child, "exit");
-			const result = readRecord(await readChildStdoutJsonLine(child));
-			root = readString(result.root);
-			const [exitCode] = readArray(await childExit);
-			assert.equal(exitCode, 0);
-			assert.equal(
-				await readFile(join(readString(result.profile), "profile-state.txt"), "utf8"),
-				"keep",
-			);
-			await assert.rejects(stat(readString(result.spill)), { code: "ENOENT" });
-		} finally {
-			await stopChildProcess(child);
-			if (root !== undefined && root !== "") {
-				await rm(root, { force: true, recursive: true }).catch(() => {
-					/* Best-effort teardown: these task-owned paths may already be absent. */
-				});
-			}
-			await cleanupSecureTempArtifacts();
-		}
-	},
-);
-
-test(
-	"stale temp pruning preserves profile children protected by prior process metadata",
-	{ concurrency: false },
-	async () => {
-		const childAScript = `
-		import { dirname, join } from "node:path";
-		import { writeFile } from "node:fs/promises";
-		import { cleanupSecureTempArtifacts, createSecureTempDirectory } from "./dist/extensions/agent-browser/lib/temp.js";
-		const profile = await createSecureTempDirectory("electron-profile-");
-		await writeFile(join(profile, "profile-state.txt"), "keep", "utf8");
-		const root = dirname(profile);
-		await cleanupSecureTempArtifacts({ preservePaths: [profile] });
-		console.log(JSON.stringify({ profile, root }));
 	`;
 		const childA = spawn(process.execPath, ["--input-type=module", "-e", childAScript], {
 			cwd: process.cwd(),
@@ -634,6 +592,7 @@ test(
 				await readFile(join(readString(result.profile), "profile-state.txt"), "utf8"),
 				"keep",
 			);
+			await assert.rejects(stat(readString(result.spill)), { code: "ENOENT" });
 
 			const markerPath = join(readString(result.root), ".pi-agent-browser-owner.json");
 			const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
