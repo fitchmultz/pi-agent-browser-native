@@ -8,8 +8,11 @@ import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/ar
 import { convertBrowserEntries } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import {
+	getNativePendingControl,
+	getNativeTabContinuationGuidance,
+} from "../extensions/agent-browser/lib/native-confirmation.js";
+import {
 	createExtensionHarness,
-	createToolBranchEntry,
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
@@ -147,7 +150,6 @@ for (const shared of [false, true]) {
 						command,
 						"read-id",
 					]);
-					branch.push(createToolBranchEntry({ details: read.details, isError: read.isError }));
 					const pendingState = SessionPageState.fromBranch(convertBrowserEntries(branch));
 					assert.ok(
 						pendingState.findReadConfirmation(["confirm", "read-id"]),
@@ -194,9 +196,6 @@ for (const shared of [false, true]) {
 						[[command, "read-id"]],
 					);
 					assert.equal(readRecord(JSON.parse(await readFile(state, "utf8"))).browserTouches, 0);
-					branch.push(
-						createToolBranchEntry({ details: confirmed.details, isError: confirmed.isError }),
-					);
 					assert.equal(
 						SessionPageState.fromBranch(convertBrowserEntries(branch)).findReadConfirmation([
 							"confirm",
@@ -465,15 +464,9 @@ test(
 					["confirm", "read-id"],
 				],
 			);
-			const pendingRead = await executeRegisteredTool(harness.tool, harness.ctx, {
+			await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "shared", "read", "public.test/docs"],
 			});
-			branch.push(
-				createToolBranchEntry({
-					details: readRecord(pendingRead.details),
-					isError: pendingRead.isError,
-				}),
-			);
 			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", "shared", "click", "#guarded"],
 			});
@@ -488,7 +481,6 @@ test(
 					["--namespace", "", "--session", "shared", "deny", "dom-id"],
 				],
 			);
-			branch.push(createToolBranchEntry({ details: blocked.details, isError: blocked.isError }));
 			const replayed = SessionPageState.fromBranch(convertBrowserEntries(branch));
 			assert.equal(
 				replayed.findReadConfirmation(["--session", "shared", "confirm", "read-id"]),
@@ -618,9 +610,6 @@ for (const after of [
 					args: [...prefix, "confirm", "snapshot-id"],
 				});
 				assert.equal(first.isError, false);
-				branch.push(
-					createToolBranchEntry({ details: readRecord(first.details), isError: first.isError }),
-				);
 				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, "snapshot", "-i"],
 				});
@@ -639,13 +628,10 @@ for (const after of [
 					],
 				};
 				const later = laterRows[after] ?? [];
-				const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
+				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, "batch"],
 					stdin: JSON.stringify([["confirm", "snapshot-id"], ...later]),
 				});
-				branch.push(
-					createToolBranchEntry({ details: readRecord(batch.details), isError: batch.isError }),
-				);
 				const replay = SessionPageState.fromBranch(convertBrowserEntries(branch)).get("shared");
 				const invalidated = after === "invalidation" || after === "failed-snapshot";
 				const current = after === "capture" ? "e3" : "e2";
@@ -1009,52 +995,38 @@ for (const batch of [false, true]) {
 	}
 }
 
-for (const metadata of [
-	{
-		after_confirmation: ["open", "https://current.test/continued"],
-		guidance: "Continuation",
-		action: "click",
-	},
-	{ after_confirmation: ["open", "https://other.test/"], guidance: "Unrelated URL" },
-	{ after_confirmation: ["open", "https://current.test/continued"] },
-	{ guidance: "Missing continuation" },
-	{
-		after_confirmation: ["open", "https://current.test/continued", "--headers", "{}"],
-		guidance: "Extra arguments",
-	},
-	{ after_confirmation: ["open", "https://current.test/continued"], guidance: "" },
-	{
-		after_confirmation: ["open", "https://current.test/continued"],
-		guidance: "Continuation",
-		unrelated: true,
-	},
-]) {
-	test(
-		`malformed tab transport metadata grants no confirmation provenance (${JSON.stringify(metadata)})`,
-		{ concurrency: false },
-		async () => {
-			await withConfirmations(async ({ state, log, harness }) => {
-				await writeFile(state, JSON.stringify({ tabMetadata: metadata }));
-				const pending = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", "shared", "tab", "new", "https://current.test/continued"],
-				});
-				assert.equal(pending.details?.readConfirmation, undefined);
-				await writeFile(log, "");
-				await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", "shared", "confirm", "dom-id"],
-				});
-				assert.deepEqual(
-					extractUpstreamCommandTokens((await readInvocationLog(log))[0].args),
-					["get", "url"],
-					"unrecognized metadata retains mandatory page checks",
-				);
-			});
-		},
+test("malformed tab transport metadata grants no confirmation provenance", () => {
+	const target = "https://current.test/continued";
+	const metadata = [
+		{ after_confirmation: ["open", target], guidance: "Continuation", action: "click" },
+		{ after_confirmation: ["open", "https://other.test/"], guidance: "Unrelated URL" },
+		{ after_confirmation: ["open", target] },
+		{ guidance: "Missing continuation" },
+		{ after_confirmation: ["open", target, "--headers", "{}"], guidance: "Extra arguments" },
+		{ after_confirmation: ["open", target], guidance: "" },
+		{ after_confirmation: ["open", target], guidance: "Continuation", unrelated: true },
+	];
+	const command = ["tab", "new", target];
+	const controls = metadata.map((row) => {
+		const data = {
+			confirmation_required: true,
+			confirmation_id: "dom-id",
+			action: "tab_new",
+			...row,
+		};
+		return [
+			getNativePendingControl(command, data),
+			getNativeTabContinuationGuidance(command, data),
+		];
+	});
+	assert.deepEqual(
+		controls,
+		Array.from({ length: 7 }, () => [undefined, undefined]),
 	);
-}
+});
 
 test(
-	"tab continuation metadata inside eval or HTTP content is never native control provenance",
+	"tab continuation page content and malformed native metadata never grant control provenance",
 	{ concurrency: false },
 	async () => {
 		await withConfirmations(async ({ state, log, harness }) => {
@@ -1088,6 +1060,29 @@ test(
 				"get",
 				"url",
 			]);
+			await writeFile(
+				state,
+				JSON.stringify({
+					tabMetadata: {
+						after_confirmation: ["open", "https://current.test/continued"],
+						guidance: "Continuation",
+						unrelated: true,
+					},
+				}),
+			);
+			const malformed = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "shared", "tab", "new", "https://current.test/continued"],
+			});
+			assert.equal(malformed.details?.readConfirmation, undefined);
+			await writeFile(log, "");
+			await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--session", "shared", "confirm", "dom-id"],
+			});
+			assert.deepEqual(
+				extractUpstreamCommandTokens((await readInvocationLog(log))[0].args),
+				["get", "url"],
+				"malformed native metadata still requires a page check before the decision",
+			);
 		});
 	},
 );
@@ -1350,12 +1345,9 @@ test(
 			]) {
 				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
 				// oxlint-disable-next-line no-await-in-loop
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, ...args],
 				});
-				branch.push(
-					createToolBranchEntry({ details: readRecord(result.details), isError: result.isError }),
-				);
 			}
 			const resumed = createExtensionHarness({ cwd: root, branch });
 			await runExtensionEvent(resumed.handlers, "session_start", { reason: "resume" }, resumed.ctx);
@@ -1513,7 +1505,7 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 			{ concurrency: false },
 			async () => {
 				const expectedAttachment = failedClose ? true : undefined;
-				await withConfirmations(async ({ root, state, branch, harness }) => {
+				await withConfirmations(async ({ root, state, harness }) => {
 					const prefix = ["--session", "shared"];
 					await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...prefix, "connect", "9222"],
@@ -1521,15 +1513,9 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 					for (const args of [["--confirm-actions", "close", "get", "url"], ["close"]]) {
 						// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
 						// oxlint-disable-next-line no-await-in-loop
-						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+						await executeRegisteredTool(harness.tool, harness.ctx, {
 							args: [...prefix, ...args],
 						});
-						branch.push(
-							createToolBranchEntry({
-								details: readRecord(result.details),
-								isError: result.isError,
-							}),
-						);
 					}
 					if (failedClose) {
 						const native = readRecord(JSON.parse(await readFile(state, "utf8")));
