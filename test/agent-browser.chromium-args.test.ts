@@ -134,6 +134,17 @@ test("Chromium diagnostic uses native top-level globals but raw batch tokens", (
 		/ignored.*option/,
 	);
 	assert.equal(validateToolArgs(["--user-agent", "--no-sandbox", "open", url]), undefined);
+	for (const args of [
+		["--headers", '{"X-Flag":"--no-sandbox"}', "open", url],
+		["fill", "#field", "--no-sandbox"],
+		["type", "#field", "before", "--no-sandbox", "after", "--clear", "--delay", "5"],
+		["select", "#pick", "--no-sandbox"],
+		["find", "role", "button", "click", "--name", "--no-sandbox"],
+	]) {
+		// Each fixed literal/header input must pass direct recognition independently.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(validateToolArgs(args), undefined, args.join(" "));
+	}
 	assert.equal(validateToolArgs(["--no-sandbox", "--help"]), undefined);
 	assert.equal(validateToolArgs(["--no-sandbox", "--version"]), undefined);
 	assert.match(
@@ -161,12 +172,7 @@ test("Chromium diagnostic uses native top-level globals but raw batch tokens", (
 for (const args of [
 	["--args", "--disable-gpu,--no-sandbox", "open", url],
 	["open", url, "--args", "--disable-gpu\n--no-sandbox"],
-	["--headers", '{"X-Flag":"--no-sandbox"}', "open", url],
-	["fill", "#field", "--no-sandbox"],
-	["type", "#field", "before", "--no-sandbox", "after", "--clear", "--delay", "5"],
-	["select", "#pick", "--no-sandbox"],
 	["upload", "#files", "--no-sandbox"],
-	["find", "role", "button", "click", "--name", "--no-sandbox"],
 	["eval", "--no-sandbox"],
 	["--no-sandbox", "--help"],
 ] as const) {
@@ -218,11 +224,15 @@ for (const mode of ["stdin", "raw"] as const) {
 					["fill", "#field", "--no-sandbox"],
 					["fill", "#field", "--args", "--no-sandbox"],
 					["select", "#pick", "--no-sandbox"],
+					["type", "#field", "before", "--no-sandbox", "after", "--clear", "--delay", "5"],
+					["find", "role", "button", "click", "--name", "--no-sandbox"],
 				];
 				await writeFile(join(root, "raw-rows.json"), JSON.stringify(rows));
 				const args = [
 					"--args",
 					"--no-sandbox",
+					"--headers",
+					'{"X-Flag":"--no-sandbox"}',
 					"batch",
 					...(mode === "raw"
 						? rows.map((row) => row.map((value) => JSON.stringify(value)).join(" "))
