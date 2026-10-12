@@ -17,7 +17,7 @@ async function loadConfigPolicyModule() {
 	if (existsSync(sourcePolicyUrl)) {
 		return import(sourcePolicyUrl.href);
 	}
-	return import("../dist/extensions/agent-browser/lib/config-policy.js");
+	return import("../dist/packaged/lib/config-policy.js");
 }
 
 const {

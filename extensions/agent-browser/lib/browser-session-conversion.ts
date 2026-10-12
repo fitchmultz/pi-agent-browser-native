@@ -122,7 +122,12 @@ export async function convertBrowserSession(
 			throw new Error("Conversion source has no native session header.");
 		}
 		stage = await open(stagePath, "wx+", 0o600);
-		const writer = new BrowserConversionWriter(file, stage, header.value.id, checksum);
+		const writer = new BrowserConversionWriter(
+			file,
+			stage,
+			{ sessionId: header.value.id, checksum },
+			metadata,
+		);
 		for (const entry of metadata) {
 			// Native ancestry and output byte ordering require each entry to finish before the next.
 			// oxlint-disable-next-line no-await-in-loop

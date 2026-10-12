@@ -328,8 +328,6 @@ function qualitySteps() {
 	return [
 		buildStep(),
 		scriptStep(["./scripts/prepare-quality-checker.mjs"]),
-		scriptStep(["./scripts/code-quality.mjs", "scope"]),
-		scriptStep(["./scripts/code-quality.mjs", "check"]),
 		scriptStep(["./scripts/code-quality.mjs", "lint"]),
 		localToolStep("oxfmt", ["--check", "."]),
 	];

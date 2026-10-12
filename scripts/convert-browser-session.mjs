@@ -23,7 +23,7 @@ if (values.help) {
 			);
 		}
 		const { convertBrowserSession } =
-			await import("../dist/extensions/agent-browser/lib/browser-session-conversion.js");
+			await import("../dist/packaged/lib/browser-session-conversion.js");
 		const receipt = await convertBrowserSession({
 			source: values.source,
 			destination: values.output,

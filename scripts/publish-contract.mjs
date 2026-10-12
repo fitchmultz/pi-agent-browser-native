@@ -27,6 +27,7 @@ export const FORBIDDEN_PACKED_FILES = Object.freeze([
 	".env*",
 	"**/*.tgz",
 	".pi/extensions/agent-browser.ts",
+	"dist/extensions/agent-browser/lib/",
 	"AGENTS.md",
 	"docs/plans/",
 	"extensions/agent-browser/index.ts",

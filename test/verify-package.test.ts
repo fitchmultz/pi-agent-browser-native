@@ -1,12 +1,13 @@
 /**
  * Purpose: Verify the release/package gate helpers that protect the published tarball contract.
  * Responsibilities: Assert CLI option parsing, failure aggregation, publish-contract derivation, and required/forbidden package invariants for the verify-package maintainer script.
- * Scope: Focused unit coverage for `scripts/verify-package.mjs` helper behavior only; full package verification still runs through `npm run verify -- package` and `npm run verify -- release`.
+ * Scope: Verifier helpers and one isolated real prepare/pack fixture, including plain-Node compiled checkout state; full installed-package verification runs through `npm run verify -- package` and `npm run verify -- release`.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: The retired `.pi/extensions/agent-browser.ts` autoload shim must stay forbidden, and required packed files must be derived from the canonical publish contract rather than duplicated in tests.
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readRecord, readString } from "./helpers/assertions.js";
 import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -275,17 +276,18 @@ test("publish contract derives required packed files from package.json", async (
 		true,
 	);
 	assert.equal(
-		publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/parsing.js"),
+		publishContract.requiredPackedFiles.includes("dist/packaged/lib/config-policy.js"),
 		true,
 	);
 	assert.equal(
-		publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/playbook.js"),
+		publishContract.requiredPackedFiles.includes("dist/packaged/lib/browser-session-conversion.js"),
 		true,
 	);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/packaged/lib/runtime.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/packaged/lib/parsing.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/packaged/lib/playbook.js"), true);
 	assert.equal(
-		publishContract.requiredPackedFiles.includes(
-			"dist/extensions/agent-browser/lib/results/snapshot.js",
-		),
+		publishContract.requiredPackedFiles.includes("dist/packaged/lib/results/snapshot.js"),
 		true,
 	);
 	for (const path of [
@@ -368,6 +370,8 @@ test("evaluatePackResult rejects private paths and tarballs without rejecting ne
 		["docs/plans/internal.md", ["docs/plans/"]],
 		["docs/plans/.secret.md", ["docs/plans/"]],
 		["AGENTS.md", ["AGENTS.md"]],
+		["dist/extensions/agent-browser/lib/runtime.js", ["dist/extensions/agent-browser/lib/"]],
+		["dist/packaged/lib/runtime.js", []],
 		[".artifacts/nested/report.json", [".artifacts/"]],
 		[".artifacts/.hidden/foo", [".artifacts/"]],
 		[".crabbox/lease.json", [".crabbox/"]],
@@ -445,7 +449,7 @@ test("verifyPackageRelease lets prepare create a missing dist directory", async 
 	}
 });
 
-test("packToTemporaryPackageDir runs prepare in an isolated source copy even under npm publish dry-run env", async (t) => {
+test("packToTemporaryPackageDir runs prepare and preserves compiled checkout state under npm publish dry-run env", async (t) => {
 	const source = resolve(import.meta.dirname, "..");
 	const directory = await mkdtemp(join(tmpdir(), "piab-package-source-"));
 	t.after(() => rm(directory, { recursive: true, force: true }));
@@ -486,6 +490,56 @@ test("packToTemporaryPackageDir runs prepare in an isolated source copy even und
 			[],
 			"real tarball must satisfy the canonical required and forbidden paths",
 		);
+		const compiledState = execFileSync(
+			process.execPath,
+			[
+				"--input-type=module",
+				"--eval",
+				`import assert from "node:assert/strict";
+import { access, rm } from "node:fs/promises";
+import { dirname } from "node:path";
+import { withAgentBrowserProcessEnvironment } from "./dist/extensions/agent-browser/lib/process-environment.js";
+import { buildExecutionPlan } from "./dist/extensions/agent-browser/lib/runtime.js";
+import { buildSnapshotPresentation } from "./dist/extensions/agent-browser/lib/results/snapshot.js";
+import { cleanupSecureTempArtifacts } from "./dist/extensions/agent-browser/lib/temp.js";
+const plan = withAgentBrowserProcessEnvironment(
+	{ AGENT_BROWSER_SESSION: "compiled-caller", AGENT_BROWSER_NAMESPACE: "compiled-namespace" },
+	() => buildExecutionPlan(["get", "title"], {
+		freshSessionName: "compiled-fresh", managedSessionName: "compiled-managed",
+		managedSessionActive: false, sessionMode: "auto",
+	}),
+);
+const refs = Object.fromEntries(Array.from({ length: 61 }, (_, index) => [
+	"e" + (index + 1), { role: "button", name: "Button " + (index + 1) },
+]));
+const presentation = await buildSnapshotPresentation({ snapshot: "Tree", refs });
+assert.ok(presentation.fullOutputPath, "fixture must create a real snapshot spill");
+try {
+	await access(presentation.fullOutputPath);
+	await cleanupSecureTempArtifacts();
+	const spillRemains = await access(presentation.fullOutputPath).then(() => true, error => {
+		if (error.code === "ENOENT") return false;
+		throw error;
+	});
+	console.log(JSON.stringify({
+		effectiveArgs: plan.effectiveArgs, namespace: plan.namespace, spillRemains,
+	}));
+} finally {
+	await rm(dirname(presentation.fullOutputPath), { recursive: true, force: true });
+}`,
+			],
+			{
+				cwd: directory,
+				env: { ...process.env, NODE_OPTIONS: "" },
+				encoding: "utf8",
+				timeout: 10_000,
+			},
+		);
+		assert.deepEqual(JSON.parse(compiledState), {
+			effectiveArgs: ["--json", "--session", "compiled-caller", "get", "title"],
+			namespace: "compiled-namespace",
+			spillRemains: false,
+		});
 	} finally {
 		if (previousDryRun === undefined) {
 			delete process.env.npm_config_dry_run;

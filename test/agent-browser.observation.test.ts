@@ -159,6 +159,70 @@ test("prose retains full action payloads and projection excludes ownership state
 	assert.doesNotMatch(text, /use details.nextActions|secret|unrelated replay/);
 });
 
+test("batch observations omit row data while retaining redacted recursive metadata and aggregate data", async () => {
+	const rendered = await renderAgentBrowserObservation({
+		content: [],
+		json: true,
+		succeeded: false,
+		details: {
+			data: { rows: [{ token: "aggregate-secret", value: 42 }], lifecycle: { internal: true } },
+			batchSteps: [
+				{
+					index: 0,
+					success: false,
+					data: { token: "row-secret" },
+					error: "password=error-secret",
+					summary: "password=error-secret",
+					failureCategory: "timeout",
+					nextActions: actions,
+					warnings: ["password=warning-secret"],
+					refSnapshot: { private: "ownership state" },
+				},
+				{
+					index: 1,
+					inspection: true,
+					stdout: "password=inspection-secret",
+					summary: "Native help",
+				},
+				{
+					index: 2,
+					inspection: true,
+					stdout: "password=ignored-stdout",
+					data: "ignored inspection data",
+					batchSteps: [{ index: 3, data: { token: "nested-secret" }, summary: "Nested output" }],
+				},
+			],
+		},
+	});
+	const expected = {
+		success: false,
+		resultCategory: "failure",
+		data: { rows: [{ token: "[REDACTED]", value: 42 }] },
+		batchSteps: [
+			{
+				index: 0,
+				success: false,
+				resultCategory: "failure",
+				error: "password=[REDACTED]",
+				failureCategory: "timeout",
+				nextActions: actions,
+				warnings: ["password=[REDACTED]"],
+			},
+			{ index: 1, success: true, resultCategory: "success", summary: "Native help" },
+			{
+				index: 2,
+				success: true,
+				resultCategory: "success",
+				batchSteps: [
+					{ index: 3, success: true, resultCategory: "success", summary: "Nested output" },
+				],
+			},
+		],
+	};
+	assert.deepEqual(rendered.structuredContent, expected);
+	assert.equal(readString(readRecord(rendered.content[0]).text), JSON.stringify(expected, null, 2));
+});
+
 test("oversized JSON and prose spill complete redacted recovery and data to a real retrievable file", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "piab-observation-"));
 	try {

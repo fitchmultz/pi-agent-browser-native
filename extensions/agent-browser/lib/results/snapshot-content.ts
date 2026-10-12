@@ -1,5 +1,5 @@
 import { isRecord } from "../parsing.js";
-import { getFullSnapshotData, getSnapshotRefEntries } from "./snapshot-refs.js";
+import { getFullSnapshotData, getSnapshotRefRecord } from "./snapshot-refs.js";
 import { stringifyUnknown } from "./text.js";
 
 export function getSnapshotText(data: Readonly<Record<string, unknown>>): string | undefined {
@@ -19,12 +19,12 @@ export function formatSnapshotSummary(data: Readonly<Record<string, unknown>>): 
 	if (isRecord(data.snapshot) && data.snapshot.kind !== "full") {
 		return `Snapshot ${stringifyUnknown(data.snapshot.kind)}: revision ${stringifyUnknown(data.snapshot.revision)} on ${origin}`;
 	}
-	return `Snapshot: ${getSnapshotRefEntries(data).length} refs on ${origin}`;
+	return `Snapshot: ${Object.keys(getSnapshotRefRecord(data) ?? {}).length} refs on ${origin}`;
 }
 
 export function formatRawSnapshotText(data: Readonly<Record<string, unknown>>): string {
 	const origin = getSnapshotOrigin(data);
-	const refs = getSnapshotRefEntries(data).length;
+	const refs = Object.keys(getSnapshotRefRecord(data) ?? {}).length;
 	const snapshot = getSnapshotText(data);
 	if (isRecord(data.snapshot) && data.snapshot.kind !== "full") {
 		return `Origin: ${origin}\n${formatSnapshotSummary(data)}\n\n${snapshot ?? "undefined"}`;

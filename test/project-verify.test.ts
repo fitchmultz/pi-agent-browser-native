@@ -17,8 +17,6 @@ import { readArray, readRecord, readString } from "./helpers/assertions.js";
 const DEFAULT_STEPS = [
 	"./scripts/build.mjs",
 	"./scripts/prepare-quality-checker.mjs",
-	"./scripts/code-quality.mjs scope",
-	"./scripts/code-quality.mjs check",
 	"./scripts/code-quality.mjs lint",
 	"--check .",
 	"--noEmit",
@@ -53,7 +51,7 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 	const steps: unknown = verifySteps({ mode: "default", passthrough: [], showHelp: false });
 	const stepLabels = labels(steps);
 	assert.equal(
-		readRecord(readArray(steps)[5]).command,
+		readRecord(readArray(steps)[3]).command,
 		join(
 			process.cwd(),
 			"node_modules",
@@ -121,8 +119,6 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	assert.deepEqual(labels(platformTarget), [
 		"./scripts/build.mjs",
 		"./scripts/prepare-quality-checker.mjs",
-		"./scripts/code-quality.mjs scope",
-		"./scripts/code-quality.mjs check",
 		"./scripts/code-quality.mjs lint",
 		"--check .",
 		"--noEmit",

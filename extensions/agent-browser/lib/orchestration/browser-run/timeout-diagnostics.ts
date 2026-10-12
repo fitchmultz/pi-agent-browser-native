@@ -93,26 +93,38 @@ async function collectTimeoutArtifactEvidence(
 	cwd: string,
 	steps: readonly PlannedTimeoutStep[],
 ): Promise<TimeoutArtifactEvidence[]> {
-	const evidence: TimeoutArtifactEvidence[] = [];
-	for (const step of steps) {
+	const paths = steps.flatMap((step) => {
 		const path = getTimeoutStepArtifactPath(step.args);
 		if (path === undefined || path === "") {
-			continue;
+			return [];
 		}
 		const absolutePath = isAbsolute(path) ? path : resolve(cwd, path);
-		// Preserve each declared path's retry window before observing the next native step's output.
-		// oxlint-disable-next-line no-await-in-loop
-		const artifact = await statTimeoutArtifactPath(absolutePath);
-		evidence.push({
-			absolutePath,
-			exists: artifact.exists,
-			path,
-			...(artifact.exists ? { sizeBytes: artifact.sizeBytes } : {}),
-			state: artifact.exists ? "verified" : "missing",
-			stepIndex: step.index,
-		});
-	}
-	return evidence;
+		return [{ absolutePath, path, stepIndex: step.index }];
+	});
+	// stat uses libuv's bounded filesystem pool, not one open file per observation.
+	// Independent retry timers overlap; Promise.all retains native plan order.
+	return Promise.all(
+		paths.map(async ({ absolutePath, path, stepIndex }): Promise<TimeoutArtifactEvidence> => {
+			const artifact = await statTimeoutArtifactPath(absolutePath);
+			if (artifact.exists) {
+				return {
+					absolutePath,
+					exists: true,
+					path,
+					sizeBytes: artifact.sizeBytes,
+					state: "verified",
+					stepIndex,
+				};
+			}
+			return {
+				absolutePath,
+				exists: false,
+				path,
+				state: "missing",
+				stepIndex,
+			};
+		}),
+	);
 }
 
 function getPlannedCurrentPageUrl(steps: readonly PlannedTimeoutStep[]): string | undefined {

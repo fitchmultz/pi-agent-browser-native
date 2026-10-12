@@ -5086,6 +5086,7 @@
 				"scripts/platform-smoke/targets.mjs",
 				"scripts/prepare-quality-checker.mjs",
 				"scripts/prepare.mjs",
+				"scripts/profile-performance.mjs",
 				"scripts/profile-startup.mjs",
 				"scripts/project.mjs",
 				"scripts/publish-contract.mjs",

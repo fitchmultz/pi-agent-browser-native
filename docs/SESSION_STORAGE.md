@@ -51,7 +51,7 @@ Select the converted locator explicitly through the native session/worker owner.
 
 Focused storage tests exercise incident-sized refs, small-event growth, begin/finish append faults with actual dispatch counts, interruption, branch projections and native generation replacement. Existing tab/ref, confirmation, recording, artifact and lifecycle suites retain their behavior checks.
 
-After `npm run build`, the opt-in model-free proof runs a journal above 1 GiB, including an ignored individual string above Node's string ceiling and repeated legacy maps, through conversion and selected replay under a constrained V8 heap:
+After `npm run build`, the opt-in model-free proof runs a journal above 1 GiB, including an ignored individual string above Node's string ceiling, repeated legacy maps, and 4,000 distinct session identities, through conversion and selected replay under a constrained V8 heap:
 
 ```sh
 node --max-old-space-size=128 test/helpers/large-browser-journal.mjs

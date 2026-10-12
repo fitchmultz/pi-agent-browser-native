@@ -27,6 +27,7 @@ import type {
 import { BrowserCommandResult } from "./extension-command-result.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SessionPageState } from "../session-page-state.js";
+import type { PreparationDaemonObservation } from "./browser-run/managed-session-daemon-inspection.js";
 
 function captureBrowserRunState(runtime: BrowserRuntime): BrowserRunState {
 	return {
@@ -260,11 +261,12 @@ async function dispatchBrowserCommand(
 		BrowserCommandPreparation,
 		"browserRunState" | "sessionPageStateUpdate" | "executionSignal"
 	>,
-	dispatch: BrowserCommandDispatch & Readonly<{ daemonInactive?: boolean }>,
+	dispatch: BrowserCommandDispatch &
+		Readonly<{ initialDaemonObservation?: PreparationDaemonObservation }>,
 ): Promise<AgentBrowserToolResult> {
 	try {
 		return await runAgentBrowserTool({
-			daemonInactive: dispatch.daemonInactive,
+			initialDaemonObservation: dispatch.initialDaemonObservation,
 			ctx: call.ctx,
 			cwd: call.browserCwd,
 			operationCwd: call.operationCwd,
@@ -299,7 +301,7 @@ async function dispatchBrowserCommand(
 export async function runBrowserCommand(
 	runtime: BrowserRuntime,
 	call: BrowserCommandCall,
-	daemonInactive?: boolean,
+	initialDaemonObservation?: PreparationDaemonObservation,
 	executionSignal = call.signal,
 ): Promise<AgentBrowserToolResult> {
 	const prepared = prepareBrowserCommand(runtime, call, executionSignal);
@@ -319,7 +321,7 @@ export async function runBrowserCommand(
 		prepared,
 		{
 			...dispatch,
-			daemonInactive,
+			initialDaemonObservation,
 		},
 	);
 	const completion = new BrowserCommandResult(runtime, call, prepared, { ...dispatch, result });

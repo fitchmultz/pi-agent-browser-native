@@ -27,16 +27,23 @@ export async function listArtifactFiles(
 ): Promise<Array<{ mtimeMs: number; path: string; size: number }>> {
 	const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
 	const files: Array<{ mtimeMs: number; path: string; size: number }> = [];
-	for (const entry of entries) {
-		if (!entry.isFile() || excludedNames.has(entry.name)) {
-			continue;
-		}
-		const path = join(directory, entry.name);
-		// Bound filesystem work and retain the original ordered scan before eviction.
+	const candidates = entries.filter((entry) => entry.isFile() && !excludedNames.has(entry.name));
+	for (let index = 0; index < candidates.length; index += 4) {
+		// Four independent stats bound filesystem work; eviction still consumes the original order.
 		// oxlint-disable-next-line no-await-in-loop
-		const stats = await stat(path).catch(() => undefined);
-		if (stats?.isFile() === true) {
-			files.push({ mtimeMs: stats.mtimeMs, path, size: stats.size });
+		const batch = await Promise.all(
+			candidates.slice(index, index + 4).map(async (entry) => {
+				const path = join(directory, entry.name);
+				const stats = await stat(path).catch(() => undefined);
+				return stats?.isFile() === true
+					? { mtimeMs: stats.mtimeMs, path, size: stats.size }
+					: undefined;
+			}),
+		);
+		for (const file of batch) {
+			if (file !== undefined) {
+				files.push(file);
+			}
 		}
 	}
 	return files;

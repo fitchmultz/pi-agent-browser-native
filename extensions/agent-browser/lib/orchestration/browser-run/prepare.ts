@@ -7,6 +7,8 @@ import { withChromeStartupArgs } from "../../process.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import type { PromptPolicy } from "../../prompt-policy.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
+import type { PreparationDaemonObservation } from "./managed-session-daemon-inspection.js";
 import {
 	findElectronLaunchRecordForSession,
 	getPersistentSessionArtifactStore,
@@ -62,6 +64,7 @@ interface PreparationControls extends PreparationPageFacts {
 	readonly onUpdate?: (result: AgentToolResult<unknown>) => void;
 	readonly promptPolicy: PromptPolicy;
 	readonly artifactStore?: PersistentSessionArtifactStore;
+	readonly initialDaemonObservation?: PreparationDaemonObservation;
 }
 
 function rawPageFailure(input: BrowserRunInputFields): PrepareBrowserRunResult | undefined {
@@ -147,12 +150,22 @@ async function preparePagePhases(
 	},
 ): Promise<PrepareBrowserRunResult> {
 	const { plan, session, policy } = planning;
+	const initial = controls.initialDaemonObservation;
+	// Only admission, filesystem preparation and pure planning precede this use of the root sample.
+	// Owned policy omits its sample after native attachment verification; later capture receipts stay fresh.
 	const page = await preparePageState(state, controls, {
 		plan,
 		session,
 		inactive: policy.inactive,
 		update: request.update,
 		preserveAttachedBrowserSession: controls.preserveAttachedBrowserSession,
+		generationInspection:
+			policy.generationInspection ??
+			(!session.ownedManagedSession &&
+			initial?.generationInspected === true &&
+			initial.identity === getAgentBrowserSessionIdentityKey(plan.sessionName ?? "", plan.namespace)
+				? initial.daemon
+				: undefined),
 	});
 	const selection = await preparePageSelection(
 		state.sessionPageState,
@@ -255,6 +268,7 @@ function preparationControls(
 			| "preserveAttachedBrowserSession"
 			| "establishAttachedBrowserSession"
 			| "ctx"
+			| "initialDaemonObservation"
 		>
 	>,
 ): PreparationControls {
@@ -268,6 +282,7 @@ function preparationControls(
 		preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,
 		establishAttachedBrowserSession: options.establishAttachedBrowserSession,
 		artifactStore: getPersistentSessionArtifactStore(options.ctx),
+		initialDaemonObservation: options.initialDaemonObservation,
 	};
 }
 
@@ -336,7 +351,6 @@ export async function prepareBrowserRun(
 				...controls,
 				chromeStartupArgs: options.input.chromeStartupArgs,
 				configuredChromeLaunch: options.input.configuredChromeLaunch,
-				daemonInactive: options.daemonInactive,
 			},
 			planning,
 			{ preparedArgs: artifacts.preparedArgs, stdin: request.stdin },

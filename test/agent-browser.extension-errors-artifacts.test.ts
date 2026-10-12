@@ -10,8 +10,11 @@ import assert from "node:assert/strict";
 import { readArray, readRecord, readString } from "./helpers/assertions.js";
 import { withAgentBrowserProcessEnvironment } from "../extensions/agent-browser/lib/process-environment.js";
 import { execFileSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import {
 	access,
+	default as fsPromises,
 	link,
 	mkdir,
 	mkdtemp,
@@ -3722,6 +3725,106 @@ test("timeout artifact evidence follows native operands, not ignored tails or ou
 			],
 		);
 	} finally {
+		await rm(cwd, { recursive: true, force: true });
+	}
+});
+
+test("timeout artifact observations overlap independent retry windows without claiming execution", async (t) => {
+	const cwd = await mkdtemp(join(tmpdir(), "timeout-windows-"));
+	const paths = Array.from({ length: 33 }, (_, index) => join(cwd, `${index}.pdf`));
+	const attempts = new Map<string, number[]>();
+	const realStat = fsPromises.stat;
+	try {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+		t.mock.method(
+			fsPromises,
+			"stat",
+			async (...args: Readonly<Parameters<typeof fsPromises.stat>>) => {
+				const path = String(args[0]);
+				if (!paths.includes(path)) {
+					return realStat(...args);
+				}
+				attempts.set(path, [...(attempts.get(path) ?? []), Date.now()]);
+				if (path === paths[0] && attempts.get(path)?.length === 3) {
+					return realStat(...args);
+				}
+				throw new Error("ENOENT: file is still missing");
+			},
+		);
+		syncBuiltinESMExports();
+		const pending = collectTimeoutPartialProgress({
+			commandTokens: ["batch", ...paths.map((path) => `pdf ${path}`)],
+			cwd,
+			stdin: JSON.stringify([["pdf", "ignored.pdf"]]),
+		});
+		await nextTurn();
+		assert.equal(
+			attempts.size,
+			paths.length,
+			"independent files start within the same retry window",
+		);
+		t.mock.timers.tick(25);
+		await nextTurn();
+		await writeFile(paths[0], "late finishing writer");
+		t.mock.timers.tick(25);
+		await nextTurn();
+		t.mock.timers.reset();
+		const progress = await pending;
+		assert.ok(progress);
+		assert.equal(attempts.size, paths.length, "native argv wins over ignored stdin");
+		assert.deepEqual(
+			progress.artifacts.map((artifact) => artifact.path),
+			paths,
+		);
+		assert.deepEqual(
+			progress.artifacts.map((artifact) => artifact.stepIndex),
+			paths.map((_, index) => index + 1),
+		);
+		assert.equal(
+			progress.artifacts[0].exists,
+			true,
+			"a writer finishing during the retry window is observed",
+		);
+		assert.equal(progress.artifacts[0].sizeBytes, Buffer.byteLength("late finishing writer"));
+		assert.deepEqual(Object.keys(progress.artifacts[0]), [
+			"absolutePath",
+			"exists",
+			"path",
+			"sizeBytes",
+			"state",
+			"stepIndex",
+		]);
+		assert.deepEqual(Object.keys(progress.artifacts[1]), [
+			"absolutePath",
+			"exists",
+			"path",
+			"state",
+			"stepIndex",
+		]);
+		assert.equal(
+			progress.artifacts.slice(1).every((artifact) => !artifact.exists),
+			true,
+		);
+		assert.deepEqual(
+			progress.steps?.map((step) => step.status),
+			Array.from({ length: paths.length }, () => "unknown"),
+		);
+		assert.equal(progress.retryStep, undefined);
+		for (const observations of attempts.values()) {
+			// Every declared path must retain three attempts with independently bounded backoff.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.equal(observations.length, 3);
+			// Every declared path must retain three attempts with independently bounded backoff.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.deepEqual(
+				observations.map((time) => time - observations[0]),
+				[0, 25, 50],
+			);
+		}
+	} finally {
+		t.mock.timers.reset();
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
 		await rm(cwd, { recursive: true, force: true });
 	}
 });

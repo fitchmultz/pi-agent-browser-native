@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -1402,6 +1402,11 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 					},
 				},
 			},
+			legacy("late-result", "label-b", {
+				args: ["get", "title"],
+				command: "get",
+				sessionName: "shared",
+			}),
 		];
 		const bytes = Buffer.from(originals.map((entry) => JSON.stringify(entry)).join("\n"));
 		await writeFile(source, bytes, { mode: 0o600 }); // A sealed valid unterminated record is inspectable, without repairing the source.
@@ -1433,7 +1438,7 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.deepEqual(
 					state.refSnapshot?.refIds,
-					leaf === "branch-b" || leaf === "label-b" ? ["e3"] : ["e1", "e2"],
+					["branch-b", "label-b", "late-result"].includes(leaf) ? ["e3"] : ["e1", "e2"],
 				);
 			}
 			if (["capture", "finish", "result"].includes(leaf)) {
@@ -1454,11 +1459,13 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 			assert.equal(recent?.entries[0].path, row.path);
 			assert.equal(
 				recent.entries[0].retentionState,
-				leaf === "branch-b" || leaf === "label-b" ? "missing" : "live",
+				["branch-b", "label-b", "late-result"].includes(leaf) ? "missing" : "live",
 			);
 		};
 		await Promise.all(
-			["capture", "begin", "finish", "branch-b", "label-b", "result", "modern"].map(verifyLeaf),
+			["capture", "begin", "finish", "branch-b", "label-b", "result", "modern", "late-result"].map(
+				verifyLeaf,
+			),
 		);
 		const result = converted.find((entry) => entry.id === "result");
 		assert.ok(result);
@@ -1478,7 +1485,7 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 		);
 		assert.deepEqual(
 			converted.find((entry) => entry.id === "modern"),
-			originals.at(-1),
+			originals.find((entry) => entry.id === "modern"),
 			"modern observations retain explicit bodies and cannot overwrite canonical state with an invocation-only receipt",
 		);
 		assert.equal(readRecord(readRecord(result.data).archive).sourceSha256, receipt.sourceSha256);
@@ -1503,6 +1510,29 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 			}),
 			/Parser|parse|expected/i,
 		);
+		const verifyInvalidAncestry = async (invalid: Readonly<object>, index: number) => {
+			await writeFile(source, `${bytes.toString("utf8")}\n${JSON.stringify(invalid)}\n`);
+			const invalidDestination = join(root, `invalid-${index}.jsonl`);
+			await assert.rejects(
+				convertBrowserSession({
+					source,
+					destination: invalidDestination,
+					confirmedStopped: true,
+				}),
+				/missing or duplicate native entry ID|missing or forward parent/,
+			);
+			await assert.rejects(stat(invalidDestination), { code: "ENOENT" });
+		};
+		for (const [index, invalid] of [
+			legacy("capture", null, {}),
+			legacy("missing-parent", "not-an-entry", {}),
+			legacy("forward-parent", "future", {}),
+			{ type: "custom", parentId: null, timestamp: header.timestamp },
+		].entries()) {
+			// Each invalid ancestry variant must remain rejected even after unused projections are released.
+			// oxlint-disable-next-line no-await-in-loop
+			await verifyInvalidAncestry(invalid, index);
+		}
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -1522,6 +1552,27 @@ test("token projection validates skipped values, splits Unicode safely and disca
 		{ id: "🧪é", data: { event: { version: 1, ok: true } } },
 	);
 	await assert.rejects(projectJson(bytes('{"ignored":[false,invalid],"id":"never"}'), [["id"]]));
+	await Promise.all(
+		['{"ignored":"unfinished', '{"ignored":[true', '{"ignored":1e}', "{}{}"].map((text) =>
+			assert.rejects(projectJson(bytes(text), [["id"]]), /Parser/),
+		),
+	);
+	async function* invalidUtf8() {
+		yield Buffer.from('{"ignored":"');
+		yield Uint8Array.of(0xe2, 0x82); // Incomplete UTF-8 at EOF, even in an ignored value.
+	}
+	await assert.rejects(projectJson(invalidUtf8(), [["id"]]), /encoded data/);
+	await assert.rejects(
+		projectJson(bytes(`{"id":"${"x".repeat(1000)}"}`), [["id"]], 128),
+		/Selected journal envelope exceeds/,
+	);
+	await assert.rejects(
+		projectJson(bytes(`{"ignored":${"[".repeat(1024)}0${"]".repeat(1024)}}`), [["id"]]),
+		/nesting exceeds 1024/,
+	);
+	const selected =
+		'{"data":{"__proto__":{"polluted":true},"constructor":"own","duplicate":1,"duplicate":2,"numbers":[-0,1.25e+2,1E-2,9007199254740993]}}';
+	assert.deepEqual(await projectJson(bytes(selected), [["data"]]), JSON.parse(selected));
 	async function* ignored() {
 		yield Buffer.from('{"ignored":"');
 		for (let index = 0; index < 64; index++) {
@@ -1530,6 +1581,34 @@ test("token projection validates skipped values, splits Unicode safely and disca
 		yield Buffer.from('","id":"kept"}');
 	}
 	assert.deepEqual(await projectJson(ignored(), [["id"]], 128), { id: "kept" });
+});
+
+test("token projection releases its byte iterator and preserves source error identity", async () => {
+	const sourceError = new Error("source read failed");
+	let closed = 0;
+	async function* interrupted() {
+		try {
+			yield Buffer.from('{"id":"partial');
+			throw sourceError;
+		} finally {
+			closed++;
+		}
+	}
+	await assert.rejects(projectJson(interrupted(), [["id"]]), (error) => error === sourceError);
+	assert.equal(closed, 1);
+	async function* oversized() {
+		try {
+			yield Buffer.from(`{"id":"${"x".repeat(1000)}`);
+			throw new Error("projection should reject before reading another chunk");
+		} finally {
+			closed++;
+		}
+	}
+	await assert.rejects(
+		projectJson(oversized(), [["id"]], 128),
+		/Selected journal envelope exceeds/,
+	);
+	assert.equal(closed, 2);
 });
 
 test("missing or corrupt winning snapshots fail replay before refs can be used", async () => {

@@ -143,8 +143,7 @@ function getCommandSubcommand(tokens: readonly string[]): string | undefined {
 	return tokens.at(1);
 }
 
-function parseCommandInfoFromTokens(commandTokens: readonly string[]): CommandInfo {
-	const upstreamCommandTokens = stripUpstreamGlobalFlags(commandTokens);
+function parseCommandInfoFromTokens(upstreamCommandTokens: readonly string[]): CommandInfo {
 	const command = upstreamCommandTokens[0];
 	return {
 		command,
@@ -153,14 +152,14 @@ function parseCommandInfoFromTokens(commandTokens: readonly string[]): CommandIn
 }
 
 export function parseCommandInfo(args: readonly string[]): CommandInfo {
-	return parseCommandInfoFromTokens(extractCommandTokens(args));
+	return parseCommandInfoFromTokens(extractUpstreamCommandTokens(args));
 }
 
 export function parseArgvDescriptor(args: readonly string[]): ArgvDescriptor {
 	const commandTokens = extractCommandTokens(args);
 	const upstreamCommandTokens = stripUpstreamGlobalFlags(commandTokens);
 	return {
-		commandInfo: parseCommandInfoFromTokens(commandTokens),
+		commandInfo: parseCommandInfoFromTokens(upstreamCommandTokens),
 		commandTokens,
 		upstreamCommandTokens,
 	};

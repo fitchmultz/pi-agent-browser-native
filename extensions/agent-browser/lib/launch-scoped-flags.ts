@@ -205,26 +205,22 @@ export const MANAGED_RESTORE_INCOMPATIBLE_BOOLEAN_ENVS = [
 ] as const;
 
 export function hasLaunchScopedFlagToken(args: readonly string[], flag: string): boolean {
-	const commandStartIndex = findCommandStartIndex(args);
-	const command = commandStartIndex === undefined ? undefined : args[commandStartIndex];
-	return args.some((token, index) => {
-		if (token.startsWith(`${flag}=`)) {
-			return flag === "--restore";
-		}
-		if (token !== flag) {
-			return false;
-		}
-		if (flag === "--auto-connect") {
-			return isBooleanFlagEnabled(args, flag);
-		}
-		if (
-			flag === "--state" &&
-			command === "wait" &&
-			commandStartIndex !== undefined &&
-			index > commandStartIndex
-		) {
-			return false;
-		}
+	if (flag === "--restore" && args.some((token) => token.startsWith("--restore="))) {
 		return true;
-	});
+	}
+	if (!args.includes(flag)) {
+		return false;
+	}
+	if (flag === "--auto-connect") {
+		return isBooleanFlagEnabled(args, flag);
+	}
+	if (flag !== "--state") {
+		return true;
+	}
+	const commandStartIndex = findCommandStartIndex(args);
+	return (
+		commandStartIndex === undefined ||
+		args[commandStartIndex] !== "wait" ||
+		args.indexOf(flag) < commandStartIndex
+	);
 }

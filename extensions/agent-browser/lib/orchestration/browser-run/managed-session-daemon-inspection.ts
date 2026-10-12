@@ -36,6 +36,12 @@ export type ManagedSessionDaemonInspection =
 	| { readonly restoreKey: string | null; readonly status: "active"; readonly generation?: string }
 	| { readonly status: "inactive" | "missing-binary" | "unknown" };
 
+export interface PreparationDaemonObservation {
+	readonly identity: string;
+	readonly daemon: ManagedSessionDaemonInspection;
+	readonly generationInspected: boolean;
+}
+
 export interface ManagedSessionDaemonInspectionOptions {
 	readonly cwd: string;
 	readonly includeGeneration?: boolean;

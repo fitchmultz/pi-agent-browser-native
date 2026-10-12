@@ -488,8 +488,8 @@ if (command === "session") {
 							);
 							assert.equal(
 								inspections.length,
-								5,
-								"owned-policy inspections and each new/ref-reusing capture verify native generation",
+								4,
+								`one owned-policy inspection per call plus separate post-capture receipts: ${JSON.stringify(dispatched.map((entry) => entry.args))}`,
 							);
 							assert.equal(
 								inspections.every(

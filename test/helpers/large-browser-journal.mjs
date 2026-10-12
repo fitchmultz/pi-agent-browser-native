@@ -113,6 +113,40 @@ try {
 				}),
 			) + "\n",
 		);
+		parent = "read-219";
+		for (let index = 0; index < 4000; index++) {
+			const id = `wide-${index}`;
+			// Distinct-session ancestry exposes retention of every historical growing page map.
+			// oxlint-disable-next-line no-await-in-loop
+			await file.write(
+				JSON.stringify({
+					type: "custom",
+					customType: "agent-browser-transition",
+					id,
+					parentId: parent,
+					timestamp,
+					data: {
+						event: {
+							version: 1,
+							phase: "state",
+							operationId: id,
+							toolCallId: id,
+							commandIndex: 0,
+							isError: false,
+							state: {},
+							pages: [
+								{
+									key: `session-${index}`,
+									target: { url: `https://fixture.test/session-${index}` },
+									refs: { kind: "invalidate" },
+								},
+							],
+						},
+					},
+				}) + "\n",
+			);
+			parent = id;
+		}
 		await file.sync();
 	} finally {
 		await file.close();
@@ -161,6 +195,11 @@ try {
 	);
 	assert.deepEqual(other.refSnapshot.refIds, ["e7"]);
 	assert.equal(other.tabTarget.url, "https://fixture.test/b#branch");
+	const wide = SessionPageState.fromBranch(await readBrowserEntries(manager("wide-3999")));
+	assert.equal(wide.views().size, 4001);
+	assert.equal(wide.get("session-0").tabTarget.url, "https://fixture.test/session-0");
+	assert.equal(wide.get("session-3999").tabTarget.url, "https://fixture.test/session-3999");
+	assert.equal(wide.get("large").refSnapshot.refIds.length, 34683);
 	assert.equal((await stat(source)).size, receipt.sourceBytes);
 	console.log(
 		JSON.stringify({
@@ -169,7 +208,8 @@ try {
 			maxRssKiB: process.resourceUsage().maxRSS,
 			selectedRefs: page.refSnapshot.refIds.length,
 			recentReceipts: recent.entries.length,
-			branchesVerified: 2,
+			branchesVerified: 3,
+			distinctSessionsVerified: wide.views().size,
 		}),
 	);
 } finally {

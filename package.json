@@ -32,7 +32,14 @@
 		"pi-agent-browser-doctor": "scripts/doctor.mjs"
 	},
 	"files": [
-		"dist",
+		"dist/extensions/agent-browser/index.js",
+		"dist/extensions/agent-browser/script-worker.js",
+		"dist/packaged/lib/config-policy.js",
+		"dist/packaged/lib/browser-session-conversion.js",
+		"dist/packaged/lib/parsing.js",
+		"dist/packaged/lib/playbook.js",
+		"dist/packaged/lib/results/snapshot.js",
+		"dist/packaged/lib/runtime.js",
 		"platform-smoke.config.mjs",
 		"scripts/config.mjs",
 		"scripts/convert-browser-session.mjs",
@@ -53,6 +60,8 @@
 		"LICENSE",
 		"docs/ARCHITECTURE.md",
 		"docs/CODE_QUALITY.md",
+		"docs/PERFORMANCE.md",
+		"docs/performance/2026-10-12.json",
 		"docs/COMMAND_REFERENCE.md",
 		"docs/ELECTRON.md",
 		"docs/RELEASE.md",
@@ -119,6 +128,7 @@
 		"prepublishOnly": "npm run verify -- release && npm pack --dry-run",
 		"build": "node ./scripts/build.mjs",
 		"startup-profile": "node ./scripts/profile-startup.mjs",
+		"performance-profile": "node --expose-gc ./scripts/profile-performance.mjs",
 		"prepare": "node ./scripts/prepare.mjs"
 	},
 	"packageManager": "npm@12.2.0",
@@ -139,6 +149,7 @@
 	"dependencies": {
 		"cross-spawn": "7.0.6",
 		"path-key": "3.1.1",
+		"stream-chain": "4.2.6",
 		"stream-json": "3.7.0",
 		"strip-json-comments": "5.0.3",
 		"which": "2.0.2"
