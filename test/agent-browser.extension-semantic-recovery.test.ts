@@ -42,90 +42,58 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				const harness = createExtensionHarness({ cwd: tempDir });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-				const missingText = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "fill", locator: "label", value: "Email" },
-				});
-				assert.equal(missingText.isError, true);
-				assert.match(
-					readString(readRecord(missingText.content[0]).text),
-					/semanticAction\.text is required for fill/,
-				);
-				assert.equal(readRecord(missingText.details).failureCategory, "validation-error");
-
-				const unsupportedUncheck = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "uncheck", locator: "label", value: "Agree terms" },
-				});
-				assert.equal(unsupportedUncheck.isError, true);
-				assert.match(
-					readString(readRecord(unsupportedUncheck.content[0]).text),
-					/semanticAction\.action must be one of: check, click, fill, select/,
-				);
-				assert.equal(readRecord(unsupportedUncheck.details).failureCategory, "validation-error");
-
-				const unsupportedRoleName = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "click", locator: "text", value: "Export", name: "Export" },
-				});
-				assert.equal(unsupportedRoleName.isError, true);
-				assert.match(
-					readString(readRecord(unsupportedRoleName.content[0]).text),
-					/semanticAction\.name is only supported/,
-				);
-				assert.equal(readRecord(unsupportedRoleName.details).failureCategory, "validation-error");
-
-				const mismatchedRoleValue = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "click", locator: "role", role: "button", value: "link" },
-				});
-				assert.equal(mismatchedRoleValue.isError, true);
-				assert.match(
-					readString(readRecord(mismatchedRoleValue.content[0]).text),
-					/semanticAction\.role must match value/,
-				);
-				assert.equal(readRecord(mismatchedRoleValue.details).failureCategory, "validation-error");
-
-				const emptySession = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "click", locator: "text", value: "Export", session: "" },
-				});
-				assert.equal(emptySession.isError, true);
-				assert.match(
-					readString(readRecord(emptySession.content[0]).text),
-					/semanticAction\.session must be a non-empty string/,
-				);
-				assert.equal(readRecord(emptySession.details).failureCategory, "validation-error");
-
-				const selectWithoutSelector = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "select", value: "chocolate" },
-				});
-				assert.equal(selectWithoutSelector.isError, true);
-				assert.match(
-					readString(readRecord(selectWithoutSelector.content[0]).text),
-					/semanticAction\.selector or semanticAction\.locator is required for select/,
-				);
-				assert.equal(readRecord(selectWithoutSelector.details).failureCategory, "validation-error");
-
-				const selectWithoutValue = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "select", selector: "#flavor" },
-				});
-				assert.equal(selectWithoutValue.isError, true);
-				assert.match(
-					readString(readRecord(selectWithoutValue.content[0]).text),
-					/semanticAction\.value or semanticAction\.values is required for select/,
-				);
-				assert.equal(readRecord(selectWithoutValue.details).failureCategory, "validation-error");
-
-				const selectWithLocator = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: {
-						action: "select",
-						locator: "placeholder",
-						selector: "#flavor",
-						value: "chocolate",
+				for (const { semanticAction, error } of [
+					{
+						semanticAction: { action: "fill", locator: "label", value: "Email" },
+						error: /semanticAction\.text is required for fill/,
 					},
-				});
-				assert.equal(selectWithLocator.isError, true);
-				assert.match(
-					readString(readRecord(selectWithLocator.content[0]).text),
-					/selector cannot be combined with locator, role, or name for select/,
-				);
-				assert.equal(readRecord(selectWithLocator.details).failureCategory, "validation-error");
+					{
+						semanticAction: { action: "uncheck", locator: "label", value: "Agree terms" },
+						error: /semanticAction\.action must be one of: check, click, fill, select/,
+					},
+					{
+						semanticAction: { action: "click", locator: "text", value: "Export", name: "Export" },
+						error: /semanticAction\.name is only supported/,
+					},
+					{
+						semanticAction: { action: "click", locator: "role", role: "button", value: "link" },
+						error: /semanticAction\.role must match value/,
+					},
+					{
+						semanticAction: { action: "click", locator: "text", value: "Export", session: "" },
+						error: /semanticAction\.session must be a non-empty string/,
+					},
+					{
+						semanticAction: { action: "select", value: "chocolate" },
+						error: /semanticAction\.selector or semanticAction\.locator is required for select/,
+					},
+					{
+						semanticAction: { action: "select", selector: "#flavor" },
+						error: /semanticAction\.value or semanticAction\.values is required for select/,
+					},
+					{
+						semanticAction: {
+							action: "select",
+							locator: "placeholder",
+							selector: "#flavor",
+							value: "chocolate",
+						},
+						error: /selector cannot be combined with locator, role, or name for select/,
+					},
+				]) {
+					// Validate each input before the next case; the final log asserts none dispatched.
+					// oxlint-disable-next-line no-await-in-loop
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction });
+					// All eight literal invalid inputs must fail for their own compiler validation reason.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.equal(result.isError, true, JSON.stringify(semanticAction));
+					// All eight literal invalid inputs must fail for their own compiler validation reason.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.match(readString(readRecord(result.content[0]).text), error);
+					// All eight literal invalid inputs must fail for their own compiler validation reason.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.equal(readRecord(result.details).failureCategory, "validation-error");
+				}
 
 				const invocations = await readInvocationLog(logPath);
 				assert.deepEqual(invocations, []);
