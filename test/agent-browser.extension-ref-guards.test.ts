@@ -27,6 +27,112 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
+for (const snapshotFlags of [
+	[],
+	["--filter", "role=link"],
+	["--search", "Overview"],
+	["--diff"],
+	["--viewport"],
+]) {
+	test(
+		`agentBrowserExtension keeps fresh snapshot refs usable after an in-page URL change (${snapshotFlags.length === 0 ? "unfiltered" : snapshotFlags.join(" ")})`,
+		{ concurrency: false },
+		async () => {
+			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-filtered-snapshot-refs-"));
+			const logPath = join(tempDir, "invocations.log");
+			const urlPath = join(tempDir, "live-url");
+			const initialUrl = "https://app.example/dashboards";
+			const snapshotUrl = `${initialUrl}?query=overview`;
+			const driftUrl = "https://other.example/";
+			const basePath = process.env.PATH ?? "";
+			await writeFile(urlPath, initialUrl);
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const url = fs.readFileSync(${JSON.stringify(urlPath)}, "utf8");
+let data = "ok";
+if (args.includes("snapshot")) {
+  data = { origin: url, refs: { e144: { role: "link", name: "Overview" } },
+    snapshot: '- link "Overview" [ref=e144]' };
+} else if (args.includes("open") || (args.includes("get") && args.includes("url"))) {
+  data = { url };
+} else if (args.includes("click")) {
+  data = { clicked: true };
+}
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+			);
+			try {
+				await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
+					assert.equal(
+						(
+							await executeRegisteredTool(harness.tool, harness.ctx, {
+								args: ["open", initialUrl],
+							})
+						).isError,
+						false,
+					);
+					assert.equal(
+						(
+							await executeRegisteredTool(harness.tool, harness.ctx, {
+								args: ["snapshot", "-i"],
+							})
+						).isError,
+						false,
+					);
+					// Simulate an asynchronous same-tab history update after the previous observation.
+					await writeFile(urlPath, snapshotUrl);
+					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["snapshot", "-i", ...snapshotFlags],
+					});
+					const snapshotDetails = readRecord(snapshot.details);
+					assert.equal(snapshot.isError, false);
+					assert.equal(readRecord(readRecord(snapshotDetails.refSnapshot).target).url, snapshotUrl);
+					assert.deepEqual(readRecord(snapshotDetails.refSnapshot).refIds, ["e144"]);
+
+					const click = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["click", "@e144"],
+					});
+					assert.equal(click.isError, false, JSON.stringify(click));
+					assert.equal(readRecord(readRecord(click.details).data).clicked, true);
+					assert.equal(readRecord(snapshotDetails.sessionTabTarget).url, snapshotUrl);
+
+					await writeFile(urlPath, driftUrl);
+					const liveUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "url"],
+					});
+					assert.equal(liveUrl.isError, false);
+					assert.equal(readRecord(readRecord(liveUrl.details).sessionTabTarget).url, driftUrl);
+					const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["click", "@e144"],
+					});
+					assert.equal(staleClick.isError, true);
+					assert.equal(readRecord(staleClick.details).failureCategory, "stale-ref");
+					assert.match(
+						readString(readRecord(staleClick.details).error),
+						/current session target is https:\/\/other\.example\//,
+					);
+					assert.equal(
+						(await readInvocationLog(logPath)).filter((entry) => entry.args.includes("click"))
+							.length,
+						1,
+					);
+				});
+			} finally {
+				await rm(tempDir, { force: true, recursive: true });
+			}
+		},
+	);
+}
+
 test(
 	"agentBrowserExtension blocks page-scoped ref reuse after navigation before upstream can recycle it",
 	{ concurrency: false },

@@ -124,6 +124,13 @@ async function collectSnapshotEvidence(
 		? buildSnapshotDiff(options.previousRefSnapshot, fullSnapshot)
 		: undefined;
 	if (fullSnapshot) {
+		if (fullSnapshot.target) {
+			options.sessionPageState.applyTabTarget({
+				sessionName: options.sessionStateKey ?? options.sessionName,
+				target: fullSnapshot.target,
+				update: options.sessionPageStateUpdate,
+			});
+		}
 		options.sessionPageState.applyRefSnapshot({
 			sessionName: options.sessionStateKey ?? options.sessionName,
 			snapshot: fullSnapshot,
@@ -227,6 +234,8 @@ function snapshotToolResult(
 		| "effectiveArgs"
 		| "sessionMode"
 		| "sessionName"
+		| "sessionPageState"
+		| "sessionStateKey"
 		| "usedImplicitSession"
 		| "namespace"
 		| "managedSessionRestoreDisabled"
@@ -250,6 +259,8 @@ function snapshotToolResult(
 			fullOutputPaths: presentation.fullOutputPaths,
 			refSnapshot: evidence.fullSnapshot,
 			sessionMode: options.sessionMode,
+			sessionTabTarget: options.sessionPageState.get(options.sessionStateKey ?? options.sessionName)
+				.tabTarget,
 			snapshotDiff: evidence.diff,
 			snapshotFilter: snapshotFilterDetails(request, evidence),
 			snapshotViewport: evidence.viewport,
