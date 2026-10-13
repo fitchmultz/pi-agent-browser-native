@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Preserve prompt-derived browser guidance on Pi 1.2 custom-message starts by using the latest user prompt when the start event has no prompt. User starts, non-browser guidance, and retained browser journals are unchanged.
+
 - Verify the current complete URL before one-use approved-capture actions in wrapper-owned managed sessions, preserving path/hash drift refusal and unchanged-page success.
 - Preserve exact tab-creation confirmation decisions and visible conditional navigation guidance from narrowly validated transport metadata, without automatically executing continuation arguments.
 
