@@ -115,59 +115,48 @@ process.stdin.on("end", () => {
 					);
 					assert.match(JSON.stringify(shortPayload.details.error), /safe value/);
 
+					const batchStdin = JSON.stringify([
+						["clipboard", "write", "clipboard-secret"],
+						["clipboard", "write", "clipboard-secret\nsecond-secret"],
+						["clipboard", "write", "object-secret"],
+						["clipboard", "write", "a"],
+					]);
 					const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["batch"],
-						stdin: JSON.stringify([["clipboard", "write", "clipboard-secret"]]),
+						stdin: batchStdin,
 					});
 					assert.equal(batch.isError, true, JSON.stringify(batch));
+					assert.equal(batch.details?.resultCategory, "failure");
+					assert.equal(batch.details.failureCategory, "upstream-error");
 					assert.match(
 						readString(readRecord(batch.content[0]).text),
 						/clipboard write \[REDACTED\]/,
 					);
-					assert.doesNotMatch(JSON.stringify(batch), /clipboard-secret/);
+					assert.doesNotMatch(
+						JSON.stringify(batch),
+						/clipboard-secret|second-secret|object-secret/,
+					);
+					const steps = readArray(batch.details.batchSteps).map(readRecord);
+					assert.match(readString(steps[0].commandText), /clipboard write \[REDACTED\]/);
+					assert.deepEqual(
+						steps.map((step) => step.success),
+						[false, false, false, false],
+					);
+					const shortBatch = steps[3];
+					assert.equal(shortBatch.resultCategory, "failure");
+					assert.equal(shortBatch.failureCategory, "upstream-error");
+					assert.match(readString(shortBatch.commandText), /clipboard write \[REDACTED\]/);
+					assert.doesNotMatch(readString(shortBatch.text), /permission denied for a\./);
+					assert.match(JSON.stringify(shortBatch), /safe metadata about clipboard denial/);
+					assert.match(JSON.stringify(shortBatch), /safe value/);
 					const invocations = (await readFile(logPath, "utf8"))
 						.trim()
 						.split("\n")
 						.map((line) => readRecord(JSON.parse(line)));
 					assert.equal(
-						invocations.some(
-							(entry) =>
-								entry.stdin === JSON.stringify([["clipboard", "write", "clipboard-secret"]]),
-						),
+						invocations.some((entry) => entry.stdin === batchStdin),
 						true,
 					);
-
-					const multilineBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch"],
-						stdin: JSON.stringify([["clipboard", "write", "clipboard-secret\nsecond-secret"]]),
-					});
-					assert.equal(multilineBatch.isError, true, JSON.stringify(multilineBatch));
-					assert.doesNotMatch(JSON.stringify(multilineBatch), /clipboard-secret|second-secret/);
-
-					const objectErrorBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch"],
-						stdin: JSON.stringify([["clipboard", "write", "object-secret"]]),
-					});
-					assert.equal(objectErrorBatch.isError, true, JSON.stringify(objectErrorBatch));
-					assert.doesNotMatch(JSON.stringify(objectErrorBatch), /object-secret/);
-
-					const shortBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch"],
-						stdin: JSON.stringify([["clipboard", "write", "a"]]),
-					});
-					assert.equal(shortBatch.isError, true, JSON.stringify(shortBatch));
-					assert.equal(shortBatch.details?.resultCategory, "failure");
-					assert.equal(shortBatch.details.failureCategory, "upstream-error");
-					assert.match(
-						readString(readRecord(shortBatch.content[0]).text),
-						/clipboard write \[REDACTED\]/,
-					);
-					assert.doesNotMatch(
-						readString(readRecord(shortBatch.content[0]).text),
-						/permission denied for a\./,
-					);
-					assert.match(JSON.stringify(shortBatch.details), /safe metadata about clipboard denial/);
-					assert.match(JSON.stringify(shortBatch.details), /safe value/);
 				},
 			);
 		} finally {

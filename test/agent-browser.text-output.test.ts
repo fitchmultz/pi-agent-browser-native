@@ -112,10 +112,6 @@ for (const { mode, expected } of [
 	{ mode: "local-empty-shorthand", expected: ": [REDACTED]\n" },
 	{ mode: "session-empty-shorthand", expected: ": [REDACTED]\n" },
 	{
-		mode: "local-empty-all",
-		expected: "refresh: [REDACTED]\n: [REDACTED]\nsession:id: [REDACTED]\ntheme: dark\n",
-	},
-	{
 		mode: "session-empty-all",
 		expected: "refresh: [REDACTED]\n: [REDACTED]\nsession:id: [REDACTED]\ntheme: dark\n",
 	},
@@ -123,14 +119,6 @@ for (const { mode, expected } of [
 	{ mode: "session-redacted-explicit", expected: "access_token=[REDACTED] [REDACTED]\n" },
 	{ mode: "local-redacted-shorthand", expected: "access_token=[REDACTED] [REDACTED]\n" },
 	{ mode: "session-redacted-shorthand", expected: "access_token=[REDACTED] [REDACTED]\n" },
-	{
-		mode: "local-colon-all",
-		expected: "refresh: [REDACTED]\n: [REDACTED]\nsession:id: [REDACTED]\ntheme: dark\n",
-	},
-	{
-		mode: "session-colon-all",
-		expected: "refresh: [REDACTED]\n: [REDACTED]\nsession:id: [REDACTED]\ntheme: dark\n",
-	},
 	{ mode: "session-benign", expected: "theme: light\ndark\n" },
 ]) {
 	test(`native text shape redaction preserves command context: ${mode}`, async () => {

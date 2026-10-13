@@ -131,25 +131,12 @@ for (const command of ["confirm", "deny"]) {
 					args: [...prefix, "webmcp", "invoke", "wait_for_navigation", "--detach"],
 				});
 				assert.equal(pending.details?.sessionTabTargetUnknown, true);
-				for (const id of ["unproven-id"]) {
-					// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-					// oxlint-disable-next-line no-await-in-loop
-					await writeFile(log, "");
-					// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-					// oxlint-disable-next-line no-await-in-loop
-					const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: [...prefix, command, id],
-					});
-					// The nonempty id fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(blocked.isError, true);
-					// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-					// oxlint-disable-next-line no-await-in-loop
-					const blockedCalls = await readInvocationLog(log);
-					// The nonempty id fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.deepEqual(blockedCalls, []);
-				}
+				await writeFile(log, "");
+				const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: [...prefix, command, "unproven-id"],
+				});
+				assert.equal(blocked.isError, true);
+				assert.deepEqual(await readInvocationLog(log), []);
 				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, "read", "public.test/legacy"],
 				});

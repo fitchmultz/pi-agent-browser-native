@@ -1217,7 +1217,7 @@ test("provider fetch helpers do not call fetch when already aborted", async () =
 	);
 });
 
-test("search execution reports API and JSON failures without leaking key", async (t) => {
+test("search execution reports invalid JSON, malformed structures, and abort without leaking key", async (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now: 1000 });
 	const fixture = await createFixture(t);
 	await withPatchedEnv(
@@ -1231,63 +1231,6 @@ test("search execution reports API and JSON failures without leaking key", async
 			const harness = createExtensionHarness({ cwd: fixture.cwd });
 			const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 			assert.ok(tool);
-			for (const responseBody of ["upstream failed skey7", "upstream failed skey&#55;"]) {
-				// The fetch stub is process-global; finish one response case before replacing it.
-				// oxlint-disable-next-line no-await-in-loop
-				await t.test(responseBody, async () => {
-					await withFakeFetch(
-						() => new Response(responseBody, { status: 429, statusText: "Too Many Requests" }),
-						async () => {
-							await assert.rejects(
-								() =>
-									fetchBraveSearchJson(
-										buildBraveSearchUrl({ query: "rate limit", count: 1, offset: 0 }),
-										"skey7",
-									),
-								(error: unknown) => {
-									assert.ok(error instanceof Error);
-									assert.match(error.message, /Brave search rate limit exceeded \(HTTP 429\)/);
-									assert.match(
-										error.message,
-										/Do not issue parallel or repeated agent_browser_web_search calls/,
-									);
-									assert.doesNotMatch(error.message, /skey7/);
-									return true;
-								},
-							);
-							await assert.rejects(
-								() =>
-									fetchExaSearchJson(
-										{ query: "rate limit", contents: { highlights: true } },
-										"skey7",
-									),
-								(error: unknown) => {
-									assert.ok(error instanceof Error);
-									assert.match(error.message, /Exa search rate limit exceeded \(HTTP 429\)/);
-									assert.match(
-										error.message,
-										/Do not issue parallel or repeated agent_browser_web_search calls/,
-									);
-									assert.doesNotMatch(error.message, /skey7/);
-									return true;
-								},
-							);
-							const result = await executeRegisteredTool(tool, harness.ctx, {
-								query: "rate limit",
-								count: 1,
-								provider: "brave",
-							});
-							assert.equal(result.isError, true);
-							assert.match(
-								JSON.stringify(result.structuredContent),
-								/"success":false.*Brave search rate limit exceeded/,
-							);
-							assert.doesNotMatch(JSON.stringify(result), /skey7/);
-						},
-					);
-				});
-				t.mock.timers.setTime(Date.now() + WEB_SEARCH_MIN_REQUEST_INTERVAL_MS);
-			}
 			for (const provider of ["brave", "exa"] as const) {
 				// Each malformed response must finish before replacing the process-global fetch stub.
 				// oxlint-disable-next-line no-await-in-loop
@@ -1379,7 +1322,18 @@ for (const [provider, status, body, hint] of [
 	["brave", 401, "", /credential|permission/i],
 	["exa", 403, "Bearer bodycanary", /credential|permission/i],
 	["brave", 400, '{"key":"sk\\u0065y7"}', /request rejected/i],
-	["exa", 429, "provider-body-preview skey7", /Do not issue parallel or repeated/],
+	[
+		"brave",
+		429,
+		"upstream failed skey&#55;",
+		/rate limit exceeded \(HTTP 429\)\. Do not issue parallel or repeated agent_browser_web_search calls/,
+	],
+	[
+		"exa",
+		429,
+		"provider-body-preview skey7",
+		/rate limit exceeded \(HTTP 429\)\. Do not issue parallel or repeated agent_browser_web_search calls/,
+	],
 	["brave", 500, "provider-body-preview skey7", /provider unavailable/i],
 ] as const) {
 	test(`${provider} HTTP ${status} diagnostics never echo provider-controlled text`, async (t) => {

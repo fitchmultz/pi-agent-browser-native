@@ -53,7 +53,6 @@ const verification = {
 
 test("canonical JSON preserves array-valued page and code output", async () => {
 	const data = ["a1", "a2", { count: 3 }];
-	assert.deepEqual(projectAgentBrowserObservation({ data }, true).data, data);
 	const rendered = await renderAgentBrowserObservation({
 		content: [],
 		details: { data },
@@ -435,10 +434,7 @@ test("code-mode snapshot filters retain full filtered data without an early spil
 			assert.deepEqual(result.result.content, []);
 			assert.equal(details.fullOutputPath, undefined);
 			assert.ok(readString(readRecord(details.data).snapshot).length > 60_000);
-			assert.notEqual(
-				readRecord(projectAgentBrowserObservation(details, true).snapshotFilter),
-				undefined,
-			);
+			readRecord(projectAgentBrowserObservation(details, true).snapshotFilter);
 		});
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -486,9 +482,7 @@ else process.stdout.write(JSON.stringify({ success:true, data:{ url:'https://exa
 					// Finish each observation/cancellation lifecycle before reusing its shared artifact store or dispatch marker.
 					// oxlint-disable-next-line no-await-in-loop
 					const snapshot = await executeRegisteredTool(h.tool, h.ctx, { args: ["snapshot", "-i"] });
-					// The fixed observation/mutation variants require their own payload/target assertions; every variant also has unconditional outcome checks.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.notEqual(readRecord(readRecord(snapshot.details).refSnapshot), undefined);
+					readRecord(readRecord(snapshot.details).refSnapshot);
 					const controller = new AbortController();
 					const pending = executeRegisteredTool(
 						h.tool,

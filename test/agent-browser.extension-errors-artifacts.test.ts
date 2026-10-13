@@ -3899,7 +3899,6 @@ if (args.includes("get") && args.includes("url")) {
 					commandTokens: ["batch"],
 					compiledJob,
 					cwd: tempDir,
-					sessionName: "named",
 				});
 				assert.deepEqual(generatedProgress?.steps?.[1]?.args, [
 					"wait",

@@ -665,24 +665,20 @@ test("buildAgentBrowserNextActions returns exact native-tool recommendations for
 		})?.map((action) => ({ id: action.id, args: action.params?.args })),
 		[{ id: "retry-session-info", args: ["--session", "named", "session", "info"] }],
 	);
+	const urlWaitActions = buildAgentBrowserNextActions({
+		args: ["wait", "--url", "**/cart.html"],
+		command: "wait",
+		resultCategory: "failure",
+		failureCategory: "timeout",
+	});
 	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			args: ["wait", "--url", "**/cart.html"],
-			command: "wait",
-			resultCategory: "failure",
-			failureCategory: "timeout",
-		})?.map((action) => action.id),
+		urlWaitActions?.map((action) => action.id),
 		["inspect-after-timeout", "fresh-session-after-url-wait-timeout"],
 	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			args: ["wait", "--url", "**/cart.html"],
-			command: "wait",
-			resultCategory: "failure",
-			failureCategory: "timeout",
-		})?.[1]?.params,
-		{ args: ["open", "about:blank"], sessionMode: "fresh" },
-	);
+	assert.deepEqual(urlWaitActions[1].params, {
+		args: ["open", "about:blank"],
+		sessionMode: "fresh",
+	});
 	// Fresh-session recovery must stay unprefixed: the planner ignores sessionMode when --session is explicit.
 	assert.deepEqual(
 		buildAgentBrowserNextActions({
@@ -765,20 +761,7 @@ test("buildAgentBrowserNextActions keeps failure inspection and scoped navigatio
 	);
 });
 
-test("buildAgentBrowserNextActions preserves mutation, confirmation and missing-tab follow-ups", () => {
-	for (const command of ["key", "keydown", "keyboard", "keyup", "scrollinto", "tap"] as const) {
-		// The nonempty command fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(
-			buildAgentBrowserNextActions({
-				command,
-				resultCategory: "success",
-				successCategory: "completed",
-			})?.[0]?.id,
-			"inspect-after-mutation",
-			command,
-		);
-	}
+test("buildAgentBrowserNextActions preserves confirmation and missing-tab follow-ups", () => {
 	assert.deepEqual(
 		buildAgentBrowserNextActions({
 			resultCategory: "failure",

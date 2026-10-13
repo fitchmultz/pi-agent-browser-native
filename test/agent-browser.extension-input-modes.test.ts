@@ -82,6 +82,11 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 						message: exclusiveModeMessage,
 					},
 					{
+						label: "qa with stdin",
+						params: { qa: { url: "https://example.com" }, stdin: "[]" },
+						message: lookupStdinMessage,
+					},
+					{
 						label: "sourceLookup with stdin",
 						params: { sourceLookup: { componentName: "Panel" }, stdin: "[]" },
 						message: lookupStdinMessage,
@@ -1936,120 +1941,7 @@ process.stdin.on("end", () => {
 );
 
 test(
-	"agentBrowserExtension admits qa.attached using URL-only preflight without looking up the title",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-attached-title-fail-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const path = require("node:path");
-const args = process.argv.slice(2);
-let stdin = "";
-const statePath = path.join(${JSON.stringify(tempDir)}, "fake-session-state.json");
-const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
-function getSessionKey() {
-  const index = args.indexOf("--session");
-  return index >= 0 ? args[index + 1] : "default";
-}
-function readSessionState() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    return parsed[getSessionKey()] ?? { title: "QA Page", url: "https://example.test/" };
-  } catch {
-    return { title: "QA Page", url: "https://example.test/" };
-  }
-}
-function findCommandStartIndex(argv) {
-  for (let i = 0; i < argv.length; i += 1) {
-    const token = argv[i];
-    if (token === "--json") continue;
-    if (valueFlags.has(token)) { i += 1; continue; }
-    if (token.startsWith("--")) continue;
-    return i;
-  }
-  return -1;
-}
-function writeStandaloneResult(data) {
-  process.stdout.write(JSON.stringify({ success: true, data }));
-}
-function handleStandaloneCommand() {
-  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-  const commandIndex = findCommandStartIndex(args);
-  const command = args[commandIndex];
-  const subcommand = args[commandIndex + 1];
-  const sessionState = readSessionState();
-  if (command === "get" && subcommand === "title") {
-    process.stderr.write("get title failed");
-    process.exit(1);
-  }
-  if (command === "get" && subcommand === "url") {
-    writeStandaloneResult({ result: sessionState.url, url: sessionState.url });
-    return true;
-  }
-  if (command === "connect") {
-    writeStandaloneResult({ connected: true, endpoint: subcommand });
-    return true;
-  }
-  return false;
-}
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { stdin += chunk; });
-process.stdin.on("end", () => {
-  if (handleStandaloneCommand()) return;
-  const steps = JSON.parse(stdin);
-  const results = steps.map((command) => command[0] === "get" && command[1] === "text"
-    ? { command, success: true, result: { result: "Welcome" } }
-    : { command, success: true, result: { ok: true } });
-  process.stdout.write(JSON.stringify(results));
-});`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
-				const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
-				const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					qa: { attached: true, expectedText: "Welcome" },
-				});
-				assert.equal(attachedResult.isError, false);
-				assert.match(
-					readString(readRecord(attachedResult.content.at(0)).text),
-					/QA preset passed\./,
-				);
-				const invocations = await readInvocationLog(logPath);
-				const batchIndex = invocations.findIndex(
-					(entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail",
-				);
-				assert.ok(batchIndex >= 0);
-				const preflightInvocations = invocations.slice(0, batchIndex);
-				assert.ok(
-					preflightInvocations.some(
-						(entry) => entry.args.includes("get") && entry.args.includes("url"),
-					),
-				);
-				assert.equal(
-					preflightInvocations.some(
-						(entry) => entry.args.includes("get") && entry.args.includes("title"),
-					),
-					false,
-				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension allows qa.attached for non-http page URLs",
+	"agentBrowserExtension admits qa.attached across page URL schemes without title preflight",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-attached-precondition-"));
@@ -2099,13 +1991,8 @@ function handleStandaloneCommand() {
     return true;
   }
   if (command === "get" && subcommand === "title") {
-    writeStandaloneResult({ result: sessionState.title, title: sessionState.title });
-    return true;
-  }
-  if (command === "open") {
-    const url = String(subcommand || "about:blank");
-    writeStandaloneResult({ title: "Blank Page", url });
-    return true;
+    process.stderr.write("get title failed");
+    process.exit(1);
   }
   if (command === "connect") {
     writeStandaloneResult({ connected: true, endpoint: subcommand });
@@ -2137,26 +2024,46 @@ process.stdin.on("end", () => {
 						harness.ctx,
 					);
 					await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
-					for (const url of ["file:///tmp/app.html", "app://shell/home"]) {
+					for (const url of ["https://example.test/", "file:///tmp/app.html", "app://shell/home"]) {
 						// Verify attached targets in order using the same native session.
 						// oxlint-disable-next-line no-await-in-loop
 						await withPatchedEnv({ FAKE_ATTACHED_URL: url }, async () => {
+							const before = (await readInvocationLog(logPath)).length;
 							const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
 								args: ["get", "url"],
 							});
-							// Both fixed non-HTTP targets must permit explicit URL verification.
+							// Every fixed URL scheme must permit explicit URL verification.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
 							const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 								qa: { attached: true, expectedText: "Welcome" },
 							});
-							// Both fixed non-HTTP targets must remain usable for attached QA.
+							// Every fixed URL scheme must remain usable for attached QA.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(attachedResult.isError, false, JSON.stringify(attachedResult));
+							// Each carried scenario must retain the QA pass, not merely a successful preflight.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.match(attachedResult.content.at(0)?.text ?? "", /QA preset passed\./);
+							const calls = (await readInvocationLog(logPath)).slice(before);
+							const batchIndex = calls.findIndex(
+								(entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail",
+							);
+							// Every URL variant must reach a native QA batch after its preflight.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.ok(batchIndex >= 0);
+							const preflight = calls.slice(0, batchIndex);
+							// The failing title fixture must not be consulted before admitting any URL scheme.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.equal(
+								preflight.some(
+									(entry) => entry.args.includes("get") && entry.args.includes("title"),
+								),
+								false,
+							);
 						});
 					}
 					const invocations = await readInvocationLog(logPath);
-					assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 2);
+					assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 3);
 				},
 			);
 		} finally {

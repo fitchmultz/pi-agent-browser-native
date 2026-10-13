@@ -78,46 +78,7 @@ if (tokens[0] === 'batch') {
 	}
 }
 
-for (const [label, step] of [
-	["leading command", ["--no-sandbox", "open", url]],
-	["navigation tail", ["open", url, "--no-sandbox"]],
-	["URL-less open", ["open", "--no-sandbox"]],
-] as const) {
-	for (const mode of ["direct", "stdin", "raw"] as const) {
-		test(
-			`Chromium launch argument diagnostic before dispatch: ${label}/${mode}`,
-			{ concurrency: false },
-			async () => {
-				await withFixture(async (root, harness, log) => {
-					await writeFile(join(root, "raw-rows.json"), JSON.stringify([step]));
-					const requests = {
-						direct: { args: [...step] },
-						stdin: { args: ["batch"], stdin: JSON.stringify([step]) },
-						raw: { args: ["batch", step.map((value) => JSON.stringify(value)).join(" ")] },
-					};
-					const params = requests[mode];
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
-					assert.equal(result.isError, true);
-					assert.equal(result.details?.failureCategory, "validation-error");
-					assert.match(result.content[0].text ?? "", /Chromium launch argument/);
-					assert.match(result.content[0].text ?? "", /top-level.*--args/);
-					assert.match(result.content[0].text ?? "", /sessionMode.*fresh/);
-					assert.match(
-						result.content[0].text ?? "",
-						step[0] === "--no-sandbox" ? /not an agent-browser command/ : /ignored.*option/,
-					);
-					assert.deepEqual(
-						await readInvocationLog(log),
-						[],
-						"validation must precede even the version subprocess",
-					);
-				});
-			},
-		);
-	}
-}
-
-test("Chromium diagnostic uses native top-level globals but raw batch tokens", () => {
+test("Chromium diagnostic uses native top-level globals but raw batch tokens", async () => {
 	assert.match(validateToolArgs(["goto", "--no-sandbox", url]) ?? "", /ignored.*option/);
 	assert.match(validateToolArgs(["navigate", url, "--no-sandbox"]) ?? "", /ignored.*option/);
 	assert.match(
@@ -167,6 +128,47 @@ test("Chromium diagnostic uses native top-level globals but raw batch tokens", (
 		validateAgentBrowserScriptBrowserParams({ args: ["open", url, "--no-sandbox"] }).error ?? "",
 		/Chromium launch argument/,
 	);
+
+	await withFixture(async (_root, harness, log) => {
+		async function rejectsBeforeDispatch(
+			step: readonly string[],
+			mode: "direct" | "stdin" | "raw",
+		) {
+			const requests = {
+				direct: { args: [...step] },
+				stdin: { args: ["batch"], stdin: JSON.stringify([step]) },
+				raw: { args: ["batch", step.map((value) => JSON.stringify(value)).join(" ")] },
+			};
+			const result = await executeRegisteredTool(harness.tool, harness.ctx, requests[mode]);
+			const context = `${step.join(" ")}/${mode}`;
+			assert.equal(result.isError, true, context);
+			assert.equal(result.details?.failureCategory, "validation-error", context);
+			assert.match(result.content[0].text ?? "", /Chromium launch argument/, context);
+			assert.match(result.content[0].text ?? "", /top-level.*--args/, context);
+			assert.match(result.content[0].text ?? "", /sessionMode.*fresh/, context);
+			assert.match(
+				result.content[0].text ?? "",
+				step[0] === "--no-sandbox" ? /not an agent-browser command/ : /ignored.*option/,
+				context,
+			);
+			assert.deepEqual(
+				await readInvocationLog(log),
+				[],
+				`${context}: validation must precede even the version subprocess`,
+			);
+		}
+		for (const step of [
+			["--no-sandbox", "open", url],
+			["open", url, "--no-sandbox"],
+			["open", "--no-sandbox"],
+		]) {
+			for (const mode of ["direct", "stdin", "raw"] as const) {
+				// Each rejected request must leave the shared fixture untouched before the next variant.
+				// oxlint-disable-next-line no-await-in-loop
+				await rejectsBeforeDispatch(step, mode);
+			}
+		}
+	});
 });
 
 for (const args of [

@@ -125,34 +125,17 @@ test("createImplicitSessionName is stable for a persisted pi session", () => {
 
 	assert.equal(one, two);
 	assert.match(one, /^piab-pi-agent-browser-[a-f0-9]{12}-[a-f0-9]{8}$/);
-});
-
-test("createImplicitSessionName hashes the full Pi session id", () => {
-	const cwd = "/Users/example/Projects/pi-agent-browser";
-	const one = createImplicitSessionName(
-		"019fe81c-92dd-7000-8000-000000000001",
-		cwd,
-		"ignored",
-		"linux",
-	);
-	const two = createImplicitSessionName(
-		"019fe81c-92dd-7000-8000-000000000002",
-		cwd,
-		"ignored",
-		"linux",
+	assert.notEqual(
+		createImplicitSessionName("019fe81c-92dd-7000-8000-000000000001", cwd, "ignored", "linux"),
+		createImplicitSessionName("019fe81c-92dd-7000-8000-000000000002", cwd, "ignored", "linux"),
+		"the full Pi session id contributes to identity",
 	);
 
-	assert.notEqual(one, two);
-});
-
-test("createImplicitSessionName includes cwd isolation for same-named checkouts", () => {
-	const sessionId = "12345678-1234-5678-9abc-def012345678";
-	const one = createImplicitSessionName(sessionId, "/tmp/foo/app", "ignored-a", "linux");
-	const two = createImplicitSessionName(sessionId, "/tmp/bar/app", "ignored-b", "linux");
-
-	assert.notEqual(one, two);
-	assert.match(one, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
-	assert.match(two, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
+	const checkoutOne = createImplicitSessionName(sessionId, "/tmp/foo/app", "ignored-a", "linux");
+	const checkoutTwo = createImplicitSessionName(sessionId, "/tmp/bar/app", "ignored-b", "linux");
+	assert.notEqual(checkoutOne, checkoutTwo, "same-named checkouts remain isolated");
+	assert.match(checkoutOne, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
+	assert.match(checkoutTwo, /^piab-app-[a-f0-9]{12}-[a-f0-9]{8}$/);
 });
 
 test("Android managed session names retain full identity entropy within namespaced socket limits", () => {
@@ -770,129 +753,81 @@ test("restoreManagedSessionStateFromBranch applies close --all to the active nam
 });
 
 test("restoreManagedSessionStateFromBranch ignores stale base completions after fresh rotation", () => {
-	const restored = restoreManagedSessionStateFromBranch(
-		[
-			createToolBranchEntry({
-				details: {
-					args: ["open", "https://example.com/base"],
-					command: "open",
-					exitCode: 0,
-					sessionMode: "auto",
-					sessionName: "piab-demo-123",
-					usedImplicitSession: true,
-				},
-			}),
-			createToolBranchEntry({
-				details: {
-					args: ["--profile", "Default", "open", "https://example.com/fresh"],
-					command: "open",
-					exitCode: 0,
-					sessionMode: "fresh",
-					sessionName: "piab-demo-123-fresh-aaa",
-					usedImplicitSession: false,
-				},
-			}),
-			createToolBranchEntry({
-				details: {
-					args: ["open", "https://example.com/stale-base"],
-					command: "open",
-					exitCode: 0,
-					sessionMode: "auto",
-					sessionName: "piab-demo-123",
-					usedImplicitSession: true,
-				},
-			}),
-		],
-		"piab-demo-123",
-	);
+	for (const row of [
+		{
+			initialArgs: ["open", "https://example.com/base"],
+			initialSession: "piab-demo-123",
+			initialMode: "auto",
+			latestArgs: ["--profile", "Default", "open", "https://example.com/fresh"],
+			latestSession: "piab-demo-123-fresh-aaa",
+			staleArgs: ["open", "https://example.com/stale-base"],
+			ordinal: 1,
+		},
+		{
+			initialArgs: ["--profile", "Default", "open", "https://example.com/first-fresh"],
+			initialSession: "piab-demo-123-fresh-aaa",
+			initialMode: "fresh",
+			latestArgs: ["--profile", "Work", "open", "https://example.com/second-fresh"],
+			latestSession: "piab-demo-123-fresh-bbb",
+			staleArgs: ["snapshot", "-i"],
+			ordinal: 2,
+		},
+		{
+			initialArgs: ["open", "https://example.com/base"],
+			initialSession: "piab-demo-123",
+			initialMode: "auto",
+			latestArgs: ["--profile", "Default", "open", "https://example.com/fresh"],
+			latestSession: "piab-demo-123-fresh-aaa",
+			staleArgs: ["close"],
+			ordinal: 1,
+		},
+	]) {
+		const restored = restoreManagedSessionStateFromBranch(
+			[
+				createToolBranchEntry({
+					details: {
+						args: row.initialArgs,
+						command: "open",
+						exitCode: 0,
+						sessionMode: row.initialMode,
+						sessionName: row.initialSession,
+						usedImplicitSession: row.initialMode === "auto",
+					},
+				}),
+				createToolBranchEntry({
+					details: {
+						args: row.latestArgs,
+						command: "open",
+						exitCode: 0,
+						sessionMode: "fresh",
+						sessionName: row.latestSession,
+						usedImplicitSession: false,
+					},
+				}),
+				createToolBranchEntry({
+					details: {
+						args: row.staleArgs,
+						command: row.staleArgs[0],
+						exitCode: 0,
+						sessionMode: "auto",
+						sessionName: row.initialSession,
+						usedImplicitSession: true,
+					},
+				}),
+			],
+			"piab-demo-123",
+		);
 
-	assert.equal(restored.active, true);
-	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
-	assert.equal(restored.freshSessionOrdinal, 1);
-});
-
-test("restoreManagedSessionStateFromBranch ignores stale earlier fresh completions after newer fresh rotation", () => {
-	const restored = restoreManagedSessionStateFromBranch(
-		[
-			createToolBranchEntry({
-				details: {
-					args: ["--profile", "Default", "open", "https://example.com/first-fresh"],
-					command: "open",
-					exitCode: 0,
-					sessionMode: "fresh",
-					sessionName: "piab-demo-123-fresh-aaa",
-					usedImplicitSession: false,
-				},
-			}),
-			createToolBranchEntry({
-				details: {
-					args: ["--profile", "Work", "open", "https://example.com/second-fresh"],
-					command: "open",
-					exitCode: 0,
-					sessionMode: "fresh",
-					sessionName: "piab-demo-123-fresh-bbb",
-					usedImplicitSession: false,
-				},
-			}),
-			createToolBranchEntry({
-				details: {
-					args: ["snapshot", "-i"],
-					command: "snapshot",
-					exitCode: 0,
-					sessionMode: "auto",
-					sessionName: "piab-demo-123-fresh-aaa",
-					usedImplicitSession: true,
-				},
-			}),
-		],
-		"piab-demo-123",
-	);
-
-	assert.equal(restored.active, true);
-	assert.equal(restored.sessionName, "piab-demo-123-fresh-bbb");
-	assert.equal(restored.freshSessionOrdinal, 2);
-});
-
-test("restoreManagedSessionStateFromBranch ignores stale close entries for superseded managed sessions", () => {
-	const restored = restoreManagedSessionStateFromBranch(
-		[
-			createToolBranchEntry({
-				details: {
-					args: ["open", "https://example.com/base"],
-					command: "open",
-					exitCode: 0,
-					sessionMode: "auto",
-					sessionName: "piab-demo-123",
-					usedImplicitSession: true,
-				},
-			}),
-			createToolBranchEntry({
-				details: {
-					args: ["--profile", "Default", "open", "https://example.com/fresh"],
-					command: "open",
-					exitCode: 0,
-					sessionMode: "fresh",
-					sessionName: "piab-demo-123-fresh-aaa",
-					usedImplicitSession: false,
-				},
-			}),
-			createToolBranchEntry({
-				details: {
-					args: ["close"],
-					command: "close",
-					exitCode: 0,
-					sessionMode: "auto",
-					sessionName: "piab-demo-123",
-					usedImplicitSession: true,
-				},
-			}),
-		],
-		"piab-demo-123",
-	);
-
-	assert.equal(restored.active, true);
-	assert.equal(restored.sessionName, "piab-demo-123-fresh-aaa");
-	assert.equal(restored.freshSessionOrdinal, 1);
+		// Every fixed stale completion and close row must preserve current ownership.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(restored.active, true, row.staleArgs.join(" "));
+		// Every fixed stale row must retain the newer session, not its own identity.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(restored.sessionName, row.latestSession);
+		// Each fixed base/fresh rank variant retains its original ordinal assertion.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(restored.freshSessionOrdinal, row.ordinal);
+	}
 });
 
 test("restoreManagedSessionStateFromBranch treats upstream close aliases as managed-session closes", () => {

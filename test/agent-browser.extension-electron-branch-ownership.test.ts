@@ -1082,6 +1082,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 				});
 				assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
 				const cleanupBranch = harness.ctx.sessionManager.getBranch().slice();
+				const coldCleanupBranch = cleanupBranch.slice();
 
 				const immediateRead = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["get", "url"],
@@ -1158,97 +1159,47 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 						reservedAfterClose,
 					],
 				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension does not restore Electron managed session after cleanup result",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-cleanup-restore-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { result: "ok", url: "app://restore-cleanup" } }));`,
-		);
-		const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
-		const electronSessionName = `${baseSessionName}-fresh-electron-restore-cleanup`;
-		const electronRecord = {
-			appName: "Restore Cleanup Electron",
-			cleanupState: "active",
-			createdAtMs: Date.now(),
-			executablePath: process.execPath,
-			launchId: "electron-restore-cleanup",
-			launchedByWrapper: true,
-			port: 9,
-			sessionName: electronSessionName,
-			userDataDir: join(tempDir, "electron-profile-restore-cleanup"),
-			version: 1,
-		};
-		const branch = [
-			createToolBranchEntry({
-				details: electronManagedSessionDetails(electronSessionName, electronRecord),
-				isError: false,
-			}),
-			createToolBranchEntry({
-				details: electronCleanupDetails(electronSessionName, electronRecord),
-				isError: false,
-			}),
-		];
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ branch, cwd: tempDir });
+				const coldHarness = createExtensionHarness({ branch: coldCleanupBranch, cwd: tempDir });
 				await runExtensionEvent(
-					harness.handlers,
+					coldHarness.handlers,
 					"session_start",
 					{ reason: "resume" },
-					harness.ctx,
+					coldHarness.ctx,
 				);
-				const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+				const coldFollowUp = await executeRegisteredTool(coldHarness.tool, coldHarness.ctx, {
 					args: ["get", "url"],
 				});
-				assert.equal(followUp.isError, false, JSON.stringify(followUp));
-				const restoredGeneratedSessionName = followUp.details?.sessionName;
-				assertIsString(restoredGeneratedSessionName);
+				assert.equal(coldFollowUp.isError, false, JSON.stringify(coldFollowUp));
+				const coldSessionName = coldFollowUp.details?.sessionName;
+				assertIsString(coldSessionName);
+				assert.match(coldSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
+				assert.notEqual(coldSessionName, electronSessionName);
+				const coldClose = await executeRegisteredTool(coldHarness.tool, coldHarness.ctx, {
+					args: ["--session", coldSessionName, "close"],
+				});
+				assert.equal(coldClose.isError, false, JSON.stringify(coldClose));
+				const coldAfterClose = await executeRegisteredTool(coldHarness.tool, coldHarness.ctx, {
+					args: ["get", "url"],
+				});
+				assert.equal(coldAfterClose.isError, false, JSON.stringify(coldAfterClose));
+				const coldAfterCloseSessionName = coldAfterClose.details?.sessionName;
+				assertIsString(coldAfterCloseSessionName);
 				assert.match(
-					restoredGeneratedSessionName,
+					coldAfterCloseSessionName,
 					new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`),
 				);
-				assert.notEqual(restoredGeneratedSessionName, electronSessionName);
-
-				const closeRestoredGenerated = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", restoredGeneratedSessionName, "close"],
-				});
-				assert.equal(closeRestoredGenerated.isError, false, JSON.stringify(closeRestoredGenerated));
-				const finalFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
-				const finalSessionName = finalFollowUp.details?.sessionName;
-				assertIsString(finalSessionName);
-				assert.match(finalSessionName, new RegExp(`^${baseSessionName}-fresh-[a-f0-9]{10}$`));
-				assert.notEqual(finalSessionName, electronSessionName);
-				assert.notEqual(finalSessionName, restoredGeneratedSessionName);
-
-				const invocations = await readInvocationLog(logPath);
+				assert.notEqual(coldAfterCloseSessionName, electronSessionName);
+				assert.notEqual(coldAfterCloseSessionName, coldSessionName);
 				assert.deepEqual(
-					invocations.map((entry) => entry.sessionName),
+					(await readInvocationLog(logPath))
+						.slice(invocations.length)
+						.map((entry) => entry.sessionName),
 					[
-						restoredGeneratedSessionName,
-						restoredGeneratedSessionName,
-						restoredGeneratedSessionName,
-						finalSessionName,
-						finalSessionName,
+						coldSessionName,
+						coldSessionName,
+						coldSessionName,
+						coldAfterCloseSessionName,
+						coldAfterCloseSessionName,
 					],
 				);
 			});

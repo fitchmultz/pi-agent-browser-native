@@ -51,7 +51,7 @@ if (args.includes("download")) {
 				{ PATH: `${tempDir}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_TEST_PAGE_URL: url },
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
-					const path = join(tempDir, "downloads", "report.csv");
+					const path = join(tempDir, "downloads", new URL(url).hostname + ".csv");
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["download", "#export", path],
 					});
@@ -310,7 +310,8 @@ test(
 		const restoreKey = `piab-r2-${"a".repeat(32)}`;
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`process.stdout.write("x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
+			`const fs = require("node:fs");
+process.stdout.write("invalid-json " + fs.readFileSync(0, "utf8") + " " + "x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
 		);
 
 		try {
@@ -352,6 +353,17 @@ test(
 						.map((file) => readFile(join(file.parentPath, file.name), "utf8")),
 				);
 				assert.doesNotMatch(persisted.join("\n"), new RegExp(sentinel));
+
+				const authResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["auth", "save", "demo", "--password-stdin"],
+					stdin: "super-secret-password",
+				});
+				assert.equal(authResult.details?.fullOutputPath, undefined);
+				assert.match(
+					readString(authResult.details?.fullOutputUnavailable ?? ""),
+					/discarded because it may contain sensitive browser data/,
+				);
+				assert.doesNotMatch(JSON.stringify(authResult), /super-secret-password/);
 				await runExtensionEvent(harness.handlers, "session_shutdown");
 			});
 		} finally {

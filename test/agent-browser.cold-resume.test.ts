@@ -155,70 +155,78 @@ async function withResumedPage(
 	await withResumedPages((row) => row(run), options);
 }
 
-for (const params of [
-	{ args: ["get", "url"] },
-	{ args: ["get", "title"] },
-	{ args: ["read"] },
-	{
-		args: ["batch", "--bail"],
-		stdin: JSON.stringify([
-			["get", "url"],
-			["get", "title"],
-		]),
+test(
+	"cold resume reopens before page reads and discards old refs",
+	{ concurrency: false },
+	async () => {
+		await withResumedPages(async (withRow) => {
+			const check = (params: { readonly args: readonly string[]; readonly stdin?: string }) =>
+				withRow(async ({ harness, logPath, sessionName, url }) => {
+					const result = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "unrelated" }, () =>
+						executeRegisteredTool(harness.tool, harness.ctx, params),
+					);
+					assert.equal(result.isError, false, result.content[0]?.text);
+					assert.equal(readRecord(result.details).sessionName, sessionName);
+					assert.equal(readRecord(result.details).namespace, "cold");
+					assert.equal(readRecord(readRecord(result.details).sessionTabTarget).url, url);
+					assert.equal(readRecord(result.details).refSnapshot, undefined);
+					assert.equal(
+						readRecord(readRecord(result.details).refSnapshotInvalidation).reason,
+						"page-transition",
+					);
+					const initialCalls = await readInvocationLog(logPath);
+					const openIndex = initialCalls.findIndex((row) => row.args.includes("open"));
+					const commandIndex = initialCalls.findIndex(
+						(row) => row.args.slice(-params.args.length).join("\\0") === params.args.join("\\0"),
+					);
+					assert.ok(openIndex >= 0 && commandIndex > openIndex, JSON.stringify(initialCalls));
+					const stale = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "value", "@e1"],
+					});
+					assert.equal(stale.isError, true);
+					assert.equal(stale.details?.failureCategory, "stale-ref");
+					const fresh = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["snapshot", "-i"],
+					});
+					assert.equal(fresh.isError, false, fresh.content[0]?.text);
+					assert.equal(fresh.details?.refSnapshotInvalidation, undefined);
+					const current = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "value", "@e1"],
+					});
+					assert.equal(current.isError, false, current.content[0]?.text);
+					const opens = (await readInvocationLog(logPath)).filter((row) =>
+						row.args.includes("open"),
+					);
+					assert.equal(opens.length, 1, "only the first cold read reopens the page");
+					assert.deepEqual(opens[0]?.args, [
+						"--json",
+						"--namespace",
+						"cold",
+						"--session",
+						sessionName,
+						"open",
+						url,
+					]);
+				});
+			for (const params of [
+				{ args: ["get", "url"] },
+				{ args: ["get", "title"] },
+				{ args: ["read"] },
+				{
+					args: ["batch", "--bail"],
+					stdin: JSON.stringify([
+						["get", "url"],
+						["get", "title"],
+					]),
+				},
+			]) {
+				// Each row resets branch/native state and completes shutdown before the next.
+				// oxlint-disable-next-line no-await-in-loop
+				await check(params);
+			}
+		});
 	},
-]) {
-	test(
-		`cold resume reopens before ${params.args.join(" ")} and discards old refs`,
-		{ concurrency: false },
-		async () => {
-			await withResumedPage(async ({ harness, logPath, sessionName, url }) => {
-				const result = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "unrelated" }, () =>
-					executeRegisteredTool(harness.tool, harness.ctx, params),
-				);
-				assert.equal(result.isError, false, result.content[0]?.text);
-				assert.equal(readRecord(result.details).sessionName, sessionName);
-				assert.equal(readRecord(result.details).namespace, "cold");
-				assert.equal(readRecord(readRecord(result.details).sessionTabTarget).url, url);
-				assert.equal(readRecord(result.details).refSnapshot, undefined);
-				assert.equal(
-					readRecord(readRecord(result.details).refSnapshotInvalidation).reason,
-					"page-transition",
-				);
-				const initialCalls = await readInvocationLog(logPath);
-				const openIndex = initialCalls.findIndex((row) => row.args.includes("open"));
-				const commandIndex = initialCalls.findIndex(
-					(row) => row.args.slice(-params.args.length).join("\\0") === params.args.join("\\0"),
-				);
-				assert.ok(openIndex >= 0 && commandIndex > openIndex, JSON.stringify(initialCalls));
-				const stale = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "value", "@e1"],
-				});
-				assert.equal(stale.isError, true);
-				assert.equal(stale.details?.failureCategory, "stale-ref");
-				const fresh = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["snapshot", "-i"],
-				});
-				assert.equal(fresh.isError, false, fresh.content[0]?.text);
-				assert.equal(fresh.details?.refSnapshotInvalidation, undefined);
-				const current = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "value", "@e1"],
-				});
-				assert.equal(current.isError, false, current.content[0]?.text);
-				const opens = (await readInvocationLog(logPath)).filter((row) => row.args.includes("open"));
-				assert.equal(opens.length, 1, "only the first cold read reopens the page");
-				assert.deepEqual(opens[0]?.args, [
-					"--json",
-					"--namespace",
-					"cold",
-					"--session",
-					sessionName,
-					"open",
-					url,
-				]);
-			});
-		},
-	);
-}
+);
 
 test(
 	"cold resume preserves explicit navigation and sessionless intent",

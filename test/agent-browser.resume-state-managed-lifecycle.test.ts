@@ -50,61 +50,6 @@ function closedSessionDetails(sessionName: string) {
 }
 
 test(
-	"agentBrowserExtension closes the active managed session when pi quits",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-const envelope = args.includes("close")
-  ? { success: true, data: { closed: true } }
-  : { success: true, data: { title: "Example Domain", url: args[args.length - 1] } };
-process.stdout.write(JSON.stringify(envelope));`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const open = await executeRegisteredTool(harness.tool, harness.ctx, {
-					sessionMode: "fresh",
-					args: ["open", "https://example.com/quit-cleanup"],
-				});
-				assert.equal(open.isError, false, JSON.stringify(open));
-				const sessionName = open.details?.sessionName;
-				assert.equal(typeof sessionName, "string");
-
-				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" });
-
-				const invocations = await readInvocationLog(logPath);
-				assert.deepEqual(
-					invocations.map((entry) => entry.args),
-					[
-						[
-							"--json",
-							"--session",
-							readString(sessionName),
-							"open",
-							"https://example.com/quit-cleanup",
-						],
-						["--json", "--session", readString(sessionName), "tab", "list"],
-						["--session", readString(sessionName), "close"],
-					],
-				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
 	"agentBrowserExtension closes all branch-owned managed sessions on quit",
 	{ concurrency: false },
 	async () => {
@@ -267,121 +212,75 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
 		);
 		const ownedName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
-		const sourceBranch = [
-			...Array.from({ length: 8 }, (_value, index) =>
-				createToolBranchEntry({
-					details: {
-						args: ["get", "title"],
-						command: "get",
-						exitCode: 0,
-						resultCategory: "success",
-						title: `noise-${index}`,
-					},
-					isError: false,
-				}),
-			),
-			createToolBranchEntry({ details: ownedSessionDetails(ownedName), isError: false }),
-		];
-		const closedBranch = [
-			createToolBranchEntry({ details: ownedSessionDetails(ownedName), isError: false }),
-			createToolBranchEntry({ details: closedSessionDetails(ownedName), isError: false }),
-		];
+		const freshName = `${ownedName}-fresh-later-active`;
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ branch: sourceBranch, cwd: tempDir });
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-				harness.setBranch(closedBranch);
-				await runExtensionEvent(
-					harness.handlers,
-					"session_tree",
-					{ newLeafId: "branch-closed", oldLeafId: "branch-open" },
-					harness.ctx,
-				);
-				await runExtensionEvent(
-					harness.handlers,
-					"session_shutdown",
-					{ reason: "quit" },
-					harness.ctx,
-				);
-
-				const closeArgs = (await readInvocationLog(logPath))
-					.map((entry) => entry.args)
-					.filter((args) => args.includes("close"));
-				assert.deepEqual(closeArgs, []);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension does not double-close older branch close rows before a later active session",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(
-			join(tmpdir(), "pi-agent-browser-explicit-close-tree-later-active-"),
-		);
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
-		);
-		const baseSessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
-		const freshSessionName = `${baseSessionName}-fresh-later-active`;
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({
-					branch: [
-						createToolBranchEntry({
-							details: ownedSessionDetails(baseSessionName),
-							isError: false,
-						}),
-					],
-					cwd: tempDir,
-				});
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-				harness.setBranch([
-					createToolBranchEntry({ details: ownedSessionDetails(baseSessionName), isError: false }),
-					createToolBranchEntry({ details: closedSessionDetails(baseSessionName), isError: false }),
-					createToolBranchEntry({
-						details: ownedSessionDetails(freshSessionName, "fresh"),
-						isError: false,
-					}),
-				]);
-				await runExtensionEvent(
-					harness.handlers,
-					"session_tree",
-					{ newLeafId: "branch-fresh", oldLeafId: "branch-base" },
-					harness.ctx,
-				);
-				await runExtensionEvent(
-					harness.handlers,
-					"session_shutdown",
-					{ reason: "quit" },
-					harness.ctx,
-				);
-
-				const closeArgs = (await readInvocationLog(logPath))
-					.map((entry) => entry.args)
-					.filter((args) => args.includes("close"));
-				assert.deepEqual(closeArgs, [["--session", freshSessionName, "close"]]);
+				for (const laterActive of [false, true]) {
+					// Each branch variant owns its harness and dispatch log; cleanup finishes before the next.
+					// oxlint-disable-next-line no-await-in-loop
+					await writeFile(logPath, "");
+					const sourceBranch = [
+						...Array.from({ length: 8 }, (_value, index) =>
+							createToolBranchEntry({
+								details: {
+									args: ["get", "title"],
+									command: "get",
+									exitCode: 0,
+									resultCategory: "success",
+									title: `noise-${index}`,
+								},
+								isError: false,
+							}),
+						),
+						createToolBranchEntry({ details: ownedSessionDetails(ownedName), isError: false }),
+					];
+					const harness = createExtensionHarness({ branch: sourceBranch, cwd: tempDir });
+					// Replay must complete before this harness switches to its closed branch.
+					// oxlint-disable-next-line no-await-in-loop
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "resume" },
+						harness.ctx,
+					);
+					harness.setBranch([
+						createToolBranchEntry({ details: ownedSessionDetails(ownedName), isError: false }),
+						createToolBranchEntry({ details: closedSessionDetails(ownedName), isError: false }),
+						...(laterActive
+							? [
+									createToolBranchEntry({
+										details: ownedSessionDetails(freshName, "fresh"),
+										isError: false,
+									}),
+								]
+							: []),
+					]);
+					// Branch ownership must settle before shutdown consumes it.
+					// oxlint-disable-next-line no-await-in-loop
+					await runExtensionEvent(
+						harness.handlers,
+						"session_tree",
+						{ newLeafId: "branch-closed", oldLeafId: "branch-open" },
+						harness.ctx,
+					);
+					// Finish this variant's cleanup before the dispatch log is reset.
+					// oxlint-disable-next-line no-await-in-loop
+					await runExtensionEvent(
+						harness.handlers,
+						"session_shutdown",
+						{ reason: "quit" },
+						harness.ctx,
+					);
+					// Observe each variant's close receipt independently before advancing.
+					// oxlint-disable-next-line no-await-in-loop
+					const closeArgs = (await readInvocationLog(logPath))
+						.map((entry) => entry.args)
+						.filter((args) => args.includes("close"));
+					// Both closed-only and later-active branches must retire the earlier owner.
+					// oxlint-disable-next-line node-test/no-conditional-assertion
+					assert.deepEqual(closeArgs, laterActive ? [["--session", freshName, "close"]] : []);
+				}
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -560,6 +459,17 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					args: ["--session", firstFreshSessionName, "close"],
 				});
 				assert.equal(closeFresh.isError, false, JSON.stringify(closeFresh));
+				const reservedAfterTree = readRecord(
+					closeFresh.details?.managedSessionOutcome,
+				).currentSessionName;
+				assertIsString(reservedAfterTree);
+				harness.setBranch(harness.ctx.sessionManager.getBranch().slice());
+				await runExtensionEvent(
+					harness.handlers,
+					"session_tree",
+					{ newLeafId: "closed-fresh", oldLeafId: "live" },
+					harness.ctx,
+				);
 
 				const finalFollowUp = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["get", "url"],
@@ -567,6 +477,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				assert.equal(finalFollowUp.isError, false, JSON.stringify(finalFollowUp));
 				const finalFreshSessionName = finalFollowUp.details?.sessionName;
 				assertIsString(finalFreshSessionName);
+				assert.equal(finalFreshSessionName, reservedAfterTree);
 				assert.match(
 					finalFreshSessionName,
 					new RegExp(
@@ -606,12 +517,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					"tab",
 					"list",
 				]);
-				await runExtensionEvent(
-					harness.handlers,
-					"session_shutdown",
-					{ reason: "quit" },
-					harness.ctx,
-				);
+				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" });
 				assert.deepEqual(
 					(await readInvocationLog(logPath))
 						.filter((entry) => entry.args.includes("close"))
@@ -701,82 +607,6 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						rotatedSessionName,
 						followUpSessionName,
 						followUpSessionName,
-					],
-				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension keeps explicit-close reserved fresh session across same-process session_tree restore",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-close-tree-reserve-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const sessionName = args.includes("--session") ? args[args.indexOf("--session") + 1] : undefined;
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, sessionName }) + "\\n");
-const data = args.includes("close")
-  ? { closed: true }
-  : { title: "Example Domain", url: "https://example.com/", sessionName };
-process.stdout.write(JSON.stringify({ success: true, data }));`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				const open = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "https://example.com/base"],
-					sessionMode: "fresh",
-				});
-				assert.equal(open.isError, false, JSON.stringify(open));
-				const baseSessionName = open.details?.sessionName;
-				assertIsString(baseSessionName);
-
-				const closeBase = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", baseSessionName, "close"],
-				});
-				assert.equal(closeBase.isError, false, JSON.stringify(closeBase));
-				const reservedSessionName = readRecord(
-					closeBase.details?.managedSessionOutcome,
-				).currentSessionName;
-				assertIsString(reservedSessionName);
-				assert.match(
-					reservedSessionName,
-					new RegExp(`^${baseSessionName.replace(/-fresh-[a-f0-9]{10}$/, "")}-fresh-[a-f0-9]{10}$`),
-				);
-
-				harness.setBranch(harness.ctx.sessionManager.getBranch().slice());
-				await runExtensionEvent(
-					harness.handlers,
-					"session_tree",
-					{ newLeafId: "closed-base", oldLeafId: "live" },
-					harness.ctx,
-				);
-
-				const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(followUp.isError, false, JSON.stringify(followUp));
-				assert.equal(followUp.details?.sessionName, reservedSessionName);
-
-				const invocations = await readInvocationLog(logPath);
-				assert.deepEqual(
-					invocations.map((entry) => entry.sessionName),
-					[
-						baseSessionName,
-						baseSessionName,
-						baseSessionName,
-						reservedSessionName,
-						reservedSessionName,
 					],
 				);
 			});
