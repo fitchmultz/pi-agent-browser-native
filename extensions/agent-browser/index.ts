@@ -1528,7 +1528,8 @@ export default function agentBrowserExtension(
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (!shouldAppendBrowserSystemPrompt(event.prompt)) {
+		const prompt = "prompt" in event ? event.prompt : getLatestUserPrompt(ctx.sessionManager.getBranch());
+		if (!shouldAppendBrowserSystemPrompt(prompt)) {
 			return undefined;
 		}
 		const runtimeConfig = loadAgentBrowserConfigSync({

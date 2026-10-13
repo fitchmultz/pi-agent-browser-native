@@ -1,5 +1,5 @@
 /**
- * Purpose: Verify prompt-derived browser artifact guards for the pi-agent-browser extension.
+ * Purpose: Verify prompt-derived browser guidance and artifact guards for the pi-agent-browser extension.
  * Responsibilities: Assert required prompt artifact close guards without semantic action blocking.
  * Scope: Integration-style Node test-runner coverage with fake agent-browser binaries.
  */
@@ -18,6 +18,38 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+test("agentBrowserExtension keeps prompt policy on user and custom starts", { concurrency: false }, async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-custom-start-"));
+	const browserPrompt = "Open https://example.com and take a browser snapshot.";
+	const ordinaryPrompt = "Write a short project outline.";
+	try {
+		for (const { prompt, storedPrompt, expected } of [
+			{ prompt: browserPrompt, storedPrompt: ordinaryPrompt, expected: true },
+			{ prompt: ordinaryPrompt, storedPrompt: browserPrompt, expected: false },
+			{ prompt: undefined, storedPrompt: browserPrompt, expected: true },
+			{ prompt: undefined, storedPrompt: ordinaryPrompt, expected: false },
+		]) {
+			const harness = createExtensionHarness({ cwd: tempDir, prompt: storedPrompt });
+			const event = {
+				...(prompt === undefined
+					? { messageType: "custom", message: { customType: "bash-wake", content: "Bash completed." } }
+					: { messageType: "user", prompt }),
+				systemPrompt: "Base system prompt",
+				systemPromptOptions: { sections: {} as Record<string, string> },
+			};
+			await runExtensionEvent(harness.handlers, "before_agent_start", event, harness.ctx);
+			assert.equal(event.systemPrompt, "Base system prompt");
+			if (expected) {
+				assert.match(event.systemPromptOptions.sections.agent_browser, /Project rule: when browser automation is needed/);
+			} else {
+				assert.deepEqual(event.systemPromptOptions.sections, {});
+			}
+		}
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
 
 test("agentBrowserExtension does not turn prompt stop-boundary text into click blocks", { concurrency: false }, async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-no-semantic-prompt-block-"));
