@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.6 - 2026-10-14
+
 ### Changed
 
 - Reduce large-result redaction, snapshot-summary, batch-metadata, and artifact-manifest work without changing visible output or credential masking.
