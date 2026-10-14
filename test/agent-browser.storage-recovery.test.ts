@@ -22,6 +22,7 @@ import {
 } from "../extensions/agent-browser/lib/browser-journal.js";
 import { convertBrowserSession } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
+import { restoreAttachedSessionKeysFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-attachment-replay.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -55,6 +56,273 @@ async function records(file: string): Promise<Array<Record<string, unknown>>> {
 		.split("\n")
 		.filter((line) => line.trim().length > 0)
 		.map((line) => readRecord(JSON.parse(line)));
+}
+
+test("normal resume reads legacy tool receipts without changing the journal or locator", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-legacy-resume-"));
+	try {
+		const file = join(root, "original.jsonl");
+		const entries = [
+			{
+				type: "message",
+				id: "legacy-capture",
+				parentId: null,
+				message: {
+					role: "toolResult",
+					toolName: "agent_browser",
+					toolCallId: "capture",
+					isError: false,
+					content: [{ type: "text", text: "Original native observation" }],
+					details: {
+						sessionName: "shared",
+						namespace: "team",
+						args: ["snapshot", "-i"],
+						command: "snapshot",
+						sessionConfirmActions: "",
+						sessionTabTarget: { url: "https://fixture.test/#approved" },
+						refSnapshot: {
+							refIds: ["e1"],
+							refs: { e1: { role: "button", name: "Continue" } },
+							target: { url: "https://fixture.test/#approved" },
+						},
+						readConfirmation: {
+							id: "capture-id",
+							state: "cleared",
+							sessionName: "shared",
+							namespace: "team",
+							source: "native-guarded-action",
+							command: "snapshot",
+							action: "snapshot",
+							refSnapshotFresh: true,
+						},
+					},
+				},
+			},
+			{
+				type: "custom",
+				customType: BROWSER_TRANSITION_ENTRY,
+				id: "other-branch",
+				parentId: "legacy-capture",
+				data: {
+					toolCallId: "unresolved",
+					isError: false,
+					details: { sessionName: "shared", namespace: "team", sessionTabTargetUnknown: true },
+				},
+			},
+		];
+		const original = Buffer.from(
+			[{ type: "session", version: 3, id: "fixture-session" }, ...entries]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n") + "\n",
+		);
+		await writeFile(file, original);
+		const selected = manager(file, "legacy-capture");
+		const branch = await readBrowserEntries(selected);
+		const page = SessionPageState.fromBranch(branch).get("team\0shared");
+		assert.equal(page.tabTarget?.url, "https://fixture.test/#approved");
+		assert.deepEqual(page.refSnapshot?.refIds, ["e1"]);
+		assert.equal(page.refSnapshot.refs?.e1.name, "Continue");
+		assert.equal(page.confirmActions, "", "explicit empty native confirmation remains selected");
+		assert.equal(
+			SessionPageState.fromBranch(branch).getReadConfirmation("team\0shared")?.refSnapshotFresh,
+			true,
+		);
+		const unresolved = SessionPageState.fromBranch(
+			await readBrowserEntries(manager(file, "other-branch")),
+		).get("team\0shared");
+		assert.equal(unresolved.tabTargetUnknown, true);
+		assert.equal(unresolved.refSnapshot, undefined);
+		const memory = {
+			...selected,
+			getSessionFile: (): string | undefined => undefined,
+			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getEntries: () => entries,
+		};
+		const inMemory = SessionPageState.fromBranch(await readBrowserEntries(memory)).get(
+			"team\0shared",
+		);
+		assert.deepEqual(inMemory.refSnapshot, page.refSnapshot);
+		assert.equal(inMemory.confirmActions, "");
+		assert.equal(entries[0].message?.details.refSnapshot.refIds[0], "e1");
+		assert.equal(
+			Object.hasOwn(entries[0], "data"),
+			false,
+			"normalization never mutates native entries",
+		);
+		assert.deepEqual(await readFile(file), original);
+		assert.equal(selected.getSessionFile(), file);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("legacy replay cannot downgrade native event validation or grant inherited cleanup leases", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-legacy-ownership-"));
+	try {
+		const file = join(root, "fork.jsonl");
+		const lease = {
+			type: "custom",
+			customType: "agent-browser-script-session",
+			id: "inherited",
+			parentId: null,
+			data: { sessionName: "old-browser", cleanup: "active", launchAttempted: true },
+		};
+		await writeFile(
+			file,
+			[{ type: "session", id: "fixture-session", parentSession: "/archive/parent.jsonl" }, lease]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n") + "\n",
+		);
+		const fork = {
+			...manager(file, lease.id),
+			getHeader: () => ({ id: "fixture-session", parentSession: "/archive/parent.jsonl" }),
+		};
+		const branch = await readBrowserEntries(fork);
+		assert.equal(
+			readRecord(getBrowserRecord(branch[0])?.event.state.scriptLease).ownerSessionId,
+			undefined,
+			"unknown original ownership stays unknown on an ordinary fork",
+		);
+		const owned = {
+			...lease,
+			id: "known-owner",
+			parentId: lease.id,
+			data: { ...lease.data, ownerSessionId: "original-parent" },
+		};
+		appendFileSync(file, `${JSON.stringify(owned)}\n`);
+		const ownedBranch = await readBrowserEntries({ ...fork, getLeafId: () => owned.id });
+		assert.equal(
+			readRecord(getBrowserRecord(ownedBranch[1])?.event.state.scriptLease).ownerSessionId,
+			"original-parent",
+			"an explicit original owner is retained rather than rebound to the fork",
+		);
+		const unrelated = {
+			type: "custom",
+			customType: "other-extension",
+			id: "other-event",
+			parentId: owned.id,
+			data: { event: { kind: "status" } },
+		};
+		appendFileSync(file, `${JSON.stringify(unrelated)}\n`);
+		const independent = await readBrowserEntries({ ...fork, getLeafId: () => unrelated.id });
+		assert.equal(
+			readRecord(getBrowserRecord(independent[1])?.event.state.scriptLease).ownerSessionId,
+			"original-parent",
+			"another extension's event field does not acquire browser schema semantics",
+		);
+		const invalid = {
+			type: "custom",
+			customType: BROWSER_TRANSITION_ENTRY,
+			id: "invalid",
+			parentId: owned.id,
+			data: {
+				event: { version: 2 },
+				details: { sessionName: "old-browser", sessionTabTarget: { url: "https://forged.test/" } },
+				isError: false,
+			},
+		};
+		appendFileSync(file, `${JSON.stringify(invalid)}\n`);
+		await assert.rejects(
+			readBrowserEntries({ ...fork, getLeafId: () => invalid.id }),
+			/Invalid browser event/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+for (const mode of [
+	"direct",
+	"batch",
+	"batch-failed",
+	"batch-diagnostic-failed",
+	"failed",
+	"unconfirmed",
+	"page-data",
+] as const) {
+	test(`legacy native confirmed close retires page and attachment state (${mode})`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "piab-legacy-close-"));
+		try {
+			const file = join(root, "original.jsonl");
+			const receipt = {
+				confirmed: mode !== "unconfirmed",
+				action: "close",
+				result: { success: mode !== "failed", data: { closed: true } },
+			};
+			const details = mode.startsWith("batch")
+				? {
+						command: "batch",
+						args: ["batch"],
+						batchSteps: [
+							{ command: ["confirm", "close-id"], success: mode !== "batch-failed", data: receipt },
+							...(mode === "batch-diagnostic-failed"
+								? [
+										{
+											command: ["get", "title"],
+											success: false,
+											lifecycle: { effectiveLaunch: { browserLaunched: false } },
+										},
+									]
+								: []),
+						],
+					}
+				: {
+						command: mode === "page-data" ? "eval" : "confirm",
+						args: mode === "page-data" ? ["eval", "--stdin"] : ["confirm", "close-id"],
+						data: receipt,
+					};
+			const entries = [
+				{
+					type: "message",
+					id: "capture",
+					parentId: null,
+					message: {
+						role: "toolResult",
+						toolName: "agent_browser",
+						toolCallId: "capture",
+						isError: false,
+						details: {
+							sessionName: "shared",
+							namespace: "team",
+							args: ["snapshot", "-i"],
+							command: "snapshot",
+							attachedBrowserSession: true,
+							sessionTabTarget: { url: "https://fixture.test/" },
+							refSnapshot: { refIds: ["e1"], target: { url: "https://fixture.test/" } },
+						},
+					},
+				},
+				{
+					type: "message",
+					id: "decision",
+					parentId: "capture",
+					message: {
+						role: "toolResult",
+						toolName: "agent_browser",
+						toolCallId: "decision",
+						isError:
+							mode === "failed" || mode === "batch-failed" || mode === "batch-diagnostic-failed",
+						details: { ...details, sessionName: "shared", namespace: "team" },
+					},
+				},
+			];
+			const original = Buffer.from(
+				[{ type: "session", version: 3, id: "fixture-session" }, ...entries]
+					.map((entry) => JSON.stringify(entry))
+					.join("\n") + "\n",
+			);
+			await writeFile(file, original);
+			const branch = await readBrowserEntries(manager(file, "decision"));
+			const closed = mode === "direct" || mode === "batch" || mode === "batch-diagnostic-failed";
+			const page = SessionPageState.fromBranch(branch).get("team\0shared");
+			assert.equal(page.tabTarget?.url, closed ? undefined : "https://fixture.test/");
+			assert.deepEqual(page.refSnapshot?.refIds, closed ? undefined : ["e1"]);
+			assert.equal(restoreAttachedSessionKeysFromBranch(branch).has("team\0shared"), !closed);
+			assert.deepEqual(await readFile(file), original);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 }
 
 test("published replay retains its captured branch while a new leaf is appended", async () => {

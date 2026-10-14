@@ -161,8 +161,8 @@ try {
 		receipt.sourceBytes - receipt.destinationBytes > 400 * 1024 * 1024,
 		"repeated legacy maps collapse without dropping the ignored value",
 	);
-	const manager = (leaf) => ({
-		getSessionFile: () => destination,
+	const manager = (path, leaf) => ({
+		getSessionFile: () => path,
 		getHeader: () => header,
 		getSessionId: () => header.id,
 		getLeafId: () => leaf,
@@ -176,40 +176,49 @@ try {
 			throw Error("No eager native payload");
 		},
 	});
-	const branch = await readBrowserEntries(manager("read-219"));
-	const page = SessionPageState.fromBranch(branch).get("large");
-	assert.equal(page.refSnapshot.refIds.length, 34683);
-	assert.deepEqual(page.refSnapshot.refs.e34683, {
-		role: "textbox",
-		name: "Field",
-		isEditable: true,
-	});
-	assert.equal(page.tabTarget.url, "https://fixture.test/large#exact-fragment");
-	let recent;
-	for (const entry of branch) {
-		recent = applyArtifactChanges(recent, getBrowserRecord(entry)?.event.artifacts);
+	for (const path of [source, destination]) {
+		// Read each retained locator independently; neither replay writes or selects a converted copy.
+		// oxlint-disable-next-line no-await-in-loop
+		const branch = await readBrowserEntries(manager(path, "read-219"));
+		const page = SessionPageState.fromBranch(branch).get("large");
+		assert.equal(page.refSnapshot.refIds.length, 34683);
+		assert.deepEqual(page.refSnapshot.refs.e34683, {
+			role: "textbox",
+			name: "Field",
+			isEditable: true,
+		});
+		assert.equal(page.tabTarget.url, "https://fixture.test/large#exact-fragment");
+		let recent;
+		for (const entry of branch) {
+			recent = applyArtifactChanges(recent, getBrowserRecord(entry)?.event.artifacts);
+		}
+		assert.equal(recent.entries.length, 100);
+		// Branch selection on this same file must not borrow refs from its physical sibling.
+		// oxlint-disable-next-line no-await-in-loop
+		const otherBranch = await readBrowserEntries(manager(path, "branch-b"));
+		const other = SessionPageState.fromBranch(otherBranch).get("large");
+		assert.deepEqual(other.refSnapshot.refIds, ["e7"]);
+		assert.equal(other.tabTarget.url, "https://fixture.test/b#branch");
+		// Each locator has its own growing selected ancestry, with bounded released parent projections.
+		// oxlint-disable-next-line no-await-in-loop
+		const wide = SessionPageState.fromBranch(await readBrowserEntries(manager(path, "wide-3999")));
+		assert.equal(wide.views().size, 4001);
+		assert.equal(wide.get("session-0").tabTarget.url, "https://fixture.test/session-0");
+		assert.equal(wide.get("session-3999").tabTarget.url, "https://fixture.test/session-3999");
+		assert.equal(wide.get("large").refSnapshot.refIds.length, 34683);
 	}
-	assert.equal(recent.entries.length, 100);
-	const other = SessionPageState.fromBranch(await readBrowserEntries(manager("branch-b"))).get(
-		"large",
-	);
-	assert.deepEqual(other.refSnapshot.refIds, ["e7"]);
-	assert.equal(other.tabTarget.url, "https://fixture.test/b#branch");
-	const wide = SessionPageState.fromBranch(await readBrowserEntries(manager("wide-3999")));
-	assert.equal(wide.views().size, 4001);
-	assert.equal(wide.get("session-0").tabTarget.url, "https://fixture.test/session-0");
-	assert.equal(wide.get("session-3999").tabTarget.url, "https://fixture.test/session-3999");
-	assert.equal(wide.get("large").refSnapshot.refIds.length, 34683);
+	assert.equal(await hashFile(source), before);
 	assert.equal((await stat(source)).size, receipt.sourceBytes);
 	console.log(
 		JSON.stringify({
 			...receipt,
 			heapLimitBytes: getHeapStatistics().heap_size_limit,
 			maxRssKiB: process.resourceUsage().maxRSS,
-			selectedRefs: page.refSnapshot.refIds.length,
-			recentReceipts: recent.entries.length,
+			selectedRefs: 34683,
+			recentReceipts: 100,
 			branchesVerified: 3,
-			distinctSessionsVerified: wide.views().size,
+			distinctSessionsVerified: 4001,
+			locatorsVerified: 2,
 		}),
 	);
 } finally {

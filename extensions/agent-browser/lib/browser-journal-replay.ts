@@ -7,9 +7,19 @@ import {
 	applyArtifactChanges,
 	getBrowserRecord,
 	snapshotFromDefinition,
+	type BrowserRecord,
 } from "./browser-transcript.js";
 import { isRecord } from "./parsing.js";
 import { getErrorCode } from "./process-errors.js";
+import { BrowserConversionBranches } from "./browser-conversion-branches.js";
+import {
+	convertBrowserEntries,
+	convertLegacyBrowserEntry,
+	emptyProjection,
+	type LegacyProjection,
+} from "./browser-legacy-projection.js";
+import { LEGACY_BROWSER_FIELDS } from "./browser-legacy-fields.js";
+import { legacySnapshot } from "./browser-legacy-pages.js";
 import {
 	projectJson,
 	readRange,
@@ -94,28 +104,6 @@ function legacyBrowserResult(entry: Readonly<Record<string, unknown>>): boolean 
 		message.details.electron !== undefined
 	);
 }
-function validateMemoryEntry(entry: unknown): void {
-	if (!isRecord(entry)) {
-		return;
-	}
-	if (legacyCustom(entry) && !getBrowserRecord(entry)) {
-		throw new Error(
-			"Legacy browser records require stopped separate-copy conversion before replay.",
-		);
-	}
-	const message = browserMessage(entry);
-	if (
-		entry.type === "message" &&
-		message &&
-		isRecord(message.details) &&
-		message.details.browserEventVersion !== 1 &&
-		!getBrowserRecord(entry)
-	) {
-		throw new Error(
-			"Legacy browser observations require stopped separate-copy conversion before replay.",
-		);
-	}
-}
 function inMemoryEntries(manager: BrowserJournalManager, physical: boolean): unknown[] {
 	const entries: unknown[] = physical ? manager.getEntries() : [];
 	if (!physical) {
@@ -135,16 +123,67 @@ function inMemoryEntries(manager: BrowserJournalManager, physical: boolean): unk
 		}
 		entries.reverse();
 	}
-	for (const entry of entries) {
-		validateMemoryEntry(entry);
+	return convertBrowserEntries(entries, legacyOwner(manager));
+}
+
+function legacyOwner(manager: BrowserJournalManager): string | undefined {
+	const header = manager.getHeader();
+	// A legacy fork without an explicit cleanup owner cannot acquire its parent's leases.
+	return header?.parentSession !== undefined ? undefined : (header?.id ?? manager.getSessionId());
+}
+
+function replayFields(value: Readonly<Record<string, unknown>>, legacy: boolean): string[][] {
+	if (legacy) {
+		return LEGACY_BROWSER_FIELDS;
 	}
-	return entries;
+	return value.customType === BROWSER_TRANSITION_ENTRY || value.type === "message"
+		? [
+				["data", "event"],
+				["data", "snapshot", "id"],
+			]
+		: [["data"]];
+}
+function projectedRecord(value: Readonly<Record<string, unknown>>, record: BrowserRecord): unknown {
+	return {
+		...value,
+		...(value.type === "custom" ? { customType: BROWSER_TRANSITION_ENTRY } : {}),
+		data: {
+			...record,
+			...(isRecord(record.snapshot) ? { snapshot: { id: record.snapshot.id } } : {}),
+		},
+	};
+}
+function winningSnapshot(
+	body: Readonly<Record<string, unknown>> | undefined,
+	source: Readonly<{ legacy: boolean; root: string; id: string }>,
+): unknown {
+	if (!source.legacy) {
+		return isRecord(body?.data) ? body.data.snapshot : undefined;
+	}
+	const value = body?.[source.root];
+	return isRecord(value) && isRecord(value.details)
+		? legacySnapshot(value.details.refSnapshot, source.id)
+		: undefined;
 }
 
 class PublishedJournalReplay {
 	private readonly projected: unknown[] = [];
-	private readonly definitions = new Map<string, JournalEntry>();
-	constructor(private readonly file: FileHandle) {}
+	private readonly definitions = new Map<string, { entry: JournalEntry; legacy: boolean }>();
+	private readonly branches: BrowserConversionBranches | undefined;
+	constructor(
+		private readonly file: FileHandle,
+		entries: readonly JournalEntry[],
+		private readonly ownerSessionId: string | undefined,
+	) {
+		if (entries.some(({ value }) => legacyCustom(value) || legacyBrowserResult(value))) {
+			this.branches = new BrowserConversionBranches(entries.map(({ value }) => value.parentId));
+		}
+	}
+	private parentProjection(parentId: unknown): LegacyProjection {
+		return typeof parentId === "string"
+			? (this.branches?.get(parentId) ?? emptyProjection())
+			: emptyProjection();
+	}
 	async project(entries: readonly JournalEntry[]): Promise<void> {
 		for (const entry of entries) {
 			// Preserve journal order and bound selected envelope memory during replay.
@@ -154,31 +193,45 @@ class PublishedJournalReplay {
 	}
 	private async projectEntry(entry: JournalEntry): Promise<void> {
 		const { value } = entry;
-		const definition =
-			isRecord(value.data) && isRecord(value.data.snapshot) ? value.data.snapshot.id : undefined;
-		if (typeof definition === "string") {
-			if (this.definitions.has(definition)) {
-				throw new Error("Browser snapshot identity is defined more than once on this ancestry.");
-			}
-			this.definitions.set(definition, entry);
-		}
-		if (legacyCustom(value) || legacyBrowserResult(value)) {
-			throw new Error(
-				"This session contains legacy browser records. Convert a stopped separate copy with npm exec --package pi-agent-browser-native -- pi-agent-browser-convert before resuming browser work; the original journal is retained.",
-			);
-		}
-		if (!replayRelevant(value, definition)) {
+		const parent = this.parentProjection(value.parentId);
+		const legacy = legacyCustom(value) || legacyBrowserResult(value);
+		if (!legacy && !replayRelevant(value)) {
+			this.advance(value, parent);
 			return;
 		}
-		const fields =
-			value.customType === BROWSER_TRANSITION_ENTRY || value.type === "message"
-				? [
-						["data", "event"],
-						["data", "snapshot", "id"],
-					]
-				: [["data"]];
-		const body = await projectJson(readRange(this.file, entry), fields);
-		this.projected.push({ ...value, ...body });
+		// Legacy maps are read one entry at a time, then discarded like non-winning native definitions.
+		const body = await projectJson(
+			readRange(this.file, entry),
+			replayFields(value, legacy),
+			legacy ? Infinity : undefined,
+		);
+		const candidate = { ...value, ...body };
+		const record = this.normalizeRecord(candidate, parent);
+		this.rememberSnapshot(entry, legacy, record?.snapshot);
+		this.projected.push(record ? projectedRecord(value, record) : candidate);
+	}
+	private normalizeRecord(
+		candidate: Readonly<Record<string, unknown>>,
+		parent: LegacyProjection,
+	): BrowserRecord | undefined {
+		const conversion = this.branches
+			? convertLegacyBrowserEntry(candidate, parent, this.ownerSessionId)
+			: undefined;
+		this.advance(candidate, conversion?.projection ?? parent);
+		return conversion?.record ?? getBrowserRecord(candidate);
+	}
+	private rememberSnapshot(entry: JournalEntry, legacy: boolean, snapshot: unknown): void {
+		if (isRecord(snapshot) && typeof snapshot.id === "string") {
+			if (this.definitions.has(snapshot.id)) {
+				throw new Error("Browser snapshot identity is defined more than once on this ancestry.");
+			}
+			this.definitions.set(snapshot.id, { entry, legacy });
+		}
+	}
+	private advance(value: Readonly<Record<string, unknown>>, projection: LegacyProjection): void {
+		if (typeof value.id === "string") {
+			this.branches?.advance(value.id, value.parentId, projection);
+		}
 	}
 	async resolveWinningDefinitions(physical: boolean): Promise<unknown[]> {
 		const { SessionPageState } = await import("./session-page-state.js");
@@ -202,34 +255,41 @@ class PublishedJournalReplay {
 		return this.projected;
 	}
 	private async resolveDefinition(id: string): Promise<void> {
-		const entry = this.definitions.get(id);
-		if (!entry) {
+		const definition = this.definitions.get(id);
+		if (!definition) {
 			throw new Error(
 				`Browser snapshot ${id} has no ancestral definition; inspect and take a fresh snapshot.`,
 			);
 		}
 		// ponytail: a requested individual snapshot must fit the consumer's memory; upgrade with native per-value paging if needed.
-		const body = await projectJson(readRange(this.file, entry), [["data", "snapshot"]], Infinity);
+		const { entry, legacy } = definition;
+		const root = entry.value.type === "message" ? "message" : "data";
+		const body = await projectJson(
+			readRange(this.file, entry),
+			legacy ? [[root, "details", "refSnapshot"]] : [["data", "snapshot"]],
+			Infinity,
+		);
+		const resolved = winningSnapshot(body, { root, legacy, id });
 		const destination = this.projected.find(
 			(candidate) => isRecord(candidate) && candidate.id === entry.value.id,
 		);
-		if (!isRecord(destination) || !isRecord(destination.data) || !isRecord(body?.data)) {
+		if (!isRecord(destination) || !isRecord(destination.data)) {
 			throw new Error("Winning browser snapshot could not be read.");
 		}
-		destination.data.snapshot = body.data.snapshot;
-		if (!isRecord(body.data.snapshot) || body.data.snapshot.id !== id) {
+		destination.data.snapshot = resolved;
+		if (!isRecord(resolved) || resolved.id !== id) {
 			throw new Error("Winning browser snapshot identity is invalid.");
 		}
-		snapshotFromDefinition(body.data.snapshot);
+		snapshotFromDefinition(resolved);
 	}
 }
-function replayRelevant(value: Readonly<Record<string, unknown>>, definition: unknown): boolean {
+function replayRelevant(value: Readonly<Record<string, unknown>>): boolean {
 	return (
 		(value.type === "custom" &&
 			typeof value.customType === "string" &&
 			REPLAY_CUSTOM_TYPES.has(value.customType)) ||
 		(isRecord(value.data) && isRecord(value.data.event)) ||
-		definition !== undefined
+		(isRecord(value.data) && isRecord(value.data.snapshot) && value.data.snapshot.id !== undefined)
 	);
 }
 async function verifyCapturedFile(file: FileHandle, path: string, captured: Stats): Promise<void> {
@@ -282,8 +342,9 @@ export async function readBrowserEntries(
 		const metadata = await scanJournalMetadata(file, captured.size);
 		validateJournalHeader(metadata, manager.getHeader()?.id ?? manager.getSessionId());
 		const records = metadata.filter((entry) => entry.value.type !== "session");
-		const replay = new PublishedJournalReplay(file);
-		await replay.project(physical ? records : branchEntries(records, leaf));
+		const selected = physical ? records : branchEntries(records, leaf);
+		const replay = new PublishedJournalReplay(file, selected, legacyOwner(manager));
+		await replay.project(selected);
 		const entries = await replay.resolveWinningDefinitions(physical);
 		await verifyCapturedFile(file, path, captured);
 		return entries;

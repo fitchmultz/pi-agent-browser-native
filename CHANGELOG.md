@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Resume historical browser-bearing conversations automatically at their original native journal path without conversion or rewritten bytes. Shared read-only normalization preserves mixed-format ancestry, confirmation settings/provenance and cleanup ownership while retaining canonical validation and native-generation guards.
 - Report the current session name for bare `session` without first verifying the page target; the unneeded `get url` probe could launch native daemons that nothing closed.
 
 ## 0.9.5 - 2026-10-12
