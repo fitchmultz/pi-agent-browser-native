@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
+import { readBrowserEntries } from "../extensions/agent-browser/lib/browser-journal.js";
 
 import {
 	createExtensionHarness,
@@ -1194,7 +1195,7 @@ if (args.includes("snapshot")) {
 				assert.equal(readRecord(clickDetails.sessionTabTarget).url, appTarget.url);
 				assert.equal(clickDetails.refSnapshot, undefined);
 				const restoredSnapshot = SessionPageState.fromBranch(
-					harness.ctx.sessionManager.getBranch(),
+					await readBrowserEntries(harness.ctx.sessionManager),
 				).get("named").refSnapshot;
 				assert.deepEqual(restoredSnapshot?.refIds, ["e1"]);
 				assert.equal("order" in restoredSnapshot, false);
@@ -1281,8 +1282,9 @@ if (args.includes("click")) {
 				assert.deepEqual(clickDetails.refIds, ["e1"]);
 				assert.equal(clickDetails.refSnapshot, undefined);
 				assert.deepEqual(
-					SessionPageState.fromBranch(harness.ctx.sessionManager.getBranch()).get("named")
-						.refSnapshot?.refIds,
+					SessionPageState.fromBranch(await readBrowserEntries(harness.ctx.sessionManager)).get(
+						"named",
+					).refSnapshot?.refIds,
 					[],
 				);
 				assert.equal(clickDetails.refSnapshotInvalidation, undefined);

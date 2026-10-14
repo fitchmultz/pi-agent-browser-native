@@ -24,9 +24,17 @@ Required replay snapshots stay in retained journal ancestry, outside observation
 
 Startup and tree changes serialize branch restore with managed/artifact work, reusing one captured replay for state and cleanup-lease recovery. Launch configuration is folded once per session during that replay. Tree changes join code execution through its complete observation finalization before restoring branch-visible state. Interrupted results retain complete caller observations in process-private spills without publishing their artifact state onto the newly selected branch. Tree changes do not roll back the real browser; process-owned cleanup and recording facts remain separate. An ordinary fork has a new native Pi UUID and cannot acquire its parent's managed/Electron/script cleanup rights. Wrapper-owned begins retain their selected socket root and owner UUID even if the launch finish is lost; restart can inspect or clean that original identity without declaring the launch successful. Owned follow-ups, code and cleanup keep that root when process defaults change; unrelated caller sessions retain native routing.
 
-## Converting a retained legacy journal
+## Resuming a retained legacy journal
 
-Legacy repeated maps/manifests and retired isolated-script leases are decoded only by the offline converter. Normal runtime replay requires the canonical event format and reports a conversion requirement rather than keeping a permanent second replay engine.
+Ordinary resume and tree navigation automatically read historical browser tool results, repeated maps/manifests and retired isolated-script leases at the original native journal locator. Replay opens the journal read-only: it does not rewrite bytes, invoke a converter, or require a new conversation. Subsequent operations append canonical events through Pi as usual.
+
+One shared legacy decoder normalizes each selected receipt into the same canonical event/reducer used by current journals and optional archive conversion. Mixed old/new branches preserve ancestry, interrupted outcomes, exact page URLs, explicit native confirmation settings (including `""`), compact pending/cleared provenance, artifacts and recorded cleanup owners. A legacy fork without an explicit original cleanup owner cannot acquire its parent's leases. Canonical event validation, committed-leaf/publication checks, native-generation ref guards and source identity checks remain in force; malformed native events cannot fall back to legacy decoding.
+
+Legacy maps are materialized one receipt at a time and discarded after normalization; only winning snapshot definitions are retained for selected-branch replay. An individual selected legacy map still must fit the consumer's memory. Missing generation evidence, evicted files and unrecorded effects remain unknown; replay never repeats browser commands or invents native confirmation capabilities.
+
+## Optional separate-copy conversion
+
+Conversion is an archive maintenance option, not a prerequisite for normal resume. Use it only when you explicitly want a distinct normalized copy.
 
 1. Stop or quiesce the exact writer through its owner. Do not convert an active journal or relaunch work merely to repair storage.
 2. Keep the original journal and choose a distinct private destination outside automatic session discovery.

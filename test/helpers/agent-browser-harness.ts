@@ -29,7 +29,6 @@ import { Type, type Static, type TSchema } from "typebox";
 import { Check } from "typebox/value";
 
 import agentBrowserExtension from "../../extensions/agent-browser/index.js";
-import { convertBrowserEntries } from "../../extensions/agent-browser/lib/browser-session-conversion.js";
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../../scripts/agent-browser-target.mjs";
 import { hasErrorCode } from "./assertions.js";
 
@@ -698,22 +697,19 @@ export function createExtensionHarness(options: ExtensionHarnessOptions): Extens
 	};
 	const normalizeBranch = (entries = options.branch ?? buildUserBranch(options.prompt)) => {
 		let parentId: string | null = null;
-		const normalized = convertBrowserEntries(
-			entries.map((value) => {
-				if (typeof value !== "object" || value === null) {
-					return value;
-				}
-				const entry = {
-					...value,
-					id: "id" in value && typeof value.id === "string" ? value.id : randomUUID(),
-					parentId: "parentId" in value ? value.parentId : parentId,
-					timestamp: "timestamp" in value ? value.timestamp : new Date().toISOString(),
-				};
-				parentId = entry.id;
-				return entry;
-			}),
-			sessionId,
-		);
+		const normalized = entries.map((value) => {
+			if (typeof value !== "object" || value === null) {
+				return value;
+			}
+			const entry = {
+				...value,
+				id: "id" in value && typeof value.id === "string" ? value.id : randomUUID(),
+				parentId: "parentId" in value ? value.parentId : parentId,
+				timestamp: "timestamp" in value ? value.timestamp : new Date().toISOString(),
+			};
+			parentId = entry.id;
+			return entry;
+		});
 		entries.splice(0, entries.length);
 		for (const entry of normalized) {
 			entries.push(entry);

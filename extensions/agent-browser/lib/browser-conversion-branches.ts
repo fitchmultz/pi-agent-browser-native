@@ -1,6 +1,6 @@
 import type { LegacyProjection } from "./browser-legacy-types.js";
 
-/** Offline conversion retains a branch projection only until its last source child consumes it. */
+/** Normalization retains a branch projection only until its last source child consumes it. */
 export class BrowserConversionBranches {
 	private readonly states = new Map<string, LegacyProjection>();
 	private readonly children = new Map<string, number>();

@@ -8,7 +8,6 @@ import stringifyJson from "stream-json/stringer.js";
 import disassembleJson from "stream-json/disassembler.js";
 import {
 	BROWSER_RESULT_TOOLS,
-	BROWSER_STATE_FIELDS,
 	BROWSER_TRANSITION_ENTRY,
 	type BrowserRecord,
 } from "./browser-transcript-contracts.js";
@@ -21,58 +20,7 @@ import {
 import { isRecord } from "./parsing.js";
 import { convertLegacyBrowserEntry, emptyProjection } from "./browser-legacy-projection.js";
 import { BrowserConversionBranches } from "./browser-conversion-branches.js";
-const DETAILS_FIELDS = [
-	...BROWSER_STATE_FIELDS,
-	"browserEventVersion",
-	"electron",
-	"compiledNetworkSourceLookup",
-	"sessionTabTarget",
-	"sessionTabTargetUnknown",
-	"sessionTabReopenPending",
-	"refSnapshot",
-	"refSnapshotInvalidation",
-	"artifactManifest",
-	"error",
-	"summary",
-];
-const LEGACY_FIELDS = [
-	["data", "event"],
-	["data", "snapshot"],
-	["data", "cleanup"],
-	["data", "sessionName"],
-	["data", "closeCommandArgs"],
-	["data", "launchAttempted"],
-	["data", "toolCallId"],
-	["data", "isError"],
-	["message", "toolName"],
-	["message", "toolCallId"],
-	["message", "isError"],
-	...["data", "message"].flatMap((root) => DETAILS_FIELDS.map((field) => [root, "details", field])),
-	...["data", "message"].flatMap((root) =>
-		["command", "success", "lifecycle"]
-			.map((field) => [root, "details", "batchSteps", "*", field])
-			.concat(
-				[
-					["data", "lifecycle"],
-					["result", "lifecycle"],
-				].map((field) => [root, "details", "batchSteps", "*"].concat(field)),
-			),
-	),
-	...["data", "message"].flatMap((root) =>
-		["command", "success", "error"]
-			.map((field) => [root, "details", "data", "*", field])
-			.concat(
-				["url", "title", "origin", "targetId"].map((field) => [
-					root,
-					"details",
-					"data",
-					"*",
-					"result",
-					field,
-				]),
-			),
-	),
-];
+import { LEGACY_BROWSER_FIELDS } from "./browser-legacy-fields.js";
 export async function sourceChecksum(file: FileHandle, size: number): Promise<string> {
 	const hash = createHash("sha256");
 	for await (const chunk of readRange(file, { offset: 0, length: size })) {
@@ -223,7 +171,7 @@ export class BrowserConversionWriter {
 			this.branches.advance(id, parentId, parent);
 			return undefined;
 		}
-		const details = await projectJson(readRange(this.file, entry), LEGACY_FIELDS, Infinity);
+		const details = await projectJson(readRange(this.file, entry), LEGACY_BROWSER_FIELDS, Infinity);
 		const conversion = convertLegacyBrowserEntry(
 			{ ...entry.value, ...details },
 			parent,
