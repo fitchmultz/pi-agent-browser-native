@@ -30,6 +30,23 @@ interface PromptState {
 	text?: string;
 	policy?: ReturnType<typeof buildPromptPolicy>;
 }
+
+export const COMPACT_FALLBACK_ENV = "AGENT_BROWSER_COMPACT_FALLBACK";
+export const PLAYBOOK_MODE_ENV = "AGENT_BROWSER_PLAYBOOK";
+
+function isCompactFallbackEnabled(): boolean {
+	const compactEnv = process.env[COMPACT_FALLBACK_ENV]?.trim().toLowerCase();
+	if (compactEnv === "1" || compactEnv === "true" || compactEnv === "yes") {
+		return true;
+	}
+	const playbookEnv = process.env[PLAYBOOK_MODE_ENV]?.trim().toLowerCase();
+	return (
+		playbookEnv === "compact" ||
+		playbookEnv === "minimal" ||
+		playbookEnv === "0" ||
+		playbookEnv === "false"
+	);
+}
 export function isBashToolCallEvent(
 	event: unknown,
 ): event is { readonly input: { readonly command: string }; readonly toolName: "bash" } {
@@ -117,7 +134,7 @@ export class BrowserPrompt {
 		});
 		this.webSearchToolRegistered = true;
 	}
-	instructions(ctx: ExtensionContext): string {
+	instructions(ctx: ExtensionContext, options?: Readonly<{ forceFull?: boolean }>): string {
 		const config = loadAgentBrowserConfigSync({
 			cwd: ctx.cwd,
 			includeProjectConfig: shouldIncludeProjectConfig(ctx),
@@ -134,6 +151,7 @@ export class BrowserPrompt {
 			guidance.length > 0
 				? `\n\nProject agent_browser config guidance:\n${guidance.map((line) => `- ${line}`).join("\n")}`
 				: "";
+		const compact = !(options?.forceFull ?? false) && isCompactFallbackEnabled();
 		const guidelines = [
 			...buildToolPromptGuidelines({
 				browserDefaultProfile: config.trustedBrowserDefaultProfile,
@@ -141,11 +159,15 @@ export class BrowserPrompt {
 				includeWebSearch: this.webSearchToolRegistered,
 				docs: getInstalledDocsPaths(),
 			}),
-			...QUICK_START_GUIDELINES,
-			...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-			...WRAPPER_TAB_RECOVERY_BEHAVIOR,
-			...Object.values(ADVANCED_TOOL_PROMPT_GUIDELINES).flat(),
-			...(this.webSearchToolRegistered ? WEB_SEARCH_TOOL_PROMPT_GUIDELINES : []),
+			...(compact
+				? []
+				: [
+						...QUICK_START_GUIDELINES,
+						...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
+						...WRAPPER_TAB_RECOVERY_BEHAVIOR,
+						...Object.values(ADVANCED_TOOL_PROMPT_GUIDELINES).flat(),
+						...(this.webSearchToolRegistered ? WEB_SEARCH_TOOL_PROMPT_GUIDELINES : []),
+					]),
 		];
 		return `${PROJECT_RULE_PROMPT}\n\n${[...new Set(guidelines)].map((line) => `- ${line}`).join("\n")}${configPrompt}`;
 	}
@@ -169,7 +191,7 @@ export class BrowserPrompt {
 					"agent_browser_web_search",
 					...Object.values(AGENT_BROWSER_TOOL_INVENTORY).map(({ name }) => name),
 				],
-				instructions: (ctx: ExtensionContext) => this.instructions(ctx),
+				instructions: (ctx: ExtensionContext) => this.instructions(ctx, { forceFull: true }),
 			},
 		]);
 		setManaged(() => {
