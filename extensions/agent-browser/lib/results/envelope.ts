@@ -230,10 +230,11 @@ function getTransportErrorText(options: AgentBrowserErrorOptions): string | unde
 }
 
 function malformedProcessErrorText(options: AgentBrowserErrorOptions): string | undefined {
-	if (options.exitCode === 0 && !options.exitSignal) {
+	if (options.exitCode === 0 && options.exitSignal === undefined) {
 		return options.parseError;
 	}
-	const signalText = options.exitSignal ? `Signal: ${options.exitSignal}.` : undefined;
+	const signalText =
+		options.exitSignal === undefined ? undefined : `Signal: ${options.exitSignal}.`;
 	const oomHint =
 		options.exitSignal === "SIGKILL" || options.exitCode === 137
 			? "SIGKILL may indicate an OOM kill or an external stop. Inspect the host kernel log and cgroup memory.events before retrying; the command may have executed."

@@ -2149,10 +2149,14 @@ test(
 							});
 							assert.equal(result.isError, true);
 							assert.equal(result.details?.exitCode, 137);
-							assert.equal(result.details?.exitSignal, exitSignal);
-							assert.equal(result.details?.failureCategory, "upstream-error");
-							assert.match(JSON.stringify(result), /OOM kill/);
-							assert.match(JSON.stringify(result), /no JSON output/);
+							assert.equal(result.details.exitSignal, exitSignal);
+							assert.equal(result.details.failureCategory, "upstream-error");
+							const visibleText = readString(readRecord(result.content[0]).text);
+							assert.match(visibleText, /exited with code 137/);
+							assert.match(visibleText, /SIGKILL may indicate an OOM kill or an external stop/);
+							assert.match(visibleText, /the command may have executed/);
+							assert.equal(visibleText.includes("Signal: SIGKILL."), exitSignal === "SIGKILL");
+							assert.match(readString(result.details.parseError), /no JSON output/);
 							assert.doesNotMatch(JSON.stringify(result), /browser-failure-secret/);
 						},
 					);

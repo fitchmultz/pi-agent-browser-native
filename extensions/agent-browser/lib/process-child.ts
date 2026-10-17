@@ -71,7 +71,7 @@ export function resolveSpawnedChildExitCode(input: {
 	if (input.useExitFallback && input.exitCode !== null && input.exitCode !== undefined) {
 		return input.exitCode;
 	}
-	if (input.exitSignal) {
+	if (input.exitSignal !== null && input.exitSignal !== undefined) {
 		return 128 + constants.signals[input.exitSignal];
 	}
 	return input.spawnError ? 127 : 0;
