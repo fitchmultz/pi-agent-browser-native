@@ -39,6 +39,9 @@ type Group = {
 };
 
 test("browser instruction ownership is synchronous and dynamic, with identical full eager fallback", async () => {
+	// Ambient compact settings must not leak into the full-fallback ownership test.
+	delete process.env.AGENT_BROWSER_COMPACT_FALLBACK;
+	delete process.env.AGENT_BROWSER_PLAYBOOK;
 	const harness = createExtensionHarness({ cwd: process.cwd() });
 	await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 	const active = harness.getActiveTools();
@@ -198,6 +201,8 @@ test("full instructions retain trusted config and late web-search guidance witho
 				PI_AGENT_BROWSER_CONFIG: undefined,
 				EXA_API_KEY: undefined,
 				BRAVE_API_KEY: undefined,
+				AGENT_BROWSER_COMPACT_FALLBACK: undefined,
+				AGENT_BROWSER_PLAYBOOK: undefined,
 			},
 			async () => {
 				const loader = new DefaultResourceLoader({
