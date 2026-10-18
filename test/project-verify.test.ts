@@ -14,6 +14,19 @@ import test from "node:test";
 import { docsSteps, hostToolPath, parseVerifyArgs, verifySteps } from "../scripts/project.mjs";
 import { readArray, readRecord, readString } from "./helpers/assertions.js";
 
+const DEFAULT_STEPS = [
+	"./scripts/build.mjs",
+	"./scripts/prepare-quality-checker.mjs",
+	"./scripts/code-quality.mjs lint",
+	"--check .",
+	"--noEmit",
+	"--test test/**/!(*.serial).test.ts",
+	"--test --test-concurrency=1 test/**/*.serial.test.ts",
+	"./scripts/check-playbook-drift.ts --check",
+	"./scripts/check-command-reference-baseline.mjs --check",
+	"./scripts/verify-command-reference.mjs",
+];
+
 function labels(steps: unknown): string[] {
 	return readArray(steps).map((step) => readArray(readRecord(step).args).map(readString).join(" "));
 }
@@ -38,7 +51,7 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 	const steps: unknown = verifySteps({ mode: "default", passthrough: [], showHelp: false });
 	const stepLabels = labels(steps);
 	assert.equal(
-		readRecord(readArray(steps)[5]).command,
+		readRecord(readArray(steps)[3]).command,
 		join(
 			process.cwd(),
 			"node_modules",
@@ -51,37 +64,12 @@ test("verify facade default gate keeps docs, typecheck, unit/fake, and command-r
 		labels(verifySteps({ mode: "quality", passthrough: [], showHelp: false })),
 		stepLabels,
 	);
-	assert.deepEqual(stepLabels, [
-		"./scripts/build.mjs",
-		"./scripts/prepare-quality-checker.mjs",
-		"./scripts/code-quality.mjs scope",
-		"./scripts/code-quality.mjs check",
-		"./scripts/code-quality.mjs lint",
-		"--check .",
-		"--noEmit",
-		"--test --test-concurrency=1 test/**/*.test.ts",
-		"./scripts/check-playbook-drift.ts --check",
-		"./scripts/check-command-reference-baseline.mjs --check",
-		"./scripts/verify-command-reference.mjs",
-	]);
+	assert.deepEqual(stepLabels, DEFAULT_STEPS);
 });
 
 test("verify facade pre-pr mode composes default verification with package-content checks", () => {
 	const steps: unknown = verifySteps({ mode: "pre-pr", passthrough: [], showHelp: false });
-	assert.deepEqual(labels(steps), [
-		"./scripts/build.mjs",
-		"./scripts/prepare-quality-checker.mjs",
-		"./scripts/code-quality.mjs scope",
-		"./scripts/code-quality.mjs check",
-		"./scripts/code-quality.mjs lint",
-		"--check .",
-		"--noEmit",
-		"--test --test-concurrency=1 test/**/*.test.ts",
-		"./scripts/check-playbook-drift.ts --check",
-		"./scripts/check-command-reference-baseline.mjs --check",
-		"./scripts/verify-command-reference.mjs",
-		"./scripts/verify-package.mjs",
-	]);
+	assert.deepEqual(labels(steps), [...DEFAULT_STEPS, "./scripts/verify-package.mjs"]);
 });
 
 test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, package-pi, platform-target, and platform smoke gates explicit", () => {
@@ -99,8 +87,9 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	});
 	assert.deepEqual(labels(realUpstream), [
 		"--test --test-force-exit --test-name-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
-		"--test --test-force-exit --test-name-pattern contract suite matches test/agent-browser.real-upstream-contract.test.ts",
+		"--test --test-force-exit --test-skip-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
 		"--test --test-force-exit test/agent-browser.batch-fidelity.test.ts",
+		"--test --test-force-exit test/agent-browser.overlay-real-upstream.test.ts",
 	]);
 	assert.equal(
 		readArray(realUpstream).every(
@@ -130,8 +119,6 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	assert.deepEqual(labels(platformTarget), [
 		"./scripts/build.mjs",
 		"./scripts/prepare-quality-checker.mjs",
-		"./scripts/code-quality.mjs scope",
-		"./scripts/code-quality.mjs check",
 		"./scripts/code-quality.mjs lint",
 		"--check .",
 		"--noEmit",
@@ -153,17 +140,7 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 test("verify facade release gate composes default verification, lifecycle, packaged Pi smoke, and platform smoke", () => {
 	const release: unknown = verifySteps({ mode: "release", passthrough: [], showHelp: false });
 	assert.deepEqual(labels(release), [
-		"./scripts/build.mjs",
-		"./scripts/prepare-quality-checker.mjs",
-		"./scripts/code-quality.mjs scope",
-		"./scripts/code-quality.mjs check",
-		"./scripts/code-quality.mjs lint",
-		"--check .",
-		"--noEmit",
-		"--test --test-concurrency=1 test/**/*.test.ts",
-		"./scripts/check-playbook-drift.ts --check",
-		"./scripts/check-command-reference-baseline.mjs --check",
-		"./scripts/verify-command-reference.mjs",
+		...DEFAULT_STEPS,
 		"./scripts/verify-lifecycle.mjs",
 		"./scripts/verify-package.mjs --smoke-pi",
 		"./scripts/platform-smoke.mjs doctor",

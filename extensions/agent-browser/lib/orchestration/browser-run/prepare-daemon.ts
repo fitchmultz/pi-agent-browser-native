@@ -1,4 +1,5 @@
 import { parseArgvDescriptor } from "../../argv-descriptor.js";
+import { getAgentBrowserSessionIdentityKey } from "../../argv-grammar.js";
 import { needsManagedSession } from "../../command-policy.js";
 import { isCloseCommand } from "../../command-taxonomy.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -16,10 +17,15 @@ import {
 import type { PreparationProcessFacts } from "./prepare-contracts.js";
 import type { PreparedAgentBrowserArgs } from "./types.js";
 import type { ExecutionPlan as AgentBrowserExecutionPlan } from "../../runtime-contracts.js";
+import type {
+	ManagedSessionDaemonInspection,
+	PreparationDaemonObservation,
+} from "./managed-session-daemon-inspection.js";
 
 export interface PreparationDaemonPolicy {
 	readonly lock?: ManagedSessionPolicyLock;
 	readonly inactive: boolean;
+	readonly generationInspection?: ManagedSessionDaemonInspection;
 	readonly cleanupOnlyReason?: Awaited<
 		ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>
 	>["cleanupOnlyReason"];
@@ -91,11 +97,13 @@ export async function prepareDaemonPolicy(
 	if (session.browserIndependent || planHasValidationError(plan) || !context) {
 		return { plan, session, policy: { inactive: false } };
 	}
+	const closeCommand = isCloseCommand(plan.commandInfo.command);
 	const policy = await acquireOwnedManagedSessionDaemonPolicy({
 		context,
 		electronLaunchRecord,
 		electronVerificationTimeoutMs: process.timeoutMs,
-		mode: isCloseCommand(plan.commandInfo.command) ? "close" : "reuse",
+		mode: closeCommand ? "close" : "reuse",
+		includeGeneration: session.hasPriorRefs && !closeCommand,
 		signal: process.signal,
 	});
 	const error = daemonReuseError(plan, session, policy);
@@ -109,6 +117,7 @@ export async function prepareDaemonPolicy(
 		policy: {
 			lock: policy.lock,
 			inactive: policy.daemonStatus === "inactive",
+			generationInspection: policy.generationInspection,
 			cleanupOnlyReason:
 				policy.error !== undefined && policy.error !== "" ? policy.cleanupOnlyReason : undefined,
 		},
@@ -119,7 +128,7 @@ interface ChromeStartupFacts extends PreparationProcessFacts {
 	readonly chromeStartupArgs?: string;
 	readonly configuredChromeLaunch?: boolean;
 	readonly preserveAttachedBrowserSession?: boolean;
-	readonly daemonInactive?: boolean;
+	readonly initialDaemonObservation?: PreparationDaemonObservation;
 }
 
 function chromeStartupEligible(
@@ -158,7 +167,10 @@ export async function prepareChromeStartupArgs(
 	let inactive = policy.inactive;
 	if (!session.ownedManagedSession) {
 		inactive =
-			facts.daemonInactive ??
+			(facts.initialDaemonObservation?.identity ===
+			getAgentBrowserSessionIdentityKey(plan.sessionName ?? "", plan.namespace)
+				? facts.initialDaemonObservation.daemon.status === "inactive"
+				: undefined) ??
 			(plan.sessionName !== undefined &&
 				(
 					await inspectManagedSessionDaemon({

@@ -115,6 +115,11 @@ test("buildToolPresentation adapts quoted and heredoc skill examples to native t
 					"",
 					"```bash",
 					'agent-browser open "https://example.com/a b?q=hello world" --profile "Default Profile"',
+					'agent-browser storage local get ""',
+					"agent-browser storage session get ''",
+					'agent-browser --namespace "" snapshot -i',
+					'agent-browser get text "   "',
+					'agent-browser get text ""#literal',
 					"agent-browser eval --stdin <<JS",
 					"document.title",
 					"JS",
@@ -131,6 +136,11 @@ test("buildToolPresentation adapts quoted and heredoc skill examples to native t
 		text,
 		/agent_browser \{ "args": \["open","https:\/\/example\.com\/a b\?q=hello world","--profile","Default Profile"\] \}/,
 	);
+	assert.ok(text.includes('agent_browser { "args": ["storage","local","get",""] }'));
+	assert.ok(text.includes('agent_browser { "args": ["storage","session","get",""] }'));
+	assert.ok(text.includes('agent_browser { "args": ["--namespace","","snapshot","-i"] }'));
+	assert.ok(text.includes('agent_browser { "args": ["get","text","   "] }'));
+	assert.ok(text.includes('agent_browser { "args": ["get","text","#literal"] }'));
 	assert.match(
 		text,
 		/agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.title" \}/,
@@ -257,6 +267,8 @@ test("buildToolPresentation appends selector-dialect guidance to unsupported sel
 	assert.equal(presentation.content[0]?.type, "text");
 	const text = readString(readRecord(presentation.content[0]).text);
 	assert.match(text, /^Failed to parse selector: button:has-text\('Close'\)/);
+	assert.equal(presentation.failureCategory, "selector-unsupported");
+	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
 	assert.match(text, /unsupported selector dialect/i);
 	assert.match(text, /snapshot -i/);
 	assert.match(text, /find role\|text\|label/);
@@ -435,15 +447,7 @@ test("buildToolPresentation explains localhost navigation failures as browser-ho
 	assert.match(text, /Use file:\/\/ only for static fallback fixtures/);
 });
 
-test("buildToolPresentation returns exact next actions for selector failures and tab drift", async () => {
-	const selectorFailure = await buildToolPresentation({
-		commandInfo: { command: "click", subcommand: "text=Close" },
-		cwd: process.cwd(),
-		errorText: "Failed to parse selector text=Close",
-	});
-	assert.equal(selectorFailure.failureCategory, "selector-unsupported");
-	assert.deepEqual(selectorFailure.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
-
+test("buildToolPresentation returns exact next actions for tab drift", async () => {
 	const tabDrift = await buildToolPresentation({
 		commandInfo: { command: "snapshot" },
 		cwd: process.cwd(),

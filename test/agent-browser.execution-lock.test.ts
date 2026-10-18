@@ -117,10 +117,10 @@ async function until(check: () => boolean | Promise<boolean>, diagnostic: () => 
 		await delay(10);
 	}
 }
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, selectedNamespace?: string) {
 	const root = await mkdtemp(join(tmpdir(), "piab-execution-"));
 	// Unique namespace also isolates the Windows native TCP identity (which ignores storage roots).
-	const namespace = basename(root);
+	const namespace = selectedNamespace ?? basename(root);
 	const identity = await resolveBrowserExecutionIdentity({
 		env: { AGENT_BROWSER_SOCKET_DIR: root },
 		namespace,
@@ -166,10 +166,19 @@ async function fixture(t: TestContext) {
 
 test("direct-call lock waiting leaves execution to native watchdogs", async (t) => {
 	const f = await fixture(t);
-	await withBrowserExecutionLock(
+	let started!: () => void;
+	const entered = new Promise<void>((resolve) => {
+		started = resolve;
+	});
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+	const pending = withBrowserExecutionLock(
 		{ identity: f.identity, deadline: Date.now() + 1_000, waitOnly: true },
 		async (signal) => {
-			await delay(1_100);
+			const running = new Promise<void>((resolve) => {
+				setTimeout(resolve, 1_100);
+			});
+			started();
+			await running;
 			assert.equal(
 				signal.aborted,
 				false,
@@ -177,6 +186,13 @@ test("direct-call lock waiting leaves execution to native watchdogs", async (t) 
 			);
 		},
 	);
+	try {
+		await entered;
+		t.mock.timers.tick(1_100);
+		await pending;
+	} finally {
+		t.mock.timers.reset();
+	}
 	assert.deepEqual(await f.claims(), []);
 });
 
@@ -258,7 +274,7 @@ test(
 			"B must publish its own claim while A still owns its claim",
 		);
 		if (process.platform !== "win32") {
-			const second = await fixture(t);
+			const second = await fixture(t, f.namespace);
 			const c = worker(t, second.options);
 			await c.event("acquired");
 			// These native claim-file counts apply to the POSIX lock transport.

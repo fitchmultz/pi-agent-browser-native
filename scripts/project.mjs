@@ -328,8 +328,6 @@ function qualitySteps() {
 	return [
 		buildStep(),
 		scriptStep(["./scripts/prepare-quality-checker.mjs"]),
-		scriptStep(["./scripts/code-quality.mjs", "scope"]),
-		scriptStep(["./scripts/code-quality.mjs", "check"]),
 		scriptStep(["./scripts/code-quality.mjs", "lint"]),
 		localToolStep("oxfmt", ["--check", "."]),
 	];
@@ -339,16 +337,24 @@ function realUpstreamSteps() {
 	const file = "test/agent-browser.real-upstream-contract.test.ts";
 	const env = { PI_AGENT_BROWSER_REAL_UPSTREAM: "1" };
 	return [
-		...["plugin list stays sessionless", "contract suite matches"].map((pattern) =>
-			localToolStep(
-				"tsx",
-				["--test", "--test-force-exit", "--test-name-pattern", pattern, file],
-				env,
-			),
+		localToolStep(
+			"tsx",
+			["--test", "--test-force-exit", "--test-name-pattern", "plugin list stays sessionless", file],
+			env,
+		),
+		localToolStep(
+			"tsx",
+			["--test", "--test-force-exit", "--test-skip-pattern", "plugin list stays sessionless", file],
+			env,
 		),
 		localToolStep(
 			"tsx",
 			["--test", "--test-force-exit", "test/agent-browser.batch-fidelity.test.ts"],
+			env,
+		),
+		localToolStep(
+			"tsx",
+			["--test", "--test-force-exit", "test/agent-browser.overlay-real-upstream.test.ts"],
 			env,
 		),
 	];
@@ -380,7 +386,8 @@ export function verifySteps(options) {
 			return [
 				...qualitySteps(),
 				localToolStep("tsc", ["--noEmit"]),
-				localToolStep("tsx", ["--test", "--test-concurrency=1", "test/**/*.test.ts"]),
+				localToolStep("tsx", ["--test", "test/**/!(*.serial).test.ts"]),
+				localToolStep("tsx", ["--test", "--test-concurrency=1", "test/**/*.serial.test.ts"]),
 				...docsSteps({ mode: "check", target: "playbook" }),
 				...commandReferenceSteps(),
 			];

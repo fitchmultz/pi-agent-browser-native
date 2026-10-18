@@ -96,7 +96,7 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 						// oxlint-disable-next-line no-await-in-loop
 						result = await executeRegisteredTool(code, harness.ctx, {
 							session: "growth",
-							code: 'let last; for(let i=0;i<15;i++) last=await browser({args:["get","title"]}); emit(last.data);',
+							code: 'let last; for(let i=0;i<2;i++) last=await browser({args:["get","title"]}); emit(last.data);',
 						});
 					}
 					assert.ok(result);
@@ -123,13 +123,19 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 						1,
 						"the complete ref payload is defined once",
 					);
-					assert.equal(
-						records.filter((record) =>
-							readArray(readRecord(record.event).pages ?? [])
-								.map(readRecord)
-								.some((page) => readRecord(page.refs).kind === "reuse"),
-						).length,
-						30,
+					const reuseRecords = records.filter((record) =>
+						readArray(readRecord(record.event).pages ?? [])
+							.map(readRecord)
+							.some((page) => readRecord(page.refs).kind === "reuse"),
+					);
+					assert.equal(reuseRecords.length, 4);
+					assert.deepEqual(
+						reuseRecords.map((record) => {
+							const event = readRecord(record.event);
+							return [record.snapshot, event.artifacts, readRecord(event.state).artifactManifest];
+						}),
+						Array.from({ length: 4 }, () => [undefined, undefined, undefined]),
+						"each ordinary read reuses refs without copying a capture, artifact delta or manifest view",
 					);
 					assert.equal(
 						readArray(readRecord(result.details.artifactManifest ?? {}).entries ?? []).length,

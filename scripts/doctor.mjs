@@ -33,13 +33,13 @@ const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 /** @typedef {{readonly checks: readonly DoctorCheck[], readonly failures: readonly DoctorCheck[], readonly warnings: readonly string[]}} DoctorReport */
 /** @typedef {{readonly cwd?: string, readonly agentDir?: string, readonly settingsPaths?: readonly string[], readonly skipSourceCheck?: boolean, readonly readText?: (path: string) => Promise<string | undefined>, readonly pathExists?: (path: string) => Promise<boolean>, readonly runAgentBrowser?: (args: readonly string[]) => Promise<string>, readonly runPi?: (args: readonly string[]) => Promise<string>}} DoctorOptions */
 
-export function normalizeAgentBrowserVersion(output) {
+function normalizeAgentBrowserVersion(output) {
 	return String(output ?? "")
 		.trim()
 		.replace(/^agent-browser\s+/, "");
 }
 
-export function normalizePiVersion(output) {
+function normalizePiVersion(output) {
 	return String(output ?? "")
 		.trim()
 		.replace(/^pi\s+/, "");

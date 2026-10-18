@@ -13,6 +13,8 @@ import {
 } from "./suite-evidence.mjs";
 import { resolve } from "node:path";
 
+/** @typedef {{readonly code: number | null, readonly signal: string | null, readonly stdout?: string, readonly stderr?: string}} ProcessReceipt */
+/** @param {{readonly config: {readonly artifactRoot: string, readonly packageName: string, readonly [key: string]: unknown}, readonly targetName: string, readonly leaseId: string, readonly stopResult: ProcessReceipt, readonly staleCleanupResult?: ProcessReceipt | null, readonly runId?: string}} options */
 export function createLeaseCleanupResult({
 	config,
 	targetName,
@@ -81,10 +83,6 @@ export function createLeaseCleanupResult({
 		],
 	);
 	return { ok: assertions.ok, suiteDir, assertions };
-}
-
-export function createLeaseCleanupFailureResult(options) {
-	return createLeaseCleanupResult({ ...options, staleCleanupResult: null });
 }
 
 export function createLeaseWarmupFailureResult(

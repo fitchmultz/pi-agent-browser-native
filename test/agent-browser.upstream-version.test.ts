@@ -89,7 +89,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { url: "https://examp
 							`Install agent-browser ${TARGET_AGENT_BROWSER_VERSION}`,
 						),
 					);
-					await assert.rejects(readFile(logPath, "utf8"));
+					await assert.rejects(readFile(logPath, "utf8"), { code: "ENOENT" });
 
 					const inspection = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["--version"],

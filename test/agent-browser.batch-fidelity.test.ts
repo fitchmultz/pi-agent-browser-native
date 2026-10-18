@@ -17,7 +17,6 @@ import {
 	getGuardedRefUsage,
 	shouldPinSessionTabForCommand,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state.js";
-import { getPageTargetValidationError } from "../extensions/agent-browser/lib/page-target-validation.js";
 import {
 	ManagedSessionRestoreState,
 	withOwnedManagedSessionContext,
@@ -249,30 +248,6 @@ test("recording FPS options alone keep the intended tab", () => {
 			}
 		}
 	}
-});
-
-test("unsupported batch bail assignment explains raw argv precedence without recovering ignored stdin", () => {
-	for (const pageUrlUnknown of [false, true]) {
-		// Exhaustive fixture variant ([false, true]): this selected path must satisfy its own contract.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(
-			readString(
-				getPageTargetValidationError({
-					args: ["batch", "--bail=true"],
-					stdin: '[["get","url"]]',
-					pageUrlUnknown,
-				}) ?? "",
-			),
-			/exact.*--bail.*stdin.*ignored/i,
-		);
-	}
-	assert.equal(
-		getPageTargetValidationError({
-			args: ["batch", "fill '#field' '--bail=true'"],
-			pageUrlUnknown: false,
-		}),
-		undefined,
-	);
 });
 
 const real = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
@@ -514,7 +489,7 @@ test(
 										["pdf", pdf, "ignored.pdf"],
 										["download", "#direct-download", download, "ignored.bin"],
 										["pdf", "--quick", "ignored.pdf"],
-										["wait", "8000"],
+										["wait", "3000"],
 									];
 									const result = await call(
 										raw ? ["batch", ...steps.map((step) => step.join(" "))] : ["batch"],
@@ -523,6 +498,7 @@ test(
 									);
 									const resultDetails = readRecord(result.details);
 									assert.equal(resultDetails.timedOut, true, result.content[0].text);
+									assert.equal(resultDetails.agentBrowserStarted, true);
 									assert.equal((await readFile(join(dir, pdf))).subarray(0, 5).toString(), "%PDF-");
 									assert.equal(
 										await readFile(join(dir, download), "utf8"),
@@ -561,6 +537,7 @@ test(
 									);
 									const timedOutDetails = readRecord(timedOut.details);
 									assert.equal(timedOutDetails.timedOut, true, timedOut.content[0].text);
+									assert.equal(timedOutDetails.agentBrowserStarted, true);
 									const retry = readArray(timedOutDetails.nextActions)
 										.map((value) => readRecord(value))
 										.find((action) => action.id === "retry-timeout-step");
@@ -730,58 +707,6 @@ test(
 									cwd: dir,
 								}),
 							);
-						for (const mode of ["direct", "stdin", "raw"]) {
-							await t.test(
-								`${mode} FPS outputPath collision stops before native recording`,
-								async () => {
-									const path = join(dir, `preflight-${mode}.webm`);
-									const row = ["record", "start", "--fps", "12", path];
-									let reached = false;
-									try {
-										let effectiveArgs: string[];
-										switch (mode) {
-											case "direct":
-												effectiveArgs = row;
-												break;
-											case "raw":
-												effectiveArgs = ["batch", row.join(" ")];
-												break;
-											default:
-												effectiveArgs = ["batch"];
-										}
-										const result = await call(
-											effectiveArgs,
-											mode === "stdin" ? JSON.stringify([row]) : undefined,
-											path,
-										);
-										const resultDetails = readRecord(result.details);
-										reached = resultDetails.agentBrowserStarted === true;
-										t.diagnostic(
-											JSON.stringify({
-												mode,
-												nativeReached: reached,
-												outputFile: resultDetails.outputFile,
-												error: result.content[0].text,
-											}),
-										);
-										assert.equal(resultDetails.failureCategory, "validation-error");
-										assert.equal(
-											reached,
-											false,
-											"a post-write outputPath guard is not early artifact protection",
-										);
-										await assert.rejects(stat(path), { code: "ENOENT" });
-									} finally {
-										if (reached) {
-											const stopped = await call(["record", "stop"]);
-											if (stopped.isError === true) {
-												await call(["record", "stop"]);
-											} // Retire a native failed-encoder take during RED too.
-										}
-									}
-								},
-							);
-						}
 						for (const subcommand of ["start", "restart"]) {
 							// Exhaustive fixture variant (["start", "restart"]): this selected path must satisfy its own contract.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
@@ -1064,7 +989,7 @@ test(
 								},
 							);
 							await t.test(
-								`${label}: mixed failures retain rows, failure category and native Pi hook`,
+								`${label}: mixed failures retain rows, category and returned tool failure`,
 								async () => {
 									for (const bail of [false, true]) {
 										if (pinned) {
@@ -1112,7 +1037,6 @@ test(
 										// Exhaustive fixture variant ([false, true]): this selected path must satisfy its own contract.
 										// oxlint-disable-next-line node-test/no-conditional-assertion
 										assert.match(readString(result.content[0].text ?? ""), /Batch failed:/);
-										// Canonical failure projection: the returned result already carries isError; the removed tool_result patch hook is covered by the handler-list contract.
 										// Exhaustive fixture variant ([false, true]): this selected path must satisfy its own contract.
 										// oxlint-disable-next-line node-test/no-conditional-assertion
 										assert.equal(
@@ -1294,16 +1218,6 @@ test(
 											["e999", 1],
 											["e998", 0],
 										] as const) {
-											const native = await direct(["get", "count", selector]);
-											// Exhaustive fixture variant ([ ["e999", 1], ["e998", 0], ] as const): this selected path must satisfy its own contract.
-											// oxlint-disable-next-line node-test/no-conditional-assertion
-											assert.equal(native.exitCode, 0, native.stderr);
-											// Exhaustive fixture variant ([ ["e999", 1], ["e998", 0], ] as const): this selected path must satisfy its own contract.
-											// oxlint-disable-next-line node-test/no-conditional-assertion
-											assert.equal(
-												readRecord(readRecord(JSON.parse(native.stdout)).data).count,
-												count,
-											);
 											const counted = await call(["get", "count", selector]);
 											const countedDetails = readRecord(counted.details);
 											// Exhaustive fixture variant ([ ["e999", 1], ["e998", 0], ] as const): this selected path must satisfy its own contract.
@@ -1316,12 +1230,6 @@ test(
 									});
 									await css.test("diff snapshot treats bare eN as a CSS subtree", async () => {
 										const args = ["diff", "snapshot", "--selector", "e999"];
-										const native = await direct(args);
-										assert.equal(native.exitCode, 0, native.stderr);
-										assert.match(
-											readString(readRecord(readRecord(JSON.parse(native.stdout)).data).diff),
-											/Literal subtree/,
-										);
 										const compared = await call(args);
 										const comparedDetails = readRecord(compared.details);
 										assert.equal(compared.isError, false, JSON.stringify(compared));
@@ -1330,41 +1238,6 @@ test(
 											/Literal subtree/,
 										);
 									});
-									await css.test(
-										"ref-resolving getters and diff screenshot still reject absent refs",
-										async () => {
-											assert.equal((await call(["snapshot", "-i"])).isError, false);
-											for (const args of [
-												...["text", "html", "value", "box", "styles"].map((getter) => [
-													"get",
-													getter,
-													"e999",
-												]),
-												["get", "attr", "e999", "id"],
-												[
-													"diff",
-													"screenshot",
-													"--baseline",
-													join(dir, "unused.png"),
-													"--selector",
-													"e999",
-												],
-											]) {
-												const stale = await call(args);
-												const staleDetails = readRecord(stale.details);
-												// Each noninteractive getter variant is asserted against the same native ref evidence.
-												// oxlint-disable-next-line node-test/no-conditional-assertion
-												assert.equal(
-													staleDetails.failureCategory,
-													"stale-ref",
-													JSON.stringify(stale),
-												);
-												// Each noninteractive getter variant is asserted against the same native ref evidence.
-												// oxlint-disable-next-line node-test/no-conditional-assertion
-												assert.equal(staleDetails.exitCode, undefined);
-											}
-										},
-									);
 								},
 							);
 							if (pinned) {

@@ -7,12 +7,13 @@
  */
 
 import assert from "node:assert/strict";
-import { readArray, readNumber, readRecord, readString } from "./helpers/assertions.js";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import { cleanupSecureTempArtifacts } from "../extensions/agent-browser/lib/temp.js";
 import {
 	TEST_SESSION_ID,
@@ -273,72 +274,6 @@ process.stdout.write(JSON.stringify([
 );
 
 test(
-	"agentBrowserExtension preserves mixed batch failure rendering while still marking the tool call as an error",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`process.stdout.write(JSON.stringify([
-  { command: ["open", "https://example.com"], success: true, result: { title: "Example Domain", url: "https://example.com/" } },
-  { command: ["click", "@zzz"], success: false, error: "Unknown ref: zzz" }
-]));
-process.exitCode = 1;`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["batch"],
-					stdin: "[]",
-				});
-				assert.equal(result.isError, true);
-				assert.equal(result.content[0]?.type, "text");
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/Batch failed: 1\/2 succeeded/,
-				);
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/First failing step: 2 — click @zzz/,
-				);
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/Step 1 — open https:\/\/example.com\/? \(succeeded\)/,
-				);
-				assert.match(readString(readRecord(result.content[0]).text), /Example Domain/);
-				assert.match(
-					readString(readRecord(result.content[0]).text),
-					/Step 2 — click @zzz \(failed\)/,
-				);
-				assert.match(readString(readRecord(result.content[0]).text), /Error: Unknown ref: zzz/);
-				assert.match(readString(readRecord(result.content[0]).text), /snapshot -i/);
-				assert.match(readString(readRecord(result.content[0]).text), /find role\|text\|label/);
-				assert.match(readString(readRecord(result.content[0]).text), /scrollintoview/);
-				assert.equal(
-					readString(result.details?.summary).includes("Batch failed: 1/2 succeeded"),
-					true,
-				);
-				assert.equal(readNumber(result.details?.exitCode ?? 0), 1);
-				assert.equal(readRecord(readRecord(result.details?.batchFailure).failedStep).index, 1);
-				assert.equal(
-					readRecord(readRecord(result.details?.batchFailure).failedStep).commandText,
-					"click @zzz",
-				);
-				assert.equal(Array.isArray(result.details?.batchSteps), true);
-				assert.equal(readString(result.details?.stderr ?? ""), "");
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
 	"agentBrowserExtension enriches click results with a post-navigation title and url summary",
 	{ concurrency: false },
 	async () => {
@@ -411,16 +346,21 @@ test(
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-if (args.includes("open")) {
+const clicked = ${JSON.stringify(join(tempDir, "clicked"))};
+const url = fs.existsSync(clicked) ? "https://example.com/docs" : "https://example.com/";
+if (args.includes("tab") && args.includes("list")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ index: 0, tabId: "t1", targetId: "native-page-1", active: true, title: "Page", url }] } }));
+} else if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain", url: "https://example.com/" } }));
 } else if (args.includes("snapshot")) {
   process.stdout.write(JSON.stringify({ success: true, data: { origin: "https://example.com/", refs: { e1: { role: "link", name: "Docs" } }, snapshot: '- link "Docs" [ref=e1]' } }));
 } else if (args.includes("click")) {
+  fs.writeFileSync(clicked, "yes");
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e1" } }));
 } else if (args.includes("get") && args.includes("title")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Docs" } }));
 } else if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/docs" } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { url } }));
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Docs", url: "https://example.com/docs" } } }));
 } else {
@@ -438,14 +378,23 @@ if (args.includes("open")) {
 					sessionMode: "fresh",
 				});
 				assert.equal(open.isError, false, JSON.stringify(open));
+				assert.equal(readRecord(open.details?.sessionTabTarget).targetId, "native-page-1");
 				const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["snapshot", "-i"],
 				});
 				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+				assert.equal(readRecord(snapshot.details?.sessionTabTarget).targetId, "native-page-1");
 				const click = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["click", "@e1"],
 				});
 				assert.equal(click.isError, false, JSON.stringify(click));
+				assert.equal(readRecord(click.details?.sessionTabTarget).targetId, "native-page-1");
+				assert.equal(
+					SessionPageState.fromBranch(harness.ctx.sessionManager.getBranch()).get(
+						readString(click.details?.sessionName),
+					).tabTarget?.targetId,
+					"native-page-1",
+				);
 				assert.deepEqual(click.details?.navigationSummary, {
 					title: "Docs",
 					url: "https://example.com/docs",
@@ -453,24 +402,12 @@ if (args.includes("open")) {
 				});
 
 				const invocations = await readInvocationLog(logPath);
-				assert.deepEqual(
-					invocations.map((entry) => entry.args.slice(-2).join(" ")),
-					[
-						"open https://example.com/",
-						"tab list",
-						"snapshot -i",
-						"tab list",
-						"snapshot -i",
-						"click @e1",
-						"get url",
-						"get title",
-						"tab list",
-					],
-				);
-				assert.equal(
-					invocations.filter((entry) => entry.args.includes("tab") && entry.args.includes("list"))
-						.length,
-					3,
+				const clickIndex = invocations.findIndex((entry) => entry.args.includes("click"));
+				assert.ok(clickIndex >= 0);
+				assert.ok(
+					invocations
+						.slice(clickIndex + 1)
+						.some((entry) => entry.args.slice(-2).join(" ") === "tab list"),
 				);
 			});
 		} finally {
@@ -515,30 +452,21 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 		);
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", "popup", "open", "https://popup.example/same"],
+				});
+				assert.equal(opened.isError, false, JSON.stringify(opened));
+				assert.ok(opened.details);
+				const seed = structuredClone(harness.ctx.sessionManager.getBranch());
 				for (const mode of ["stdin", "raw", "snapshot", "open-click", "closed"]) {
-					const harness = createExtensionHarness({ cwd: tempDir });
-					// Fixture transitions and their assertions run in order against this test's shared state.
+					// Reset native focus before replaying an independent copy of the real open's journal.
 					// oxlint-disable-next-line no-await-in-loop
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--session", "popup", "open", "https://popup.example/same"],
-					});
-					// All five literal popup modes run their lifecycle checks before the next mode.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(opened.isError, false, JSON.stringify(opened));
-					// All five literal popup modes run their lifecycle checks before the next mode.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(opened.details);
+					await writeFile(statePath, "t1");
 					const resumed = createExtensionHarness({
 						cwd: tempDir,
-						branch: harness.ctx.sessionManager.getBranch().slice(),
+						branch: structuredClone(seed),
 					});
 					// Fixture transitions and their assertions run in order against this test's shared state.
 					// oxlint-disable-next-line no-await-in-loop

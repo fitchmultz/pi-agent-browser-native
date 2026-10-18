@@ -9,10 +9,19 @@
 import assert from "node:assert/strict";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { execFile as execFileCallback } from "node:child_process";
-import { appendFile, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+	appendFile,
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	realpath,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
@@ -541,4 +550,67 @@ test("isDirectRun matches file URL for argv[1] only", () => {
 	assert.equal(isDirectRun(pathToFileURL(scriptPath).href, ["node", scriptPath]), true);
 	assert.equal(isDirectRun(pathToFileURL(scriptPath).href, ["node", "/tmp/other.mjs"]), false);
 	assert.equal(isDirectRun(pathToFileURL(scriptPath).href, ["node"]), false);
+});
+
+test("native lifecycle setup failure cleans its temporary root and retains diagnostics", async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), "piab-lifecycle-setup-fault-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const browserDir = join(directory, "browser");
+	const artifactsDir = join(directory, "artifacts");
+	const sdkPath = join(directory, "sdk.mjs");
+	await mkdir(browserDir);
+	await writeFile(
+		sdkPath,
+		`import { writeFileSync } from "node:fs";
+const envSnapshot = () => JSON.stringify(Object.entries(process.env).sort(([a], [b]) => a.localeCompare(b)));
+const originalEnv = envSnapshot();
+process.on("exit", () => writeFileSync(${JSON.stringify(join(directory, "env-restored.json"))}, JSON.stringify({
+	restored: envSnapshot() === originalEnv
+})));
+export function createAgentSession() {}
+export const SettingsManager = { inMemory() { return {}; } };
+export const ModelRuntime = { async create() { return {}; } };
+export class DefaultResourceLoader {
+	async reload() { throw new Error("injected lifecycle loader failure"); }
+}
+`,
+	);
+	const result = await execFile(
+		process.execPath,
+		[
+			"--test",
+			fileURLToPath(new URL("./agent-browser.native-lifecycle.test.mjs", import.meta.url)),
+		],
+		{
+			env: {
+				...process.env,
+				NODE_TEST_CONTEXT: undefined,
+				TMPDIR: directory,
+				TMP: directory,
+				TEMP: directory,
+				PI_NATIVE_LIFECYCLE_REQUIRED: "0",
+				PI_NATIVE_LIFECYCLE_SDK: sdkPath,
+				PI_NATIVE_LIFECYCLE_BROWSER_DIR: browserDir,
+				PI_NATIVE_LIFECYCLE_ARTIFACT_DIR: artifactsDir,
+			},
+			timeout: 10_000,
+		},
+	).then(
+		({ stdout, stderr }) => {
+			throw new Error(`The injected loader failure must fail qualification: ${stdout}\n${stderr}`);
+		},
+		(error: unknown) => readRecord(error),
+	);
+	assert.equal(result.code, 1);
+	assert.match(readString(result.stdout), /injected lifecycle loader failure/);
+	assert.deepEqual(
+		(await readdir(directory)).filter((name) => name.startsWith("piab-lc-")),
+		[],
+	);
+	assert.deepEqual(JSON.parse(await readFile(join(artifactsDir, "receipts.json"), "utf8")), {
+		receipts: [],
+	});
+	assert.deepEqual(JSON.parse(await readFile(join(directory, "env-restored.json"), "utf8")), {
+		restored: true,
+	});
 });

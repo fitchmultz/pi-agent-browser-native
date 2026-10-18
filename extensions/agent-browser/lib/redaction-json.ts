@@ -146,22 +146,20 @@ export function redactEmbeddedStructuredText(text: string, redact: RedactText): 
 	let output = "";
 	let cursor = 0;
 	const findEnd = createBalancedJsonEndFinder(text);
-	while (cursor < text.length) {
-		const char = text[cursor];
-		if (char !== "{" && char !== "[") {
-			output += char;
-			cursor += 1;
-			continue;
-		}
-		const endIndex = findEnd(cursor);
+	const openers = /[[{]/g;
+	let match: RegExpExecArray | null;
+	while ((match = openers.exec(text)) !== null) {
+		const endIndex = findEnd(match.index);
 		if (endIndex === undefined) {
-			output += char;
-			cursor += 1;
 			continue;
 		}
-		const candidate = text.slice(cursor, endIndex + 1);
-		output += redactSerializedJson(candidate, redact) ?? candidate;
-		cursor = endIndex + 1;
+		const candidate = text.slice(match.index, endIndex + 1);
+		const redacted = redactSerializedJson(candidate, redact) ?? candidate;
+		if (redacted !== candidate) {
+			output += text.slice(cursor, match.index) + redacted;
+			cursor = endIndex + 1;
+		}
+		openers.lastIndex = endIndex + 1;
 	}
-	return output;
+	return cursor === 0 ? text : output + text.slice(cursor);
 }

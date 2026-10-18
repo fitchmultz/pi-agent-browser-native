@@ -19,6 +19,7 @@ import {
 import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { isSessionArtifactManifest } from "./results/artifact-manifest.js";
+import { isSuccessfulNativeConfirmedClose } from "./native-confirmation.js";
 
 import { browserStringArray } from "./browser-value-parsing.js";
 
@@ -28,6 +29,7 @@ import type {
 	LegacyProjectionState,
 	LegacyContext,
 } from "./browser-legacy-types.js";
+import { BrowserConversionBranches } from "./browser-conversion-branches.js";
 export type { LegacyProjection } from "./browser-legacy-types.js";
 export const emptyProjection = (): LegacyProjectionState => ({ pages: new Map(), nextIndex: 0 });
 
@@ -159,6 +161,33 @@ function operationIdentity(
 		operationId: pending?.operationId ?? `legacy-${options.nativeId}`,
 	};
 }
+function normalizeLegacyBatchStep(
+	step: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+	return step.success === true &&
+		isSuccessfulNativeConfirmedClose(browserStringArray(step.command), step.data)
+		? { ...step, command: ["close"] }
+		: step;
+}
+function normalizeLegacyDetails(
+	details: Readonly<Record<string, unknown>>,
+	isError: boolean,
+): Readonly<Record<string, unknown>> {
+	const closed =
+		!isError &&
+		isSuccessfulNativeConfirmedClose(
+			extractUpstreamCommandTokens(browserStringArray(details.args)),
+			details.data,
+		);
+	const batchSteps = Array.isArray(details.batchSteps)
+		? details.batchSteps.filter(isRecord).map(normalizeLegacyBatchStep)
+		: undefined;
+	return {
+		...details,
+		...(closed ? { command: "close", subcommand: undefined } : {}),
+		...(batchSteps !== undefined ? { batchSteps } : {}),
+	};
+}
 function context(
 	entry: Readonly<Record<string, unknown>>,
 	message: Readonly<Record<string, unknown>>,
@@ -168,16 +197,17 @@ function context(
 	const nativeId = typeof entry.id === "string" ? entry.id : randomUUID();
 	const toolCallId =
 		typeof message.toolCallId === "string" ? message.toolCallId : `legacy-${nativeId}`;
-	const identity = legacyIdentity(details);
+	const replayDetails = normalizeLegacyDetails(details, message.isError === true);
+	const identity = legacyIdentity(replayDetails);
 	const operation = operationIdentity(
-		{ entry, details, key: identity.key, toolCallId, nativeId },
+		{ entry, details: replayDetails, key: identity.key, toolCallId, nativeId },
 		current,
 	);
 	return {
 		...identity,
 		...operation,
 		nativeId,
-		details,
+		details: replayDetails,
 		isError: message.isError === true,
 		toolCallId,
 	};
@@ -224,6 +254,7 @@ function hasPageEffects(ctx: LegacyContext): boolean {
 			"sessionTabTargetUnknown",
 			"sessionTabTarget",
 			"sessionTabReopenPending",
+			"sessionConfirmActions",
 			"refSnapshot",
 			"refSnapshotInvalidation",
 		].some((field) => ctx.details[field] !== undefined) ||
@@ -314,7 +345,15 @@ function convertMessage(
 		...(definition ? { snapshot: definition } : {}),
 	};
 }
-/** Offline only: normalize old receipts along their actual parent ancestry, never physical equality. */
+function hasCanonicalBrowserEvent(entry: Readonly<Record<string, unknown>>): boolean {
+	return (
+		isRecord(entry.data) &&
+		Object.hasOwn(entry.data, "event") &&
+		(entry.type === "message" || entry.customType === BROWSER_TRANSITION_ENTRY)
+	);
+}
+
+/** Normalize old receipts into the canonical reducer along their actual parent ancestry. */
 export function convertLegacyBrowserEntry(
 	entry: Readonly<Record<string, unknown>>,
 	parent: LegacyProjection = emptyProjection(),
@@ -329,6 +368,9 @@ export function convertLegacyBrowserEntry(
 	if (canonical) {
 		applyCanonical(current, parent, canonical);
 		return { projection: current };
+	}
+	if (hasCanonicalBrowserEvent(entry)) {
+		throw new Error("Invalid browser event; legacy replay cannot bypass canonical validation.");
 	}
 	const script = scriptRecord(
 		entry,
@@ -354,20 +396,22 @@ export function convertLegacyBrowserEntry(
 }
 function archiveParent(
 	value: Readonly<Record<string, unknown>>,
-	states: ReadonlyMap<string, LegacyProjection>,
+	branches: Readonly<Pick<BrowserConversionBranches, "get">>,
 	linear: LegacyProjection,
 ): LegacyProjection {
 	if (typeof value.parentId === "string") {
-		return states.get(value.parentId) ?? emptyProjection();
+		return branches.get(value.parentId) ?? emptyProjection();
 	}
 	return Object.hasOwn(value, "parentId") ? emptyProjection() : linear;
 }
-/** Explicit archive conversion; runtime restoration never invokes the legacy decoder. */
+/** Read-only normalization; callers choose whether to replay or publish a separate archive copy. */
 export function convertBrowserEntries(
 	entries: readonly unknown[],
 	ownerSessionId?: string,
 ): unknown[] {
-	const states = new Map<string, LegacyProjection>();
+	const branches = new BrowserConversionBranches(
+		entries.map((value) => (isRecord(value) ? value.parentId : undefined)),
+	);
 	let linear: LegacyProjection = emptyProjection();
 	return entries.map((value, index) => {
 		if (!isRecord(value)) {
@@ -380,10 +424,10 @@ export function convertBrowserEntries(
 		};
 		const converted = convertLegacyBrowserEntry(
 			entry,
-			archiveParent(value, states, linear),
+			archiveParent(value, branches, linear),
 			ownerSessionId,
 		);
-		states.set(entry.id, converted.projection);
+		branches.advance(entry.id, value.parentId, converted.projection);
 		linear = converted.projection;
 		return converted.record
 			? {

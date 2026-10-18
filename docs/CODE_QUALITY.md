@@ -32,6 +32,38 @@ Review fixes before committing; dangerous fixes and suggestion fixes are not par
 `lint:fix`. Run formatting after reviewed lint fixes and rerun acceptance. Failures
 are never converted to success by these commands.
 
+The default, quality, pre-pr, platform-target, and release facades run scope and
+suppression-policy validation once through `lint`, before the corrected checker.
+Standalone `quality:policy` and `quality:scope` remain available for focused
+inspection and intentional scope regeneration; running them separately in the
+facade would repeat the same validation without adding coverage.
+
+### Test scheduling
+
+`npm test` builds once and prepares the corrected checker once, then runs
+`tsx --test "test/**/!(*.serial).test.ts"` with Node's default file concurrency, followed by
+`tsx --test --test-concurrency=1 "test/**/*.serial.test.ts"`.
+The default/quality verification gates use the same two stages. File isolation
+keeps environment patches process-local; the shared browser harness supplies a
+private short socket directory unless `PI_AGENT_BROWSER_SOCKET_DIR` is already set.
+The harness also clears inherited Pi/delegation identity variables; root-default
+tests set their identities explicitly after import. No in-file concurrency is enabled.
+
+The serial lane contains `test/agent-browser.startup.serial.test.ts` and
+`test/agent-browser.prompt-policy.serial.test.ts` for wall-clock budgets, plus
+`test/agent-browser.managed-session-policy-lock.serial.test.ts` for fixtures in
+the shared policy collector directory. Their timing and global-GC contracts must
+not compete with the parallel lane. Build/pack fixtures must use disposable source trees rather
+than rewriting this checkout's `dist/` while other files consume it.
+`platform-target` retains its explicit serial subset; `quality:probes` remains a
+focused serial checker suite. The allowance-isolation mutation must fail in the
+parallel stage with its named `code-quality.test.ts` diagnostic.
+
+The real prepare/pack fixture in `test/verify-package.test.ts` also runs a plain
+Node child against emitted checkout modules. It verifies shared process-environment
+session/namespace propagation and snapshot-spill cleanup through the imported temp
+owner; source-loaded tests cannot detect bundles overwriting these shared modules.
+
 ## Language and role scope
 
 The root `.oxlintrc.json` enables type-aware rules and compiler diagnostics. The
@@ -153,9 +185,13 @@ Non-generic TS/JSDoc array aliases retain exact declared identity without introd
 wrapper types. Built-in browser `URL` and Node's `node:url` `URL` have distinct
 origins; the filesystem `PathLike` contract requires the Node-qualified allowance.
 
-`test/code-quality.test.ts` exercises actual language/compiler scope, consumer
-resolution, test-role boundaries, framework diagnostics, declaration isolation,
-mutable intersections, suppression policy, and formatting idempotence. Probes
+The real-CLI probes are split by contract: `test/code-quality.test.ts` covers
+framework diagnostics and qualified registration isolation;
+`test/code-quality-scope.test.ts` covers language/compiler scope, consumer resolution,
+test-role boundaries, suppression policy, and formatting idempotence;
+`test/code-quality-subtests.test.ts` covers subtest promise ownership and nested
+registration; `test/code-quality-readonly.test.ts` covers declaration isolation and
+mutable additions/intersections. `npm run quality:probes` runs all four files. Probes
 check expected rule identities; setup/configuration/parser failures are not valid
 negative evidence. Keep minimal unsuppressed checker reproductions when upgrading
 the backend and retire the patch only after the same controls pass.

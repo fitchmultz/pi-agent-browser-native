@@ -33,12 +33,6 @@ function probeCommandError(result: ProbeCommandResult, label: string): string | 
 		? `${label}: ${result.error}`
 		: undefined;
 }
-function probeString(data: unknown, field: "title" | "url", limit: number): string | undefined {
-	return boundElectronProbeString(
-		extractStringResultField(data, "result") ?? extractStringResultField(data, field),
-		limit,
-	);
-}
 export async function collectElectronProbe(
 	options: ElectronManagedSessionInspection,
 ): Promise<ElectronProbeResult> {
@@ -49,8 +43,10 @@ export async function collectElectronProbe(
 	if (urlError !== undefined) {
 		throw new Error(urlError);
 	}
-	const url = probeString(urlResult.data, "url", 300);
-	if (url === undefined || url.length === 0) {
+	const url =
+		extractStringResultField(urlResult.data, "result") ??
+		extractStringResultField(urlResult.data, "url");
+	if (url === undefined || url.trim().length === 0) {
 		throw new Error("get url returned no active page URL.");
 	}
 	const titleResult = await runElectronProbeCommandData({ ...options, args: ["get", "title"] });
@@ -83,7 +79,11 @@ export async function collectElectronProbe(
 		snapshot,
 		status: errors.length === 0 ? "succeeded" : "partial",
 		tabs,
-		title: probeString(titleResult.data, "title", 160),
+		title: boundElectronProbeString(
+			extractStringResultField(titleResult.data, "result") ??
+				extractStringResultField(titleResult.data, "title"),
+			160,
+		),
 		url,
 	};
 	return { ...probe, summary: getElectronProbeSummary(probe) };

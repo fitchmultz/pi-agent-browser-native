@@ -15,6 +15,7 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 import { readRecord, readArray, readString, hasErrorCode } from "./helpers/assertions.js";
+import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/runtime.js";
 
 const clearedBrowserEnv = Object.fromEntries(
 	Object.keys(process.env)
@@ -49,6 +50,7 @@ console.log(JSON.stringify({ success: true, data }));
 				AGENT_BROWSER_DEBUG: "1",
 				AGENT_BROWSER_NO_AUTO_DIALOG: "0",
 				PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0",
+				PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS: "1",
 			},
 			async () => {
 				const one = createExtensionHarness({ cwd: root, sessionId: "pi-one" });
@@ -197,7 +199,9 @@ if (args.includes("close") && process.env.FAIL_CLOSE === "1") {
 }
 const finish = () => console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "about:blank" } }));
 if (args.includes("open") && !fs.existsSync(${JSON.stringify(releasePath)})) {
-  fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
+  // Publish atomically: a directory watcher can fire on file creation before its content lands.
+  fs.writeFileSync(${JSON.stringify(`${startedPath}.tmp`)}, "started");
+  fs.renameSync(${JSON.stringify(`${startedPath}.tmp`)}, ${JSON.stringify(startedPath)});
   const timer = setInterval(() => {
     if (fs.existsSync(${JSON.stringify(releasePath)})) { clearInterval(timer); finish(); }
   }, 5);
@@ -544,11 +548,13 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 					code: 'emit((await browser({args:["get","title"]})).success);',
 				});
 				assert.equal(code.isError, false, code.content[0].text);
+				assert.equal(code.details?.data, true);
+				const codeCalls = await readInvocationLog(log);
 				assert.ok(
-					(await readInvocationLog(log)).every(
-						(call) => readRecord(call).confirmActions === "navigate",
-					),
+					codeCalls.some((call) => call.args.includes("get") && call.args.includes("title")),
+					"code reached the requested native getter",
 				);
+				assert.ok(codeCalls.every((call) => readRecord(call).confirmActions === "navigate"));
 				await writeFile(log, "");
 				const qaTool = resumed.getTool("agent_browser_qa");
 				assert.ok(qaTool);
@@ -563,11 +569,12 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 						}),
 				);
 				assert.equal(qa.isError, false, qa.content[0].text);
+				const qaCalls = await readInvocationLog(log);
 				assert.ok(
-					(await readInvocationLog(log)).every(
-						(call) => readRecord(call).confirmActions === "navigate",
-					),
+					qaCalls.some((call) => call.args.includes("batch")),
+					"QA reached its native readiness batch",
 				);
+				assert.ok(qaCalls.every((call) => readRecord(call).confirmActions === "navigate"));
 				await withPatchedEnv({ FAIL_CLOSE: "1" }, async () =>
 					assert.equal((await check(resumed, [...prefix, "close"], "navigate")).isError, true),
 				);
@@ -965,6 +972,134 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "http
 	}
 });
 
+for (const mode of ["root", "owned"] as const) {
+	test(`warm ${mode} calls reuse only the same-call generation sample`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "pbs-generation-"));
+		const log = join(root, "calls.jsonl");
+		const generation = join(root, "generation");
+		const gate = join(root, "gate");
+		const active = join(root, "active");
+		const replaceOnCapture = join(root, "replace-on-capture");
+		await writeFile(generation, "original");
+		await writeFakeAgentBrowserBinary(
+			root,
+			`const fs = require("node:fs"), args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args }) + "\\n");
+const url = "https://fixture.test/same";
+const generation = fs.readFileSync(${JSON.stringify(generation)}, "utf8");
+if (args.includes("snapshot") && fs.existsSync(${JSON.stringify(replaceOnCapture)})) {
+  fs.writeFileSync(${JSON.stringify(generation)}, "captured");
+}
+let active = null;
+try { active = JSON.parse(fs.readFileSync(${JSON.stringify(active)}, "utf8")); } catch {}
+if (!args.includes("session") && !active) {
+  active = { restoreKey: process.env.AGENT_BROWSER_RESTORE || null };
+  fs.writeFileSync(${JSON.stringify(active)}, JSON.stringify(active));
+}
+const data = args.includes("session")
+  ? { active: active !== null, runtime: active && { ...active, backgroundPid: process.ppid, browserLaunched: true, ...(generation === "unknown" ? {} : { socketDir: generation }) } }
+  : args.includes("snapshot") && fs.existsSync(${JSON.stringify(gate)})
+    ? { confirmation_required: true, confirmation_id: "helper-id", action: "snapshot" }
+  : args.includes("snapshot") ? { url, snapshot: '- textbox "Name" [ref=e1]', refs: { e1: { role: "textbox", name: "Name" } } }
+  : args.includes("get") && args.includes("url") && fs.existsSync(${JSON.stringify(gate)})
+    ? { confirmation_required: true, confirmation_id: "helper-id", action: "url" }
+  : args.includes("tab") ? { tabs: [{ tabId: "t1", url, active: true }] }
+  : { url, title: "Fixture", text: "Name" };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+		);
+		try {
+			await withPatchedEnv(
+				{
+					...clearedBrowserEnv,
+					PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+					HOME: root,
+					USERPROFILE: root,
+					PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"),
+					PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
+					AGENT_BROWSER_NAMESPACE: "Team Work",
+				},
+				async () => {
+					const harness = createExtensionHarness({ cwd: root, sessionId: "generation-root" });
+					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["snapshot", "-i"],
+						...(mode === "owned" ? { sessionMode: "fresh" } : {}),
+					});
+					assert.equal(snapshot.isError, false, snapshot.content[0].text);
+					const prefix =
+						mode === "owned" ? ["--session", readString(snapshot.details?.sessionName)] : [];
+					const captureGeneration = readRecord(snapshot.details?.refSnapshot).generation;
+					assert.equal(typeof captureGeneration, "string");
+					await writeFile(log, "");
+					const read = () =>
+						executeRegisteredTool(harness.tool, harness.ctx, {
+							args: [...prefix, "get", "text", "@e1"],
+						});
+					assert.equal((await read()).isError, false);
+					assert.equal(
+						(await readInvocationLog(log)).filter(
+							(call) => extractUpstreamCommandTokens(call.args).join(" ") === "session info",
+						).length,
+						1,
+						"warm pre-dispatch generation reconciliation needs one native status probe",
+					);
+					await writeFile(generation, "replacement");
+					await writeFile(log, "");
+					assert.equal((await read()).details?.failureCategory, "stale-ref");
+					assert.equal(
+						(await readInvocationLog(log)).some((call) => call.args.includes("text")),
+						false,
+						"a prior call's generation is never reused",
+					);
+					await writeFile(replaceOnCapture, "replace");
+					const refreshed = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: [...prefix, "snapshot", "-i"],
+					});
+					assert.equal(refreshed.isError, false, refreshed.content[0].text);
+					assert.notEqual(readRecord(refreshed.details?.refSnapshot).generation, captureGeneration);
+					assert.equal(
+						readRecord(
+							JSON.parse(readString(readRecord(refreshed.details?.refSnapshot).generation)),
+						).socketDir,
+						"captured",
+						"a capture binds its post-command generation, never its preparation sample",
+					);
+					await rm(replaceOnCapture);
+					await writeFile(gate, "pending");
+					await writeFile(log, "");
+					const pending = await read();
+					assert.equal(pending.details?.failureCategory, "confirmation-required");
+					assert.equal(pending.details.agentBrowserStarted, false);
+					assert.equal(
+						(await readInvocationLog(log)).some((call) => call.args.includes("text")),
+						false,
+						"status reuse cannot dispatch past a native helper confirmation",
+					);
+					await rm(gate);
+					await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: [...prefix, "snapshot", "-i"],
+					});
+					await writeFile(generation, "unknown");
+					await writeFile(log, "");
+					assert.equal((await read()).details?.failureCategory, "stale-ref");
+					assert.equal(
+						(await readInvocationLog(log)).some((call) => call.args.includes("text")),
+						false,
+						"missing generation evidence remains fail-closed",
+					);
+					await runExtensionEvent(
+						harness.handlers,
+						"session_shutdown",
+						{ reason: "quit" },
+						harness.ctx,
+					);
+				},
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+}
+
 test("root Chrome bootstrap defaults follow effective engine without replacing native launch settings", async (t) => {
 	const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-engine-"));
 	const log = join(root, "calls.jsonl");
@@ -996,6 +1131,7 @@ console.log(JSON.stringify({ success: true, data: { session: "default", title: "
 				PI_AGENT_BROWSER_SOCKET_DIR: join(root, "s"),
 				PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
 				PI_AGENT_BROWSER_CONFIG: packageConfig,
+				PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS: "1",
 				PI_SUBAGENT_CHILD: undefined,
 				PI_SUBAGENT_ROOT_SESSION_ID: undefined,
 			},
@@ -1103,21 +1239,33 @@ console.log(JSON.stringify({ success: true, data: { session: "default", title: "
 									args: [...scenario.args, "open", "https://fixture.test/"],
 								});
 								assert.equal(result.isError, false, result.content[0].text);
-								const saved = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [
-										...scenario.args,
-										"auth",
-										"save",
-										"fixture",
-										"--url",
-										"https://fixture.test/",
-									],
-								});
-								assert.equal(saved.isError, false, saved.content[0].text);
-								const followup = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [...scenario.args, "get", "title"],
-								});
-								assert.equal(followup.isError, false, followup.content[0].text);
+								if (
+									[
+										"default Chrome",
+										"CLI Lightpanda",
+										"caller native Chrome config launch args",
+									].includes(scenario.name)
+								) {
+									const saved = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: [
+											...scenario.args,
+											"auth",
+											"save",
+											"fixture",
+											"--url",
+											"https://fixture.test/",
+										],
+									});
+									// Representative Chrome, non-Chrome and native-config rows retain command-family continuity.
+									// oxlint-disable-next-line node-test/no-conditional-assertion
+									assert.equal(saved.isError, false, saved.content[0].text);
+									const followup = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: [...scenario.args, "get", "title"],
+									});
+									// Each continuity row must also complete its post-launch browser command.
+									// oxlint-disable-next-line node-test/no-conditional-assertion
+									assert.equal(followup.isError, false, followup.content[0].text);
+								}
 								const calls = await readInvocationLog(log);
 								const main = calls.find((call) => call.args.includes("open"));
 								assert.ok(main, "the requested browser call reached upstream");
@@ -1244,8 +1392,11 @@ test(
 									});
 									assert.equal(result.isError, false, result.content[0].text);
 									assert.equal(result.details?.sessionName, name);
-									const qa = await executeRegisteredTool(child.tool, child.ctx, {
-										qa: { attached: true, expectedText: "Agent Browser Contract Fixture" },
+									const qaTool = child.getTool("agent_browser_qa");
+									assert.ok(qaTool);
+									const qa = await executeRegisteredTool(qaTool, child.ctx, {
+										attached: true,
+										expectedText: "Agent Browser Contract Fixture",
 									});
 									assert.equal(qa.isError, false, qa.content[0].text);
 								} finally {

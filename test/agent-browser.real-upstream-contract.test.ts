@@ -798,6 +798,11 @@ test(
 										url,
 									]);
 									assert.equal(invalid.isError, true);
+									assert.match(
+										readString(readRecord(invalid.details).error),
+										/Unexpected argument for record restart:/,
+										"extra operands must fail native argument validation, not action policy",
+									);
 									assert.ok(
 										readArray(readRecord(invalid.details).nextActions)
 											.map(readRecord)
@@ -1380,9 +1385,20 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 				timeout: 30_000,
 			},
 		);
-		await new Promise<void>((complete) => {
-			setTimeout(complete, 1_000);
-		});
+		await execFileAsync(
+			"agent-browser",
+			[
+				"--json",
+				"--config",
+				configPath,
+				"--session",
+				sessionName,
+				"wait",
+				"--fn",
+				"document.title !== 'PENDING'",
+			],
+			{ cwd: tempDir, env: upstreamEnv, timeout: 30_000 },
+		);
 		const control = await execFileAsync(
 			"agent-browser",
 			["--json", "--config", configPath, "--session", sessionName, "get", "title"],
@@ -1392,6 +1408,8 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 				timeout: 30_000,
 			},
 		);
+		const daemonPid = Number(await readFile(join(socketDir, `${sessionName}.pid`), "utf8"));
+		assert.ok(Number.isSafeInteger(daemonPid) && daemonPid > 0);
 		const controlData = readRecord(readRecord(JSON.parse(control.stdout)).data);
 		assert.equal(
 			controlData.title ?? controlData.result,
@@ -1420,6 +1438,30 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 					cwd: tempDir,
 				});
 				assert.equal(opened.exitCode, 0, opened.spawnError?.message ?? opened.stderr);
+				const ready = await runAgentBrowserProcess({
+					args: [
+						"--json",
+						"--session",
+						sessionName,
+						"wait",
+						"--fn",
+						"document.title !== 'PENDING'",
+					],
+					cwd: tempDir,
+				});
+				assert.equal(ready.exitCode, 0, ready.spawnError?.message ?? ready.stderr);
+				const title = await runAgentBrowserProcess({
+					args: ["--json", "--session", sessionName, "get", "title"],
+					cwd: tempDir,
+				});
+				assert.equal(title.exitCode, 0, title.spawnError?.message ?? title.stderr);
+				const titleData = readRecord(readRecord(JSON.parse(title.stdout)).data);
+				assert.equal(titleData.title ?? titleData.result, "READABLE");
+				assert.equal(
+					Number(await readFile(join(socketDir, `${sessionName}.pid`), "utf8")),
+					daemonPid,
+					"wrapper reuse must preserve the caller daemon and its local-file capability",
+				);
 
 				const safeOpen = await runAgentBrowserProcess({
 					args: ["--json", "--session", safeSessionName, "open", pathToFileURL(fixturePath).href],
@@ -1478,6 +1520,7 @@ for (const reconstructed of [false, true]) {
 						const branch: unknown[] = [];
 						let harness = createExtensionHarness({ cwd: dir, branch });
 						let sessionName: string | undefined, restoreKey: string | undefined;
+						let daemonPid: number | undefined;
 						try {
 							await runExtensionEvent(
 								harness.handlers,
@@ -1510,7 +1553,8 @@ for (const reconstructed of [false, true]) {
 							});
 							assert.equal(before.isError, false, resultText(before));
 							const nativeBefore = readRecord(readRecord(before.details).data);
-							assert.ok(readNumber(nativeBefore.pid) > 0);
+							daemonPid = readNumber(nativeBefore.pid);
+							assert.ok(daemonPid > 0);
 							restoreKey = readString(readRecord(nativeBefore.runtime).restoreKey);
 							assert.match(restoreKey, /^piab-r2-/);
 							if (reconstructed) {
@@ -1537,14 +1581,13 @@ for (const reconstructed of [false, true]) {
 							for (const args of [
 								["read", url],
 								["batch", `read ${url}`],
-								["session", "info"],
 							]) {
 								// Each read must retain the owned daemon before the next command touches it.
 								// oxlint-disable-next-line no-await-in-loop
 								const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 									args: [...prefix, ...args],
 								});
-								// Every fixed read/session-info variant must succeed before daemon continuity checks.
+								// Every fixed read variant must succeed before daemon continuity checks.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
 								assert.equal(result.isError, false, resultText(result));
 								// Inspect this command's daemon identity before a later command can replace it.
@@ -1553,14 +1596,14 @@ for (const reconstructed of [false, true]) {
 									args: [...prefix, "session", "info"],
 								});
 								const nativeAfter = readRecord(readRecord(after.details).data);
-								// Every fixed read/session-info variant must preserve native daemon identity.
+								// Every fixed read variant must preserve native daemon identity.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
 								assert.equal(
 									nativeAfter.pid,
 									nativeBefore.pid,
 									`${args[0]} must not replace the owned daemon`,
 								);
-								// Every fixed read/session-info variant must preserve automatic restore identity.
+								// Every fixed read variant must preserve automatic restore identity.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
 								assert.equal(readRecord(nativeAfter.runtime).restoreKey, restoreKey);
 								// Verify the retained page before the next loop's browser operation.
@@ -1602,7 +1645,6 @@ for (const reconstructed of [false, true]) {
 								harness.ctx,
 							);
 							if (sessionName !== undefined && sessionName.length > 0) {
-								const pid = Number(await readFileIfPresent(join(socketDir, `${sessionName}.pid`)));
 								const closed = await runAgentBrowserProcess({
 									args: ["--json", "--namespace", "", "close", "--all"],
 									cwd: dir,
@@ -1611,17 +1653,16 @@ for (const reconstructed of [false, true]) {
 								// Every initialized fixture must close; failed initialization already fails the test.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
 								assert.equal(closed.exitCode, 0, closed.stderr);
-								// Every initialized fixture must terminate its owned daemon before cleanup finishes.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(
-									await waitForTestPidExit(
-										pid === 0 || Number.isNaN(pid) ? undefined : pid,
-										10_000,
-									),
-									true,
-									"the private native daemon must exit",
-								);
 							}
+							assert.ok(
+								daemonPid !== undefined && daemonPid > 0,
+								"capture a genuine PID before close",
+							);
+							assert.equal(
+								await waitForTestPidExit(daemonPid, 10_000),
+								true,
+								"the private native daemon must exit",
+							);
 						}
 					},
 				);
@@ -2072,11 +2113,12 @@ test(
 									"native lifecycle remains in audit details",
 								);
 								assert.deepEqual(envelope.data, visibleData);
-								assert.ok(
-									Object.values(readRecord(readRecord(envelope.data).refs)).every(
-										(ref) => readRecord(ref).role === "button",
-									),
+								const visibleRefs = Object.values(readRecord(readRecord(envelope.data).refs)).map(
+									readRecord,
 								);
+								assert.ok(visibleRefs.length > 0, "filter must retain actual fixture buttons");
+								assert.ok(visibleRefs.some((ref) => ref.role === "button" && ref.name === "Save"));
+								assert.ok(visibleRefs.every((ref) => ref.role === "button"));
 								assert.ok(
 									Object.values(
 										readRecord(readRecord(readRecord(result.details).refSnapshot).refs),
@@ -4213,6 +4255,11 @@ test(
 						JSON.stringify({ restore: "replacement-close-key" }),
 						"utf8",
 					);
+					const closingPid = Number(
+						await readFile(join(socketDir, `${readString(managedSessionName)}.pid`), "utf8"),
+					);
+					assert.ok(Number.isSafeInteger(closingPid));
+					assert.ok(closingPid > 0);
 					const firstClose = await (async () => {
 						try {
 							return await withPatchedEnv(
@@ -4239,9 +4286,11 @@ test(
 						false,
 						`first managed close should persist restore state despite late config: ${resultText(firstClose)}`,
 					);
-					await new Promise<void>((complete) => {
-						setTimeout(complete, 200);
-					});
+					assert.equal(
+						await waitForTestPidExit(closingPid, 10_000),
+						true,
+						"closed native daemon must exit",
+					);
 					const closedInfo = await execFileAsync(
 						"agent-browser",
 						[

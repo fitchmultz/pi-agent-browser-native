@@ -116,11 +116,9 @@ export async function analyzeNetworkSourceLookupResults(
 	const { distinctNetworkCandidates, getFailedNetworkRequests, observeInitiatorCandidates } =
 		await import("./lookup-network-evidence.js");
 	const { scanWorkspaceRequests } = await import("./lookup-workspace.js");
-	const failedRequests = getFailedNetworkRequests(
-		data,
-		compiled.query.url ?? compiled.query.filter,
-	);
-	const observed = observeInitiatorCandidates(data, failedRequests);
+	const queryText = compiled.query.filter ?? compiled.query.url;
+	const failedRequests = getFailedNetworkRequests(data, queryText);
+	const observed = observeInitiatorCandidates(data, failedRequests, queryText);
 	const workspace = await scanWorkspaceRequests(compiled.query, failedRequests, cwd);
 	const candidates = distinctNetworkCandidates([...observed, ...workspace.candidates]);
 	const status = networkStatus(failedRequests.length, candidates.length);

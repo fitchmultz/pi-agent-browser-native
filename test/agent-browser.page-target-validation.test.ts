@@ -236,6 +236,29 @@ test("non-bail batches preserve known prior-page behavior and guard unknown targ
 });
 
 test("raw batch command arguments exclusively determine validation and resulting targets", () => {
+	assert.match(
+		getPageTargetValidationError({
+			args: ["batch", "--bail=true"],
+			stdin: '[["get","url"]]',
+			pageUrlUnknown: false,
+		}) ?? "",
+		/exact.*--bail.*stdin.*ignored/i,
+	);
+	assert.match(
+		getPageTargetValidationError({
+			args: ["batch", "--bail=true"],
+			stdin: '[["get","url"]]',
+			pageUrlUnknown: true,
+		}) ?? "",
+		/exact.*--bail.*stdin.*ignored/i,
+	);
+	assert.equal(
+		getPageTargetValidationError({
+			args: ["batch", "fill '#field' '--bail=true'"],
+			pageUrlUnknown: false,
+		}),
+		undefined,
+	);
 	const ignoredStdin = JSON.stringify([
 		["open", "file:///ignored.html"],
 		["snapshot", "-i"],

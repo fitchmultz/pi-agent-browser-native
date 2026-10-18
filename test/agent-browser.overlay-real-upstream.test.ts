@@ -76,6 +76,7 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 							const sessionName = readRecord(opened.details).sessionName;
 							assert.equal(typeof sessionName, "string");
 							const identity = [...namespacePrefix, "--session", readString(sessionName)];
+							const recoveryParams = { args: [...identity, "snapshot", "-i"] };
 							const raw = await runAgentBrowserProcess({
 								// Raw controls must keep the managed idle policy or upstream relaunches at about:blank.
 								ownedManagedSession: mode === "managed",
@@ -108,7 +109,7 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 								["find", "nth", "0", "button"],
 							];
 							for (const params of [
-								...commands.map((args) => ({ args: [...prefix, ...args] })),
+								{ args: [...prefix, "click", "#target"] },
 								{ args: [...prefix, "--json", "click", "#target"] },
 								{ args: [...prefix, "batch"], stdin: JSON.stringify(commands) },
 								...(mode === "empty-namespace"
@@ -162,7 +163,7 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 									[
 										{
 											id: "inspect-overlay-state",
-											params: { args: [...identity, "snapshot", "-i"] },
+											params: recoveryParams,
 										},
 									],
 									JSON.stringify(result),
@@ -177,11 +178,19 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 									// oxlint-disable-next-line node-test/no-conditional-assertion
 									assert.match(text, /inspect-overlay-state/);
 								}
-								const rows = readArray(readRecord(result.details).batchSteps ?? []);
-								const isBatch = "args" in params && params.args?.includes("batch") === true;
-								// Every fixed batch input must return rows; direct inputs may legitimately have no batch receipts.
+								const rows = readArray(readRecord(result.details).batchSteps ?? []).map(readRecord);
+								const expectedCommands =
+									"stdin" in params
+										? readArray(JSON.parse(readString(params.stdin))).map((row) =>
+												readArray(row).map(readString),
+											)
+										: [];
+								// Every declared batch must retain all native failures in input order; direct calls have no rows.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(!isBatch || rows.length > 0);
+								assert.deepEqual(
+									rows.map((row) => ({ command: row.command, success: row.success })),
+									expectedCommands.map((command) => ({ command, success: false })),
+								);
 								for (const row of rows) {
 									// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
 									// oxlint-disable-next-line node-test/no-conditional-assertion
@@ -190,22 +199,6 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 									// oxlint-disable-next-line node-test/no-conditional-assertion
 									assert.deepEqual(readRecord(row).nextActions, actions);
 								}
-								// Inspect each covered-click failure before the next call mutates the same native page/session.
-								// oxlint-disable-next-line no-await-in-loop
-								const inspection = await executeRegisteredTool(
-									harness.tool,
-									harness.ctx,
-									readRecord(actions[0]).params,
-								);
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(inspection.isError, false, JSON.stringify(inspection));
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(inspection.details).sessionName, sessionName);
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(inspection.details).namespace, namespace);
 								t.diagnostic(
 									JSON.stringify({
 										mode,
@@ -218,6 +211,14 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 									}),
 								);
 							}
+							const inspection = await executeRegisteredTool(
+								harness.tool,
+								harness.ctx,
+								recoveryParams,
+							);
+							assert.equal(inspection.isError, false, JSON.stringify(inspection));
+							assert.equal(readRecord(inspection.details).sessionName, sessionName);
+							assert.equal(readRecord(inspection.details).namespace, namespace);
 							const hover = await executeRegisteredTool(harness.tool, harness.ctx, {
 								args: [...prefix, "hover", "#target"],
 							});

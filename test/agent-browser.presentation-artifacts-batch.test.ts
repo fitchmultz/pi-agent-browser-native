@@ -21,7 +21,6 @@ import type {
 	SessionArtifactManifestEntry,
 } from "../extensions/agent-browser/lib/results/contracts.js";
 import {
-	DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
 	getSessionArtifactManifestMaxEntries,
 	mergeSessionArtifactManifest,
 } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
@@ -274,10 +273,14 @@ test("buildToolPresentation renders metadata-first summaries for file artifact c
 	}
 });
 
-test("buildToolPresentation does not classify state load paths as saved artifacts", async () => {
+test("buildToolPresentation does not classify state load paths as saved artifacts", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-state-load-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+	await writeFile(join(tempDir, "auth-state.json"), "{}");
+
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "state", subcommand: "load" },
-		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		cwd: tempDir,
 		envelope: { success: true, data: { path: "auth-state.json" } },
 	});
 
@@ -362,10 +365,13 @@ test("buildToolPresentation renders record start as a lifecycle state without mi
 	assert.deepEqual(presentation.nextActions[0].params?.args, ["record", "stop"]);
 });
 
-test("buildToolPresentation renders record restart as a pending lifecycle state", async () => {
+test("buildToolPresentation renders record restart as a pending lifecycle state", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-record-restart-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "record", subcommand: "restart" },
-		cwd: "/tmp/pi-agent-browser-artifact-tests",
+		cwd: tempDir,
 		envelope: { success: true, data: { path: "recording-restart.webm" } },
 	});
 
@@ -866,7 +872,7 @@ test("buildToolPresentation scopes artifact verification to current-result artif
 				{
 					createdAtMs: Date.now() - 1,
 					kind: "spill",
-					path: "/tmp/old-spill.txt",
+					path: join(tempDir, "old-spill.txt"),
 					retentionState: "evicted",
 					storageScope: "persistent-session",
 				},
@@ -1007,60 +1013,78 @@ test(
 				);
 			},
 		);
+		await withPatchedEnv(
+			{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "20" },
+			async () => {
+				const older: SessionArtifactManifestEntry = {
+					absolutePath: "/tmp/older.webm",
+					command: "record",
+					createdAtMs: 1,
+					cwd: "/tmp",
+					kind: "video",
+					namespace: "scope",
+					path: "older.webm",
+					retentionState: "live",
+					session: "shared",
+					storageScope: "explicit-path",
+					subcommand: "start",
+				};
+				const newer = {
+					...older,
+					absolutePath: "/tmp/newer.webm",
+					createdAtMs: 2,
+					path: "newer.webm",
+				};
+				const incremental = mergeSessionArtifactManifest({
+					base: mergeSessionArtifactManifest({ entries: [older] }),
+					entries: [newer],
+				});
+				assert.deepEqual(
+					incremental?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["newer.webm", "start"]],
+				);
+				const newestFirst = mergeSessionArtifactManifest({ entries: [newer, older] });
+				assert.deepEqual(
+					newestFirst?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["newer.webm", "start"]],
+				);
+				const sameTimestamp = mergeSessionArtifactManifest({
+					entries: [older, { ...newer, createdAtMs: older.createdAtMs }],
+				});
+				assert.deepEqual(
+					sameTimestamp?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["newer.webm", "start"]],
+				);
+				const stopped = mergeSessionArtifactManifest({
+					entries: [older, { ...older, subcommand: "stop" }],
+				});
+				assert.deepEqual(
+					stopped?.entries.map((entry) => [entry.path, entry.subcommand]),
+					[["older.webm", "stop"]],
+				);
+			},
+		);
 	},
 );
 
-test("artifact manifest defaults to a QA-friendly recent window", () => {
-	assert.equal(
-		getSessionArtifactManifestMaxEntries({}),
-		DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-	);
-	assert.equal(DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES, 100);
-});
-
-test("artifact manifest recent window is configurable and ignores invalid values", async () => {
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3" },
-		async () => {
-			assert.equal(getSessionArtifactManifestMaxEntries(), 3);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "0" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "-1" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3.5" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
-	await withPatchedEnv(
-		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "not-a-number" },
-		async () => {
-			assert.equal(
-				getSessionArtifactManifestMaxEntries(),
-				DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES,
-			);
-		},
-	);
+test("artifact manifest recent window is configurable and ignores invalid values", () => {
+	for (const [value, expected] of [
+		[undefined, 100],
+		["3", 3],
+		["0", 100],
+		["-1", 100],
+		["3.5", 100],
+		["not-a-number", 100],
+	] as const) {
+		// Every fixed valid/default/invalid environment value must independently satisfy the window contract.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			getSessionArtifactManifestMaxEntries({
+				PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: value,
+			}),
+			expected,
+		);
+	}
 });
 
 test("artifact manifest evicts oldest metadata entries at the configured recent window", async () => {
@@ -1087,14 +1111,17 @@ test("artifact manifest evicts oldest metadata entries at the configured recent 
 	);
 });
 
-test("buildToolPresentation reports the configured artifact manifest recent window", async () => {
+test("buildToolPresentation reports the configured artifact manifest recent window", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-artifact-window-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+
 	await withPatchedEnv(
 		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "3" },
 		async () => {
 			const presentation = await buildToolPresentation({
 				commandInfo: { command: "screenshot" },
-				cwd: process.cwd(),
-				envelope: { success: true, data: { path: "dogfood-shot.png" } },
+				cwd: tempDir,
+				envelope: { success: true, data: { path: "screenshot.png" } },
 			});
 
 			assert.equal(presentation.artifactManifest?.maxEntries, 3);
@@ -1139,35 +1166,6 @@ test("buildToolPresentation compacts oversized generic outputs and prints the ac
 	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 	assert.match(await readFile(spillPath, "utf8"), /Large eval row 220/);
 	await rm(spillPath, { force: true });
-});
-
-test("buildToolPresentation formats batch output for the model", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "batch" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: [
-				{
-					command: ["open", "https://developer.mozilla.org"],
-					success: true,
-					result: { title: "MDN Web Docs" },
-				},
-				{ command: ["get", "title"], success: true, result: { title: "MDN Web Docs" } },
-			],
-		},
-	});
-
-	assert.equal(presentation.content[0].type, "text");
-	assert.match(
-		readString(readRecord(presentation.content[0]).text),
-		/Step 1 — open https:\/\/developer.mozilla.org/,
-	);
-	assert.match(readString(readRecord(presentation.content[0]).text), /MDN Web Docs/);
-	assert.equal(Array.isArray(presentation.data), true);
-	assert.equal(presentation.batchSteps?.length, 2);
-	assert.equal(presentation.batchSteps[0].commandText, "open https://developer.mozilla.org");
-	assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
 });
 
 test("buildToolPresentation preserves partial batch results when a later step fails", async () => {
@@ -1429,7 +1427,7 @@ test("buildToolPresentation does not re-append old artifact retention noise for 
 				createdAtMs: 1_000,
 				evictedAtMs: 2_000,
 				kind: "spill",
-				path: "/tmp/old-spill.json",
+				path: join(tempDir, "old-spill.json"),
 				retentionState: "evicted",
 				storageScope: "persistent-session",
 			},
@@ -1491,6 +1489,10 @@ test("buildToolPresentation reuses standalone inline screenshot rendering inside
 		assert.match(text, /Step 1 — open https:\/\/example.com/);
 		assert.match(text, /Example Domain/);
 		assert.match(text, /Step 2 — screenshot/);
+		assert.equal(Array.isArray(presentation.data), true);
+		assert.equal(presentation.batchSteps?.length, 2);
+		assert.equal(presentation.batchSteps[0].commandText, "open https://example.com");
+		assert.match(presentation.summary, /Batch: 2\/2 succeeded/);
 		assert.match(text, /Saved image: batched.png/);
 		assert.match(text, /1 inline image attachment below/);
 		assert.equal(presentation.content[1].type, "image");
@@ -1501,17 +1503,20 @@ test("buildToolPresentation reuses standalone inline screenshot rendering inside
 		assert.equal(presentation.artifacts[0].absolutePath, imagePath);
 		assert.equal(presentation.artifacts[0].mediaType, "image/png");
 		assert.equal(presentation.artifacts[0].exists, true);
-		assert.equal(presentation.batchSteps?.[1]?.imagePath, imagePath);
+		assert.equal(presentation.batchSteps[1].imagePath, imagePath);
 		assert.equal(presentation.batchSteps[1].artifacts?.[0]?.kind, "image");
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
 });
 
-test("buildToolPresentation preserves non-screenshot file artifacts inside batch output", async () => {
+test("buildToolPresentation preserves non-screenshot file artifacts inside batch output", async (t) => {
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-batch-artifacts-"));
+	t.after(() => rm(tempDir, { force: true, recursive: true }));
+
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "batch" },
-		cwd: "/tmp/pi-agent-browser-batch-artifacts",
+		cwd: tempDir,
 		envelope: {
 			success: true,
 			data: [

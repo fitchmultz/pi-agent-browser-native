@@ -24,7 +24,7 @@ function legacyTarget(value: Readonly<Record<string, unknown>>): SessionTabTarge
 		targetId: typeof value.targetId === "string" ? value.targetId : undefined,
 	});
 }
-function legacySnapshot(value: unknown, id: string): BrowserSnapshot | undefined {
+export function legacySnapshot(value: unknown, id: string): BrowserSnapshot | undefined {
 	if (!isRecord(value) || !Array.isArray(value.refIds)) {
 		return undefined;
 	}
@@ -214,6 +214,15 @@ export class LegacyPageConversion {
 		}
 	}
 	change(key: string): BrowserPageChange {
+		return {
+			...this.pageChange(key),
+			...(typeof this.ctx.details.sessionConfirmActions === "string" ||
+			this.ctx.details.sessionConfirmActions === null
+				? { confirmActions: this.ctx.details.sessionConfirmActions }
+				: {}),
+		};
+	}
+	private pageChange(key: string): BrowserPageChange {
 		const ctx = this.ctx;
 		if (ctx.begin) {
 			this.page.target = undefined;

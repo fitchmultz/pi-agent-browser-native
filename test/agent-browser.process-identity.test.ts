@@ -22,6 +22,7 @@ for (const cancel of [false, true]) {
 	test(`process identity probes honor ${cancel ? "abort" : "the shared deadline"} while a native helper is stalled`, async (t) => {
 		const original = childProcess.execFile;
 		let launched = 0;
+		let dispatched = 0;
 		const probes: ReturnType<typeof execFile>[] = [];
 		t.mock.method(
 			childProcess,
@@ -40,6 +41,9 @@ for (const cancel of [false, true]) {
 					options,
 					callback,
 				);
+				child.once("spawn", () => {
+					dispatched++;
+				});
 				probes.push(child);
 				return child;
 			},
@@ -61,6 +65,7 @@ for (const cancel of [false, true]) {
 				undefined,
 			);
 			assert.equal(launched, 1, "exhausted budget must not launch fallback helpers");
+			assert.equal(dispatched, 1, "the deadline must terminate a genuinely spawned native helper");
 			assert.ok(
 				Date.now() - started < 1_000,
 				"coordination must not wait for the helper's ten-second run",

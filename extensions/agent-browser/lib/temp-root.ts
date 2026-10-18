@@ -216,19 +216,28 @@ export async function cleanupSecureTempArtifacts(
 		});
 	});
 }
-export async function getSessionTempRoot(): Promise<string> {
-	if (!sessionTempRootPromise) {
-		sessionTempRootPromise = (async () => {
-			const tempRoot = await mkdtemp(join(tmpdir(), TEMP_ROOT_PREFIX));
-			await chmod(tempRoot, 0o700).catch(() => {
-				/* mkdtemp already creates a private root. */
-			});
-			await writeSecureTempRootOwnershipMarker(tempRoot);
-			ownedTempRoots.add(tempRoot);
-			registerExitCleanup();
-			return tempRoot;
-		})();
+async function allocateSessionTempRoot(): Promise<string> {
+	const tempRoot = await mkdtemp(join(tmpdir(), TEMP_ROOT_PREFIX));
+	try {
+		await chmod(tempRoot, 0o700).catch(() => {
+			/* mkdtemp already creates a private root. */
+		});
+		await writeSecureTempRootOwnershipMarker(tempRoot);
+		ownedTempRoots.add(tempRoot);
+		registerExitCleanup();
+		return tempRoot;
+	} catch (error) {
+		await rm(tempRoot, { force: true, recursive: true }).catch(() => {
+			/* Preserve the allocation failure if private-root cleanup also fails. */
+		});
+		throw error;
 	}
+}
+export async function getSessionTempRoot(): Promise<string> {
+	sessionTempRootPromise ??= allocateSessionTempRoot().catch((error: unknown) => {
+		sessionTempRootPromise = undefined;
+		throw error;
+	});
 	const tempRoot = await sessionTempRootPromise;
 	await refreshSecureTempRootLease(tempRoot).catch(() => {
 		/* A failed refresh leaves the existing marker. */
@@ -256,13 +265,4 @@ export async function getSecureTempChildDirectoryValidationError(
 		return `Refusing to remove ${path}; parent temp root is owned by uid ${marker.ownerUid ?? "unknown"}, not current uid ${currentUid ?? "unknown"}.`;
 	}
 	return undefined;
-}
-export async function getSecureTempDebugState(): Promise<{
-	currentTempRoot?: string;
-	ownedTempRoots: string[];
-}> {
-	return {
-		currentTempRoot: await sessionTempRootPromise?.catch(() => undefined),
-		ownedTempRoots: [...ownedTempRoots].sort(),
-	};
 }

@@ -26,6 +26,7 @@ import {
 	createExtensionHarness,
 	getBrowserInstructions,
 	runExtensionEvent,
+	runExtensionEventResults,
 	withPatchedEnv,
 } from "./helpers/agent-browser-harness.js";
 
@@ -43,6 +44,57 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 	const active = harness.getActiveTools();
 	const fallback = await getBrowserInstructions(harness);
 	assert.ok(fallback.startsWith(PROJECT_RULE_PROMPT));
+	assert.match(fallback, /ordinary requested non-destructive submissions may proceed/);
+	assert.match(
+		fallback,
+		/require explicit authorization for purchases, production-control, destructive\/irreversible, or account\/security\/privacy changes/,
+	);
+	assert.doesNotMatch(fallback, /Stop before order\/post\/purchase\/submit/);
+	assert.match(
+		fallback,
+		/ordinary non-destructive form submissions within the requested flow may proceed without separate confirmation/,
+	);
+	assert.match(fallback, /agent_browser for one native command/);
+	assert.match(fallback, /For agent_browser, use open → snapshot -i/);
+	assert.match(fallback, /sessionMode:fresh/);
+	assert.match(fallback, /bare calls share a root Pi browser with descendants/);
+	assert.match(fallback, /copied Chrome profiles may omit encrypted cookies/);
+	assert.match(fallback, /exact user paths/);
+	assert.match(fallback, /requested\/configured profiles/);
+	assert.match(fallback, /read <url> for text/);
+	assert.match(fallback, /batch --bail with JSON-array stdin for fixed sequences/);
+	assert.match(fallback, /get text\/html\/value\/count <selector>/);
+	assert.match(fallback, /get attr <selector> <name>/);
+	assert.doesNotMatch(fallback, /get title\/url\/text\/html\/value\/attr\/count/);
+	assert.match(fallback, /Use --json only for JSON text/);
+	assert.doesNotMatch(fallback, /never pass --json/);
+	assert.match(fallback, /ffmpeg before start/);
+	assert.match(fallback, /Verify nested scrolling/);
+	assert.match(fallback, /follow visible nextActions/);
+	assert.match(
+		fallback,
+		/serialize each complete browser operation and code cell by native socket context, namespace, and session/,
+	);
+	assert.match(fallback, /Different identities remain concurrent/);
+	assert.match(fallback, /It is not a transaction or rollback/);
+	assert.match(
+		fallback,
+		/Choose agent_browser for one native command, native batch --bail with JSON-array stdin for a known fixed sequence/,
+	);
+	assert.match(fallback, /Return to the model when a fresh observation needs judgment/);
+	assert.match(fallback, /Neither tool is a named recipe registry/);
+	assert.match(fallback, /evidence-only screenshots/);
+	assert.match(fallback, /Routine same-session calls skip tab-list preflights/);
+	assert.match(fallback, /react inspect <fiberId>/);
+	assert.doesNotMatch(fallback, /react tree\/inspect\/renders\/suspense/);
+	assert.match(fallback, /network route <url>/);
+	assert.match(fallback, /diff screenshot --baseline <file>/);
+	assert.doesNotMatch(fallback, /diff snapshot\/screenshot\/url/);
+	assert.match(fallback, /clipboard write <text>/);
+	assert.doesNotMatch(fallback, /clipboard read\/write\/copy\/paste/);
+	assert.ok(fallback.includes(join(process.cwd(), "README.md")));
+	assert.ok(fallback.includes(join(process.cwd(), "docs/COMMAND_REFERENCE.md")));
+	assert.ok(fallback.includes(join(process.cwd(), "docs/TOOL_CONTRACT.md")));
 	for (const line of [
 		...RUNTIME_PROMPT_GUIDELINES,
 		...QUICK_START_GUIDELINES,
@@ -91,6 +143,21 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 		"an inactive manager restores full eager guidance",
 	);
 	assert.deepEqual(harness.getActiveTools(), active);
+	const sections: Record<string, string> = { unrelated: "Retain this section" };
+	const event = {
+		systemPrompt: "Base system prompt",
+		systemPromptOptions: {
+			sections,
+		},
+	};
+	assert.deepEqual(
+		await runExtensionEventResults(harness.handlers, "before_agent_start", event, harness.ctx),
+		[],
+		"eager fallback composes a native section, never a full prompt replacement",
+	);
+	assert.equal(event.systemPrompt, "Base system prompt");
+	assert.equal(event.systemPromptOptions.sections.unrelated, "Retain this section");
+	assert.equal(event.systemPromptOptions.sections.agent_browser, fallback);
 });
 
 test("compact eager fallback bounds prompt size when AGENT_BROWSER_COMPACT_FALLBACK is set", async () => {
@@ -220,6 +287,14 @@ test("full instructions retain trusted config and late web-search guidance witho
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(fallback.includes(line), trusted);
 						}
+						// Both trust variants must deliver the independent provider-routing guidance only when enabled.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.equal(
+							fallback.includes(
+								"Prefer agent_browser_web_search for facts; agent_browser for pages.",
+							),
+							trusted,
+						);
 						// Neither fixed trust variant may leak the independent credential canary.
 						// oxlint-disable-next-line node-test/no-conditional-assertion
 						assert.ok(!fallback.includes("test-only-key"));

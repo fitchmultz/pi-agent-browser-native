@@ -24,9 +24,9 @@ concurrency:
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3d1b323fd602274c55e5f44692f24c8605e52b60 # main
     with:
-      automation-ref: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+      automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/.github
-          ref: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+          ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
           path: automation
           persist-credentials: false
       - name: Install system prerequisites
@@ -77,9 +77,11 @@ jobs:
           mkdir -m 700 "$root/home"
       - name: Build latest native fixture host and download stock browser
         env:
+          GH_TOKEN: ${{ github.token }}
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
         run: |
           env -i HOME="$CI_ROOT/home" TMPDIR=/tmp OFFICIAL_VERSION="$OFFICIAL_VERSION" \
+            GH_TOKEN="$GH_TOKEN" \
             PATH="$CI_NODE_BIN:/usr/local/bin:/usr/bin:/bin" \
             bash "$CI_ROOT/extension/scripts/ci-native-lifecycle.sh" setup "$CI_ROOT"
       - name: Allow the fixture Chrome to create its sandbox

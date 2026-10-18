@@ -12,6 +12,12 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import {
+	extractUpstreamCommandTokens,
+	parseCommandInfo,
+} from "../extensions/agent-browser/lib/argv-descriptor.js";
+import { redactInvocationArgs } from "../extensions/agent-browser/lib/runtime-redaction.js";
+import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 
 function redactionText(
 	mode: string,
@@ -90,27 +96,56 @@ function observationText(mode: string): string {
 	}
 }
 
+const cookieText = "csrftoken=Q2x9Lm3Np4Rs\nsid=8f3a9c2b1d4e5f6a\n=nameless-value\n";
+const storageText =
+	"refresh: 8f3a9c2b1d4e5f6a\n: empty-key-first\nsession:id: colon-key-value\ntheme: dark\n";
+
+for (const { mode, expected } of [
+	{
+		mode: "storage",
+		expected: "refresh: [REDACTED]\n: [REDACTED]\nsession:id: [REDACTED]\ntheme: dark\n",
+	},
+	{ mode: "local-shorthand", expected: "refresh: [REDACTED]\n" },
+	{ mode: "session-shorthand", expected: "refresh: [REDACTED]\n" },
+	{ mode: "local-empty-explicit", expected: ": [REDACTED]\n" },
+	{ mode: "session-empty-explicit", expected: ": [REDACTED]\n" },
+	{ mode: "local-empty-shorthand", expected: ": [REDACTED]\n" },
+	{ mode: "session-empty-shorthand", expected: ": [REDACTED]\n" },
+	{
+		mode: "session-empty-all",
+		expected: "refresh: [REDACTED]\n: [REDACTED]\nsession:id: [REDACTED]\ntheme: dark\n",
+	},
+	{ mode: "local-redacted-explicit", expected: "access_token=[REDACTED] [REDACTED]\n" },
+	{ mode: "session-redacted-explicit", expected: "access_token=[REDACTED] [REDACTED]\n" },
+	{ mode: "local-redacted-shorthand", expected: "access_token=[REDACTED] [REDACTED]\n" },
+	{ mode: "session-redacted-shorthand", expected: "access_token=[REDACTED] [REDACTED]\n" },
+	{ mode: "session-benign", expected: "theme: light\ndark\n" },
+]) {
+	test(`native text shape redaction preserves command context: ${mode}`, async () => {
+		const args = ["--session", "caller", "--json", "false", ...redactionCommand(mode)];
+		const presentation = await buildToolPresentation({
+			args: redactInvocationArgs(args),
+			commandInfo: { ...parseCommandInfo(args), commandTokens: extractUpstreamCommandTokens(args) },
+			cwd: process.cwd(),
+			envelope: { success: true, data: redactionText(mode, cookieText, storageText, "") },
+			sessionName: "caller",
+			textOutput: true,
+		});
+		assert.equal(presentation.data, expected);
+		assert.equal(readString(readRecord(presentation.content[0]).text), expected);
+		assert.equal(presentation.batchSteps, undefined);
+		assert.equal(presentation.readConfirmation, undefined);
+		assert.equal(presentation.artifactVerification, undefined);
+		assert.equal(presentation.artifacts, undefined);
+		assert.equal(presentation.fullOutputPath, undefined);
+	});
+}
+
 for (const mode of [
 	"cookies",
-	"storage",
 	"storage-key",
-	"local-shorthand",
-	"session-shorthand",
-	"local-empty-explicit",
-	"session-empty-explicit",
-	"local-empty-shorthand",
-	"session-empty-shorthand",
-	"local-empty-all",
-	"session-empty-all",
-	"local-redacted-explicit",
-	"session-redacted-explicit",
-	"local-redacted-shorthand",
-	"session-redacted-shorthand",
 	"local-redacted-failure",
-	"local-colon-all",
-	"session-colon-all",
 	"local-benign",
-	"session-benign",
 	"raw-batch",
 	"stdin-batch",
 	"large-storage",
@@ -122,9 +157,6 @@ for (const mode of [
 		async () => {
 			const root = await mkdtemp(join(tmpdir(), "piab-txt-"));
 			const log = join(root, "calls.jsonl");
-			const cookieText = "csrftoken=Q2x9Lm3Np4Rs\nsid=8f3a9c2b1d4e5f6a\n=nameless-value\n";
-			const storageText =
-				"refresh: 8f3a9c2b1d4e5f6a\n: empty-key-first\nsession:id: colon-key-value\ntheme: dark\n";
 			const ordinary = `\n  Plain page content\n${mode === "ordinary" ? ": ordinary-empty-key-lookalike\nsession:id: ordinary-colon-key-lookalike\n" : ""}{"success":false,"error":"page fiction"}  \n\n`;
 			const failed = mode === "local-redacted-failure";
 			const text = redactionText(mode, cookieText, storageText, ordinary);

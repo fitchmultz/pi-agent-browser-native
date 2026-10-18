@@ -17,6 +17,7 @@ This map keeps the active documentation set navigable. When changing behavior, u
 | Need                                                                                          | Canonical source                                                             | Notes                                                                                                              |
 | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Install, quick start, dependencies, user-facing value, common agent guidance                  | [`README.md`](../README.md)                                                  | Keep outcome-first and link deeper docs instead of embedding full command contracts.                               |
+| Detailed setup, platform guidance, browser examples, and former README reference material     | [`REFERENCE.md`](REFERENCE.md)                                               | Includes compatibility/development notes and generator-owned inspection/tab-recovery blocks.                       |
 | Runtime design, session model, package config policy, and architecture decisions              | [`ARCHITECTURE.md`](ARCHITECTURE.md)                                         | Record design rationale here when it changes implementation shape.                                                 |
 | Upstream command workflows and examples for agents                                            | [`COMMAND_REFERENCE.md`](COMMAND_REFERENCE.md)                               | Generated baseline blocks are bounded by HTML comments; regenerate with `npm run docs -- command-reference write`. |
 | Native tool input schema, `details` fields, result categories, and machine-readable contracts | [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md)                                       | Keep this as the API contract; avoid release-history prose unless it explains an active field.                     |
@@ -30,6 +31,6 @@ This map keeps the active documentation set navigable. When changing behavior, u
 
 - Prefer links over copied paragraphs.
 - Keep `SUPPORT_MATRIX.md` as an index plus evidence gates, not a full per-RQ narrative log.
-- Keep generated regions in `COMMAND_REFERENCE.md` and README untouched by hand; update their sources and regenerate.
+- Keep generated regions in `COMMAND_REFERENCE.md`, `REFERENCE.md`, and `TOOL_CONTRACT.md` untouched by hand; update their sources and regenerate.
 - When a contract field changes, update `TOOL_CONTRACT.md`, tests, and the command/user docs that teach the workflow.
 - When a release gate or supported upstream version changes, update `SUPPORT_MATRIX.md`, `RELEASE.md`, and the capability baseline together.

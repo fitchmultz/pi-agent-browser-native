@@ -13,7 +13,6 @@ import {
 export {
 	cleanupSecureTempArtifacts,
 	getSecureTempChildDirectoryValidationError,
-	getSecureTempDebugState,
 	preserveSecureTempDirectory,
 	writeSecureTempRootOwnershipMarker,
 } from "./temp-root.js";

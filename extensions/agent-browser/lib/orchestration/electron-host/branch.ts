@@ -27,6 +27,7 @@ function hasValidOptionalFields(value: Readonly<Record<string, unknown>>): boole
 		"packageSource",
 		"platform",
 		"sessionName",
+		"startIdentity",
 		"webSocketDebuggerUrl",
 	];
 	return (

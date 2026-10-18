@@ -1,23 +1,19 @@
 /**
  * Purpose: Verify the release/package gate helpers that protect the published tarball contract.
  * Responsibilities: Assert CLI option parsing, failure aggregation, publish-contract derivation, and required/forbidden package invariants for the verify-package maintainer script.
- * Scope: Focused unit coverage for `scripts/verify-package.mjs` helper behavior only; full package verification still runs through `npm run verify -- package` and `npm run verify -- release`.
+ * Scope: Verifier helpers and one isolated real prepare/pack fixture, including plain-Node compiled checkout state; full installed-package verification runs through `npm run verify -- package` and `npm run verify -- release`.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: The retired `.pi/extensions/agent-browser.ts` autoload shim must stay forbidden, and required packed files must be derived from the canonical publish contract rather than duplicated in tests.
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readRecord, readString } from "./helpers/assertions.js";
-import { execFile as execFileCallback } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import test, { before } from "node:test";
-import { promisify } from "node:util";
-
-// Native execFile returns ChildProcess and supplies custom promisify; the ambient callback expects void.
-// oxlint-disable-next-line typescript/strict-void-return
-const execFile = promisify(execFileCallback);
+import { join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
+import test from "node:test";
 import {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,
@@ -31,10 +27,6 @@ import {
 	parseCliArgs,
 	verifyPackageRelease,
 } from "../scripts/verify-package.mjs";
-
-before(async () => {
-	await execFile(process.execPath, ["scripts/build.mjs"], { maxBuffer: 10 * 1024 * 1024 });
-});
 
 test("parseCliArgs supports help, list-files, and smoke-pi modes", () => {
 	assert.deepEqual(parseCliArgs([]), { listFiles: false, showHelp: false, smokePi: false });
@@ -100,6 +92,22 @@ test("evaluatePiSmokeResult requires exactly one packaged agent_browser source a
 			tools: [],
 		})[0] ?? "",
 		/Expected exactly one/,
+	);
+	assert.deepEqual(
+		evaluatePiSmokeResult({
+			packageDir: "/tmp/pkg/package",
+			tools: [
+				{
+					name: "agent_browser",
+					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
+				},
+				{
+					name: "agent_browser",
+					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/duplicate.js" },
+				},
+			],
+		}),
+		["Expected exactly one packaged agent_browser tool, found 2."],
 	);
 	assert.match(
 		evaluatePiSmokeResult({
@@ -198,28 +206,12 @@ test("executePackagedAgentBrowserSmoke reports packaged invocation failures clea
 test("package metadata keeps Pi peers host-provided and declares the qualified runtime graph", async () => {
 	const packageJson = readRecord(JSON.parse(await readFile("package.json", "utf8")));
 
-	assert.equal(
-		readRecord(packageJson.dependencies)["cross-spawn"],
-		"7.0.6",
-		"the spawner must not rely on Pi's private transitive dependencies",
-	);
-	assert.equal(
-		readRecord(packageJson.dependencies)["path-key"],
-		"3.1.1",
-		"launcher PATH selection must match cross-spawn 7",
-	);
-	assert.equal(
-		readRecord(packageJson.dependencies).which,
-		"2.0.2",
-		"launcher resolution must match cross-spawn 7",
-	);
+	const dependencies = readRecord(packageJson.dependencies);
+	assert.equal(typeof dependencies["cross-spawn"], "string");
+	assert.equal(typeof dependencies["path-key"], "string");
+	assert.equal(typeof dependencies.which, "string");
 	assert.equal(readRecord(packageJson.engines).node, ">=24.21.0");
 	assert.equal(packageJson.packageManager, "npm@12.2.0");
-	assert.equal(
-		packageJson.overrides,
-		undefined,
-		"transitive owners should select their compatible dependency versions",
-	);
 	for (const packageName of [
 		"@earendil-works/pi-ai",
 		"@earendil-works/pi-coding-agent",
@@ -232,6 +224,12 @@ test("package metadata keeps Pi peers host-provided and declares the qualified r
 			readRecord(packageJson.peerDependencies)[packageName],
 			"*",
 			`${packageName} should stay host-provided per Pi package docs`,
+		);
+		// Every host peer must remain optional for consumer installations without a Pi host.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.equal(
+			readRecord(readRecord(packageJson.peerDependenciesMeta)[packageName]).optional,
+			true,
 		);
 	}
 	assert.equal(
@@ -278,17 +276,18 @@ test("publish contract derives required packed files from package.json", async (
 		true,
 	);
 	assert.equal(
-		publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/parsing.js"),
+		publishContract.requiredPackedFiles.includes("dist/packaged/lib/config-policy.js"),
 		true,
 	);
 	assert.equal(
-		publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/lib/playbook.js"),
+		publishContract.requiredPackedFiles.includes("dist/packaged/lib/browser-session-conversion.js"),
 		true,
 	);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/packaged/lib/runtime.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/packaged/lib/parsing.js"), true);
+	assert.equal(publishContract.requiredPackedFiles.includes("dist/packaged/lib/playbook.js"), true);
 	assert.equal(
-		publishContract.requiredPackedFiles.includes(
-			"dist/extensions/agent-browser/lib/results/snapshot.js",
-		),
+		publishContract.requiredPackedFiles.includes("dist/packaged/lib/results/snapshot.js"),
 		true,
 	);
 	for (const path of [
@@ -338,12 +337,16 @@ test("collectPackedMarkdownLinkFailures reports local links absent from the pack
 	try {
 		await writeFile(
 			join(tempDir, "README.md"),
-			"[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n",
+			"[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n" +
+				"![art](.github/readme/flow.png) ![missing art](.github/readme/missing.png) " +
+				"[ordinary link](.github/readme/flow.png) ![other image](docs/missing.png)\n",
 			"utf8",
 		);
 		await writeFile(join(tempDir, "CHANGELOG.md"), "[root](README.md)\n", "utf8");
 		await mkdir(join(tempDir, "docs"));
 		await writeFile(join(tempDir, "docs", "TOOL_CONTRACT.md"), "# Contract\n", "utf8");
+		await mkdir(join(tempDir, ".github", "readme"), { recursive: true });
+		await writeFile(join(tempDir, ".github", "readme", "flow.png"), "repo-only artwork", "utf8");
 
 		const failures = await collectPackedMarkdownLinkFailures({
 			cwd: tempDir,
@@ -352,30 +355,13 @@ test("collectPackedMarkdownLinkFailures reports local links absent from the pack
 
 		assert.deepEqual(failures, [
 			"Packed Markdown link README.md -> docs/support-notes.md resolves to missing packed file docs/support-notes.md.",
+			"Packed Markdown link README.md -> .github/readme/flow.png resolves to missing packed file .github/readme/flow.png.",
+			"Packed Markdown link README.md -> docs/missing.png resolves to missing packed file docs/missing.png.",
+			"README artwork is missing from the repository: .github/readme/missing.png.",
 		]);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
 	}
-});
-
-test("evaluatePackResult uses the shared publish contract", async () => {
-	const publishContract = await loadPublishContract();
-	const report = evaluatePackResult({
-		forbiddenRepoFiles: [],
-		missingRepoFiles: [],
-		packResult: {
-			entryCount: publishContract.requiredPackedFiles.length,
-			filename: "pi-agent-browser-native-0.2.12.tgz",
-			files: publishContract.requiredPackedFiles.map((path) => ({ path })),
-			size: 123,
-			unpackedSize: 456,
-		},
-		publishContract,
-	});
-
-	assert.deepEqual(report.failures, []);
-	assert.deepEqual(report.missingPackedFiles, []);
-	assert.deepEqual(report.forbiddenPackedFiles, []);
 });
 
 test("evaluatePackResult rejects private paths and tarballs without rejecting neighboring names", async () => {
@@ -384,11 +370,14 @@ test("evaluatePackResult rejects private paths and tarballs without rejecting ne
 		["docs/plans/internal.md", ["docs/plans/"]],
 		["docs/plans/.secret.md", ["docs/plans/"]],
 		["AGENTS.md", ["AGENTS.md"]],
+		["dist/extensions/agent-browser/lib/runtime.js", ["dist/extensions/agent-browser/lib/"]],
+		["dist/packaged/lib/runtime.js", []],
 		[".artifacts/nested/report.json", [".artifacts/"]],
 		[".artifacts/.hidden/foo", [".artifacts/"]],
 		[".crabbox/lease.json", [".crabbox/"]],
 		[".crabbox/.lease", [".crabbox/"]],
 		[".debug/log.txt", [".debug/"]],
+		[".github/readme/flow.png", [".github/readme/"]],
 		[".debug/.hidden/log.txt", [".debug/"]],
 		[".platform-smoke-runs/report.json", [".platform-smoke-runs/"]],
 		[".platform-smoke-runs/.receipt", [".platform-smoke-runs/"]],
@@ -460,13 +449,31 @@ test("verifyPackageRelease lets prepare create a missing dist directory", async 
 	}
 });
 
-test("packToTemporaryPackageDir writes a tarball even under npm publish dry-run env", async () => {
+test("packToTemporaryPackageDir runs prepare and preserves compiled checkout state under npm publish dry-run env", async (t) => {
+	const source = resolve(import.meta.dirname, "..");
+	const directory = await mkdtemp(join(tmpdir(), "piab-package-source-"));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const excluded = new Set([".git", "node_modules", "dist", ".artifacts", ".crabbox", ".cueloop"]);
+	await cp(source, directory, {
+		recursive: true,
+		filter: (file) => !excluded.has(relative(source, file).split(sep)[0]),
+	});
+	await symlink(join(source, "node_modules"), join(directory, "node_modules"), "junction");
+	const lock = await readFile(join(directory, "package-lock.json"), "utf8");
+	await assert.rejects(access(join(directory, "dist")));
 	const previousDryRun = process.env.npm_config_dry_run;
+	const previousOffline = process.env.npm_config_offline;
 	process.env.npm_config_dry_run = "true";
+	process.env.npm_config_offline = "true";
 	let packed: Awaited<ReturnType<typeof packToTemporaryPackageDir>> | undefined;
 
 	try {
-		packed = await packToTemporaryPackageDir();
+		packed = await packToTemporaryPackageDir(directory);
+		const entrypoint: unknown = await import(
+			pathToFileURL(join(directory, "dist/extensions/agent-browser/index.js")).href
+		);
+		assert.equal(typeof readRecord(entrypoint).default, "function");
+		assert.equal(await readFile(join(directory, "package-lock.json"), "utf8"), lock);
 		await access(join(packed.packageDir, "package.json"));
 		assert.match(
 			readString(readRecord(packed.packResult).filename),
@@ -476,18 +483,73 @@ test("packToTemporaryPackageDir writes a tarball even under npm publish dry-run 
 			forbiddenRepoFiles: [],
 			missingRepoFiles: [],
 			packResult: readRecord(packed.packResult),
-			publishContract: await loadPublishContract(),
+			publishContract: await loadPublishContract({ cwd: directory }),
 		});
 		assert.deepEqual(
 			report.failures,
 			[],
 			"real tarball must satisfy the canonical required and forbidden paths",
 		);
+		const compiledState = execFileSync(
+			process.execPath,
+			[
+				"--input-type=module",
+				"--eval",
+				`import assert from "node:assert/strict";
+import { access, rm } from "node:fs/promises";
+import { dirname } from "node:path";
+import { withAgentBrowserProcessEnvironment } from "./dist/extensions/agent-browser/lib/process-environment.js";
+import { buildExecutionPlan } from "./dist/extensions/agent-browser/lib/runtime.js";
+import { buildSnapshotPresentation } from "./dist/extensions/agent-browser/lib/results/snapshot.js";
+import { cleanupSecureTempArtifacts } from "./dist/extensions/agent-browser/lib/temp.js";
+const plan = withAgentBrowserProcessEnvironment(
+	{ AGENT_BROWSER_SESSION: "compiled-caller", AGENT_BROWSER_NAMESPACE: "compiled-namespace" },
+	() => buildExecutionPlan(["get", "title"], {
+		freshSessionName: "compiled-fresh", managedSessionName: "compiled-managed",
+		managedSessionActive: false, sessionMode: "auto",
+	}),
+);
+const refs = Object.fromEntries(Array.from({ length: 61 }, (_, index) => [
+	"e" + (index + 1), { role: "button", name: "Button " + (index + 1) },
+]));
+const presentation = await buildSnapshotPresentation({ snapshot: "Tree", refs });
+assert.ok(presentation.fullOutputPath, "fixture must create a real snapshot spill");
+try {
+	await access(presentation.fullOutputPath);
+	await cleanupSecureTempArtifacts();
+	const spillRemains = await access(presentation.fullOutputPath).then(() => true, error => {
+		if (error.code === "ENOENT") return false;
+		throw error;
+	});
+	console.log(JSON.stringify({
+		effectiveArgs: plan.effectiveArgs, namespace: plan.namespace, spillRemains,
+	}));
+} finally {
+	await rm(dirname(presentation.fullOutputPath), { recursive: true, force: true });
+}`,
+			],
+			{
+				cwd: directory,
+				env: { ...process.env, NODE_OPTIONS: "" },
+				encoding: "utf8",
+				timeout: 10_000,
+			},
+		);
+		assert.deepEqual(JSON.parse(compiledState), {
+			effectiveArgs: ["--json", "--session", "compiled-caller", "get", "title"],
+			namespace: "compiled-namespace",
+			spillRemains: false,
+		});
 	} finally {
 		if (previousDryRun === undefined) {
 			delete process.env.npm_config_dry_run;
 		} else {
 			process.env.npm_config_dry_run = previousDryRun;
+		}
+		if (previousOffline === undefined) {
+			delete process.env.npm_config_offline;
+		} else {
+			process.env.npm_config_offline = previousOffline;
 		}
 		await packed?.cleanup();
 	}

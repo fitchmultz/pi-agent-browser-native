@@ -25,6 +25,7 @@ import {
 	type NativeDefaults,
 } from "./native-config.js";
 import { withRootBrowserLaunch, type RootBrowserLaunchPolicy } from "./native-root-launch.js";
+import type { PreparationDaemonObservation } from "./browser-run/managed-session-daemon-inspection.js";
 
 export interface NativeSessionCallContext {
 	readonly cwd: string;
@@ -36,10 +37,13 @@ export interface NativeSessionCallContext {
 	};
 }
 
-type BrowserRunner = (daemonInactive?: boolean) => Promise<AgentBrowserToolResult>;
+type BrowserRunner = (
+	observation?: PreparationDaemonObservation,
+) => Promise<AgentBrowserToolResult>;
 type LaunchDefaultsRunner = (
 	browserRun: BrowserRunner,
 	signal?: AbortSignal,
+	includeGeneration?: boolean,
 ) => Promise<AgentBrowserToolResult>;
 type InputRunner = (
 	input: ResolvedAgentBrowserValidInput,
@@ -306,8 +310,8 @@ class NativeSessionCall {
 	}
 
 	private rootLaunchRunner(policy: RootBrowserLaunchPolicy): LaunchDefaultsRunner {
-		return (browserRun, signal = this.context.signal) =>
-			withRootBrowserLaunch(policy, browserRun, signal);
+		return (browserRun, signal = this.context.signal, includeGeneration) =>
+			withRootBrowserLaunch(policy, browserRun, signal, includeGeneration);
 	}
 
 	async run(): Promise<AgentBrowserToolResult> {

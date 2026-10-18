@@ -470,7 +470,14 @@ emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Da
 						}
 						const launch = readRecord(readRecord(data.lifecycle).effectiveLaunch);
 						const hash = launch.launchHash;
-						return hash === null || hash === undefined ? [] : [readString(hash)];
+						if (hash === null || hash === undefined) {
+							return [];
+						}
+						assert.ok(
+							typeof hash === "string" || (typeof hash === "number" && Number.isFinite(hash)),
+							"native launchHash must be a string or finite number",
+						);
+						return [String(hash)];
 					}),
 				),
 			];

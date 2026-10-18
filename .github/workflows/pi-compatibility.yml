@@ -4,6 +4,19 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      official-version:
+        description: Official stable version; blank resolves latest
+        type: string
+        default: ""
+      fork-ref:
+        description: Exact maintained fork commit; blank resolves main
+        type: string
+        default: ""
+      native-qualification:
+        description: Run this repository's pinned fleet entry instead of the routine package checks
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       official-version:
@@ -23,19 +36,31 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PI_AUTOMATION_REF: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+  PI_AUTOMATION_REF: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3d1b323fd602274c55e5f44692f24c8605e52b60 # main
     with:
-      automation-ref: 3b7a5f72d9c2d67d6fb53ef7bd308b005c385af3 # main
+      automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
+  native-qualification:
+    needs: resolve
+    if: >-
+      !cancelled() && needs.resolve.result == 'success' &&
+      github.event_name == 'workflow_dispatch' && inputs.native-qualification
+    uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+    with:
+      automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+      source-ref: ${{ github.sha }}
+      official-version: ${{ needs.resolve.outputs.official-version }}
+      fork-ref: ${{ needs.resolve.outputs.fork-ref }}
+
   official:
     needs: resolve
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.native-qualification }}
     name: Official Pi / Node 24
     runs-on: ubuntu-26.04
     timeout-minutes: 30
@@ -68,6 +93,7 @@ jobs:
       - name: Qualify latest official Pi
         working-directory: extension
         env:
+          GH_TOKEN: ${{ github.token }}
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
           PI_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/official-evidence
         run: |
@@ -84,7 +110,7 @@ jobs:
 
   fork:
     needs: resolve
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.native-qualification }}
     name: Fork Pi / Node 24
     runs-on: ubuntu-26.04
     timeout-minutes: 30
@@ -152,7 +178,7 @@ jobs:
 
   macos:
     needs: resolve
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && !inputs.native-qualification }}
     name: macOS package smoke
     runs-on: macos-latest
     timeout-minutes: 8
@@ -181,6 +207,7 @@ jobs:
       - name: Load the packed package in latest Pi
         working-directory: extension
         env:
+          GH_TOKEN: ${{ github.token }}
           OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
           PI_COMPAT_EVIDENCE_DIR: ${{ runner.temp }}/macos-evidence
         run: |

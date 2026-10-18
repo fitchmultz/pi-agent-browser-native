@@ -24,8 +24,6 @@ import {
 	evaluateDoctor,
 	formatDoctorReport,
 	isDirectRun,
-	normalizeAgentBrowserVersion,
-	normalizePiVersion,
 	parseCliArgs,
 } from "../scripts/doctor.mjs";
 
@@ -40,16 +38,6 @@ function passingPiVersion() {
 function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
 	return evaluateDoctor({ runPi: async () => passingPiVersion(), ...options });
 }
-
-test("normalizeAgentBrowserVersion strips the upstream binary label", () => {
-	assert.equal(normalizeAgentBrowserVersion("agent-browser 0.26.0\n"), "0.26.0");
-	assert.equal(normalizeAgentBrowserVersion("0.26.0\n"), "0.26.0");
-});
-
-test("normalizePiVersion strips an optional pi binary label", () => {
-	assert.equal(normalizePiVersion("pi 0.84.0\n"), "0.84.0");
-	assert.equal(normalizePiVersion("0.84.0\n"), "0.84.0");
-});
 
 test("doctor reports missing agent-browser with actionable install guidance", async () => {
 	const missing = Object.assign(new Error("spawn agent-browser ENOENT"), { code: "ENOENT" });
@@ -70,11 +58,17 @@ test("doctor reports missing agent-browser with actionable install guidance", as
 });
 
 test("doctor accepts the supported floor and newer stable versions", async () => {
-	for (const version of ["0.35.0", "0.35.2", "1.0.0"]) {
+	for (const [version, upstreamOutput, piOutput] of [
+		["0.35.0", "agent-browser 0.35.0\n", "pi 1.0.0\n"],
+		["0.35.0", "0.35.0\n", "1.0.0\n"],
+		["0.35.2", "agent-browser 0.35.2\n", "1.0.0\n"],
+		["1.0.0", "agent-browser 1.0.0\n", "1.0.0\n"],
+	]) {
 		// Each injected version/source case completes and is asserted before the next begins.
 		// oxlint-disable-next-line no-await-in-loop
 		const report = await evaluateDoctorWithPi({
-			runAgentBrowser: async () => `agent-browser ${version}\n`,
+			runAgentBrowser: async () => upstreamOutput,
+			runPi: async () => piOutput,
 			skipSourceCheck: true,
 		});
 		const text = formatDoctorReport(report);
@@ -82,6 +76,9 @@ test("doctor accepts the supported floor and newer stable versions", async () =>
 		// All fixed version/source variants must pass; the loop has no result-based filtering.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.equal(report.failures.length, 0);
+		// Every version spelling must produce the recognized Pi floor, not an unparseable warning.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.match(text, /Pi version satisfies the minimum runtime floor: 1\.0\.0/);
 		// Every supported-version fixture must report its exact detected version.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.match(
@@ -173,27 +170,6 @@ test("doctor reports duplicate package and checkout sources with remediation", a
 	assert.match(text, /keep exactly one active source/i);
 });
 
-test("doctor passes the source check when exactly one configured source is active", async () => {
-	const settingsByPath = new Map([
-		[
-			resolve("/agent/settings.json"),
-			JSON.stringify({ packages: ["npm:pi-agent-browser-native"] }),
-		],
-	]);
-	const report = await evaluateDoctorWithPi({
-		agentDir: "/agent",
-		cwd: "/repo",
-		pathExists: async (path: string) => settingsByPath.has(path),
-		readText: async (path: string) => settingsByPath.get(path),
-		runAgentBrowser: async () => passingVersion(),
-	});
-	const text = formatDoctorReport(report);
-
-	assert.equal(report.failures.length, 0);
-	assert.match(text, /No duplicate pi-agent-browser-native sources detected/);
-	assert.match(text, /Detected source: npm:pi-agent-browser-native/);
-});
-
 test("doctor resolves relative sources from their settings file directory", async () => {
 	// The compiled `dist/` entrypoint row protects packaged installs whose configured source points at build output.
 	for (const [settingsKey, source] of [
@@ -242,7 +218,7 @@ test("doctor treats no configured source as an informational warning, not a fail
 	assert.match(text, /Doctor passed/);
 });
 
-test("doctor remains read-only through injected I/O", async () => {
+test("doctor invokes upstream only for the read-only version probe", async () => {
 	const calls: string[] = [];
 	const settingsByPath = new Map([
 		[
@@ -268,6 +244,9 @@ test("doctor remains read-only through injected I/O", async () => {
 	});
 
 	assert.equal(report.failures.length, 0);
+	const text = formatDoctorReport(report);
+	assert.match(text, /No duplicate pi-agent-browser-native sources detected/);
+	assert.match(text, /Detected source: npm:pi-agent-browser-native/);
 	// The only agent-browser invocation is the read-only --version probe: the doctor never shells out
 	// to `agent-browser doctor` or any fix/write command through the injected seam.
 	assert.deepEqual(

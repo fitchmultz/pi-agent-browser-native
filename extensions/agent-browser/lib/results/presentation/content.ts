@@ -134,8 +134,11 @@ function selectObservationFields(
 function projectBatchMetadata(
 	step: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
-	const { data: _data, ...metadata } = projectAgentBrowserObservation(step, step.success !== false);
-	return Object.assign({ index: step.index }, metadata);
+	const { data: _data, stdout: _stdout, ...metadata } = step;
+	return Object.assign(
+		{ index: step.index },
+		projectAgentBrowserObservation(metadata, step.success !== false),
+	);
 }
 
 // Shared by direct results and code observations; ownership/replay state stays in details.

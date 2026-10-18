@@ -625,46 +625,31 @@ test("buildToolPresentation renders empty page titles instead of dumping raw ups
 });
 
 test("buildToolPresentation renders structured and empty eval results instead of dumping raw upstream JSON", async () => {
-	const evalPresentation = async (result: unknown) =>
-		buildToolPresentation({
-			commandInfo: { command: "eval" },
-			cwd: process.cwd(),
-			envelope: {
-				success: true,
-				data: {
-					lifecycle: { launched: false, reused: true },
-					origin: "https://shop.example/",
-					result,
-				},
-			},
-		});
-
-	assert.equal(
-		presentationText(await evalPresentation([1, 2, 3])),
-		"[\n  1,\n  2,\n  3\n]\n\nOrigin: https://shop.example/",
-	);
-	assert.equal(
-		presentationText(await evalPresentation({ a: 1 })),
-		'{\n  "a": 1\n}\n\nOrigin: https://shop.example/',
-	);
-	assert.equal(presentationText(await evalPresentation([])), "[]\n\nOrigin: https://shop.example/");
-	assert.equal(
-		presentationText(await evalPresentation(null)),
-		"null\n\nOrigin: https://shop.example/",
-	);
-	assert.equal(
-		presentationText(await evalPresentation("")),
-		"(empty string)\n\nOrigin: https://shop.example/",
-	);
-	assert.equal(presentationText(await evalPresentation(0)), "0\n\nOrigin: https://shop.example/");
-	assert.equal(
-		presentationText(await evalPresentation(false)),
-		"false\n\nOrigin: https://shop.example/",
-	);
-
 	await Promise.all(
-		[[1, 2, 3], {}, [], null, ""].map(async (result) => {
-			assert.doesNotMatch(presentationText(await evalPresentation(result)), /lifecycle/);
+		[
+			{ result: [1, 2, 3], text: "[\n  1,\n  2,\n  3\n]" },
+			{ result: { a: 1 }, text: '{\n  "a": 1\n}' },
+			{ result: {}, text: "{}" },
+			{ result: [], text: "[]" },
+			{ result: null, text: "null" },
+			{ result: "", text: "(empty string)" },
+			{ result: 0, text: "0" },
+			{ result: false, text: "false" },
+		].map(async ({ result, text }) => {
+			const presentation = await buildToolPresentation({
+				commandInfo: { command: "eval" },
+				cwd: process.cwd(),
+				envelope: {
+					success: true,
+					data: {
+						lifecycle: { launched: false, reused: true },
+						origin: "https://shop.example/",
+						result,
+					},
+				},
+			});
+			assert.equal(presentationText(presentation), `${text}\n\nOrigin: https://shop.example/`);
+			assert.doesNotMatch(presentationText(presentation), /lifecycle/);
 		}),
 	);
 });

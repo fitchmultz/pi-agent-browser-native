@@ -10,6 +10,7 @@ import {
 	type SessionTabTarget,
 } from "../../session-page-state.js";
 import { getGuardedRefUsage } from "./session-state-refs.js";
+import { presentElectronManagedSessionTarget } from "./final-result-electron.js";
 import type {
 	ElectronManagedSessionTarget,
 	ElectronPostCommandHealthDiagnostic,
@@ -177,15 +178,16 @@ export function buildElectronSessionMismatch(options: {
 		return;
 	}
 	const nextActions = buildElectronMismatchNextActions(options.record, liveTarget);
+	const managedSession = presentElectronManagedSessionTarget(options.managedSession);
 	return {
 		launchId: options.record.launchId,
 		liveTarget,
-		managedSession: options.managedSession,
+		managedSession,
 		nextActionIds: nextActions.map((action) => action.id),
 		reason,
 		sessionName: options.record.sessionName,
 		statusTargets: options.statusTargets,
-		summary: describeElectronMismatch(options.managedSession, options.record, liveTarget, reason),
+		summary: describeElectronMismatch(managedSession, options.record, liveTarget, reason),
 	};
 }
 

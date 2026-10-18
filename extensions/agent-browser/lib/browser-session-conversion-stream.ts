@@ -8,7 +8,6 @@ import stringifyJson from "stream-json/stringer.js";
 import disassembleJson from "stream-json/disassembler.js";
 import {
 	BROWSER_RESULT_TOOLS,
-	BROWSER_STATE_FIELDS,
 	BROWSER_TRANSITION_ENTRY,
 	type BrowserRecord,
 } from "./browser-transcript-contracts.js";
@@ -19,63 +18,9 @@ import {
 	type JournalRange,
 } from "./browser-journal-reader.js";
 import { isRecord } from "./parsing.js";
-import {
-	convertLegacyBrowserEntry,
-	emptyProjection,
-	type LegacyProjection,
-} from "./browser-legacy-projection.js";
-const DETAILS_FIELDS = [
-	...BROWSER_STATE_FIELDS,
-	"browserEventVersion",
-	"electron",
-	"compiledNetworkSourceLookup",
-	"sessionTabTarget",
-	"sessionTabTargetUnknown",
-	"sessionTabReopenPending",
-	"refSnapshot",
-	"refSnapshotInvalidation",
-	"artifactManifest",
-	"error",
-	"summary",
-];
-const LEGACY_FIELDS = [
-	["data", "event"],
-	["data", "snapshot"],
-	["data", "cleanup"],
-	["data", "sessionName"],
-	["data", "closeCommandArgs"],
-	["data", "launchAttempted"],
-	["data", "toolCallId"],
-	["data", "isError"],
-	["message", "toolName"],
-	["message", "toolCallId"],
-	["message", "isError"],
-	...["data", "message"].flatMap((root) => DETAILS_FIELDS.map((field) => [root, "details", field])),
-	...["data", "message"].flatMap((root) =>
-		["command", "success", "lifecycle"]
-			.map((field) => [root, "details", "batchSteps", "*", field])
-			.concat(
-				[
-					["data", "lifecycle"],
-					["result", "lifecycle"],
-				].map((field) => [root, "details", "batchSteps", "*"].concat(field)),
-			),
-	),
-	...["data", "message"].flatMap((root) =>
-		["command", "success", "error"]
-			.map((field) => [root, "details", "data", "*", field])
-			.concat(
-				["url", "title", "origin", "targetId"].map((field) => [
-					root,
-					"details",
-					"data",
-					"*",
-					"result",
-					field,
-				]),
-			),
-	),
-];
+import { convertLegacyBrowserEntry, emptyProjection } from "./browser-legacy-projection.js";
+import { BrowserConversionBranches } from "./browser-conversion-branches.js";
+import { LEGACY_BROWSER_FIELDS } from "./browser-legacy-fields.js";
 export async function sourceChecksum(file: FileHandle, size: number): Promise<string> {
 	const hash = createHash("sha256");
 	for await (const chunk of readRange(file, { offset: 0, length: size })) {
@@ -178,15 +123,22 @@ function isLegacyBrowserEntry(value: Readonly<Record<string, unknown>>): boolean
 /** Owns branch projection and counters while streaming entries, never whole raw payloads. */
 export class BrowserConversionWriter {
 	private readonly ids = new Set<string>();
-	private readonly states = new Map<string, LegacyProjection>();
+	private readonly branches: BrowserConversionBranches;
 	private convertedRecords = 0;
 	private snapshotDefinitions = 0;
 	constructor(
 		private readonly file: FileHandle,
 		private readonly stage: FileHandle,
-		private readonly sessionId: string,
-		private readonly checksum: string,
-	) {}
+		private readonly source: {
+			readonly sessionId: string;
+			readonly checksum: string;
+		},
+		metadata: readonly JournalEntry[],
+	) {
+		this.branches = new BrowserConversionBranches(
+			metadata.map((entry) => (entry.value.type === "session" ? undefined : entry.value.parentId)),
+		);
+	}
 	get counts(): Readonly<{
 		entryCount: number;
 		convertedRecords: number;
@@ -213,19 +165,19 @@ export class BrowserConversionWriter {
 		this.ids.add(id);
 		const parent =
 			typeof parentId === "string"
-				? (this.states.get(parentId) ?? emptyProjection())
+				? (this.branches.get(parentId) ?? emptyProjection())
 				: emptyProjection();
 		if (!isLegacyBrowserEntry(entry.value)) {
-			this.states.set(id, parent);
+			this.branches.advance(id, parentId, parent);
 			return undefined;
 		}
-		const details = await projectJson(readRange(this.file, entry), LEGACY_FIELDS, Infinity);
+		const details = await projectJson(readRange(this.file, entry), LEGACY_BROWSER_FIELDS, Infinity);
 		const conversion = convertLegacyBrowserEntry(
 			{ ...entry.value, ...details },
 			parent,
-			this.sessionId,
+			this.source.sessionId,
 		);
-		this.states.set(id, conversion.projection);
+		this.branches.advance(id, parentId, conversion.projection);
 		return conversion.record;
 	}
 	async write(entry: JournalEntry, sourceSize: number): Promise<void> {
@@ -239,7 +191,7 @@ export class BrowserConversionWriter {
 		}
 		const data = {
 			...record,
-			archive: { sourceSha256: this.checksum, offset: entry.offset, length: entry.length },
+			archive: { sourceSha256: this.source.checksum, offset: entry.offset, length: entry.length },
 		};
 		if (entry.value.type === "message") {
 			await rewriteMessage(this.file, entry, this.stage, data);

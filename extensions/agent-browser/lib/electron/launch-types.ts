@@ -60,6 +60,7 @@ export interface ElectronLaunchRecord {
 	readonly port: number;
 	readonly processGroupId?: number;
 	readonly sessionName?: string;
+	readonly startIdentity?: string;
 	readonly targetType?: "any" | "page" | "webview";
 	readonly userDataDir: string;
 	readonly version: typeof ELECTRON_LAUNCH_RECORD_VERSION;
