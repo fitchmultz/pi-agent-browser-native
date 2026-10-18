@@ -178,6 +178,7 @@ test("compact eager fallback bounds prompt size when AGENT_BROWSER_COMPACT_FALLB
 			assert.ok(fallback.startsWith(PROJECT_RULE_PROMPT));
 			assert.ok(fallback.includes("Use agent_browser for real browser or live web content."));
 			for (const line of SHARED_BROWSER_PLAYBOOK_GUIDELINES) {
+				// Every long playbook line must be absent; the inventory is the fixture.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.ok(
 					!fallback.includes(line),
