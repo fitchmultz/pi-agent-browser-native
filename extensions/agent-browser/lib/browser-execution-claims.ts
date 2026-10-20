@@ -167,7 +167,67 @@ async function prepareClaim(
 		path: `${basePath}.claim-${token}`,
 	};
 }
-async function publishClaim(claim: PreparedClaim): Promise<void> {
+function publicationRetryAvailable(budget: ClaimBudget): boolean {
+	return (
+		budget.deadline !== undefined && budget.signal?.aborted !== true && Date.now() < budget.deadline
+	);
+}
+function candidateMatchesPreparedClaim(
+	candidate: PolicyLockClaim | undefined,
+	claim: PreparedClaim,
+): boolean {
+	if (!candidate || candidate.ticket !== null) {
+		return false;
+	}
+	const { owner } = candidate;
+	const expected = claim.owner;
+	const sessions = owner.sessionNames;
+	const expectedSessions = expected.sessionNames;
+	const identityFields = ["token", "pid", "startIdentity", "version"] as const;
+	return (
+		identityFields.every((field) => owner[field] === expected[field]) &&
+		(expectedSessions === null
+			? sessions === null
+			: sessions !== null &&
+				sessions.length === expectedSessions.length &&
+				sessions.every((session, index) => session === expectedSessions[index]))
+	);
+}
+async function publishCandidate(claim: PreparedClaim, budget: ClaimBudget): Promise<boolean> {
+	while (true) {
+		try {
+			// The initial native publication attempt retains its existing single-probe semantics.
+			// oxlint-disable-next-line no-await-in-loop
+			await rename(claim.candidatePath, claim.path);
+			return true;
+		} catch (error) {
+			if (
+				process.platform !== "win32" ||
+				getErrorCode(error) !== "EPERM" ||
+				!publicationRetryAvailable(budget)
+			) {
+				throw error;
+			}
+			// Retry only the observed Windows publication conflict, within the original budget.
+			// oxlint-disable-next-line no-await-in-loop
+			await waitForRetry(budget.signal);
+			if (!publicationRetryAvailable(budget)) {
+				throw error;
+			}
+			// Every retry must still own this unpublished candidate and its complete captured scope.
+			// oxlint-disable-next-line no-await-in-loop
+			const candidate = await readClaim(claim.candidatePath);
+			if (!candidateMatchesPreparedClaim(candidate, claim)) {
+				debugPolicyFailure("publish.verify", "candidate-unconfirmed", error);
+				return false;
+			}
+			if (!publicationRetryAvailable(budget)) {
+				throw error;
+			}
+		}
+	}
+}
+async function publishClaim(claim: PreparedClaim, budget: ClaimBudget): Promise<boolean> {
 	let stage = "publish.mkdir";
 	try {
 		await mkdir(claim.candidatePath, { mode: 0o700 });
@@ -178,7 +238,7 @@ async function publishClaim(claim: PreparedClaim): Promise<void> {
 			mode: 0o600,
 		});
 		stage = "publish.rename";
-		await rename(claim.candidatePath, claim.path);
+		return await publishCandidate(claim, budget);
 	} catch (error) {
 		debugPolicyFailure(stage, "native-error", error);
 		throw error;
@@ -273,7 +333,7 @@ export function acquireExecutionClaim(
 		: acquireClaim(options);
 }
 async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicyLock | undefined> {
-	if (options.signal?.aborted === true) {
+	if (acquisitionCancelled(options)) {
 		debugPolicyFailure("acquire.begin", "cancelled");
 		return undefined;
 	}
@@ -289,8 +349,13 @@ async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicy
 	}
 	let published = false;
 	let acquired = false;
+	let cleanupCandidate = true;
 	try {
-		await publishClaim(claim);
+		if (!(await publishClaim(claim, budget))) {
+			// An observed foreign/unknown candidate also withdraws our cleanup authority.
+			cleanupCandidate = false;
+			return undefined;
+		}
 		published = true;
 		const ticket = await publishTicket(claim);
 		if (ticket === undefined || !(await waitForTurn(claim, ticket, budget, deadline))) {
@@ -311,9 +376,7 @@ async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicy
 		debugPolicyFailure("acquire.complete", "native-error", error);
 		return undefined;
 	} finally {
-		await rm(claim.candidatePath, { force: true, recursive: true }).catch((error: unknown) => {
-			debugPolicyFailure("cleanup.candidate-rm", "native-error", error);
-		});
+		await cleanupUnpublishedCandidate(claim, cleanupCandidate);
 		if (published && !acquired) {
 			const removed = await removeClaimOwnedBy(
 				claim.path,
@@ -322,6 +385,16 @@ async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicy
 			);
 			debugRemovalResult(removed, "cleanup.complete");
 		}
+	}
+}
+async function cleanupUnpublishedCandidate(
+	claim: PreparedClaim,
+	permitted: boolean,
+): Promise<void> {
+	if (permitted) {
+		await rm(claim.candidatePath, { force: true, recursive: true }).catch((error: unknown) => {
+			debugPolicyFailure("cleanup.candidate-rm", "native-error", error);
+		});
 	}
 }
 function debugRemovalResult(removed: boolean, stage: string): void {

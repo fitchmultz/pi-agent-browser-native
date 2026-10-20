@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Retry Windows `EPERM` failures when publishing a browser execution claim only within the original acquisition budget, revalidating the same immutable owner and scope before every retry; cancellation, unknown ownership, and single-attempt probes still fail closed.
+
 ## 0.9.6 - 2026-10-14
 
 ### Changed
