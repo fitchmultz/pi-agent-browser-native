@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { Check } from "typebox/value";
 import {
 	InMemoryCredentialStore,
 	normalizeContext,
@@ -306,6 +307,15 @@ test("native Pi registration keeps advanced tools discoverable and activation ad
 				"agent_browser_tools",
 			],
 		);
+		for (const name of all().filter((toolName) => toolName.startsWith("agent_browser"))) {
+			const tool = session.getToolDefinition(name);
+			// The exact nonempty inventory above requires every registered tool to publish an object root.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.ok(tool, `registered ${name}`);
+			// Strict providers reject schemas whose roots lack type: object.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.equal(readRecord(tool.parameters).type, "object", `${name} root schema type`);
+		}
 		assert.deepEqual(active().sort(), [...baseTools].sort());
 		assert.equal(session.getCallableToolNames().includes("agent_browser_qa"), false);
 		const inventory = await call("agent_browser_tools", {});
@@ -329,13 +339,24 @@ test("native Pi registration keeps advanced tools discoverable and activation ad
 });
 
 test("native defaultTools survives startup and initial resume restoration is additive", async () => {
-	const managerWithRestored = (tool: "action" | "qa"): SessionManager => {
+	const managerWithRestored = (...tools: readonly ("action" | "qa")[]): SessionManager => {
 		const manager = SessionManager.inMemory();
+		// Native history declares the complete initial loadout before additive tool deltas.
+		manager.appendMessage({
+			role: "system",
+			content: "",
+			timestamp: 0,
+			toolsAdded: baseTools.map((name) => ({
+				name,
+				description: "Initially active tool",
+				parameters: JsonSchema.Object({}),
+			})),
+		});
 		manager.appendMessage({
 			role: "system",
 			content: "",
 			timestamp: 1,
-			toolsAdded: [
+			toolsAdded: tools.map((tool) =>
 				tool === "action"
 					? {
 							name: "agent_browser_action",
@@ -343,10 +364,17 @@ test("native defaultTools survives startup and initial resume restoration is add
 							parameters: AGENT_BROWSER_ACTION_PARAMS,
 						}
 					: { name: "agent_browser_qa", description: "QA", parameters: AGENT_BROWSER_QA_PARAMS },
-			],
+			),
 		});
 		return manager;
 	};
+	const removed = managerWithRestored("qa", "action");
+	removed.appendMessage({
+		role: "system",
+		content: "",
+		timestamp: 2,
+		toolsRemoved: [{ name: "agent_browser_action" }],
+	});
 	const cases: Array<{
 		label: string;
 		options: { defaultTools?: string[]; sessionManager?: SessionManager };
@@ -356,7 +384,7 @@ test("native defaultTools survives startup and initial resume restoration is add
 			label: "default tools with a transcript-restored action",
 			options: {
 				defaultTools: ["agent_browser", "agent_browser_qa"],
-				sessionManager: managerWithRestored("action"),
+				sessionManager: managerWithRestored("qa", "action"),
 			},
 			restoredTool: "agent_browser_action",
 		},
@@ -367,6 +395,11 @@ test("native defaultTools survives startup and initial resume restoration is add
 		{
 			label: "transcript-restored qa without default tools",
 			options: { sessionManager: managerWithRestored("qa") },
+			restoredTool: "agent_browser_qa",
+		},
+		{
+			label: "transcript removal overrides addition without default tools",
+			options: { sessionManager: removed },
 			restoredTool: "agent_browser_qa",
 		},
 		{ label: "plain registration without default tools or restoration", options: {} },
@@ -413,11 +446,13 @@ test("public returns classify failure without a result hook and preserve JSON, i
 		{ name: "agent_browser_code", input: { code: "emit(42)" }, json: true },
 		{ name: "agent_browser_qa", input: { attached: true }, json: false },
 	];
-	for (const { name, input, json } of cases) {
-		// Fixture transitions and their assertions run in order against this test's shared state.
-		// oxlint-disable-next-line no-await-in-loop
-		await withSurface(
-			async ({ call, session }) => {
+	const upstreamText = { type: "text" as const, text: "QA failed." };
+	await withSurface(
+		async ({ call, session }) => {
+			for (const { name, input, json } of cases) {
+				upstreamText.text = json ? '{"success":false,"data":42}' : "QA failed.";
+				// Each variant must finish before changing this fixture's upstream text.
+				// oxlint-disable-next-line no-await-in-loop
 				const result = await call(name, input);
 				// All four literal tool/result variants check failure, image, recovery, and output contracts.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
@@ -473,18 +508,10 @@ test("public returns classify failure without a result hook and preserve JSON, i
 				// All four literal tool/result variants check failure, image, recovery, and output contracts.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.equal(tool.namespace?.name, "browser");
-			},
-			{
-				result: {
-					content: [
-						{ type: "text", text: json ? '{"success":false,"data":42}' : "QA failed." },
-						image,
-					],
-					details,
-				},
-			},
-		);
-	}
+			}
+		},
+		{ result: { content: [upstreamText, image], details } },
+	);
 });
 
 test("export failures cannot retain a stale successful structured result", async () => {
@@ -597,35 +624,6 @@ test("advanced wrappers normalize into one executor while code keeps explicit id
 	});
 });
 
-test("startup preserves native transcript activation and honors native removals", async () => {
-	const manager = SessionManager.inMemory();
-	manager.appendMessage({
-		role: "system",
-		content: "",
-		timestamp: 1,
-		toolsAdded: [
-			{ name: "agent_browser_qa", description: "QA", parameters: AGENT_BROWSER_QA_PARAMS },
-			{
-				name: "agent_browser_action",
-				description: "Action",
-				parameters: AGENT_BROWSER_ACTION_PARAMS,
-			},
-		],
-	});
-	manager.appendMessage({
-		role: "system",
-		content: "",
-		timestamp: 2,
-		toolsRemoved: [{ name: "agent_browser_action" }],
-	});
-	await withSurface(
-		async ({ active }) => {
-			assert.deepEqual(active().sort(), [...baseTools, "agent_browser_qa"].sort());
-		},
-		{ sessionManager: manager },
-	);
-});
-
 test("explicit native CLI tool selection stays active and the loader cannot override unavailable tools", async () => {
 	const original = process.argv;
 	try {
@@ -665,7 +663,7 @@ for (const tools of [["agent_browser_qa"], ["agent_browser_qa", "agent_browser_t
 	});
 }
 
-test("internal input normalization preserves QA semantics without public job/script routes", () => {
+test("internal input normalization rejects retired job/script routes", () => {
 	for (const params of [{ script: "emit(1)" }, { job: { steps: [{ action: "snapshot" }] } }]) {
 		const resolved = resolveAgentBrowserInput({
 			params,
@@ -675,25 +673,6 @@ test("internal input normalization preserves QA semantics without public job/scr
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.equal(resolved.status, "invalid");
 	}
-	const resolve = (params: unknown) =>
-		resolveAgentBrowserInput({ params, getBatchPreflightValidationError: () => undefined });
-	assert.match(
-		resolve({ qa: { attached: true }, sessionMode: "fresh" }).validationError ?? "",
-		/cannot be used/,
-	);
-	assert.match(
-		resolve({ qa: { url: "https://example.com" }, stdin: "[]" }).validationError ?? "",
-		/generate their own batch stdin/,
-	);
-	const qa = resolve({ qa: { url: "https://example.com", expectedText: "Ready" } });
-	assert.equal(qa.kind, "qa");
-	assert.equal(qa.compiledQaPreset.checks.checkNetwork, true);
-	assert.equal(qa.compiledQaPreset.checks.diagnosticsResetAtStart, true);
-	assert.equal(qa.compiledGeneratedBatch.failFast, true);
-	assert.deepEqual(qa.compiledGeneratedBatch.args, ["batch", "--bail"]);
-	assert.ok(
-		qa.compiledGeneratedBatch.steps.some(({ args }) => args[0] === "wait" && args[1] === "--fn"),
-	);
 });
 
 test("prompt routing is compact and preserves browser authority, recovery, and image geometry", () => {
@@ -737,7 +716,15 @@ test("prompt routing is compact and preserves browser authority, recovery, and i
 });
 
 test("Electron action schemas preserve field boundaries through native Pi validation", async () => {
-	await withSurface(async ({ call, calls }) => {
+	await withSurface(async ({ call, calls, session }) => {
+		const electron = session.getToolDefinition("agent_browser_electron");
+		assert.ok(electron);
+		assert.equal(Check(electron.parameters, { action: "list", query: 42 }), false);
+		assert.equal(Check(electron.parameters, { action: "list", maxResults: "10" }), false);
+		await call("agent_browser_electron", { action: "list", query: 42 });
+		assert.deepEqual(calls.at(-1)?.electron, { action: "list", query: "42" });
+		await call("agent_browser_electron", { action: "list", maxResults: "10" });
+		assert.deepEqual(calls.at(-1)?.electron, { action: "list", maxResults: 10 });
 		await call("agent_browser_electron", { action: "list", appPath: null, maxResults: null });
 		assert.deepEqual(calls.at(-1)?.electron, { action: "list" });
 		const fields: JsonObject = {
@@ -810,34 +797,30 @@ test("Electron action schemas preserve field boundaries through native Pi valida
 			{ action: "launch", handoff: "invalid" },
 			{ action: "list", maxResults: 0 },
 			{ action: "list", query: "" },
+			{ action: "list", maxResults: 1.5 },
+			{ action: "launch", allow: [""] },
+			{ action: "status", all: false },
+			{ action: "cleanup", all: false },
+			{ action: "probe", timeoutMs: 0 },
 			{ action: "unknown" },
 			{ action: "list", unknown: true },
 			{},
 		];
 		for (const input of invalid) {
-			// All nine literal invalid Electron inputs must reject at native schema validation.
+			const before = calls.length;
+			// Every literal invalid Electron input must reject at native schema validation.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
-			const rejection = assert.rejects(call("agent_browser_electron", input), /Validation failed/);
+			const rejection = assert.rejects(
+				call("agent_browser_electron", input),
+				/Validation failed/,
+				JSON.stringify(input),
+			);
 			// Fixture transitions and their assertions run in order against this test's shared state.
 			// oxlint-disable-next-line no-await-in-loop
 			await rejection;
-		}
-	});
-});
-
-test("every registered browser tool exposes an object-rooted parameter schema", async () => {
-	await withSurface(async ({ all, session }) => {
-		const browserTools = all().filter((toolName) => toolName.startsWith("agent_browser"));
-		assert.ok(browserTools.length > 0, "browser tools must be registered");
-		for (const name of browserTools) {
-			const tool = session.getToolDefinition(name);
-			// The asserted nonempty registered browser-tool set checks every object-rooted schema.
+			// Every invalid Electron input must fail before the executor receives it.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(tool, `registered ${name}`);
-			// Strict providers reject a schema whose root lacks `type: "object"`.
-			// The asserted nonempty registered browser-tool set checks every object-rooted schema.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(readRecord(tool.parameters).type, "object", `${name} root schema type`);
+			assert.equal(calls.length, before, JSON.stringify(input));
 		}
 	});
 });

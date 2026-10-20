@@ -13,6 +13,7 @@ import {
 import { parseAgentBrowserConfigLayer, describeUnknownError } from "./config-validation.js";
 export * from "./config-providers.js";
 export {
+	parseAgentBrowserConfigJson,
 	parseAgentBrowserConfigLayer,
 	validateAgentBrowserConfig,
 	validateWebSearchProvider,

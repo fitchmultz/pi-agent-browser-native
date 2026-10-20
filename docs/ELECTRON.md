@@ -131,7 +131,19 @@ Returns app metadata under `details.electron.apps`: `name`, optional `bundleId`/
 
 ### `electron.launch` — launch and attach
 
-Pass **exactly one** target: `appPath`, `appName`, `bundleId`, or `executablePath`. The wrapper resolves the target, verifies Electron framework evidence, applies optional caller-owned `allow` / `deny` policy, creates an isolated temp `userDataDir`, launches with `--remote-debugging-port=0` plus safe defaults, reads `DevToolsActivePort`, then attaches through upstream `connect` as a fresh managed session.
+Pass **exactly one** target: `appPath`, `appName`, `bundleId`, or `executablePath`. The wrapper resolves the target, verifies Electron runtime and app payload evidence, applies optional caller-owned `allow` / `deny` policy, creates an isolated temp `userDataDir`, launches with `--remote-debugging-port=0` plus safe defaults, reads `DevToolsActivePort`, then attaches through upstream `connect` as a fresh managed session.
+
+Payload evidence accepts `app.asar`, an `app/` directory, or the stock npm Electron runtime's `default_app.asar`. macOS also requires `Contents/Frameworks/Electron Framework.framework`; Linux/Windows require the existing Chromium resource evidence. These checks apply to discovery and explicit paths alike, and remain a correctness gate rather than a security boundary.
+
+For an unpackaged development app, point `executablePath` at the stock Electron binary and put the app directory in `appArgs`:
+
+```json
+{
+	"action": "launch",
+	"executablePath": "/path/to/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron",
+	"appArgs": ["/path/to/fixture-app"]
+}
+```
 
 ```json
 {
@@ -154,6 +166,8 @@ Handoff selection (`handoff` field):
 
 `targetType` defaults to `"page"`; use `"webview"` or `"any"` for apps whose useful UI is exposed as a webview target.
 
+CDP readiness requires `/json/version` to contain a nonempty, non-whitespace `Browser` or `browser` string. An arbitrary JSON object is not readiness evidence; other version metadata is optional. The same rule determines debug-port liveness in status and cleanup.
+
 Optional `timeoutMs` on `electron.launch` sets the host readiness polling budget for `DevToolsActivePort` and CDP metadata. The clock starts after target discovery and policy checks; upstream attach and handoff have separate subprocess budgets. When omitted, the default is **15 seconds** with a hard maximum of **120 seconds**, matching `ELECTRON_LAUNCH_DEFAULT_TIMEOUT_MS` and `ELECTRON_LAUNCH_MAX_TIMEOUT_MS` in `extensions/agent-browser/lib/electron/launch.ts`. Pi cancellation is separate: an already-cancelled call never launches the app, while cancellation during readiness polling or URL/tab/snapshot handoff closes the managed session, stops the tracked process, removes its isolated profile, and returns `failureCategory: "aborted"` without waiting for the launch timeout.
 
 Wrapper-owned launches **always** use an isolated temp profile and an OS-chosen port. If wrapper validation, managed-session policy, or the post-attach live-URL handoff guard fails after the host app starts, the wrapper immediately stops that process and removes the isolated profile; it retains a partial tracked record only when cleanup itself cannot finish. `--user-data-dir`, `--remote-debugging-port`, `--remote-debugging-address`, `--remote-debugging-pipe`, and bare `--` in `appArgs` are rejected. There is no caller-supplied port and no way to make `electron.launch` reuse the app's normal signed-in profile or attach to an already-running app — by design. Use the manual path described above when those are the actual requirements.
@@ -170,6 +184,8 @@ Read-only inspection of one or more tracked launches. Without `launchId` or `all
 
 Reports `cleanupState`, current debug-port and PID liveness, bounded CDP targets, and freshly measured `userDataDirState` under `details.electron.statuses`. An explicit `launchId` can inspect a **historical cleaned launch record**; default and `all: true` selection exclude cleaned records. Cleanup history does not determine current liveness. The tracked profile path is `present`, `absent` (only native `lstat` ENOENT), or `unknown` (other filesystem errors); a dangling symlink is present. This measures that path only, not all app residue, and is not stored in the launch record. Its managed-session title/URL reads hold the normal daemon-policy lock and owned restore context. Mismatch fields surface when the current managed session or tab no longer matches a live wrapper launch target — typically the cue to follow `reattach-electron-launch` before trusting old refs.
 
+Status and probe compare complete URLs before shortening them for display. Managed-session/probe URL summaries remain capped at 300 characters (probe tab URLs at 240); probe page-target/ref state retains the full URL.
+
 ### `electron.probe` — compact state read
 
 `probe` collapses what would otherwise be separate `get url` / `get title` / focused-element `eval` / `tab list` / `snapshot -i` calls into one bounded result. Use it instead of chaining those reads when you just need a quick "where are we?" check. The wrapper holds the managed-session daemon-policy lock for the probe and runs every underlying read with the session's owned restore decision, so probing cannot restart the daemon under a different restore key.
@@ -185,7 +201,7 @@ Output appears under `details.electron.probe`: `title`, `url`, `focusedElement`,
 
 ### `electron.cleanup` — wrapper-owned only
 
-Closes the tracked managed session, stops only the wrapper-tracked process, verifies that the debug port no longer serves `/json/version`, and removes the wrapper-created `userDataDir`. Cleanup waits for actual exit when it has a tracked child handle. For a live restored PID without that handle, it first checks the native process command line for the recorded profile: `Win32_Process.CommandLine` through Windows PowerShell on Windows, or `ps` on POSIX. If inspection fails or the profile does not match, cleanup leaves the process and profile intact.
+Closes the tracked managed session, stops only the wrapper-tracked process, verifies that the debug port no longer serves `/json/version`, and removes the wrapper-created `userDataDir`. Cleanup waits for actual exit when it has a tracked child handle. For a live restored PID without that handle, it signals only when the process start identity recorded at launch matches the live process, which proves the PID was not reused. Records without an identity (for example from older versions), unreadable identities, and mismatches leave the process and profile intact; stop such a process manually.
 
 Cleanup partial failures fail the tool result with `failureCategory: "cleanup-failed"` and the `retry-electron-cleanup` next action references the same `launchId` so retries are bounded.
 
@@ -331,6 +347,11 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 - On macOS, apps installed outside `/Applications` and `~/Applications` are not scanned in v1. Pass `appPath` or `executablePath` explicitly.
 - Windows hosts report `platform: "unsupported"` from `electron.list`; always pass `executablePath` (or a resolvable `appPath`) for `launch`.
 
+### Launch rejects the target as non-Electron
+
+- Verify both runtime resources and an app payload (`app.asar`, `app/`, or `default_app.asar`) exist beside the executable. On macOS, the Electron Framework is also required; Chromium paks alone do not establish an Electron target.
+- The stock npm Electron runtime is supported without repackaging. Pass its binary as `executablePath` and your unpackaged app directory as an `appArgs` operand.
+
 ### Attach succeeds but `snapshot -i` returns no refs
 
 - Some Electron apps take a beat to render. The default `handoff: "snapshot"` already retries briefly; if it still reports no refs, run `tab list`, select the intended stable `t<N>` app tab, then run `snapshot -i` again.
@@ -356,6 +377,7 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 
 ### Mismatch between `status` and the active session
 
+- A shortened URL ending in `...` is display-only; long URLs alone do not cause mismatch or reattach guidance. Status/probe compare full normalized URLs.
 - `electron.status` may report a live wrapper launch while the managed session has drifted to `about:blank`. Follow `reattach-electron-launch`, then refresh refs before reusing old `@e…` handles. For non-wrapper tab drift where `details.nextActions` names `select-intended-tab-after-drift`, use that stable `t<N>` action plus `snapshot-after-tab-recovery` before continuing.
 
 ## Code and shared-session coordination

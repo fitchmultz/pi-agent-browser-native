@@ -14,6 +14,7 @@ import type { PreparationSessionPlan } from "./prepare-session-plan.js";
 import type { PreparationProcessFacts } from "./prepare-contracts.js";
 import type { BrowserRunState } from "./types.js";
 import type { ExecutionPlan as AgentBrowserExecutionPlan } from "../../runtime-contracts.js";
+import type { ManagedSessionDaemonInspection } from "./managed-session-daemon-inspection.js";
 
 export interface PreparationPageState {
 	readonly sessionStateKey?: string;
@@ -36,16 +37,20 @@ export async function inspectPreparationGeneration(
 			readonly headedManagedAutosaveDisabled?: boolean;
 		};
 	},
+	priorInspection?: ManagedSessionDaemonInspection,
 ): Promise<Awaited<ReturnType<typeof inspectManagedSessionDaemon>>> {
-	return inspectManagedSessionDaemon({
-		...process,
-		namespace: identity.namespace,
-		sessionName: identity.sessionName,
-		includeGeneration: true,
-		headedManagedAutosaveInterval:
-			identity.owned?.headedManagedAutosaveInterval ??
-			(identity.owned?.headedManagedAutosaveDisabled === true ? "0" : undefined),
-	});
+	return (
+		priorInspection ??
+		inspectManagedSessionDaemon({
+			...process,
+			namespace: identity.namespace,
+			sessionName: identity.sessionName,
+			includeGeneration: true,
+			headedManagedAutosaveInterval:
+				identity.owned?.headedManagedAutosaveInterval ??
+				(identity.owned?.headedManagedAutosaveDisabled === true ? "0" : undefined),
+		})
+	);
 }
 
 function consumeConfirmedCapture(
@@ -91,6 +96,7 @@ async function reconcileGeneration(
 		readonly session: PreparationSessionPlan;
 		readonly page: PreparationPageState;
 		readonly update: ReturnType<SessionPageState["beginUpdate"]>;
+		readonly generationInspection?: ManagedSessionDaemonInspection;
 	},
 ): Promise<PreparationPageState & { readonly nativeGenerationChanged: boolean }> {
 	const { page, plan, session } = request;
@@ -105,11 +111,15 @@ async function reconcileGeneration(
 	) {
 		return { ...page, nativeGenerationChanged: false };
 	}
-	const daemon = await inspectPreparationGeneration(process, {
-		namespace: plan.namespace,
-		sessionName: name,
-		owned: session.ownedManagedSession,
-	});
+	const daemon = await inspectPreparationGeneration(
+		process,
+		{
+			namespace: plan.namespace,
+			sessionName: name,
+			owned: session.ownedManagedSession,
+		},
+		request.generationInspection,
+	);
 	pageState.bindSnapshotGeneration(key, daemon.status === "active" ? daemon.generation : undefined);
 	const generationKnown = daemon.status === "active" && daemon.generation !== undefined;
 	if (generationKnown && snapshot.generation === daemon.generation) {
@@ -159,6 +169,7 @@ export async function preparePageState(
 		readonly inactive: boolean;
 		readonly preserveAttachedBrowserSession?: boolean;
 		readonly update: ReturnType<SessionPageState["beginUpdate"]>;
+		readonly generationInspection?: ManagedSessionDaemonInspection;
 	},
 ): Promise<PreparationPageState> {
 	const { plan, session, update } = request;
@@ -169,6 +180,7 @@ export async function preparePageState(
 		plan,
 		session,
 		update,
+		generationInspection: request.generationInspection,
 		page: {
 			sessionStateKey: key,
 			priorSessionTabTarget: prior.tabTarget,

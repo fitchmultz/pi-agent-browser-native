@@ -6,6 +6,7 @@ import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next
 import { extractRefSnapshotFromData, type SessionTabTarget } from "../../session-page-state.js";
 import { extractStringResultField, runSessionCommandData } from "./session-state.js";
 import { diagnosticErrorText } from "./diagnostic-values.js";
+import { presentElectronManagedSessionTarget } from "./final-result-electron.js";
 import type {
 	ElectronHandoffSummary,
 	ElectronManagedSessionTarget,
@@ -21,15 +22,8 @@ interface SessionObservationOptions {
 	readonly timeoutMs?: number;
 }
 
-function boundedSessionResult(
-	data: unknown,
-	field: "title" | "url",
-	limit: number,
-): string | undefined {
-	return boundElectronProbeString(
-		extractStringResultField(data, "result") ?? extractStringResultField(data, field),
-		limit,
-	);
+function sessionResult(data: unknown, field: "title" | "url"): string | undefined {
+	return extractStringResultField(data, "result") ?? extractStringResultField(data, field);
 }
 
 async function collectManagedSessionCommandData(
@@ -49,11 +43,7 @@ async function collectElectronManagedSessionUrl(options: SessionObservationOptio
 	readonly url?: string;
 }> {
 	const urlResult = await collectManagedSessionCommandData({ ...options, args: ["get", "url"] });
-	const url = boundElectronProbeString(
-		extractStringResultField(urlResult.data, "result") ??
-			extractStringResultField(urlResult.data, "url"),
-		300,
-	);
+	const url = sessionResult(urlResult.data, "url");
 	return urlResult.error !== undefined && urlResult.error !== ""
 		? { error: urlResult.error }
 		: { url };
@@ -71,8 +61,8 @@ export async function collectElectronManagedSessionTarget(options: {
 	}
 	const request = { ...options, sessionName: options.sessionName };
 	const urlResult = await collectManagedSessionCommandData({ ...request, args: ["get", "url"] });
-	const url = boundedSessionResult(urlResult.data, "url", 300);
-	if ((urlResult.error ?? "") !== "" || url === undefined || url === "") {
+	const url = sessionResult(urlResult.data, "url");
+	if ((urlResult.error ?? "") !== "" || url === undefined || url.trim() === "") {
 		return {
 			error: urlResult.error ?? "get url returned no active page URL.",
 			sessionName: options.sessionName,
@@ -82,7 +72,7 @@ export async function collectElectronManagedSessionTarget(options: {
 		...request,
 		args: ["get", "title"],
 	});
-	const title = boundedSessionResult(titleResult.data, "title", 160);
+	const title = boundElectronProbeString(sessionResult(titleResult.data, "title"), 160);
 	return {
 		sessionName: options.sessionName,
 		title,
@@ -111,12 +101,13 @@ export async function collectQaAttachedTarget(options: {
 			url: target.url,
 		};
 	}
-	return collectElectronManagedSessionTarget({
+	const observed = await collectElectronManagedSessionTarget({
 		cwd: options.cwd,
 		namespace: options.namespace,
 		sessionName: options.sessionName,
 		signal: options.signal,
 	});
+	return observed ? presentElectronManagedSessionTarget(observed) : undefined;
 }
 
 export function formatQaAttachedTargetText(

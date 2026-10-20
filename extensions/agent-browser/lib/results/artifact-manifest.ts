@@ -33,7 +33,7 @@ export function isPendingRecordingArtifact(
 const SESSION_ARTIFACT_MANIFEST_VERSION = 1;
 const SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES_ENV =
 	"PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES";
-export const DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = 100;
+const DEFAULT_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = 100;
 
 function parsePositiveSafeInteger(value: string | undefined): number | undefined {
 	if (value === undefined) {
@@ -152,7 +152,7 @@ export function retirePendingRecordingManifestEntries(
 }
 
 function getSupersededRecordingKeys(
-	candidates: readonly (readonly [string, SessionArtifactManifestEntry])[],
+	candidates: ReadonlyMap<string, SessionArtifactManifestEntry>,
 	entry: SessionArtifactManifestEntry,
 	key: string,
 ): string[] {
@@ -163,7 +163,7 @@ function getSupersededRecordingKeys(
 		entry.session !== undefined && entry.session.length > 0
 			? getAgentBrowserSessionIdentityKey(entry.session, entry.namespace)
 			: undefined;
-	return candidates
+	return [...candidates]
 		.filter(([candidateKey, candidate]) => {
 			const sameRecordingSession =
 				entrySessionKey === undefined
@@ -232,7 +232,7 @@ export function mergeSessionArtifactManifest(options: {
 		.map(({ entry }) => entry);
 	for (const entry of orderedEntries) {
 		const key = getSessionArtifactManifestEntryKey(entry);
-		for (const candidateKey of getSupersededRecordingKeys([...byPath], entry, key)) {
+		for (const candidateKey of getSupersededRecordingKeys(byPath, entry, key)) {
 			byPath.delete(candidateKey);
 		}
 		const existing = byPath.get(key);

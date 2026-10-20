@@ -26,10 +26,14 @@ const { isolatedEnvironment, writeJson } = await import(
 const { prepareHost, selectDevelopmentHost } = await import(
 	pathToFileURL(join(automation, "scripts/hosts.mjs"))
 );
-// Nested test sockets need the same short temporary root as the pinned qualifier.
-const root = mkdtempSync("/tmp/pc-");
+// Install-mode links stay external and outlive this process; the caller owns fixture cleanup.
+// Full/smoke test sockets retain the pinned qualifier's short temporary root.
+const rootParent = mode === "install" ? resolve(source, "..", ".artifacts") : "/tmp";
+mkdirSync(rootParent, { recursive: true });
+const root = mkdtempSync(join(rootParent, "pc-"));
 const env = isolatedEnvironment(root);
 let goRoot;
+let retainInstalledHost = false;
 
 function execute(command, args) {
 	console.log(`$ ${command} ${args.join(" ")}`);
@@ -82,6 +86,8 @@ try {
 	} else if (mode === "smoke") {
 		execute("npm", ["run", "typecheck"]);
 		execute("node", ["scripts/verify-package.mjs", "--smoke-pi"]);
+	} else {
+		retainInstalledHost = true;
 	}
 } finally {
 	try {
@@ -89,6 +95,8 @@ try {
 			rmSync(goRoot, { recursive: true, force: true });
 		}
 	} finally {
-		rmSync(root, { recursive: true, force: true });
+		if (!retainInstalledHost) {
+			rmSync(root, { recursive: true, force: true });
+		}
 	}
 }

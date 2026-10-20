@@ -181,11 +181,8 @@ async function publishTicket(claim: PreparedClaim): Promise<number | undefined> 
 	await rename(candidate, join(claim.path, LOCK_TICKET_FILE));
 	return ticket.ticket;
 }
-function acquisitionExpired(budget: ClaimBudget): boolean {
-	return (
-		budget.signal?.aborted === true ||
-		(budget.deadline !== undefined && Date.now() >= budget.deadline)
-	);
+function acquisitionCancelled(budget: ClaimBudget): boolean {
+	return budget.signal?.aborted === true;
 }
 async function waitForTurn(
 	claim: PreparedClaim,
@@ -210,8 +207,9 @@ async function waitForTurn(
 			// Opportunistic GC must finish before the final cancellation check.
 			// oxlint-disable-next-line no-await-in-loop
 			await cleanDeadPolicyArtifacts(claim.directory, budget);
-			// Re-read cancellation/deadline after the awaited filesystem/native probes.
-			return !acquisitionExpired(budget);
+			// GC stays within the wait budget but cannot revoke a turn this claim already won;
+			// only cancellation can. Callers enforce their own operation deadlines.
+			return !acquisitionCancelled(budget);
 		}
 		if (Date.now() >= deadline) {
 			return false;

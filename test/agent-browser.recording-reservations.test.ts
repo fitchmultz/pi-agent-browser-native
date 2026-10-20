@@ -7,18 +7,10 @@ import {
 	appendRecordingReservationTransition,
 	applyRecordingArtifactsToReservations,
 	restoreRecordingReservationStateFromBranch,
-	retireRecordingReservation,
 	type ActiveRecordingReservation,
 } from "../extensions/agent-browser/lib/recording-reservations.js";
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
-import {
-	isPendingRecordingCommand,
-	mergeSessionArtifactManifest,
-} from "../extensions/agent-browser/lib/results/artifact-manifest.js";
-import type {
-	FileArtifactMetadata,
-	SessionArtifactManifestEntry,
-} from "../extensions/agent-browser/lib/results/contracts.js";
+import type { FileArtifactMetadata } from "../extensions/agent-browser/lib/results/contracts.js";
 
 function pendingArtifact(session: string, namespace: string, path: string): FileArtifactMetadata {
 	return {
@@ -33,27 +25,6 @@ function pendingArtifact(session: string, namespace: string, path: string): File
 		status: "pending",
 		subcommand: "start",
 		willExistOnStop: true,
-	};
-}
-
-function pendingManifestEntry(
-	session: string,
-	namespace: string,
-	path: string,
-	createdAtMs: number,
-): SessionArtifactManifestEntry {
-	return {
-		absolutePath: `/tmp/${path}`,
-		command: "record",
-		createdAtMs,
-		cwd: "/tmp",
-		kind: "video",
-		namespace,
-		path,
-		retentionState: "live",
-		session,
-		storageScope: "explicit-path",
-		subcommand: "start",
 	};
 }
 
@@ -127,22 +98,7 @@ test("contact-sheet reservations survive replay and retire with their video", ()
 	assert.equal(restored.size, 0);
 });
 
-test("recording reservations distinguish namespace plus session identity", () => {
-	const reservations = new Map<string, ActiveRecordingReservation>();
-	applyRecordingArtifactsToReservations(reservations, [
-		pendingArtifact("shared", "one", "one.webm"),
-		pendingArtifact("shared", "two", "two.webm"),
-	]);
-	assert.equal(reservations.size, 2);
-	assert.equal(retireRecordingReservation(reservations, "shared", "one")?.path, "one.webm");
-	assert.equal(reservations.size, 1);
-	assert.equal(
-		reservations.get(getAgentBrowserSessionIdentityKey("shared", "two"))?.path,
-		"two.webm",
-	);
-});
-
-test("recording reservation branch entries survive bounded manifest eviction and retire exactly", () => {
+test("recording reservation journal ignores unrelated bounded manifests and retires exact identities", () => {
 	const appended: Array<{ customType: string; data: unknown }> = [];
 	const appendEntry = (customType: string, data: unknown) => {
 		appended.push({ customType, data });
@@ -230,118 +186,59 @@ test("recording reservation branch entries survive bounded manifest eviction and
 		appended.every((entry) => entry.customType === RECORDING_RESERVATION_ENTRY_TYPE),
 		true,
 	);
-});
-
-test("recording reservation transition replay keeps the newest pending path authoritative", () => {
-	const appended: Array<{ customType: string; data: unknown }> = [];
-	const appendEntry = (customType: string, data: unknown) => {
-		appended.push({ customType, data });
-	};
-	const older = pendingArtifact("shared", "scope", "older.webm");
-	const newer = pendingArtifact("shared", "scope", "newer.webm");
 	appendRecordingReservationTransition(
 		{ appendEntry },
 		{
 			reservation: {
-				absolutePath: older.absolutePath,
-				cwd: older.cwd ?? "/tmp",
-				namespace: older.namespace,
-				path: older.path,
-				sessionName: older.session ?? "",
-			},
-			state: "closed",
-		},
-	);
-	appendRecordingReservationTransition(
-		{ appendEntry },
-		{
-			reservation: {
-				absolutePath: newer.absolutePath,
-				cwd: newer.cwd ?? "/tmp",
-				namespace: newer.namespace,
-				path: newer.path,
-				sessionName: newer.session ?? "",
+				absolutePath: "/tmp/newest-alpha.webm",
+				cwd: "/tmp",
+				namespace: "alpha",
+				path: "newest-alpha.webm",
+				sessionName: "shared",
 			},
 			state: "active",
 		},
 	);
-	const newestFirstEntries = [
-		pendingManifestEntry("shared", "scope", "newer.webm", 2),
-		pendingManifestEntry("shared", "scope", "older.webm", 1),
-	];
-	const branch = [
-		...appended.map((entry) => Object.assign({ type: "custom" }, entry)),
+	const ignoredManifest = {
+		entries: [alpha, beta].map((artifact) =>
+			Object.assign({}, artifact, {
+				createdAtMs: 4,
+				retentionState: "live",
+				storageScope: "explicit-path",
+			}),
+		),
+		evictedCount: 0,
+		liveCount: 2,
+		maxEntries: 20,
+		updatedAtMs: 4,
+		version: 1,
+	};
+	const reopened = restoreRecordingReservationStateFromBranch([
+		...branch,
+		{ type: "custom", ...appended[3] },
 		{
 			type: "message",
 			message: {
 				toolName: "agent_browser",
-				details: {
-					artifactManifest: {
-						entries: newestFirstEntries,
-						evictedCount: 0,
-						liveCount: 2,
-						maxEntries: 20,
-						updatedAtMs: 2,
-						version: 1,
-					},
-				},
+				details: { artifactManifest: ignoredManifest },
 			},
 		},
-	];
-	const restored = restoreRecordingReservationStateFromBranch(branch);
+	]);
+	assert.equal(reopened.active.size, 2);
 	assert.equal(
-		restored.active.get(getAgentBrowserSessionIdentityKey("shared", "scope"))?.path,
-		"newer.webm",
+		reopened.active.get(getAgentBrowserSessionIdentityKey("shared", "alpha"))?.path,
+		"newest-alpha.webm",
 	);
-	assert.equal(restored.terminal.size, 0);
-
-	const firstManifest = mergeSessionArtifactManifest({ entries: [newestFirstEntries[1]] });
-	const mergedManifest = mergeSessionArtifactManifest({
-		base: firstManifest,
-		entries: [newestFirstEntries[0]],
-	});
-	assert.deepEqual(
-		mergedManifest?.entries
-			.filter((entry) => entry.command === "record" && entry.subcommand === "start")
-			.map((entry) => entry.path),
-		["newer.webm"],
-	);
-	const mergedNewestFirst = mergeSessionArtifactManifest({ entries: newestFirstEntries });
-	assert.deepEqual(
-		mergedNewestFirst?.entries
-			.filter((entry) => entry.command === "record" && entry.subcommand === "start")
-			.map((entry) => entry.path),
-		["newer.webm"],
-	);
-
-	const sameTimestampManifest = mergeSessionArtifactManifest({
-		entries: [
-			pendingManifestEntry("shared", "scope", "same-ms-older.webm", 3),
-			pendingManifestEntry("shared", "scope", "same-ms-newer.webm", 3),
-		],
-	});
-	assert.deepEqual(
-		sameTimestampManifest?.entries
-			.filter((entry) => isPendingRecordingCommand(entry.command, entry.subcommand, entry.kind))
-			.map((entry) => entry.path),
-		["same-ms-newer.webm"],
-	);
-
-	const pendingThenStopped = pendingManifestEntry("shared", "scope", "same-ms-finished.webm", 4);
-	const stoppedAtSameTimestamp = { ...pendingThenStopped, subcommand: "stop" };
-	const stoppedManifest = mergeSessionArtifactManifest({
-		entries: [pendingThenStopped, stoppedAtSameTimestamp],
-	});
-	assert.deepEqual(
-		stoppedManifest?.entries.map((entry) => entry.subcommand),
-		["stop"],
-	);
-	const manifestOnlyReplay = restoreRecordingReservationStateFromBranch([
+	assert.equal(reopened.terminal.size, 0);
+	const messageOnly = restoreRecordingReservationStateFromBranch([
 		{
 			type: "message",
-			message: { toolName: "agent_browser", details: { artifactManifest: stoppedManifest } },
+			message: {
+				toolName: "agent_browser",
+				details: { artifactManifest: ignoredManifest },
+			},
 		},
 	]);
-	assert.equal(manifestOnlyReplay.active.size, 0);
-	assert.equal(manifestOnlyReplay.terminal.size, 0);
+	assert.equal(messageOnly.active.size, 0);
+	assert.equal(messageOnly.terminal.size, 0);
 });

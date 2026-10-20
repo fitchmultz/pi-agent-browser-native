@@ -1,7 +1,7 @@
 import { readArray, readRecord, readString } from "./helpers/assertions.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,15 +25,18 @@ test("Lightpanda captures stay attached as text-rendered images without coordina
 		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
 		"base64",
 	);
-	await writeFile(path, imageBytes);
 	await writeFakeAgentBrowserBinary(
 		dir,
 		`
+const fs = require("node:fs");
 const args = process.argv.slice(2);
 const engine = process.env.PIAB_FIXTURE_ENGINE ?? 'lightpanda';
 const lifecycle = { effectiveLaunch: { browserLaunched: true, ...(engine === 'absent' ? {} : {engine}) } };
 const sample = { ...(process.env.PIAB_FIXTURE_RENDERING === 'text' ? {rendering:'text'} : {}), url:'https://fixture.test/', frame:'main', childFrameCount:0, viewport:{width:1,height:1}, document:{width:1,height:1}, scroll:{x:0,y:0}, dpr:1, visualViewport:{x:0,y:0,scale:1} };
 const capture = {path:${JSON.stringify(path)},lifecycle};
+if (args.includes('screenshot') || args.includes('batch')) {
+  fs.writeFileSync(${JSON.stringify(path)}, Buffer.from(${JSON.stringify(imageBytes.toString("base64"))}, 'base64'));
+}
 const data = args.includes('batch') ? [{command:['screenshot',${JSON.stringify(path)}],success:true,result:capture}]
   : args.includes('screenshot') ? capture : args.includes('eval') ? {result:sample}
   : {url:'https://fixture.test/',title:'Fixture',lifecycle};

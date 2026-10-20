@@ -111,11 +111,11 @@ function isSafeSameSnapshotFormBatchStep(
 	}
 }
 
-function getBatchRefInvalidationMessage(
+function getBatchRefInvalidationFailure(
 	commandTokens: readonly string[],
 	stdin: string | undefined,
 	refSnapshot: SessionRefSnapshot | undefined,
-): string | undefined {
+): StaleRefPreflight | undefined {
 	if (commandTokens[0] !== "batch") {
 		return;
 	}
@@ -126,7 +126,11 @@ function getBatchRefInvalidationMessage(
 		}
 		const refIds = collectRefsFromTokens(step);
 		if (refIds.length > 0 && isRefGuardedCommand(step[0]) && priorStepInvalidatesRefs) {
-			return `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`;
+			return {
+				message: `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`,
+				refIds,
+				snapshot: refSnapshot,
+			};
 		}
 		if (
 			isRefInvalidatingBatchCommand(step) &&
@@ -215,21 +219,13 @@ export function buildStaleRefPreflight(facts: RefPreflightFacts): StaleRefPrefli
 				),
 			]
 		: guardedRefIds;
-	const batchInvalidationMessage = getBatchRefInvalidationMessage(
+	const batchInvalidationFailure = getBatchRefInvalidationFailure(
 		facts.commandTokens,
 		facts.stdin,
 		facts.refSnapshot,
 	);
-	if (
-		batchInvalidationMessage !== undefined &&
-		batchInvalidationMessage.length > 0 &&
-		guardedRefIds.length > 0
-	) {
-		return {
-			message: batchInvalidationMessage,
-			refIds: guardedRefIds,
-			snapshot: facts.refSnapshot,
-		};
+	if (batchInvalidationFailure) {
+		return batchInvalidationFailure;
 	}
 	if (usedRefIds.length === 0) {
 		return;

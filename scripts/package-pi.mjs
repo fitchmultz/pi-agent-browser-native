@@ -1,7 +1,7 @@
 /** Isolated packaged Pi SDK/CLI loading and deterministic browser invocation evidence. */
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
@@ -293,6 +293,58 @@ async function installRuntimeConsumer(tarballPath) {
 	return packageDir;
 }
 
+async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
+	const options = {
+		cwd: tempAgentDir,
+		env: { ...process.env, HOME: tempAgentDir, USERPROFILE: tempAgentDir },
+		timeout: 10_000,
+	};
+	const config = await execFile(
+		process.execPath,
+		[join(packageDir, "scripts/config.mjs"), "paths"],
+		options,
+	);
+	assert.ok(config.stdout.includes(join(tempAgentDir, ".pi", "config")));
+	const source = join(tempAgentDir, "legacy.jsonl");
+	const destination = join(tempAgentDir, "converted.jsonl");
+	const bytes = `${JSON.stringify({ type: "session", version: 3, id: "packaged-conversion", timestamp: "2026-01-01T00:00:00.000Z", cwd: tempAgentDir })}\n`;
+	await writeFile(source, bytes, { mode: 0o600 });
+	await execFile(
+		process.execPath,
+		[
+			join(packageDir, "scripts/convert-browser-session.mjs"),
+			"--source",
+			source,
+			"--output",
+			destination,
+			"--confirm-stopped",
+		],
+		options,
+	);
+	assert.equal(await readFile(source, "utf8"), bytes);
+	assert.equal(JSON.parse(await readFile(destination, "utf8")).id, "packaged-conversion");
+	const worker = execFile(
+		process.execPath,
+		[
+			"--permission",
+			"--max-old-space-size=64",
+			realpathSync(join(packageDir, "dist/extensions/agent-browser/script-worker.js")),
+			"1048576",
+			"8388608",
+		],
+		{ cwd: tempAgentDir, env: {}, timeout: 10_000 },
+	);
+	worker.child.stdin.end(`${JSON.stringify({ type: "start", code: "return 42;" })}\n`);
+	const { stdout } = await worker;
+	assert.ok(
+		stdout
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line))
+			.some((row) => row.type === "complete" && row.hasValue === true && row.value === 42),
+	);
+}
+
 export async function verifyPackagedPiLoad(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
 	const { hostCli } = await import("./compat-host.mjs");
@@ -302,6 +354,7 @@ export async function verifyPackagedPiLoad(options = {}) {
 	try {
 		tempAgentDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-agent-"));
 		const packageDir = await installRuntimeConsumer(tarballPath);
+		await verifyPackagedRuntimeFiles(packageDir, tempAgentDir);
 		const resourceLoader = new DefaultResourceLoader({
 			agentDir: tempAgentDir,
 			cwd: packageDir,

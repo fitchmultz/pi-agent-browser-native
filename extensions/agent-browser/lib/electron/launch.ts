@@ -9,6 +9,7 @@ import {
 import type { ElectronCdpTarget, ElectronCdpVersion } from "./cdp.js";
 import { createSecureTempDirectory, preserveSecureTempDirectory } from "../temp.js";
 import { stringifyUnknown } from "../results/text.js";
+import { readProcessStartIdentity } from "../process-identity.js";
 import {
 	isElectronLaunchAborted,
 	pollCdpMetadata,
@@ -161,7 +162,7 @@ function launchFailureMessage(
 		case "aborted":
 			return `Electron launch was aborted${target ? ` before ${label} finished starting` : " before the app started"}.`;
 		case "non-electron-target":
-			return `Electron launch rejected: ${label} does not have Electron framework evidence.`;
+			return `Electron launch rejected: ${label} does not have the required Electron runtime and app payload evidence.`;
 		case "policy-blocked":
 			return detail ?? `Electron launch blocked by caller policy for ${label}.`;
 		case "single-instance-conflict":
@@ -187,6 +188,7 @@ class ElectronLaunchAttempt {
 	private readonly timeoutMs: number;
 	private readonly deadlineMs: number;
 	private readonly appArgs: readonly string[];
+	private startIdentity: string | undefined;
 
 	constructor(
 		private readonly options: ElectronLaunchOptions,
@@ -276,6 +278,7 @@ class ElectronLaunchAttempt {
 			platform: this.target.platform,
 			port,
 			processGroupId: process.platform === "win32" ? undefined : pid,
+			startIdentity: this.startIdentity,
 			targetType: this.options.targetType,
 			userDataDir: this.userDataDir,
 			version: ELECTRON_LAUNCH_RECORD_VERSION,
@@ -297,6 +300,14 @@ class ElectronLaunchAttempt {
 				this.process.spawnError?.message,
 			);
 		}
+		const pid = this.process.child.pid;
+		this.startIdentity =
+			pid === undefined
+				? undefined
+				: await readProcessStartIdentity(pid, process.platform, {
+						deadline: this.deadlineMs,
+						signal: this.options.signal,
+					});
 		const portResult = await pollDevToolsActivePort({
 			deadlineMs: this.deadlineMs,
 			getChildExit: this.process.childExit,

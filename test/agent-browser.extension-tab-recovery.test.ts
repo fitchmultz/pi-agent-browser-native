@@ -752,6 +752,7 @@ test(
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 		const logPath = join(tempDir, "invocations.log");
+		const releasePath = join(tempDir, "release");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -762,7 +763,9 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + 
 const slow = { title: "Slow First", url: "https://example.com/slow-first" };
 const fast = { title: "Fast Second", url: "https://example.com/fast-second" };
 if (args.includes("https://example.com/slow-first")) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  const deadline = Date.now() + 15000;
+  while (!fs.existsSync(${JSON.stringify(releasePath)}) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  if (!fs.existsSync(${JSON.stringify(releasePath)})) throw new Error("fixture release not received");
   process.stdout.write(JSON.stringify({ success: true, data: slow }));
 } else if (args.includes("https://example.com/fast-second")) {
   process.stdout.write(JSON.stringify({ success: true, data: fast }));
@@ -807,6 +810,16 @@ if (args.includes("https://example.com/slow-first")) {
 					args: ["--session", "named", "open", "https://example.com/fast-second"],
 				});
 
+				try {
+					assert.equal(
+						(await readInvocationLog(logPath)).some((entry) =>
+							entry.args.includes("https://example.com/fast-second"),
+						),
+						false,
+					);
+				} finally {
+					await writeFile(releasePath, "release");
+				}
 				const [slowOpen, fastOpen] = await Promise.all([slowOpenPromise, fastOpenPromise]);
 				assert.equal(slowOpen.isError, false, JSON.stringify(slowOpen));
 				assert.equal(fastOpen.isError, false, JSON.stringify(fastOpen));
@@ -851,6 +864,7 @@ test(
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-unverified-target-"));
 		const logPath = join(tempDir, "invocations.log");
+		const releasePath = join(tempDir, "release");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -858,7 +872,9 @@ test(
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("https://example.com/slow")) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  const deadline = Date.now() + 15000;
+  while (!fs.existsSync(${JSON.stringify(releasePath)}) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  if (!fs.existsSync(${JSON.stringify(releasePath)})) throw new Error("fixture release not received");
   process.stdout.write(JSON.stringify({ success: true, data: { title: "First", url: "https://example.com/slow" } }));
 } else if (args.includes("connect")) {
   process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }));
@@ -881,6 +897,14 @@ if (args.includes("https://example.com/slow")) {
 				const connectPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["--session", "named", "connect", "9222"],
 				});
+				try {
+					assert.equal(
+						(await readInvocationLog(logPath)).some((entry) => entry.args.includes("connect")),
+						false,
+					);
+				} finally {
+					await writeFile(releasePath, "release");
+				}
 				const [firstOpen, connected] = await Promise.all([slowOpenPromise, connectPromise]);
 				assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
 				assert.deepEqual(firstOpen.details?.sessionTabTarget, {
@@ -916,6 +940,7 @@ test(
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-session-case-alias-"));
 		const logPath = join(tempDir, "invocations.log");
+		const releasePath = join(tempDir, "release");
 		const statePath = join(tempDir, "shared-session-state.json");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
@@ -936,7 +961,9 @@ if (args.includes("open")) {
 } else if (args.includes("get") && args.includes("url")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: state.url } }));
 } else if (args.includes("snapshot")) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  const deadline = Date.now() + 15000;
+  while (!fs.existsSync(${JSON.stringify(releasePath)}) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  if (!fs.existsSync(${JSON.stringify(releasePath)})) throw new Error("fixture release not received");
   try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, "utf8")); } catch {}
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: ["snapshot-finished", namespace, session] }) + "\\n");
   process.stdout.write(JSON.stringify({ success: true, data: { snapshot: state.url.includes("-secret") ? "SECRET CONTENT" : "SAFE CONTENT" } }));
@@ -958,6 +985,7 @@ if (args.includes("open")) {
 					});
 					assert.equal(opened.isError, false, JSON.stringify(opened));
 
+					await rm(releasePath, { force: true });
 					const snapshotPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...readIdentityArgs, "snapshot", "-i"],
 					});
@@ -968,6 +996,14 @@ if (args.includes("open")) {
 					const nextOpenPromise = executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...writeIdentityArgs, "open", nextUrl],
 					});
+					try {
+						assert.equal(
+							(await readInvocationLog(logPath)).some((entry) => entry.args.includes(nextUrl)),
+							false,
+						);
+					} finally {
+						await writeFile(releasePath, "release");
+					}
 					const [snapshot, nextOpen] = await Promise.all([snapshotPromise, nextOpenPromise]);
 					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
 					assert.doesNotMatch(JSON.stringify(snapshot), /SECRET CONTENT/);

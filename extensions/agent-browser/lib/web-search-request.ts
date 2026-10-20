@@ -1,5 +1,5 @@
 import type { WebSearchProvider } from "./config.js";
-import { cleanSearchText, getProviderLabel } from "./web-search-results.js";
+import { getProviderLabel } from "./web-search-results.js";
 
 export const SEARCH_REQUEST_TIMEOUT_MS = 15_000;
 export const WEB_SEARCH_MIN_REQUEST_INTERVAL_MS = 1_100;
@@ -35,25 +35,21 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 export class WebSearchRequestGate {
 	private lastRequestStartedAt = 0;
 	private tail: Promise<unknown> = Promise.resolve();
-	constructor(
-		private readonly now: () => number = Date.now,
-		private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void> = sleepWithAbort,
-	) {}
 
 	run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
 		const runTask = async () => {
 			const elapsedMs =
 				this.lastRequestStartedAt === 0
 					? WEB_SEARCH_MIN_REQUEST_INTERVAL_MS
-					: this.now() - this.lastRequestStartedAt;
+					: Date.now() - this.lastRequestStartedAt;
 			const waitMs = Math.max(0, WEB_SEARCH_MIN_REQUEST_INTERVAL_MS - elapsedMs);
 			if (waitMs > 0) {
-				await this.sleep(waitMs, signal);
+				await sleepWithAbort(waitMs, signal);
 			}
 			if (signal?.aborted === true) {
 				signal.throwIfAborted();
 			}
-			this.lastRequestStartedAt = this.now();
+			this.lastRequestStartedAt = Date.now();
 			return task();
 		};
 		const result = this.tail.then(runTask, runTask);
@@ -64,32 +60,25 @@ export class WebSearchRequestGate {
 	}
 }
 
-function redactSearchSecret(text: string, apiKey: string): string {
-	return apiKey.length > 0 ? text.split(apiKey).join("[REDACTED]") : text;
-}
-
 function formatSearchHttpError(options: {
 	readonly provider: WebSearchProvider;
 	readonly status: number;
-	readonly statusText: string;
-	readonly body: string;
-	readonly apiKey: string;
 }): string {
-	const { provider, status, statusText, body, apiKey } = options;
+	const { provider, status } = options;
 	const providerLabel = getProviderLabel(provider);
-	const errorPreview = cleanSearchText(redactSearchSecret(body, apiKey), 300);
 	if (status === 429) {
-		const preview =
-			errorPreview !== undefined
-				? ` Upstream details: ${redactSearchSecret(errorPreview, apiKey)}`
-				: "";
-		return `${providerLabel} search rate limit exceeded (HTTP 429). Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect those results, then wait before retrying or ask the user to adjust their ${providerLabel} API plan/limits.${preview}`;
+		return `${providerLabel} search rate limit exceeded (HTTP 429). Do not issue parallel or repeated agent_browser_web_search calls; use one high-signal query, inspect those results, then wait before retrying or ask the user to adjust their ${providerLabel} API plan/limits.`;
 	}
-	return `${providerLabel} search failed with HTTP ${status}: ${errorPreview !== undefined ? redactSearchSecret(errorPreview, apiKey) : statusText}`;
+	if (status === 401 || status === 403) {
+		return `${providerLabel} search failed with HTTP ${status}: Check your API credential and permissions.`;
+	}
+	if (status >= 500) {
+		return `${providerLabel} search failed with HTTP ${status}: Provider unavailable; retry later.`;
+	}
+	return `${providerLabel} search failed with HTTP ${status}: Request rejected; check the search parameters.`;
 }
 
 export async function fetchSearchJson(options: {
-	readonly apiKey: string;
 	readonly cancelMessage: string;
 	readonly init?: RequestInit;
 	readonly invalidJsonMessage: string;
@@ -111,25 +100,23 @@ export async function fetchSearchJson(options: {
 	options.signal?.addEventListener("abort", abort, { once: true });
 	try {
 		const response = await fetch(options.request, { ...options.init, signal: controller.signal });
-		const text = await response.text();
 		if (!response.ok) {
+			await response.body?.cancel().catch(() => {
+				// Disposal errors must not replace the source-free HTTP diagnostic.
+			});
 			throw new Error(
 				formatSearchHttpError({
 					provider: options.provider,
 					status: response.status,
-					statusText: response.statusText,
-					body: text,
-					apiKey: options.apiKey,
 				}),
 			);
 		}
+		const text = await response.text();
 		try {
 			return JSON.parse(text);
-		} catch (error) {
-			throw new Error(
-				`${options.invalidJsonMessage}: ${error instanceof Error ? error.message : "Unknown JSON parse failure"}`,
-				{ cause: error },
-			);
+		} catch {
+			// Parser messages and causes can include partial credentials from the response body.
+			throw new Error(options.invalidJsonMessage);
 		}
 	} finally {
 		clearTimeout(timeout);

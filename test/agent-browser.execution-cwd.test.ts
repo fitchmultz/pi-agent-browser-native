@@ -129,10 +129,18 @@ console.log(JSON.stringify({ success: true, data }));
 				selected = b;
 				await Promise.all(
 					[
-						{ sourceLookup: { componentName: "Widget", includeDomHints: false } },
-						{ networkSourceLookup: { url: "https://fixture.test/api/items" } },
-					].map(async (params) => {
-						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+						{
+							name: "agent_browser_source",
+							params: { componentName: "Widget", includeDomHints: false },
+						},
+						{
+							name: "agent_browser_network_source",
+							params: { url: "https://fixture.test/api/items" },
+						},
+					].map(async ({ name, params }) => {
+						const tool = harness.getTool(name);
+						assert.ok(tool, `${name} must be registered`);
+						const result = await executeRegisteredTool(tool, harness.ctx, params);
 						const resultDetails = readRecord(result.details);
 						assert.equal(result.isError, false, result.content[0].text);
 						assert.match(
@@ -243,11 +251,13 @@ console.log(JSON.stringify({ success: true, data }));
 							args: ["get", "title"],
 						});
 						const envDetails = readRecord(env.details);
+						assert.equal(env.isError, false, env.content[0].text);
 						assert.equal(envDetails.sessionName, "env-session");
 						const explicit = await executeRegisteredTool(harness.tool, harness.ctx, {
 							args: ["--session", "per-call", "get", "title"],
 						});
 						const explicitDetails = readRecord(explicit.details);
+						assert.equal(explicit.isError, false, explicit.content[0].text);
 						assert.equal(explicitDetails.sessionName, "per-call");
 					},
 				);

@@ -25,7 +25,7 @@ const SCROLL_CONTAINER_DIRECTIONS = new Set(["down", "left", "right", "up"]);
 function getContainerScrollRequest(
 	commandTokens: readonly string[],
 ): { amount?: string; direction: string; selector: string } | undefined {
-	if (commandTokens[0] !== "scroll" || commandTokens.length < 3) {
+	if (commandTokens[0] !== "scroll" || commandTokens.length < 3 || commandTokens.length > 4) {
 		return undefined;
 	}
 	const selector = commandTokens[1];
@@ -206,7 +206,7 @@ function getPageScrollToRequest(commandTokens: readonly string[]): PageScrollReq
 		return undefined;
 	}
 	if (commandTokens[1]?.toLowerCase() === "to") {
-		return getPageScrollTarget(commandTokens.at(2));
+		return commandTokens.length === 3 ? getPageScrollTarget(commandTokens.at(2)) : undefined;
 	}
 	const direction = commandTokens[1]?.toLowerCase();
 	if (!isPageScrollDirection(direction) || commandTokens.length > 3) {

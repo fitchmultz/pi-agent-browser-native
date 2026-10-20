@@ -86,7 +86,7 @@ test(
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-required-artifact-"));
 		const logPath = join(tempDir, "invocations.log");
-		const firstScreenshotPath = join(tempDir, "release-smoke-first.png");
+		const firstScreenshotPath = "./release-smoke-first.png";
 		const secondScreenshotPath = join(tempDir, "release-smoke-second.png");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
@@ -132,7 +132,7 @@ if (args.includes("screenshot")) {
 					args: ["screenshot", firstScreenshotPath],
 				});
 				assert.equal(firstScreenshot.isError, false, JSON.stringify(firstScreenshot));
-				assert.equal((await stat(firstScreenshotPath)).isFile(), true);
+				assert.equal((await stat(join(tempDir, firstScreenshotPath))).isFile(), true);
 
 				const stillBlockedClose = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["close"],
@@ -210,67 +210,6 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 					invocations.filter((entry) => entry.args.includes("close")).length,
 					prompts.length,
 				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension resolves relative prompt screenshot paths before allowing close",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-relative-artifact-"));
-		const logPath = join(tempDir, "invocations.log");
-		const relativeScreenshotPath = "./release-smoke.png";
-		const absoluteScreenshotPath = join(tempDir, "release-smoke.png");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-if (args.includes("screenshot")) {
-  const path = args[args.length - 1];
-  fs.writeFileSync(path, "png");
-  process.stdout.write(JSON.stringify({ success: true, data: { path } }));
-} else if (args.includes("close")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
-}`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({
-					cwd: tempDir,
-					prompt: `Save a screenshot here: ${relativeScreenshotPath}`,
-				});
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const blockedClose = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["close"],
-				});
-				assert.equal(blockedClose.isError, true);
-				assert.equal(
-					readRecord(readArray(readRecord(blockedClose.details?.promptGuard).missingArtifacts)[0])
-						.path,
-					relativeScreenshotPath,
-				);
-
-				const screenshot = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["screenshot", relativeScreenshotPath],
-				});
-				assert.equal(screenshot.isError, false, JSON.stringify(screenshot));
-				assert.equal((await stat(absoluteScreenshotPath)).isFile(), true);
-
-				const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
-				assert.equal(close.isError, false, JSON.stringify(close));
-
-				const invocations = await readInvocationLog(logPath);
-				assert.equal(invocations.filter((entry) => entry.args.includes("close")).length, 1);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });

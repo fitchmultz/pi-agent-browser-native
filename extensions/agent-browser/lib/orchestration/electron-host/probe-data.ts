@@ -104,7 +104,7 @@ export function extractElectronProbeTabs(data: unknown): {
 			tabId: getTrimmedString(tab.tabId) ?? getTrimmedString(tab.id),
 			title: getTrimmedString(tab.title) ?? getTrimmedString(tab.label),
 			type: getTrimmedString(tab.type),
-			url: getTrimmedString(tab.url),
+			url: typeof tab.url === "string" ? tab.url : undefined,
 		}));
 	if (allTabs.length === 0) {
 		return {};
@@ -178,7 +178,9 @@ export function summarizeElectronProbeSnapshot(data: unknown): {
 export function getElectronProbeSummary(probe: Omit<ElectronProbeResult, "summary">): string {
 	const parts = [
 		probe.title !== undefined && probe.title.length > 0 ? `title "${probe.title}"` : undefined,
-		probe.url !== undefined && probe.url.length > 0 ? `url ${probe.url}` : undefined,
+		probe.url !== undefined && probe.url.length > 0
+			? `url ${boundElectronProbeString(probe.url, 300) ?? ""}`
+			: undefined,
 		probe.focusedElement ? "focused element" : undefined,
 		probe.tabs ? `${probe.tabs.total} tab(s)` : undefined,
 		probe.snapshot ? `${probe.snapshot.refCount} ref(s)` : undefined,

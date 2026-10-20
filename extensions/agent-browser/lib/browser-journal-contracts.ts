@@ -8,5 +8,5 @@ export interface BrowserBranchManager {
 export interface BrowserJournalManager extends BrowserBranchManager {
 	readonly getEntries: () => unknown[];
 	readonly getSessionFile: () => string | undefined;
-	readonly getHeader: () => Readonly<{ id: string }> | null;
+	readonly getHeader: () => Readonly<{ id: string; parentSession?: string }> | null;
 }

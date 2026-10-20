@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readArray, readString } from "./helpers/assertions.js";
-import { readdir, readFile } from "node:fs/promises";
-import { resolve, relative, dirname } from "node:path";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve, relative, dirname, join } from "node:path";
 import test from "node:test";
 
 // Runtime module edges only: `import`/`export` ... from statements and bare side-effect imports.
@@ -91,23 +92,30 @@ function findCycles(graph: ReadonlyMap<string, ReadonlySet<string>>): string[][]
 	return cycles;
 }
 
-test("browser-run orchestration modules stay acyclic", async () => {
+test("browser-run orchestration modules stay acyclic", async (t) => {
+	const fixture = await mkdtemp(join(tmpdir(), "piab-import-cycle-"));
+	t.after(() => rm(fixture, { recursive: true, force: true }));
+	await writeFile(join(fixture, "a.ts"), 'import "./b.js"; export const value = 1;');
+	await writeFile(join(fixture, "b.ts"), 'export { value } from "./a.js";');
+	assert.deepEqual(
+		findCycles(await buildImportGraph(fixture)).map((cycle) =>
+			cycle.map((path) => relative(fixture, path)),
+		),
+		[["a.ts", "b.ts", "a.ts"]],
+		"runtime import and re-export cycles must be detected",
+	);
+	await writeFile(
+		join(fixture, "a.ts"),
+		'import type { Value } from "./b.js"; export type Value = string;',
+	);
+	await writeFile(join(fixture, "b.ts"), 'export type { Value } from "./a.js";');
+	assert.deepEqual(
+		findCycles(await buildImportGraph(fixture)),
+		[],
+		"erased type-only imports and re-exports cannot create runtime cycles",
+	);
 	const root = resolve("extensions/agent-browser/lib/orchestration/browser-run");
 	const graph = await buildImportGraph(root);
-	// Re-export edges in browser-run/index.ts must stay visible to the cycle detector; without them a
-	// cycle routed through a re-export would pass unnoticed.
-	const indexImports = graph.get(resolve(root, "index.ts"));
-	assert.ok(indexImports);
-	assert.equal(
-		indexImports.has(resolve(root, "managed-session-daemon-policy.ts")),
-		true,
-		"index.ts re-export edge to managed-session-daemon-policy.ts is not detected",
-	);
-	assert.equal(
-		indexImports.has(resolve(root, "session-state.ts")),
-		true,
-		"index.ts re-export edge to session-state.ts is not detected",
-	);
 	const cycles = findCycles(graph);
 	assert.deepEqual(
 		cycles.map((cycle) => cycle.map((file) => relative(process.cwd(), file))),

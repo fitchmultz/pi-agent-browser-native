@@ -207,12 +207,25 @@ test("semantic fill visible-ref resolution is internal-only and requires one exa
 		undefined,
 	);
 	assert.deepEqual(
-		resolveVisibleRefActionFromSnapshot({
-			allowFill: true,
-			compiledAction,
-			snapshotData: comboboxSnapshot,
-		})?.args,
-		["fill", "@e17", "private search"],
+		["textbox", "combobox"].map(
+			(role) =>
+				resolveVisibleRefActionFromSnapshot({
+					allowFill: true,
+					compiledAction: {
+						...compiledAction,
+						args: ["find", "role", role, "fill", "private search", "--name", "Search"],
+					},
+					snapshotData: {
+						...comboboxSnapshot,
+						refs: { e17: { name: "Search", role } },
+						snapshot: `- ${role} "Search" [ref=e17]`,
+					},
+				})?.args,
+		),
+		[
+			["fill", "@e17", "private search"],
+			["fill", "@e17", "private search"],
+		],
 	);
 
 	const target = getVisibleRefFallbackTarget({ commandTokens: compiledAction.args });

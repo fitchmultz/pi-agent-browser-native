@@ -56,9 +56,10 @@ function firstNonempty(values: readonly (string | undefined)[]): string | undefi
 }
 export async function inspectDarwinApp(appPath: string): Promise<ElectronAppDiscovery | undefined> {
 	const framework = join(appPath, "Contents", "Frameworks", "Electron Framework.framework");
-	const hasFramework = await isDirectory(framework);
-	const hasPayload = await hasElectronAppPayload(join(appPath, "Contents", "Resources"));
-	if (!hasFramework || !hasPayload) {
+	if (!(await isDirectory(framework))) {
+		return undefined;
+	}
+	if (!(await hasElectronAppPayload(join(appPath, "Contents", "Resources")))) {
 		return undefined;
 	}
 	const info = await readMacInfoPlist(appPath);

@@ -39,6 +39,7 @@ export interface PreparationSessionOwners {
 import type { OwnedManagedSessionReference, PreparedAgentBrowserArgs } from "./types.js";
 
 export interface PreparationSessionPlan {
+	readonly hasPriorRefs: boolean;
 	readonly browserIndependent: boolean;
 	readonly readConfirmation?: ReadConfirmation;
 	readonly recordedOwnedSession?: OwnedManagedSessionReference;
@@ -393,6 +394,9 @@ export function prepareSessionPlan(
 	return {
 		plan,
 		session: {
+			hasPriorRefs:
+				(owners.pageState.get(getSessionContextKey(plan.sessionName, plan.namespace)).refSnapshot
+					?.refIds.length ?? 0) > 0,
 			browserIndependent,
 			readConfirmation,
 			recordedOwnedSession: recorded,

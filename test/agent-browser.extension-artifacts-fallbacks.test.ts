@@ -7,12 +7,13 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { cleanupSecureTempArtifacts } from "../extensions/agent-browser/lib/temp.js";
+import { getSessionTempRoot } from "../extensions/agent-browser/lib/temp-root.js";
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
@@ -50,7 +51,7 @@ if (args.includes("download")) {
 				{ PATH: `${tempDir}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_TEST_PAGE_URL: url },
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
-					const path = join(tempDir, "downloads", "report.csv");
+					const path = join(tempDir, "downloads", new URL(url).hostname + ".csv");
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["download", "#export", path],
 					});
@@ -83,10 +84,11 @@ test(
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-direct-download-failure-"));
+		const outputPath = join(tempDir, "export.csv");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`process.stdout.write(JSON.stringify({ success: false, error: "Download not verified: file missing at /tmp/export.csv" }));
+			`process.stdout.write(JSON.stringify({ success: false, error: ${JSON.stringify(`Download not verified: file missing at ${outputPath}`)} }));
 process.exit(1);`,
 		);
 
@@ -103,7 +105,7 @@ process.exit(1);`,
 					);
 
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["download", "@e1", "/tmp/export.csv"],
+						args: ["download", "@e1", outputPath],
 					});
 
 					assert.equal(result.isError, true);
@@ -115,7 +117,7 @@ process.exit(1);`,
 						result.details.sessionName,
 						"wait",
 						"--download",
-						"/tmp/export.csv",
+						outputPath,
 					]);
 				},
 			);
@@ -126,7 +128,7 @@ process.exit(1);`,
 );
 
 test(
-	"agentBrowserExtension keeps stale-ref guidance after same-tab verification",
+	"agentBrowserExtension keeps direct and per-step stale-ref guidance after same-tab verification",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-ref-"));
@@ -140,6 +142,11 @@ if (args.includes("get") && args.includes("url")) {
   process.exit(0);
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: false, error: "Could not locate element with role=button name=Old" }));
+  process.exit(1);
+} else if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify([
+    { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
+  ]));
   process.exit(1);
 }
 process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
@@ -183,73 +190,18 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 				assert.match(readString(text), /snapshot/);
 				assert.equal(result.details?.resultCategory, "failure");
 				assert.equal(result.details.failureCategory, "stale-ref");
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
 
-test(
-	"agentBrowserExtension keeps per-step stale-ref guidance for a verified user batch",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stale-batch-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const args = process.argv.slice(2);
-if (args.includes("get") && args.includes("url")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/" } }));
-  process.exit(0);
-} else if (args.includes("batch")) {
-  process.stdout.write(JSON.stringify([
-    { command: ["click", "@e4"], success: false, error: "Could not locate element with role=button name=Old" }
-  ]));
-  process.exit(1);
-}
-process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
-  { tabId: "t1", title: "Example Domain", url: "https://example.com/", active: true },
-  { tabId: "t2", title: "Other", url: "https://other.example/", active: false }
-] } }));`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({
-					branch: [
-						createToolBranchEntry({
-							details: {
-								args: ["--session", "named", "open", "https://example.com"],
-								command: "open",
-								sessionName: "named",
-								sessionTabTarget: { title: "Example Domain", url: "https://example.com/" },
-							},
-							isError: false,
-						}),
-					],
-					cwd: tempDir,
-				});
-				await runExtensionEvent(
-					harness.handlers,
-					"session_start",
-					{ reason: "resume" },
-					harness.ctx,
-				);
-
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+				const batch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["--session", "named", "batch"],
 					stdin: JSON.stringify([["click", "@e4"]]),
 				});
-
-				assert.equal(result.isError, true);
-				assert.equal(result.content[0].type, "text");
-				const text = readString(readRecord(result.content[0]).text);
-				assert.match(readString(text), /Could not locate element/);
-				assert.match(readString(text), /refresh-interactive-refs/);
-				assert.match(readString(text), /snapshot/);
+				assert.equal(batch.isError, true);
+				assert.equal(batch.content[0].type, "text");
+				assert.match(batch.content[0].text, /Could not locate element/);
+				assert.match(batch.content[0].text, /refresh-interactive-refs/);
+				assert.match(batch.content[0].text, /snapshot/);
 				assert.equal(
-					readArray(result.details?.batchSteps).map(readRecord)[0].failureCategory,
+					readArray(batch.details?.batchSteps).map(readRecord)[0].failureCategory,
 					"stale-ref",
 				);
 			});
@@ -350,7 +302,6 @@ test(
 	"agentBrowserExtension discards oversized malformed output instead of persisting browser secrets",
 	{ concurrency: false },
 	async () => {
-		await cleanupSecureTempArtifacts();
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 		const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-"));
 		const sessionFile = join(sessionDir, "session.jsonl");
@@ -359,13 +310,16 @@ test(
 		const restoreKey = `piab-r2-${"a".repeat(32)}`;
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`process.stdout.write("x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
+			`const fs = require("node:fs");
+process.stdout.write("invalid-json " + fs.readFileSync(0, "utf8") + " " + "x".repeat(600000) + ${JSON.stringify(restoreKey + sentinel)});`,
 		);
 
 		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir, sessionDir, sessionFile });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const spoolRoot = await getSessionTempRoot();
+				const beforeSpools = new Set(await readdir(spoolRoot));
 
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["state", "show", "caller-owned.json"],
@@ -381,108 +335,41 @@ test(
 				assert.equal(result.details?.artifactManifest, undefined);
 				assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
 				assert.doesNotMatch(JSON.stringify(result), /piab-r2-[a-f\d]{32}/);
+				assert.deepEqual(
+					(await readdir(spoolRoot)).filter(
+						(name) => !beforeSpools.has(name) && name.startsWith("process-stdout-"),
+					),
+					[],
+					"raw stdout spool is removed before returning, not only at shutdown",
+				);
+				assert.doesNotMatch(
+					JSON.stringify(harness.ctx.sessionManager.getBranch()),
+					new RegExp(sentinel),
+				);
+				const files = await readdir(sessionDir, { recursive: true, withFileTypes: true });
+				const persisted = await Promise.all(
+					files
+						.filter((file) => file.isFile())
+						.map((file) => readFile(join(file.parentPath, file.name), "utf8")),
+				);
+				assert.doesNotMatch(persisted.join("\n"), new RegExp(sentinel));
+
+				const authResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["auth", "save", "demo", "--password-stdin"],
+					stdin: "super-secret-password",
+				});
+				assert.equal(authResult.details?.fullOutputPath, undefined);
+				assert.match(
+					readString(authResult.details?.fullOutputUnavailable ?? ""),
+					/discarded because it may contain sensitive browser data/,
+				);
+				assert.doesNotMatch(JSON.stringify(authResult), /super-secret-password/);
 				await runExtensionEvent(harness.handlers, "session_shutdown");
 			});
 		} finally {
 			await cleanupSecureTempArtifacts();
 			await rm(tempDir, { force: true, recursive: true });
 			await rm(sessionDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension discards malformed spills when only a session directory is available",
-	{ concurrency: false },
-	async () => {
-		await cleanupSecureTempArtifacts();
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-		const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-dir-only-"));
-		const basePath = process.env.PATH ?? "";
-		const sentinel = "RQ-0006-session-dir-only-sentinel";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`process.stdout.write("x".repeat(600000) + ${JSON.stringify(sentinel)});`,
-		);
-
-		try {
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir, sessionDir });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["snapshot", "-i"],
-					});
-
-					assert.equal(result.isError, true);
-					assert.equal(result.details?.fullOutputPath, undefined);
-					assert.match(
-						readString(result.details?.fullOutputUnavailable ?? ""),
-						/discarded because it may contain sensitive browser data/,
-					);
-					assert.equal(result.details?.artifactManifest, undefined);
-					assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
-				},
-			);
-		} finally {
-			await cleanupSecureTempArtifacts();
-			await rm(tempDir, { force: true, recursive: true });
-			await rm(sessionDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension discards malformed spills without session artifacts",
-	{ concurrency: false },
-	async () => {
-		await cleanupSecureTempArtifacts();
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-		const basePath = process.env.PATH ?? "";
-		const sentinel = "RQ-0006-temp-parse-failure-sentinel";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`process.stdout.write("x".repeat(600000) + ${JSON.stringify(sentinel)});`,
-		);
-
-		try {
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/" },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["eval", "--stdin"],
-						stdin: "document.body.innerText",
-					});
-
-					assert.equal(result.isError, true);
-					assert.match(readString(result.details?.parseError ?? ""), /invalid JSON/i);
-					assert.equal(result.details?.fullOutputPath, undefined);
-					assert.match(
-						readString(result.details?.fullOutputUnavailable ?? ""),
-						/discarded because it may contain sensitive browser data/,
-					);
-					assert.equal(result.details?.artifactManifest, undefined);
-					assert.doesNotMatch(JSON.stringify(result), new RegExp(sentinel));
-				},
-			);
-		} finally {
-			await cleanupSecureTempArtifacts();
-			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
 );

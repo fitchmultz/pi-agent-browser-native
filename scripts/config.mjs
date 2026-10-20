@@ -17,7 +17,7 @@ async function loadConfigPolicyModule() {
 	if (existsSync(sourcePolicyUrl)) {
 		return import(sourcePolicyUrl.href);
 	}
-	return import("../dist/extensions/agent-browser/lib/config-policy.js");
+	return import("../dist/packaged/lib/config-policy.js");
 }
 
 const {
@@ -35,6 +35,7 @@ const {
 	getWebSearchProviderLabel,
 	isWebSearchProvider,
 	loadAgentBrowserConfigStateSync,
+	parseAgentBrowserConfigJson,
 	summarizeConfigFiles,
 } = await loadConfigPolicyModule();
 
@@ -51,22 +52,22 @@ function usage() {
 	return `pi-agent-browser-native config helper
 
 Usage through npm exec:
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config paths
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config show
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search status
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-key --stdin --provider <exa|brave> [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-env <ENV_VAR> [--provider brave|exa] [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search set-command <command> --provider <exa|brave> [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search clear --provider <exa|brave|all> [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search prefer <exa|brave|auto> [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search enable [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config web-search disable [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile status
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile set <name|path> [--policy explicit-only|authenticated-only|always] [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser profile clear [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable status
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable set <path> [--global|--project]
-  npm exec --yes --package pi-agent-browser-native@latest -- pi-agent-browser-config browser executable clear [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config paths
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config show
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search status
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-key --stdin --provider <exa|brave> [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-env <ENV_VAR> [--provider brave|exa] [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search set-command <command> --provider <exa|brave> [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search clear --provider <exa|brave|all> [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search prefer <exa|brave|auto> [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search enable [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config web-search disable [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser profile status
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser profile set <name|path> [--policy explicit-only|authenticated-only|always] [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser profile clear [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser executable status
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser executable set <path> [--global|--project]
+  npm exec --yes --package pi-agent-browser-native -- pi-agent-browser-config browser executable clear [--global|--project]
 
 Notes:
   Global config:  ~/.pi/config/pi-agent-browser-native/config.json
@@ -111,11 +112,14 @@ function readConfig(path) {
 	if (!existsSync(path)) {
 		return { ...DEFAULT_CONFIG };
 	}
-	const parsed = JSON.parse(readFileSync(path, "utf8"));
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+	const parsed = parseAgentBrowserConfigJson(readFileSync(path, "utf8"));
+	if (!parsed.ok) {
+		throw new Error(`${path}: ${parsed.error}`);
+	}
+	if (!parsed.value || typeof parsed.value !== "object" || Array.isArray(parsed.value)) {
 		throw new Error(`${path} must contain a JSON object.`);
 	}
-	return { ...DEFAULT_CONFIG, ...parsed };
+	return { ...DEFAULT_CONFIG, ...parsed.value };
 }
 
 function writeConfig(path, config) {

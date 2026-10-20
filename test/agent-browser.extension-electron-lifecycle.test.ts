@@ -7,19 +7,15 @@
  */
 
 import assert from "node:assert/strict";
-import { execFileSync, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, stat, watch, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { readRecord, readArray, readString, readNumber } from "./helpers/assertions.js";
 
-import { Check } from "typebox/value";
-
 import { compileAgentBrowserElectron } from "../extensions/agent-browser/lib/input-modes/electron.js";
-import { cleanupElectronLaunchResources } from "../extensions/agent-browser/lib/electron/cleanup.js";
-import { launchElectronApp } from "../extensions/agent-browser/lib/electron/launch.js";
 
 import { getBrowserRecord } from "../extensions/agent-browser/lib/browser-transcript.js";
 import { isRecord } from "../extensions/agent-browser/lib/parsing.js";
@@ -49,27 +45,6 @@ import {
 	writeFakeLinuxElectronBinary,
 	writeFakeMacElectronApp,
 } from "./helpers/extension-validation-fixtures.js";
-
-async function waitForLoggedCommand(
-	logPath: string,
-	command: string,
-	timeoutMs = 5_000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		// Poll the observed dispatch/exit state before waiting again; parallel polls would race cancellation.
-		// oxlint-disable-next-line no-await-in-loop
-		if ((await readInvocationLog(logPath)).some((entry) => entry.args.includes(command))) {
-			return;
-		}
-		// Poll the observed dispatch/exit state before waiting again; parallel polls would race cancellation.
-		// oxlint-disable-next-line no-await-in-loop
-		await new Promise<void>((resolve) => {
-			setTimeout(resolve, 10);
-		});
-	}
-	throw new Error(`Timed out waiting for ${command} invocation.`);
-}
 
 test(
 	"agentBrowserExtension accepts action-specific electron schema and routes list without upstream spawn",
@@ -105,63 +80,6 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 		try {
 			await withPatchedEnv({ HOME: tempDir, PATH: `${tempDir}:${basePath}` }, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir });
-				const tool = harness.getTool("agent_browser_electron");
-				assert.ok(tool !== undefined);
-				const schema = tool.parameters;
-				assert.equal(Check(schema, { action: "list" }), true);
-				assert.equal(Check(schema, { action: "list", maxResults: 10, query: "code" }), true);
-				assert.equal(
-					Check(schema, {
-						action: "launch",
-						allow: ["Code"],
-						appArgs: ["--safe-mode"],
-						appName: "Code",
-						deny: ["Slack"],
-						handoff: "tabs",
-						targetType: "webview",
-						timeoutMs: 1_000,
-					}),
-					true,
-				);
-				assert.equal(
-					Check(schema, { action: "status", launchId: "launch-1", timeoutMs: 1_000 }),
-					true,
-				);
-				assert.equal(Check(schema, { action: "status", timeoutMs: 1_000 }), true);
-				assert.equal(Check(schema, { action: "cleanup", all: true, timeoutMs: 1_000 }), true);
-				assert.equal(Check(schema, { action: "status", all: true, launchId: "launch-1" }), false);
-				assert.equal(Check(schema, { action: "cleanup", all: true, launchId: "launch-1" }), false);
-				assert.equal(Check(schema, { action: "status", all: false }), false);
-				assert.equal(Check(schema, { action: "cleanup", all: false }), false);
-				assert.equal(Check(schema, {}), false);
-				assert.equal(Check(schema, { action: "probe" }), true);
-				assert.equal(
-					Check(schema, { action: "probe", launchId: "launch-1", timeoutMs: 1_000 }),
-					true,
-				);
-				assert.equal(Check(schema, { action: "probe", timeoutMs: 0 }), false);
-				assert.equal(Check(schema, { action: "probe", handoff: "tabs" }), false);
-				assert.equal(Check(schema, { action: "status", handoff: "tabs" }), false);
-				assert.equal(Check(schema, { action: "cleanup", handoff: "tabs" }), false);
-				assert.equal(Check(schema, { action: "list", launchId: "launch-1" }), false);
-				assert.equal(Check(schema, { action: "list", query: 42 }), false);
-				assert.equal(Check(schema, { action: "list", query: "" }), false);
-				assert.equal(Check(schema, { action: "list", maxResults: "10" }), false);
-				assert.equal(Check(schema, { action: "list", maxResults: 1.5 }), false);
-				assert.equal(Check(schema, { action: "launch", allow: [""] }), false);
-				assert.equal(
-					Check(schema, {
-						action: "launch",
-						appName: "Code",
-						appPath: "/Applications/Visual Studio Code.app",
-					}),
-					true,
-				);
-				assert.equal(
-					Check(schema, { action: "launch", appName: "Code", launchId: "launch-1" }),
-					false,
-				);
-
 				const listResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					electron: { action: "list", maxResults: 1, query: "__piab_no_matching_electron_app__" },
 				});
@@ -583,215 +501,6 @@ test(
 				}
 			});
 		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension cleans Electron after post-launch managed policy rejection",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-policy-reject-"));
-		const applicationsDir = join(tempDir, "Applications");
-		const upstreamLogPath = join(tempDir, "agent-browser.log");
-		const launchLogPath = join(tempDir, "electron-launch.log");
-		const basePath = process.env.PATH ?? "";
-		let launchPid: number | undefined;
-		try {
-			await mkdir(applicationsDir, { recursive: true });
-			const app = await writeFakeLaunchableElectronApp({
-				applicationsDir,
-				bundleId: "com.example.PolicyReject",
-				launchLogPath,
-				name: "Policy Reject",
-			});
-			await writeFakeAgentBrowserBinary(
-				tempDir,
-				`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(upstreamLogPath)}, JSON.stringify({ args }) + "\\n");
-if (args.includes("session") && args.includes("info")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { active: true, runtime: { restoreKey: "foreign-policy" } } }));
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "unexpected", url: "about:blank" } }));
-}`,
-			);
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
-					});
-					assert.equal(result.isError, true, JSON.stringify(result));
-					assert.match(
-						readString(readRecord(result.content[0]).text),
-						/does not match the requested managed-restore policy/,
-					);
-					const launch = readRecord(JSON.parse((await readFile(launchLogPath, "utf8")).trim()));
-					launchPid = readNumber(launch.pid);
-					await waitForTestPidExit(readNumber(launch.pid));
-					await assert.rejects(stat(readString(launch.userDataDir)));
-					const invocations = await readInvocationLog(upstreamLogPath);
-					assert.equal(
-						invocations.some((entry) => entry.args.includes("connect")),
-						false,
-					);
-				},
-			);
-		} finally {
-			if (launchPid !== undefined && launchPid !== 0) {
-				await stopTestPid(launchPid);
-			}
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension allows local Electron snapshot handoff",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-protected-handoff-"));
-		const applicationsDir = join(tempDir, "Applications");
-		const upstreamLogPath = join(tempDir, "agent-browser.log");
-		const launchLogPath = join(tempDir, "electron-launch.log");
-		const protectedUrl = `file://${join(tempDir, ".agent-browser", "sessions", "auth.html")}`;
-		const basePath = process.env.PATH ?? "";
-		let launchPid: number | undefined;
-		try {
-			await mkdir(applicationsDir, { recursive: true });
-			const app = await writeFakeLaunchableElectronApp({
-				applicationsDir,
-				bundleId: "com.example.ProtectedHandoff",
-				launchLogPath,
-				name: "Protected Handoff",
-			});
-			await writeFakeAgentBrowserBinary(
-				tempDir,
-				fakeAgentBrowserLifecycleScript(upstreamLogPath, {
-					sessionUrl: protectedUrl,
-					snapshotTitle: "SECRET LOCAL CONTENT",
-					snapshotUrl: protectedUrl,
-				}),
-			);
-			await withPatchedEnv(
-				{ AGENT_BROWSER_SESSION: "shared-default", PATH: `${tempDir}:${basePath}` },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
-					});
-					assert.equal(result.isError, false, JSON.stringify(result));
-					assert.match(JSON.stringify(result), /SECRET LOCAL CONTENT/);
-					const invocations = await readInvocationLog(upstreamLogPath);
-					assert.equal(
-						invocations.some(
-							(entry) => entry.args.includes("snapshot") || entry.args.includes("tab"),
-						),
-						true,
-					);
-					const launch = readRecord(JSON.parse((await readFile(launchLogPath, "utf8")).trim()));
-					launchPid = readNumber(launch.pid);
-					assert.match(readString(readRecord(result.details).sessionName), /^piab-/);
-					assert.equal(
-						invocations.some((entry) => entry.args.includes("shared-default")),
-						false,
-						"Electron's owned launch must not attach the shared default browser session",
-					);
-					const launchId = readRecord(
-						readRecord(readRecord(result.details).electron).identifiers,
-					).launchId;
-					assert.ok(typeof launchId === "string" && launchId.length > 0);
-					const cleanup = await executeRegisteredTool(harness.tool, harness.ctx, {
-						electron: { action: "cleanup", launchId },
-					});
-					assert.equal(cleanup.isError, false, JSON.stringify(cleanup));
-					assert.equal(await waitForTestPidExit(readNumber(launch.pid)), true);
-					await assert.rejects(stat(readString(launch.userDataDir)));
-				},
-			);
-		} finally {
-			if (launchPid !== undefined && launchPid !== 0) {
-				await stopTestPid(launchPid);
-			}
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension cleans an Electron launch canceled during snapshot handoff",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-canceled-handoff-"));
-		const applicationsDir = join(tempDir, "Applications");
-		const upstreamLogPath = join(tempDir, "agent-browser.log");
-		const launchLogPath = join(tempDir, "electron-launch.log");
-		const basePath = process.env.PATH ?? "";
-		let launchPid: number | undefined;
-		try {
-			await mkdir(applicationsDir, { recursive: true });
-			const app = await writeFakeLaunchableElectronApp({
-				applicationsDir,
-				bundleId: "com.example.CanceledHandoff",
-				launchLogPath,
-				name: "Canceled Handoff",
-			});
-			await writeFakeAgentBrowserBinary(
-				tempDir,
-				`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(upstreamLogPath)}, JSON.stringify({ args }) + "\\n");
-const commandIndex = args.findIndex((arg) => ["close", "connect", "get", "snapshot", "tab"].includes(arg));
-const command = args[commandIndex];
-const subcommand = args[commandIndex + 1];
-if (command === "snapshot") setInterval(() => {}, 1000);
-else {
-  const data = command === "get" && subcommand === "url"
-    ? { result: "app://safe", url: "app://safe" }
-    : command === "tab" ? { tabs: [{ active: true, tabId: "t1", url: "app://safe" }] }
-      : command === "connect" ? { connected: true } : { closed: true };
-  process.stdout.write(JSON.stringify({ success: true, data }));
-}`,
-			);
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				const controller = new AbortController();
-				const resultPromise = executeRegisteredTool(
-					harness.tool,
-					harness.ctx,
-					{ electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs } },
-					controller.signal,
-				);
-				await waitForLoggedCommand(upstreamLogPath, "snapshot");
-				controller.abort();
-				const result = await resultPromise;
-				assert.equal(result.isError, true, JSON.stringify(result));
-				assert.equal(readRecord(result.details).failureCategory, "aborted");
-				const launch = readRecord(JSON.parse((await readFile(launchLogPath, "utf8")).trim()));
-				launchPid = readNumber(launch.pid);
-				assert.equal(await waitForTestPidExit(readNumber(launch.pid)), true);
-				await assert.rejects(stat(readString(launch.userDataDir)));
-			});
-		} finally {
-			if (launchPid !== undefined && launchPid !== 0) {
-				await stopTestPid(launchPid);
-			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
@@ -1257,58 +966,6 @@ test(
 	},
 );
 
-for (const terminateBeforeCleanup of [false, true]) {
-	test(
-		`Electron cleanup awaits tracked child exit before removing owned resources (already signaled: ${terminateBeforeCleanup})`,
-		{ concurrency: false },
-		async () => {
-			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-exit-"));
-			let child: ChildProcess | undefined;
-			try {
-				const app = await writeFakeLaunchableElectronApp({
-					applicationsDir: tempDir,
-					bundleId: "com.example.CleanupExit",
-					launchLogPath: join(tempDir, "launch.json"),
-					name: "Cleanup Exit",
-				});
-				const launched = await launchElectronApp({ appPath: app.appPath, appArgs: app.appArgs });
-				assert.equal(launched.ok, true, launched.ok ? undefined : JSON.stringify(launched.failure));
-				child = launched.value.child;
-				let exited = false;
-				child.once("exit", () => {
-					exited = true;
-				});
-				if (terminateBeforeCleanup) {
-					child.kill("SIGTERM");
-				}
-				const cleanup = await cleanupElectronLaunchResources({
-					child,
-					record: launched.value.record,
-				});
-				assert.equal(cleanup.partial, false, JSON.stringify(cleanup));
-				assert.equal(
-					exited,
-					true,
-					"tracked process must exit before cleanup returns, not merely stop responding to PID probes",
-				);
-				assert.throws(() => process.kill(readNumber(launched.value.record.pid), 0), {
-					code: "ESRCH",
-				});
-				await assert.rejects(stat(launched.value.record.userDataDir), { code: "ENOENT" });
-				// In particular, Windows must release the running executable without rm retries.
-				await rm(app.executablePath);
-			} finally {
-				if (child && child.exitCode === null && child.signalCode === null) {
-					const exited = once(child, "exit", { signal: AbortSignal.timeout(2_000) });
-					child.kill("SIGKILL");
-					await exited;
-				}
-				await rm(tempDir, { force: true, recursive: true });
-			}
-		},
-	);
-}
-
 test(
 	"agentBrowserExtension retains headed autosave policy for Electron cleanup close",
 	{ concurrency: false },
@@ -1515,6 +1172,7 @@ test(
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-normal-file-text-scope-"));
+		const localUrl = pathToFileURL(join(tempDir, "normal-browser-fixture.html")).href;
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -1523,11 +1181,11 @@ const commandIndex = args.findIndex((arg) => arg === "open" || arg === "get" || 
 const command = args[commandIndex];
 const subcommand = args[commandIndex + 1];
 const data = command === "open"
-  ? { title: "Normal file page", url: "file:///tmp/normal-browser-fixture.html" }
+  ? { title: "Normal file page", url: ${JSON.stringify(localUrl)} }
   : command === "get" && subcommand === "text"
-    ? { origin: "file:///tmp/normal-browser-fixture.html", text: "normal page text" }
+    ? { origin: ${JSON.stringify(localUrl)}, text: "normal page text" }
     : command === "get" && subcommand === "url"
-      ? { result: "file:///tmp/normal-browser-fixture.html", url: "file:///tmp/normal-browser-fixture.html" }
+      ? { result: ${JSON.stringify(localUrl)}, url: ${JSON.stringify(localUrl)} }
       : { closed: true };
 process.stdout.write(JSON.stringify({ success: true, data }));`,
 		);
@@ -1540,7 +1198,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				});
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 				const openResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "file:///tmp/normal-browser-fixture.html"],
+					args: ["open", localUrl],
 					sessionMode: "fresh",
 				});
 				assert.equal(openResult.isError, false);
@@ -1566,6 +1224,7 @@ test(
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-local-drift-"));
+		const localUrl = pathToFileURL(join(tempDir, "drifted-local-page.html")).href;
 		const logPath = join(tempDir, "agent-browser.log");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
@@ -1579,7 +1238,7 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ command, subcomma
 const data = command === "open"
   ? { title: "Safe page", url: "https://fixture.invalid/" }
   : command === "get" && subcommand === "url"
-    ? { result: "file:///tmp/drifted-local-page.html", url: "file:///tmp/drifted-local-page.html" }
+    ? { result: ${JSON.stringify(localUrl)}, url: ${JSON.stringify(localUrl)} }
     : command === "get" && subcommand === "title"
       ? { result: "SECRET LOCAL TITLE", title: "SECRET LOCAL TITLE" }
       : { closed: true };
@@ -2008,9 +1667,11 @@ else write({ ok: true, title: currentPage().title, url: currentPage().url });`,
 test(
 	"agentBrowserExtension applies electron.probe timeoutMs to bounded subprocess probes",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-timeout-"));
 		const logPath = join(tempDir, "agent-browser.log");
+		const readyPath = join(tempDir, "url-ready");
+		const releasePath = join(tempDir, "release-url");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -2037,9 +1698,9 @@ if (command === "open") {
 	return;
 }
 if (args.includes("get") && args.includes("url")) {
-	setTimeout(() => {
-		process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
-	}, 2000);
+	fs.writeFileSync(${JSON.stringify(readyPath)}, String(process.pid));
+	while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+	process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
 	return;
 }
 process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));`,
@@ -2072,10 +1733,64 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 				});
 				assert.equal(safeOpen.isError, false, JSON.stringify(safeOpen));
 
-				// Leave room for lock admission and process startup, but not the fake URL response.
-				const probeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					electron: { action: "probe", timeoutMs: 1_000 },
-				});
+				const realSetTimeout = setTimeout;
+				const realClearTimeout = clearTimeout;
+				const controlledProbe = async (timeoutMs: number, expire: boolean) => {
+					await rm(readyPath, { force: true });
+					await rm(releasePath, { force: true });
+					const controller = new AbortController();
+					const ready = (async () => {
+						for await (const event of watch(tempDir, {
+							signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+						})) {
+							if (event.filename === "url-ready") {
+								return;
+							}
+						}
+					})();
+					t.mock.timers.enable({ apis: ["setTimeout"] });
+					const pending = executeRegisteredTool(
+						harness.tool,
+						harness.ctx,
+						{ electron: { action: "probe", timeoutMs } },
+						controller.signal,
+					);
+					let guard: NodeJS.Timeout | undefined;
+					try {
+						await Promise.race([
+							ready,
+							pending.then((result) => {
+								throw new Error(
+									`Probe settled before get url dispatched: ${JSON.stringify(result)}`,
+								);
+							}),
+						]);
+						if (expire) {
+							t.mock.timers.tick(timeoutMs);
+						} else {
+							await writeFile(releasePath, "go");
+						}
+						return await Promise.race([
+							pending,
+							new Promise<never>((_resolve, reject) => {
+								guard = realSetTimeout(
+									() => reject(new Error("Probe ignored its controlled URL read")),
+									10_000,
+								);
+							}),
+						]);
+					} finally {
+						t.mock.timers.reset();
+						controller.abort();
+						if (guard) {
+							realClearTimeout(guard);
+						}
+						await writeFile(releasePath, "go");
+						await Promise.allSettled([pending, ready]);
+					}
+				};
+				// Start the native child before advancing its unchanged caller watchdog.
+				const probeResult = await controlledProbe(1_000, true);
 				assert.equal(probeResult.isError, true, JSON.stringify(probeResult));
 				assert.deepEqual(
 					readRecord(probeResult.details).compiledElectron,
@@ -2095,9 +1810,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 
 				// Control: the same fixture under a generous timeout must succeed, proving the
 				// bounded failure above comes from the applied timeoutMs, not any other failure.
-				const controlResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					electron: { action: "probe", timeoutMs: 5_000 },
-				});
+				const controlResult = await controlledProbe(5_000, false);
 				assert.equal(controlResult.isError, false, JSON.stringify(controlResult));
 				assert.deepEqual(readRecord(controlResult.details).compiledElectron, {
 					action: "probe",

@@ -167,11 +167,6 @@ async function main(argv = process.argv.slice(2)) {
 	const packageEntrypoint = await readPackageEntrypoint();
 	const directImportSamples = await measureDirectImportSamples(packageEntrypoint, options.samples);
 	const directSummary = summarize(directImportSamples);
-	if (!directSummary.withinBudget) {
-		throw new Error(
-			`Direct startup exceeded ${DIRECT_IMPORT_BUDGET_MS}ms budget: max ${directSummary.maxMs.toFixed(1)}ms.`,
-		);
-	}
 	const firstSample = directImportSamples[0] ?? { events: 0, tools: [] };
 	const report = {
 		artifactPath: resolve(repoRoot, ".artifacts", "startup-profile", "latest.json"),
@@ -197,6 +192,11 @@ async function main(argv = process.argv.slice(2)) {
 	await mkdir(dirname(report.artifactPath), { recursive: true });
 	await writeFile(report.artifactPath, `${JSON.stringify(report, null, "\t")}\n`, "utf8");
 	console.log(options.json ? JSON.stringify(report, null, 2) : formatHuman(report));
+	if (!directSummary.withinBudget) {
+		throw new Error(
+			`Direct startup exceeded ${DIRECT_IMPORT_BUDGET_MS}ms budget: max ${directSummary.maxMs.toFixed(1)}ms.`,
+		);
+	}
 	return 0;
 }
 

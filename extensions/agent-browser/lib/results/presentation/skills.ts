@@ -39,6 +39,7 @@ function getSkillContent(data: unknown): string | undefined {
 class SkillShellWords {
 	private readonly words: string[] = [];
 	private current = "";
+	private wordStarted = false;
 	private quote: "single" | "double" | undefined;
 	private index = 0;
 	private readonly input: string;
@@ -48,9 +49,10 @@ class SkillShellWords {
 	}
 
 	private flush(): void {
-		if (this.current.length > 0) {
+		if (this.wordStarted) {
 			this.words.push(this.current);
 			this.current = "";
+			this.wordStarted = false;
 		}
 	}
 
@@ -76,14 +78,17 @@ class SkillShellWords {
 
 	private consumeUnquoted(char: string): boolean {
 		if (char === "'" || char === '"') {
+			this.wordStarted = true;
 			this.quote = char === "'" ? "single" : "double";
 		} else if (char === "\\") {
+			this.wordStarted = true;
 			this.appendEscape();
-		} else if (char === "#" && this.current.length === 0) {
+		} else if (char === "#" && !this.wordStarted) {
 			return false;
 		} else if (/\s/.test(char)) {
 			this.flush();
 		} else {
+			this.wordStarted = true;
 			this.current += char;
 		}
 		return true;

@@ -47,6 +47,7 @@ export async function directoryContainsChromePak(directory: string): Promise<boo
 export async function hasElectronAppPayload(resourcesDirectory: string): Promise<boolean> {
 	return (
 		(await pathExists(join(resourcesDirectory, "app.asar"))) ||
+		(await pathExists(join(resourcesDirectory, "default_app.asar"))) ||
 		(await isDirectory(join(resourcesDirectory, "app")))
 	);
 }

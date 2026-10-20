@@ -10,8 +10,11 @@ import assert from "node:assert/strict";
 import { readArray, readRecord, readString } from "./helpers/assertions.js";
 import { withAgentBrowserProcessEnvironment } from "../extensions/agent-browser/lib/process-environment.js";
 import { execFileSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import {
 	access,
+	default as fsPromises,
 	link,
 	mkdir,
 	mkdtemp,
@@ -23,8 +26,8 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
-import test from "node:test";
+import { basename, delimiter, dirname, join } from "node:path";
+import test, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
@@ -57,6 +60,77 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+async function waitForFile(path: string, signal: AbortSignal): Promise<void> {
+	for await (const event of watch(dirname(path), { signal })) {
+		if (event.filename === basename(path)) {
+			try {
+				// A delayed removal event is not readiness for the next native invocation.
+				await access(path);
+				return;
+			} catch (error) {
+				if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+					throw error;
+				}
+			}
+		}
+	}
+}
+
+async function executeControlledTimeout(
+	t: TestContext,
+	harness: Readonly<Pick<ReturnType<typeof createExtensionHarness>, "tool" | "ctx">>,
+	params: {
+		readonly args: readonly string[];
+		readonly stdin: string;
+		readonly sessionMode?: "fresh";
+	},
+	startedPath: string,
+): Promise<Awaited<ReturnType<typeof executeRegisteredTool>>> {
+	await rm(startedPath, { force: true });
+	const controller = new AbortController();
+	const ready = waitForFile(
+		startedPath,
+		AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+	);
+	const timers = t.mock.method(globalThis, "setTimeout");
+	const clearedTimers = t.mock.method(globalThis, "clearTimeout");
+	const pending = executeRegisteredTool(
+		harness.tool,
+		harness.ctx,
+		{ ...params, timeoutMs: 10_000 },
+		controller.signal,
+	);
+	try {
+		await Promise.race([
+			ready,
+			pending.then((result) =>
+				assert.fail(`Timeout child never started: ${JSON.stringify(result)}`),
+			),
+		]);
+		// Keep startup/lock timers real; fire the actual watchdog only after native dispatch.
+		const watchdog = timers.mock.calls.findLast(
+			(call) =>
+				typeof call.arguments[1] === "number" &&
+				call.arguments[1] > 0 &&
+				call.arguments[1] <= 10_000 &&
+				!clearedTimers.mock.calls.some((cleared) => cleared.arguments[0] === call.result),
+		);
+		assert.ok(watchdog, "the dispatched command must install its watchdog");
+		clearTimeout(watchdog.result);
+		watchdog.arguments[0]();
+		timers.mock.restore();
+		clearedTimers.mock.restore();
+		const result = await pending;
+		assert.equal(result.details?.timedOut, true, JSON.stringify(result));
+		return result;
+	} finally {
+		timers.mock.restore();
+		clearedTimers.mock.restore();
+		controller.abort();
+		await Promise.allSettled([pending, ready]);
+	}
+}
 
 test(
 	"agentBrowserExtension rejects dangling value-taking flags before spawning agent-browser",
@@ -140,7 +214,18 @@ process.stdout.write(JSON.stringify({ success: true, data: { files: [{ filename:
 					// oxlint-disable-next-line node-test/no-conditional-assertion
 					assert.equal(result.isError, false, JSON.stringify(result));
 				}
-				assert.ok((await readInvocationLog(logPath)).length >= 4);
+				const invocations = await readInvocationLog(logPath);
+				assert.deepEqual(
+					invocations.filter(({ args }) => args.includes("state")).map(({ args }) => args),
+					[
+						["--json", "state", "list"],
+						["--json", "state", "show", `/other/checkout/${restoreKey}-managed.json`],
+						["--json", "state", "clear", "--all"],
+					],
+				);
+				const openArgs = invocations.find(({ args }) => args.includes("open"))?.args ?? [];
+				assert.equal(openArgs[openArgs.indexOf("--restore") + 1], restoreKey);
+				assert.deepEqual(openArgs.slice(-2), ["open", "https://example.com"]);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -658,7 +743,10 @@ if (args.includes("get") && args.includes("url")) {
 				});
 				assert.equal(listed.isError, false, JSON.stringify(listed));
 				assert.match(JSON.stringify(listed), /caller-owned/);
-				assert.match(JSON.stringify(listed), /piab-foreign-live|private\.example/);
+				assert.deepEqual(readRecord(listed.details?.data).sessions, [
+					{ name: "piab-foreign-live", active: true, url: "https://private.example" },
+					{ name: "caller-owned", active: false, url: "https://example.com" },
+				]);
 
 				for (const sessionName of ["piab-foreign-live", "PIAB-foreign-live"]) {
 					// Fixture transitions and their assertions run in order against this test's shared state.
@@ -842,7 +930,7 @@ if (args.includes("session") && args.includes("info")) {
 						(await readInvocationLog(logPath)).filter(
 							(entry) => !(entry.args.includes("session") && entry.args.includes("info")),
 						).length;
-					const invocationCount = await userInvocationCount();
+					let invocationCount = await userInvocationCount();
 
 					const abortController = new AbortController();
 					abortController.abort();
@@ -861,15 +949,27 @@ if (args.includes("session") && args.includes("info")) {
 
 					for (const params of [
 						{
-							args: ["batch"],
+							args: ["batch", "--bail"],
 							stdin: JSON.stringify([
 								["connect", "wss://remote.example/devtools/browser/test"],
+								["get", "url"],
 								["snapshot", "-i"],
 							]),
 						},
 						{ args: ["batch", "connect wss://remote.example/devtools/browser/test"] },
 					]) {
 						// Fixture transitions and their assertions run in order against this test's shared state.
+						// oxlint-disable-next-line no-await-in-loop
+						const verified = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["get", "url"],
+						});
+						// Each negative policy case starts with an independently verified page, not an unknown-target denial.
+						// oxlint-disable-next-line node-test/no-conditional-assertion
+						assert.equal(verified.isError, false, JSON.stringify(verified));
+						// Count the deliberate verification before checking that policy denial adds no user dispatch.
+						// oxlint-disable-next-line no-await-in-loop
+						invocationCount = await userInvocationCount();
+						// The two raw/stdin policy cases share the daemon and run after their page verification.
 						// oxlint-disable-next-line no-await-in-loop
 						const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
 						// Both literal raw/stdin connect batches must fail without increasing user dispatch count.
@@ -882,7 +982,7 @@ if (args.includes("session") && args.includes("info")) {
 						// oxlint-disable-next-line node-test/no-conditional-assertion
 						assert.match(
 							readString(blockedBatch.details.validationError ?? ""),
-							/does not match the requested managed-restore policy|active page became unverified/,
+							/does not match the requested managed-restore policy/,
 						);
 						// Fixture transitions and their assertions run in order against this test's shared state.
 						// oxlint-disable-next-line no-await-in-loop
@@ -1044,50 +1144,57 @@ if (args.includes("session") && args.includes("info")) {
 						second.ctx,
 					);
 					await writeFile(statePath, JSON.stringify({ active: false, restoreKey: null }));
-					const compatible = executeRegisteredTool(first.tool, first.ctx, {
-						args: ["open", "https://example.com/safe"],
-					});
-					for (let attempt = 0; attempt < 100; attempt += 1) {
-						try {
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await access(startedPath);
-							break;
-						} catch {
-							if (attempt === 99) {
-								// This is a fail-closed polling deadline: exhausting all 100 attempts fails the test.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.fail("compatible call did not reach the fake upstream process");
-							}
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await new Promise((resolveDelay) => {
-								setTimeout(resolveDelay, 10);
-							});
-						}
+					const controller = new AbortController();
+					const ready = waitForFile(
+						startedPath,
+						AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+					);
+					const compatible = executeRegisteredTool(
+						first.tool,
+						first.ctx,
+						{ args: ["open", "https://example.com/safe"] },
+						controller.signal,
+					);
+					const pending = [compatible];
+					try {
+						await Promise.race([
+							ready,
+							compatible.then((result) =>
+								assert.fail(`Compatible child never held: ${JSON.stringify(result)}`),
+							),
+						]);
+						const incompatible = withAgentBrowserProcessEnvironment(
+							{ AGENT_BROWSER_PROFILE: "Default" },
+							() =>
+								executeRegisteredTool(
+									second.tool,
+									second.ctx,
+									{ args: ["open", "https://example.com/unsafe"] },
+									controller.signal,
+								),
+						);
+						pending.push(incompatible);
+						const observer = await executeRegisteredTool(first.tool, first.ctx, {
+							args: ["--session", "observer", "session", "info"],
+						});
+						assert.equal(observer.isError, false, JSON.stringify(observer));
+						await writeFile(allowPath, "allow");
+						const compatibleResult = await compatible;
+						assert.equal(compatibleResult.isError, false, JSON.stringify(compatibleResult));
+						const daemonState = readRecord(JSON.parse(await readFile(statePath, "utf8")));
+						assert.match(readString(daemonState.restoreKey ?? ""), /^piab-r2-/);
+						const blocked = await incompatible;
+						assert.equal(blocked.isError, true, JSON.stringify(blocked));
+						assert.match(
+							readString(blocked.details?.validationError ?? ""),
+							/does not match the requested managed-restore policy/,
+						);
+						assert.equal(await readFile(mainLogPath, "utf8"), "compatible-main\n");
+					} finally {
+						await writeFile(allowPath, "allow");
+						controller.abort();
+						await Promise.allSettled([...pending, ready]);
 					}
-					const incompatible = withAgentBrowserProcessEnvironment(
-						{ AGENT_BROWSER_PROFILE: "Default" },
-						() =>
-							executeRegisteredTool(second.tool, second.ctx, {
-								args: ["open", "https://example.com/unsafe"],
-							}),
-					);
-					await new Promise((resolveDelay) => {
-						setTimeout(resolveDelay, 50);
-					});
-					await writeFile(allowPath, "allow");
-					const compatibleResult = await compatible;
-					assert.equal(compatibleResult.isError, false, JSON.stringify(compatibleResult));
-					const daemonState = readRecord(JSON.parse(await readFile(statePath, "utf8")));
-					assert.match(readString(daemonState.restoreKey ?? ""), /^piab-r2-/);
-					const blocked = await incompatible;
-					assert.equal(blocked.isError, true, JSON.stringify(blocked));
-					assert.match(
-						readString(blocked.details?.validationError ?? ""),
-						/does not match the requested managed-restore policy/,
-					);
-					assert.equal(await readFile(mainLogPath, "utf8"), "compatible-main\n");
 				},
 			);
 		} finally {
@@ -1184,6 +1291,8 @@ test(
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-artifact-concurrent-"));
 		const startedPath = join(tempDir, "slow-started");
+		const releasePath = join(tempDir, "release-slow");
+		const orderPath = join(tempDir, "order.log");
 		const slowPath = join(tempDir, "slow.png");
 		const fastPath = join(tempDir, "fast.png");
 		const finalPath = join(tempDir, "final.png");
@@ -1198,14 +1307,22 @@ const session = sessionIndex >= 0 ? args[sessionIndex + 1] : "default";
 if (args.includes("get") && args.includes("url")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: "https://example.com/", url: "https://example.com/" } }));
 } else if (args.includes("screenshot")) {
+  fs.appendFileSync(${JSON.stringify(orderPath)}, session + "-start\\n");
+  const capture = () => {
+    const outputPath = args.at(-1);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, Buffer.from("89504e470d0a1a0a", "hex"));
+    fs.appendFileSync(${JSON.stringify(orderPath)}, session + "-end\\n");
+    process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
+  };
   if (session === "slow") {
+    const watcher = fs.watch(${JSON.stringify(tempDir)}, () => {
+      if (!fs.existsSync(${JSON.stringify(releasePath)})) return;
+      watcher.close();
+      capture();
+    });
     fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
-  }
-  const outputPath = args.at(-1);
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-  fs.writeFileSync(outputPath, Buffer.from("89504e470d0a1a0a", "hex"));
-  process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
+  } else capture();
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.com/" } }));
 }`,
@@ -1225,32 +1342,53 @@ if (args.includes("get") && args.includes("url")) {
 						{ reason: "new" },
 						harness.ctx,
 					);
-					const slowScreenshot = executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--session", "slow", "screenshot", slowPath],
-					});
-					for (let attempt = 0; attempt < 3_000; attempt += 1) {
-						try {
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await access(startedPath);
-							break;
-						} catch {
-							if (attempt === 2_999) {
-								// This is a fail-closed startup deadline: exhausting all 3000 attempts fails the test.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.fail("slow caller-owned screenshot did not start");
-							}
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await new Promise((resolveDelay) => {
-								setTimeout(resolveDelay, 5);
-							});
-						}
+					const controller = new AbortController();
+					const ready = waitForFile(
+						startedPath,
+						AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+					);
+					const slowScreenshot = executeRegisteredTool(
+						harness.tool,
+						harness.ctx,
+						{ args: ["--session", "slow", "screenshot", slowPath] },
+						controller.signal,
+					);
+					const pending = [slowScreenshot];
+					let concurrentResults: Awaited<ReturnType<typeof executeRegisteredTool>>[];
+					try {
+						await Promise.race([
+							ready,
+							slowScreenshot.then((result) =>
+								assert.fail(`Slow capture never held: ${JSON.stringify(result)}`),
+							),
+						]);
+						const fastScreenshot = executeRegisteredTool(
+							harness.tool,
+							harness.ctx,
+							{ args: ["--session", "fast", "screenshot", fastPath] },
+							controller.signal,
+						);
+						pending.push(fastScreenshot);
+						// Other-session native reads complete while both artifact calls are outstanding.
+						const read = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", "observer", "get", "html", "body"],
+						});
+						assert.equal(read.isError, false, JSON.stringify(read));
+						const title = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", "observer", "get", "title"],
+						});
+						assert.equal(title.isError, false, JSON.stringify(title));
+						assert.equal(await readFile(orderPath, "utf8"), "slow-start\n");
+						await writeFile(releasePath, "release");
+						concurrentResults = await Promise.all([slowScreenshot, fastScreenshot]);
+						assert.equal(
+							await readFile(orderPath, "utf8"),
+							"slow-start\nslow-end\nfast-start\nfast-end\n",
+						);
+					} finally {
+						controller.abort();
+						await Promise.allSettled([...pending, ready]);
 					}
-					const fastScreenshot = executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--session", "fast", "screenshot", fastPath],
-					});
-					const concurrentResults = await Promise.all([slowScreenshot, fastScreenshot]);
 					assert.equal(
 						concurrentResults.every((result) => result.isError === false),
 						true,
@@ -2080,6 +2218,7 @@ test(
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-timeout-"));
 		const logPath = join(tempDir, "invocations.log");
 		const releasePath = join(tempDir, "release");
+		const outputPath = join(tempDir, "export.csv");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -2098,7 +2237,8 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 				{
 					PATH: `${tempDir}:${basePath}`,
 					PI_AGENT_BROWSER_TEST_PAGE_URL: "https://fixture.test/",
-					PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "50",
+					// Real helper probes such as the live `get url` check also use this base budget.
+					PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "10000",
 				},
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
@@ -2110,37 +2250,46 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 					);
 
 					const batchWaitStdin = JSON.stringify([
-						["wait", "--text", "42", "--timeout", "1000"],
-						["wait", "1000"],
+						["wait", "--text", "42", "--timeout", "5000"],
+						["wait", "5000"],
 					]);
+					// Past the 10 s base watchdog, before every extended wait budget (15 s or more).
+					const elapsed = 12_000;
 					const cases = [
-						{ params: { args: ["wait", "31000"] }, elapsed: 100 },
-						{
-							params: { args: ["wait", "--download", "/tmp/export.csv", "--timeout", "30000"] },
-							elapsed: 100,
-						},
-						{ params: { args: ["batch"], stdin: batchWaitStdin }, elapsed: 6500 },
+						{ args: ["wait", "31000"] },
+						{ args: ["wait", "--download", outputPath, "--timeout", "30000"] },
+						{ args: ["batch"], stdin: batchWaitStdin },
 					];
 					const realSetTimeout = setTimeout;
-					for (const [index, { params, elapsed }] of cases.entries()) {
+					for (const [index, params] of cases.entries()) {
 						// Fixture transitions and their assertions run in order against this test's shared state.
 						// oxlint-disable-next-line no-await-in-loop
 						await rm(releasePath, { force: true });
 						const controller = new AbortController();
-						t.mock.timers.enable({ apis: ["setTimeout"] });
+						const timers = t.mock.method(globalThis, "setTimeout");
+						const clearedTimers = t.mock.method(globalThis, "clearTimeout");
 						const pending = executeRegisteredTool(
 							harness.tool,
 							harness.ctx,
 							params,
 							controller.signal,
 						);
+						// A result before the held child starts is a preflight failure; report it immediately.
+						const early: { result?: string } = {};
+						const settled = Promise.allSettled([pending]).then(([outcome]) => {
+							early.result = JSON.stringify(outcome);
+							return outcome;
+						});
 						try {
 							// Preflight and native process startup use real I/O. Advance the
 							// watchdog only once the requested command is running and held.
-							const deadline = Date.now() + 5000;
+							const deadline = Date.now() + 15_000;
 							// Fixture transitions and their assertions run in order against this test's shared state.
 							// oxlint-disable-next-line no-await-in-loop
 							while ((await readInvocationLog(logPath)).length <= index) {
+								// This polling guard fails stalled startup; an already-started child needs no polling iteration.
+								// oxlint-disable-next-line node-test/no-conditional-assertion
+								assert.equal(early.result, undefined, "tool settled before the wait child started");
 								// This polling guard fails stalled startup; an already-started child needs no polling iteration.
 								// oxlint-disable-next-line node-test/no-conditional-assertion
 								assert.ok(Date.now() < deadline, "controlled wait child must start");
@@ -2150,7 +2299,17 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 									realSetTimeout(resolveDelay, 5);
 								});
 							}
-							t.mock.timers.tick(elapsed);
+							for (const timerCall of timers.mock.calls.filter(
+								(call) =>
+									typeof call.arguments[1] === "number" &&
+									call.arguments[1] <= elapsed &&
+									!clearedTimers.mock.calls.some((cleared) => cleared.arguments[0] === call.result),
+							)) {
+								clearTimeout(timerCall.result);
+								timerCall.arguments[0]();
+							}
+							timers.mock.restore();
+							clearedTimers.mock.restore();
 							// Fixture transitions and their assertions run in order against this test's shared state.
 							// oxlint-disable-next-line no-await-in-loop
 							await writeFile(releasePath, "release");
@@ -2164,11 +2323,12 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(result.details?.resultCategory, "success");
 						} finally {
-							t.mock.timers.reset();
+							timers.mock.restore();
+							clearedTimers.mock.restore();
 							controller.abort();
 							// Fixture transitions and their assertions run in order against this test's shared state.
 							// oxlint-disable-next-line no-await-in-loop
-							await Promise.allSettled([pending]);
+							await settled;
 						}
 					}
 					const invocations = await readInvocationLog(logPath);
@@ -2176,7 +2336,7 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 						invocations.map((entry) => entry.args.slice(-4)),
 						[
 							["--session", invocations[0].args[2], "wait", "31000"],
-							["--download", "/tmp/export.csv", "--timeout", "30000"],
+							["--download", outputPath, "--timeout", "30000"],
 							["--json", "--session", invocations[2].args[2], "batch"],
 						],
 					);
@@ -3084,9 +3244,10 @@ test("applyAgentBrowserOutputPath rehydrates compacted batch rows from live wrap
 	}
 });
 
-test("timeout observations do not prove planned steps ran", { concurrency: false }, async () => {
+test("timeout observations do not prove planned steps ran", { concurrency: false }, async (t) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "piab-timeout-evidence-"));
 	const logPath = join(tempDir, "executed.log");
+	const startedPath = join(tempDir, "started");
 	await writeFile(join(tempDir, "receipt.png"), "old receipt");
 	await writeFakeAgentBrowserBinary(
 		tempDir,
@@ -3096,6 +3257,7 @@ if (args.includes("batch")) {
   const steps = JSON.parse(fs.readFileSync(0, "utf8"));
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(steps[0]) + "\\n");
   setInterval(() => {}, 60000);
+  fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
 } else if (args.includes("url")) {
   process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.test/start" } }));
 } else {
@@ -3112,16 +3274,20 @@ if (args.includes("batch")) {
 			]) {
 				// Fixture transitions and their assertions run in order against this test's shared state.
 				// oxlint-disable-next-line no-await-in-loop
-				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", "timeout-proof", "batch", "--bail"],
-					stdin: JSON.stringify([
-						["wait", "60000"],
-						["fill", "#amount", "100"],
-						["click", "#submit"],
-						lastStep,
-					]),
-					timeoutMs: 2000,
-				});
+				const result = await executeControlledTimeout(
+					t,
+					harness,
+					{
+						args: ["--session", "timeout-proof", "batch", "--bail"],
+						stdin: JSON.stringify([
+							["wait", "60000"],
+							["fill", "#amount", "100"],
+							["click", "#submit"],
+							lastStep,
+						]),
+					},
+					startedPath,
+				);
 				// Both literal timeout endings check unknown steps rather than inferring completed work.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.ok(result.details);
@@ -3177,8 +3343,9 @@ if (args.includes("batch")) {
 test(
 	"agentBrowserExtension reports partial progress and artifacts after native batch timeout",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-job-timeout-progress-"));
+		const startedPath = join(tempDir, "started");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -3199,6 +3366,7 @@ if (args.includes("get") && args.includes("url")) {
     fs.writeFileSync(path.resolve(screenshot), "fake image");
   }
   setInterval(() => {}, 1000);
+  fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
 } else if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", url: "https://example.test/" } }));
 } else {
@@ -3207,13 +3375,6 @@ if (args.includes("get") && args.includes("url")) {
 		);
 
 		try {
-			// The timed-out fake upstream normally writes this before hanging, but pre-create it
-			// so this diagnostic test is about wrapper timeout progress instead of Node process
-			// startup timing under full-suite load.
-			await mkdir(join(tempDir, "dogfood/secret-token"), { recursive: true });
-			await writeFile(join(tempDir, "dogfood/secret-token/filled.png"), "fake image");
-			await mkdir(join(tempDir, "dogfood"), { recursive: true });
-			await writeFile(join(tempDir, "dogfood/option-full-page.png"), "fake image");
 			await withPatchedEnv(
 				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "2000" },
 				async () => {
@@ -3225,39 +3386,35 @@ if (args.includes("get") && args.includes("url")) {
 						harness.ctx,
 					);
 
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch", "--bail"],
-						stdin: JSON.stringify([
-							["open", "https://example.test"],
-							["fill", "#search", "export"],
-							["screenshot", "dogfood/secret-token/filled.png"],
-							["wait", "--download", "dogfood/export.csv"],
-							["wait", "500"],
-						]),
-					});
+					const result = await executeControlledTimeout(
+						t,
+						harness,
+						{
+							args: ["batch", "--bail"],
+							stdin: JSON.stringify([
+								["open", "https://example.test"],
+								["fill", "#search", "export"],
+								["screenshot", "dogfood/secret-token/filled.png"],
+								["wait", "--download", "dogfood/export.csv"],
+								["wait", "500"],
+							]),
+						},
+						startedPath,
+					);
 					assert.ok(result.details);
 
 					assert.equal(result.isError, true);
 					assert.equal(result.details.failureCategory, "timeout");
 					assert.equal(result.details.timedOut, true);
 					const timeoutProgress = readRecord(result.details.timeoutPartialProgress);
-					assert.ok(
-						readRecord(timeoutProgress.currentPage).url ===
-							"https://example.test/secret-token/results?token=%5BREDACTED%5D" ||
-							readRecord(timeoutProgress.currentPage).url === "https://example.test/",
-						`unexpected timeout current page URL: ${readString(readRecord(timeoutProgress.currentPage).url ?? "")}`,
+					assert.equal(
+						readRecord(timeoutProgress.currentPage).url,
+						"https://example.test/secret-token/results?token=%5BREDACTED%5D",
 					);
-					if (
-						typeof readRecord(timeoutProgress.currentPage).title === "string" &&
-						readString(readRecord(timeoutProgress.currentPage).title).length > 0
-					) {
-						// Title recovery is optional after timeout; URL/artifact checks and both display variants remain required.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(timeoutProgress.currentPage).title,
-							"Results page export secret-token Authorization: Bearer [REDACTED]",
-						);
-					}
+					assert.equal(
+						readRecord(timeoutProgress.currentPage).title,
+						"Results page export secret-token Authorization: Bearer [REDACTED]",
+					);
 					assert.deepEqual(
 						readArray(timeoutProgress.artifacts)
 							.map(readRecord)
@@ -3293,21 +3450,10 @@ if (args.includes("get") && args.includes("url")) {
 					assert.equal(timeoutProgress.retryStep, undefined);
 					const text = readRecord(result.content[0]).text;
 					assert.match(readString(text), /Timeout partial progress:/);
-					if (
-						typeof readRecord(timeoutProgress.currentPage).title === "string" &&
-						readString(readRecord(timeoutProgress.currentPage).title).length > 0
-					) {
-						// Both observed title-present/absent variants assert their corresponding visible page summary.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							readString(text),
-							/Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/,
-						);
-					} else {
-						// Both observed title-present/absent variants assert their corresponding visible page summary.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(readString(text), /Current page: https:\/\/example.test\//);
-					}
+					assert.match(
+						readString(text),
+						/Current page: \[REDACTED\] — https:\/\/example.test\/\[REDACTED\]\/results\?token=%5BREDACTED%5D/,
+					);
 					assert.match(
 						readString(text),
 						/Artifact from step 3: dogfood\/\[REDACTED\]\/filled\.png \(exists, 10 bytes\)/,
@@ -3327,51 +3473,23 @@ if (args.includes("get") && args.includes("url")) {
 						false,
 					);
 
-					const batchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch"],
-						stdin: JSON.stringify([
-							["screenshot", "--full-page", "dogfood/option-full-page.png"],
-							["wait", "--download", "dogfood/download.csv", "--timeout", "1000"],
-						]),
-					});
-					assert.ok(batchResult.details);
-					assert.equal(batchResult.isError, true);
-					const batchProgress = readRecord(batchResult.details.timeoutPartialProgress);
-					assert.deepEqual(
-						readArray(batchProgress.artifacts)
-							.map(readRecord)
-							.map((artifact) => ({
-								exists: artifact.exists,
-								path: artifact.path,
-								stepIndex: artifact.stepIndex,
-							})),
-						[
-							{ exists: true, path: "dogfood/option-full-page.png", stepIndex: 1 },
-							{ exists: false, path: "dogfood/download.csv", stepIndex: 2 },
-						],
-					);
-
-					const waitNoPathResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch"],
-						stdin: JSON.stringify([["wait", "--download", "--timeout", "1000"]]),
-					});
-					assert.ok(waitNoPathResult.details);
-					assert.equal(waitNoPathResult.isError, true);
-					const waitNoPathProgress = readRecord(waitNoPathResult.details.timeoutPartialProgress);
-					assert.deepEqual(waitNoPathProgress.artifacts, []);
-
 					const openBeforeMutatingTimeout = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["open", "https://example.test"],
 						timeoutMs: 10_000,
 					});
 					assert.equal(openBeforeMutatingTimeout.isError, false);
-					const mutatingTimeoutResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch", "--bail"],
-						stdin: JSON.stringify([
-							["fill", "#search", "export"],
-							["wait", "500"],
-						]),
-					});
+					const mutatingTimeoutResult = await executeControlledTimeout(
+						t,
+						harness,
+						{
+							args: ["batch", "--bail"],
+							stdin: JSON.stringify([
+								["fill", "#search", "export"],
+								["wait", "500"],
+							]),
+						},
+						startedPath,
+					);
 					assert.ok(mutatingTimeoutResult.details);
 					assert.equal(mutatingTimeoutResult.isError, true);
 					const mutatingProgress = readRecord(mutatingTimeoutResult.details.timeoutPartialProgress);
@@ -3406,9 +3524,10 @@ if (args.includes("get") && args.includes("url")) {
 test(
 	"timeout recovery verifies an unknown page target before snapshotting",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-timeout-target-recovery-"));
 		const failUrlPath = join(tempDir, "fail-url");
+		const startedPath = join(tempDir, "started");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -3425,6 +3544,7 @@ if (args.includes("batch")) {
   } else {
     fs.writeFileSync(${JSON.stringify(failUrlPath)}, "1");
     setInterval(() => {}, 60_000);
+    fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
   }
 } else if (args.includes("get") && args.includes("url")) {
   if (fs.existsSync(${JSON.stringify(failUrlPath)})) { process.stdout.write(JSON.stringify({ success: false, error: "page unavailable" })); process.exitCode = 1; }
@@ -3447,14 +3567,18 @@ if (args.includes("batch")) {
 					).isError,
 					false,
 				);
-				const timedOut = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["batch", "--bail"],
-					stdin: JSON.stringify([
-						["open", "https://example.test/next"],
-						["fill", "#search", "query"],
-					]),
-					timeoutMs: 1000,
-				});
+				const timedOut = await executeControlledTimeout(
+					t,
+					harness,
+					{
+						args: ["batch", "--bail"],
+						stdin: JSON.stringify([
+							["open", "https://example.test/next"],
+							["fill", "#search", "query"],
+						]),
+					},
+					startedPath,
+				);
 				assert.ok(timedOut.details);
 				assert.equal(timedOut.isError, true);
 				assert.equal(timedOut.details.timedOut, true);
@@ -3501,15 +3625,18 @@ if (args.includes("batch")) {
 test(
 	"agentBrowserExtension retries fresh timed-out navigation in a new session when no live URL is recovered",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		// Fresh-session names plus the namespace must fit Darwin's Unix socket limit.
 		const tempDir = await mkdtemp(join(tmpdir(), "fr-"));
+		const startedPath = join(tempDir, "started");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`const args = process.argv.slice(2);
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
 if (args.includes("batch")) {
   setInterval(() => {}, 60_000);
+  fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
 } else {
   process.stdout.write(JSON.stringify({ success: false, error: "no live page" }));
 }`,
@@ -3527,11 +3654,16 @@ if (args.includes("batch")) {
 						harness.ctx,
 					);
 
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["batch", "--bail"],
-						stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]),
-						sessionMode: "fresh",
-					});
+					const result = await executeControlledTimeout(
+						t,
+						harness,
+						{
+							args: ["batch", "--bail"],
+							stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]),
+							sessionMode: "fresh",
+						},
+						startedPath,
+					);
 					assert.ok(result.details);
 
 					assert.equal(result.isError, true);
@@ -3554,11 +3686,16 @@ if (args.includes("batch")) {
 						stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]),
 						sessionMode: "fresh",
 					});
-					const namespaced = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--namespace", "r", "batch"],
-						stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]),
-						sessionMode: "fresh",
-					});
+					const namespaced = await executeControlledTimeout(
+						t,
+						harness,
+						{
+							args: ["--namespace", "r", "batch"],
+							stdin: JSON.stringify([["open", "https://example.test/fresh-timeout"]]),
+							sessionMode: "fresh",
+						},
+						startedPath,
+					);
 					assert.ok(namespaced.details);
 					const namespacedRetry = readArray(namespaced.details.nextActions)
 						.map(readRecord)
@@ -3604,8 +3741,16 @@ test("timeout retries preserve native row semantics in visible and structured pa
 
 test("timeout artifact evidence follows native operands, not ignored tails or outer globals", async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "timeout-argv-"));
-	const paths = ["actual.pdf", "-actual.bin", "--quick", "--screenshot-dir", "capture.csv"];
+	const paths = [
+		"actual.pdf",
+		"-actual.bin",
+		"--quick",
+		"--screenshot-dir",
+		"capture.csv",
+		"dogfood/option-full-page.png",
+	];
 	try {
+		await mkdir(join(cwd, "dogfood"));
 		for (const path of paths) {
 			// Fixture transitions and their assertions run in order against this test's shared state.
 			// oxlint-disable-next-line no-await-in-loop
@@ -3621,13 +3766,123 @@ test("timeout artifact evidence follows native operands, not ignored tails or ou
 				["screenshot", "body", paths[3], "ignored.png"],
 				["wait", "--download", "--timeout", "30000", paths[4], "ignored.csv"],
 				["state", "save", "not-a-timeout-family.json"],
+				["screenshot", "--full-page", paths[5]],
+				["wait", "--download", "dogfood/download.csv", "--timeout", "1000"],
+				["wait", "--download", "--timeout", "1000"],
 			]),
 		});
 		assert.deepEqual(
 			progress?.artifacts.map(({ path, exists, stepIndex }) => ({ path, exists, stepIndex })),
-			paths.map((path, index) => ({ path, exists: true, stepIndex: index + 1 })),
+			[
+				...paths.map((path, index) => ({
+					path,
+					exists: true,
+					stepIndex: index < 5 ? index + 1 : 7,
+				})),
+				{ exists: false, path: "dogfood/download.csv", stepIndex: 8 },
+			],
 		);
 	} finally {
+		await rm(cwd, { recursive: true, force: true });
+	}
+});
+
+test("timeout artifact observations overlap independent retry windows without claiming execution", async (t) => {
+	const cwd = await mkdtemp(join(tmpdir(), "timeout-windows-"));
+	const paths = Array.from({ length: 33 }, (_, index) => join(cwd, `${index}.pdf`));
+	const attempts = new Map<string, number[]>();
+	const realStat = fsPromises.stat;
+	try {
+		t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+		t.mock.method(
+			fsPromises,
+			"stat",
+			async (...args: Readonly<Parameters<typeof fsPromises.stat>>) => {
+				const path = String(args[0]);
+				if (!paths.includes(path)) {
+					return realStat(...args);
+				}
+				attempts.set(path, [...(attempts.get(path) ?? []), Date.now()]);
+				if (path === paths[0] && attempts.get(path)?.length === 3) {
+					return realStat(...args);
+				}
+				throw new Error("ENOENT: file is still missing");
+			},
+		);
+		syncBuiltinESMExports();
+		const pending = collectTimeoutPartialProgress({
+			commandTokens: ["batch", ...paths.map((path) => `pdf ${path}`)],
+			cwd,
+			stdin: JSON.stringify([["pdf", "ignored.pdf"]]),
+		});
+		await nextTurn();
+		assert.equal(
+			attempts.size,
+			paths.length,
+			"independent files start within the same retry window",
+		);
+		t.mock.timers.tick(25);
+		await nextTurn();
+		await writeFile(paths[0], "late finishing writer");
+		t.mock.timers.tick(25);
+		await nextTurn();
+		t.mock.timers.reset();
+		const progress = await pending;
+		assert.ok(progress);
+		assert.equal(attempts.size, paths.length, "native argv wins over ignored stdin");
+		assert.deepEqual(
+			progress.artifacts.map((artifact) => artifact.path),
+			paths,
+		);
+		assert.deepEqual(
+			progress.artifacts.map((artifact) => artifact.stepIndex),
+			paths.map((_, index) => index + 1),
+		);
+		assert.equal(
+			progress.artifacts[0].exists,
+			true,
+			"a writer finishing during the retry window is observed",
+		);
+		assert.equal(progress.artifacts[0].sizeBytes, Buffer.byteLength("late finishing writer"));
+		assert.deepEqual(Object.keys(progress.artifacts[0]), [
+			"absolutePath",
+			"exists",
+			"path",
+			"sizeBytes",
+			"state",
+			"stepIndex",
+		]);
+		assert.deepEqual(Object.keys(progress.artifacts[1]), [
+			"absolutePath",
+			"exists",
+			"path",
+			"state",
+			"stepIndex",
+		]);
+		assert.equal(
+			progress.artifacts.slice(1).every((artifact) => !artifact.exists),
+			true,
+		);
+		assert.deepEqual(
+			progress.steps?.map((step) => step.status),
+			Array.from({ length: paths.length }, () => "unknown"),
+		);
+		assert.equal(progress.retryStep, undefined);
+		for (const observations of attempts.values()) {
+			// Every declared path must retain three attempts with independently bounded backoff.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.equal(observations.length, 3);
+			// Every declared path must retain three attempts with independently bounded backoff.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.deepEqual(
+				observations.map((time) => time - observations[0]),
+				[0, 25, 50],
+			);
+		}
+	} finally {
+		t.mock.timers.reset();
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
 		await rm(cwd, { recursive: true, force: true });
 	}
 });
@@ -3702,7 +3957,6 @@ if (args.includes("get") && args.includes("url")) {
 					commandTokens: ["batch"],
 					compiledJob,
 					cwd: tempDir,
-					sessionName: "named",
 				});
 				assert.deepEqual(generatedProgress?.steps?.[1]?.args, [
 					"wait",
@@ -3826,14 +4080,15 @@ test(
 );
 
 test(
-	"agentBrowserExtension forwards wait --download saved-file metadata in details",
+	"agentBrowserExtension keeps wait download metadata while rejecting a missing saved file",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-wait-download-"));
+		const outputPath = join(tempDir, "export.csv");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
-			`process.stdout.write(JSON.stringify({ success: true, data: { path: "/tmp/export.csv", elapsedMs: 64 } }));`,
+			`process.stdout.write(JSON.stringify({ success: true, data: { path: ${JSON.stringify(outputPath)}, elapsedMs: 64 } }));`,
 		);
 
 		try {
@@ -3849,7 +4104,7 @@ test(
 					);
 
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["wait", "--download", "/tmp/export.csv"],
+						args: ["wait", "--download", outputPath],
 					});
 					assert.ok(result.details);
 
@@ -3857,19 +4112,20 @@ test(
 					assert.equal(result.content[0]?.type, "text");
 					assert.ok(
 						readString(readRecord(result.content[0]).text).includes(
-							`Artifact verification failed: requested download was not found at ${resolve(tempDir, "/tmp/export.csv")}.`,
+							`Artifact verification failed: requested download was not found at ${outputPath}.`,
 						),
 					);
-					assert.match(
-						readString(readRecord(result.content[0]).text),
-						/Download event reported; file not verified: \/tmp\/export\.csv/,
+					assert.ok(
+						readString(readRecord(result.content[0]).text).includes(
+							`Download event reported; file not verified: ${outputPath}`,
+						),
 					);
-					assert.equal(result.details.savedFilePath, "/tmp/export.csv");
+					assert.equal(result.details.savedFilePath, outputPath);
 					assert.deepEqual(result.details.savedFile, {
 						command: "wait",
 						kind: "download",
 						metadata: { elapsedMs: 64 },
-						path: "/tmp/export.csv",
+						path: outputPath,
 						subcommand: "--download",
 					});
 					assert.equal(result.details.resultCategory, "failure");
@@ -3879,24 +4135,22 @@ test(
 					assert.equal(readRecord(result.details.artifactVerification).verified, false);
 					assert.deepEqual(
 						readRecord(readArray(result.details.nextActions).map(readRecord)[0].params).args,
-						["--session", result.details.sessionName, "wait", "--download", "/tmp/export.csv"],
+						["--session", result.details.sessionName, "wait", "--download", outputPath],
 					);
 					assert.equal(readRecord(result.details.pageChangeSummary).changeType, "artifact");
-					assert.equal(
-						readRecord(result.details.pageChangeSummary).savedFilePath,
-						"/tmp/export.csv",
-					);
+					assert.equal(readRecord(result.details.pageChangeSummary).savedFilePath, outputPath);
 
 					const shortResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["wait", "-d", "/tmp/export.csv"],
+						args: ["wait", "-d", outputPath],
 					});
 					assert.ok(shortResult.details);
 					assert.equal(shortResult.isError, true);
-					assert.match(
-						shortResult.content[0]?.text ?? "",
-						/Download event reported; file not verified: \/tmp\/export\.csv/,
+					assert.ok(
+						(shortResult.content[0]?.text ?? "").includes(
+							`Download event reported; file not verified: ${outputPath}`,
+						),
 					);
-					assert.equal(shortResult.details.savedFilePath, "/tmp/export.csv");
+					assert.equal(shortResult.details.savedFilePath, outputPath);
 					assert.equal(readRecord(shortResult.details.savedFile).subcommand, "-d");
 					assert.equal(readRecord(shortResult.details.artifactVerification).missingCount, 1);
 				},

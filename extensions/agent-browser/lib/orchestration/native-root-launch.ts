@@ -1,4 +1,7 @@
-import { scanUpstreamGlobalFlagOccurrences } from "../argv-grammar.js";
+import {
+	getAgentBrowserSessionIdentityKey,
+	scanUpstreamGlobalFlagOccurrences,
+} from "../argv-grammar.js";
 import { withAgentBrowserProcessEnvironment } from "../process-environment.js";
 import { withChromeStartupArgs } from "../process.js";
 import { buildValidationFailureResult } from "./input-plan.js";
@@ -7,6 +10,10 @@ import type { AgentBrowserToolResult } from "./browser-run/types.js";
 import { inspectManagedSessionDaemon } from "./browser-run/managed-session-daemon-policy.js";
 import { buildMissingBinaryMessage } from "./browser-run/final-result-missing-binary.js";
 import type { NativeDefaults } from "./native-config.js";
+import type {
+	ManagedSessionDaemonInspection,
+	PreparationDaemonObservation,
+} from "./browser-run/managed-session-daemon-inspection.js";
 
 export interface RootBrowserLaunchPolicy {
 	readonly cwd: string;
@@ -68,16 +75,38 @@ function rootRestoreKey(
 	return status === "inactive" ? policy.rootName : undefined;
 }
 
+function rootLaunchEnvironment(
+	policy: RootBrowserLaunchPolicy,
+	daemon: ManagedSessionDaemonInspection,
+): NodeJS.ProcessEnv {
+	const bootstrap = daemon.status === "inactive";
+	const restore = rootRestoreKey(
+		policy,
+		daemon.status,
+		daemon.status === "active" ? daemon.restoreKey : undefined,
+	);
+	const profile = bootstrapProfile(policy, bootstrap);
+	const executablePath = bootstrapExecutable(policy, bootstrap);
+	return {
+		...(restore !== undefined ? { AGENT_BROWSER_RESTORE: restore } : {}),
+		...(profile !== undefined ? { AGENT_BROWSER_PROFILE: profile } : {}),
+		...(executablePath !== undefined ? { AGENT_BROWSER_EXECUTABLE_PATH: executablePath } : {}),
+	};
+}
+
 export async function withRootBrowserLaunch(
 	policy: RootBrowserLaunchPolicy,
-	browserRun: (daemonInactive?: boolean) => Promise<AgentBrowserToolResult>,
+	browserRun: (observation?: PreparationDaemonObservation) => Promise<AgentBrowserToolResult>,
 	signal?: AbortSignal,
+	includeGeneration = false,
 ): Promise<AgentBrowserToolResult> {
+	const namespace = cliValue(policy.input.toolArgs, "--namespace") ?? policy.namespace;
 	const daemon = await inspectManagedSessionDaemon({
 		cwd: policy.cwd,
 		signal,
 		sessionName: policy.rootName,
-		namespace: cliValue(policy.input.toolArgs, "--namespace") ?? policy.namespace,
+		namespace,
+		includeGeneration,
 		timeoutMs: 5_000,
 	});
 	if (daemon.status === "missing-binary") {
@@ -108,24 +137,17 @@ export async function withRootBrowserLaunch(
 		});
 	}
 	// Active native daemons own their launch choices; defaults may only bootstrap or preserve explicit local options.
-	const bootstrap = daemon.status === "inactive";
-	const restore = rootRestoreKey(
-		policy,
-		daemon.status,
-		daemon.status === "active" ? daemon.restoreKey : undefined,
-	);
-	const profile = bootstrapProfile(policy, bootstrap);
-	const executablePath = bootstrapExecutable(policy, bootstrap);
-	return withAgentBrowserProcessEnvironment(
-		{
-			...(restore !== undefined ? { AGENT_BROWSER_RESTORE: restore } : {}),
-			...(profile !== undefined ? { AGENT_BROWSER_PROFILE: profile } : {}),
-			...(executablePath !== undefined ? { AGENT_BROWSER_EXECUTABLE_PATH: executablePath } : {}),
-		},
-		() =>
-			withChromeStartupArgs(
-				bootstrap || policy.configuredChromeLaunch ? policy.chromeStartupArgs : undefined,
-				() => browserRun(bootstrap),
-			),
+	return withAgentBrowserProcessEnvironment(rootLaunchEnvironment(policy, daemon), () =>
+		withChromeStartupArgs(
+			daemon.status === "inactive" || policy.configuredChromeLaunch
+				? policy.chromeStartupArgs
+				: undefined,
+			() =>
+				browserRun({
+					identity: getAgentBrowserSessionIdentityKey(policy.rootName, namespace),
+					daemon,
+					generationInspected: includeGeneration,
+				}),
+		),
 	);
 }

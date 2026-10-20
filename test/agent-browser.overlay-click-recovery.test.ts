@@ -48,6 +48,16 @@ test("covered-click inspection follows the actual direct, semantic, and raw find
 				sessionName: "work",
 				...input,
 			});
+			// Each fixed click/envelope variant must preserve the original failed result.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.equal(presentation.resultCategory, "failure");
+			// Each fixed click/envelope variant must leave the native failure visible.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.ok(
+				presentation.content.some(
+					(content) => content.type === "text" && content.text.includes(coveredClick),
+				),
+			);
 			// Each fixed click/envelope variant must retain the same failure classification.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.equal(presentation.failureCategory, "upstream-error");

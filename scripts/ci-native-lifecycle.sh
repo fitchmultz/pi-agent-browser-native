@@ -41,6 +41,8 @@ case "$mode" in
     }
     PI_COMPAT_EVIDENCE_DIR="$root/logs/host" node scripts/ci-host-compat.mjs \
       official install "$root/automation" "${OFFICIAL_VERSION:-latest}"
+    # Only host preparation needs GitHub metadata auth; keep lifecycle/browser children token-free.
+    unset GH_TOKEN
     npm run build
     # A separate stock installation, never a dependency or a custom browser build.
     npm install --global --prefix "$root/browser" agent-browser@0.38.1

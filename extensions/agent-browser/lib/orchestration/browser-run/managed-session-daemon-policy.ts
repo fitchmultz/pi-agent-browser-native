@@ -31,12 +31,14 @@ interface DaemonPolicyOptions {
 	readonly electronLaunchRecord?: ElectronLaunchRecord;
 	readonly electronVerificationTimeoutMs?: number;
 	readonly mode?: "close" | "reuse";
+	readonly includeGeneration?: boolean;
 	readonly signal?: AbortSignal;
 }
 
 interface DaemonPolicyResult {
 	readonly cleanupOnlyReason?: "restore-disabled-daemon-without-provenance";
 	readonly daemonStatus?: ManagedSessionDaemonInspection["status"];
+	readonly generationInspection?: ManagedSessionDaemonInspection;
 	readonly error?: string;
 	readonly lock?: ManagedSessionPolicyLock;
 }
@@ -200,12 +202,12 @@ async function validateReusableDaemonPolicy(
 	}
 	const restoreDisabledPolicyNeedsProvenance =
 		stickyDisabled || context.restoreDecision !== "enabled";
-	if (
+	const verifyAttachment =
 		daemon.status === "active" &&
 		restoreDisabledPolicyNeedsProvenance &&
 		!hasKnownDaemonRestoreKey &&
-		daemon.restoreKey === requestedDaemonRestoreKey
-	) {
+		daemon.restoreKey === requestedDaemonRestoreKey;
+	if (verifyAttachment) {
 		hasKnownDaemonRestoreKey = await verifyRestoredElectronAttachment(options);
 	}
 	return finishReusableDaemonPolicy(
@@ -214,6 +216,8 @@ async function validateReusableDaemonPolicy(
 		{
 			restoreDisabledPolicyNeedsProvenance,
 			requestedDaemonRestoreKey,
+			includeGeneration: options.includeGeneration,
+			verifyAttachment,
 		},
 		hasKnownDaemonRestoreKey,
 	);
@@ -225,6 +229,8 @@ function finishReusableDaemonPolicy(
 	policy: {
 		readonly restoreDisabledPolicyNeedsProvenance: boolean;
 		readonly requestedDaemonRestoreKey: OwnedManagedSessionContext["expectedDaemonRestoreKey"];
+		readonly includeGeneration?: boolean;
+		readonly verifyAttachment: boolean;
 	},
 	hasKnownDaemonRestoreKey: boolean,
 ): DaemonPolicyResult {
@@ -245,7 +251,24 @@ function finishReusableDaemonPolicy(
 				policy.restoreDisabledPolicyNeedsProvenance,
 				hasKnownDaemonRestoreKey,
 			)
-		: { daemonStatus: daemon.status };
+		: {
+				daemonStatus: daemon.status,
+				// The native CDP provenance helper can change the browser; never reuse its preceding sample.
+				generationInspection:
+					policy.includeGeneration === true && !policy.verifyAttachment ? daemon : undefined,
+			};
+}
+
+function daemonGenerationRequired(
+	context: OwnedManagedSessionContext,
+	receipt: DaemonReceipt,
+	includeGeneration: boolean | undefined,
+): boolean {
+	return (
+		includeGeneration === true ||
+		(receipt !== undefined &&
+			!context.restoreState.hasDaemonRestoreKey(context.sessionName, context.namespace))
+	);
 }
 
 export async function acquireOwnedManagedSessionDaemonPolicy(
@@ -272,9 +295,7 @@ export async function acquireOwnedManagedSessionDaemonPolicy(
 		const receipt = context.restoreState.getDaemonReceipt(context.sessionName, context.namespace);
 		const daemon = await inspectManagedSessionDaemon({
 			cwd: context.cwd,
-			includeGeneration:
-				receipt !== undefined &&
-				!context.restoreState.hasDaemonRestoreKey(context.sessionName, context.namespace),
+			includeGeneration: daemonGenerationRequired(context, receipt, options.includeGeneration),
 			headedManagedAutosaveInterval: context.headedManagedAutosaveInterval,
 			namespace: context.namespace,
 			sessionName: context.sessionName,

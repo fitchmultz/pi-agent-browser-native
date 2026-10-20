@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -147,14 +148,18 @@ process.stdout.write(Buffer.from(JSON.stringify({ args: process.argv.slice(2), s
 					// oxlint-disable-next-line node-test/no-conditional-assertion
 					assert.equal(failed.agentBrowserStarted, true);
 				}
+				const controller = new AbortController();
 				const missing = await runAgentBrowserProcess({
 					args: ["--version"],
 					cwd: root,
 					env: { PATH: join(root, "missing") },
+					signal: controller.signal,
 				});
 				assert.equal(missing.exitCode, 127);
 				assert.equal(readRecord(missing.spawnError).code, "ENOENT");
 				assert.equal(missing.agentBrowserStarted, false);
+				assert.equal(missing.aborted, false);
+				assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 			},
 		);
 	} finally {

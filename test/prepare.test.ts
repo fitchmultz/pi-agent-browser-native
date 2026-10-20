@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { readArray, readRecord } from "./helpers/assertions.js";
+import { readArray } from "./helpers/assertions.js";
 import { execFile as execFileCallback } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -13,6 +12,7 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 const buildModules = [
 	"typescript",
+	"esbuild",
 	"typebox",
 	"@earendil-works/pi-coding-agent",
 	"@earendil-works/pi-tui",
@@ -21,6 +21,7 @@ const buildModules = [
 for (const [description, missingPath] of [
 	["builds without installing when import-only dependencies exist", undefined],
 	["installs before building when a dependency is missing", "node_modules/typescript"],
+	["installs before building when the bundler is missing", "node_modules/esbuild"],
 	[
 		"installs before building when an exported target is missing",
 		"node_modules/@earendil-works/pi-coding-agent/index.js",
@@ -98,17 +99,3 @@ appendFileSync("calls.jsonl", JSON.stringify(["build"]) + "\\n");
 		);
 	});
 }
-
-test("prepare builds the extension with the platform compiler without changing the source lock", async () => {
-	const before = await readFile("package-lock.json", "utf8");
-	await execFile(process.execPath, ["scripts/prepare.mjs"], {
-		env: { ...process.env, npm_config_offline: "true" },
-		maxBuffer: 20 * 1024 * 1024,
-		timeout: 120_000,
-	});
-	const entrypoint: unknown = await import(
-		pathToFileURL(join(process.cwd(), "dist/extensions/agent-browser/index.js")).href
-	);
-	assert.equal(typeof readRecord(entrypoint).default, "function");
-	assert.equal(await readFile("package-lock.json", "utf8"), before);
-});

@@ -46,6 +46,7 @@ import type { PromptPolicy } from "../../prompt-policy.js";
 import type { ActiveRecordingReservation } from "../../recording-reservations.js";
 import type { ReadConfirmation } from "../../read-confirmation.js";
 import type { AgentBrowserExecuteParams, ResolvedAgentBrowserValidInput } from "../input-plan.js";
+import type { PreparationDaemonObservation } from "./managed-session-daemon-inspection.js";
 
 export type AgentBrowserToolResult = AgentToolResult<unknown> & { readonly isError?: boolean };
 export type AgentBrowserProcessResult = Awaited<ReturnType<typeof runAgentBrowserProcess>>;
@@ -136,7 +137,7 @@ export interface BrowserRunStatePatch {
 export type BrowserRunOptions = Readonly<{
 	modelVisible?: boolean;
 	operationCwd?: string;
-	daemonInactive?: boolean;
+	initialDaemonObservation?: PreparationDaemonObservation;
 	ctx: BrowserRunContext;
 	cwd: string;
 	electronPostCommandStatusSettleMs: number;

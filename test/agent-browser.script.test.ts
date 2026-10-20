@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { readRecord, readString, readArray } from "./helpers/assertions.js";
-import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -88,7 +90,7 @@ emit({kept,parallel:parallel.map(r=>r.data.value),batch:batch.data.value});`,
 			active += 1;
 			maxActive = Math.max(active, maxActive);
 			calls.push([...params.args]);
-			await delay(5);
+			await Promise.resolve();
 			active -= 1;
 			return successEnvelope({ value: params.args[1] });
 		},
@@ -269,12 +271,16 @@ test("code enforces call, output, IPC and time limits and retains partial emissi
 	}
 });
 
-test("abort waits for the dispatched operation and does not start queued siblings", async () => {
+test("abort waits for the dispatched operation and does not start queued siblings", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const controller = new AbortController();
 	let started!: () => void;
 	const active = new Promise<void>((resolve) => {
 		started = resolve;
 	});
+	const aborted = Promise.withResolvers<undefined>();
+	const release = Promise.withResolvers<undefined>();
+	let settled = false;
 	let drained = false;
 	let calls = 0;
 	const pending = runAgentBrowserScript({
@@ -283,15 +289,8 @@ test("abort waits for the dispatched operation and does not start queued sibling
 		dispatch: async (_params, signal) => {
 			calls++;
 			started();
-			await new Promise<void>((resolve) =>
-				signal.addEventListener(
-					"abort",
-					() => {
-						setTimeout(resolve, 40);
-					},
-					{ once: true },
-				),
-			);
+			signal.addEventListener("abort", () => aborted.resolve(undefined), { once: true });
+			await release.promise;
 			drained = true;
 			return {
 				success: false,
@@ -301,9 +300,25 @@ test("abort waits for the dispatched operation and does not start queued sibling
 			};
 		},
 	});
+	const observed = pending.finally(() => {
+		settled = true;
+	});
 	await active;
 	controller.abort();
-	const result = await pending;
+	try {
+		await aborted.promise;
+		// Dispatch has entered and received abort; allow child-reaping deadlines to expire
+		// without releasing the unresolved browser operation.
+		t.mock.timers.tick(1000);
+		await new Promise<void>((resolve) => {
+			setImmediate(resolve);
+		});
+		assert.equal(settled, false, "abort cannot finish before the active effect drains");
+		assert.equal(calls, 1, "queued siblings must not dispatch during abort");
+	} finally {
+		release.resolve(undefined);
+	}
+	const result = await observed;
 	assert.equal(result.aborted, true);
 	assert.equal(drained, true);
 	assert.equal(calls, 1);
@@ -442,20 +457,32 @@ test("selected image emission forwards real bytes once and rejects stale or inve
 	}
 });
 
-test("missing compiled worker returns a setup failure", { concurrency: false }, async () => {
-	const worker = join(process.cwd(), "dist/extensions/agent-browser/script-worker.js");
-	const backup = `${worker}.test-backup`;
-	await rename(worker, backup);
-	try {
-		const result = await runAgentBrowserScript({
-			code: "emit(1)",
-			dispatch: async () => successEnvelope(null),
-		});
-		assert.equal(result.failureCategory, "missing-binary");
-		assert.match(result.error ?? "", /Compiled script worker is missing/);
-	} finally {
-		await rename(backup, worker);
-	}
+test("missing compiled worker returns a setup failure", async (t) => {
+	const consumer = await mkdtemp(join(tmpdir(), "piab-missing-worker-"));
+	t.after(() => rm(consumer, { recursive: true, force: true }));
+	await cp(join(process.cwd(), "dist"), join(consumer, "dist"), { recursive: true });
+	await rm(join(consumer, "dist/extensions/agent-browser/script-worker.js"));
+	await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
+	await symlink(
+		join(process.cwd(), "node_modules"),
+		join(consumer, "node_modules"),
+		process.platform === "win32" ? "junction" : "dir",
+	);
+	const runnerUrl = pathToFileURL(
+		join(consumer, "dist/extensions/agent-browser/lib/input-modes/script.js"),
+	).href;
+	const output = execFileSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`const {runAgentBrowserScript}=await import(${JSON.stringify(runnerUrl)}); process.stdout.write(JSON.stringify(await runAgentBrowserScript({ code: "emit(1)", dispatch: async () => { throw new Error("missing worker must not dispatch"); } })));`,
+		],
+		{ encoding: "utf8" },
+	);
+	const result = readRecord(JSON.parse(output));
+	assert.equal(result.failureCategory, "missing-binary");
+	assert.match(readString(result.error), /Compiled script worker is missing/);
 });
 
 type CodeHarnessView = Pick<
@@ -481,6 +508,7 @@ const command=args.find(arg=>['open','get','snapshot','eval','close','batch'].in
 if(command==='open'){url=args[args.indexOf('open')+1]; fs.writeFileSync(${JSON.stringify(statePath)},JSON.stringify({url})); data={url,title:'Fixture'};}
 else if(command==='close') data={closed:true};
 else if(command==='snapshot') data={url,refs:{e1:{role:'button',name:'Submit'}},snapshot:'- button "Submit" [ref=e1]'};
+else if(command==='eval' && fs.readFileSync(0,'utf8')==='hold') {const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(dir, "release"))})){clearInterval(timer); process.stdout.write(JSON.stringify({success:true,data:{result:'released'}}));}},10); return;}
 else if(command==='eval') data={result:'x'.repeat(30000)+'END'};
 else if(command==='batch') data=args.slice(args.indexOf('batch')+1).filter(arg=>arg!=='--bail').map(row=>({command:row.split(' '),success:true,result:{}}));
 else data=args.includes('url')?{url}:{title:'Fixture'};
@@ -644,29 +672,46 @@ test(
 	"a code deadline expires while waiting behind another local code cell",
 	{ concurrency: false, timeout: 10_000 },
 	async () => {
-		await withCodeHarness(async (harness, logPath) => {
+		await withCodeHarness(async (harness, logPath, dir) => {
 			const tool = harness.getTool("agent_browser_code");
 			assert.ok(tool);
 			const first = executeRegisteredTool(tool, harness.ctx, {
-				code: 'await browser({args:["get","url"]}); const end=Date.now()+1500; while(Date.now()<end) {} emit("first");',
+				code: 'await browser({args:["eval","--stdin"],stdin:"hold"}); emit("first");',
 			});
-			// Poll the receipt until inner dispatch has begun before cancelling.
-			// oxlint-disable-next-line no-await-in-loop
-			while (!(await readInvocationLog(logPath)).some((call) => call.args.includes("get"))) {
-				// The next receipt observation must wait for its retry delay.
-				// oxlint-disable-next-line no-await-in-loop
-				await delay(10);
-			}
-			const second = executeRegisteredTool(tool, harness.ctx, {
-				code: 'emit("second");',
-				timeoutMs: 50,
-			});
+			let watchdog: ReturnType<typeof setTimeout> | undefined;
+			let second: ReturnType<typeof executeRegisteredTool> | undefined;
 			try {
-				const result = await Promise.race([second, delay(500)]);
-				assert.ok(result, "queued code must time out without waiting for the first cell to finish");
+				// Wait for the actual upstream dispatch receipt, not a cold-child deadline.
+				// oxlint-disable-next-line no-await-in-loop
+				while (!(await readInvocationLog(logPath)).some((call) => call.args.includes("eval"))) {
+					// Receipt observations must stay ordered.
+					// oxlint-disable-next-line no-await-in-loop
+					await delay(10);
+				}
+				second = executeRegisteredTool(tool, harness.ctx, {
+					code: 'await browser({args:["get","title"]}); emit("second");',
+					timeoutMs: 50,
+				});
+				const result = await Promise.race([
+					second,
+					new Promise<never>((_resolve, reject) => {
+						watchdog = setTimeout(
+							() =>
+								reject(new Error("queued code must time out before the first cell is released")),
+							500,
+						);
+					}),
+				]);
 				assert.equal(result.isError, true);
 				assert.equal(readRecord(result.details).failureCategory, "timeout");
+				assert.equal(
+					(await readInvocationLog(logPath)).some((call) => call.args.includes("title")),
+					false,
+					"expired queued cell cannot dispatch",
+				);
 			} finally {
+				clearTimeout(watchdog);
+				await writeFile(join(dir, "release"), "released");
 				await Promise.all([first, second]);
 			}
 		});
@@ -851,7 +896,7 @@ test(
 	},
 );
 
-test("pending inner transitions restore unknown target after interruption", () => {
+test("converted legacy explicit unknown-target outcomes invalidate restored refs", () => {
 	const key = getAgentBrowserSessionIdentityKey("selected");
 	const state = SessionPageState.fromBranch(
 		convertBrowserEntries([

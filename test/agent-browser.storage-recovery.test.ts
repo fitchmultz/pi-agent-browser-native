@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -22,6 +22,7 @@ import {
 } from "../extensions/agent-browser/lib/browser-journal.js";
 import { convertBrowserSession } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
+import { restoreAttachedSessionKeysFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-attachment-replay.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -55,6 +56,273 @@ async function records(file: string): Promise<Array<Record<string, unknown>>> {
 		.split("\n")
 		.filter((line) => line.trim().length > 0)
 		.map((line) => readRecord(JSON.parse(line)));
+}
+
+test("normal resume reads legacy tool receipts without changing the journal or locator", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-legacy-resume-"));
+	try {
+		const file = join(root, "original.jsonl");
+		const entries = [
+			{
+				type: "message",
+				id: "legacy-capture",
+				parentId: null,
+				message: {
+					role: "toolResult",
+					toolName: "agent_browser",
+					toolCallId: "capture",
+					isError: false,
+					content: [{ type: "text", text: "Original native observation" }],
+					details: {
+						sessionName: "shared",
+						namespace: "team",
+						args: ["snapshot", "-i"],
+						command: "snapshot",
+						sessionConfirmActions: "",
+						sessionTabTarget: { url: "https://fixture.test/#approved" },
+						refSnapshot: {
+							refIds: ["e1"],
+							refs: { e1: { role: "button", name: "Continue" } },
+							target: { url: "https://fixture.test/#approved" },
+						},
+						readConfirmation: {
+							id: "capture-id",
+							state: "cleared",
+							sessionName: "shared",
+							namespace: "team",
+							source: "native-guarded-action",
+							command: "snapshot",
+							action: "snapshot",
+							refSnapshotFresh: true,
+						},
+					},
+				},
+			},
+			{
+				type: "custom",
+				customType: BROWSER_TRANSITION_ENTRY,
+				id: "other-branch",
+				parentId: "legacy-capture",
+				data: {
+					toolCallId: "unresolved",
+					isError: false,
+					details: { sessionName: "shared", namespace: "team", sessionTabTargetUnknown: true },
+				},
+			},
+		];
+		const original = Buffer.from(
+			[{ type: "session", version: 3, id: "fixture-session" }, ...entries]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n") + "\n",
+		);
+		await writeFile(file, original);
+		const selected = manager(file, "legacy-capture");
+		const branch = await readBrowserEntries(selected);
+		const page = SessionPageState.fromBranch(branch).get("team\0shared");
+		assert.equal(page.tabTarget?.url, "https://fixture.test/#approved");
+		assert.deepEqual(page.refSnapshot?.refIds, ["e1"]);
+		assert.equal(page.refSnapshot.refs?.e1.name, "Continue");
+		assert.equal(page.confirmActions, "", "explicit empty native confirmation remains selected");
+		assert.equal(
+			SessionPageState.fromBranch(branch).getReadConfirmation("team\0shared")?.refSnapshotFresh,
+			true,
+		);
+		const unresolved = SessionPageState.fromBranch(
+			await readBrowserEntries(manager(file, "other-branch")),
+		).get("team\0shared");
+		assert.equal(unresolved.tabTargetUnknown, true);
+		assert.equal(unresolved.refSnapshot, undefined);
+		const memory = {
+			...selected,
+			getSessionFile: (): string | undefined => undefined,
+			getEntry: (id: string) => entries.find((entry) => entry.id === id),
+			getEntries: () => entries,
+		};
+		const inMemory = SessionPageState.fromBranch(await readBrowserEntries(memory)).get(
+			"team\0shared",
+		);
+		assert.deepEqual(inMemory.refSnapshot, page.refSnapshot);
+		assert.equal(inMemory.confirmActions, "");
+		assert.equal(entries[0].message?.details.refSnapshot.refIds[0], "e1");
+		assert.equal(
+			Object.hasOwn(entries[0], "data"),
+			false,
+			"normalization never mutates native entries",
+		);
+		assert.deepEqual(await readFile(file), original);
+		assert.equal(selected.getSessionFile(), file);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("legacy replay cannot downgrade native event validation or grant inherited cleanup leases", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-legacy-ownership-"));
+	try {
+		const file = join(root, "fork.jsonl");
+		const lease = {
+			type: "custom",
+			customType: "agent-browser-script-session",
+			id: "inherited",
+			parentId: null,
+			data: { sessionName: "old-browser", cleanup: "active", launchAttempted: true },
+		};
+		await writeFile(
+			file,
+			[{ type: "session", id: "fixture-session", parentSession: "/archive/parent.jsonl" }, lease]
+				.map((entry) => JSON.stringify(entry))
+				.join("\n") + "\n",
+		);
+		const fork = {
+			...manager(file, lease.id),
+			getHeader: () => ({ id: "fixture-session", parentSession: "/archive/parent.jsonl" }),
+		};
+		const branch = await readBrowserEntries(fork);
+		assert.equal(
+			readRecord(getBrowserRecord(branch[0])?.event.state.scriptLease).ownerSessionId,
+			undefined,
+			"unknown original ownership stays unknown on an ordinary fork",
+		);
+		const owned = {
+			...lease,
+			id: "known-owner",
+			parentId: lease.id,
+			data: { ...lease.data, ownerSessionId: "original-parent" },
+		};
+		appendFileSync(file, `${JSON.stringify(owned)}\n`);
+		const ownedBranch = await readBrowserEntries({ ...fork, getLeafId: () => owned.id });
+		assert.equal(
+			readRecord(getBrowserRecord(ownedBranch[1])?.event.state.scriptLease).ownerSessionId,
+			"original-parent",
+			"an explicit original owner is retained rather than rebound to the fork",
+		);
+		const unrelated = {
+			type: "custom",
+			customType: "other-extension",
+			id: "other-event",
+			parentId: owned.id,
+			data: { event: { kind: "status" } },
+		};
+		appendFileSync(file, `${JSON.stringify(unrelated)}\n`);
+		const independent = await readBrowserEntries({ ...fork, getLeafId: () => unrelated.id });
+		assert.equal(
+			readRecord(getBrowserRecord(independent[1])?.event.state.scriptLease).ownerSessionId,
+			"original-parent",
+			"another extension's event field does not acquire browser schema semantics",
+		);
+		const invalid = {
+			type: "custom",
+			customType: BROWSER_TRANSITION_ENTRY,
+			id: "invalid",
+			parentId: owned.id,
+			data: {
+				event: { version: 2 },
+				details: { sessionName: "old-browser", sessionTabTarget: { url: "https://forged.test/" } },
+				isError: false,
+			},
+		};
+		appendFileSync(file, `${JSON.stringify(invalid)}\n`);
+		await assert.rejects(
+			readBrowserEntries({ ...fork, getLeafId: () => invalid.id }),
+			/Invalid browser event/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+for (const mode of [
+	"direct",
+	"batch",
+	"batch-failed",
+	"batch-diagnostic-failed",
+	"failed",
+	"unconfirmed",
+	"page-data",
+] as const) {
+	test(`legacy native confirmed close retires page and attachment state (${mode})`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "piab-legacy-close-"));
+		try {
+			const file = join(root, "original.jsonl");
+			const receipt = {
+				confirmed: mode !== "unconfirmed",
+				action: "close",
+				result: { success: mode !== "failed", data: { closed: true } },
+			};
+			const details = mode.startsWith("batch")
+				? {
+						command: "batch",
+						args: ["batch"],
+						batchSteps: [
+							{ command: ["confirm", "close-id"], success: mode !== "batch-failed", data: receipt },
+							...(mode === "batch-diagnostic-failed"
+								? [
+										{
+											command: ["get", "title"],
+											success: false,
+											lifecycle: { effectiveLaunch: { browserLaunched: false } },
+										},
+									]
+								: []),
+						],
+					}
+				: {
+						command: mode === "page-data" ? "eval" : "confirm",
+						args: mode === "page-data" ? ["eval", "--stdin"] : ["confirm", "close-id"],
+						data: receipt,
+					};
+			const entries = [
+				{
+					type: "message",
+					id: "capture",
+					parentId: null,
+					message: {
+						role: "toolResult",
+						toolName: "agent_browser",
+						toolCallId: "capture",
+						isError: false,
+						details: {
+							sessionName: "shared",
+							namespace: "team",
+							args: ["snapshot", "-i"],
+							command: "snapshot",
+							attachedBrowserSession: true,
+							sessionTabTarget: { url: "https://fixture.test/" },
+							refSnapshot: { refIds: ["e1"], target: { url: "https://fixture.test/" } },
+						},
+					},
+				},
+				{
+					type: "message",
+					id: "decision",
+					parentId: "capture",
+					message: {
+						role: "toolResult",
+						toolName: "agent_browser",
+						toolCallId: "decision",
+						isError:
+							mode === "failed" || mode === "batch-failed" || mode === "batch-diagnostic-failed",
+						details: { ...details, sessionName: "shared", namespace: "team" },
+					},
+				},
+			];
+			const original = Buffer.from(
+				[{ type: "session", version: 3, id: "fixture-session" }, ...entries]
+					.map((entry) => JSON.stringify(entry))
+					.join("\n") + "\n",
+			);
+			await writeFile(file, original);
+			const branch = await readBrowserEntries(manager(file, "decision"));
+			const closed = mode === "direct" || mode === "batch" || mode === "batch-diagnostic-failed";
+			const page = SessionPageState.fromBranch(branch).get("team\0shared");
+			assert.equal(page.tabTarget?.url, closed ? undefined : "https://fixture.test/");
+			assert.deepEqual(page.refSnapshot?.refIds, closed ? undefined : ["e1"]);
+			assert.equal(restoreAttachedSessionKeysFromBranch(branch).has("team\0shared"), !closed);
+			assert.deepEqual(await readFile(file), original);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 }
 
 test("published replay retains its captured branch while a new leaf is appended", async () => {
@@ -1402,6 +1670,11 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 					},
 				},
 			},
+			legacy("late-result", "label-b", {
+				args: ["get", "title"],
+				command: "get",
+				sessionName: "shared",
+			}),
 		];
 		const bytes = Buffer.from(originals.map((entry) => JSON.stringify(entry)).join("\n"));
 		await writeFile(source, bytes, { mode: 0o600 }); // A sealed valid unterminated record is inspectable, without repairing the source.
@@ -1433,7 +1706,7 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 				// oxlint-disable-next-line node-test/no-conditional-assertion
 				assert.deepEqual(
 					state.refSnapshot?.refIds,
-					leaf === "branch-b" || leaf === "label-b" ? ["e3"] : ["e1", "e2"],
+					["branch-b", "label-b", "late-result"].includes(leaf) ? ["e3"] : ["e1", "e2"],
 				);
 			}
 			if (["capture", "finish", "result"].includes(leaf)) {
@@ -1454,11 +1727,13 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 			assert.equal(recent?.entries[0].path, row.path);
 			assert.equal(
 				recent.entries[0].retentionState,
-				leaf === "branch-b" || leaf === "label-b" ? "missing" : "live",
+				["branch-b", "label-b", "late-result"].includes(leaf) ? "missing" : "live",
 			);
 		};
 		await Promise.all(
-			["capture", "begin", "finish", "branch-b", "label-b", "result", "modern"].map(verifyLeaf),
+			["capture", "begin", "finish", "branch-b", "label-b", "result", "modern", "late-result"].map(
+				verifyLeaf,
+			),
 		);
 		const result = converted.find((entry) => entry.id === "result");
 		assert.ok(result);
@@ -1478,7 +1753,7 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 		);
 		assert.deepEqual(
 			converted.find((entry) => entry.id === "modern"),
-			originals.at(-1),
+			originals.find((entry) => entry.id === "modern"),
 			"modern observations retain explicit bodies and cannot overwrite canonical state with an invocation-only receipt",
 		);
 		assert.equal(readRecord(readRecord(result.data).archive).sourceSha256, receipt.sourceSha256);
@@ -1503,6 +1778,29 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 			}),
 			/Parser|parse|expected/i,
 		);
+		const verifyInvalidAncestry = async (invalid: Readonly<object>, index: number) => {
+			await writeFile(source, `${bytes.toString("utf8")}\n${JSON.stringify(invalid)}\n`);
+			const invalidDestination = join(root, `invalid-${index}.jsonl`);
+			await assert.rejects(
+				convertBrowserSession({
+					source,
+					destination: invalidDestination,
+					confirmedStopped: true,
+				}),
+				/missing or duplicate native entry ID|missing or forward parent/,
+			);
+			await assert.rejects(stat(invalidDestination), { code: "ENOENT" });
+		};
+		for (const [index, invalid] of [
+			legacy("capture", null, {}),
+			legacy("missing-parent", "not-an-entry", {}),
+			legacy("forward-parent", "future", {}),
+			{ type: "custom", parentId: null, timestamp: header.timestamp },
+		].entries()) {
+			// Each invalid ancestry variant must remain rejected even after unused projections are released.
+			// oxlint-disable-next-line no-await-in-loop
+			await verifyInvalidAncestry(invalid, index);
+		}
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -1522,6 +1820,27 @@ test("token projection validates skipped values, splits Unicode safely and disca
 		{ id: "🧪é", data: { event: { version: 1, ok: true } } },
 	);
 	await assert.rejects(projectJson(bytes('{"ignored":[false,invalid],"id":"never"}'), [["id"]]));
+	await Promise.all(
+		['{"ignored":"unfinished', '{"ignored":[true', '{"ignored":1e}', "{}{}"].map((text) =>
+			assert.rejects(projectJson(bytes(text), [["id"]]), /Parser/),
+		),
+	);
+	async function* invalidUtf8() {
+		yield Buffer.from('{"ignored":"');
+		yield Uint8Array.of(0xe2, 0x82); // Incomplete UTF-8 at EOF, even in an ignored value.
+	}
+	await assert.rejects(projectJson(invalidUtf8(), [["id"]]), /encoded data/);
+	await assert.rejects(
+		projectJson(bytes(`{"id":"${"x".repeat(1000)}"}`), [["id"]], 128),
+		/Selected journal envelope exceeds/,
+	);
+	await assert.rejects(
+		projectJson(bytes(`{"ignored":${"[".repeat(1024)}0${"]".repeat(1024)}}`), [["id"]]),
+		/nesting exceeds 1024/,
+	);
+	const selected =
+		'{"data":{"__proto__":{"polluted":true},"constructor":"own","duplicate":1,"duplicate":2,"numbers":[-0,1.25e+2,1E-2,9007199254740993]}}';
+	assert.deepEqual(await projectJson(bytes(selected), [["data"]]), JSON.parse(selected));
 	async function* ignored() {
 		yield Buffer.from('{"ignored":"');
 		for (let index = 0; index < 64; index++) {
@@ -1530,6 +1849,34 @@ test("token projection validates skipped values, splits Unicode safely and disca
 		yield Buffer.from('","id":"kept"}');
 	}
 	assert.deepEqual(await projectJson(ignored(), [["id"]], 128), { id: "kept" });
+});
+
+test("token projection releases its byte iterator and preserves source error identity", async () => {
+	const sourceError = new Error("source read failed");
+	let closed = 0;
+	async function* interrupted() {
+		try {
+			yield Buffer.from('{"id":"partial');
+			throw sourceError;
+		} finally {
+			closed++;
+		}
+	}
+	await assert.rejects(projectJson(interrupted(), [["id"]]), (error) => error === sourceError);
+	assert.equal(closed, 1);
+	async function* oversized() {
+		try {
+			yield Buffer.from(`{"id":"${"x".repeat(1000)}`);
+			throw new Error("projection should reject before reading another chunk");
+		} finally {
+			closed++;
+		}
+	}
+	await assert.rejects(
+		projectJson(oversized(), [["id"]], 128),
+		/Selected journal envelope exceeds/,
+	);
+	assert.equal(closed, 2);
 });
 
 test("missing or corrupt winning snapshots fail replay before refs can be used", async () => {

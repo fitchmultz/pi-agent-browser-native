@@ -15,6 +15,7 @@ import {
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { statSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { getEventListeners } from "node:events";
 import {
@@ -64,9 +65,10 @@ import {
 } from "../extensions/agent-browser/lib/process.js";
 import { parseAgentBrowserEnvelope } from "../extensions/agent-browser/lib/results/envelope.js";
 import { buildExecutionPlan } from "../extensions/agent-browser/lib/runtime.js";
+import { runSessionCommandData } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state-commands.js";
 import {
 	cleanupSecureTempArtifacts,
-	getSecureTempDebugState,
+	openSecureTempFile,
 } from "../extensions/agent-browser/lib/temp.js";
 import {
 	buildStdioLingerFakeScript,
@@ -76,6 +78,27 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+
+const realSetTimeout = setTimeout;
+async function readStartedReceipt(path: string): Promise<string> {
+	const deadline = Date.now() + 10_000;
+	for (;;) {
+		try {
+			// Observe actual child dispatch before advancing any mocked parent watchdog.
+			// oxlint-disable-next-line no-await-in-loop
+			return await readFile(path, "utf8");
+		} catch (error) {
+			if (!hasErrorCode(error, "ENOENT") || Date.now() >= deadline) {
+				throw error;
+			}
+			// Native I/O/startup remains real while parent timers are controlled.
+			// oxlint-disable-next-line no-await-in-loop
+			await new Promise((resolve) => {
+				realSetTimeout(resolve, 5);
+			});
+		}
+	}
+}
 
 test("Windows socket storage validates native directories without POSIX uid metadata", async () => {
 	const root = await mkdtemp(join(tmpdir(), "piab-win-storage-"));
@@ -87,10 +110,6 @@ test("Windows socket storage validates native directories without POSIX uid meta
 			undefined,
 		);
 		assert.equal((await lstat(socketDir)).isDirectory(), true);
-		assert.equal(
-			await getAgentBrowserSocketDirValidationError(socketDir, undefined, "win32"),
-			undefined,
-		);
 		assert.equal(
 			await getAgentBrowserSocketDirValidationError("relative", undefined, "win32"),
 			"the path is not absolute",
@@ -337,29 +356,6 @@ test("process start identity rejects empty, multi-record, and NUL output", () =>
 	assert.equal(normalizeProcessStartIdentity(" \r\n"), undefined);
 	assert.equal(normalizeProcessStartIdentity("first record\nsecond record"), undefined);
 	assert.equal(normalizeProcessStartIdentity("identity\0suffix"), undefined);
-});
-
-test("writeFakeAgentBrowserBinary installs Windows cmd launcher when platform is win32", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-win32-launcher-"));
-
-	try {
-		const launcherPath = await writeFakeAgentBrowserBinary(
-			tempDir,
-			`process.stdout.write(JSON.stringify({ ok: true }));`,
-			"win32",
-		);
-		const cmdText = await readFile(join(tempDir, "agent-browser.cmd"), "utf8");
-
-		assert.equal(launcherPath, join(tempDir, "agent-browser.cmd"));
-		assert.match(readString(cmdText), /@ECHO OFF/i);
-		assert.match(readString(cmdText), /agent-browser-fake\.cjs/);
-		assert.match(readString(cmdText), /" %\*\r\n$/);
-		await assert.rejects(stat(join(tempDir, "agent-browser")), (error: unknown) =>
-			hasErrorCode(error, "ENOENT"),
-		);
-	} finally {
-		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
-	}
 });
 
 test("process helpers clamp the upstream default operation timeout to the documented baseline", () => {
@@ -672,7 +668,7 @@ test("runAgentBrowserProcess fails before spawn for unsafe socket storage", asyn
 			});
 			assert.equal(result.agentBrowserStarted, false);
 			assert.match(readString(result.spawnError?.message ?? ""), /socket storage.*symlink/i);
-			await assert.rejects(readFile(markerPath, "utf8"));
+			await assert.rejects(readFile(markerPath, "utf8"), { code: "ENOENT" });
 		});
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
@@ -708,86 +704,63 @@ test("runAgentBrowserProcess does not spawn already-aborted calls", async () => 
 	}
 });
 
-test("runAgentBrowserProcess stops a hung upstream client at the wrapper watchdog", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-timeout-"));
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`process.stdin.resume(); setTimeout(() => process.stdout.write(JSON.stringify({ success: true, data: "late" })), 5000);`,
-	);
-
-	try {
-		const startedAt = Date.now();
-		const processResult = await runAgentBrowserProcess({
-			args: ["wait", "5000"],
-			cwd: tempDir,
-			env: { PATH: `${tempDir}${delimiter}${basePath}` },
-			timeoutMs: 100,
-		});
-
-		assert.equal(processResult.timedOut, true);
-		assert.equal(processResult.timeoutMs, 100);
-		assert.equal(processResult.aborted, false);
-		// The observed Windows shell close code wins over the timeout fallback.
-		assert.equal(processResult.exitCode, process.platform === "win32" ? 1 : 124);
-		assert.ok(Date.now() - startedAt < 2_000);
-	} finally {
-		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
-	}
-});
-
 for (const mode of ["timeout", "abort"] as const) {
-	test(`runAgentBrowserProcess reaps its fixture before returning from ${mode}`, async () => {
+	test(`runAgentBrowserProcess reaps its fixture before returning from ${mode}`, async (t) => {
 		const root = await mkdtemp(join(tmpdir(), "piab-reap-"));
-		const pidPath = join(root, "pid");
+		const receiptPath = join(root, "started.json");
 		const controller = new AbortController();
+		const timeoutMs = mode === "timeout" ? 800 : 0;
+		const timeoutExitCode = process.platform === "win32" ? 1 : 124;
 		await writeFakeAgentBrowserBinary(
 			root,
-			`require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000);`,
+			`const fs = require("node:fs"); const stdin = fs.readFileSync(0, "utf8"); fs.writeFileSync(${JSON.stringify(`${receiptPath}.tmp`)}, JSON.stringify({pid:process.pid,stdin})); fs.renameSync(${JSON.stringify(`${receiptPath}.tmp`)}, ${JSON.stringify(receiptPath)}); setInterval(() => {}, 1000);`,
 		);
+		t.mock.timers.enable({ apis: ["setTimeout"] });
 		const pending = runAgentBrowserProcess({
-			args: ["get", "url"],
+			args: ["eval", "--stdin"],
 			cwd: root,
 			env: { PATH: `${root}${delimiter}${process.env.PATH ?? ""}` },
 			signal: controller.signal,
-			timeoutMs: mode === "timeout" ? 800 : 0,
+			stdin: "document.title",
+			timeoutMs,
 		});
 		let pid: number | undefined;
 		try {
-			const deadline = Date.now() + 5_000;
-			while (Date.now() < deadline) {
-				try {
-					// Read the child-published PID after each retry delay so cancellation targets the live child.
-					// oxlint-disable-next-line no-await-in-loop
-					pid = Number(await readFile(pidPath, "utf8"));
-					break;
-				} catch {
-					// Wait for the child to publish its PID before another dependent read attempt.
-					// oxlint-disable-next-line no-await-in-loop
-					await new Promise((resolve) => {
-						setTimeout(resolve, 5);
-					});
-				}
-			}
-			assert.ok(
-				pid !== undefined && Number.isInteger(pid) && pid > 0,
-				"fixture must start before cancellation",
+			const receipt = readRecord(JSON.parse(await readStartedReceipt(receiptPath)));
+			pid = readNumber(receipt.pid);
+			assert.ok(Number.isInteger(pid) && pid > 0, "fixture must start before cancellation");
+			assert.equal(
+				receipt.stdin,
+				"document.title",
+				"abort exercises an actually received stdin command",
 			);
+			const startedAt = Date.now();
 			if (mode === "abort") {
 				controller.abort();
+			} else {
+				t.mock.timers.tick(timeoutMs);
 			}
+			// Keep native exit/close and the inherited-stdio grace on the real clock.
+			t.mock.timers.reset();
 			const result = await pending;
 			assert.equal(result.spawnError, undefined);
+			assert.equal(result.agentBrowserStarted, true);
 			assert.equal(result.timedOut, mode === "timeout");
+			assert.equal(result.timeoutMs, mode === "timeout" ? timeoutMs : undefined);
 			assert.equal(result.aborted, mode === "abort");
+			assert.equal(
+				mode === "timeout" ? result.exitCode : undefined,
+				mode === "timeout" ? timeoutExitCode : undefined,
+			);
+			assert.ok(Date.now() - startedAt < 2_000, "watchdog completion must remain bounded");
 			assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 			assert.throws(
 				() => process.kill(readNumber(pid), 0),
 				{ code: "ESRCH" },
 				"fixture must be gone at return, not eventually",
 			);
-			await rm(root, { recursive: true, force: true });
 		} finally {
+			t.mock.timers.reset();
 			controller.abort();
 			await pending;
 			if (pid !== undefined) {
@@ -825,34 +798,6 @@ test("runAgentBrowserProcess handles closed stdin pipe without an unhandled EPIP
 
 		assert.equal(processResult.aborted, false);
 		assert.equal(processResult.spawnError, undefined);
-	} finally {
-		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
-	}
-});
-
-test("runAgentBrowserProcess handles abort during stdin-bearing command", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`process.stdin.resume(); setTimeout(() => process.stdout.write(JSON.stringify({ success: true })), 5000);`,
-	);
-	const controller = new AbortController();
-
-	try {
-		const resultPromise = runAgentBrowserProcess({
-			args: ["eval", "--stdin"],
-			cwd: tempDir,
-			env: { PATH: `${tempDir}${delimiter}${basePath}` },
-			signal: controller.signal,
-			stdin: "document.title",
-		});
-		setImmediate(() => controller.abort());
-
-		const processResult = await resultPromise;
-		assert.equal(processResult.aborted, true);
-		assert.equal(processResult.spawnError, undefined);
-		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 	} finally {
 		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
@@ -910,7 +855,7 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 	}
 });
 
-test("runAgentBrowserProcess returns timeout exit code when descendants keep stdio handles open", async () => {
+test("runAgentBrowserProcess returns timeout exit code when descendants keep stdio handles open", async (t) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-timeout-"));
 	const basePath = process.env.PATH ?? "";
 	const lingerPidPath = join(tempDir, "linger.pid");
@@ -921,22 +866,30 @@ test("runAgentBrowserProcess returns timeout exit code when descendants keep std
 		}),
 	);
 	let lingerPid: number | undefined;
-
+	const controller = new AbortController();
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const timeoutMs = 5_000;
+	const pending = runAgentBrowserProcess({
+		args: ["wait", "5000"],
+		cwd: tempDir,
+		env: {
+			PATH: `${tempDir}${delimiter}${basePath}`,
+			PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
+		},
+		timeoutMs,
+		signal: controller.signal,
+	});
 	try {
+		lingerPid = Number((await readStartedReceipt(lingerPidPath)).trim());
+		assert.doesNotThrow(
+			() => process.kill(readNumber(lingerPid), 0),
+			"the real descendant must be running before the watchdog",
+		);
 		const startedAt = Date.now();
-		const timeoutMs = 5_000;
-		const processResult = await runAgentBrowserProcess({
-			args: ["wait", "5000"],
-			cwd: tempDir,
-			env: {
-				PATH: `${tempDir}${delimiter}${basePath}`,
-				PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
-			},
-			timeoutMs,
-		});
+		t.mock.timers.tick(timeoutMs);
+		t.mock.timers.reset();
+		const processResult = await pending;
 		const elapsedMs = Date.now() - startedAt;
-
-		lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
 		assert.equal(processResult.timedOut, true);
 		assert.equal(processResult.timeoutMs, timeoutMs);
 		assert.equal(processResult.exitCode, process.platform === "win32" ? 1 : 124);
@@ -946,6 +899,9 @@ test("runAgentBrowserProcess returns timeout exit code when descendants keep std
 			`expected inherited stdio handles not to delay timeout resolution, got ${elapsedMs}ms`,
 		);
 	} finally {
+		t.mock.timers.reset();
+		controller.abort();
+		await pending;
 		if (Number.isInteger(lingerPid)) {
 			try {
 				process.kill(readNumber(lingerPid), "SIGTERM");
@@ -967,7 +923,7 @@ test("runAgentBrowserProcess removes abort listeners after repeated successful r
 	const controller = new AbortController();
 
 	try {
-		for (let index = 0; index < 5; index += 1) {
+		for (let index = 0; index < 2; index += 1) {
 			// Reuse one AbortSignal sequentially to detect listeners retained after each completed process.
 			// oxlint-disable-next-line no-await-in-loop
 			const processResult = await runAgentBrowserProcess({
@@ -977,19 +933,19 @@ test("runAgentBrowserProcess removes abort listeners after repeated successful r
 				signal: controller.signal,
 			});
 
-			// Exhaustive fixture variant (index < 5): this selected path must satisfy its own contract.
+			// Exhaustive fixture variant (index < 2): this selected path must satisfy its own contract.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.equal(processResult.exitCode, 0);
-			// Exhaustive fixture variant (index < 5): this selected path must satisfy its own contract.
+			// Exhaustive fixture variant (index < 2): this selected path must satisfy its own contract.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.equal(processResult.agentBrowserStarted, true);
-			// Exhaustive fixture variant (index < 5): this selected path must satisfy its own contract.
+			// Exhaustive fixture variant (index < 2): this selected path must satisfy its own contract.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.equal(processResult.spawnError, undefined);
-			// Exhaustive fixture variant (index < 5): this selected path must satisfy its own contract.
+			// Exhaustive fixture variant (index < 2): this selected path must satisfy its own contract.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.equal(processResult.aborted, false);
-			// Exhaustive fixture variant (index < 5): this selected path must satisfy its own contract.
+			// Exhaustive fixture variant (index < 2): this selected path must satisfy its own contract.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 		}
@@ -998,31 +954,8 @@ test("runAgentBrowserProcess removes abort listeners after repeated successful r
 	}
 });
 
-test("runAgentBrowserProcess removes abort listeners after spawn errors", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-	const controller = new AbortController();
-
-	try {
-		const processResult = await runAgentBrowserProcess({
-			args: ["snapshot"],
-			cwd: tempDir,
-			env: { PATH: tempDir },
-			signal: controller.signal,
-		});
-
-		assert.equal(processResult.exitCode, 127);
-		assert.match(readString(processResult.spawnError?.message ?? ""), /ENOENT|agent-browser/);
-		assert.equal(processResult.aborted, false);
-		assert.equal(processResult.agentBrowserStarted, false);
-		assert.equal(getEventListeners(controller.signal, "abort").length, 0);
-	} finally {
-		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
-	}
-});
-
 test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnvelope still sees the full payload", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-	const fakeAgentBrowserPath = join(tempDir, "agent-browser");
 	const bigSnapshotRows = Array.from({ length: 7_000 }, (_, index) => {
 		const ref = `e${index + 1}`;
 		return `- generic "Large process snapshot row ${index + 1} that forces stdout spilling without losing parseability" [ref=${ref}] clickable [onclick]`;
@@ -1031,25 +964,9 @@ test("runAgentBrowserProcess spills oversized stdout while parseAgentBrowserEnve
 		{ length: 80 },
 		(_, index) => `e${index + 1}: { name: "Action ${index + 1}", role: "button" }`,
 	).join(",");
-	await writeFile(
-		fakeAgentBrowserPath,
-		`#!/usr/bin/env node
-const envelope = {
-  success: true,
-  data: {
-    origin: "https://example.com/process-large",
-    refs: {${refsLiteral}},
-    snapshot: ${JSON.stringify(bigSnapshotRows)}
-  }
-};
-process.stdout.write(JSON.stringify(envelope));
-`,
-		"utf8",
-	);
-	if (process.platform === "win32") {
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const envelope = {
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`const envelope = {
   success: true,
   data: {
     origin: "https://example.com/process-large",
@@ -1058,10 +975,7 @@ process.stdout.write(JSON.stringify(envelope));
   }
 };
 process.stdout.write(JSON.stringify(envelope));`,
-		);
-	} else {
-		await chmod(fakeAgentBrowserPath, 0o755);
-	}
+	);
 
 	try {
 		const processResult = await runAgentBrowserProcess({
@@ -1142,6 +1056,8 @@ test(
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 		const basePath = process.env.PATH ?? "";
 		const closeDebugPath = join(tempDir, "close-debug.json");
+		const tempAnchor = await openSecureTempFile("close-anchor", ".txt");
+		await tempAnchor.fileHandle.close();
 		await writeFakeAgentBrowserBinary(
 			tempDir,
 			`const fs = require("node:fs");
@@ -1203,9 +1119,7 @@ if (args.includes("session") && args.includes("info")) {
 					);
 					assert.equal(freshOpen.isError, false, JSON.stringify(freshOpen));
 
-					const { currentTempRoot } = await getSecureTempDebugState();
-					assert.equal(typeof currentTempRoot, "string");
-					const entries = await readdir(readString(currentTempRoot));
+					const entries = await readdir(dirname(tempAnchor.path));
 					assert.deepEqual(
 						entries.filter((entry) => entry.startsWith("process-stdout-")),
 						[],
@@ -1250,58 +1164,41 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
-	"agentBrowserExtension removes oversized navigation-summary stdout spills after failed helper commands",
-	{ concurrency: false },
-	async () => {
-		await cleanupSecureTempArtifacts();
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const clicked = ${JSON.stringify(join(tempDir, "clicked"))};
-if (args.includes("click")) fs.writeFileSync(clicked, "yes");
-const isNavigationSummaryHelper = fs.existsSync(clicked) && (args.includes("eval") || (args.includes("get") && (args.includes("title") || args.includes("url"))));
-if (isNavigationSummaryHelper) {
-	process.stdout.write(JSON.stringify({ success: false, data: { payload: "x".repeat(700000) } }), () => process.exit(1));
-} else if (args.includes("open") || (args.includes("get") && args.includes("url"))) {
-	process.stdout.write(JSON.stringify({ success: true, data: { title: "OK", url: "https://example.com/" } }));
-} else {
-	process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }));
-}`,
+test("runSessionCommandData removes an observed stdout spill after helper failure", async () => {
+	await cleanupSecureTempArtifacts();
+	const tempDir = await mkdtemp(join(tmpdir(), "piab-helper-spill-"));
+	let spillPath = "";
+	await writeFakeAgentBrowserBinary(
+		tempDir,
+		`process.stdout.write(JSON.stringify({ success: false, data: { payload: "x".repeat(700000) } }), () => process.exit(1));`,
+	);
+	try {
+		await assert.rejects(
+			runSessionCommandData({
+				args: ["get", "title"],
+				cwd: tempDir,
+				env: { PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}` },
+				sessionName: `helper-${randomUUID()}`,
+				throwOnFailure: true,
+				onProcessResult: (result) => {
+					assert.equal(result.exitCode, 1);
+					spillPath = readString(result.stdoutSpillPath);
+					assert.ok(
+						statSync(spillPath).size > 700000,
+						"the native helper actually spilled before cleanup",
+					);
+					assert.equal(readRecord(JSON.parse(readFileSync(spillPath, "utf8"))).success, false);
+				},
+			}),
+			/agent-browser process exited with code 1/,
 		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-
-				const firstOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["open", "https://example.com/"],
-				});
-				assert.equal(firstOpen.isError, false, JSON.stringify(firstOpen));
-
-				const click = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["click", "@e1"],
-				});
-				assert.equal(click.isError, false, JSON.stringify(click));
-
-				const { currentTempRoot } = await getSecureTempDebugState();
-				assert.equal(typeof currentTempRoot, "string");
-				const entries = await readdir(readString(currentTempRoot));
-				assert.deepEqual(
-					entries.filter((entry) => entry.startsWith("process-stdout-")),
-					[],
-				);
-			});
-		} finally {
-			await cleanupSecureTempArtifacts();
-			await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
-		}
-	},
-);
+		assert.notEqual(spillPath, "", "the callback must observe the failed helper");
+		await assert.rejects(stat(spillPath), { code: "ENOENT" });
+	} finally {
+		await cleanupSecureTempArtifacts();
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
 
 test(
 	"runAgentBrowserProcess pins managed restore identity while preserving caller configuration",

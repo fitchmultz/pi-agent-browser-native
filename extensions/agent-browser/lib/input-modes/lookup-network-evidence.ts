@@ -64,7 +64,17 @@ export function getFailedNetworkRequests(
 			});
 		}
 	}
-	return failed;
+	const seenRequestIds = new Set<string>();
+	return failed.filter(({ requestId: id }) => {
+		if (id === undefined) {
+			return true;
+		}
+		if (seenRequestIds.has(id)) {
+			return false;
+		}
+		seenRequestIds.add(id);
+		return true;
+	});
 }
 
 export function distinctNetworkCandidates(
@@ -118,6 +128,7 @@ function correlatesWithFailure(
 export function observeInitiatorCandidates(
 	data: unknown,
 	failedRequests: readonly AgentBrowserNetworkSourceLookupRequest[],
+	queryText?: string,
 ): AgentBrowserNetworkSourceLookupCandidate[] {
 	const failedIds = new Set(
 		failedRequests.map((request) => request.requestId).filter((value) => value !== undefined),
@@ -134,7 +145,11 @@ export function observeInitiatorCandidates(
 			if (!isRecord(value)) {
 				continue;
 			}
-			if (correlatesWithFailure(value, failedIds, failedUrls) || isFailedNetworkRecord(value)) {
+			const url = typeof value.url === "string" ? value.url : undefined;
+			if (
+				networkRequestMatchesQuery(url, queryText) &&
+				(correlatesWithFailure(value, failedIds, failedUrls) || isFailedNetworkRecord(value))
+			) {
 				candidates.push(...initiatorCandidates(value));
 			}
 		}

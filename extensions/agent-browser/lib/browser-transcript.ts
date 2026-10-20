@@ -88,7 +88,7 @@ export function getBrowserRecord(entry: unknown): BrowserRecord | undefined {
 	return { ...entry.data, event: parseBrowserEvent(event) };
 }
 
-/** Only canonical receipts participate in live replay. Legacy shapes belong to the offline converter. */
+/** Replay boundaries normalize legacy receipts before this canonical reducer reads them. */
 export function getBrowserResultMessage(entry: unknown): Record<string, unknown> | undefined {
 	const record = getBrowserRecord(entry);
 	return record

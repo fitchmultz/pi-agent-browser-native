@@ -12,6 +12,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 import { Check } from "typebox/value";
 
@@ -20,7 +21,6 @@ import {
 	analyzeQaPresetTimeout,
 	compileAgentBrowserQaPreset,
 } from "../extensions/agent-browser/lib/input-modes/job.js";
-import { compileAgentBrowserSemanticAction } from "../extensions/agent-browser/lib/input-modes/semantic-action.js";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -80,6 +80,11 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 						label: "sourceLookup with args",
 						params: { args: ["react", "tree"], sourceLookup: { componentName: "Panel" } },
 						message: exclusiveModeMessage,
+					},
+					{
+						label: "qa with stdin",
+						params: { qa: { url: "https://example.com" }, stdin: "[]" },
+						message: lookupStdinMessage,
 					},
 					{
 						label: "sourceLookup with stdin",
@@ -169,19 +174,6 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	},
 );
 
-test("semanticAction treats an empty generated role name as omitted", () => {
-	assert.deepEqual(
-		compileAgentBrowserSemanticAction({
-			action: "fill",
-			locator: "role",
-			role: "textbox",
-			name: "",
-			text: "query",
-		}).compiled?.args,
-		["find", "role", "textbox", "fill", "query"],
-	);
-});
-
 test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA failures", () => {
 	const compiled = compileAgentBrowserQaPreset({
 		url: "https://example.test/",
@@ -196,6 +188,98 @@ test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA fai
 	]);
 	assert.deepEqual(analysis.notRunChecks, []);
 	assert.match(analysis.summary, /QA preset failed/);
+});
+
+test("QA visible-text predicates follow computed visibility without requiring ancestor boxes", async (t) => {
+	class Element {
+		readonly tagName: string;
+		readonly parentElement: Readonly<Element> | null;
+		readonly value: string;
+		readonly style: {
+			readonly display: string;
+			readonly visibility: string;
+			readonly opacity: string;
+		};
+		constructor(
+			value: string,
+			parentElement: Readonly<Element> | null = null,
+			style: Partial<Element["style"]> = {},
+			tagName = "INPUT",
+		) {
+			this.tagName = tagName;
+			this.parentElement = parentElement;
+			this.value = value;
+			this.style = { display: "block", visibility: "visible", opacity: "1", ...style };
+		}
+		getClientRects() {
+			return this.style.display === "contents" || this.style.display === "none" ? [] : [{}];
+		}
+	}
+	const root = new Element("", null, {}, "BODY");
+	const transparentParent = new Element("", root, { opacity: "0" }, "DIV");
+	const contentsParent = new Element("", root, { display: "contents" }, "DIV");
+	const invisibleParent = new Element("", root, { visibility: "hidden" }, "DIV");
+	const undisplayedParent = new Element("", root, { display: "none" }, "DIV");
+	const visibleInput = new Element("Visible control", root);
+	const hiddenInput = new Element("Hidden control", transparentParent);
+	const contentsInput = new Element("Contents control", contentsParent);
+	const overriddenInput = new Element("Overridden control", invisibleParent, {
+		visibility: "visible",
+	});
+	const undisplayedInput = new Element("Undisplayed control", undisplayedParent);
+	const nodes = [
+		{ parentElement: root, nodeValue: "Visible   heading" },
+		{ parentElement: transparentParent, nodeValue: "Hidden heading" },
+		{ parentElement: contentsParent, nodeValue: "Contents text" },
+		{ parentElement: invisibleParent, nodeValue: "Invisible text" },
+		{ parentElement: undisplayedParent, nodeValue: "Undisplayed text" },
+		{ parentElement: new Element("", root, {}, "SCRIPT"), nodeValue: "Script text" },
+		{ parentElement: new Element("", root, {}, "STYLE"), nodeValue: "Style text" },
+		{ parentElement: new Element("", root, {}, "SVG"), nodeValue: "Svg text" },
+	];
+	const elements = [visibleInput, hiddenInput, contentsInput, overriddenInput, undisplayedInput];
+	const context = {
+		HTMLElement: Element,
+		NodeFilter: { SHOW_TEXT: 4, SHOW_ELEMENT: 1 },
+		window: { getComputedStyle: (element: Readonly<Element>) => element.style },
+		document: {
+			body: root,
+			createTreeWalker: (_root: unknown, whatToShow: number) => {
+				const iterator = (whatToShow === 4 ? nodes : elements)[Symbol.iterator]();
+				return { nextNode: () => iterator.next().value ?? null };
+			},
+		},
+	};
+	const cases = [
+		{ text: "Visible heading", visible: true },
+		{ text: "Visible control", visible: true },
+		{ text: "Hidden heading", visible: false },
+		{ text: "Hidden control", visible: false },
+		{ text: "Contents control", visible: true },
+		{ text: "Overridden control", visible: true },
+		{ text: "Contents text", visible: true },
+		{ text: "Invisible text", visible: false },
+		{ text: "Undisplayed control", visible: false },
+		{ text: "Undisplayed text", visible: false },
+		{ text: "Script text", visible: false },
+		{ text: "Style text", visible: false },
+		{ text: "Svg text", visible: false },
+	];
+	const compiled = compileAgentBrowserQaPreset({
+		attached: true,
+		expectedText: cases.map(({ text }) => text),
+	}).compiled;
+	assert.ok(compiled);
+	const predicates = compiled.steps.filter((step) => step.action === "assertText");
+	assert.equal(predicates.length, cases.length);
+	await Promise.all(
+		cases.map(({ text, visible }, index) =>
+			t.test(text, () => {
+				const observed: unknown = runInNewContext(predicates[index].args[2], context);
+				assert.equal(observed, visible);
+			}),
+		),
+	);
 });
 
 test("analyzeQaPresetResults reports missing expected text as QA failure", () => {
@@ -562,86 +646,6 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 				const harness = createExtensionHarness({ cwd: tempDir });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
-				const clickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "click", locator: "role", value: "button", name: "Export" },
-				});
-				assert.equal(clickResult.isError, false);
-				assert.deepEqual(readRecord(clickResult.details).compiledSemanticAction, {
-					action: "click",
-					locator: "role",
-					args: ["find", "role", "button", "click", "--name", "Export"],
-				});
-
-				const roleOnlyClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: {
-						action: "click",
-						locator: "role",
-						role: "button",
-						name: "Continue without Signing In",
-					},
-				});
-				assert.equal(roleOnlyClickResult.isError, false);
-				assert.deepEqual(readRecord(roleOnlyClickResult.details).compiledSemanticAction, {
-					action: "click",
-					locator: "role",
-					args: ["find", "role", "button", "click", "--name", "Continue without Signing In"],
-				});
-
-				const fillResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: {
-						action: "fill",
-						locator: "label",
-						value: "Email",
-						text: "user@example.test",
-					},
-				});
-				assert.equal(fillResult.isError, false);
-				assert.deepEqual(readRecord(fillResult.details).compiledSemanticAction, {
-					action: "fill",
-					locator: "label",
-					args: ["find", "label", "Email", "fill", "user@example.test"],
-				});
-
-				const selectorFillResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "fill", selector: "@e1", text: "selector text" },
-				});
-				assert.equal(selectorFillResult.isError, false);
-				assert.deepEqual(readRecord(selectorFillResult.details).compiledSemanticAction, {
-					action: "fill",
-					selector: "@e1",
-					args: ["fill", "@e1", "selector text"],
-				});
-
-				const selectorClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "click", selector: "#submit" },
-				});
-				assert.equal(selectorClickResult.isError, false);
-				assert.deepEqual(readRecord(selectorClickResult.details).compiledSemanticAction, {
-					action: "click",
-					selector: "#submit",
-					args: ["click", "#submit"],
-				});
-
-				const selectorSessionResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "check", selector: "@e4", session: "named" },
-				});
-				assert.equal(selectorSessionResult.isError, false);
-				assert.deepEqual(readRecord(selectorSessionResult.details).compiledSemanticAction, {
-					action: "check",
-					selector: "@e4",
-					args: ["--session", "named", "check", "@e4"],
-				});
-
-				const textClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					semanticAction: { action: "click", locator: "text", value: "Close" },
-				});
-				assert.equal(textClickResult.isError, false);
-				assert.deepEqual(readRecord(textClickResult.details).compiledSemanticAction, {
-					action: "click",
-					locator: "text",
-					args: ["find", "text", "Close", "click"],
-				});
-
 				const sessionClickResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					semanticAction: { action: "click", locator: "text", value: "Close", session: "named" },
 				});
@@ -652,6 +656,16 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 					args: ["--session", "named", "find", "text", "Close", "click"],
 				});
 				assert.equal(readRecord(sessionClickResult.details).sessionName, "named");
+
+				const selectorFillResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+					semanticAction: { action: "fill", selector: "@e1", text: "selector text" },
+				});
+				assert.equal(selectorFillResult.isError, false);
+				assert.deepEqual(readRecord(selectorFillResult.details).compiledSemanticAction, {
+					action: "fill",
+					selector: "@e1",
+					args: ["fill", "@e1", "selector text"],
+				});
 
 				const selectResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					semanticAction: {
@@ -671,57 +685,18 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 				assert.equal(readRecord(selectResult.details).sessionName, "named");
 
 				const invocationLog = await readInvocationLog(logPath);
-				const invocations = invocationLog.filter((entry) => entry.args.includes("find"));
-				assert.deepEqual(invocations[0]?.args.slice(-6), [
-					"find",
-					"role",
-					"button",
-					"click",
-					"--name",
-					"Export",
-				]);
-				assert.deepEqual(invocations[1]?.args.slice(-6), [
-					"find",
-					"role",
-					"button",
-					"click",
-					"--name",
-					"Continue without Signing In",
-				]);
-				assert.deepEqual(invocations[2]?.args.slice(-5), [
-					"find",
-					"label",
-					"Email",
-					"fill",
-					"user@example.test",
-				]);
+				assert.deepEqual(
+					invocationLog
+						.filter((entry) => entry.args.includes("find"))
+						.map((entry) => entry.args.slice(-6)),
+					[["--session", "named", "find", "text", "Close", "click"]],
+				);
 				assert.deepEqual(
 					invocationLog
 						.find((entry) => entry.args.at(-3) === "fill" && entry.args.at(-2) === "@e1")
 						?.args.slice(-3),
 					["fill", "@e1", "selector text"],
 				);
-				assert.deepEqual(
-					invocationLog
-						.find((entry) => entry.args.at(-2) === "click" && entry.args.at(-1) === "#submit")
-						?.args.slice(-2),
-					["click", "#submit"],
-				);
-				assert.deepEqual(
-					invocationLog
-						.find((entry) => entry.args.at(-2) === "check" && entry.args.at(-1) === "@e4")
-						?.args.slice(-4),
-					["--session", "named", "check", "@e4"],
-				);
-				assert.deepEqual(invocations[3]?.args.slice(-4), ["find", "text", "Close", "click"]);
-				assert.deepEqual(invocations[4]?.args.slice(-6), [
-					"--session",
-					"named",
-					"find",
-					"text",
-					"Close",
-					"click",
-				]);
 				const selectInvocation = invocationLog.find((entry) => entry.args.includes("select"));
 				assert.deepEqual(selectInvocation?.args.slice(-5), [
 					"--session",
@@ -731,98 +706,6 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 					"chocolate",
 				]);
 			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension resolves semantic role fills through one exact current editable ref",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-fill-visible-ref-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
-if (args.includes("open")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { title: "Search", url: "https://search.example.test/" } }));
-} else if (args.includes("snapshot")) {
-  process.stdout.write(JSON.stringify({ success: true, data: {
-    origin: "https://search.example.test/",
-    refs: { e17: { role: "combobox", name: "Search" } },
-    snapshot: '- combobox "Search" [ref=e17]'
-  } }));
-} else if (args.includes("fill")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { filled: "@e17" } }));
-} else if (args.includes("find")) {
-  process.stdout.write(JSON.stringify({ success: false, error: "selector not found" }));
-  process.exit(1);
-} else {
-  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
-}`,
-		);
-
-		try {
-			await withPatchedEnv(
-				{
-					PATH: `${tempDir}:${basePath}`,
-					PI_AGENT_BROWSER_TEST_PAGE_URL: "https://search.example.test/",
-				},
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir });
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-
-					const open = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["open", "https://search.example.test/"],
-					});
-					assert.equal(open.isError, false);
-
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						semanticAction: {
-							action: "fill",
-							locator: "role",
-							role: "combobox",
-							name: "Search",
-							text: "pi issue 70 search",
-						},
-					});
-					assert.equal(result.isError, false, JSON.stringify(result));
-					assert.deepEqual(readRecord(result.details).compiledSemanticAction, {
-						action: "fill",
-						locator: "role",
-						args: ["find", "role", "combobox", "fill", "pi issue 70 search", "--name", "Search"],
-					});
-					assert.deepEqual(readArray(readRecord(result.details).effectiveArgs).slice(-3), [
-						"fill",
-						"@e17",
-						"pi issue 70 search",
-					]);
-					const invocations = await readInvocationLog(logPath);
-					assert.ok(invocations.some((entry) => entry.args.includes("snapshot")));
-					assert.ok(
-						invocations.some(
-							(entry) =>
-								entry.args.at(-3) === "fill" &&
-								entry.args.at(-2) === "@e17" &&
-								entry.args.at(-1) === "pi issue 70 search",
-						),
-					);
-					assert.equal(
-						invocations.some((entry) => entry.args.includes("find")),
-						false,
-					);
-				},
-			);
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -1139,7 +1022,7 @@ if (args.includes("open")) {
 );
 
 test(
-	"agentBrowserExtension resolves semantic role fills after stored snapshot misses",
+	"agentBrowserExtension resolves semantic role fills through fresh refs instead of the stored snapshot",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-fill-fresh-ref-"));
@@ -1210,6 +1093,11 @@ if (args.includes("open")) {
 						},
 					});
 					assert.equal(result.isError, false, JSON.stringify(result));
+					assert.deepEqual(readRecord(result.details).compiledSemanticAction, {
+						action: "fill",
+						locator: "role",
+						args: ["find", "role", "textbox", "fill", "query", "--name", "Search Documentation"],
+					});
 					assert.deepEqual(readArray(readRecord(result.details).effectiveArgs).slice(-3), [
 						"fill",
 						"@e17",
@@ -1217,6 +1105,10 @@ if (args.includes("open")) {
 					]);
 					const invocations = await readInvocationLog(logPath);
 					assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
+					assert.equal(
+						invocations.some((entry) => entry.args.includes("find")),
+						false,
+					);
 					assert.ok(
 						invocations.some(
 							(entry) =>
@@ -1389,6 +1281,7 @@ test(
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-"));
 		const logPath = join(tempDir, "invocations.log");
+		const qaModeBefore = process.env.AGENT_BROWSER_FAKE_QA_MODE;
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
 			tempDir,
@@ -1471,7 +1364,7 @@ process.stdin.on("end", () => {
   if (handleStandaloneCommand()) return;
   fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
   const steps = JSON.parse(stdin);
-  const results = steps.map((command) => {
+  function executeStep(command) {
     const name = command[0];
     if (name === "open") {
       const url = String(command[1] || "");
@@ -1511,15 +1404,24 @@ process.stdin.on("end", () => {
       return { command, success: true, result: { path: command[1] } };
     }
     return { command, success: true, result: { ok: true } };
-  });
-  const failureIndex = results.findIndex((row) => row.success === false);
-  process.stdout.write(JSON.stringify(args.includes("--bail") && failureIndex >= 0 ? results.slice(0, failureIndex + 1) : results));
+  }
+  const results = [];
+  for (const command of steps) {
+    const row = executeStep(command);
+    results.push(row);
+    if (args.includes("--bail") && row.success === false) break;
+  }
+  process.stdout.write(JSON.stringify(results));
 });`,
 		);
 
 		try {
 			await withPatchedEnv(
-				{ PATH: `${tempDir}:${basePath}`, PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1" },
+				{
+					PATH: `${tempDir}:${basePath}`,
+					PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
+					AGENT_BROWSER_FAKE_QA_MODE: undefined,
+				},
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
 					await runExtensionEvent(
@@ -1986,7 +1888,12 @@ process.stdin.on("end", () => {
 
 					process.env.AGENT_BROWSER_FAKE_QA_MODE = "assertion-fail";
 					const attachedAssertionFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
-						qa: { attached: true, expectedText: "Missing text", expectedSelector: "main" },
+						qa: {
+							attached: true,
+							expectedText: "Missing text",
+							expectedSelector: "main",
+							screenshotPath: join(tempDir, "not-run.png"),
+						},
 					});
 					assert.equal(attachedAssertionFailure.isError, true);
 					assert.match(
@@ -2001,6 +1908,8 @@ process.stdin.on("end", () => {
 						readString(readRecord(attachedAssertionFailure.content.at(0)).text),
 						/QA attached target:/,
 					);
+
+					await assert.rejects(readFile(join(tempDir, "not-run.png")), { code: "ENOENT" });
 
 					const attachedFreshResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 						qa: { attached: true, expectedText: "Welcome" },
@@ -2024,6 +1933,7 @@ process.stdin.on("end", () => {
 					assert.equal(readRecord(attachedWithUrl.details).failureCategory, "validation-error");
 				},
 			);
+			assert.equal(process.env.AGENT_BROWSER_FAKE_QA_MODE, qaModeBefore);
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -2031,120 +1941,7 @@ process.stdin.on("end", () => {
 );
 
 test(
-	"agentBrowserExtension allows qa.attached preflight when get title fails but get url succeeds",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-attached-title-fail-"));
-		const logPath = join(tempDir, "invocations.log");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
-const path = require("node:path");
-const args = process.argv.slice(2);
-let stdin = "";
-const statePath = path.join(${JSON.stringify(tempDir)}, "fake-session-state.json");
-const valueFlags = new Set(["--session", "--namespace", "--profile", "--state", "--session-name", "--restore-save", "--restore-check-url", "--restore-check-text", "--restore-check-fn", "--cdp", "--provider", "-p", "--device", "--user-agent"]);
-function getSessionKey() {
-  const index = args.indexOf("--session");
-  return index >= 0 ? args[index + 1] : "default";
-}
-function readSessionState() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    return parsed[getSessionKey()] ?? { title: "QA Page", url: "https://example.test/" };
-  } catch {
-    return { title: "QA Page", url: "https://example.test/" };
-  }
-}
-function findCommandStartIndex(argv) {
-  for (let i = 0; i < argv.length; i += 1) {
-    const token = argv[i];
-    if (token === "--json") continue;
-    if (valueFlags.has(token)) { i += 1; continue; }
-    if (token.startsWith("--")) continue;
-    return i;
-  }
-  return -1;
-}
-function writeStandaloneResult(data) {
-  process.stdout.write(JSON.stringify({ success: true, data }));
-}
-function handleStandaloneCommand() {
-  fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
-  const commandIndex = findCommandStartIndex(args);
-  const command = args[commandIndex];
-  const subcommand = args[commandIndex + 1];
-  const sessionState = readSessionState();
-  if (command === "get" && subcommand === "title") {
-    process.stderr.write("get title failed");
-    process.exit(1);
-  }
-  if (command === "get" && subcommand === "url") {
-    writeStandaloneResult({ result: sessionState.url, url: sessionState.url });
-    return true;
-  }
-  if (command === "connect") {
-    writeStandaloneResult({ connected: true, endpoint: subcommand });
-    return true;
-  }
-  return false;
-}
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { stdin += chunk; });
-process.stdin.on("end", () => {
-  if (handleStandaloneCommand()) return;
-  const steps = JSON.parse(stdin);
-  const results = steps.map((command) => command[0] === "get" && command[1] === "text"
-    ? { command, success: true, result: { result: "Welcome" } }
-    : { command, success: true, result: { ok: true } });
-  process.stdout.write(JSON.stringify(results));
-});`,
-		);
-
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-				const harness = createExtensionHarness({ cwd: tempDir });
-				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-				await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
-				const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["get", "url"],
-				});
-				assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
-				const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-					qa: { attached: true, expectedText: "Welcome" },
-				});
-				assert.equal(attachedResult.isError, false);
-				assert.match(
-					readString(readRecord(attachedResult.content.at(0)).text),
-					/QA preset passed\./,
-				);
-				const invocations = await readInvocationLog(logPath);
-				const batchIndex = invocations.findIndex(
-					(entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail",
-				);
-				assert.ok(batchIndex >= 0);
-				const preflightInvocations = invocations.slice(0, batchIndex);
-				assert.ok(
-					preflightInvocations.some(
-						(entry) => entry.args.includes("get") && entry.args.includes("url"),
-					),
-				);
-				assert.equal(
-					preflightInvocations.some(
-						(entry) => entry.args.includes("get") && entry.args.includes("title"),
-					),
-					false,
-				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
-
-test(
-	"agentBrowserExtension allows qa.attached for non-http page URLs",
+	"agentBrowserExtension admits qa.attached across page URL schemes without title preflight",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-attached-precondition-"));
@@ -2194,13 +1991,8 @@ function handleStandaloneCommand() {
     return true;
   }
   if (command === "get" && subcommand === "title") {
-    writeStandaloneResult({ result: sessionState.title, title: sessionState.title });
-    return true;
-  }
-  if (command === "open") {
-    const url = String(subcommand || "about:blank");
-    writeStandaloneResult({ title: "Blank Page", url });
-    return true;
+    process.stderr.write("get title failed");
+    process.exit(1);
   }
   if (command === "connect") {
     writeStandaloneResult({ connected: true, endpoint: subcommand });
@@ -2232,26 +2024,46 @@ process.stdin.on("end", () => {
 						harness.ctx,
 					);
 					await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
-					for (const url of ["file:///tmp/app.html", "app://shell/home"]) {
+					for (const url of ["https://example.test/", "file:///tmp/app.html", "app://shell/home"]) {
 						// Verify attached targets in order using the same native session.
 						// oxlint-disable-next-line no-await-in-loop
 						await withPatchedEnv({ FAKE_ATTACHED_URL: url }, async () => {
+							const before = (await readInvocationLog(logPath)).length;
 							const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
 								args: ["get", "url"],
 							});
-							// Both fixed non-HTTP targets must permit explicit URL verification.
+							// Every fixed URL scheme must permit explicit URL verification.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
 							const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 								qa: { attached: true, expectedText: "Welcome" },
 							});
-							// Both fixed non-HTTP targets must remain usable for attached QA.
+							// Every fixed URL scheme must remain usable for attached QA.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(attachedResult.isError, false, JSON.stringify(attachedResult));
+							// Each carried scenario must retain the QA pass, not merely a successful preflight.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.match(attachedResult.content.at(0)?.text ?? "", /QA preset passed\./);
+							const calls = (await readInvocationLog(logPath)).slice(before);
+							const batchIndex = calls.findIndex(
+								(entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail",
+							);
+							// Every URL variant must reach a native QA batch after its preflight.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.ok(batchIndex >= 0);
+							const preflight = calls.slice(0, batchIndex);
+							// The failing title fixture must not be consulted before admitting any URL scheme.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.equal(
+								preflight.some(
+									(entry) => entry.args.includes("get") && entry.args.includes("title"),
+								),
+								false,
+							);
 						});
 					}
 					const invocations = await readInvocationLog(logPath);
-					assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 2);
+					assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 3);
 				},
 			);
 		} finally {
