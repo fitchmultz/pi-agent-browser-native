@@ -884,6 +884,14 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 						{ reason: "new" },
 						harness.ctx,
 					);
+					// Prime this fixture's native dispatch/coordination before testing tiny dialog
+					// budgets. A cold Windows PowerShell identity probe is real I/O even when
+					// Date/setTimeout are mocked, and cannot fit the explicit 75 ms queue budget.
+					const ready = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "url"],
+						timeoutMs: 15_000,
+					});
+					assert.equal(ready.isError, false, JSON.stringify(ready));
 					const realNow = Date.now;
 					const realSetTimeout = setTimeout;
 					const realClearTimeout = clearTimeout;
@@ -892,22 +900,23 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 						const controller = new AbortController();
 						// Freeze coordination deadlines while native dispatch and child liveness remain real.
 						t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realNow() });
-						let settled = false;
+						const state = { settled: false };
 						const pending = executeRegisteredTool(
 							harness.tool,
 							harness.ctx,
 							params,
 							controller.signal,
 						).then((result) => {
-							settled = true;
+							state.settled = true;
 							return result;
 						});
 						try {
+							// Native Windows CMD/Node startup under suite load is not a dialog budget.
 							const deadline = realNow() + 5000;
 							// The child must read stdin and enter the hang before the parent watchdog advances.
 							// oxlint-disable-next-line no-await-in-loop
 							while ((await readInvocationLog(logPath)).length <= before) {
-								if (realNow() >= deadline) {
+								if (state.settled || realNow() >= deadline) {
 									throw new Error("dialog fixture did not dispatch");
 								}
 								// Observe real dispatch I/O without advancing the mocked watchdog.
@@ -920,8 +929,14 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 							await new Promise((resolveDelay) => {
 								realSetTimeout(resolveDelay, 0);
 							});
-							assert.equal(settled, false, "dialog must remain pending before its selected budget");
+							assert.equal(
+								state.settled,
+								false,
+								"dialog must remain pending before its selected budget",
+							);
 							t.mock.timers.tick(1);
+							// Only the selected watchdog is virtual; taskkill/reaping and claim retries are real.
+							t.mock.timers.reset();
 							let deadlineTimer: NodeJS.Timeout | undefined;
 							try {
 								const result = await Promise.race([
