@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { dirname, join, win32 } from "node:path";
+import { debugPolicyFailure } from "./browser-execution-policy-debug.js";
 
 export function getCurrentProcessUid(): number | undefined {
 	return typeof process.getuid === "function" ? process.getuid() : undefined;
@@ -91,6 +92,10 @@ interface ProcessIdentityBudget {
 	readonly deadline?: number;
 }
 
+function debugIdentityBudget(budget: ProcessIdentityBudget | undefined): void {
+	debugPolicyFailure("probe.budget", budget?.signal?.aborted === true ? "cancelled" : "deadline");
+}
+
 async function executeProcessStartIdentityCommand(
 	command: ProcessStartIdentityCommand,
 	budget: ProcessIdentityBudget = {},
@@ -99,6 +104,7 @@ async function executeProcessStartIdentityCommand(
 		budget.signal?.aborted === true ||
 		(budget.deadline !== undefined && Date.now() >= budget.deadline)
 	) {
+		debugIdentityBudget(budget);
 		return undefined;
 	}
 	const timeout = Math.max(
@@ -107,7 +113,11 @@ async function executeProcessStartIdentityCommand(
 	);
 	return await new Promise((resolve) => {
 		execFile(command.file, command.args, { timeout, signal: budget.signal }, (error, stdout) => {
-			resolve(error ? undefined : normalizeProcessStartIdentity(stdout));
+			const identity = error ? undefined : normalizeProcessStartIdentity(stdout);
+			if (identity === undefined) {
+				debugPolicyFailure("probe.execute", error ? "native-error" : "invalid-output", error);
+			}
+			resolve(identity);
 		});
 	});
 }
@@ -153,6 +163,7 @@ export async function readProcessStartIdentity(
 	budget?: ProcessIdentityBudget,
 ): Promise<string | undefined> {
 	if (identityBudgetExpired(budget)) {
+		debugIdentityBudget(budget);
 		return undefined;
 	}
 	if (pid !== process.pid || platform !== process.platform) {

@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { tracePolicyFilesystem } from "./helpers/policy-filesystem-trace.js";
 import { setImmediate } from "node:timers/promises";
 import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
 import {
@@ -329,8 +328,7 @@ if (args.includes("snapshot")) {
 test(
 	"agentBrowserExtension preserves named older owned dispatch, semantic replanning, and queue ordering after replacement close fails",
 	{ concurrency: false },
-	async (t) => {
-		const trace = tracePolicyFilesystem(t);
+	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "piab-owned-namespace-"));
 		const cwd = join(tempDir, "p");
 		const home = join(tempDir, "home");
@@ -607,7 +605,7 @@ if (command === "session") {
 							const resumedOld = await executeRegisteredTool(resumed.tool, resumed.ctx, {
 								args: ["--session", oldSession, "snapshot", "-i"],
 							});
-							assert.equal(resumedOld.isError, false, trace.failureMessage(resumedOld));
+							assert.equal(resumedOld.isError, false, JSON.stringify(resumedOld));
 							assert.equal(resumedOld.details?.namespace, "review-space");
 							assert.notEqual(resumedOld.details.managedSessionRestoreDisabled, true);
 							const resumedCurrent = await executeRegisteredTool(resumed.tool, resumed.ctx, {

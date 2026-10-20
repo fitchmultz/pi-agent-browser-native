@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { getErrorCode } from "./process-errors.js";
+import {
+	debugPolicyFailure,
+	policyDebugEnabled,
+	withPolicyDebugAttempt,
+	policyDebugPhase,
+} from "./browser-execution-policy-debug.js";
 import { join } from "node:path";
 import { readProcessStartIdentity } from "./process-identity.js";
 import {
@@ -103,7 +109,11 @@ async function claimStillExists(path: string): Promise<boolean> {
 		await lstat(path);
 		return true;
 	} catch (error) {
-		return getErrorCode(error) !== "ENOENT";
+		const code = getErrorCode(error);
+		if (code !== "ENOENT") {
+			debugPolicyFailure("acquire.predecessor-stat", "presence-unresolved", error);
+		}
+		return code !== "ENOENT";
 	}
 }
 async function anyPredecessorBlocks(
@@ -126,12 +136,14 @@ async function prepareClaim(
 ): Promise<PreparedClaim | undefined> {
 	const directory = getCoordinationDirectory(process.platform);
 	if (!(await ensureCoordinationDirectory(directory, process.platform))) {
+		debugPolicyFailure("acquire.prepare", "directory-unavailable");
 		return undefined;
 	}
 	const basePath = getBrowserExecutionLockPath(identity);
 	const token = randomUUID();
 	const startIdentity = await readProcessStartIdentity(process.pid, process.platform, budget);
 	if (startIdentity === undefined || startIdentity.length === 0) {
+		debugPolicyFailure("acquire.prepare", "start-identity-unavailable");
 		return undefined;
 	}
 	const owner: PolicyLockOwner = {
@@ -143,6 +155,7 @@ async function prepareClaim(
 	};
 	const content = JSON.stringify(owner);
 	if (Buffer.byteLength(content) > POLICY_LOCK_MAX_BYTES) {
+		debugPolicyFailure("acquire.prepare", "owner-too-large");
 		return undefined;
 	}
 	return {
@@ -155,17 +168,26 @@ async function prepareClaim(
 	};
 }
 async function publishClaim(claim: PreparedClaim): Promise<void> {
-	await mkdir(claim.candidatePath, { mode: 0o700 });
-	await writeFile(join(claim.candidatePath, LOCK_OWNER_FILE), claim.content, {
-		encoding: "utf8",
-		flag: "wx",
-		mode: 0o600,
-	});
-	await rename(claim.candidatePath, claim.path);
+	let stage = "publish.mkdir";
+	try {
+		await mkdir(claim.candidatePath, { mode: 0o700 });
+		stage = "publish.owner-write";
+		await writeFile(join(claim.candidatePath, LOCK_OWNER_FILE), claim.content, {
+			encoding: "utf8",
+			flag: "wx",
+			mode: 0o600,
+		});
+		stage = "publish.rename";
+		await rename(claim.candidatePath, claim.path);
+	} catch (error) {
+		debugPolicyFailure(stage, "native-error", error);
+		throw error;
+	}
 }
 async function publishTicket(claim: PreparedClaim): Promise<number | undefined> {
 	const claims = await readClaims(claim.basePath);
 	if (!claims) {
+		debugPolicyFailure("ticket.scan", "claims-unavailable");
 		return undefined;
 	}
 	const maxTicket = claims.reduce(
@@ -173,12 +195,24 @@ async function publishTicket(claim: PreparedClaim): Promise<number | undefined> 
 		0,
 	);
 	if (!Number.isSafeInteger(maxTicket + 1)) {
+		debugPolicyFailure("ticket.number", "unsafe-ticket-number");
 		return undefined;
 	}
 	const ticket: PolicyLockTicket = { ticket: maxTicket + 1, token: claim.owner.token, version: 4 };
 	const candidate = join(claim.path, `.ticket-${claim.owner.token}.tmp`);
-	await writeFile(candidate, JSON.stringify(ticket), { encoding: "utf8", flag: "wx", mode: 0o600 });
-	await rename(candidate, join(claim.path, LOCK_TICKET_FILE));
+	let stage = "ticket.write";
+	try {
+		await writeFile(candidate, JSON.stringify(ticket), {
+			encoding: "utf8",
+			flag: "wx",
+			mode: 0o600,
+		});
+		stage = "ticket.rename";
+		await rename(candidate, join(claim.path, LOCK_TICKET_FILE));
+	} catch (error) {
+		debugPolicyFailure(stage, "native-error", error);
+		throw error;
+	}
 	return ticket.ticket;
 }
 function acquisitionCancelled(budget: ClaimBudget): boolean {
@@ -195,10 +229,12 @@ async function waitForTurn(
 		// oxlint-disable-next-line no-await-in-loop
 		const claims = await readClaims(claim.basePath);
 		if (!claims) {
+			debugPolicyFailure("acquire.wait-scan", "claims-unavailable");
 			return false;
 		}
 		const own = claims.find((entry) => entry.owner.token === claim.owner.token);
 		if (!own || own.ticket !== ticket) {
+			debugPolicyFailure("acquire.own-claim", !own ? "missing" : "ticket-mismatch");
 			return false;
 		}
 		// Liveness checks and stale-claim removal must finish before acquisition.
@@ -209,24 +245,36 @@ async function waitForTurn(
 			await cleanDeadPolicyArtifacts(claim.directory, budget);
 			// GC stays within the wait budget but cannot revoke a turn this claim already won;
 			// only cancellation can. Callers enforce their own operation deadlines.
-			return !acquisitionCancelled(budget);
+			const cancelled = acquisitionCancelled(budget);
+			if (cancelled) {
+				debugPolicyFailure("acquire.turn", "cancelled");
+			}
+			return !cancelled;
 		}
 		if (Date.now() >= deadline) {
+			debugPolicyFailure("acquire.wait", "deadline");
 			return false;
 		}
 		// Polling respects ordering and cancellation; contenders cannot run concurrently here.
 		// oxlint-disable-next-line no-await-in-loop
 		await waitForRetry(budget.signal);
 	}
+	debugPolicyFailure("acquire.wait", "cancelled");
 	return false;
 }
 function acquisitionDeadline(options: ClaimOptions): number {
 	return options.deadline ?? Date.now() + (options.timeoutMs ?? POLICY_LOCK_WAIT_MS);
 }
-export async function acquireExecutionClaim(
+export function acquireExecutionClaim(
 	options: ClaimOptions,
 ): Promise<ManagedSessionPolicyLock | undefined> {
+	return policyDebugEnabled
+		? withPolicyDebugAttempt(() => acquireClaim(options))
+		: acquireClaim(options);
+}
+async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicyLock | undefined> {
 	if (options.signal?.aborted === true) {
+		debugPolicyFailure("acquire.begin", "cancelled");
 		return undefined;
 	}
 	const deadline = acquisitionDeadline(options);
@@ -250,16 +298,34 @@ export async function acquireExecutionClaim(
 		}
 		acquired = true;
 		return {
-			release: async () => {
-				await removeClaimOwnedBy(claim.path, claim.owner.token, Date.now() + POLICY_LOCK_WAIT_MS);
-			},
+			release: policyDebugPhase("release", async () => {
+				const removed = await removeClaimOwnedBy(
+					claim.path,
+					claim.owner.token,
+					Date.now() + POLICY_LOCK_WAIT_MS,
+				);
+				debugRemovalResult(removed, "release.complete");
+			}),
 		};
-	} catch {
+	} catch (error) {
+		debugPolicyFailure("acquire.complete", "native-error", error);
 		return undefined;
 	} finally {
-		await rm(claim.candidatePath, { force: true, recursive: true }).catch(() => undefined);
+		await rm(claim.candidatePath, { force: true, recursive: true }).catch((error: unknown) => {
+			debugPolicyFailure("cleanup.candidate-rm", "native-error", error);
+		});
 		if (published && !acquired) {
-			await removeClaimOwnedBy(claim.path, claim.owner.token, Date.now() + POLICY_LOCK_WAIT_MS);
+			const removed = await removeClaimOwnedBy(
+				claim.path,
+				claim.owner.token,
+				Date.now() + POLICY_LOCK_WAIT_MS,
+			);
+			debugRemovalResult(removed, "cleanup.complete");
 		}
+	}
+}
+function debugRemovalResult(removed: boolean, stage: string): void {
+	if (!removed) {
+		debugPolicyFailure(stage, "claim-not-removed");
 	}
 }

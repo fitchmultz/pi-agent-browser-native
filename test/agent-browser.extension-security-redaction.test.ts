@@ -12,7 +12,6 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { tracePolicyFilesystem } from "./helpers/policy-filesystem-trace.js";
 
 import {
 	createExtensionHarness,
@@ -185,8 +184,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: "
 test(
 	"agentBrowserExtension preserves bearer prose while marking credentials in content, details, and exports",
 	{ concurrency: false },
-	async (t) => {
-		const trace = tracePolicyFilesystem(t);
+	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bearer-prose-"));
 		const basePath = process.env.PATH ?? "";
 		const prose =
@@ -221,7 +219,7 @@ test(
 					});
 					// Both literal prose/JSON read variants run these shared redaction checks.
 					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, false, trace.failureMessage(result));
+					assert.equal(result.isError, false, JSON.stringify(result));
 					// Both literal prose/JSON read variants run these shared redaction checks.
 					// oxlint-disable-next-line node-test/no-conditional-assertion
 					assert.deepEqual(result.details?.data, expectedData);

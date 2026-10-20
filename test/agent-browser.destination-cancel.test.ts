@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test, { after } from "node:test";
-import { tracePolicyFilesystem } from "./helpers/policy-filesystem-trace.js";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
@@ -313,17 +312,12 @@ for (const command of destinations) {
 		test(
 			`explicit ${command[0]} destination owns the next snapshot after resume (batch=${batch})`,
 			{ concurrency: false },
-			async (t) => {
-				const trace = command[0] === "diff" && !batch ? tracePolicyFilesystem(t) : undefined;
+			async () => {
 				await withPage(async (page) => {
 					const args = batch ? ["batch"] : command;
 					const stdin = batch ? JSON.stringify([command]) : undefined;
 					const changed = await page.call({ args, stdin });
-					assert.equal(
-						changed.isError,
-						false,
-						trace === undefined ? changed.content[0].text : trace.failureMessage(changed),
-					);
+					assert.equal(changed.isError, false, JSON.stringify(changed));
 					const stale = await page.call({ args: ["get", "value", "@e1"] });
 					await page.reload();
 					const snapshot = await page.call({ args: ["snapshot", "-i"] });
