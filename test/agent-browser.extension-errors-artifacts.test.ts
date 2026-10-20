@@ -3730,7 +3730,7 @@ test("timeout artifact evidence follows native operands, not ignored tails or ou
 });
 
 test("timeout artifact observations overlap independent retry windows without claiming execution", async (t) => {
-	const cwd = await mkdtemp(join(tmpdir(), "timeout-windows-"));
+	const cwd = await mkdtemp(join(tmpdir(), "timeout paths-"));
 	const paths = Array.from({ length: 33 }, (_, index) => join(cwd, `${index}.pdf`));
 	const attempts = new Map<string, number[]>();
 	const realStat = fsPromises.stat;
@@ -3753,7 +3753,8 @@ test("timeout artifact observations overlap independent retry windows without cl
 		);
 		syncBuiltinESMExports();
 		const pending = collectTimeoutPartialProgress({
-			commandTokens: ["batch", ...paths.map((path) => `pdf ${path}`)],
+			// Native raw batch rows use shell-word quoting on every host, including Windows paths.
+			commandTokens: ["batch", ...paths.map((path) => `pdf ${JSON.stringify(path)}`)],
 			cwd,
 			stdin: JSON.stringify([["pdf", "ignored.pdf"]]),
 		});
