@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { watch } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import fs, { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, dirname, delimiter, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
 import { recoverRecordingStop } from "../extensions/agent-browser/lib/orchestration/browser-run/recording-recovery.js";
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
+import { redactSensitiveValue } from "../extensions/agent-browser/lib/runtime-redaction.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
 import {
@@ -173,6 +175,7 @@ async function executeWithRecordingTimeout(
 	},
 ): Promise<Awaited<ReturnType<typeof executeRegisteredTool>>> {
 	const controller = new AbortController();
+	const realDateNow = Date.now;
 	let markReady!: () => void;
 	const ready = new Promise<void>((resolve) => {
 		markReady = resolve;
@@ -184,9 +187,12 @@ async function executeWithRecordingTimeout(
 	});
 	let timeout: NodeJS.Timeout | undefined;
 	const watchdog = new Promise<never>((_resolve, reject) => {
-		timeout = setTimeout(() => reject(new Error("record stop must reach native dispatch")), 5_000);
+		timeout = setTimeout(
+			() => reject(new Error("record stop must dispatch and complete within the real watchdog")),
+			5_000,
+		);
 	});
-	t.mock.timers.enable({ apis: ["setTimeout"] });
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realDateNow() });
 	const pending = executeRegisteredTool(
 		harness.tool,
 		harness.ctx,
@@ -197,19 +203,26 @@ async function executeWithRecordingTimeout(
 		await Promise.race([
 			ready,
 			watchdog,
-			pending.then(() => {
-				throw new Error("record stop completed before the controlled timeout");
+			pending.then((result) => {
+				throw new Error(
+					`record stop completed before the controlled timeout: ${JSON.stringify({ pid: process.pid, result: redactSensitiveValue(result) })}`,
+				);
 			}),
 		]);
 		assert.equal(await readFile(join(root, "stop-ready"), "utf8"), "ready");
+		// Native receipts and mtimes use real time; setTime alone must not trigger the timeout.
+		t.mock.timers.setTime(realDateNow());
 		t.mock.timers.tick(200);
-		return await pending;
+		return await Promise.race([pending, watchdog]);
 	} finally {
 		t.mock.timers.reset();
 		watcher.close();
-		clearTimeout(timeout);
 		controller.abort();
-		await Promise.allSettled([pending]);
+		try {
+			await Promise.allSettled([pending]);
+		} finally {
+			clearTimeout(timeout);
+		}
 	}
 }
 
@@ -561,14 +574,71 @@ test(
 	},
 );
 
-for (const mode of ["timeout", "stale-batch"]) {
+// These fixture writes are strings; the forwarder never inspects or transforms their data.
+type FixtureWriteArguments = readonly [
+	file: Parameters<typeof fs.writeFile>[0],
+	data: string,
+	options?: Readonly<Parameters<typeof fs.writeFile>[2]>,
+];
+
+function delayNextNativeOwnerWrite(t: TestContext): {
+	readonly observe: () => {
+		readonly writes: number;
+		readonly realElapsedMs: number;
+		readonly logicalElapsedMs: number;
+	};
+	readonly restore: () => void;
+} {
+	const nativeWriteFile = fs.writeFile;
+	const realSetTimeout = setTimeout;
+	const realDateNow = Date.now;
+	const state = { writes: 0, realElapsedMs: 0, logicalElapsedMs: 0 };
+	const mocked = t.mock.method(fs, "writeFile", async (...args: FixtureWriteArguments) => {
+		await nativeWriteFile(...args);
+		const path = args[0];
+		if (
+			state.writes === 0 &&
+			typeof path === "string" &&
+			basename(path) === "owner.json" &&
+			basename(dirname(path)).includes(".candidate-")
+		) {
+			state.writes++;
+			const realStarted = realDateNow();
+			const logicalStarted = Date.now();
+			// Real pre-dispatch work exceeds 200 ms while the fixture timers remain unticked.
+			await new Promise<void>((resolve) => {
+				realSetTimeout(resolve, 300);
+			});
+			state.realElapsedMs = realDateNow() - realStarted;
+			state.logicalElapsedMs = Date.now() - logicalStarted;
+		}
+	});
+	syncBuiltinESMExports();
+	const restore = (): void => {
+		mocked.mock.restore();
+		syncBuiltinESMExports();
+	};
+	t.after(() => {
+		restore();
+		t.diagnostic(JSON.stringify({ pid: process.pid, controlledOwnerWrite: state }));
+	});
+	return { observe: () => ({ ...state }), restore };
+}
+
+for (const [mode, delayed] of [
+	["timeout", false],
+	["stale-batch", false],
+	["timeout", true],
+	["stale-batch", true],
+] as const) {
 	test(
-		`timed-out raw recording batch keeps receipt evidence without claiming other steps succeeded: ${mode}`,
+		`timed-out raw recording batch keeps receipt evidence without claiming other steps succeeded: ${mode}${delayed ? " (real 300 ms pre-dispatch delay)" : ""}`,
 		{ concurrency: false },
 		async (t) => {
 			await withRecorder(mode, async ({ root, logPath, harness, prefix }) => {
 				const path = join(root, "raw.webm"),
 					outputPath = join(root, "batch-receipt.json");
+				const delay = delayed ? delayNextNativeOwnerWrite(t) : undefined;
 				const result = await executeWithRecordingTimeout(t, root, harness, {
 					args: [...prefix, "batch", `record start ${JSON.stringify(path)}`, "record stop"],
 					stdin: JSON.stringify([
@@ -576,6 +646,8 @@ for (const mode of ["timeout", "stale-batch"]) {
 						["record", "stop"],
 					]),
 					outputPath,
+				}).finally(() => {
+					delay?.restore();
 				});
 				assert.equal(
 					result.isError,
@@ -602,6 +674,10 @@ for (const mode of ["timeout", "stale-batch"]) {
 					2,
 					"bootstrap inspection plus receipt recovery",
 				);
+				const observation = delay?.observe();
+				assert.equal(observation?.writes ?? 0, Number(delayed));
+				assert.ok(!delayed || (observation?.realElapsedMs ?? 0) > 200);
+				assert.equal(observation?.logicalElapsedMs ?? 0, 0);
 			});
 		},
 	);
