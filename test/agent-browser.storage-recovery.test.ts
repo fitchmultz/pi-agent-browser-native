@@ -1960,7 +1960,7 @@ test(
 				`const fs=require('node:fs'); const args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({args})+'\\n');
 const url='https://fixture.test/same'; const command=args.find(arg=>['session','snapshot','get','tab'].includes(arg));
-const data=command==='session' ? {active:true,runtime:{restoreKey:null,backgroundPid:process.ppid,browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}}
+const data=command==='session' ? {active:true,runtime:{restoreKey:null,backgroundPid:${process.pid},browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}}
 : command==='snapshot' ? {url,snapshot:'- textbox "Name" [ref=e1]',refs:{e1:{role:'textbox',name:'Name'}}}
 : command==='tab' ? {tabs:[{tabId:'t1',url,active:true}]} : args.includes('url') ? {url} : {text:'Name'};
 process.stdout.write(JSON.stringify({success:true,data}));`,
@@ -2053,7 +2053,7 @@ test(
 				`const fs=require('node:fs'), args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args})+'\\n');
 let data;
-if(args.includes('session')) data={active:fs.existsSync(${JSON.stringify(active)}),runtime:fs.existsSync(${JSON.stringify(active)})?{restoreKey:null,backgroundPid:process.ppid,browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}:null};
+if(args.includes('session')) data={active:fs.existsSync(${JSON.stringify(active)}),runtime:fs.existsSync(${JSON.stringify(active)})?{restoreKey:null,backgroundPid:${process.pid},browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}:null};
 else {
   if(args.includes('open')) fs.writeFileSync(${JSON.stringify(active)}, 'active');
   data=args.includes('tab')?{tabs:[{tabId:'t1',url:'https://fixture.test/profile',active:true}]}:{url:'https://fixture.test/profile',title:'Profile fixture'};

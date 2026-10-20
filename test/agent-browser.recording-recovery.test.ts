@@ -58,7 +58,7 @@ function execute(row) {
   if (row[0] === 'get' && row[1] === 'text' && mode === 'mixed-failure') throw new Error('Unknown ref @e1');
   if (row[0] === 'snapshot') return { url: 'https://recording.test/', snapshot: '- button "Old button" [ref=e1]', refs: { e1: { role: 'button', name: 'Old button' } } };
   if (row[0] === 'session') return { session: 'recorder', namespace: mode === 'namespace-mismatch' ? 'other' : 'scope', active: true, pid: 123,
-    runtime: { backgroundPid: process.ppid, socketDir: 'recording-fixture', browserLaunched: true, restoreKey: null, recording: { current: state.current, last: state.last }, browser: { status: 'not-launched', alive: false, pid: null, userDataDir: null, ownership: 'none', tabs: [], error: null } } };
+    runtime: { backgroundPid: ${process.pid}, socketDir: 'recording-fixture', browserLaunched: true, restoreKey: null, recording: { current: state.current, last: state.last }, browser: { status: 'not-launched', alive: false, pid: null, userDataDir: null, ownership: 'none', tabs: [], error: null } } };
   if (row[0] === 'record' && row[1] === 'start') {
     const started = Date.now() - (mode === 'old-receipt' ? 60000 : 0);
     state.current = { recordingId: 'new-take', path: path.resolve(row[2]), success: null, error: null, frames: 60, capturedFrames: 2, fps: 30,

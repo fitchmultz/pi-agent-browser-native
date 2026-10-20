@@ -69,7 +69,8 @@ test("Windows uses the resolved source and hosts, native environment check and c
 		windows,
 		/--host "\$HOST" --target "\$target" --output "\$GITHUB_WORKSPACE\/evidence"/,
 	);
-	assert.match(windows, /2>&1 \| tee evidence\/qualification.log/);
+	assert.match(windows, /set -euo pipefail\n          target="\$OFFICIAL_VERSION"/);
+	assert.match(windows, /2>&1 \| tee evidence\/qualification.log \| tail -n 1000/);
 	assert.match(windows, /if: always\(\)\n        with:\n          name: windows-qualification-/);
 	assert.match(
 		windows,

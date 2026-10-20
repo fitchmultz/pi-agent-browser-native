@@ -107,7 +107,7 @@ const navigate = url => { current().url = url === ${JSON.stringify(requestedUrl)
 function execute(row) {
   const [command, subcommand] = row;
   if (command === 'not-a-command') throw new Error('Unknown command: not-a-command');
-  if (command === 'session') return { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey, backgroundPid: process.ppid, socketDir: process.env.AGENT_BROWSER_SOCKET_DIR, browserLaunched: true } : null };
+  if (command === 'session') return { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey, backgroundPid: ${process.pid}, socketDir: process.env.AGENT_BROWSER_SOCKET_DIR, browserLaunched: true } : null };
   if (command === 'close') { state.active = false; state.pages = []; state.restoreKey = null; return { closed: true }; }
   if (!state.active) { state.active = true; state.restoreKey = process.env.AGENT_BROWSER_RESTORE ?? null; state.pages = [{ tabId: 't1', title: 'Page', url: 'http://127.0.0.1:43210/' }]; state.selected = 't1'; }
   if (command === 'open') {

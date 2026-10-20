@@ -353,7 +353,7 @@ const restoreKey = process.env.AGENT_BROWSER_RESTORE ?? null;
 const log = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event, namespace, namespaceEnv: process.env.AGENT_BROWSER_NAMESPACE ?? null, sessionName, restoreKey, observedRestoreKey: active?.restoreKey, active: active !== null }) + "\\n");
 log("start");
 if (command === "session") {
-  process.stdout.write(JSON.stringify({ success: true, data: { active: active !== null, runtime: active ? { restoreKey: active.restoreKey, backgroundPid: process.ppid, socketDir: ${JSON.stringify(tempDir)}, browserLaunched: true } : null } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { active: active !== null, runtime: active ? { restoreKey: active.restoreKey, backgroundPid: ${process.pid}, socketDir: ${JSON.stringify(tempDir)}, browserLaunched: true } : null } }));
 } else if (command === "close" && namespace === "review-space" && !fs.existsSync(${JSON.stringify(closeGate)})) {
   process.stdout.write(JSON.stringify({ success: false, error: "forced old-session close failure" }));
   process.exit(1);
