@@ -5,7 +5,13 @@
  */
 
 import assert from "node:assert/strict";
-import { readRecord, readString, readArray, hasErrorCode } from "./helpers/assertions.js";
+import {
+	readRecord,
+	readString,
+	readNumber,
+	readArray,
+	hasErrorCode,
+} from "./helpers/assertions.js";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -621,9 +627,46 @@ test("managed session policy lock replaces only a proven-dead claim and excludes
 	assert.deepEqual(await claimPaths(), []);
 });
 
+async function readCriticalJournal(path: string): Promise<string> {
+	try {
+		return await readFile(path, "utf8");
+	} catch (error) {
+		if (hasErrorCode(error, "ENOENT")) {
+			return "<journal not created>";
+		}
+		throw error;
+	}
+}
+
+function assertSerializedJournal(journal: string, pids: readonly number[]): void {
+	const lines = journal.trim().split("\n");
+	assert.equal(lines.length, 8, journal);
+	const observed = Array.from({ length: 4 }, (_, index) => {
+		const start = lines[index * 2];
+		assert.match(start, /^start:\d+$/, journal);
+		assert.equal(lines[index * 2 + 1], start.replace("start:", "end:"), journal);
+		return start.slice("start:".length);
+	});
+	assert.deepEqual(observed.sort(), pids.map(String).sort(), journal);
+	let active = 0;
+	let maxActive = 0;
+	for (const line of lines) {
+		active += line.startsWith("start:") ? 1 : -1;
+		maxActive = Math.max(maxActive, active);
+		// Every journal transition must keep ownership nonnegative; final checks require balance.
+		assert.ok(active >= 0, journal);
+	}
+	assert.equal(active, 0, journal);
+	assert.equal(maxActive, 1, journal);
+}
+
 test("competing cross-process reclaimers stay serialized after a stale claim", async (t) => {
 	const moduleUrl = new URL(
 		"../dist/extensions/agent-browser/lib/managed-session-policy-lock.js",
+		import.meta.url,
+	).href;
+	const identityUrl = new URL(
+		"../dist/extensions/agent-browser/lib/process-identity.js",
 		import.meta.url,
 	).href;
 	const staleScript = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
@@ -632,46 +675,92 @@ test("competing cross-process reclaimers stay serialized after a stale claim", a
 	});
 	const [staleCode] = readArray(await once(stale, "exit"));
 	assert.equal(staleCode, 0);
-	await onlyClaimPath();
+	const stalePath = await onlyClaimPath();
+	const staleOwner = await readFile(join(stalePath, "owner.json"), "utf8");
+	const staleTicket = await readFile(join(stalePath, "ticket.json"), "utf8");
 
 	const logPath = join(dirname(lockBasePath), `${basename(lockBasePath)}.critical.log`);
-	const contenderScript = `import fs from "node:fs"; import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)}, timeoutMs: 1000 }); if (!lock) process.exit(2); fs.appendFileSync(${JSON.stringify(logPath)}, "start:" + process.pid + "\\n"); await new Promise((resolve) => setTimeout(resolve, 25)); fs.appendFileSync(${JSON.stringify(logPath)}, "end:" + process.pid + "\\n"); await lock.release();`;
-	try {
-		const contenders = Array.from({ length: 4 }, () => {
-			const child = spawn(process.execPath, ["--input-type=module", "--eval", contenderScript], {
-				stdio: ["ignore", "ignore", "pipe"],
-			});
-			let stderr = "";
-			child.stderr.on("data", (chunk: unknown) => {
-				assert.ok(Buffer.isBuffer(chunk));
-				stderr += chunk.toString("utf8");
-			});
-			t.after(async () => {
-				await stopChildProcess(child);
-			});
-			return { child, exit: once(child, "exit"), getStderr: () => stderr };
+	const contenderScript = `
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)};
+import { readProcessStartIdentity } from ${JSON.stringify(identityUrl)};
+// Observe only this child's real identity outside the measured contention window. No lock warmup.
+const startIdentity = await readProcessStartIdentity(process.pid);
+assert.ok(typeof startIdentity === "string" && startIdentity.length > 0, "Own process-start identity unavailable before READY");
+const go = new Promise((resolve) => {
+  let command = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => { command += chunk; });
+  process.stdin.once("end", () => { assert.equal(command, "go\\n"); resolve(); });
+});
+console.log(JSON.stringify({ event: "ready", pid: process.pid }));
+await go;
+const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)}, timeoutMs: 1000 });
+if (!lock) process.exit(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, "start:" + process.pid + "\\n");
+await new Promise((resolve) => setTimeout(resolve, 25));
+fs.appendFileSync(${JSON.stringify(logPath)}, "end:" + process.pid + "\\n");
+await lock.release();`;
+	const contenders = Array.from({ length: 4 }, () => {
+		const child = spawn(process.execPath, ["--input-type=module", "--eval", contenderScript], {
+			stdio: ["pipe", "pipe", "pipe"],
 		});
+		let stderr = "";
+		child.stderr.setEncoding("utf8");
+		child.stderr.on("data", (chunk: string) => {
+			stderr += chunk;
+		});
+		const closed = once(child, "close");
+		const ready = readChildStdoutJsonLine(child).then(readRecord);
+		return { child, closed, ready, getStderr: () => stderr };
+	});
+	const diagnostics = (journal: string): string =>
+		JSON.stringify({
+			contenders: contenders.map((contender) => ({
+				pid: contender.child.pid,
+				code: contender.child.exitCode,
+				signal: contender.child.signalCode,
+				stderr: contender.getStderr(),
+			})),
+			journal,
+		});
+	try {
+		const ready = await Promise.all(contenders.map((contender) => contender.ready));
+		const pids = contenders.map((contender) => readNumber(contender.child.pid));
+		assert.equal(new Set(pids).size, 4);
+		assert.deepEqual(
+			ready,
+			pids.map((pid) => ({ event: "ready", pid })),
+		);
+		// Own-identity preparation must neither acquire a lock nor reclaim the original stale owner.
+		assert.deepEqual(await claimPaths(), [stalePath]);
+		assert.equal(await readFile(join(stalePath, "owner.json"), "utf8"), staleOwner);
+		assert.equal(await readFile(join(stalePath, "ticket.json"), "utf8"), staleTicket);
 		for (const contender of contenders) {
-			// These contenders already run concurrently; join their exits before reading the journal.
-			// oxlint-disable-next-line no-await-in-loop
-			const [code] = readArray(await contender.exit);
-			// Every fixed contender must exit successfully.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(code, 0, contender.getStderr());
+			contender.child.stdin.end("go\n"); // Release all gates and close stdin before awaiting any completion.
 		}
-		const lines = (await readFile(logPath, "utf8")).trim().split("\n");
-		let active = 0;
-		let maxActive = 0;
-		for (const line of lines) {
-			active += line.startsWith("start:") ? 1 : -1;
-			maxActive = Math.max(maxActive, active);
-			// Every journal transition must keep ownership nonnegative; final checks require balance.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(active >= 0);
-		}
-		assert.equal(active, 0);
-		assert.equal(maxActive, 1);
+		const exits = await Promise.all(
+			contenders.map(async (contender) => readArray(await contender.closed)),
+		);
+		const journal = await readCriticalJournal(logPath);
+		assert.deepEqual(
+			exits.map((values) => values[0]),
+			[0, 0, 0, 0],
+			diagnostics(journal),
+		);
+		assertSerializedJournal(journal, pids);
+	} catch (error) {
+		await Promise.all(
+			contenders.map(async (contender) => {
+				await stopChildProcess(contender.child);
+				await contender.closed;
+			}),
+		);
+		t.diagnostic(diagnostics(await readCriticalJournal(logPath)));
+		throw error;
 	} finally {
+		await Promise.all(contenders.map(async (contender) => stopChildProcess(contender.child)));
 		await rm(logPath, { force: true });
 	}
 });
