@@ -83,13 +83,10 @@ test("one resolved fork package feeds Linux and Windows while native dispatch om
 	assert.ok(job("fork").includes(artifact));
 	assert.ok(job("windows").includes(artifact));
 	assert.match(job("fork"), /test "\$FORK_PACKAGE" = success/);
-	for (const consumer of ["fork", "windows"]) {
-		assert.ok(
-			job(consumer).includes(
-				'assert.equal(JSON.parse(readFileSync(process.argv[1], "utf8")).ref, process.env.FORK_REF)',
-			),
-		);
-	}
+	const receiptCheck =
+		'assert.equal(JSON.parse(readFileSync(process.argv[1], "utf8")).ref, process.env.FORK_REF)';
+	assert.ok(job("fork").includes(receiptCheck));
+	assert.ok(job("windows").includes(receiptCheck));
 	assert.match(job("native-qualification"), /waived-platforms: false/);
 	assert.match(
 		job("native-qualification"),
