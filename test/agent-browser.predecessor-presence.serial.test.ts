@@ -133,7 +133,8 @@ await ended;`;
 		) => {
 			if (
 				(args[0] === "-p" && args[1] === String(holderPid)) ||
-				args.at(-1)?.includes(`Get-Process -Id ${holderPid} `) === true
+				args.at(-1)?.includes(`Get-Process -Id ${holderPid} `) === true ||
+				args.at(-1)?.includes(`GetProcessById(${holderPid})`) === true
 			) {
 				foreignProbes++;
 			}

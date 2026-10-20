@@ -36,7 +36,7 @@ export function buildProcessStartIdentityCommand(
 					"-NoProfile",
 					"-NonInteractive",
 					"-Command",
-					`$p = Get-Process -Id ${pid} -ErrorAction Stop; Write-Output ("${WINDOWS_PROCESS_START_IDENTITY_PREFIX}" + $p.StartTime.ToUniversalTime().Ticks)`,
+					`$ErrorActionPreference = 'Stop'; $p = $null; try { $p = [System.Diagnostics.Process]::GetProcessById(${pid}); [long]$ticks = $p.StartTime.ToUniversalTime().Ticks; if ($ticks -le 0) { throw 'Process start ticks unavailable' }; [Console]::Out.WriteLine("${WINDOWS_PROCESS_START_IDENTITY_PREFIX}" + $ticks.ToString([Globalization.CultureInfo]::InvariantCulture)) } finally { if ($null -ne $p) { $p.Dispose() } }`,
 				],
 				file: win32.join(
 					windowsSystemRoot,

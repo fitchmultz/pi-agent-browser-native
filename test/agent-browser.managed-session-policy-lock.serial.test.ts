@@ -694,7 +694,7 @@ const nativeExecFile = childProcess.execFile;
 childProcess.execFile = function(file, args, options, callback) {
   if (arguments.length !== 4 || !Array.isArray(args) || !options || typeof callback !== "function") return Reflect.apply(nativeExecFile, this, arguments);
   const command = args.at(-1);
-  const windowsPid = typeof command === "string" ? command.match(/Get-Process -Id (\\d+)/)?.[1] : undefined;
+  const windowsPid = typeof command === "string" ? command.match(/(?:Get-Process -Id |GetProcessById\\()(\\d+)/)?.[1] : undefined;
   const target = Number(args[0] === "-p" ? args[1] : windowsPid);
   if (!Number.isSafeInteger(target) || target <= 0) return Reflect.apply(nativeExecFile, this, arguments);
   const role = target === process.pid ? "self" : "other";
