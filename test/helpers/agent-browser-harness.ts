@@ -37,7 +37,9 @@ delete process.env.PI_SUBAGENT_CHILD;
 delete process.env.PI_SUBAGENT_ROOT_SESSION_ID;
 delete process.env.PI_SESSION_ID;
 
-export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
+// Stable across this file worker's harness/resume instances, distinct from unrelated parallel
+// workers. Native Windows root browsers key off the Pi ID, not the fixture cwd/socket root.
+export const TEST_SESSION_ID = randomUUID();
 export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
 export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contract.txt";
 const journalFixtures = mkdtempSync(join(tmpdir(), "piab-journal-fixtures-"));

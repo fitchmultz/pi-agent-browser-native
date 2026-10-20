@@ -47,7 +47,13 @@ The default/quality verification gates use the same two stages. File isolation
 keeps environment patches process-local; the shared browser harness supplies a
 private short socket directory unless `PI_AGENT_BROWSER_SOCKET_DIR` is already set.
 The harness also clears inherited Pi/delegation identity variables; root-default
-tests set their identities explicitly after import. No in-file concurrency is enabled.
+tests set their identities explicitly after import. Its default Pi ID is generated once
+per file worker, remaining stable across that worker's harness/reload/resume instances.
+Independent Windows fake browsers must also use distinct explicit session/namespace
+identities: native Windows coordination ignores private socket roots. Namespace-wide
+`close --all` fixtures use private namespaces unless the literal default namespace is
+the contract under test. Do not isolate identical native identities by changing their
+coordination directory or relaxing lock checks. No in-file concurrency is enabled.
 
 The serial lane contains `test/agent-browser.startup.serial.test.ts` and
 `test/agent-browser.prompt-policy.serial.test.ts` for wall-clock budgets, plus
