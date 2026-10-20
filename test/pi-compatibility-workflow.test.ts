@@ -17,6 +17,13 @@ function job(name: string): string {
 	return readString(body.split(/\n  [a-z][a-z-]*:\n/)[0]);
 }
 
+test("checker patches retain canonical LF bytes in native Windows source checkouts", () => {
+	assert.ok(
+		readFileSync(".gitattributes", "utf8").split(/\r?\n/).includes("patches/*.patch text eol=lf"),
+	);
+	assert.doesNotMatch(readFileSync("patches/oxlint-tsgolint.patch", "utf8"), /\r\n/);
+});
+
 test("Windows qualification blocks PR, release-call and manual compatibility runs for both hosts", () => {
 	assert.match(workflow, /pull_request:\n    branches: \[main\]/);
 	assert.match(workflow, /  workflow_call:/);
