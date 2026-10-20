@@ -94,6 +94,7 @@ function nativeObservationDetails(
 		recordingRecovery: options.presentation.recordingRecovery,
 		readConfirmation: options.presentation.readConfirmation,
 		exitCode: options.processResult.exitCode,
+		exitSignal: options.processResult.exitSignal,
 		parseError: options.plainTextInspection ? undefined : options.parseError,
 		stderr: options.processResult.stderr,
 		stdout: options.plainTextInspection ? (options.inspectionText ?? "") : undefined,
