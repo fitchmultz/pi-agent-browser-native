@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { readString } from "./helpers/assertions.js";
+
 // Native Windows source consumers can check out these same YAML bytes as CRLF.
 const workflow = readFileSync(".github/workflows/pi-compatibility.yml", "utf8").replace(
 	/\r\n/g,
@@ -10,9 +12,9 @@ const workflow = readFileSync(".github/workflows/pi-compatibility.yml", "utf8").
 );
 
 function job(name: string): string {
-	const body = workflow.split(`\n  ${name}:\n`)[1];
-	assert.ok(body, `Missing compatibility job: ${name}`);
-	return body.split(/\n  [a-z][a-z-]*:\n/)[0] ?? "";
+	const body = readString(workflow.split(`\n  ${name}:\n`)[1]);
+	assert.notEqual(body.length, 0, `Missing compatibility job: ${name}`);
+	return readString(body.split(/\n  [a-z][a-z-]*:\n/)[0]);
 }
 
 test("Windows qualification blocks PR, release-call and manual compatibility runs for both hosts", () => {
@@ -36,6 +38,8 @@ test("Windows uses the resolved source and hosts, native environment check and c
 	assert.match(windows, /ref: \$\{\{ github.sha \}\}/);
 	assert.match(windows, /ref: \$\{\{ env.PI_AUTOMATION_REF \}\}/);
 	assert.match(windows, /node-version: "24"\n          check-latest: true/);
+	assert.match(windows, /git config --system core.longpaths true/);
+	assert.ok(windows.indexOf("core.longpaths true") < windows.indexOf("scripts/qualify.mjs"));
 	assert.match(windows, /PSModulePath=\$env:PSModulePath/);
 	assert.match(windows, /OFFICIAL_VERSION: \$\{\{ needs.resolve.outputs.official-version \}\}/);
 	assert.match(windows, /PI_COMPAT_FORK_REF: \$\{\{ needs.resolve.outputs.fork-ref \}\}/);

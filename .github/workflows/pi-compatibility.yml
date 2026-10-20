@@ -290,6 +290,9 @@ jobs:
         run: |
           test "$RESOLVE" = success
           test "$FORK_PACKAGE" = success
+      - name: Enable Git long paths for isolated checker source checkouts
+        # The qualifier replaces HOME; system config also reaches its nested Git processes.
+        run: git config --system core.longpaths true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: extension
