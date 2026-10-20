@@ -356,11 +356,34 @@ jobs:
           set -euo pipefail
           target="$OFFICIAL_VERSION"
           if [[ "$HOST" == fork ]]; then target="$RUNNER_TEMP/fork-package"; fi
-          # Retain the full artifact log; bound the console so its final failure summary stays inspectable.
+          # Retain the full artifact log and terminal totals; failed assertions are printed separately below.
           node automation/scripts/qualify.mjs --repo pi-agent-browser-native --source "$GITHUB_WORKSPACE/extension" \
             --host "$HOST" --target "$target" --output "$GITHUB_WORKSPACE/evidence" \
             2>&1 | tee evidence/qualification.log | tail -n 1000
           git -C extension diff --exit-code
+      - name: Expose failed Windows TAP assertions
+        if: failure()
+        run: |
+          set -euo pipefail
+          if [[ -f evidence/qualification.log ]]; then
+            printf '\nAll failed TAP test names (including nested subtests):\n'
+            awk '/^[[:space:]]*not ok /' evidence/qualification.log
+            printf '\nFailed TAP diagnostics (first 1600 lines; complete log retained in artifact):\n'
+            awk '
+              { sub(/\r$/, "") }
+              !printing && /^[[:space:]]*not ok / {
+                match($0, /^[[:space:]]*/)
+                closing = substr($0, 1, RLENGTH) "  ..."
+                printing = 1
+              }
+              printing {
+                lines++
+                if (lines <= 1600) print
+                if ($0 == closing) printing = 0
+              }
+              END { if (lines > 1600) print "[diagnostics truncated; see qualification.log artifact]" }
+            ' evidence/qualification.log
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

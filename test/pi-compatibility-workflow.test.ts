@@ -71,6 +71,13 @@ test("Windows uses the resolved source and hosts, native environment check and c
 	);
 	assert.match(windows, /set -euo pipefail\n          target="\$OFFICIAL_VERSION"/);
 	assert.match(windows, /2>&1 \| tee evidence\/qualification.log \| tail -n 1000/);
+	assert.match(windows, /name: Expose failed Windows TAP assertions\n        if: failure\(\)/);
+	assert.ok(windows.includes("awk '/^[[:space:]]*not ok /' evidence/qualification.log"));
+	assert.ok(windows.includes('closing = substr($0, 1, RLENGTH) "  ..."'));
+	assert.ok(windows.includes("if ($0 == closing) printing = 0"));
+	assert.ok(windows.includes("if (lines <= 1600) print"));
+	assert.ok(windows.includes("if (lines > 1600)"));
+	assert.match(windows, /diagnostics truncated; see qualification.log artifact/);
 	assert.match(windows, /if: always\(\)\n        with:\n          name: windows-qualification-/);
 	assert.match(
 		windows,
