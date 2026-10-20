@@ -716,11 +716,12 @@ test(
 				args: ["batch"],
 				stdin: JSON.stringify([["record", "start", "unparseable.webm"]]),
 			});
-			assert.equal(readRecord(result.details).failureCategory, "parse-failure");
-			assert.equal(
-				readRecord(readRecord(result.details).refSnapshotInvalidation).reason,
-				"page-transition",
-			);
+			const details = readRecord(result.details);
+			assert.equal(result.isError, true);
+			assert.equal(details.exitCode, 1);
+			assert.equal(details.failureCategory, "upstream-error");
+			assert.match(readString(details.parseError), /invalid JSON/);
+			assert.equal(readRecord(details.refSnapshotInvalidation).reason, "page-transition");
 			assert.doesNotMatch(result.content[0]?.text ?? "", /Page state:/);
 		});
 	},

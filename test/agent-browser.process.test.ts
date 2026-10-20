@@ -174,6 +174,27 @@ test("resolveSpawnedChildExitCode prefers close, then timeout, then exit fallbac
 	);
 });
 
+test("resolveSpawnedChildExitCode never converts signal termination into success", () => {
+	assert.equal(
+		resolveSpawnedChildExitCode({
+			closeCode: null,
+			exitCode: null,
+			exitSignal: "SIGKILL",
+			useExitFallback: true,
+			timedOut: false,
+		}),
+		137,
+	);
+	assert.equal(
+		resolveSpawnedChildExitCode({ exitSignal: "SIGTERM", useExitFallback: true, timedOut: false }),
+		143,
+	);
+	assert.equal(
+		resolveSpawnedChildExitCode({ exitSignal: "SIGKILL", useExitFallback: true, timedOut: true }),
+		124,
+	);
+});
+
 test("prepareAgentBrowserSpawnArgs preserves caller launch controls", () => {
 	assert.deepEqual(prepareAgentBrowserSpawnArgs(["open", "about:blank"]), ["open", "about:blank"]);
 	assert.deepEqual(
@@ -833,6 +854,57 @@ test("runAgentBrowserProcess resolves after exit when descendants keep stdio han
 		await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
 	}
 });
+
+test(
+	"runAgentBrowserProcess preserves killed-child signals when descendants keep stdio handles open",
+	{ skip: process.platform === "win32" },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-signal-"));
+		const lingerPidPath = join(tempDir, "linger.pid");
+		let lingerPid: number | undefined;
+		try {
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				buildStdioLingerFakeScript({
+					afterSpawnBody: "process.kill(process.pid, 'SIGKILL');",
+				}),
+			);
+			const timeoutMs = 10_000;
+			const startedAt = Date.now();
+			const result = await runAgentBrowserProcess({
+				args: ["open", "https://fixture.test/"],
+				cwd: tempDir,
+				env: {
+					PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
+					PI_AGENT_BROWSER_TEST_LINGER_PID_PATH: lingerPidPath,
+				},
+				timeoutMs,
+			});
+			lingerPid = Number((await readFile(lingerPidPath, "utf8")).trim());
+			assert.ok(
+				Date.now() - startedAt < timeoutMs / 2,
+				"signal fallback must not wait for descendant closure",
+			);
+			assert.equal(result.exitCode, 137);
+			assert.equal(result.exitSignal, "SIGKILL");
+			assert.equal(result.timedOut, false);
+			assert.equal(result.aborted, false);
+			assert.equal(result.spawnError, undefined);
+			assert.equal(result.stdout, "");
+			assert.equal(result.stderr, "");
+			assert.doesNotThrow(() => process.kill(readNumber(lingerPid), 0));
+		} finally {
+			if (Number.isInteger(lingerPid)) {
+				try {
+					process.kill(readNumber(lingerPid), "SIGTERM");
+				} catch {
+					// The fixture descendant may have already exited.
+				}
+			}
+			await rm(tempDir, { force: true, maxRetries: 5, recursive: true, retryDelay: 100 });
+		}
+	},
+);
 
 test("runAgentBrowserProcess returns timeout exit code when descendants keep stdio handles open", async (t) => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stdio-timeout-"));
