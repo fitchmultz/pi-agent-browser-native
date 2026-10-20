@@ -415,6 +415,9 @@ test("registers agent_browser_web_search with actionable search-type and rate-li
 			[AGENT_BROWSER_CONFIG_ENV]: undefined,
 			[BRAVE_API_KEY_ENV]: "test-secret",
 			[EXA_API_KEY_ENV]: undefined,
+			// Ambient compact settings omit WEB_SEARCH_TOOL_PROMPT_GUIDELINES from the unmanaged fallback.
+			AGENT_BROWSER_COMPACT_FALLBACK: undefined,
+			AGENT_BROWSER_PLAYBOOK: undefined,
 		},
 		async () => {
 			const harness = createExtensionHarness({ cwd: fixture.cwd });
