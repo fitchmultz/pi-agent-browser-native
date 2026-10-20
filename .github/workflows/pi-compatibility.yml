@@ -55,6 +55,8 @@ jobs:
     with:
       automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
       source-ref: ${{ github.sha }}
+      # Required Windows lanes below replace the shared owner-waived diagnostics.
+      waived-platforms: false
       official-version: ${{ needs.resolve.outputs.official-version }}
       fork-ref: ${{ needs.resolve.outputs.fork-ref }}
 
@@ -108,10 +110,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  fork:
+  fork-package:
     needs: resolve
-    if: ${{ !cancelled() && !inputs.native-qualification }}
-    name: Fork Pi / Node 24
+    if: ${{ !cancelled() }}
+    name: Build resolved fork packages
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -143,23 +145,68 @@ jobs:
           package-manager-cache: false
       - name: Use the package npm version
         run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version: "1.27.1"
-          cache: false
       - name: Build the current fork packages
         working-directory: pi-host
         env:
-          PI_FORK_REF: ${{ steps.fork.outputs.commit }}
+          PI_FORK_REF: ${{ needs.resolve.outputs.fork-ref }}
         run: |
           test "$(git rev-parse HEAD)" = "$PI_FORK_REF"
           npm ci --ignore-scripts --no-audit --no-fund
           npm run hydrate:model-data
           PI_OFFLINE=1 PI_TELEMETRY=0 npm run build:offline
           node ../automation/scripts/pack-fork.mjs . "$RUNNER_TEMP/fork-package" "$PI_FORK_REF"
-          mkdir -p "$RUNNER_TEMP/fork-evidence"
-          cp -a "$RUNNER_TEMP/fork-package" "$RUNNER_TEMP/fork-evidence/packages"
           git diff --exit-code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-fork-host-${{ needs.resolve.outputs.fork-ref }}
+          path: ${{ runner.temp }}/fork-package
+          if-no-files-found: error
+          retention-days: 7
+
+  fork:
+    needs: [resolve, fork-package]
+    if: ${{ !cancelled() && !inputs.native-qualification }}
+    name: Fork Pi / Node 24
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - name: Require resolved hosts and exact fork artifacts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+          FORK_PACKAGE: ${{ needs.fork-package.result }}
+        run: |
+          test "$RESOLVE" = success
+          test "$FORK_PACKAGE" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          package-manager-cache: false
+      - name: Use the package npm version
+        run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-fork-host-${{ needs.resolve.outputs.fork-ref }}
+          path: ${{ runner.temp }}/fork-package
+      - name: Require the resolved fork receipt
+        env:
+          FORK_REF: ${{ needs.resolve.outputs.fork-ref }}
+        run: |
+          node --input-type=module -e 'import assert from "node:assert/strict"; import { readFileSync } from "node:fs"; assert.equal(JSON.parse(readFileSync(process.argv[1], "utf8")).ref, process.env.FORK_REF)' "$RUNNER_TEMP/fork-package/receipt.json"
       - name: Qualify the installed fork graph
         working-directory: extension
         env:
@@ -221,3 +268,99 @@ jobs:
           path: ${{ runner.temp }}/macos-evidence
           if-no-files-found: error
           retention-days: 3
+
+  windows:
+    needs: [resolve, fork-package]
+    if: ${{ !cancelled() }}
+    name: Windows qualification / ${{ matrix.host }} / Node 24
+    runs-on: windows-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [official, fork]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require resolved hosts and exact fork artifacts
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+          FORK_PACKAGE: ${{ needs.fork-package.result }}
+        run: |
+          test "$RESOLVE" = success
+          test "$FORK_PACKAGE" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          check-latest: true
+          package-manager-cache: false
+      - name: Use the package npm version
+        run: npm exec --yes --package="$(node -p 'require("./extension/package.json").packageManager')" -- npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: matrix.host == 'fork'
+        with:
+          name: browser-fork-host-${{ needs.resolve.outputs.fork-ref }}
+          path: ${{ runner.temp }}/fork-package
+      - name: Require the resolved fork receipt
+        if: matrix.host == 'fork'
+        env:
+          FORK_REF: ${{ needs.resolve.outputs.fork-ref }}
+        run: |
+          node --input-type=module -e 'import assert from "node:assert/strict"; import { readFileSync } from "node:fs"; assert.equal(JSON.parse(readFileSync(process.argv[1], "utf8")).ref, process.env.FORK_REF)' "$RUNNER_TEMP/fork-package/receipt.json"
+      - name: Preserve native Windows module discovery for isolated PowerShell
+        shell: pwsh
+        run: '"PSModulePath=$env:PSModulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+      - name: Record exact qualification inputs
+        env:
+          HOST: ${{ matrix.host }}
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+          FORK_REF: ${{ needs.resolve.outputs.fork-ref }}
+        run: |
+          test "$(git -C extension rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p evidence
+          printf 'Inputs only; not a qualification pass.\nsource=%s\nhost=%s\nofficial=%s\nfork=%s\nnode=%s\nnpm=%s\nautomation=%s\n' \
+            "$GITHUB_SHA" "$HOST" "$OFFICIAL_VERSION" "$FORK_REF" "$(node --version)" "$(npm --version)" \
+            "$(git -C automation rev-parse HEAD)" > evidence/lane-inputs.txt
+      - name: Require native Windows environment self-check
+        run: |
+          set -euo pipefail
+          node --test automation/test/windows-environment.native.mjs 2>&1 | tee evidence/windows-environment.tap
+      - name: Qualify complete Windows contracts and Git/npm consumers
+        timeout-minutes: 60
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOST: ${{ matrix.host }}
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+          PI_COMPAT_LANE_LABEL: ${{ matrix.host }}
+          PI_COMPAT_FORK_REF: ${{ needs.resolve.outputs.fork-ref }}
+        run: |
+          set -euo pipefail
+          target="$OFFICIAL_VERSION"
+          if [[ "$HOST" == fork ]]; then target="$RUNNER_TEMP/fork-package"; fi
+          node automation/scripts/qualify.mjs --repo pi-agent-browser-native --source "$GITHUB_WORKSPACE/extension" \
+            --host "$HOST" --target "$target" --output "$GITHUB_WORKSPACE/evidence" \
+            2>&1 | tee evidence/qualification.log
+          git -C extension diff --exit-code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: windows-qualification-${{ matrix.host }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
