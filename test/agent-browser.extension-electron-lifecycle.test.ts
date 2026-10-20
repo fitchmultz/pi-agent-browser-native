@@ -1816,11 +1816,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 				// Preserve the native numeric close code: taskkill reports 1 on Windows;
 				// POSIX signal termination has no close code and uses the timeout fallback.
 				const timeoutExitCode = process.platform === "win32" ? 1 : 124;
-				assert.match(
-					readString(readRecord(probeResult.content[0]).text),
-					new RegExp(
-						`Electron probe failed: get url: agent-browser process exited with code ${timeoutExitCode}`,
-					),
+				assert.equal(
+					readString(readRecord(probeResult.content[0]).text).split(/\r?\n/, 1)[0],
+					`Electron probe failed: get url: agent-browser process exited with code ${timeoutExitCode}`,
 				);
 
 				// Control: the same fixture under a generous timeout must succeed, proving the
