@@ -683,25 +683,73 @@ test("competing cross-process reclaimers stay serialized after a stale claim", a
 	const contenderScript = `
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)};
 import { readProcessStartIdentity } from ${JSON.stringify(identityUrl)};
-// Observe only this child's real identity outside the measured contention window. No lock warmup.
-const startIdentity = await readProcessStartIdentity(process.pid);
-assert.ok(typeof startIdentity === "string" && startIdentity.length > 0, "Own process-start identity unavailable before READY");
-const go = new Promise((resolve) => {
-  let command = "";
-  process.stdin.setEncoding("utf8");
-  process.stdin.on("data", (chunk) => { command += chunk; });
-  process.stdin.once("end", () => { assert.equal(command, "go\\n"); resolve(); });
-});
-console.log(JSON.stringify({ event: "ready", pid: process.pid }));
-await go;
-const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)}, timeoutMs: 1000 });
-if (!lock) process.exit(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, "start:" + process.pid + "\\n");
-await new Promise((resolve) => setTimeout(resolve, 25));
-fs.appendFileSync(${JSON.stringify(logPath)}, "end:" + process.pid + "\\n");
-await lock.release();`;
+// Buffer bounded timing metadata only; never retain argv, paths, output or generation values.
+const probes = [];
+let omitted = 0;
+const nativeExecFile = childProcess.execFile;
+childProcess.execFile = function(file, args, options, callback) {
+  if (arguments.length !== 4 || !Array.isArray(args) || !options || typeof callback !== "function") return Reflect.apply(nativeExecFile, this, arguments);
+  const command = args.at(-1);
+  const windowsPid = typeof command === "string" ? command.match(/Get-Process -Id (\\d+)/)?.[1] : undefined;
+  const target = Number(args[0] === "-p" ? args[1] : windowsPid);
+  if (!Number.isSafeInteger(target) || target <= 0) return Reflect.apply(nativeExecFile, this, arguments);
+  const role = target === process.pid ? "self" : "other";
+  const started = performance.now();
+  return nativeExecFile.call(this, file, args, options, function(...values) {
+    const error = values[0];
+    const code = error?.code;
+    const signal = error?.signal;
+    const sample = {
+      role,
+      elapsedMs: Math.round(performance.now() - started),
+      timeoutMs: Number.isFinite(options.timeout) ? options.timeout : null,
+      success: error === null || error === undefined,
+      code: typeof code === "string" && /^(?:E[A-Z0-9]{1,24}|ABORT_ERR|ERR_[A-Z_]{1,48})$/.test(code) ? code : "-",
+      exit: Number.isSafeInteger(code) ? code : null,
+      killed: error?.killed === true,
+      signal: typeof signal === "string" && /^SIG[A-Z0-9]{1,12}$/.test(signal) ? signal : "-",
+    };
+    if (probes.length < 16) probes.push(sample); else omitted++;
+    return Reflect.apply(callback, this, values);
+  });
+};
+syncBuiltinESMExports();
+let goStarted;
+let goToCriticalMs = null;
+try {
+  // Observe only this child's real identity outside the measured contention window. No lock warmup.
+  const startIdentity = await readProcessStartIdentity(process.pid);
+  assert.ok(typeof startIdentity === "string" && startIdentity.length > 0, "Own process-start identity unavailable before READY");
+  const go = new Promise((resolve) => {
+    let command = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => { command += chunk; });
+    process.stdin.once("end", () => { assert.equal(command, "go\\n"); goStarted = performance.now(); resolve(); });
+  });
+  console.log(JSON.stringify({ event: "ready", pid: process.pid }));
+  await go;
+  const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)}, timeoutMs: 1000 });
+  if (!lock) {
+    process.exitCode = 2;
+  } else {
+    try {
+      goToCriticalMs = Math.round(performance.now() - goStarted);
+      fs.appendFileSync(${JSON.stringify(logPath)}, "start:" + process.pid + "\\n");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      fs.appendFileSync(${JSON.stringify(logPath)}, "end:" + process.pid + "\\n");
+    } finally {
+      await lock.release();
+    }
+  }
+} finally {
+  childProcess.execFile = nativeExecFile;
+  syncBuiltinESMExports();
+  process.stderr.write(JSON.stringify({ event: "identity-timing", probes, omitted, goToCriticalMs }) + "\\n");
+}`;
 	const contenders = Array.from({ length: 4 }, () => {
 		const child = spawn(process.execPath, ["--input-type=module", "--eval", contenderScript], {
 			stdio: ["pipe", "pipe", "pipe"],

@@ -92,6 +92,10 @@ async function claimBlocks(
 	if (!relevantPredecessor(claim, ownClaim) || (await hasPublishedLaterTicket(claim, ownClaim))) {
 		return false;
 	}
+	// A predecessor may have released since the scan; only confirmed absence skips its query.
+	if (!(await claimStillExists(claim.path))) {
+		return false;
+	}
 	const alive = await ownerAlive(claim.owner, budget);
 	if (alive === false) {
 		await removeClaimOwnedBy(claim.path, claim.owner.token);
