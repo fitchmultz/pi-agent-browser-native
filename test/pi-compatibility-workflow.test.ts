@@ -109,3 +109,66 @@ test("one resolved fork package feeds Linux and Windows while native dispatch om
 	);
 	assert.match(job("native-qualification"), /fork-ref: \$\{\{ needs.resolve.outputs.fork-ref \}\}/);
 });
+
+function policyExtraction(source: string): string {
+	const marker =
+		"Native policy diagnostics (first 400 matches; complete log retained in artifact):";
+	const afterMarker = readString(source.split(marker)[1]);
+	return readString(afterMarker.split("' evidence/qualification.log")[0]);
+}
+
+function assertBoundedPolicyExtraction(source: string): void {
+	const extraction = policyExtraction(source);
+	assert.ok(extraction.includes('sub(/\\r$/, "")'));
+	assert.ok(extraction.includes("line = $0"));
+	assert.ok(extraction.includes('sub(/^[[:space:]]*# /, "", line)'));
+	assert.ok(extraction.includes("if (line ~ /^PI-AGENT-BROWSER-POLICY [0-9]+: /)"));
+	assert.match(extraction, /total\+\+\s+if \(total <= 400\) print line/);
+	assert.match(extraction, /END \{\s+shown = total < 400 \? total : 400/);
+	assert.ok(
+		extraction.includes(
+			'printf "Policy diagnostics: total=%d shown=%d omitted=%d\\n", total, shown, total - shown',
+		),
+	);
+	// The bounded printer must still consume the complete file and count every match.
+	assert.doesNotMatch(extraction, /\b(?:exit|nextfile|getline)\b|\|\s*(?:head|tail)\b/);
+}
+
+test("failed Windows qualification exposes bounded exact policy stderr diagnostics without an outer env workaround", () => {
+	const windows = job("windows");
+	assertBoundedPolicyExtraction(windows);
+	assert.doesNotMatch(windows, /NODE_DEBUG|NODE_OPTIONS/);
+	assert.match(workflow, /PI_AUTOMATION_REF: 3d1b323fd602274c55e5f44692f24c8605e52b60/);
+	assert.ok(
+		windows.indexOf("Failed TAP diagnostics") < windows.indexOf("Native policy diagnostics"),
+	);
+	assert.ok(
+		windows.indexOf("Native policy diagnostics") < windows.indexOf("actions/upload-artifact"),
+	);
+});
+
+test("policy extraction controls reject broad matching, missing bounds, incomplete counts and an early drain stop", () => {
+	const windows = job("windows");
+	assert.throws(() =>
+		assertBoundedPolicyExtraction(
+			windows.replace("/^PI-AGENT-BROWSER-POLICY [0-9]+: /", "/POLICY/"),
+		),
+	);
+	assert.throws(() =>
+		assertBoundedPolicyExtraction(windows.replace("if (total <= 400) print line", "print line")),
+	);
+	assert.throws(() => assertBoundedPolicyExtraction(windows.replace("total++", "total = 400")));
+	assert.throws(() =>
+		assertBoundedPolicyExtraction(
+			windows.replace("total, shown, total - shown", "shown, shown, 0"),
+		),
+	);
+	assert.throws(() =>
+		assertBoundedPolicyExtraction(
+			windows.replace(
+				"if (total <= 400) print line",
+				"if (total <= 400) print line; if (total > 400) exit",
+			),
+		),
+	);
+});

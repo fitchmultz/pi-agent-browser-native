@@ -383,6 +383,22 @@ jobs:
               }
               END { if (lines > 1600) print "[diagnostics truncated; see qualification.log artifact]" }
             ' evidence/qualification.log
+            printf '\nNative policy diagnostics (first 400 matches; complete log retained in artifact):\n'
+            awk '
+              {
+                sub(/\r$/, "")
+                line = $0
+                sub(/^[[:space:]]*# /, "", line)
+                if (line ~ /^PI-AGENT-BROWSER-POLICY [0-9]+: /) {
+                  total++
+                  if (total <= 400) print line
+                }
+              }
+              END {
+                shown = total < 400 ? total : 400
+                printf "Policy diagnostics: total=%d shown=%d omitted=%d\n", total, shown, total - shown
+              }
+            ' evidence/qualification.log
           fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

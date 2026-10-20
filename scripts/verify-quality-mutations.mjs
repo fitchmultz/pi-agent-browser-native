@@ -9,6 +9,10 @@ import { stripVTControlCharacters } from "node:util";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const excluded = new Set([".git", "node_modules", "dist", ".artifacts", ".crabbox", ".cueloop"]);
 const lintStage = /scripts\/code-quality\.mjs lint$/u;
+const contractStage = new RegExp(
+	`^${RegExp.escape(`${process.execPath} ${fileURLToPath(import.meta.resolve("tsx/cli"))} --test test/**/!(*.serial).test.ts`.replaceAll("\\", "/"))}$`,
+	"u",
+);
 const mutations = [
 	{
 		name: "syntax",
@@ -41,7 +45,7 @@ const mutations = [
 	{
 		name: "allowance-isolation",
 		file: ".oxlintrc.json",
-		stage: /\/tsx(?:\.cmd)? --test test\/\*\*\/!\(\*\.serial\)\.test\.ts$/u,
+		stage: contractStage,
 		diagnostic:
 			/^(?:not ok \d+ - |✖ )qualified registration allowance cannot exempt shadows, other declarations or ordinary work(?: \([\d.]+ms\))?$/mu,
 		evidencePath: "test/code-quality.test.ts",

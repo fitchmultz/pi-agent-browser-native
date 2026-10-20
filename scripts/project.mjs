@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
  * Purpose: Provide the small public npm-script facade for maintainer docs and verification workflows.
- * Responsibilities: Dispatch consolidated `npm run docs -- ...` and `npm run verify -- ...` commands to the underlying focused scripts, preserve exit codes, and print discoverable help. Default/pre-pr/release/docs verify step wiring is regression-locked in `test/project-verify.test.ts`.
+ * Responsibilities: Dispatch `npm test`, consolidated `npm run docs -- ...` and `npm run verify -- ...` commands to the underlying focused scripts, preserve exit codes, and print discoverable help. Default/pre-pr/release/docs verify step wiring is regression-locked in `test/project-verify.test.ts`.
  * Scope: Local maintainer orchestration only; individual verifier scripts continue to own their domain-specific checks.
- * Usage: Called from package.json scripts (`npm run docs`, `npm run verify -- package-pi`) or directly as `node scripts/project.mjs <docs|verify> ...`.
+ * Usage: Called from package.json scripts (`npm run docs`, `npm run verify -- package-pi`) or directly as `node scripts/project.mjs <test|docs|verify> ...`.
  * Invariants/Assumptions: `npm install` has populated local `node_modules/.bin` tools, and Pi/tmux are available in the maintainer environment only for lifecycle/package smoke modes.
  * Related: `docs/SUPPORT_MATRIX.md` maps `npm run verify` / `npm run docs` modes to the release-readiness gates maintainers re-run before shipping.
  */
@@ -11,7 +11,7 @@
 import { spawn } from "node:child_process";
 import { delimiter, join } from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const nodeCommand = process.execPath;
 const binSuffix = process.platform === "win32" ? ".cmd" : "";
@@ -23,13 +23,21 @@ class UsageError extends Error {
 	}
 }
 
+class CommandFailure extends Error {
+	constructor(message, exitCode) {
+		super(message);
+		this.exitCode = exitCode ?? 1;
+	}
+}
+
 function printTopLevelHelp() {
 	console.log(`project.mjs
 
 Usage:
-  node scripts/project.mjs <docs|verify> [mode] [options]
+  node scripts/project.mjs <test|docs|verify> [mode] [options]
 
 Public npm entrypoints:
+  npm test                     Build, prepare, then run every parallel and serial contract test.
   npm run docs                 Check generated documentation blocks.
   npm run docs -- write        Rewrite generated documentation blocks.
   npm run verify               Run the default local verification gate.
@@ -150,12 +158,17 @@ function run(command, args, options = {}) {
 				resolve();
 				return;
 			}
-			reject(new Error(`${commandLabel(command, args)} exited with code ${code ?? "unknown"}`));
+			reject(
+				new CommandFailure(
+					`${commandLabel(command, args)} exited with code ${code ?? "unknown"}`,
+					code,
+				),
+			);
 		});
 	});
 }
 
-async function runSteps(steps) {
+export async function runSteps(steps) {
 	for (const step of steps) {
 		// Each verification step must pass before dependent checks run or release actions start.
 		// oxlint-disable-next-line no-await-in-loop
@@ -324,10 +337,34 @@ function commandReferenceSteps() {
 	];
 }
 
+function prepareCheckerStep() {
+	return scriptStep(["./scripts/prepare-quality-checker.mjs"]);
+}
+
+function contractTestSteps(platform, tap = false) {
+	// The pinned qualifier strips NODE_DEBUG before invoking the repository. Enable
+	// exactly this opt-in channel at the owned child boundary, never a wildcard.
+	const env = platform === "win32" ? { NODE_DEBUG: "pi-agent-browser-policy" } : undefined;
+	// Public CLI export plus native Node avoids CMD interpreting the extglob's
+	// parentheses or splitting an installed package path containing spaces.
+	const cli = fileURLToPath(import.meta.resolve("tsx/cli"));
+	const args = [cli, "--test", ...(tap ? ["--test-reporter=tap"] : [])];
+	return [
+		scriptStep([...args, "test/**/!(*.serial).test.ts"], env),
+		scriptStep([...args, "--test-concurrency=1", "test/**/*.serial.test.ts"], env),
+	];
+}
+
+// Platform selects only the diagnostic policy; executable paths stay host-native.
+// Tests can exercise the Windows policy on Linux without spoofing the native host.
+export function testSteps(platform = process.platform) {
+	return [buildStep(), prepareCheckerStep(), ...contractTestSteps(platform, true)];
+}
+
 function qualitySteps() {
 	return [
 		buildStep(),
-		scriptStep(["./scripts/prepare-quality-checker.mjs"]),
+		prepareCheckerStep(),
 		scriptStep(["./scripts/code-quality.mjs", "lint"]),
 		localToolStep("oxfmt", ["--check", "."]),
 	];
@@ -378,7 +415,7 @@ function platformTargetSteps() {
 	];
 }
 
-export function verifySteps(options) {
+export function verifySteps(options, platform = process.platform) {
 	validatePassthrough(options.mode, options.passthrough);
 	switch (options.mode) {
 		case "default":
@@ -386,8 +423,7 @@ export function verifySteps(options) {
 			return [
 				...qualitySteps(),
 				localToolStep("tsc", ["--noEmit"]),
-				localToolStep("tsx", ["--test", "test/**/!(*.serial).test.ts"]),
-				localToolStep("tsx", ["--test", "--test-concurrency=1", "test/**/*.serial.test.ts"]),
+				...contractTestSteps(platform),
 				...docsSteps({ mode: "check", target: "playbook" }),
 				...commandReferenceSteps(),
 			];
@@ -397,7 +433,7 @@ export function verifySteps(options) {
 			return commandReferenceSteps();
 		case "pre-pr":
 			return [
-				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
+				...verifySteps({ mode: "default", passthrough: [], showHelp: false }, platform),
 				...verifySteps({ mode: "package", passthrough: [], showHelp: false }),
 			];
 		case "startup-profile":
@@ -425,7 +461,7 @@ export function verifySteps(options) {
 			return [scriptStep(["./scripts/platform-smoke.mjs", ...options.passthrough])];
 		case "release":
 			return [
-				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
+				...verifySteps({ mode: "default", passthrough: [], showHelp: false }, platform),
 				...verifySteps({ mode: "lifecycle", passthrough: [], showHelp: false }),
 				...verifySteps({ mode: "package-pi", passthrough: [], showHelp: false }),
 				scriptStep(["./scripts/platform-smoke.mjs", "doctor"]),
@@ -439,11 +475,31 @@ export function verifySteps(options) {
 	}
 }
 
+async function runTestCommand(args) {
+	if (args.length > 0) {
+		throw new UsageError("The complete test gate does not accept options or filtered test paths.");
+	}
+	try {
+		await runSteps(testSteps());
+		return 0;
+	} catch (error) {
+		// Preserve npm test's former && chain status without changing verify/docs exits.
+		if (error instanceof CommandFailure) {
+			console.error(error.message);
+			return error.exitCode;
+		}
+		throw error;
+	}
+}
+
 export async function main(argv = process.argv.slice(2)) {
 	const [command, ...rest] = argv;
 	if (!command || command === "-h" || command === "--help") {
 		printTopLevelHelp();
 		return 0;
+	}
+	if (command === "test") {
+		return runTestCommand(rest);
 	}
 	if (command === "docs") {
 		const options = parseDocsArgs(rest);
