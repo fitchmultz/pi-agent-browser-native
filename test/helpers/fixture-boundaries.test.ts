@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readInvocationLog } from "./agent-browser-harness.js";
+import {
+	createExtensionHarness,
+	readInvocationLog,
+	TEST_SESSION_ID,
+} from "./agent-browser-harness.js";
 import {
 	readArray,
 	readBoolean,
@@ -13,6 +18,28 @@ import {
 	readString,
 } from "./assertions.js";
 import { readOptionalFakeElectronLaunchLog } from "./extension-validation-fixtures.js";
+
+test("fixture Pi roots are stable within a worker and distinct across real processes", () => {
+	const script = `import { TEST_SESSION_ID } from ${JSON.stringify(new URL("./agent-browser-harness.ts", import.meta.url).href)}; process.stdout.write(TEST_SESSION_ID);`;
+	const workerIdentity = () =>
+		execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+			encoding: "utf8",
+		});
+	const first = workerIdentity();
+	const second = workerIdentity();
+	assert.notEqual(first, second);
+	assert.notEqual(first, TEST_SESSION_ID);
+	const initial = createExtensionHarness({ cwd: process.cwd(), sessionFile: null });
+	const resumed = createExtensionHarness({ cwd: process.cwd(), sessionFile: null });
+	assert.equal(initial.ctx.sessionManager.getSessionId(), TEST_SESSION_ID);
+	assert.equal(resumed.ctx.sessionManager.getSessionId(), TEST_SESSION_ID);
+	const explicit = createExtensionHarness({
+		cwd: process.cwd(),
+		sessionFile: null,
+		sessionId: "intentional-shared-root",
+	});
+	assert.equal(explicit.ctx.sessionManager.getSessionId(), "intentional-shared-root");
+});
 
 await test("fixture readers reject malformed shapes instead of asserting unchecked JSON types", async () => {
 	assert.deepEqual(readRecord({ key: 1 }), { key: 1 });

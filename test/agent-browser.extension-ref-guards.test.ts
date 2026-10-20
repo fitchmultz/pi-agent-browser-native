@@ -8,10 +8,8 @@ import { readArray, readRecord, readString } from "./helpers/assertions.js";
  */
 
 import assert from "node:assert/strict";
-import childProcess from "node:child_process";
 import { existsSync, watch } from "node:fs";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
-import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -2207,6 +2205,7 @@ test(
 		const basePath = process.env.PATH ?? "";
 		const startPath = join(tempDir, "batch-started");
 		const realSetTimeout = setTimeout;
+		const realClearTimeout = clearTimeout;
 		await writeFakeAgentBrowserBinary(
 			tempDir,
 			`const fs = require("node:fs");
@@ -2225,10 +2224,7 @@ if (args.includes("snapshot")) {
 } else if (args.includes("batch")) {
   fs.writeFileSync(${JSON.stringify(startPath)}, "started");
   // Simulate upstream buffering batch rows past the wrapper timeout.
-  setTimeout(() => {
-    process.stdout.write(JSON.stringify({ success: true, data: [] }));
-    process.exit(0);
-  }, 4000);
+  setInterval(() => {}, 60_000);
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
 }`,
@@ -2251,23 +2247,11 @@ if (args.includes("snapshot")) {
 						() => started.reject(new Error("batch child did not start")),
 						15_000,
 					);
-					t.after(() => {
-						clearTimeout(startupTimer);
-						watcher.close();
-					});
 					const controller = new AbortController();
-					const nativeSpawn = childProcess.spawn;
-					t.mock.method(
-						childProcess,
-						"spawn",
-						(...spawnArgs: Readonly<Parameters<typeof childProcess.spawn>>) => {
-							if (Array.isArray(spawnArgs[1]) && spawnArgs[1].includes("batch")) {
-								t.mock.timers.enable({ apis: ["setTimeout"] });
-							}
-							return nativeSpawn(...spawnArgs);
-						},
-					);
-					syncBuiltinESMExports();
+					// Mock before dispatch, not from a POSIX-only argv match: cross-spawn wraps
+					// the Windows CMD launch in a single command string. Freeze coordination and
+					// the 900 ms watchdog until the fixture proves the batch is running.
+					t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
 					const pending = executeRegisteredTool(
 						harness.tool,
 						harness.ctx,
@@ -2278,15 +2262,14 @@ if (args.includes("snapshot")) {
 						await started.promise;
 						// The native child is now running; advance only its wrapper watchdog.
 						t.mock.timers.tick(900);
+						// Reaping/Windows claim retries must use native timers after the watchdog fires.
 						t.mock.timers.reset();
 						const result = await pending;
 						assert.equal(result.details?.agentBrowserStarted, true);
 						return result;
 					} finally {
 						t.mock.timers.reset();
-						t.mock.restoreAll();
-						syncBuiltinESMExports();
-						clearTimeout(startupTimer);
+						realClearTimeout(startupTimer);
 						watcher.close();
 						controller.abort();
 						await Promise.allSettled([pending]);

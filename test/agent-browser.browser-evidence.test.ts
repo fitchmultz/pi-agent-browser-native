@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
-import childProcess from "node:child_process";
-import { syncBuiltinESMExports } from "node:module";
+import { readRecord, readString } from "./helpers/assertions.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -214,61 +212,110 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`,
 							[args],
 						);
 					}
-					const nativeSpawn = childProcess.spawn;
-					const spawned: string[][] = [];
-					t.mock.method(
-						childProcess,
-						"spawn",
-						(...args: Readonly<Parameters<typeof childProcess.spawn>>) => {
-							if (Array.isArray(args[1]) && args[1].includes("--json")) {
-								spawned.push(readArray(args[1]).map(readString));
-							}
-							return nativeSpawn(...args);
+					const realNow = Date.now;
+					const realSetTimeout = setTimeout;
+					const realClearTimeout = clearTimeout;
+					for (const params of [
+						{ args: ["read", "timeout.test"] },
+						{
+							args: ["batch"],
+							stdin: JSON.stringify([
+								["read", "public.test"],
+								["read", "timeout.test"],
+							]),
 						},
-					);
-					syncBuiltinESMExports();
-					try {
-						for (const params of [
-							{ args: ["read", "timeout.test"] },
-							{
-								args: ["batch"],
-								stdin: JSON.stringify([
-									["read", "public.test"],
-									["read", "timeout.test"],
-								]),
-							},
-							{ args: ["batch", "read timeout.test"], stdin: JSON.stringify([["snapshot", "-i"]]) },
-						]) {
-							// Fixture transitions and their assertions run in order against this test's shared state.
+						{ args: ["batch", "read timeout.test"], stdin: JSON.stringify([["snapshot", "-i"]]) },
+					]) {
+						// Fixture transitions and their assertions run in order against this test's shared state.
+						// oxlint-disable-next-line no-await-in-loop
+						await writeFile(logPath, "");
+						const controller = new AbortController();
+						// Windows launches the CMD fixture through cross-spawn's wrapped argv, not the
+						// original child_process.spawn argv. Observe the ready child instead of that wrapper.
+						t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realNow() });
+						const state = { settled: false };
+						const pending = executeRegisteredTool(
+							harness.tool,
+							harness.ctx,
+							{ ...params, timeoutMs: 150 },
+							controller.signal,
+						).then((result) => {
+							state.settled = true;
+							return result;
+						});
+						let deadlineTimer: NodeJS.Timeout | undefined;
+						try {
+							const deadline = realNow() + 15_000;
+							while (true) {
+								// Poll fresh fixture I/O while the 150 ms watchdog remains frozen.
+								// oxlint-disable-next-line no-await-in-loop
+								const invocations = await readInvocationLog(logPath);
+								if (
+									invocations.some(
+										(row) => extractUpstreamCommandTokens(row.args)[0] === params.args[0],
+									)
+								) {
+									break;
+								}
+								if (state.settled || realNow() >= deadline) {
+									throw new Error("URL-read timeout fixture did not dispatch");
+								}
+								// Wait for real child I/O without advancing the mocked command budget.
+								// oxlint-disable-next-line no-await-in-loop
+								await new Promise((resolveDelay) => {
+									realSetTimeout(resolveDelay, 5);
+								});
+							}
+							t.mock.timers.tick(149);
+							// Give native I/O a turn before checking the pre-deadline boundary for each variant.
 							// oxlint-disable-next-line no-await-in-loop
-							await writeFile(logPath, "");
-							spawned.length = 0;
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							const timeout = await executeRegisteredTool(harness.tool, harness.ctx, {
-								...params,
-								timeoutMs: 150,
+							await new Promise((resolveDelay) => {
+								realSetTimeout(resolveDelay, 0);
 							});
-							// All three literal timeout variants check timeout evidence and exact spawned command.
+							// Every fixed timeout variant must retain the complete 150 ms command budget.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.equal(state.settled, false, "URL read must remain pending before its timeout");
+							t.mock.timers.tick(1);
+							// The timeout has fired; let native reaping and Windows claim retries run normally.
+							t.mock.timers.reset();
+							// Drain this timed-out variant before changing the shared fixture log/state.
+							// oxlint-disable-next-line no-await-in-loop
+							const timeout = await Promise.race([
+								pending,
+								new Promise<never>((_resolve, reject) => {
+									deadlineTimer = realSetTimeout(
+										() => reject(new Error("URL-read watchdog did not settle")),
+										15_000,
+									);
+								}),
+							]);
+							// All three literal timeout variants check timeout evidence and exact dispatch.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.ok(timeout.details);
-							// All three literal timeout variants check timeout evidence and exact spawned command.
+							// Every literal timeout variant must report timeout, not a startup or policy failure.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(timeout.details.failureCategory, "timeout");
-							// All three literal timeout variants check timeout evidence and exact spawned command.
+							// Each ready native read/batch must retain positive dispatch evidence after timeout.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(timeout.details.agentBrowserStarted, true);
-							// Observe real spawns: a short watchdog can expire before a slow fixture Node reaches its log write.
-							// All three literal timeout variants check timeout evidence and exact spawned command.
+							// Checking every ready fixture invocation also rejects all page/session helpers.
 							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.deepEqual(
-								spawned.map((args) => extractUpstreamCommandTokens(args)[0]),
+								// Read the complete invocation log before beginning the next timeout variant.
+								// oxlint-disable-next-line no-await-in-loop
+								(await readInvocationLog(logPath)).map(
+									(row) => extractUpstreamCommandTokens(row.args)[0],
+								),
 								[params.args[0]],
 							);
+						} finally {
+							realClearTimeout(deadlineTimer);
+							t.mock.timers.reset();
+							controller.abort();
+							// Reap each variant on failure before restoring or removing its shared fixture.
+							// oxlint-disable-next-line no-await-in-loop
+							await Promise.allSettled([pending]);
 						}
-					} finally {
-						t.mock.restoreAll();
-						syncBuiltinESMExports();
 					}
 					await writeFile(logPath, "");
 					const bare = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["read"] });

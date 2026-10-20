@@ -47,13 +47,21 @@ The default/quality verification gates use the same two stages. File isolation
 keeps environment patches process-local; the shared browser harness supplies a
 private short socket directory unless `PI_AGENT_BROWSER_SOCKET_DIR` is already set.
 The harness also clears inherited Pi/delegation identity variables; root-default
-tests set their identities explicitly after import. No in-file concurrency is enabled.
+tests set their identities explicitly after import. Its default Pi ID is generated once
+per file worker, remaining stable across that worker's harness/reload/resume instances.
+Independent Windows fake browsers must also use distinct explicit session/namespace
+identities: native Windows coordination ignores private socket roots. Namespace-wide
+`close --all` fixtures use private namespaces unless the literal default namespace is
+the contract under test. Do not isolate identical native identities by changing their
+coordination directory or relaxing lock checks. No in-file concurrency is enabled.
 
 The serial lane contains `test/agent-browser.startup.serial.test.ts` and
 `test/agent-browser.prompt-policy.serial.test.ts` for wall-clock budgets, plus
 `test/agent-browser.managed-session-policy-lock.serial.test.ts` for fixtures in
-the shared policy collector directory. Their timing and global-GC contracts must
-not compete with the parallel lane. Build/pack fixtures must use disposable source trees rather
+the shared policy collector directory. `test/agent-browser.extension-validation-coordination.serial.test.ts`
+retains genuine default-namespace close-all contention and recording ownership cases;
+uniquely namespaced contention cases stay parallel. Their timing, namespace-wide and
+global-GC contracts must not compete with the parallel lane. Build/pack fixtures must use disposable source trees rather
 than rewriting this checkout's `dist/` while other files consume it.
 `platform-target` retains its explicit serial subset; `quality:probes` remains a
 focused serial checker suite. The allowance-isolation mutation must fail in the

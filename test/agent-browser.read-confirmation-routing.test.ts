@@ -18,6 +18,9 @@ import {
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { withConfirmations } from "./helpers/read-confirmation-fixture.js";
 
+// Native Windows caller sessions share an identity across storage roots; unrelated file workers do not.
+const SHARED_SESSION = `read-route-${process.pid}`;
+
 for (const shared of [false, true]) {
 	for (const command of ["confirm", "deny"]) {
 		test(
@@ -26,7 +29,7 @@ for (const shared of [false, true]) {
 			async () => {
 				await withConfirmations(async ({ root, log, state, branch, harness: initialHarness }) => {
 					let harness = initialHarness;
-					const prefix = shared ? ["--namespace", "team", "--session", "shared"] : [];
+					const prefix = shared ? ["--namespace", "team", "--session", SHARED_SESSION] : [];
 					const read = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...prefix, "--confirm-actions", "read", "read", "public.test/docs"],
 					});
@@ -43,7 +46,7 @@ for (const shared of [false, true]) {
 						"--namespace",
 						shared ? "team" : "",
 						"--session",
-						shared ? "shared" : "default",
+						shared ? SHARED_SESSION : "default",
 						command,
 						"read-id",
 					]);
@@ -86,7 +89,7 @@ for (const shared of [false, true]) {
 						args: [command, "read-id"],
 					});
 					assert.equal(confirmed.isError, false, confirmed.content[0].text);
-					assert.equal(confirmed.details?.sessionName, shared ? "shared" : "default");
+					assert.equal(confirmed.details?.sessionName, shared ? SHARED_SESSION : "default");
 					assert.equal(confirmed.details.managedSessionOutcome, undefined);
 					assert.deepEqual(
 						(await readInvocationLog(log)).map((call) => extractUpstreamCommandTokens(call.args)),
@@ -123,7 +126,7 @@ for (const command of ["confirm", "deny"]) {
 		{ concurrency: false },
 		async () => {
 			await withConfirmations(async ({ log, harness }) => {
-				const prefix = ["--namespace", "team", "--session", "shared"];
+				const prefix = ["--namespace", "team", "--session", SHARED_SESSION];
 				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, "click", "#guarded"],
 				});
@@ -208,7 +211,7 @@ for (const legacy of [true, false]) {
 			{ concurrency: false },
 			async () => {
 				await withConfirmations(async ({ root, log, harness }) => {
-					const prefix = ["--namespace", "team", "--session", "shared"];
+					const prefix = ["--namespace", "team", "--session", SHARED_SESSION];
 					const read = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [
 							...prefix,
@@ -255,7 +258,7 @@ test(
 	async () => {
 		await withConfirmations(async ({ log, state, harness }) => {
 			const read = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "read", "public.test/docs"],
+				args: ["--session", SHARED_SESSION, "read", "public.test/docs"],
 			});
 			assert.equal(read.details?.failureCategory, "confirmation-required");
 			const native = readRecord(JSON.parse(await readFile(state, "utf8")));
@@ -263,7 +266,12 @@ test(
 				state,
 				JSON.stringify({
 					...native,
-					pending: { id: "new-dom-id", action: "click", sessionName: "shared", namespace: "" },
+					pending: {
+						id: "new-dom-id",
+						action: "click",
+						sessionName: SHARED_SESSION,
+						namespace: "",
+					},
 				}),
 			);
 			await writeFile(log, "");
@@ -274,7 +282,7 @@ test(
 			assert.match(result.content[0].text ?? "", /mismatch/);
 			assert.equal(
 				result.details?.sessionName,
-				"shared",
+				SHARED_SESSION,
 				"the stale ID must reach its original native session, not a newly generated one",
 			);
 			assert.equal(result.details.managedSessionOutcome, undefined);
@@ -296,13 +304,13 @@ test(
 	async () => {
 		await withConfirmations(async ({ log, branch, harness }) => {
 			const body = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "read", "public.test/body"],
+				args: ["--session", SHARED_SESSION, "read", "public.test/body"],
 			});
 			assert.equal(body.details?.readConfirmation, undefined);
 			const pageJson = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: [
 					"--session",
-					"shared",
+					SHARED_SESSION,
 					"eval",
 					"({ confirmed: true, action: 'read', result: { success: false, error: 'HTTP read failed: test response 500' } })",
 				],
@@ -311,7 +319,7 @@ test(
 			assert.equal(pageJson.details?.readConfirmation, undefined);
 			await writeFile(log, "");
 			await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "confirm", "read-id"],
+				args: ["--session", SHARED_SESSION, "confirm", "read-id"],
 			});
 			assert.deepEqual(
 				(await readInvocationLog(log)).map((call) => extractUpstreamCommandTokens(call.args)),
@@ -321,7 +329,7 @@ test(
 				],
 			);
 			const bare = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "read"],
+				args: ["--session", SHARED_SESSION, "read"],
 			});
 			assert.equal(
 				readRecord(bare.details?.readConfirmation).source,
@@ -330,7 +338,7 @@ test(
 			);
 			assert.equal(readRecord(bare.details?.readConfirmation).capabilities, undefined);
 			const legacy = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "read", "public.test/legacy"],
+				args: ["--session", SHARED_SESSION, "read", "public.test/legacy"],
 			});
 			assert.equal(
 				readRecord(legacy.details?.readConfirmation).capabilities,
@@ -339,7 +347,7 @@ test(
 			);
 			await writeFile(log, "");
 			await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "confirm", "read-id"],
+				args: ["--session", SHARED_SESSION, "confirm", "read-id"],
 			});
 			assert.deepEqual(
 				(await readInvocationLog(log)).map((call) => extractUpstreamCommandTokens(call.args)),
@@ -349,10 +357,10 @@ test(
 				],
 			);
 			await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "read", "public.test/docs"],
+				args: ["--session", SHARED_SESSION, "read", "public.test/docs"],
 			});
 			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "click", "#guarded"],
+				args: ["--session", SHARED_SESSION, "click", "#guarded"],
 			});
 			assert.equal(blocked.isError, true);
 			assert.equal(blocked.details?.failureCategory, "confirmation-required");
@@ -361,21 +369,21 @@ test(
 			assert.deepEqual(
 				actions.map((action) => readRecord(action.params).args),
 				[
-					["--namespace", "", "--session", "shared", "confirm", "dom-id"],
-					["--namespace", "", "--session", "shared", "deny", "dom-id"],
+					["--namespace", "", "--session", SHARED_SESSION, "confirm", "dom-id"],
+					["--namespace", "", "--session", SHARED_SESSION, "deny", "dom-id"],
 				],
 			);
 			const replayed = SessionPageState.fromBranch(convertBrowserEntries(branch));
 			assert.equal(
-				replayed.findReadConfirmation(["--session", "shared", "confirm", "read-id"]),
+				replayed.findReadConfirmation(["--session", SHARED_SESSION, "confirm", "read-id"]),
 				undefined,
 			);
 			assert.equal(
-				replayed.findReadConfirmation(["--session", "shared", "confirm", "dom-id"])?.source,
+				replayed.findReadConfirmation(["--session", SHARED_SESSION, "confirm", "dom-id"])?.source,
 				"native-guarded-action",
 			);
 			for (const args of [
-				["--session", "shared", "confirm", "foreign-id"],
+				["--session", SHARED_SESSION, "confirm", "foreign-id"],
 				["--session", "other", "confirm", "dom-id"],
 			]) {
 				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
@@ -427,7 +435,7 @@ for (const batch of [false, true]) {
 		{ concurrency: false },
 		async () => {
 			await withConfirmations(async ({ harness }) => {
-				const prefix = ["--session", "shared"];
+				const prefix = ["--session", SHARED_SESSION];
 				const decide = async (args: readonly string[]) => {
 					const pending = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...prefix, ...args],
@@ -462,7 +470,7 @@ for (const batch of [false, true]) {
 				assert.equal(
 					SessionPageState.fromBranch(
 						convertBrowserEntries(harness.ctx.sessionManager.getBranch()),
-					).get("shared").tabTarget,
+					).get(SHARED_SESSION).tabTarget,
 					undefined,
 				);
 			});
@@ -484,7 +492,7 @@ for (const batch of [false, true]) {
 							"Only after confirmation creates the blank tab (never after denial), open the requested URL in that tab.",
 					};
 					await writeFile(state, JSON.stringify({ tabMetadata: metadata }));
-					const prefix = ["--namespace", "team", "--session", "shared"];
+					const prefix = ["--namespace", "team", "--session", SHARED_SESSION];
 					const row = ["tab", "new", "--label", "continued", target];
 					const pending = await executeRegisteredTool(
 						harness.tool,
@@ -606,7 +614,7 @@ test(
 				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
 				// oxlint-disable-next-line no-await-in-loop
 				const page = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", "shared", ...args],
+					args: ["--session", SHARED_SESSION, ...args],
 				});
 				// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
@@ -614,7 +622,7 @@ test(
 			}
 			await writeFile(log, "");
 			await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "confirm", "dom-id"],
+				args: ["--session", SHARED_SESSION, "confirm", "dom-id"],
 			});
 			assert.deepEqual(extractUpstreamCommandTokens((await readInvocationLog(log))[0].args), [
 				"get",
@@ -631,12 +639,12 @@ test(
 				}),
 			);
 			const malformed = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "tab", "new", "https://current.test/continued"],
+				args: ["--session", SHARED_SESSION, "tab", "new", "https://current.test/continued"],
 			});
 			assert.equal(malformed.details?.readConfirmation, undefined);
 			await writeFile(log, "");
 			await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "confirm", "dom-id"],
+				args: ["--session", SHARED_SESSION, "confirm", "dom-id"],
 			});
 			assert.deepEqual(
 				extractUpstreamCommandTokens((await readInvocationLog(log))[0].args),
@@ -653,7 +661,7 @@ test(
 	async () => {
 		await withConfirmations(async ({ root, state, branch, harness }) => {
 			await writeFile(state, JSON.stringify({ url: "https://fixture.test/before" }));
-			const prefix = ["--session", "shared"];
+			const prefix = ["--session", SHARED_SESSION];
 			for (const args of [
 				["get", "url"],
 				["click", "#guarded"],
@@ -692,7 +700,7 @@ test(
 		await withConfirmations(async ({ state, log, harness }) => {
 			await writeFile(state, JSON.stringify({ gateNextUrl: true }));
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "get", "title"],
+				args: ["--session", SHARED_SESSION, "get", "title"],
 			});
 			assert.equal(result.details?.failureCategory, "confirmation-required");
 			assert.equal(result.details.agentBrowserStarted, false);
@@ -714,7 +722,7 @@ test(
 	async () => {
 		await withConfirmations(async ({ harness }) => {
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--session", "shared", "batch", "--bail"],
+				args: ["--session", SHARED_SESSION, "batch", "--bail"],
 				stdin: JSON.stringify([["click", "#dispatched"]]),
 			});
 			assert.equal(result.details?.failureCategory, "confirmation-required");
@@ -734,21 +742,26 @@ test(
 	{ concurrency: false },
 	async () => {
 		await withConfirmations(async ({ log, state, harness }) => {
-			const prefix = ["--session", "shared"];
+			const prefix = ["--session", SHARED_SESSION];
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "get", "url"] });
 			for (const control of [
-				{ session: "shared", rows: [["confirm", "dom-id"]], suppress: true },
-				{ session: "shared", rows: [["confirm", "foreign-id"]], suppress: false },
+				{ session: SHARED_SESSION, rows: [["confirm", "dom-id"]], suppress: true },
+				{ session: SHARED_SESSION, rows: [["confirm", "foreign-id"]], suppress: false },
 				{ session: "other", rows: [["confirm", "dom-id"]], suppress: false },
 				{
-					session: "shared",
+					session: SHARED_SESSION,
 					rows: [
 						["get", "title"],
 						["confirm", "dom-id"],
 					],
 					suppress: false,
 				},
-				{ session: "shared", rows: [["confirm", "dom-id"]], raw: "get title", suppress: false },
+				{
+					session: SHARED_SESSION,
+					rows: [["confirm", "dom-id"]],
+					raw: "get title",
+					suppress: false,
+				},
 			]) {
 				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
 				// oxlint-disable-next-line no-await-in-loop
@@ -821,7 +834,7 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 			async () => {
 				const expectedAttachment = failedClose ? true : undefined;
 				await withConfirmations(async ({ root, state, harness }) => {
-					const prefix = ["--session", "shared"];
+					const prefix = ["--session", SHARED_SESSION];
 					await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...prefix, "connect", "9222"],
 					});
@@ -848,7 +861,7 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 						harness.ctx,
 						code
 							? {
-									session: "shared",
+									session: SHARED_SESSION,
 									code: `emit((await browser(${JSON.stringify(decision)})).success);`,
 								}
 							: { ...decision, args: [...prefix, ...decision.args] },
@@ -861,7 +874,7 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 					}
 					const page = SessionPageState.fromBranch(
 						convertBrowserEntries(harness.ctx.sessionManager.getBranch()),
-					).get("shared");
+					).get(SHARED_SESSION);
 					assert.equal(
 						page.tabTargetUnknown,
 						undefined,

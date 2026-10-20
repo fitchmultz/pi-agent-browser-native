@@ -37,7 +37,9 @@ delete process.env.PI_SUBAGENT_CHILD;
 delete process.env.PI_SUBAGENT_ROOT_SESSION_ID;
 delete process.env.PI_SESSION_ID;
 
-export const TEST_SESSION_ID = "12345678-1234-5678-9abc-def012345678";
+// Stable across this file worker's harness/resume instances, distinct from unrelated parallel
+// workers. Native Windows root browsers key off the Pi ID, not the fixture cwd/socket root.
+export const TEST_SESSION_ID = randomUUID();
 export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
 export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contract.txt";
 const journalFixtures = mkdtempSync(join(tmpdir(), "piab-journal-fixtures-"));
@@ -1052,6 +1054,7 @@ export async function writeFakeAgentBrowserBinary(
 	scriptBody: string,
 	platform: NodeJS.Platform = processPlatform,
 ): Promise<string> {
+	// The virtual daemon belongs to this fixture owner, not Windows' per-invocation cmd.exe parent.
 	const defaultSessionInfo = `if (process.env.PI_AGENT_BROWSER_TEST_PRESERVE_INTERNAL_LAUNCH_FLAGS !== "1") {
   const rawArgsIndex = process.argv.indexOf("--args");
   if (rawArgsIndex >= 0 && ["", "--no-startup-window"].includes(process.argv[rawArgsIndex + 1])) process.argv.splice(rawArgsIndex, 2);
@@ -1074,7 +1077,7 @@ process.stdout.write = (chunk, ...rest) => {
     if (!info && reply.success === true && __piabFakeArgs.some(arg => ["open","get","snapshot","eval","click","fill","batch","screenshot","record","connect","close","quit","exit"].includes(arg))) {
       const closed = __piabFakeArgs.some(arg => ["close","quit","exit"].includes(arg)) && !__piabFakeArgs.includes("batch");
       __piabRuntime = closed ? { active: false, runtime: null } : { active: true, runtime: {
-        restoreKey: process.env.AGENT_BROWSER_RESTORE || null, backgroundPid: process.ppid, socketDir: "test-fixture-runtime", browserLaunched: true
+        restoreKey: process.env.AGENT_BROWSER_RESTORE || null, backgroundPid: ${process.pid}, socketDir: "test-fixture-runtime", browserLaunched: true
       }};
       __piabFs.writeFileSync(__piabRuntimePath, JSON.stringify(__piabRuntime), { mode: 0o600 });
     }

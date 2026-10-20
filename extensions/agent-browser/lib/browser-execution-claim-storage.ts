@@ -5,6 +5,11 @@ import { basename, dirname, join } from "node:path";
 import { processStartIdentitiesMatch, readProcessStartIdentity } from "./process-identity.js";
 import { getErrorCode } from "./process-errors.js";
 import {
+	debugPolicyFailure,
+	policyDebugEnabled,
+	policyDebugError,
+} from "./browser-execution-policy-debug.js";
+import {
 	parseOwner,
 	parseTicket,
 	POLICY_LOCK_MAX_BYTES,
@@ -38,41 +43,77 @@ function secureEntryOwnership(entry: Stats, mask: number): boolean {
 	const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 	return uid !== undefined && entry.uid === uid && (entry.mode & mask) === 0;
 }
+type ReportClaimFailure = (stage: string, reason: string, error?: unknown) => void;
 async function readClaimTicket(
 	path: string,
 	owner: PolicyLockOwner,
+	report?: ReportClaimFailure,
 ): Promise<PolicyLockClaim | undefined> {
 	const ticketPath = join(path, LOCK_TICKET_FILE);
+	let stage = "claim.ticket-stat";
 	try {
 		if (!secureEntry(await lstat(ticketPath), false)) {
+			report?.(stage, "unsafe-metadata");
 			return undefined;
 		}
+		stage = "claim.ticket-read";
 		const ticket = parseTicket(await readFile(ticketPath, "utf8"), owner.token);
+		if (ticket === undefined) {
+			report?.(stage, "invalid-ticket-or-token");
+		}
 		return ticket === undefined ? undefined : { owner, path, ticket };
 	} catch (error) {
-		return getErrorCode(error) === "ENOENT" ? { owner, path, ticket: null } : undefined;
+		const code = getErrorCode(error);
+		if (code !== "ENOENT") {
+			report?.(stage, "native-error", error);
+		}
+		return code === "ENOENT" ? { owner, path, ticket: null } : undefined;
 	}
 }
-export async function readClaim(path: string): Promise<PolicyLockClaim | undefined> {
+async function inspectClaim(
+	path: string,
+	report?: ReportClaimFailure,
+): Promise<PolicyLockClaim | undefined> {
+	let stage = "claim.directory-stat";
 	try {
 		const directory = await lstat(path);
 		const ownerPath = join(path, LOCK_OWNER_FILE);
+		stage = "claim.owner-stat";
 		const ownerEntry = await lstat(ownerPath);
 		if (!secureEntry(directory, true) || !secureEntry(ownerEntry, false)) {
+			report?.("claim.metadata", "unsafe-directory-or-owner");
 			return undefined;
 		}
+		stage = "claim.owner-read";
 		const owner = parseOwner(await readFile(ownerPath, "utf8"));
-		return owner ? await readClaimTicket(path, owner) : undefined;
-	} catch {
+		if (!owner) {
+			report?.(stage, "invalid-owner");
+		}
+		return owner ? await readClaimTicket(path, owner, report) : undefined;
+	} catch (error) {
+		report?.(stage, "native-error", error);
 		return undefined;
 	}
+}
+function reportDirectClaimFailure(stage: string, reason: string, error?: unknown): void {
+	// Direct readers may race a release. readClaims reports absence only when not confirmed gone.
+	if (getErrorCode(error) !== "ENOENT") {
+		debugPolicyFailure(stage, reason, error);
+	}
+}
+export function readClaim(path: string): Promise<PolicyLockClaim | undefined> {
+	return inspectClaim(path, policyDebugEnabled ? reportDirectClaimFailure : undefined);
 }
 async function claimDisappeared(path: string): Promise<boolean> {
 	try {
 		await lstat(path);
 		return false;
 	} catch (error) {
-		return getErrorCode(error) === "ENOENT";
+		const code = getErrorCode(error);
+		if (code !== "ENOENT") {
+			debugPolicyFailure("claims.absence-stat", "absence-not-confirmed", error);
+		}
+		return code === "ENOENT";
 	}
 }
 export async function readClaims(basePath: string): Promise<PolicyLockClaim[] | undefined> {
@@ -81,24 +122,44 @@ export async function readClaims(basePath: string): Promise<PolicyLockClaim[] | 
 	let names: string[];
 	try {
 		names = await readdir(directory);
-	} catch {
+	} catch (error) {
+		debugPolicyFailure("claims.readdir", "native-error", error);
 		return undefined;
 	}
 	const claims: PolicyLockClaim[] = [];
 	for (const name of names.filter((candidate) => candidate.startsWith(prefix))) {
 		const path = join(directory, name);
+		let failure:
+			| {
+					readonly stage: string;
+					readonly reason: string;
+					readonly error: ReturnType<typeof policyDebugError>;
+			  }
+			| undefined;
 		// Claim absence must be resolved before accepting the next contender.
 		// oxlint-disable-next-line no-await-in-loop
-		const claim = await readClaim(path);
+		const claim = await inspectClaim(
+			path,
+			policyDebugEnabled
+				? (stage, reason, error) => {
+						failure = { stage, reason, error: policyDebugError(error) };
+					}
+				: undefined,
+		);
 		if (!claim) {
 			// A disappearing immutable claim is not a corrupt contender.
 			// oxlint-disable-next-line no-await-in-loop
 			if (await claimDisappeared(path)) {
 				continue;
 			}
+			if (failure !== undefined) {
+				debugPolicyFailure(failure.stage, failure.reason, failure.error);
+			}
+			debugPolicyFailure("claims.inspect", "absence-not-confirmed");
 			return undefined;
 		}
 		if (name !== `${prefix}${claim.owner.token}`) {
+			debugPolicyFailure("claims.inspect", "published-owner-token-mismatch");
 			return undefined;
 		}
 		claims.push(claim);
@@ -117,6 +178,7 @@ export async function ownerAlive(
 			return false;
 		}
 		if (code !== "EPERM") {
+			debugPolicyFailure("owner.liveness", "native-error", error);
 			return undefined;
 		}
 	}
@@ -150,6 +212,7 @@ async function moveOwnedClaim(
 		// Each retry must revalidate ownership before another move attempt.
 		// oxlint-disable-next-line no-await-in-loop
 		if ((await readClaim(path))?.owner.token !== token) {
+			debugPolicyFailure("remove.verify", "owner-missing-or-token-mismatch");
 			return undefined;
 		}
 		try {
@@ -163,12 +226,14 @@ async function moveOwnedClaim(
 				return "absent";
 			}
 			if (process.platform !== "win32" || code !== "EPERM" || Date.now() >= deadline) {
+				debugPolicyFailure("remove.rename", "native-error", error);
 				return undefined;
 			}
 			// Retry only after a bounded pause, then revalidate the same immutable owner.
 			// oxlint-disable-next-line no-await-in-loop
 			await waitForRetry();
 			if (Date.now() >= deadline) {
+				debugPolicyFailure("remove.rename", "retry-deadline", error);
 				return undefined;
 			}
 		}
@@ -189,14 +254,21 @@ export async function removeClaimOwnedBy(
 	}
 	const moved = await readClaim(movedPath);
 	if (moved?.owner.token !== token) {
+		debugPolicyFailure("remove.moved-verify", "owner-missing-or-token-mismatch");
 		try {
 			await rename(movedPath, path);
-		} catch {
+		} catch (error) {
+			debugPolicyFailure("remove.restore-rename", "native-error", error);
 			/* An unverified moved claim remains unavailable to contenders. */
 		}
 		return false;
 	}
-	await rm(movedPath, { force: true, recursive: true });
+	try {
+		await rm(movedPath, { force: true, recursive: true });
+	} catch (error) {
+		debugPolicyFailure("remove.rm", "native-error", error);
+		throw error;
+	}
 	return true;
 }
 function gcBatch(names: readonly string[]): string[] {

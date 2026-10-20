@@ -166,6 +166,26 @@ test("electron discovery and explicit paths accept the stock macOS runtime paylo
 	}
 });
 
+test("electron executable inspection preserves filesystem-native bundle paths", async () => {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-native-path-"));
+	try {
+		const app = await writeFakeMacElectronApp({
+			// A literal backslash on POSIX must not become a separator. On Windows,
+			// both this directory and the returned bundle path use native separators.
+			applicationsDir: join(tempDir, "Applications\\literal"),
+			bundleId: "com.example.NativePath",
+			name: "Native Path",
+		});
+		const inspected = await inspectElectronExecutablePath(app.executablePath, "darwin");
+		assert.equal(inspected?.appPath, await realpath(app.appPath));
+		assert.equal(inspected.executablePath, await realpath(app.executablePath));
+		await rm(app.executablePath);
+		assert.equal(await inspectElectronExecutablePath(app.executablePath, "darwin"), undefined);
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+});
+
 for (const platform of ["linux", "win32"] as const) {
 	test(`electron explicit paths accept the stock ${platform} runtime but not bare Chromium paks`, async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-stock-${platform}-`));
@@ -174,10 +194,9 @@ for (const platform of ["linux", "win32"] as const) {
 			const resources = join(dirname(executable), "resources");
 			await rename(join(resources, "app.asar"), join(resources, "default_app.asar"));
 			const expectedExecutable = await realpath(executable);
-			assert.equal(
-				(await inspectElectronExecutablePath(executable, platform))?.executablePath,
-				expectedExecutable,
-			);
+			const inspected = await inspectElectronExecutablePath(executable, platform);
+			assert.equal(inspected?.executablePath, expectedExecutable);
+			assert.equal(inspected.appPath, undefined, "executable targets are not macOS bundles");
 			assert.equal(
 				(await inspectElectronAppPath(executable, platform))?.executablePath,
 				expectedExecutable,

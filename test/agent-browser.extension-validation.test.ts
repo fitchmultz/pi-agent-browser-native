@@ -37,6 +37,12 @@ import {
 } from "./helpers/agent-browser-harness.js";
 
 import {
+	assertReleasedPdf,
+	runCloseAllNamespaceScenarios,
+	withRecordingReservationHarness,
+} from "./helpers/extension-validation-coordination-fixtures.js";
+
+import {
 	PLAIN_RENDER_THEME,
 	createRenderContext,
 	isTestPidAlive,
@@ -884,6 +890,14 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 						{ reason: "new" },
 						harness.ctx,
 					);
+					// Prime this fixture's native dispatch/coordination before testing tiny dialog
+					// budgets. A cold Windows PowerShell identity probe is real I/O even when
+					// Date/setTimeout are mocked, and cannot fit the explicit 75 ms queue budget.
+					const ready = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "url"],
+						timeoutMs: 15_000,
+					});
+					assert.equal(ready.isError, false, JSON.stringify(ready));
 					const realNow = Date.now;
 					const realSetTimeout = setTimeout;
 					const realClearTimeout = clearTimeout;
@@ -892,22 +906,23 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 						const controller = new AbortController();
 						// Freeze coordination deadlines while native dispatch and child liveness remain real.
 						t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realNow() });
-						let settled = false;
+						const state = { settled: false };
 						const pending = executeRegisteredTool(
 							harness.tool,
 							harness.ctx,
 							params,
 							controller.signal,
 						).then((result) => {
-							settled = true;
+							state.settled = true;
 							return result;
 						});
 						try {
+							// Native Windows CMD/Node startup under suite load is not a dialog budget.
 							const deadline = realNow() + 5000;
 							// The child must read stdin and enter the hang before the parent watchdog advances.
 							// oxlint-disable-next-line no-await-in-loop
 							while ((await readInvocationLog(logPath)).length <= before) {
-								if (realNow() >= deadline) {
+								if (state.settled || realNow() >= deadline) {
 									throw new Error("dialog fixture did not dispatch");
 								}
 								// Observe real dispatch I/O without advancing the mocked watchdog.
@@ -920,8 +935,14 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 							await new Promise((resolveDelay) => {
 								realSetTimeout(resolveDelay, 0);
 							});
-							assert.equal(settled, false, "dialog must remain pending before its selected budget");
+							assert.equal(
+								state.settled,
+								false,
+								"dialog must remain pending before its selected budget",
+							);
 							t.mock.timers.tick(1);
+							// Only the selected watchdog is virtual; taskkill/reaping and claim retries are real.
+							t.mock.timers.reset();
 							let deadlineTimer: NodeJS.Timeout | undefined;
 							try {
 								const result = await Promise.race([
@@ -2018,561 +2039,12 @@ test(
 	"agentBrowserExtension makes close --all exclusive within its namespace",
 	{ concurrency: false },
 	async (t) => {
-		for (const scenario of [
-			{
-				label: "caller-default",
-				named: false,
-				callerOwned: true,
-				override: undefined,
-				batch: false,
-				ambient: undefined,
-				fresh: false,
-			},
-			{
-				label: "current-named",
-				named: true,
-				callerOwned: false,
-				override: undefined,
-				batch: false,
-				ambient: undefined,
-				fresh: false,
-			},
-			{
-				label: "current-named-batch",
-				named: true,
-				callerOwned: false,
-				override: undefined,
-				batch: true,
-				ambient: undefined,
-				fresh: false,
-			},
-			{
-				label: "explicit-default",
-				named: true,
-				callerOwned: false,
-				override: "",
-				batch: false,
-				ambient: undefined,
-				fresh: false,
-			},
-			{
-				label: "explicit-other",
-				named: true,
-				callerOwned: false,
-				override: "other",
-				batch: false,
-				ambient: undefined,
-				fresh: false,
-			},
-			{
-				label: "fresh-ambient",
-				named: true,
-				callerOwned: false,
-				override: undefined,
-				batch: false,
-				ambient: "Review Space",
-				fresh: true,
-			},
-			{
-				label: "current-default-ambient",
-				named: false,
-				callerOwned: false,
-				override: undefined,
-				batch: false,
-				ambient: "Review Space",
-				fresh: false,
-			},
-		]) {
-			// Each namespace scenario owns its gates, environment, and shutdown; do not overlap them.
-			// oxlint-disable-next-line no-await-in-loop
-			await t.test(scenario.label, async () => {
-				const openingNamespace = scenario.named ? "review-space" : "";
-				const openingPrefix = scenario.named ? ["--namespace", "Review Space"] : [];
-				const openingMode = scenario.callerOwned ? "auto" : "fresh";
-				const openingSessionPattern = scenario.callerOwned ? /^pi-root-/ : /^piab-/;
-				const namespace = scenario.override ?? openingNamespace;
-				const matchingPrefix =
-					namespace !== "" || (scenario.ambient !== undefined && scenario.ambient !== "")
-						? ["--namespace", namespace]
-						: [];
-				const closeNamespacePrefix =
-					scenario.override !== undefined ? ["--namespace", scenario.override] : [];
-				const closeCommand = scenario.batch ? ["batch", "close --all"] : ["close", "--all"];
-				const closeMode = scenario.fresh ? "fresh" : "auto";
-				const reportedNamespace = scenario.override ?? (namespace === "" ? undefined : namespace);
-				const tempDir = await mkdtemp(join(tmpdir(), "piab-close-all-queue-"));
-				const cwd = join(tempDir, "g");
-				await mkdir(cwd);
-				const logPath = join(tempDir, "events.log");
-				const openGate = join(tempDir, "release-open");
-				const waitGate = join(tempDir, "release-wait");
-				const closeGate = join(tempDir, "release-close");
-				const nodeBinDir = dirname(process.execPath);
-				await writeFakeAgentBrowserBinary(
-					tempDir,
-					`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const valueFlags = new Set(["--allow-file-access", "--args", "--namespace", "--session"]);
-let commandIndex = -1;
-for (let index = 0; index < args.length; index += 1) {
-  if (args[index] === "--json") continue;
-  if (valueFlags.has(args[index])) { index += 1; continue; }
-  if (args[index].startsWith("--")) continue;
-  commandIndex = index;
-  break;
-}
-const commandArgs = args.slice(commandIndex);
-const command = commandArgs[0];
-const namespaceIndex = args.indexOf("--namespace");
-const namespace = (namespaceIndex >= 0 ? args[namespaceIndex + 1] : process.env.AGENT_BROWSER_NAMESPACE ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-const sessionIndex = args.indexOf("--session");
-const sessionName = sessionIndex >= 0 ? args[sessionIndex + 1] : process.env.AGENT_BROWSER_SESSION || "default";
-const writeEvent = (event) => fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, event, namespace, sessionName }) + "\\n");
-const waitForGate = (gate) => {
-  const deadline = Date.now() + 15000;
-  while (!fs.existsSync(gate)) {
-    if (Date.now() > deadline) throw new Error("gate was not released: " + gate);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-  }
-};
-const closesAll = (command === "close" && commandArgs.includes("--all")) || (command === "batch" && commandArgs.includes("close --all"));
-if (closesAll) {
-  writeEvent("close-start");
-  waitForGate(${JSON.stringify(closeGate)});
-  writeEvent("close-end");
-} else {
-  writeEvent(command + "-start");
-  if (command === "open") waitForGate(${JSON.stringify(openGate)});
-  if (command === "wait") { waitForGate(${JSON.stringify(waitGate)}); writeEvent("wait-end"); }
-}
-const data = command === "get" ? { result: "https://safe.example/", url: "https://safe.example/" }
-  : command === "tab" ? { tabs: [] } : command === "close" ? { closed: true } : { url: "https://safe.example/" };
-process.stdout.write(JSON.stringify(command === "batch"
-  ? [{ command: ["close", "--all"], data: { closed: true }, success: true }]
-  : { success: true, data }));`,
-				);
-				const readEvents = async () =>
-					(await readInvocationLog(logPath)).map((entry) => ({
-						args: entry.args,
-						event: readString(entry.event),
-						namespace: readString(readRecord(entry).namespace),
-						sessionName: readString(entry.sessionName),
-					}));
-				const waitForEvent = async (event: string) => {
-					const deadline = Date.now() + 15_000;
-					while (Date.now() <= deadline) {
-						// Observe the independently appended event before a deadline-limited retry.
-						// oxlint-disable-next-line no-await-in-loop
-						const found = (await readEvents()).find((entry) => entry.event === event);
-						if (found) {
-							return found;
-						}
-						// Wait between observations rather than overlapping native event reads.
-						// oxlint-disable-next-line no-await-in-loop
-						await new Promise((resolveDelay) => {
-							setTimeout(resolveDelay, 10);
-						});
-					}
-					assert.fail(`${scenario.label}: ${event} did not dispatch`);
-				};
-				try {
-					await withPatchedEnv(
-						{
-							AGENT_BROWSER_NAMESPACE: scenario.ambient,
-							AGENT_BROWSER_SESSION: undefined,
-							PATH: `${tempDir}${delimiter}${nodeBinDir}`,
-						},
-						async () => {
-							const harness = createExtensionHarness({
-								cwd,
-								prompt: "Exercise global close ordering.",
-							});
-							await runExtensionEvent(
-								harness.handlers,
-								"session_start",
-								{ reason: "new" },
-								harness.ctx,
-							);
-							const pending: Array<ReturnType<typeof executeRegisteredTool>> = [];
-							try {
-								const open = executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [...openingPrefix, "open", "https://safe.example/"],
-									sessionMode: openingMode,
-								});
-								pending.push(open);
-								const openStarted = await Promise.race([
-									waitForEvent("open-start"),
-									open.then((result) =>
-										assert.fail(
-											`${scenario.label}: open ended before the fixture gate: ${readString(readRecord(result.content.at(0)).text)}`,
-										),
-									),
-								]);
-								assert.match(openStarted.sessionName, openingSessionPattern);
-								assert.equal(openStarted.namespace, openingNamespace);
-								let closeSessionName = openStarted.sessionName;
-								if (scenario.callerOwned) {
-									closeSessionName = "caller-owned";
-								}
-								if (scenario.fresh) {
-									closeSessionName = "default";
-								}
-								const wait = executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [...matchingPrefix, "--session", "already-running", "wait", "1"],
-								});
-								pending.push(wait);
-								const waitStarted = await waitForEvent("wait-start");
-								assert.equal(waitStarted.namespace, namespace);
-								const closeAll = executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [
-										...closeNamespacePrefix,
-										...(scenario.fresh ? [] : ["--session", closeSessionName]),
-										...closeCommand,
-									],
-									sessionMode: closeMode,
-								});
-								pending.push(closeAll);
-								await writeFile(openGate, "go");
-								const openResult = await open;
-								assert.equal(openResult.isError, false, JSON.stringify(openResult));
-								assert.equal(readRecord(openResult.details).sessionName, openStarted.sessionName);
-								const beforeDrain = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: ["--namespace", "unrelated", "--session", "drain-control", "tab", "list"],
-								});
-								assert.equal(beforeDrain.isError, false, JSON.stringify(beforeDrain));
-								assert.equal(
-									(await readEvents()).some((entry) => entry.event === "close-start"),
-									false,
-									scenario.label,
-								);
-								await writeFile(waitGate, "go");
-								const waitResult = await wait;
-								assert.equal(waitResult.isError, false, JSON.stringify(waitResult));
-								const closeStarted = await waitForEvent("close-start");
-								assert.equal(closeStarted.namespace, namespace, scenario.label);
-								assert.equal(closeStarted.sessionName, closeSessionName);
-								if (scenario.fresh) {
-									// Only the fixed fresh-launch variant emits this replacement close receipt.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.deepEqual(closeStarted.args, ["--json", "close", "--all"]);
-								}
-								const atCloseStart = (await readEvents()).length;
-								const overlappingCaller = executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [...matchingPrefix, "--session", "same-namespace", "tab", "list"],
-								});
-								const overlappingManaged = executeRegisteredTool(harness.tool, harness.ctx, {
-									args: ["get", "url"],
-								});
-								pending.push(overlappingCaller, overlappingManaged);
-								const otherNamespace = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: ["--namespace", "unrelated", "--session", "other-session", "tab", "list"],
-								});
-								assert.equal(otherNamespace.isError, false, JSON.stringify(otherNamespace));
-								const whileClosed = (await readEvents()).slice(atCloseStart);
-								assert.equal(
-									whileClosed.some(
-										(entry) =>
-											entry.sessionName === "same-namespace" ||
-											entry.sessionName.startsWith("piab-") ||
-											entry.sessionName.startsWith("pi-root-"),
-									),
-									false,
-									`${scenario.label}: ${JSON.stringify(whileClosed)}`,
-								);
-								await writeFile(closeGate, "go");
-								const [closeResult, callerResult, overlapResult] = await Promise.all([
-									closeAll,
-									overlappingCaller,
-									overlappingManaged,
-								]);
-								assert.equal(closeResult.isError, false, JSON.stringify(closeResult));
-								assert.equal(readRecord(closeResult.details).closeAllApplied, true, scenario.label);
-								assert.equal(
-									readRecord(closeResult.details).namespace,
-									reportedNamespace,
-									scenario.label,
-								);
-								assert.equal(
-									readRecord(closeResult.details).sessionName,
-									scenario.fresh ? undefined : closeStarted.sessionName,
-								);
-								assert.equal(callerResult.isError, false, JSON.stringify(callerResult));
-								assert.equal(overlapResult.isError, false, JSON.stringify(overlapResult));
-								const events = await readEvents();
-								const waitEnd = events.findIndex((entry) => entry.event === "wait-end");
-								const closeStart = events.findIndex((entry) => entry.event === "close-start");
-								const closeEnd = events.findIndex((entry) => entry.event === "close-end");
-								const otherStart = events.findIndex(
-									(entry) => entry.sessionName === "other-session" && entry.event === "tab-start",
-								);
-								const lateStart = events.findIndex(
-									(entry) => entry.sessionName === "same-namespace" && entry.event === "tab-start",
-								);
-								const managedStart = events.findIndex(
-									(entry) =>
-										entry.sessionName === readRecord(overlapResult.details).sessionName &&
-										entry.event === "get-start",
-								);
-								assert.ok(waitEnd >= 0 && closeStart > waitEnd, JSON.stringify(events));
-								assert.ok(otherStart > closeStart && otherStart < closeEnd, JSON.stringify(events));
-								assert.ok(lateStart > closeEnd && managedStart > closeEnd, JSON.stringify(events));
-							} finally {
-								await Promise.all(
-									[openGate, waitGate, closeGate].map((gate) => writeFile(gate, "go")),
-								);
-								await Promise.allSettled(pending);
-								await runExtensionEvent(
-									harness.handlers,
-									"session_shutdown",
-									{ reason: "quit" },
-									harness.ctx,
-								);
-							}
-						},
-					);
-				} finally {
-					await rm(tempDir, { force: true, recursive: true });
-				}
-			});
-		}
-	},
-);
-
-// These PDFs deliberately do not create files: the native receipt proves admission, not artifact success.
-function assertReleasedPdf(result: {
-	readonly isError?: boolean;
-	readonly details?: Readonly<Record<string, unknown>>;
-}): void {
-	assert.equal(result.isError, true);
-	const details = readRecord(result.details);
-	assert.equal(details.failureCategory, "artifact-missing");
-	assert.equal(readRecord(details.data).command, "pdf");
-}
-
-// Each recording contract gets isolated state, an ffmpeg-free PATH, and a one-row manifest cap.
-type RecordingReservationHarnessView = Pick<
-	ReturnType<typeof createExtensionHarness>,
-	"ctx" | "getTool" | "tool"
-> & {
-	readonly appendedEntries: readonly Readonly<
-		ReturnType<typeof createExtensionHarness>["appendedEntries"][number]
-	>[];
-	readonly handlers: Parameters<typeof runExtensionEvent>[0];
-};
-
-async function withRecordingReservationHarness(
-	slug: string,
-	prompt: string,
-	run: (
-		harness: RecordingReservationHarnessView,
-		context: { readonly noRecordingMarker: string; readonly tempDir: string },
-	) => Promise<void>,
-): Promise<void> {
-	const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-recording-${slug}-`));
-	const noRecordingMarker = join(tempDir, "no-recording");
-	const missingFfmpegPath =
-		process.platform === "android" ? join(tempDir, "node-only") : dirname(process.execPath);
-	if (process.platform === "android") {
-		await mkdir(missingFfmpegPath);
-		await symlink(process.execPath, join(missingFfmpegPath, "node"), "file");
-	}
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
-const args = process.argv.slice(2);
-const valueFlags = new Set(["--namespace", "--session"]);
-let commandIndex = -1;
-for (let i = 0; i < args.length; i += 1) {
-  const token = args[i];
-  if (token === "--json") continue;
-  if (valueFlags.has(token)) { i += 1; continue; }
-  if (token.startsWith("--")) continue;
-  commandIndex = i;
-  break;
-}
-const commandArgs = args.slice(commandIndex).filter((token) => token !== "--json" && token !== "--quiet");
-const command = commandArgs[0];
-const subcommand = commandArgs[1];
-const path = command === "pdf" ? commandArgs[1] : commandArgs[2];
-if (command === "record" && subcommand === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})) {
-  process.stdout.write(JSON.stringify({ success: false, error: "No recording in progress" }));
-  process.exit(1);
-}
-if (command === "find") {
-  process.stdout.write(JSON.stringify({ success: false, error: "No element found by text 'Missing Control'" }));
-  process.exit(1);
-}
-const batchInput = command === "batch" ? fs.readFileSync(0, "utf8") : "";
-const batchSteps = batchInput
-  ? JSON.parse(batchInput)
-  : commandArgs.slice(1).filter((value) => value !== "--bail" && !value.startsWith("--bail=")).map((value) => value.split(" "));
-const closeStepIndex = batchSteps.findIndex((step) => step[0] === "close");
-const postCloseStopIndex = batchSteps.findIndex((step, index) => index > closeStepIndex && step[0] === "record" && step[1] === "stop");
-const postCloseStopPath = ${JSON.stringify(join(tempDir, "post-close-stop.webm"))};
-if (postCloseStopIndex >= 0 && !fs.existsSync(${JSON.stringify(noRecordingMarker)})) fs.writeFileSync(postCloseStopPath, "recording");
-const firstCallFailure = command === "batch" && batchSteps.some((step) => step[0] === "click" && step[1] === "#missing-after-close");
-const data = command === "batch"
-  ? batchSteps.map((step, index) => step[0] === "click" && step[1] === "#missing-after-close"
-    ? { command: step, success: false, error: "Element not found after browser launch" }
-    : step[0] === "open" && step[1] === "fail-after-close"
-      ? { command: step, success: false, error: "Navigation failed after browser launch", result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } } }
-    : step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
-      ? { command: step, success: false, error: "No recording in progress" }
-      : { command: step, success: true, result: {
-      command: step[0],
-      path: index === postCloseStopIndex ? postCloseStopPath : step[2],
-      subcommand: step[1],
-        ...(index === postCloseStopIndex
-          ? { lifecycle: { effectiveLaunch: { browserLaunched: true } } }
-          : step[0] === "stream" && step[1] === "status"
-            ? { lifecycle: { effectiveLaunch: { browserLaunched: false } } }
-            : {}),
-      } })
-  : command === "get" && subcommand === "url"
-    ? { command, subcommand, url: "https://safe.example/" }
-    : { command, subcommand, path };
-process.stdout.write(JSON.stringify({ success: !firstCallFailure, data }));
-if (firstCallFailure) process.exit(1);`,
-	);
-	try {
-		await withPatchedEnv(
-			{
-				PATH: `${tempDir}${delimiter}${missingFfmpegPath}`,
-				PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "1",
-			},
-			async () => {
-				const harness = createExtensionHarness({
-					cwd: tempDir,
-					prompt,
-					sessionFile: join(tempDir, "session.jsonl"),
-				});
-				await run(harness, { noRecordingMarker, tempDir });
-			},
-		);
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-}
-
-test(
-	"agentBrowserExtension keeps browser ownership when the first managed batch call fails after close",
-	{ concurrency: false },
-	async () => {
-		await withRecordingReservationHarness(
-			"first-call",
-			"Test failed post-close launch ownership.",
-			async (firstCallHarness) => {
-				const failedFirstCall = await executeRegisteredTool(
-					firstCallHarness.tool,
-					firstCallHarness.ctx,
-					{
-						sessionMode: "fresh",
-						args: ["batch"],
-						stdin: JSON.stringify([["close"], ["click", "#missing-after-close"]]),
-					},
-				);
-				assert.equal(failedFirstCall.isError, true, failedFirstCall.content.at(0)?.text);
-				assert.equal(
-					readRecord(readRecord(failedFirstCall.details).managedSessionOutcome).activeAfter,
-					true,
-				);
-				assert.equal(typeof readRecord(failedFirstCall.details).sessionName, "string");
-				const recoveredFirstCall = await executeRegisteredTool(
-					firstCallHarness.tool,
-					firstCallHarness.ctx,
-					{ args: ["get", "url"] },
-				);
-				assert.equal(recoveredFirstCall.isError, false, recoveredFirstCall.content.at(0)?.text);
-				assert.equal(
-					readRecord(recoveredFirstCall.details).sessionName,
-					readRecord(failedFirstCall.details).sessionName,
-				);
-				const closeAllFirstCall = await executeRegisteredTool(
-					firstCallHarness.tool,
-					firstCallHarness.ctx,
-					{ args: ["--session", "caller-owned", "close", "--all"] },
-				);
-				assert.equal(readRecord(closeAllFirstCall.details).closeAllApplied, true);
-				assert.equal(
-					readRecord(readRecord(closeAllFirstCall.details).managedSessionOutcome).activeAfter,
-					false,
-				);
-				const rotatedAfterCloseAll = await executeRegisteredTool(
-					firstCallHarness.tool,
-					firstCallHarness.ctx,
-					{ args: ["get", "url"] },
-				);
-				assert.notEqual(
-					readRecord(rotatedAfterCloseAll.details).sessionName,
-					readRecord(failedFirstCall.details).sessionName,
-				);
-				await executeRegisteredTool(firstCallHarness.tool, firstCallHarness.ctx, {
-					args: ["close"],
-				});
-			},
-		);
-	},
-);
-
-test(
-	"agentBrowserExtension releases recording reservations by namespace on close --all",
-	{ concurrency: false },
-	async () => {
-		await withRecordingReservationHarness(
-			"namespace-close",
-			"Record a browser workflow.",
-			async (harness, { tempDir }) => {
-				await mkdir(join(tempDir, "ffmpeg"));
-				const globalOne = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", "global-one", "record", "start", "global-one.webm"],
-				});
-				assert.equal(globalOne.isError, false, globalOne.content.at(0)?.text);
-				const globalTwo = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", "global-two", "record", "start", "global-two.webm"],
-				});
-				assert.equal(globalTwo.isError, false, globalTwo.content.at(0)?.text);
-				const otherNamespaceRecording = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: [
-						"--namespace",
-						"other",
-						"--session",
-						"global-three",
-						"record",
-						"start",
-						"global-three.webm",
-					],
-				});
-				assert.equal(
-					otherNamespaceRecording.isError,
-					false,
-					otherNamespaceRecording.content.at(0)?.text,
-				);
-				assert.equal(readRecord(otherNamespaceRecording.details).namespace, "other");
-				const globalClose = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["close", "--all"],
-				});
-				assert.equal(readRecord(globalClose.details).closeAllApplied, true);
-				assert.equal(readRecord(globalClose.details).namespace, undefined);
-				const releasedGlobalOne = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["pdf", "global-one.webm"],
-				});
-				const releasedGlobalTwo = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["pdf", "global-two.webm"],
-				});
-				assertReleasedPdf(releasedGlobalOne);
-				assertReleasedPdf(releasedGlobalTwo);
-				const retainedOtherNamespace = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["pdf", "global-three.webm"],
-				});
-				assert.match(
-					readString(readRecord(retainedOtherNamespace.content.at(0)).text),
-					/reserved by an active recording/,
-				);
-				await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--namespace", "other", "close", "--all"],
-				});
-			},
-		);
+		assert.deepEqual(await runCloseAllNamespaceScenarios(t, "named"), [
+			"current-named",
+			"current-named-batch",
+			"explicit-other",
+			"fresh-ambient",
+		]);
 	},
 );
 

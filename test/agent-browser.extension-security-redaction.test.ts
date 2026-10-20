@@ -219,7 +219,7 @@ test(
 					});
 					// Both literal prose/JSON read variants run these shared redaction checks.
 					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, false);
+					assert.equal(result.isError, false, JSON.stringify(result));
 					// Both literal prose/JSON read variants run these shared redaction checks.
 					// oxlint-disable-next-line node-test/no-conditional-assertion
 					assert.deepEqual(result.details?.data, expectedData);

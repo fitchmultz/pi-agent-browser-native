@@ -11,6 +11,9 @@ import {
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { withConfirmations } from "./helpers/read-confirmation-fixture.js";
 
+// Native Windows caller sessions share an identity across storage roots; unrelated file workers do not.
+const SHARED_SESSION = `capture-actions-${process.pid}`;
+
 for (const action of [
 	{ action: "click", locator: "role", role: "button", name: "Save", expected: ["click", "@e5"] },
 	{ action: "check", locator: "role", role: "checkbox", name: "Terms", expected: ["check", "@e6"] },
@@ -60,7 +63,7 @@ for (const action of [
 						},
 					}),
 				);
-				const prefix = ["--session", "shared"];
+				const prefix = ["--session", SHARED_SESSION];
 				assert.equal(
 					(
 						await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -70,7 +73,7 @@ for (const action of [
 					false,
 				);
 				const { expected, ...params } = action;
-				const request = { ...params, session: "shared" };
+				const request = { ...params, session: SHARED_SESSION };
 				const initialActionTool = harness.getTool("agent_browser_action");
 				assert.ok(initialActionTool);
 				const pending = await executeRegisteredTool(initialActionTool, harness.ctx, request);
@@ -148,7 +151,7 @@ for (const owned of [false, true]) {
 							);
 							const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
 								args: [
-									...(owned ? [] : ["--session", "shared"]),
+									...(owned ? [] : ["--session", SHARED_SESSION]),
 									"--confirm-actions",
 									"snapshot",
 									"open",
@@ -265,7 +268,7 @@ for (const mode of ["absent", "ambiguous", "drift", "intervening"] as const) {
 						semanticSnapshot: { origin: "https://current.test/", refs, snapshot: "" },
 					}),
 				);
-				const prefix = ["--session", "shared"];
+				const prefix = ["--session", SHARED_SESSION];
 				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, "--confirm-actions", "snapshot", "open", "https://current.test/"],
 				});
@@ -308,7 +311,7 @@ for (const mode of ["absent", "ambiguous", "drift", "intervening"] as const) {
 					role: "combobox",
 					name: "Flavor",
 					value: "chocolate",
-					session: "shared",
+					session: SHARED_SESSION,
 				});
 				assert.equal(result.isError, true);
 				if (mode === "absent" || mode === "ambiguous") {

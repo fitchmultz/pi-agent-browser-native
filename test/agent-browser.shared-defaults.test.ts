@@ -997,7 +997,7 @@ if (!args.includes("session") && !active) {
   fs.writeFileSync(${JSON.stringify(active)}, JSON.stringify(active));
 }
 const data = args.includes("session")
-  ? { active: active !== null, runtime: active && { ...active, backgroundPid: process.ppid, browserLaunched: true, ...(generation === "unknown" ? {} : { socketDir: generation }) } }
+  ? { active: active !== null, runtime: active && { ...active, backgroundPid: ${process.pid}, browserLaunched: true, ...(generation === "unknown" ? {} : { socketDir: generation }) } }
   : args.includes("snapshot") && fs.existsSync(${JSON.stringify(gate)})
     ? { confirmation_required: true, confirmation_id: "helper-id", action: "snapshot" }
   : args.includes("snapshot") ? { url, snapshot: '- textbox "Name" [ref=e1]', refs: { e1: { role: "textbox", name: "Name" } } }

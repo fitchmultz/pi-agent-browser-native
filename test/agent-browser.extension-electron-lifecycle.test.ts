@@ -1698,7 +1698,8 @@ if (command === "open") {
 	return;
 }
 if (args.includes("get") && args.includes("url")) {
-	fs.writeFileSync(${JSON.stringify(readyPath)}, String(process.pid));
+	fs.writeFileSync(${JSON.stringify(`${readyPath}.tmp`)}, String(process.pid));
+	fs.renameSync(${JSON.stringify(`${readyPath}.tmp`)}, ${JSON.stringify(readyPath)});
 	while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
 	process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
 	return;
@@ -1765,12 +1766,15 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 								);
 							}),
 						]);
+						const pid = Number(await readFile(readyPath, "utf8"));
+						assert.ok(Number.isInteger(pid) && pid > 0, "get url must publish its native PID");
+						assert.doesNotThrow(() => process.kill(pid, 0), "get url is live before the watchdog");
 						if (expire) {
 							t.mock.timers.tick(timeoutMs);
 						} else {
 							await writeFile(releasePath, "go");
 						}
-						return await Promise.race([
+						const result = await Promise.race([
 							pending,
 							new Promise<never>((_resolve, reject) => {
 								guard = realSetTimeout(
@@ -1779,6 +1783,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 								);
 							}),
 						]);
+						assert.throws(
+							() => process.kill(pid, 0),
+							{ code: "ESRCH" },
+							"probe completion must reap its get url child",
+						);
+						return result;
 					} finally {
 						t.mock.timers.reset();
 						controller.abort();
@@ -1803,9 +1813,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 					JSON.stringify(probeResult),
 				);
 				assert.equal(readRecord(readRecord(probeResult.details).electron).status, "failed");
-				assert.match(
-					readString(readRecord(probeResult.content[0]).text),
-					/Electron probe failed: get url: agent-browser process exited with code 124/,
+				// Preserve the native numeric close code: taskkill reports 1 on Windows;
+				// POSIX signal termination has no close code and uses the timeout fallback.
+				const timeoutExitCode = process.platform === "win32" ? 1 : 124;
+				assert.equal(
+					readString(readRecord(probeResult.content[0]).text).split(/\r?\n/, 1)[0],
+					`Electron probe failed: get url: agent-browser process exited with code ${timeoutExitCode}`,
 				);
 
 				// Control: the same fixture under a generous timeout must succeed, proving the

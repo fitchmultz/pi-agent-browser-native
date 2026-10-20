@@ -13,6 +13,9 @@ import {
 import { readRecord, readArray } from "./helpers/assertions.js";
 import { withConfirmations } from "./helpers/read-confirmation-fixture.js";
 
+// Native Windows caller sessions share an identity across storage roots; unrelated file workers do not.
+const SHARED_SESSION = `capture-replay-${process.pid}`;
+
 for (const after of [
 	"none",
 	"failed-row",
@@ -26,7 +29,7 @@ for (const after of [
 		{ concurrency: false },
 		async () => {
 			await withConfirmations(async ({ state, log, branch, harness }) => {
-				const prefix = ["--session", "shared"];
+				const prefix = ["--session", SHARED_SESSION];
 				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, "--confirm-actions", "snapshot", "open", "https://current.test/"],
 				});
@@ -59,7 +62,9 @@ for (const after of [
 					args: [...prefix, "batch"],
 					stdin: JSON.stringify([["confirm", "snapshot-id"], ...later]),
 				});
-				const replay = SessionPageState.fromBranch(convertBrowserEntries(branch)).get("shared");
+				const replay = SessionPageState.fromBranch(convertBrowserEntries(branch)).get(
+					SHARED_SESSION,
+				);
 				const invalidated = after === "invalidation" || after === "failed-snapshot";
 				const current = after === "capture" ? "e3" : "e2";
 				if (invalidated) {
@@ -109,7 +114,7 @@ test(
 	async () => {
 		await withConfirmations(async ({ harness }) => {
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--namespace", "team", "--session", "shared", "--json", "snapshot", "-i"],
+				args: ["--namespace", "team", "--session", SHARED_SESSION, "--json", "snapshot", "-i"],
 			});
 			assert.equal(result.details?.failureCategory, "confirmation-required");
 			assert.equal(
@@ -122,8 +127,8 @@ test(
 					.map(readRecord)
 					.map((row) => readRecord(row.params).args),
 				[
-					["--namespace", "team", "--session", "shared", "confirm", "snapshot-id"],
-					["--namespace", "team", "--session", "shared", "deny", "snapshot-id"],
+					["--namespace", "team", "--session", SHARED_SESSION, "confirm", "snapshot-id"],
+					["--namespace", "team", "--session", SHARED_SESSION, "deny", "snapshot-id"],
 				],
 			);
 		});
@@ -144,13 +149,19 @@ for (const mode of [
 		const unresolved = mode === "deny" || mode === "nested";
 		await withConfirmations(async ({ root, state, log, harness: initialHarness }) => {
 			let harness = initialHarness;
-			const prefix = ["--session", "shared"];
-			await executeRegisteredTool(harness.tool, harness.ctx, {
+			const prefix = ["--session", SHARED_SESSION];
+			const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: [...prefix, "--confirm-actions", "snapshot", "open", "https://current.test/"],
 			});
-			await executeRegisteredTool(harness.tool, harness.ctx, {
+			assert.equal(opened.isError, false, opened.content[0].text);
+			const pending = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: [...prefix, "snapshot", "-i"],
 			});
+			assert.equal(
+				pending.details?.failureCategory,
+				"confirmation-required",
+				pending.content[0].text,
+			);
 			if (mode === "nested") {
 				const native = readRecord(JSON.parse(await readFile(state, "utf8")));
 				readRecord(native.pending).nested = true;
@@ -180,7 +191,7 @@ for (const mode of [
 			const code = codeTool;
 			const getterRequests: Readonly<Record<string, unknown>> = {
 				code: {
-					session: "shared",
+					session: SHARED_SESSION,
 					code: `emit((await browser({args:${JSON.stringify(getterArgs)}})).success);`,
 				},
 				batch: { args: [...prefix, "batch", "--bail"], stdin: JSON.stringify([getterArgs]) },

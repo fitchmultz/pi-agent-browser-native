@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { discoverDarwinApps, inspectDarwinApp } from "./discovery-darwin.js";
 import {
 	hasLinuxElectronEvidence,
@@ -205,12 +205,12 @@ function sortApps(apps: readonly ElectronAppDiscovery[]): ElectronAppDiscovery[]
 	});
 }
 function findMacAppBundleAncestor(path: string): string | undefined {
-	const parts = resolve(path).split(/[\\/]+/);
+	const parts = resolve(path).split(sep);
 	const index = parts.findIndex((part) => part.endsWith(".app"));
 	if (index < 0) {
 		return undefined;
 	}
-	const ancestor = parts.slice(0, index + 1).join("/");
+	const ancestor = parts.slice(0, index + 1).join(sep);
 	return ancestor.length > 0 ? ancestor : "/";
 }
 export async function inspectElectronExecutablePath(

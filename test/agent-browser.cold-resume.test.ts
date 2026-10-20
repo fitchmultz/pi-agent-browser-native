@@ -53,7 +53,7 @@ let start = 0;
 while (args[start]?.startsWith('--')) start += args[start] === '--json' ? 1 : 2;
 const tokens = args.slice(start);
 function execute(tokens) {
-  if (tokens[0] === 'session') return tokens[1] === 'info' ? { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey, backgroundPid: process.ppid, socketDir: process.env.AGENT_BROWSER_SOCKET_DIR, browserLaunched: true } : null } : { sessions: [] };
+  if (tokens[0] === 'session') return tokens[1] === 'info' ? { active: state.active, runtime: state.active ? { restoreKey: state.restoreKey, backgroundPid: ${process.pid}, socketDir: process.env.AGENT_BROWSER_SOCKET_DIR, browserLaunched: true } : null } : { sessions: [] };
   if (tokens[0] === 'close') { state = { active: false, url: 'about:blank', restoreKey: null }; return { closed: true }; }
   if (tokens[0] === 'read' && tokens.some((token) => token.startsWith('http:'))) return { content: 'Fetched page', source: 'http', url: tokens.at(-1) };
   if (!state.active) { state.active = true; state.restoreKey = process.env.AGENT_BROWSER_RESTORE ?? null; }

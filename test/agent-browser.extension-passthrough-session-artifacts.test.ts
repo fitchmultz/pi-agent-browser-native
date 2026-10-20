@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readArray, readRecord, readString } from "./helpers/assertions.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import {
 	createExtensionHarness,
@@ -955,8 +955,15 @@ if (args.includes("batch")) {
 }`,
 		);
 
+		const namespace = basename(tempDir);
+		const otherNamespace = `${namespace}-other`;
+		const fixtureEnv = {
+			PATH: `${tempDir}:${basePath}`,
+			// close --all must drain this fixture's Windows namespace, not unrelated file workers.
+			AGENT_BROWSER_NAMESPACE: namespace,
+		};
 		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+			await withPatchedEnv(fixtureEnv, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir, prompt: "Capture a trace." });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 				const traceStart = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1012,7 +1019,7 @@ if (args.includes("batch")) {
 				);
 
 				const otherNamespaceTrace = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--namespace", "other", "--session", "other-a", "trace", "start"],
+					args: ["--namespace", otherNamespace, "--session", "other-a", "trace", "start"],
 				});
 				assert.equal(otherNamespaceTrace.isError, false);
 				const traceA = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1034,7 +1041,7 @@ if (args.includes("batch")) {
 				});
 				assert.equal(profilerAAfterCloseAll.isError, false);
 				const profilerOtherAfterCloseAll = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--namespace", "other", "--session", "other-a", "profiler", "start"],
+					args: ["--namespace", otherNamespace, "--session", "other-a", "profiler", "start"],
 				});
 				assert.equal(profilerOtherAfterCloseAll.isError, true);
 				assert.match(
@@ -1044,7 +1051,7 @@ if (args.includes("batch")) {
 					/Wrapper believes trace tracing is active/,
 				);
 				await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--namespace", "other", "--session", "other-a", "close"],
+					args: ["--namespace", otherNamespace, "--session", "other-a", "close"],
 				});
 			});
 		} finally {

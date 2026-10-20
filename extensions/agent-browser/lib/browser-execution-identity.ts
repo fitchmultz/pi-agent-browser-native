@@ -13,6 +13,7 @@ import {
 } from "./process-socket-storage.js";
 import { getCurrentProcessUid } from "./process-identity.js";
 import { getErrorCode } from "./process-errors.js";
+import { debugPolicyFailure } from "./browser-execution-policy-debug.js";
 
 export interface BrowserExecutionIdentity {
 	readonly socketContext: string;
@@ -45,17 +46,26 @@ export async function ensureCoordinationDirectory(
 	path: string,
 	platform: NodeJS.Platform,
 ): Promise<boolean> {
+	let stage = "prepare.directory-mkdir";
 	try {
 		try {
 			await mkdir(path, { mode: 0o700 });
 		} catch (error) {
 			if (getErrorCode(error) !== "EEXIST") {
+				debugPolicyFailure(stage, "native-error", error);
 				return false;
 			}
 		}
+		stage = "prepare.directory-stat";
 		const entry = await lstat(path);
-		return !entry.isSymbolicLink() && entry.isDirectory() && directoryOwnerTrusted(entry, platform);
-	} catch {
+		const trusted =
+			!entry.isSymbolicLink() && entry.isDirectory() && directoryOwnerTrusted(entry, platform);
+		if (!trusted) {
+			debugPolicyFailure(stage, "unsafe-metadata");
+		}
+		return trusted;
+	} catch (error) {
+		debugPolicyFailure(stage, "native-error", error);
 		return false;
 	}
 }

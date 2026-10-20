@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -25,6 +25,7 @@ import { SessionPageState } from "../extensions/agent-browser/lib/session-page-s
 import { restoreAttachedSessionKeysFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-attachment-replay.js";
 import {
 	createExtensionHarness,
+	createShortPrivateSocketDir,
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
@@ -48,6 +49,14 @@ function manager(file: string, leaf: string | null) {
 			throw new Error("Official replay must token-load only the winning definition.");
 		},
 	};
+}
+
+function replaceOpenJournal(file: string, replacement: string): void {
+	// Renaming over an open target is not portable to Windows. Each fixture replaces only once
+	// in a fresh private directory, so the same-directory backup name is vacant. Keep that exact
+	// file for the captured reader, then publish a different inode at the original locator.
+	renameSync(file, `${file}.captured`);
+	renameSync(replacement, file);
 }
 
 async function records(file: string): Promise<Array<Record<string, unknown>>> {
@@ -670,18 +679,21 @@ for (const change of ["replace", "truncate"] as const) {
 		try {
 			const file = join(root, "session.jsonl");
 			const header = { type: "session", id: "fixture-session" };
-			await writeFile(
-				file,
-				`${JSON.stringify(header)}\n${JSON.stringify({ type: "label", id: "anchor", parentId: null })}\n`,
-			);
+			const original = `${JSON.stringify(header)}\n${JSON.stringify({ type: "label", id: "anchor", parentId: null })}\n`;
+			await writeFile(file, original);
+			const captured = await stat(file);
+			let changed = false;
 			const native = {
 				...manager(file, "anchor"),
 				getHeader() {
-					if (change === "replace") {
-						writeFileSync(`${file}.replacement`, `${JSON.stringify(header)}\n`);
-						renameSync(`${file}.replacement`, file);
-					} else {
-						writeFileSync(file, `${JSON.stringify(header)}\n`);
+					if (!changed) {
+						if (change === "replace") {
+							writeFileSync(`${file}.replacement`, `${JSON.stringify(header)}\n`);
+							replaceOpenJournal(file, `${file}.replacement`);
+						} else {
+							writeFileSync(file, `${JSON.stringify(header)}\n`);
+						}
+						changed = true;
 					}
 					return header;
 				},
@@ -691,6 +703,17 @@ for (const change of ["replace", "truncate"] as const) {
 				/replaced or truncated/,
 				"native ancestry is not a durable file receipt",
 			);
+			assert.equal(changed, true, "the fixture must reach the captured-file boundary");
+			assert.equal(await readFile(file, "utf8"), `${JSON.stringify(header)}\n`);
+			if (change === "replace") {
+				// The replacement must preserve the held prefix while changing the published file identity.
+				// oxlint-disable-next-line node-test/no-conditional-assertion
+				assert.equal(await readFile(`${file}.captured`, "utf8"), original);
+				const published = await stat(file);
+				// The replacement must preserve the held prefix while changing the published file identity.
+				// oxlint-disable-next-line node-test/no-conditional-assertion
+				assert.notDeepEqual([published.dev, published.ino], [captured.dev, captured.ino]);
+			}
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -1209,7 +1232,7 @@ process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixture.tes
 										appendFileSync(file, `\n${dirty}\n`);
 									} else {
 										writeFileSync(`${file}.repair`, `${readFileSync(file, "utf8")}\n${dirty}\n`);
-										renameSync(`${file}.repair`, file);
+										replaceOpenJournal(file, `${file}.repair`);
 									}
 									dirty = undefined;
 								}
@@ -1221,6 +1244,8 @@ process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixture.tes
 							{ reason: "new" },
 							harness.ctx,
 						);
+						const publishedPrefix = await readFile(file);
+						const captured = await stat(file);
 						const prefix = ["--session", "dirty-receipt"];
 						const refused = await executeRegisteredTool(harness.tool, harness.ctx, {
 							args: [...prefix, "eval", "--stdin"],
@@ -1232,6 +1257,12 @@ process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixture.tes
 							"begin-unconfirmed",
 							JSON.stringify(refused),
 						);
+						assert.deepEqual(await readFile(file), publishedPrefix);
+						assert.equal(
+							(await readInvocationLog(log)).length,
+							0,
+							"unconfirmed begin never dispatches",
+						);
 						const inspected = await executeRegisteredTool(harness.tool, harness.ctx, {
 							args: [...prefix, "get", "url"],
 						});
@@ -1240,6 +1271,19 @@ process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixture.tes
 							(await readInvocationLog(log)).some((row) => row.stdin === "NEVER_RETRY_MUTATION"),
 							false,
 						);
+						assert.deepEqual(
+							(await readFile(file)).subarray(0, publishedPrefix.length),
+							publishedPrefix,
+						);
+						if (repair === "rewrite") {
+							// Rewrite repair retains the captured prefix but publishes a distinct journal file.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.deepEqual(await readFile(`${file}.captured`), publishedPrefix);
+							const published = await stat(file);
+							// Rewrite repair retains the captured prefix but publishes a distinct journal file.
+							// oxlint-disable-next-line node-test/no-conditional-assertion
+							assert.notDeepEqual([published.dev, published.ino], [captured.dev, captured.ino]);
+						}
 						const persisted = await records(file);
 						assert.equal(
 							persisted.filter((entry) => getBrowserRecord(entry)?.event.phase === "begin").length,
@@ -1409,9 +1453,13 @@ test(
 	{ concurrency: false },
 	async () => {
 		const root = await mkdtemp(join(tmpdir(), "piab-pending-owner-"));
-		const socketDir = await mkdtemp("/tmp/po-");
-		const otherSocketDir = await mkdtemp("/tmp/pf-");
+		const socketDirs: string[] = [];
 		try {
+			const socketDir = createShortPrivateSocketDir(join(root, "owner"));
+			socketDirs.push(socketDir);
+			const otherSocketDir = createShortPrivateSocketDir(join(root, "fork"));
+			socketDirs.push(otherSocketDir);
+			await Promise.all(socketDirs.map((path) => mkdir(path, { recursive: true, mode: 0o700 })));
 			const log = join(root, "commands.jsonl");
 			await writeFakeAgentBrowserBinary(
 				root,
@@ -1536,7 +1584,7 @@ process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixture.tes
 			);
 		} finally {
 			await Promise.all(
-				[root, socketDir, otherSocketDir].map((path) => rm(path, { recursive: true, force: true })),
+				[root, ...socketDirs].map((path) => rm(path, { recursive: true, force: true })),
 			);
 		}
 	},
@@ -1960,7 +2008,7 @@ test(
 				`const fs=require('node:fs'); const args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({args})+'\\n');
 const url='https://fixture.test/same'; const command=args.find(arg=>['session','snapshot','get','tab'].includes(arg));
-const data=command==='session' ? {active:true,runtime:{restoreKey:null,backgroundPid:process.ppid,browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}}
+const data=command==='session' ? {active:true,runtime:{restoreKey:null,backgroundPid:${process.pid},browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}}
 : command==='snapshot' ? {url,snapshot:'- textbox "Name" [ref=e1]',refs:{e1:{role:'textbox',name:'Name'}}}
 : command==='tab' ? {tabs:[{tabId:'t1',url,active:true}]} : args.includes('url') ? {url} : {text:'Name'};
 process.stdout.write(JSON.stringify({success:true,data}));`,
@@ -2053,7 +2101,7 @@ test(
 				`const fs=require('node:fs'), args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args})+'\\n');
 let data;
-if(args.includes('session')) data={active:fs.existsSync(${JSON.stringify(active)}),runtime:fs.existsSync(${JSON.stringify(active)})?{restoreKey:null,backgroundPid:process.ppid,browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}:null};
+if(args.includes('session')) data={active:fs.existsSync(${JSON.stringify(active)}),runtime:fs.existsSync(${JSON.stringify(active)})?{restoreKey:null,backgroundPid:${process.pid},browserLaunched:true,socketDir:fs.readFileSync(${JSON.stringify(generation)},'utf8')}:null};
 else {
   if(args.includes('open')) fs.writeFileSync(${JSON.stringify(active)}, 'active');
   data=args.includes('tab')?{tabs:[{tabId:'t1',url:'https://fixture.test/profile',active:true}]}:{url:'https://fixture.test/profile',title:'Profile fixture'};

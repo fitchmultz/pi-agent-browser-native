@@ -445,7 +445,15 @@ test(
 										const launch = readRecord(
 											readRecord(readRecord(result.details).electron).launch,
 										);
-										assert.equal(launch.appPath, app.appPath);
+										// Windows launch targets are executables, not macOS app bundles.
+										const expectedAppPath = process.platform === "win32" ? undefined : app.appPath;
+										assert.equal(launch.appPath, expectedAppPath);
+										assert.equal(
+											launch.executablePath,
+											process.platform === "win32"
+												? await realpath(app.executablePath)
+												: app.executablePath,
+										);
 										const lookup = await executeRegisteredTool(harness.tool, harness.ctx, {
 											sourceLookup: {
 												componentName: "MissingPackagedComponent",
@@ -462,7 +470,7 @@ test(
 										assert.equal(source.workspaceRoot, tempDir);
 										assert.deepEqual(source.electronContext, {
 											appName: "Handoff Electron",
-											appPath: app.appPath,
+											appPath: expectedAppPath,
 											executablePath: launch.executablePath,
 											launchId,
 											sessionName: launch.sessionName,

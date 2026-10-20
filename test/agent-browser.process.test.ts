@@ -331,8 +331,12 @@ test("process start identity commands prefer system paths before PATH and keep n
 	assert.match(readString(windows?.file ?? ""), /(?:^|[\\/])powershell\.exe$/i);
 	assert.equal(win32.isAbsolute(windows?.file ?? ""), true);
 	assert.equal(windows?.args.includes("-NonInteractive"), true);
-	assert.match(readString(windows.args.at(-1) ?? ""), /Get-Process -Id 123/);
-	assert.match(readString(windows.args.at(-1) ?? ""), /win32-powershell-ticks-v1:/);
+	assert.deepEqual(windows.args.slice(0, -1), ["-NoProfile", "-NonInteractive", "-Command"]);
+	assert.ok(
+		windows.args.at(-1) ===
+			`$ErrorActionPreference = 'Stop'; $p = $null; try { $p = [System.Diagnostics.Process]::GetProcessById(123); [long]$ticks = $p.StartTime.ToUniversalTime().Ticks; if ($ticks -le 0) { throw 'Process start ticks unavailable' }; [Console]::Out.WriteLine("win32-powershell-ticks-v1:" + $ticks.ToString([Globalization.CultureInfo]::InvariantCulture)) } finally { if ($null -ne $p) { $p.Dispose() } }`,
+		"Windows probes must compute positive UTC ticks with guarded .NET lookup/disposal and invariant console output",
+	);
 	assert.equal(buildProcessStartIdentityCommand(0, "win32"), undefined);
 	assert.equal(normalizeProcessStartIdentity("  638000000000000000\r\n"), "638000000000000000");
 	assert.equal(
