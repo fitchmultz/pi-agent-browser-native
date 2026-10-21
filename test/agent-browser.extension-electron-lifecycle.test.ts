@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1673,15 +1673,16 @@ test(
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-timeout-"));
 		const logPath = join(tempDir, "agent-browser.log");
 		const server = createServer();
-		server.listen(0, "127.0.0.1");
-		await once(server, "listening");
-		const address = server.address();
-		assert.ok(address !== null && typeof address === "object");
-		const controlUrl = `http://127.0.0.1:${address.port}/`;
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
+		try {
+			server.listen(0, "127.0.0.1");
+			await once(server, "listening");
+			const address = server.address();
+			assert.ok(address !== null && typeof address === "object");
+			const controlUrl = `http://127.0.0.1:${address.port}/ready/`;
+			const basePath = process.env.PATH ?? "";
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
 const args = process.argv.slice(2);
 const valueFlags = new Set(["--session"]);
 let commandIndex = -1;
@@ -1716,9 +1717,8 @@ if (args.includes("get") && args.includes("url")) {
 	return;
 }
 process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));`,
-		);
+			);
 
-		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
@@ -1751,13 +1751,21 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 					const controller = new AbortController();
 					let controlResponse: ServerResponse | undefined;
 					const readySignal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
-					const ready = new Promise<number>((resolve, reject) => {
-						readySignal.addEventListener("abort", () => reject(readySignal.reason), { once: true });
-						server.once("request", (request, response) => {
-							controlResponse = response;
-							resolve(Number(request.url?.slice(1)));
-						});
-					});
+					const ready = Promise.withResolvers<number>();
+					const onReadyAbort = () => ready.reject(readySignal.reason);
+					const onRequest = (request: IncomingMessage, response: ServerResponse) => {
+						controlResponse = response;
+						const match = /^\/ready\/([1-9]\d*)$/.exec(request.url ?? "");
+						if (request.method !== "GET" || !match) {
+							ready.reject(
+								new Error(`Unexpected probe control request: ${request.method} ${request.url}`),
+							);
+							return;
+						}
+						ready.resolve(Number(match[1]));
+					};
+					readySignal.addEventListener("abort", onReadyAbort, { once: true });
+					server.once("request", onRequest);
 					t.mock.timers.enable({ apis: ["setTimeout"] });
 					const pending = executeRegisteredTool(
 						harness.tool,
@@ -1769,19 +1777,20 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 					try {
 						// Readiness and release share the real child's still-open loopback request.
 						const pid = await Promise.race([
-							ready,
+							ready.promise,
 							pending.then((result) => {
 								throw new Error(
 									`Probe settled before get url dispatched: ${JSON.stringify(result)}`,
 								);
 							}),
 						]);
+						assert.ok(controlResponse, "get url must hold its native control response");
 						assert.ok(Number.isInteger(pid) && pid > 0, "get url must publish its native PID");
 						assert.doesNotThrow(() => process.kill(pid, 0), "get url is live before the watchdog");
 						if (expire) {
 							t.mock.timers.tick(timeoutMs);
 						} else {
-							controlResponse?.end("release");
+							controlResponse.end("release");
 						}
 						const result = await Promise.race([
 							pending,
@@ -1804,9 +1813,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 						if (guard) {
 							realClearTimeout(guard);
 						}
-						controlResponse?.end("release");
-						server.removeAllListeners("request");
-						await Promise.allSettled([pending, ready]);
+						if (controlResponse && !controlResponse.writableEnded) {
+							controlResponse.end("release");
+						}
+						server.off("request", onRequest);
+						readySignal.removeEventListener("abort", onReadyAbort);
+						await Promise.allSettled([pending, ready.promise]);
 					}
 				};
 				// Start the native child before advancing its unchanged caller watchdog.
@@ -1844,8 +1856,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 				assert.equal(readRecord(controlElectron.probe).url, "late");
 			});
 		} finally {
+			const closed = new Promise<void>((resolve) => server.close(() => resolve()));
 			server.closeAllConnections();
-			await new Promise<void>((resolve) => server.close(() => resolve()));
+			await closed;
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
