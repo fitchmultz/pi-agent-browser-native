@@ -1758,7 +1758,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 						const match = /^\/ready\/([1-9]\d*)$/.exec(request.url ?? "");
 						if (request.method !== "GET" || !match) {
 							ready.reject(
-								new Error(`Unexpected probe control request: ${request.method} ${request.url}`),
+								new Error(
+									`Unexpected probe control request: ${request.method ?? "<unset>"} ${request.url ?? "<unset>"}`,
+								),
 							);
 							return;
 						}
@@ -1856,7 +1858,9 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 				assert.equal(readRecord(controlElectron.probe).url, "late");
 			});
 		} finally {
-			const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+			const closed = new Promise<void>((resolve) => {
+				server.close(() => resolve());
+			});
 			server.closeAllConnections();
 			await closed;
 			await rm(tempDir, { force: true, recursive: true });
