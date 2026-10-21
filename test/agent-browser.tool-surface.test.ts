@@ -132,15 +132,6 @@ async function withSurface(
 						return options.result ?? { content: [], details: {} };
 					},
 				});
-				pi.on("session_start", (_event, ctx) => {
-					context = {
-						...ctx,
-						tools: [],
-						async executeTool() {
-							throw new Error("Nested tool execution is not used by this surface fixture.");
-						},
-					};
-				});
 			},
 		],
 	});
@@ -175,6 +166,8 @@ async function withSurface(
 						id: "surface",
 						arguments: input,
 					});
+					// Use the selected host's complete, current tool context, including after reload.
+					context = session.extensionRunner.createToolContext("surface", undefined);
 					return tool.execute("surface", params, undefined, undefined, context);
 				},
 				active: () => session.getActiveToolNames(),
