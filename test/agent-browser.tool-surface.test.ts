@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { readArray, readRecord } from "./helpers/assertions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -214,8 +214,17 @@ test("registered browser code serializes for Anthropic while Pi still rejects in
 			{
 				apiKey: "test-key",
 				maxRetries: 0,
-				async fetch(_url, init) {
-					payload = JSON.parse(readString(init?.body));
+				async fetch(url, init) {
+					// Consume the real host's wire body; maintained hosts may gzip direct Anthropic requests.
+					const request = new Request(url, init);
+					const encoding = request.headers.get("content-encoding");
+					assert.ok(encoding === null || encoding === "gzip");
+					assert.ok(request.body);
+					const body =
+						encoding === "gzip"
+							? request.body.pipeThrough(new DecompressionStream("gzip"))
+							: request.body;
+					payload = await new Response(body).json();
 					return new Response(
 						'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
 						{
