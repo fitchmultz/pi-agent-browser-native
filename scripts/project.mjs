@@ -89,8 +89,8 @@ Modes:
   package-pi          Verify package contents plus isolated Pi package smoke.
   lifecycle           Run the tmux-driven configured-source lifecycle harness.
   platform-target     Fast platform-local gate used inside Crabbox smoke targets.
-  platform-smoke      Run the Crabbox macOS/Ubuntu/native-Windows platform smoke harness.
-  release             Run default verification, lifecycle, package-pi, and release-blocking platform smoke.
+  platform-smoke      Run required macOS/Ubuntu platform smoke; native Windows is explicit best-effort.
+  release             Run default verification, lifecycle, package-pi, and required macOS/Ubuntu platform smoke.
 
 Options:
   --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
@@ -465,12 +465,7 @@ export function verifySteps(options, platform = process.platform) {
 				...verifySteps({ mode: "lifecycle", passthrough: [], showHelp: false }),
 				...verifySteps({ mode: "package-pi", passthrough: [], showHelp: false }),
 				scriptStep(["./scripts/platform-smoke.mjs", "doctor"]),
-				scriptStep([
-					"./scripts/platform-smoke.mjs",
-					"run",
-					"--target",
-					"macos,ubuntu,windows-native",
-				]),
+				scriptStep(["./scripts/platform-smoke.mjs", "run"]),
 			];
 	}
 }

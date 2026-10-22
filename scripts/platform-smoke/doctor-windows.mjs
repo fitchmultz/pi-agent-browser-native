@@ -183,7 +183,7 @@ export function checkWindows({
 }) {
 	console.log("\n── Windows native / Parallels ──");
 	if (!(config?.requiredTargets ?? []).includes("windows-native")) {
-		report.warn("windows-native is not listed in requiredTargets for this configuration");
+		report.warn("windows-native not selected (best-effort); setup not checked, not a pass");
 		return;
 	}
 	if (!commandPath("prlctl")) {

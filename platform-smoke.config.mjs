@@ -1,5 +1,5 @@
 // Platform smoke configuration for pi-agent-browser-native.
-// Crabbox owns the target lease/sync loop; this file is the project source of truth for release-blocking platform coverage.
+// Crabbox owns the target lease/sync loop; this file is the project source of truth for required and explicitly selected best-effort platform coverage.
 
 import packageJson from "./package.json" with { type: "json" };
 import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
@@ -10,7 +10,8 @@ const PLATFORM_SMOKE_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-age
 export default {
 	packageName: "pi-agent-browser-native",
 	artifactRoot: ".artifacts/platform-smoke",
-	requiredTargets: ["macos", "ubuntu", "windows-native"],
+	requiredTargets: ["macos", "ubuntu"],
+	optionalTargets: ["windows-native"],
 	requiredSuites: ["platform-build", "browser-dogfood-smoke"],
 	requiredCrabbox: {
 		install: "Homebrew package or PLATFORM_SMOKE_CRABBOX override",

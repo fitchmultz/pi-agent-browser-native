@@ -1,14 +1,14 @@
 # Platform smoke testing
 
-`pi-agent-browser-native` uses a Crabbox-backed local platform smoke gate to prove the package on macOS, Ubuntu Linux, and native Windows before release.
+`pi-agent-browser-native` uses a Crabbox-backed required local platform gate on **macOS and Ubuntu Linux**. Native Windows is **best-effort and explicitly on demand**, not a required default PR or release target.
 
-**Windows qualification:** official/fork Windows CI and the native environment self-check are blocking again under [#191](https://github.com/fitchmultz/pi-agent-browser-native/issues/191). The owner’s 2026-09-21 waiver applied to the historical 0.6.16 rollout; it was not a Windows pass. Preserve its failed evidence and all new attempts. The platform commands below are unchanged: hosted CI does not replace the native browser dogfood matrix. See [release qualification and historical waiver](RELEASE.md#current-0616-rollout-waiver).
+The owner's 2026-10-22 best-effort decision supersedes [#191](https://github.com/fitchmultz/pi-agent-browser-native/issues/191) / PR291's blocking policy, not their unresolved process-lock/Electron failures. The September waiver is historical, not current authority. Routine Windows CI is one nonblocking official-host build/import/process smoke; broader official/fork full qualification and its environment self-check require manual `windows-qualification=true`. Neither a green required aggregate nor a not-run deep suite is a Windows pass.
 
-Outside that rollout exception, this is a release-blocking gate. Missing setup is not a skipped pass. When a maintainer approves an [alternate native transport](#alternate-native-transports), it must prove the same target-local suites; missing upstream `agent-browser` or browser dependencies still blocks that target.
+Missing macOS/Ubuntu setup is not a skipped pass. Default doctor requires only their providers/setup, not Windows, Parallels or Windows credentials. Explicit Windows doctor/run remains strict and returns real nonzero status. No test assertions, runtime ownership checks or budgets are relaxed.
 
 ## Required release gate
 
-Run the cheap harness checks first, build the project-owned Ubuntu image, run doctor explicitly, then run the full matrix and inspect the evidence:
+Run the cheap harness checks first, build the project-owned Ubuntu image, run doctor explicitly, then run the required matrix and inspect the evidence:
 
 ```sh
 npm run check:platform-smoke
@@ -16,31 +16,32 @@ npm run smoke:platform:ubuntu-image
 npm run smoke:platform:doctor
 npm run smoke:platform:all
 crabbox list --provider local-container
-crabbox list --provider parallels
 ```
 
-`smoke:platform:all` also runs `smoke:platform:doctor` before any target suite starts, so the explicit doctor step is a readable release checklist step rather than a hidden precondition. The canonical `npm run verify -- release` gate also runs the configured-source lifecycle harness, then the same platform doctor and full `macos,ubuntu,windows-native` matrix after default verification and packaged Pi smoke, so `npm publish` cannot pass `prepublishOnly` without lifecycle and platform gates. After the matrix, inspect `.artifacts/platform-smoke/<run-id>/...` summaries and manifests; a green Crabbox exit without matching suite assertions is not release proof. Use provider-specific `crabbox list` commands for cleanup review because this host may have unrelated Crabbox providers configured that require credentials.
+`smoke:platform:all` means all **required** configured targets, not optional Windows. It also runs `smoke:platform:doctor` before any target suite starts, so the explicit doctor step is a readable release checklist step rather than a hidden precondition. The canonical `npm run verify -- release` gate also runs the configured-source lifecycle harness, then the same platform doctor and configured required `macos,ubuntu` matrix after default verification and packaged Pi smoke, so `npm publish` cannot pass `prepublishOnly` without lifecycle and platform gates. After the matrix, inspect `.artifacts/platform-smoke/<run-id>/...` summaries and manifests; a green Crabbox exit without matching suite assertions is not release proof. Use provider-specific `crabbox list` commands for cleanup review because this host may have unrelated Crabbox providers configured that require credentials.
 
 Per-target commands are for diagnosis:
 
 ```sh
 npm run smoke:platform:macos
 npm run smoke:platform:ubuntu
+node scripts/platform-smoke.mjs doctor --target windows-native
 npm run smoke:platform:windows-native
+crabbox list --provider parallels # only after an explicitly selected Windows run
 npm run verify -- platform-smoke run --target ubuntu --suite platform-build
 ```
 
 ## Targets
 
-| Target           | Crabbox provider       | Shell contract                                     | Release status                                    |
-| ---------------- | ---------------------- | -------------------------------------------------- | ------------------------------------------------- |
-| `macos`          | `ssh` static localhost | POSIX shell on macOS                               | Required                                          |
-| `ubuntu`         | `local-container`      | POSIX shell in a Docker-compatible local container | Required                                          |
-| `windows-native` | `parallels`            | native Windows PowerShell over OpenSSH             | Required; the 0.6.16 rollout waiver is historical |
+| Target           | Crabbox provider       | Shell contract                                     | Release status                       |
+| ---------------- | ---------------------- | -------------------------------------------------- | ------------------------------------ |
+| `macos`          | `ssh` static localhost | POSIX shell on macOS                               | Required                             |
+| `ubuntu`         | `local-container`      | POSIX shell in a Docker-compatible local container | Required                             |
+| `windows-native` | `parallels`            | native Windows PowerShell over OpenSSH             | Best-effort; explicit selection only |
 
 ## Alternate native transports
 
-With maintainer approval, local macOS execution can replace localhost SSH. Routine GitHub Actions includes blocking official/fork Windows contract and consumer jobs. These do not replace the separate Crabbox/Parallels release target or establish a browser-dogfood pass; the September rollout’s separately waived platform evidence is unchanged. Record alternate native checks separately from Crabbox SSH or Parallels results. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
+With maintainer approval, local macOS execution can replace localhost SSH. For native Windows, routine GitHub Actions includes only the nonblocking smoke. On-demand full Windows jobs and Crabbox/Parallels target results retain their own scope and failures; neither is substituted for required macOS/Ubuntu evidence or relabeled a browser-dogfood pass. Record alternate native checks separately from Crabbox SSH or Parallels results. The default `release` and `prepublishOnly` commands still select the Crabbox matrix; record alternate suite evidence separately rather than reporting those commands as passed.
 
 On macOS, run the unchanged commands returned by `buildPlatformBuildCommand('macos', 'pi-agent-browser-native', '24.21.0')` and `buildBrowserDogfoodCommand('macos', '0.38.1', true)` in [`scripts/platform-smoke/targets.mjs`](../scripts/platform-smoke/targets.mjs), serially in a clean private source copy. Use private HOME, npm and Pi settings, and headless browser profiles, and clear inherited `PI_*` variables first: a shell started from Pi exports `PI_PACKAGE_DIR` and `PI_MANAGED_CLI`, which make the archived Pi CLI report the host package instead of the locked suite version. No Remote Login or host security change is required.
 
@@ -71,6 +72,7 @@ PLATFORM_SMOKE_MAC_PORT=22
 # The tag suffix is derived from scripts/agent-browser-capability-baseline.mjs.
 PLATFORM_SMOKE_UBUNTU_IMAGE="pi-agent-browser-native-platform:node24-agent-browser<baseline-version>"
 
+# Optional: needed only when windows-native is explicitly selected.
 PLATFORM_SMOKE_WINDOWS_VM="pi-extension-windows-template"
 PLATFORM_SMOKE_WINDOWS_SNAPSHOT="crabbox-ready-ab-0.33.0"
 PLATFORM_SMOKE_WINDOWS_USER="<windows-ssh-user>"

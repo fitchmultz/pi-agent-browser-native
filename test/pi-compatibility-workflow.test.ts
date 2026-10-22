@@ -1,4 +1,4 @@
-/** Lock the blocking native-Windows qualification and its retained failure evidence. */
+/** Lock best-effort Windows selection without weakening strict hosts or retained failure evidence. */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -24,14 +24,34 @@ test("checker patches retain canonical LF bytes in native Windows source checkou
 	assert.doesNotMatch(readFileSync("patches/oxlint-tsgolint.patch", "utf8"), /\r\n/);
 });
 
-test("Windows qualification blocks PR, release-call and manual compatibility runs for both hosts", () => {
+test("Windows is job-level best-effort: one routine smoke and explicit-only full qualification", () => {
 	assert.match(workflow, /pull_request:\n    branches: \[main\]/);
 	assert.match(workflow, /  workflow_call:/);
 	assert.match(workflow, /  workflow_dispatch:/);
-	assert.doesNotMatch(workflow, /continue-on-error:/);
+	assert.doesNotMatch(job("official"), /continue-on-error:/);
+	assert.doesNotMatch(job("fork"), /continue-on-error:/);
+	assert.doesNotMatch(job("macos"), /continue-on-error:/);
+	assert.doesNotMatch(job("native-qualification"), /continue-on-error:/);
+	const smoke = job("windows-smoke");
+	assert.match(smoke, /\n    continue-on-error: true\n/);
+	assert.doesNotMatch(smoke, /\n        continue-on-error:/);
+	assert.match(smoke, /needs: resolve/);
+	assert.match(smoke, /!inputs.windows-qualification/);
+	assert.match(smoke, /timeout-minutes: 15/);
+	assert.match(smoke, /ci-host-compat.mjs official windows-smoke/);
+	assert.doesNotMatch(smoke, /setup-go|scripts\/qualify.mjs|matrix:|check:compat/);
+	assert.match(smoke, /set -euo pipefail/);
+	assert.match(smoke, /if: always\(\)[\s\S]*name: windows-best-effort-smoke/);
+	assert.match(workflow, /windows-qualification:[\s\S]*?type: boolean\n        default: false/);
+	const callInputs = readString(
+		readString(workflow.split("  workflow_call:")[1]).split("\npermissions:")[0],
+	);
+	assert.doesNotMatch(callInputs, /windows-qualification/);
 	const windows = job("windows");
 	assert.match(windows, /needs: \[resolve, fork-package\]/);
-	assert.match(windows, /if: \$\{\{ !cancelled\(\) \}\}/);
+	assert.match(windows, /github.event_name == 'workflow_dispatch' && inputs.windows-qualification/);
+	assert.match(windows, /\n    continue-on-error: true\n/);
+	assert.doesNotMatch(windows, /\n        continue-on-error:/);
 	assert.doesNotMatch(windows, /!inputs.native-qualification/);
 	assert.match(windows, /runs-on: windows-latest/);
 	assert.match(windows, /fail-fast: false/);

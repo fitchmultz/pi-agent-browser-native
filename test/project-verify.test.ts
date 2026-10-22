@@ -170,7 +170,7 @@ test("verify facade release gate composes default verification, lifecycle, packa
 		"./scripts/verify-lifecycle.mjs",
 		"./scripts/verify-package.mjs --smoke-pi",
 		"./scripts/platform-smoke.mjs doctor",
-		"./scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native",
+		"./scripts/platform-smoke.mjs run",
 	]);
 });
 
