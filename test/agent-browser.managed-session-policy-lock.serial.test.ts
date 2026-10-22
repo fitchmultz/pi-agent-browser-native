@@ -675,6 +675,7 @@ test("competing cross-process reclaimers stay serialized after a stale claim", a
 	});
 	const [staleCode] = readArray(await once(stale, "exit"));
 	assert.equal(staleCode, 0);
+	const stalePid = readNumber(stale.pid);
 	const stalePath = await onlyClaimPath();
 	const staleOwner = await readFile(join(stalePath, "owner.json"), "utf8");
 	const staleTicket = await readFile(join(stalePath, "ticket.json"), "utf8");
@@ -687,9 +688,29 @@ import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)};
 import { readProcessStartIdentity } from ${JSON.stringify(identityUrl)};
-// Buffer bounded timing metadata only; never retain argv, paths, output or generation values.
+// Buffer only fixture-target/timing metadata; never retain argv, paths, output or generation values.
 const probes = [];
+const liveness = [];
+const stalePid = ${JSON.stringify(stalePid)};
 let omitted = 0;
+let omittedLiveness = 0;
+let sequence = 0;
+let goStarted;
+const elapsedSinceGo = () => goStarted === undefined ? null : Math.round(performance.now() - goStarted);
+const nativeKill = process.kill;
+process.kill = function(pid, signal) {
+  if (signal !== 0 || !Number.isSafeInteger(pid) || pid <= 0) return Reflect.apply(nativeKill, this, arguments);
+  const sample = { sequence: ++sequence, targetPid: pid, matchesStalePid: pid === stalePid, atGoMs: elapsedSinceGo() };
+  try {
+    const result = Reflect.apply(nativeKill, this, arguments);
+    if (liveness.length < 32) liveness.push({ ...sample, outcome: "success" }); else omittedLiveness++;
+    return result;
+  } catch (error) {
+    const outcome = error?.code === "ESRCH" ? "ESRCH" : error?.code === "EPERM" ? "EPERM" : "other";
+    if (liveness.length < 32) liveness.push({ ...sample, outcome }); else omittedLiveness++;
+    throw error;
+  }
+};
 const nativeExecFile = childProcess.execFile;
 childProcess.execFile = function(file, args, options, callback) {
   if (arguments.length !== 4 || !Array.isArray(args) || !options || typeof callback !== "function") return Reflect.apply(nativeExecFile, this, arguments);
@@ -698,6 +719,8 @@ childProcess.execFile = function(file, args, options, callback) {
   const target = Number(args[0] === "-p" ? args[1] : windowsPid);
   if (!Number.isSafeInteger(target) || target <= 0) return Reflect.apply(nativeExecFile, this, arguments);
   const role = target === process.pid ? "self" : "other";
+  const startSequence = ++sequence;
+  const startedAtGoMs = elapsedSinceGo();
   const started = performance.now();
   return nativeExecFile.call(this, file, args, options, function(...values) {
     const error = values[0];
@@ -705,6 +728,12 @@ childProcess.execFile = function(file, args, options, callback) {
     const signal = error?.signal;
     const sample = {
       role,
+      targetPid: target,
+      matchesStalePid: target === stalePid,
+      startSequence,
+      endSequence: ++sequence,
+      startedAtGoMs,
+      endedAtGoMs: elapsedSinceGo(),
       elapsedMs: Math.round(performance.now() - started),
       timeoutMs: Number.isFinite(options.timeout) ? options.timeout : null,
       success: error === null || error === undefined,
@@ -718,7 +747,6 @@ childProcess.execFile = function(file, args, options, callback) {
   });
 };
 syncBuiltinESMExports();
-let goStarted;
 let goToCriticalMs = null;
 try {
   // Observe only this child's real identity outside the measured contention window. No lock warmup.
@@ -747,8 +775,9 @@ try {
   }
 } finally {
   childProcess.execFile = nativeExecFile;
+  process.kill = nativeKill;
   syncBuiltinESMExports();
-  process.stderr.write(JSON.stringify({ event: "identity-timing", probes, omitted, goToCriticalMs }) + "\\n");
+  process.stderr.write(JSON.stringify({ event: "identity-timing", probes, omitted, liveness, omittedLiveness, goToCriticalMs }) + "\\n");
 }`;
 	const contenders = Array.from({ length: 4 }, () => {
 		const child = spawn(process.execPath, ["--input-type=module", "--eval", contenderScript], {
@@ -765,7 +794,11 @@ try {
 	});
 	const diagnostics = (journal: string): string =>
 		JSON.stringify({
-			contenders: contenders.map((contender) => ({
+			stalePid,
+			stalePidReusedByContender: contenders.some((contender) => contender.child.pid === stalePid),
+			// Peer ordinals identify spawn order, not ticket/claim precedence.
+			contenders: contenders.map((contender, index) => ({
+				peerOrdinal: index + 1,
 				pid: contender.child.pid,
 				code: contender.child.exitCode,
 				signal: contender.child.signalCode,
@@ -798,6 +831,7 @@ try {
 			diagnostics(journal),
 		);
 		assertSerializedJournal(journal, pids);
+		t.diagnostic(diagnostics(journal));
 	} catch (error) {
 		await Promise.all(
 			contenders.map(async (contender) => {
