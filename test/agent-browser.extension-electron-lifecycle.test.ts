@@ -8,7 +8,9 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, stat, watch, writeFile } from "node:fs/promises";
+import { once } from "node:events";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1670,12 +1672,17 @@ test(
 	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-probe-timeout-"));
 		const logPath = join(tempDir, "agent-browser.log");
-		const readyPath = join(tempDir, "url-ready");
-		const releasePath = join(tempDir, "release-url");
-		const basePath = process.env.PATH ?? "";
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`const fs = require("node:fs");
+		const server = createServer();
+		try {
+			server.listen(0, "127.0.0.1");
+			await once(server, "listening");
+			const address = server.address();
+			assert.ok(address !== null && typeof address === "object");
+			const controlUrl = `http://127.0.0.1:${address.port}/ready/`;
+			const basePath = process.env.PATH ?? "";
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
 const args = process.argv.slice(2);
 const valueFlags = new Set(["--session"]);
 let commandIndex = -1;
@@ -1698,16 +1705,20 @@ if (command === "open") {
 	return;
 }
 if (args.includes("get") && args.includes("url")) {
-	fs.writeFileSync(${JSON.stringify(`${readyPath}.tmp`)}, String(process.pid));
-	fs.renameSync(${JSON.stringify(`${readyPath}.tmp`)}, ${JSON.stringify(readyPath)});
-	while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-	process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
+	require("node:http").get(${JSON.stringify(controlUrl)} + process.pid, { agent: false }, (response) => {
+		let control = "";
+		response.setEncoding("utf8");
+		response.on("data", (chunk) => { control += chunk; });
+		response.on("end", () => {
+			if (control !== "release") throw new Error("Unexpected probe control response");
+			process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));
+		});
+	});
 	return;
 }
 process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } }));`,
-		);
+			);
 
-		try {
 			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
 				const harness = createExtensionHarness({ cwd: tempDir });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
@@ -1737,18 +1748,26 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 				const realSetTimeout = setTimeout;
 				const realClearTimeout = clearTimeout;
 				const controlledProbe = async (timeoutMs: number, expire: boolean) => {
-					await rm(readyPath, { force: true });
-					await rm(releasePath, { force: true });
 					const controller = new AbortController();
-					const ready = (async () => {
-						for await (const event of watch(tempDir, {
-							signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
-						})) {
-							if (event.filename === "url-ready") {
-								return;
-							}
+					let controlResponse: ServerResponse | undefined;
+					const readySignal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+					const ready = Promise.withResolvers<number>();
+					const onReadyAbort = () => ready.reject(readySignal.reason);
+					const onRequest = (request: IncomingMessage, response: ServerResponse) => {
+						controlResponse = response;
+						const match = /^\/ready\/([1-9]\d*)$/.exec(request.url ?? "");
+						if (request.method !== "GET" || !match) {
+							ready.reject(
+								new Error(
+									`Unexpected probe control request: ${request.method ?? "<unset>"} ${request.url ?? "<unset>"}`,
+								),
+							);
+							return;
 						}
-					})();
+						ready.resolve(Number(match[1]));
+					};
+					readySignal.addEventListener("abort", onReadyAbort, { once: true });
+					server.once("request", onRequest);
 					t.mock.timers.enable({ apis: ["setTimeout"] });
 					const pending = executeRegisteredTool(
 						harness.tool,
@@ -1758,21 +1777,22 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 					);
 					let guard: NodeJS.Timeout | undefined;
 					try {
-						await Promise.race([
-							ready,
+						// Readiness and release share the real child's still-open loopback request.
+						const pid = await Promise.race([
+							ready.promise,
 							pending.then((result) => {
 								throw new Error(
 									`Probe settled before get url dispatched: ${JSON.stringify(result)}`,
 								);
 							}),
 						]);
-						const pid = Number(await readFile(readyPath, "utf8"));
+						assert.ok(controlResponse, "get url must hold its native control response");
 						assert.ok(Number.isInteger(pid) && pid > 0, "get url must publish its native PID");
 						assert.doesNotThrow(() => process.kill(pid, 0), "get url is live before the watchdog");
 						if (expire) {
 							t.mock.timers.tick(timeoutMs);
 						} else {
-							await writeFile(releasePath, "go");
+							controlResponse.end("release");
 						}
 						const result = await Promise.race([
 							pending,
@@ -1795,8 +1815,12 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 						if (guard) {
 							realClearTimeout(guard);
 						}
-						await writeFile(releasePath, "go");
-						await Promise.allSettled([pending, ready]);
+						if (controlResponse && !controlResponse.writableEnded) {
+							controlResponse.end("release");
+						}
+						server.off("request", onRequest);
+						readySignal.removeEventListener("abort", onReadyAbort);
+						await Promise.allSettled([pending, ready.promise]);
 					}
 				};
 				// Start the native child before advancing its unchanged caller watchdog.
@@ -1834,6 +1858,11 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "late" } })
 				assert.equal(readRecord(controlElectron.probe).url, "late");
 			});
 		} finally {
+			const closed = new Promise<void>((resolve) => {
+				server.close(() => resolve());
+			});
+			server.closeAllConnections();
+			await closed;
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
