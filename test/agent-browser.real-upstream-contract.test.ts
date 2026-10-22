@@ -16,6 +16,7 @@ import {
 	hasErrorCode,
 } from "./helpers/assertions.js";
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -1066,12 +1067,20 @@ async function closeManagedSessionIfPresent(options: {
 	readonly cwd: string;
 	readonly sessionName?: string;
 	readonly socketDir?: string;
+	readonly namespace?: string;
 }): Promise<void> {
 	if (options.sessionName === undefined || options.sessionName.length === 0) {
 		return;
 	}
 	await runAgentBrowserProcess({
-		args: ["--json", "--namespace", "", "--session", options.sessionName, "close"],
+		args: [
+			"--json",
+			"--namespace",
+			options.namespace ?? "",
+			"--session",
+			options.sessionName,
+			"close",
+		],
 		cwd: options.cwd,
 		env: {
 			AGENT_BROWSER_SOCKET_DIR:
@@ -2721,8 +2730,11 @@ test(
 	{ skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, timeout: 60_000 },
 	async () => {
 		await assertInstalledAgentBrowserVersion();
-		const dir = await mkdtemp(join(tmpdir(), "piab-auth-"));
+		// The cwd basename contributes to the managed name; leave room for the native namespace/socket suffix.
+		const dir = await mkdtemp(join(tmpdir(), "a-"));
 		const socketDir = createShortPrivateSocketDir(dir);
+		// Native Windows pipes are namespace/session-scoped, not socket-directory-scoped.
+		const namespace = randomBytes(5).toString("hex");
 		const fixture = await startAgentBrowserContractFixtureServer();
 		let managedSessionName: string | undefined;
 		try {
@@ -2737,7 +2749,7 @@ test(
 					AGENT_BROWSER_ENCRYPTION_KEY: undefined,
 					AGENT_BROWSER_SESSION: undefined,
 					AGENT_BROWSER_SESSION_NAME: undefined,
-					AGENT_BROWSER_NAMESPACE: undefined,
+					AGENT_BROWSER_NAMESPACE: namespace,
 					AGENT_BROWSER_PROFILE: undefined,
 					AGENT_BROWSER_RESTORE: undefined,
 					AGENT_BROWSER_CDP: undefined,
@@ -2754,11 +2766,13 @@ test(
 					};
 					const url = `${fixture.baseUrl}/contract`;
 					const opened = await executeRegisteredTool(h.tool, h.ctx, {
-						args: ["open", url],
+						args: ["--namespace", namespace, "open", url],
 						sessionMode: "fresh",
 					});
-					managedSessionName = readString(readRecord(opened.details).sessionName);
+					const attemptedSession = opened.details?.sessionName;
+					managedSessionName = typeof attemptedSession === "string" ? attemptedSession : undefined;
 					assert.equal(opened.isError, false, resultText(opened));
+					assert.ok(managedSessionName !== undefined, "fresh open returned a managed identity");
 					assert.ok(managedSessionName.startsWith("piab-"));
 
 					const saved = await call(
@@ -2812,9 +2826,24 @@ test(
 				},
 			);
 		} finally {
-			await closeManagedSessionIfPresent({ cwd: dir, sessionName: managedSessionName, socketDir });
-			await closeManagedSessionIfPresent({ cwd: dir, sessionName: "auth-other", socketDir });
-			await closeManagedSessionIfPresent({ cwd: dir, sessionName: "default", socketDir });
+			await closeManagedSessionIfPresent({
+				cwd: dir,
+				sessionName: managedSessionName,
+				socketDir,
+				namespace,
+			});
+			await closeManagedSessionIfPresent({
+				cwd: dir,
+				sessionName: "auth-other",
+				socketDir,
+				namespace,
+			});
+			await closeManagedSessionIfPresent({
+				cwd: dir,
+				sessionName: "default",
+				socketDir,
+				namespace,
+			});
 			await fixture.close();
 			await rm(socketDir, { recursive: true, force: true });
 			await rm(dir, { recursive: true, force: true });
