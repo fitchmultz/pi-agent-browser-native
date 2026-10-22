@@ -28,17 +28,17 @@ function printHelp() {
 	console.log(`Usage: node scripts/platform-smoke.mjs <command> [options]
 
 Commands:
-  doctor                     Validate Crabbox and platform prerequisites
-  run --target <names>       Run one or more comma-separated targets concurrently
-  run --suite <name>         Run one suite on all or specified targets
+  doctor [--target <names>]  Validate prerequisites for selected targets (required by default)
+  run [--target <names>]    Run required or explicitly selected targets concurrently
+  run --suite <name>         Run one suite on required or specified targets
 
 Package scripts:
   check:platform-smoke       Syntax-check harness scripts and run cheap harness invariant tests
   smoke:platform:ubuntu-image Build the local Ubuntu image used by default
-  smoke:platform:all         Runs doctor first, then the full macOS/Ubuntu/Windows matrix
+  smoke:platform:all         Runs doctor first, then required macOS/Ubuntu targets (not optional Windows)
 
 Targets:
-  macos, ubuntu, windows-native
+  macos, ubuntu (required); windows-native (explicit best-effort)
 
 Suites:
   platform-build             npm ci, npm run verify -- platform-target, npm pack, packed pi install --approve, pi list --approve
@@ -109,16 +109,24 @@ function validateNames(kind, names, allowed) {
 	}
 }
 
-async function runTargets(args) {
-	const { runTargetSuites } = await import("./platform-smoke/targets.mjs");
+function selectedTargets(args) {
 	const targets = args.target
 		? args.target
 				.split(",")
 				.map((name) => name.trim())
 				.filter(Boolean)
 		: config.requiredTargets;
+	validateNames("target", targets, [...config.requiredTargets, ...(config.optionalTargets ?? [])]);
+	if (targets.length === 0) {
+		throw new Error("Select at least one target");
+	}
+	return targets;
+}
+
+async function runTargets(args) {
+	const { runTargetSuites } = await import("./platform-smoke/targets.mjs");
+	const targets = selectedTargets(args);
 	const suites = args.suite ? [args.suite] : config.requiredSuites;
-	validateNames("target", targets, config.requiredTargets);
 	validateNames("suite", suites, config.requiredSuites);
 	const results = await Promise.all(
 		targets.map(async (targetName) => {
@@ -151,7 +159,7 @@ export async function main(argv = process.argv.slice(2)) {
 
 	if (args.command === "doctor") {
 		const { runDoctor } = await import("./platform-smoke/doctor.mjs");
-		await runDoctor(config);
+		await runDoctor({ ...config, requiredTargets: selectedTargets(args) });
 		return process.exitCode ?? 0;
 	}
 

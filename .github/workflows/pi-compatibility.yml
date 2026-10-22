@@ -13,6 +13,10 @@ on:
         description: Exact maintained fork commit; blank resolves main
         type: string
         default: ""
+      windows-qualification:
+        description: Best-effort full native Windows official/fork contracts and consumers (on demand only)
+        type: boolean
+        default: false
       native-qualification:
         description: Run this repository's pinned fleet entry instead of the routine package checks
         type: boolean
@@ -55,7 +59,7 @@ jobs:
     with:
       automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
       source-ref: ${{ github.sha }}
-      # Required Windows lanes below replace the shared owner-waived diagnostics.
+      # Windows is explicit best-effort below; shared platform diagnostics stay disabled.
       waived-platforms: false
       official-version: ${{ needs.resolve.outputs.official-version }}
       fork-ref: ${{ needs.resolve.outputs.fork-ref }}
@@ -269,10 +273,75 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  windows-smoke:
+    needs: resolve
+    if: ${{ !cancelled() && !inputs.windows-qualification }}
+    continue-on-error: true
+    name: Windows best-effort smoke / official / Node 24
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Require resolved latest host
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+        run: test "$RESOLVE" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: extension
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ env.PI_AUTOMATION_REF }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          package-manager-cache: false
+      - name: Use the package npm version
+        run: npm install --global "$(node -p 'require("./extension/package.json").packageManager')"
+      - name: Preserve native Windows module discovery for isolated PowerShell
+        shell: pwsh
+        run: '"PSModulePath=$env:PSModulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+      - name: Record smoke inputs (not full qualification)
+        env:
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+        run: |
+          test "$(git -C extension rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p evidence
+          printf 'Best-effort smoke inputs only; not a pass.\nsource=%s\nhost=official\nofficial=%s\nnode=%s\nnpm=%s\nautomation=%s\n' \
+            "$GITHUB_SHA" "$OFFICIAL_VERSION" "$(node --version)" "$(npm --version)" \
+            "$(git -C automation rev-parse HEAD)" > evidence/lane-inputs.txt
+      - name: Native build, compiled import and process transport
+        timeout-minutes: 10
+        working-directory: extension
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OFFICIAL_VERSION: ${{ needs.resolve.outputs.official-version }}
+          PI_COMPAT_EVIDENCE_DIR: ${{ github.workspace }}/evidence
+        run: |
+          set -euo pipefail
+          node scripts/ci-host-compat.mjs official windows-smoke "$GITHUB_WORKSPACE/automation" "$OFFICIAL_VERSION" \
+            2>&1 | tee "$GITHUB_WORKSPACE/evidence/windows-smoke.log"
+          git diff --exit-code
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: windows-best-effort-smoke
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
+
   windows:
     needs: [resolve, fork-package]
-    if: ${{ !cancelled() }}
-    name: Windows qualification / ${{ matrix.host }} / Node 24
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows-qualification }}
+    continue-on-error: true
+    name: Windows best-effort qualification / ${{ matrix.host }} / Node 24
     runs-on: windows-latest
     timeout-minutes: 70
     strategy:
