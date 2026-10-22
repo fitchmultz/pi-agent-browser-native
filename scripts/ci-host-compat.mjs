@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import crossSpawn from "cross-spawn";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -25,7 +24,7 @@ assert.ok(flavor !== "fork" || target, "Fork requires the built package director
 
 const source = process.cwd();
 const automation = resolve(automationPath);
-const { isolatedEnvironment, writeJson } = await import(
+const { isolatedEnvironment, run, writeJson } = await import(
 	pathToFileURL(join(automation, "scripts/common.mjs"))
 );
 const { prepareHost, selectDevelopmentHost } = await import(
@@ -42,10 +41,13 @@ let goRoot;
 let retainInstalledHost = false;
 
 function execute(command, args) {
+	// Bootstrap has no node_modules yet. Reuse the pinned helper's native npm .cmd transport.
+	if (process.platform === "win32" && command === "npm") {
+		run(command, args, { cwd: source, env, stdio: "inherit" });
+		return;
+	}
 	console.log(`$ ${command} ${args.join(" ")}`);
-	// Reuse maintained npm .cmd transport on Windows; POSIX qualification stays native spawnSync.
-	const spawn = process.platform === "win32" ? crossSpawn.sync : spawnSync;
-	const result = spawn(command, args, { cwd: source, env, stdio: "inherit" });
+	const result = spawnSync(command, args, { cwd: source, env, stdio: "inherit" });
 	if (result.error) {
 		throw result.error;
 	}

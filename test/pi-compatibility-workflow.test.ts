@@ -1,6 +1,9 @@
 /** Lock best-effort Windows selection without weakening strict hosts or retained failure evidence. */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { readString } from "./helpers/assertions.js";
@@ -191,4 +194,22 @@ test("policy extraction controls reject broad matching, missing bounds, incomple
 			),
 		),
 	);
+});
+
+// Actual CI starts this entrypoint before npm ci; installed-worktree checks cannot catch eager dependencies.
+// Exercise the existing CLI boundary in a dependency-free directory, without an SDK stand-in or new seam.
+test("CI host helper can bootstrap its CLI before dependencies are installed", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "ci-host-bootstrap-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const entry = join(root, "ci-host-compat.mjs");
+	copyFileSync(new URL("../scripts/ci-host-compat.mjs", import.meta.url), entry);
+	const result = spawnSync(process.execPath, [entry, "--help"], {
+		cwd: root,
+		encoding: "utf8",
+		timeout: 10_000,
+	});
+	assert.ifError(result.error);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.signal, null);
+	assert.match(result.stdout, /full\|smoke\|windows-smoke\|install/);
 });
