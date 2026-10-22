@@ -886,6 +886,14 @@ Long-running or lifecycle commands should be explicitly paired with cleanup call
 
 ### Batch, auth, confirmations, sessions, chat, dashboard, devices, and setup
 
+Auth profiles are shared in upstream's HOME-level `~/.agent-browser/auth` store:
+`auth save`, `list`, `show`, `delete`, and `remove` do not select a browser, and
+`--session` does not create a separate credential store. Saving a profile alone
+does not log in. `auth login <name>` applies a shared profile to the selected
+browser, preserving an unqualified call's active automatic root or managed session.
+Use distinct auth-profile names for separate accounts; use sessions, persistent
+browser profiles, or `state save/load` to separate cookies and storage.
+
 | Command                                            | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `batch [--bail] ["cmd" ...]`                       | Execute multiple commands sequentially from args or stdin.                                                                                                                                                                                                                                                                                                                                                                                        |

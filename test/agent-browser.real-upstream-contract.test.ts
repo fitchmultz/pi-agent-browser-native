@@ -2717,6 +2717,112 @@ test(
 );
 
 test(
+	"real upstream auth profiles are global while login uses the active managed browser",
+	{ skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, timeout: 60_000 },
+	async () => {
+		await assertInstalledAgentBrowserVersion();
+		const dir = await mkdtemp(join(tmpdir(), "piab-auth-"));
+		const socketDir = createShortPrivateSocketDir(dir);
+		const fixture = await startAgentBrowserContractFixtureServer();
+		let managedSessionName: string | undefined;
+		try {
+			await withPatchedEnv(
+				{
+					HOME: dir,
+					USERPROFILE: dir,
+					PI_CODING_AGENT_DIR: join(dir, "pi"),
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+					AGENT_BROWSER_SOCKET_DIR: socketDir,
+					AGENT_BROWSER_CONFIG: undefined,
+					AGENT_BROWSER_ENCRYPTION_KEY: undefined,
+					AGENT_BROWSER_SESSION: undefined,
+					AGENT_BROWSER_SESSION_NAME: undefined,
+					AGENT_BROWSER_NAMESPACE: undefined,
+					AGENT_BROWSER_PROFILE: undefined,
+					AGENT_BROWSER_RESTORE: undefined,
+					AGENT_BROWSER_CDP: undefined,
+					AGENT_BROWSER_AUTO_CONNECT: undefined,
+					AGENT_BROWSER_PROVIDER: undefined,
+				},
+				async () => {
+					const h = createExtensionHarness({ cwd: dir, sessionFile: null });
+					await runExtensionEvent(h.handlers, "session_start", { reason: "new" }, h.ctx);
+					const call = async (args: readonly string[], stdin?: string) => {
+						const result = await executeRegisteredTool(h.tool, h.ctx, { args, stdin });
+						assert.equal(result.isError, false, `${args.join(" ")}: ${resultText(result)}`);
+						return result;
+					};
+					const url = `${fixture.baseUrl}/contract`;
+					const opened = await executeRegisteredTool(h.tool, h.ctx, {
+						args: ["open", url],
+						sessionMode: "fresh",
+					});
+					managedSessionName = readString(readRecord(opened.details).sessionName);
+					assert.equal(opened.isError, false, resultText(opened));
+					assert.ok(managedSessionName.startsWith("piab-"));
+
+					const saved = await call(
+						[
+							"auth",
+							"save",
+							"fixture",
+							"--url",
+							url,
+							"--username",
+							"fixture-user",
+							"--username-selector",
+							"#name-input",
+							"--password-selector",
+							"#notes-input",
+							"--submit-selector",
+							"#mark-ready",
+							"--password-stdin",
+						],
+						"fixture-only\n",
+					);
+					assert.equal(readArray(saved.details?.effectiveArgs).includes("--session"), false);
+					const listed = await call(["auth", "list"]);
+					assert.deepEqual(listed.details?.effectiveArgs, ["--json", "auth", "list"]);
+					assert.deepEqual(
+						readArray(getResultValue(readRecord(listed.details), ["profiles"])).map(
+							(profile) => readRecord(profile).name,
+						),
+						["fixture"],
+					);
+					const shown = await call(["--session", "auth-other", "auth", "show", "fixture"]);
+					assert.equal(
+						readRecord(getResultValue(readRecord(shown.details), ["profile"])).username,
+						"fixture-user",
+					);
+
+					const login = await call(["auth", "login", "fixture"]);
+					assert.equal(login.details?.usedImplicitSession, true);
+					assert.equal(login.details.sessionName, managedSessionName);
+					const applied = await call(
+						["eval", "--stdin"],
+						"document.querySelector('#name-input').value === 'fixture-user' && " +
+							"document.querySelector('#notes-input').value === 'fixture-only' && " +
+							"document.body.dataset.clicked === 'yes'",
+					);
+					assert.equal(getResultValue(readRecord(applied.details), ["result"]), true);
+					const removed = await call(["auth", "remove", "fixture"]);
+					assert.deepEqual(removed.details?.effectiveArgs, ["--json", "auth", "remove", "fixture"]);
+					const empty = await call(["--session", "auth-other", "auth", "list"]);
+					assert.deepEqual(getResultValue(readRecord(empty.details), ["profiles"]), []);
+				},
+			);
+		} finally {
+			await closeManagedSessionIfPresent({ cwd: dir, sessionName: managedSessionName, socketDir });
+			await closeManagedSessionIfPresent({ cwd: dir, sessionName: "auth-other", socketDir });
+			await closeManagedSessionIfPresent({ cwd: dir, sessionName: "default", socketDir });
+			await fixture.close();
+			await rm(socketDir, { recursive: true, force: true });
+			await rm(dir, { recursive: true, force: true });
+		}
+	},
+);
+
+test(
 	"real upstream agent-browser contract suite matches wrapper and browser-session expectations",
 	{
 		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
