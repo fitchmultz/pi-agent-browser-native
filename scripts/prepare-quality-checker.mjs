@@ -148,9 +148,11 @@ async function build(directory, fingerprint, patch, lifecycle) {
 	if ((await run("git", ["rev-parse", "HEAD"], source, lifecycle)) !== revision) {
 		throw new Error("Quality checker source revision mismatch.");
 	}
+	// Git for Windows must materialize the pinned compiler's >260-character paths.
+	// Command configuration also reaches the nested checkout; no user config is changed.
 	await run(
 		"git",
-		["submodule", "update", "--init", "--depth", "1", "typescript-go"],
+		["-c", "core.longpaths=true", "submodule", "update", "--init", "--depth", "1", "typescript-go"],
 		source,
 		lifecycle,
 	);
@@ -187,6 +189,9 @@ async function initializeCompiler(source, lifecycle) {
 	await run(
 		"git",
 		[
+			// git am refreshes the compiler index, including its long test-data paths.
+			"-c",
+			"core.longpaths=true",
 			"-c",
 			"user.name=Quality checker build",
 			"-c",
