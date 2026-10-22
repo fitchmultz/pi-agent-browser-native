@@ -189,6 +189,9 @@ async function initializeCompiler(source, lifecycle) {
 	await run(
 		"git",
 		[
+			// git am refreshes the compiler index, including its long test-data paths.
+			"-c",
+			"core.longpaths=true",
 			"-c",
 			"user.name=Quality checker build",
 			"-c",

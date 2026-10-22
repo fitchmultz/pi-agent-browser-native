@@ -140,9 +140,10 @@ submodule `2bd066d87f5bafd315be9f40889d0a60b9e58e0b`, applies
 `patches/oxlint-tsgolint.patch`, and verifies the cached binary's fingerprint/hash.
 It selects Go **1.27.1**. A clean install needs Git, Go, and network access for this
 first build; no manual installed-package edits or install lifecycle hooks are needed.
-The compiler submodule update uses Git's command-scoped `core.longpaths=true` so
-Git for Windows can materialize the pinned compiler's long test-data paths in the
-nested checkout. This does not write repository, user, or system Git configuration;
+The compiler submodule update and patch application use Git's command-scoped
+`core.longpaths=true` so Git for Windows can materialize and inspect the pinned
+compiler's long test-data paths during checkout and `git am` index refresh. This
+setting is not persisted to repository, user, or system Git configuration;
 compiler revision checks, patch verification, and cache integrity remain unchanged.
 
 All semantic lint goes through `scripts/oxlint.mjs`, which forces the verified
