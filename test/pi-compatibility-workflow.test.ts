@@ -1,6 +1,9 @@
-/** Lock the blocking native-Windows qualification and its retained failure evidence. */
+/** Lock best-effort Windows selection without weakening strict hosts or retained failure evidence. */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { readString } from "./helpers/assertions.js";
@@ -24,14 +27,34 @@ test("checker patches retain canonical LF bytes in native Windows source checkou
 	assert.doesNotMatch(readFileSync("patches/oxlint-tsgolint.patch", "utf8"), /\r\n/);
 });
 
-test("Windows qualification blocks PR, release-call and manual compatibility runs for both hosts", () => {
+test("Windows is job-level best-effort: one routine smoke and explicit-only full qualification", () => {
 	assert.match(workflow, /pull_request:\n    branches: \[main\]/);
 	assert.match(workflow, /  workflow_call:/);
 	assert.match(workflow, /  workflow_dispatch:/);
-	assert.doesNotMatch(workflow, /continue-on-error:/);
+	assert.doesNotMatch(job("official"), /continue-on-error:/);
+	assert.doesNotMatch(job("fork"), /continue-on-error:/);
+	assert.doesNotMatch(job("macos"), /continue-on-error:/);
+	assert.doesNotMatch(job("native-qualification"), /continue-on-error:/);
+	const smoke = job("windows-smoke");
+	assert.match(smoke, /\n    continue-on-error: true\n/);
+	assert.doesNotMatch(smoke, /\n        continue-on-error:/);
+	assert.match(smoke, /needs: resolve/);
+	assert.match(smoke, /!inputs.windows-qualification/);
+	assert.match(smoke, /timeout-minutes: 15/);
+	assert.match(smoke, /ci-host-compat.mjs official windows-smoke/);
+	assert.doesNotMatch(smoke, /setup-go|scripts\/qualify.mjs|matrix:|check:compat/);
+	assert.match(smoke, /set -euo pipefail/);
+	assert.match(smoke, /if: always\(\)[\s\S]*name: windows-best-effort-smoke/);
+	assert.match(workflow, /windows-qualification:[\s\S]*?type: boolean\n        default: false/);
+	const callInputs = readString(
+		readString(workflow.split("  workflow_call:")[1]).split("\npermissions:")[0],
+	);
+	assert.doesNotMatch(callInputs, /windows-qualification/);
 	const windows = job("windows");
 	assert.match(windows, /needs: \[resolve, fork-package\]/);
-	assert.match(windows, /if: \$\{\{ !cancelled\(\) \}\}/);
+	assert.match(windows, /github.event_name == 'workflow_dispatch' && inputs.windows-qualification/);
+	assert.match(windows, /\n    continue-on-error: true\n/);
+	assert.doesNotMatch(windows, /\n        continue-on-error:/);
 	assert.doesNotMatch(windows, /!inputs.native-qualification/);
 	assert.match(windows, /runs-on: windows-latest/);
 	assert.match(windows, /fail-fast: false/);
@@ -171,4 +194,22 @@ test("policy extraction controls reject broad matching, missing bounds, incomple
 			),
 		),
 	);
+});
+
+// Actual CI starts this entrypoint before npm ci; installed-worktree checks cannot catch eager dependencies.
+// Exercise the existing CLI boundary in a dependency-free directory, without an SDK stand-in or new seam.
+test("CI host helper can bootstrap its CLI before dependencies are installed", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "ci-host-bootstrap-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const entry = join(root, "ci-host-compat.mjs");
+	copyFileSync(new URL("../scripts/ci-host-compat.mjs", import.meta.url), entry);
+	const result = spawnSync(process.execPath, [entry, "--help"], {
+		cwd: root,
+		encoding: "utf8",
+		timeout: 10_000,
+	});
+	assert.ifError(result.error);
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(result.signal, null);
+	assert.match(result.stdout, /full\|smoke\|windows-smoke\|install/);
 });

@@ -51,13 +51,19 @@ function crabboxProviders(cbox) {
 		.filter(Boolean);
 }
 
-function checkRequiredProviders(cbox, report) {
+function checkRequiredProviders(cbox, config, report) {
 	const providers = crabboxProviders(cbox);
 	if (providers.length === 0) {
 		report.fail("could not read crabbox providers");
 		return;
 	}
-	for (const provider of ["ssh", "local-container", "parallels"]) {
+	const providersByTarget = {
+		macos: "ssh",
+		ubuntu: "local-container",
+		"windows-native": "parallels",
+	};
+	for (const target of config.requiredTargets) {
+		const provider = providersByTarget[target];
 		if (providers.includes(provider)) {
 			report.ok(`crabbox provider available: ${provider}`);
 		} else {
@@ -163,13 +169,18 @@ function macSettings(config, packageName) {
 }
 
 function checkProviders(cbox, config, settings, report) {
-	checkRequiredProviders(cbox, report);
-	checkCrabboxProvider(
-		cbox,
-		["--provider", "local-container", "--local-container-image", settings.ubuntuImage],
-		"ubuntu local-container",
-		report,
-	);
+	checkRequiredProviders(cbox, config, report);
+	if (config.requiredTargets.includes("ubuntu")) {
+		checkCrabboxProvider(
+			cbox,
+			["--provider", "local-container", "--local-container-image", settings.ubuntuImage],
+			"ubuntu local-container",
+			report,
+		);
+	}
+	if (!config.requiredTargets.includes("macos")) {
+		return;
+	}
 	const mac = macSettings(config, settings.packageName);
 	checkCrabboxProvider(
 		cbox,
@@ -251,8 +262,12 @@ export async function runDoctor(config) {
 	if (cboxPath) {
 		checkProviders(cbox, config, { packageName, ubuntuImage }, report);
 	}
-	checkDocker(ubuntuImage, report);
-	checkMacSsh(config, packageName, report);
+	if (config.requiredTargets.includes("ubuntu")) {
+		checkDocker(ubuntuImage, report);
+	}
+	if (config.requiredTargets.includes("macos")) {
+		checkMacSsh(config, packageName, report);
+	}
 	checkWindows({
 		cbox,
 		config,
