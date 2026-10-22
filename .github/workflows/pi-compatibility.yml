@@ -202,8 +202,8 @@ jobs:
             const baseline = git(source, ['show', `${base}:${target}`]);
             const observed = git(control, ['show', `HEAD:${target}`]);
             assert.equal(digest(baseline), '85f1769ed1b3c2afc30cfeff8bacb65c3bada1c4dd1d97ebe07fb2721385d5a1');
-            assert.equal(digest(observed), '8f2a406f6f5991ff47af72cdc392d3393bdde97d07950954ea3638ed647f04a5');
-            assert.equal(git(control, ['rev-parse', `HEAD:${target}`]).toString().trim(), 'afa7db197561fe918205a5ae7ee0712cdd1caaaf');
+            assert.equal(digest(observed), '00381d7792c5239739694aeadcfa015435133872c078eb44b0ecb217e7eb4d5e');
+            assert.equal(git(control, ['rev-parse', `HEAD:${target}`]).toString().trim(), 'a5564fdd9556e10374f9dc48794864beec9c04ee');
             writeFileSync(join(evidence, 'observation.diff'), git(control, ['diff', base, 'HEAD', '--', target]));
             const tracks = git(source, ['ls-files', '-z']).toString().split('\0').filter(Boolean);
             const snapshot = paths => Object.fromEntries(paths.map(path => [path, hash(join(source, path))]));
@@ -305,7 +305,7 @@ jobs:
             for (const key of ['runtimeGraphSha256','runtimeLockSha256','indexSha256','cliSha256']) assert.equal(finalHost[key], selected[key]);
             const lines = readFileSync(join(evidence, 'test.stdout.tap'), 'utf8').split(/\r?\n/);
             assert.ok(lines.includes('# tests 1'), 'Expected exactly one selected test');
-            const records = lines.filter(line => line.startsWith('# {"stalePid":')).map(line => JSON.parse(line.slice(2)));
+            const records = lines.filter(line => line.startsWith('# {"stalePid":')).map(line => JSON.parse(line.slice(2).replace(/\\([\\#])/g, "$1")));
             assert.equal(records.length, 1, 'Missing/ambiguous target diagnostic record');
             const diagnostic = records[0];
             assert.equal(diagnostic.contenders.length, 4);

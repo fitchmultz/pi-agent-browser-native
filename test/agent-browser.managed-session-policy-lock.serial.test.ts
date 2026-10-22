@@ -669,7 +669,76 @@ test("competing cross-process reclaimers stay serialized after a stale claim", a
 		"../dist/extensions/agent-browser/lib/process-identity.js",
 		import.meta.url,
 	).href;
-	const staleScript = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
+	const staleScript = `
+import childProcess from "node:child_process";
+import { writeSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)};
+const probes = [];
+let calls = 0, callbacks = 0, unmatched = 0, omitted = 0, observationErrors = 0;
+const nativeExecFile = childProcess.execFile;
+childProcess.execFile = function(file, args, options, callback) {
+  if (arguments.length !== 4 || !Array.isArray(args) || !options || typeof callback !== "function") {
+    unmatched++;
+    return Reflect.apply(nativeExecFile, this, arguments);
+  }
+  const command = args.at(-1);
+  const windowsPid = typeof command === "string" ? command.match(/(?:Get-Process -Id |GetProcessById\\()(\\d+)/)?.[1] : undefined;
+  const target = Number(args[0] === "-p" ? args[1] : windowsPid);
+  if (!Number.isSafeInteger(target) || target <= 0) {
+    unmatched++;
+    return Reflect.apply(nativeExecFile, this, arguments);
+  }
+  const timeoutMs = Number.isFinite(options.timeout) ? options.timeout : null;
+  const started = performance.now();
+  calls++;
+  return nativeExecFile.call(this, file, args, options, function(...values) {
+    const elapsedMs = Math.round(performance.now() - started);
+    try {
+      return Reflect.apply(callback, this, values);
+    } finally {
+      callbacks++;
+      try {
+        const error = values[0];
+        const code = error?.code;
+        const killed = error?.killed;
+        const signal = error?.signal;
+        const safeCode = typeof code === "string" && /^(?:E[A-Z0-9]{1,24}|ABORT_ERR|ERR_[A-Z_]{1,48})$/.test(code) ? code : Number.isSafeInteger(code) ? code : null;
+        const safeKilled = typeof killed === "boolean" ? killed : null;
+        const safeSignal = typeof signal === "string" && /^SIG[A-Z0-9]{1,12}$/.test(signal) ? signal : null;
+        if ((code !== undefined && code !== null && safeCode === null) ||
+            (killed !== undefined && killed !== null && safeKilled === null) ||
+            (signal !== undefined && signal !== null && safeSignal === null)) observationErrors++;
+        const sample = { targetPid: target, role: target === process.pid ? "self" : "other",
+          timeoutMs, elapsedMs, success: error === null || error === undefined,
+          code: safeCode, killed: safeKilled, signal: safeSignal };
+        if (probes.length < 16) probes.push(sample); else omitted++;
+      } catch {
+        observationErrors++;
+      }
+    }
+  });
+};
+syncBuiltinESMExports();
+let lock;
+try {
+  lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} });
+} finally {
+  try {
+    childProcess.execFile = nativeExecFile;
+    syncBuiltinESMExports();
+  } catch {
+    observationErrors++;
+  }
+  try {
+    // Only the existing stderr FD; no file/claim access. Sync errors cannot mask acquisition.
+    writeSync(2, JSON.stringify({ event: "bootstrap-identity-timing", calls, callbacks, unmatched,
+      probes, omitted, observationErrors }) + "\\n");
+  } catch {
+    // A missing/truncated tape is inconclusive; preserve the original outcome or thrown Error.
+  }
+}
+if (!lock) process.exit(2);`;
 	const stale: ChildProcess = spawn(
 		process.execPath,
 		["--input-type=module", "--eval", staleScript],
