@@ -202,8 +202,8 @@ jobs:
             const baseline = git(source, ['show', `${base}:${target}`]);
             const observed = git(control, ['show', `HEAD:${target}`]);
             assert.equal(digest(baseline), '85f1769ed1b3c2afc30cfeff8bacb65c3bada1c4dd1d97ebe07fb2721385d5a1');
-            assert.equal(digest(observed), 'c42f4faefa668b44c1c9038eec8519cff8d14a64d196e624f87ece9e196838d9');
-            assert.equal(git(control, ['rev-parse', `HEAD:${target}`]).toString().trim(), '277894bb3bfa10dd18a65650d781a0e98ef4fb6b');
+            assert.equal(digest(observed), '8f2a406f6f5991ff47af72cdc392d3393bdde97d07950954ea3638ed647f04a5');
+            assert.equal(git(control, ['rev-parse', `HEAD:${target}`]).toString().trim(), 'afa7db197561fe918205a5ae7ee0712cdd1caaaf');
             writeFileSync(join(evidence, 'observation.diff'), git(control, ['diff', base, 'HEAD', '--', target]));
             const tracks = git(source, ['ls-files', '-z']).toString().split('\0').filter(Boolean);
             const snapshot = paths => Object.fromEntries(paths.map(path => [path, hash(join(source, path))]));

@@ -12,7 +12,7 @@ import {
 	readArray,
 	hasErrorCode,
 } from "./helpers/assertions.js";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs, { chmod, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
@@ -670,10 +670,50 @@ test("competing cross-process reclaimers stay serialized after a stale claim", a
 		import.meta.url,
 	).href;
 	const staleScript = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
-	const stale = spawn(process.execPath, ["--input-type=module", "--eval", staleScript], {
-		stdio: "ignore",
+	const stale: ChildProcess = spawn(
+		process.execPath,
+		["--input-type=module", "--eval", staleScript],
+		{
+			env: {
+				...process.env,
+				NODE_DEBUG: [process.env.NODE_DEBUG, "pi-agent-browser-policy"].filter(Boolean).join(","),
+			},
+			stdio: ["ignore", "ignore", "pipe"],
+		},
+	);
+	let staleStderr = "";
+	let staleSpawnError: Error | undefined;
+	let staleStderrError: Error | undefined;
+	const staleClosed = new Promise<readonly [number | null, NodeJS.Signals | null]>((resolve) => {
+		stale.once("error", (error: Error) => {
+			staleSpawnError = error;
+		});
+		stale.once("close", (code, signal) => resolve([code, signal]));
 	});
-	const [staleCode] = readArray(await once(stale, "exit"));
+	stale.stderr?.setEncoding("utf8");
+	stale.stderr?.on("data", (chunk: string) => {
+		staleStderr += chunk;
+	});
+	stale.stderr?.on("error", (error: Error) => {
+		staleStderrError = error;
+	});
+	// Drain the only piped stream before reporting; spawn errors also reach native close.
+	const [staleCode, staleSignal] = readArray(await staleClosed);
+	t.diagnostic(
+		JSON.stringify({
+			event: "stale-bootstrap",
+			pid: stale.pid,
+			code: staleCode,
+			signal: staleSignal,
+			stderr: staleStderr,
+			stderrComplete: stale.stderr?.readableEnded === true && staleStderrError === undefined,
+			spawnError: staleSpawnError?.name ?? null,
+			stderrError: staleStderrError?.name ?? null,
+		}),
+	);
+	if (staleSpawnError !== undefined) {
+		throw staleSpawnError;
+	}
 	assert.equal(staleCode, 0);
 	const stalePid = readNumber(stale.pid);
 	const stalePath = await onlyClaimPath();
