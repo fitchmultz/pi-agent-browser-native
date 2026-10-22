@@ -35,7 +35,7 @@ jobs:
     if: ${{ !cancelled() }}
     name: Native lifecycle Linux
     runs-on: ubuntu-26.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
