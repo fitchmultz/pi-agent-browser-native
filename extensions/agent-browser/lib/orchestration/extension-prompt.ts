@@ -97,6 +97,7 @@ export function shouldIncludeProjectConfig(
 }
 /** Owns prompt caching and companion registration, never browser or artifact state. */
 export class BrowserPrompt {
+	private docsPaths: ReturnType<typeof getInstalledDocsPaths> | undefined;
 	private state: PromptState | undefined;
 	private webSearchToolRegistered = false;
 	constructor(private readonly pi: ExtensionAPI) {}
@@ -157,7 +158,7 @@ export class BrowserPrompt {
 				browserDefaultProfile: config.trustedBrowserDefaultProfile,
 				browserExecutablePath: config.trustedBrowserExecutablePath,
 				includeWebSearch: this.webSearchToolRegistered,
-				docs: getInstalledDocsPaths(),
+				docs: (this.docsPaths ??= getInstalledDocsPaths()),
 			}),
 			...(compact
 				? []
