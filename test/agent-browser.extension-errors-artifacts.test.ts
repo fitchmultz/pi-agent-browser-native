@@ -393,6 +393,46 @@ if (args.includes("url")) {
 );
 
 test(
+	"agentBrowserExtension lets a cold caller-owned launch keep its flags instead of probing first",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-cold-launch-"));
+		const logPath = join(tempDir, "invocations.log");
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const args = process.argv.slice(2);
+require("node:fs").appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: args.includes("url") ? { url: "https://safe.example/" } : { html: "SAFE" } }));`,
+		);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const read = (sessionName: string, flags: readonly string[]) =>
+					executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", sessionName, ...flags, "get", "html", "body"],
+					});
+				const order = async (sessionName: string) => {
+					const calls = (await readInvocationLog(logPath)).filter(
+						(entry) => entry.args.includes(sessionName) && !entry.args.includes("info"),
+					);
+					await writeFile(logPath, "");
+					return calls.map((entry) => (entry.args.includes("url") ? "url" : "html"));
+				};
+				assert.equal((await read("cold-flags", ["--ignore-https-errors"])).isError, false);
+				assert.deepEqual(await order("cold-flags"), ["html"], "cold launch carries caller flags");
+				assert.equal((await read("cold-flags", ["--ignore-https-errors"])).isError, false);
+				assert.deepEqual(await order("cold-flags"), ["url", "html"], "warm page stays verified");
+				assert.equal((await read("cold-plain", [])).isError, false);
+				assert.deepEqual(await order("cold-plain"), ["url", "html"], "flagless probe is unchanged");
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test(
 	"agentBrowserExtension serializes caller-owned live verification with same-session commands",
 	{ concurrency: false },
 	async () => {

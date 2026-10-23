@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Let a first page-dependent call on a caller-owned explicit session, such as `--session s1 --ignore-https-errors auth login <profile>`, start the browser with its own launch flags. When the call carries browser launch flags and native `session info` reports no running daemon, the page-target probe no longer cold-starts that browser without them; flagless calls and running browsers keep the probe (#294).
 - Read Windows process-start generations through a fresh .NET process lookup and invariant UTC ticks, retaining the existing versioned identity format, native executable, cancellation and probe budgets.
 - Avoid querying a browser execution predecessor's process identity after its immutable claim is confirmed gone, while retaining fresh generation checks for present or unresolved claims and rechecking presence after each query.
 - Retry Windows `EPERM` failures when publishing a browser execution claim only within the original acquisition budget, revalidating the same immutable owner and scope before every retry; cancellation, unknown ownership, and single-attempt probes still fail closed.

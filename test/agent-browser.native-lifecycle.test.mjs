@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -417,6 +418,86 @@ test(
 				assert.equal(reloaded.details.data.pid, status.data.pid);
 			} finally {
 				await ok({ args: ["--session", "default", "close"] });
+			}
+		});
+		await t.test("cold explicit-session auth login launches with caller flags", async () => {
+			const certDir = join(root, "https-fixture");
+			await mkdir(certDir);
+			const keyPath = join(certDir, "key.pem");
+			const certPath = join(certDir, "cert.pem");
+			const subject = ["-subj", "/CN=lifecycle-fixture"];
+			const san = ["-addext", "subjectAltName=IP:127.0.0.1"];
+			execFileSync("openssl", [
+				"req",
+				"-x509",
+				"-newkey",
+				"rsa:2048",
+				"-nodes",
+				"-days",
+				"1",
+				"-keyout",
+				keyPath,
+				"-out",
+				certPath,
+				...subject,
+				...san,
+			]);
+			const https = createHttpsServer(
+				{
+					key: await readFile(keyPath),
+					cert: await readFile(certPath),
+				},
+				(_req, res) => {
+					res.setHeader("content-type", "text/html");
+					res.end(
+						"<!doctype html><title>Login fixture</title><form onsubmit=\"event.preventDefault();document.body.dataset.login=document.querySelector('#user').value+':'+document.querySelector('#pass').value\"><input id=user><input id=pass type=password><button id=go>Sign in</button></form>",
+					);
+				},
+			);
+			await new Promise((done) => https.listen(0, "127.0.0.1", done));
+			const sessionName = `lifecycle-https-${sm.getSessionId()}`;
+			try {
+				await ok({
+					args: [
+						"auth",
+						"save",
+						"fixture",
+						"--url",
+						`https://127.0.0.1:${https.address().port}/`,
+						"--username",
+						"fixture-user",
+						"--username-selector",
+						"#user",
+						"--password-selector",
+						"#pass",
+						"--submit-selector",
+						"#go",
+						"--password-stdin",
+					],
+					stdin: "fixture-only\n",
+				});
+				// Reporter shape: the login is the first call, so it must start the browser itself.
+				await ok({
+					args: [
+						"--session",
+						sessionName,
+						"--ignore-https-errors",
+						"--args",
+						"--disable-gpu",
+						"auth",
+						"login",
+						"fixture",
+					],
+				});
+				const login = await ok({
+					args: ["--session", sessionName, "eval", "--stdin"],
+					stdin: "document.body.dataset.login",
+				});
+				assert.equal(login.details.data.result, "fixture-user:fixture-only");
+			} finally {
+				await ok({ args: ["--session", sessionName, "close"] });
+				await ok({ args: ["auth", "remove", "fixture"] });
+				await new Promise((done) => https.close(done));
 			}
 		});
 		await t.test("managed fresh browser keeps ordinary ownership and cleanup", async () => {

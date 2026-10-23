@@ -1,6 +1,7 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { ElectronLaunchSuccess } from "../../electron/launch.js";
 import { createFreshSessionName } from "../../runtime.js";
+import { hasBrowserLaunchFlag } from "../../launch-scoped-flags.js";
 import { getPageTargetValidationError } from "../../page-target-validation.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { withChromeStartupArgs } from "../../process.js";
@@ -185,7 +186,12 @@ async function preparePagePhases(
 		return selection.earlyResult;
 	}
 	const semantic = await prepareSemanticAction(
-		controls,
+		{
+			...controls,
+			callerColdLaunch: hasBrowserLaunchFlag(request.preparedArgs.args)
+				? planning.callerDaemonInactive
+				: undefined,
+		},
 		request.sessionFacts,
 		{
 			hasReadConfirmation: session.readConfirmation !== undefined,

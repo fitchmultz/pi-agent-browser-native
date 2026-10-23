@@ -24,6 +24,8 @@ import type { PreparationProcessFacts } from "./prepare-contracts.js";
 export interface PreparationPageFacts extends PreparationProcessFacts {
 	readonly preserveAttachedBrowserSession?: boolean;
 	readonly establishAttachedBrowserSession?: boolean;
+	/** Resolves true when the caller's launch flags target a caller-owned daemon that is not running. */
+	readonly callerColdLaunch?: () => Promise<boolean>;
 }
 import type {
 	BrowserRunInputFields,
@@ -305,6 +307,16 @@ function verifiedLivePage(
 	};
 }
 
+/**
+ * A cold caller-owned daemon has no page to verify, and a `get url` probe would start it without the
+ * caller's launch flags, which upstream then ignores on the requested command.
+ */
+async function probeWouldDropLaunchFlags(process: PreparationPageFacts): Promise<boolean> {
+	return (
+		process.preserveAttachedBrowserSession !== true && (await process.callerColdLaunch?.()) === true
+	);
+}
+
 export async function verifyPreparationLivePage(
 	process: PreparationPageFacts,
 	selection: PreparationPageSelection,
@@ -325,6 +337,9 @@ export async function verifyPreparationLivePage(
 	}
 	if (process.establishAttachedBrowserSession === true) {
 		return { ...selection, executionPlan: withPlanValidationError(plan, request.requirement) };
+	}
+	if (await probeWouldDropLaunchFlags(process)) {
+		return selection;
 	}
 	const url = await readLiveUrl(process, plan);
 	if (url === undefined) {
