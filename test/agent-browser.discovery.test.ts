@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { readRecord } from "./helpers/assertions.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -161,6 +163,134 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 	assert.equal(event.systemPrompt, "Base system prompt");
 	assert.equal(event.systemPromptOptions.sections.unrelated, "Retain this section");
 	assert.equal(event.systemPromptOptions.sections.agent_browser, fallback);
+});
+
+test("documentation paths resolve lazily once per extension instance across instruction callers", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "piab-docs-cache-"));
+	try {
+		await withPatchedEnv(
+			{
+				HOME: root,
+				PI_AGENT_BROWSER_CONFIG: undefined,
+				EXA_API_KEY: undefined,
+				BRAVE_API_KEY: undefined,
+				AGENT_BROWSER_COMPACT_FALLBACK: undefined,
+				AGENT_BROWSER_PLAYBOOK: undefined,
+			},
+			async () => {
+				const exists = t.mock.method(fs, "existsSync");
+				const reads = t.mock.method(fs, "readFileSync");
+				syncBuiltinESMExports();
+				const manifest = join(process.cwd(), "package.json");
+				const counts = () => ({
+					exists: exists.mock.calls.filter((call) => call.arguments[0] === manifest).length,
+					reads: reads.mock.calls.filter((call) => call.arguments[0] === manifest).length,
+				});
+				const harness = createExtensionHarness({ cwd: root });
+				const active = harness.getActiveTools();
+				const groups: Group[] = [];
+				let managed = true;
+				harness.events.emit("pi:instruction-groups", {
+					register: (group: Group) => groups.push(group),
+					isManaged: () => managed,
+				});
+				assert.equal(await getBrowserInstructions(harness), "");
+				assert.deepEqual(counts(), { exists: 0, reads: 0 });
+				const full = groups[0]?.instructions(harness.ctx);
+				managed = false;
+				const fallback = await getBrowserInstructions(harness);
+				assert.equal(fallback, full);
+				assert.deepEqual(counts(), { exists: 1, reads: 1 });
+				assert.ok(
+					["README.md", "docs/COMMAND_REFERENCE.md", "docs/TOOL_CONTRACT.md"].every((path) =>
+						fallback.includes(join(process.cwd(), path)),
+					),
+				);
+				const firstWalk = exists.mock.calls
+					.map((call) => String(call.arguments[0]))
+					.filter((path) => path.endsWith("package.json"));
+				assert.ok(firstWalk.length > 0);
+				assert.equal(new Set(firstWalk).size, firstWalk.length);
+				const repeated = await Promise.all(
+					Array.from({ length: 4 }, () => getBrowserInstructions(harness)),
+				);
+				assert.deepEqual(
+					repeated,
+					Array.from({ length: 4 }, () => fallback),
+				);
+				assert.equal(groups[0]?.instructions(harness.ctx), fallback);
+				assert.deepEqual(counts(), { exists: 1, reads: 1 });
+				assert.deepEqual(
+					exists.mock.calls
+						.map((call) => String(call.arguments[0]))
+						.filter((path) => path.endsWith("package.json")),
+					firstWalk,
+				);
+				assert.deepEqual(harness.getActiveTools(), active);
+				const reloaded = createExtensionHarness({ cwd: root });
+				assert.deepEqual(counts(), { exists: 1, reads: 1 });
+				assert.equal(await getBrowserInstructions(reloaded), fallback);
+				assert.deepEqual(counts(), { exists: 2, reads: 2 });
+			},
+		);
+	} finally {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("cached documentation paths retain live config, trust and compact-mode instructions", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "piab-docs-live-config-"));
+	try {
+		await withPatchedEnv(
+			{
+				HOME: join(root, "home"),
+				PI_AGENT_BROWSER_CONFIG: undefined,
+				EXA_API_KEY: undefined,
+				BRAVE_API_KEY: undefined,
+				AGENT_BROWSER_COMPACT_FALLBACK: undefined,
+				AGENT_BROWSER_PLAYBOOK: undefined,
+			},
+			async () => {
+				const harness = createExtensionHarness({ cwd: root });
+				const initial = await getBrowserInstructions(harness);
+				const groups: Group[] = [];
+				harness.events.emit("pi:instruction-groups", {
+					register: (group: Group) => groups.push(group),
+					isManaged: () => false,
+				});
+				const configPath = join(root, ".pi/config/pi-agent-browser-native/config.json");
+				await mkdir(dirname(configPath), { recursive: true });
+				await writeFile(
+					configPath,
+					JSON.stringify({ version: 1, browser: { executablePath: "/tmp/changed-browser" } }),
+				);
+				const updated = await getBrowserInstructions(harness);
+				assert.notEqual(updated, initial);
+				assert.ok(updated.includes("/tmp/changed-browser"));
+				assert.equal(groups[0]?.instructions(harness.ctx), updated);
+				const trust = t.mock.method(harness.ctx, "isProjectTrusted", () => false);
+				assert.equal(await getBrowserInstructions(harness), initial);
+				assert.equal(groups[0]?.instructions(harness.ctx), initial);
+				process.env.AGENT_BROWSER_COMPACT_FALLBACK = "true";
+				const compact = await getBrowserInstructions(harness);
+				assert.ok(compact.length < initial.length);
+				assert.equal(groups[0]?.instructions(harness.ctx), initial);
+				delete process.env.AGENT_BROWSER_COMPACT_FALLBACK;
+				process.env.AGENT_BROWSER_PLAYBOOK = "minimal";
+				assert.equal(await getBrowserInstructions(harness), compact);
+				assert.equal(groups[0]?.instructions(harness.ctx), initial);
+				delete process.env.AGENT_BROWSER_PLAYBOOK;
+				trust.mock.restore();
+				assert.equal(await getBrowserInstructions(harness), updated);
+				assert.equal(groups[0]?.instructions(harness.ctx), updated);
+			},
+		);
+	} finally {
+		t.mock.restoreAll();
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
 test("compact eager fallback bounds prompt size when AGENT_BROWSER_COMPACT_FALLBACK is set", async () => {
