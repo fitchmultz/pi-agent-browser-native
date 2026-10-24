@@ -1,5 +1,7 @@
 # Current upstream support matrix
 
+Published-journal restore reuses structural metadata for four unchanged paths per loaded module instance. Appends, rewrites, truncation and replacement require full rescans. Identity, branch, event and winning-definition validation remain per restore. `test/agent-browser.journal-cache.test.ts` covers cache reuse and invalidation beside the existing storage, ref and cleanup suites. See [session storage](SESSION_STORAGE.md#reading-and-retention) for memory and cold-load limits.
+
 Root browser groups use native named sessions plus per-root restore, with scoped Chrome profile-name bootstrap from existing package config. `test/agent-browser.shared-defaults.test.ts` covers root separation, descendant routing, exact root-name follow-ups, helper launch consistency, explicit overrides, and quit ownership; the companion pi-subagents tests cover foreground/detached launch and saved revive identity. Native JSON restore supports cookies and web storage, not new IndexedDB-only or memory credentials. Real SDK/native-browser restart and concurrency evidence is required for this boundary; a profile metadata match alone is not login proof.
 
 Related docs:
