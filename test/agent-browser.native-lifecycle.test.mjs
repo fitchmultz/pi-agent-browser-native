@@ -487,7 +487,7 @@ test(
 					"fixture",
 				];
 				// Reporter shape: the login is the first call, so it must start the browser itself.
-				await ok({ args: loginArgs });
+				const firstLogin = await ok({ args: loginArgs });
 				const login = await ok({
 					args: ["--session", sessionName, "eval", "--stdin"],
 					stdin: "document.body.dataset.login",
@@ -499,21 +499,17 @@ test(
 					...process.env,
 					AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR,
 				};
+				const readNative = (args) =>
+					JSON.parse(
+						execFileSync("agent-browser", args, {
+							env: nativeEnv,
+							encoding: "utf8",
+							timeout: 15_000,
+						}),
+					);
 				// Stop only this fixture's browser without clearing the extension's remembered target.
-				execFileSync("agent-browser", [...nativeArgs, "close"], {
-					env: nativeEnv,
-					timeout: 5000,
-				});
-				await waitFor(
-					() =>
-						JSON.parse(
-							execFileSync("agent-browser", [...nativeArgs, "session", "info"], {
-								env: nativeEnv,
-								encoding: "utf8",
-								timeout: 5000,
-							}),
-						).data.active === false,
-				);
+				readNative([...nativeArgs, "close"]);
+				await waitFor(() => readNative([...nativeArgs, "session", "info"]).data.active === false);
 				await session.reload();
 				await ok({ args: loginArgs });
 				const resumedLogin = await ok({
@@ -521,6 +517,46 @@ test(
 					stdin: "document.body.dataset.login",
 				});
 				assert.equal(resumedLogin.details.data.result, "fixture-user:fixture-only");
+				const previousTarget = resumedLogin.details.sessionTabTarget;
+				assert.equal(typeof previousTarget.targetId, "string");
+				readNative([...nativeArgs, "close"]);
+				await waitFor(() => readNative([...nativeArgs, "session", "info"]).data.active === false);
+				const nativeReadArgs = [...firstLogin.details.effectiveArgs.slice(0, -3), "get", "title"];
+				const nativeControl = {
+					title: readNative(nativeReadArgs).data.title,
+					url: readNative([...nativeArgs, "get", "url"]).data.url,
+					pid: readNative([...nativeArgs, "session", "info"]).data.pid,
+				};
+				assert.equal(typeof nativeControl.title, "string");
+				assert.equal(typeof nativeControl.url, "string");
+				readNative([...nativeArgs, "close"]);
+				await waitFor(() => readNative([...nativeArgs, "session", "info"]).data.active === false);
+				await session.reload();
+				const coldRead = await ok({ args: [...loginArgs.slice(0, -3), "get", "title"] });
+				assert.equal(coldRead.details.data.title, nativeControl.title);
+				assert.equal(coldRead.details.sessionTabTarget.url, nativeControl.url);
+				assert.equal(typeof coldRead.details.sessionTabTarget.targetId, "string");
+				assert.notEqual(coldRead.details.sessionTabTarget.targetId, previousTarget.targetId);
+				assert.equal(coldRead.details.data.navigationSummary, undefined);
+				assert.equal(coldRead.details.pageChangeSummary, undefined);
+				assert.doesNotMatch(
+					coldRead.content[0].text,
+					/Action dispatched; application change unverified/,
+				);
+				const followed = await ok({ args: ["--session", sessionName, "get", "title"] });
+				assert.equal(followed.details.data.title, nativeControl.title);
+				assert.equal(
+					followed.details.sessionTabTarget.targetId,
+					coldRead.details.sessionTabTarget.targetId,
+				);
+				receipts.push({
+					label: "native cold non-navigation read comparison",
+					nativeReadArgs,
+					nativeControl,
+					previousTarget,
+					replacementTarget: coldRead.details.sessionTabTarget,
+					nativeTitle: coldRead.details.data.title,
+				});
 			} finally {
 				await ok({ args: ["--session", sessionName, "close"] });
 				await ok({ args: ["auth", "remove", "fixture"] });

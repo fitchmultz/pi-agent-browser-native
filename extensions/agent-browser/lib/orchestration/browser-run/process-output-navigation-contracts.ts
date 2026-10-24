@@ -43,10 +43,7 @@ export type NavigationObservationRequestedInput = Readonly<
 > & {
 	readonly input: {
 		readonly prepared: Readonly<
-			Pick<
-				PreparedBrowserRun,
-				"callerColdLaunch" | "compiledSemanticAction" | "executionPlan" | "runtimeToolStdin"
-			>
+			Pick<PreparedBrowserRun, "compiledSemanticAction" | "executionPlan" | "runtimeToolStdin">
 		>;
 	};
 };
