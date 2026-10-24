@@ -237,6 +237,58 @@ test(
 	},
 );
 
+test(
+	"cold caller-owned read preserves flags and observes its replacement without mutation evidence",
+	{ concurrency: false },
+	async () => {
+		await withPage(
+			async (page) => {
+				await page.patch({ active: false, browser: false, url: "about:blank" });
+				const result = await page.call({ args: ["--ignore-https-errors", "get", "title"] });
+				assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
+				const firstBrowserCall = (await page.calls()).find(
+					(row) => extractUpstreamCommandTokens(row.args)[0] !== "session",
+				);
+				assert.deepEqual(extractUpstreamCommandTokens(firstBrowserCall?.args ?? []), [
+					"get",
+					"title",
+				]);
+				assert.equal(firstBrowserCall?.args.includes("--ignore-https-errors"), true);
+				const details = readRecord(result.details);
+				const startupUrl = new URL(page.url).origin + "/";
+				assert.equal(readRecord(details.sessionTabTarget).url, startupUrl);
+				assert.equal(details.sessionTabTargetUnknown, undefined);
+				assert.equal(readRecord(details.data).navigationSummary, undefined);
+				assert.equal(details.pageChangeSummary, undefined);
+				assert.doesNotMatch(
+					readString(readRecord(result.content[0]).text),
+					/Action dispatched; application change unverified/,
+				);
+				assert.equal(readRecord(details.refSnapshotInvalidation).reason, "page-transition");
+				const followed = await page.call({ args: ["get", "title"] });
+				assert.equal(followed.isError, false);
+				assert.equal(readRecord(followed.details?.sessionTabTarget).url, startupUrl);
+				assert.equal(readRecord(followed.details).pageChangeSummary, undefined);
+				await page.tree();
+				await page.reload();
+				const inspected = await page.call({ args: ["session", "info"] });
+				assert.equal(inspected.isError, false);
+				assert.equal(readRecord(inspected.details?.sessionTabTarget).url, startupUrl);
+				assert.equal(readRecord(inspected.details).sessionTabTargetUnknown, undefined);
+				assert.equal(
+					(await page.calls()).some((row) => {
+						const [command, subcommand] = extractUpstreamCommandTokens(row.args);
+						return command === "open" || (command === "tab" && subcommand !== "list");
+					}),
+					false,
+					"caller-owned replacement observation must not reopen or select the old URL",
+				);
+			},
+			{ explicit: true },
+		);
+	},
+);
+
 for (const options of [{ explicit: true }, { attached: true }, { restoreDisabled: true }]) {
 	test(
 		`cold boundary does not navigate outside automatic restore: ${JSON.stringify(options)}`,

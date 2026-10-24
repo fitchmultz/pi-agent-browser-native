@@ -15,9 +15,28 @@ type BrowserOutputInvocation = NativeOutputPhase["input"] &
 	LifecycleOutputPhase["input"] &
 	PublicationOutputPhase["input"] &
 	BuildOutputResultInput["input"];
+
+function coldLaunchOutput(input: BrowserOutputInvocation): BrowserOutputInvocation {
+	if (input.prepared.callerColdLaunch !== true || !input.processResult.agentBrowserStarted) {
+		return input;
+	}
+	// Dispatch keeps its validated page facts; the replacement browser cannot inherit their identity.
+	return {
+		...input,
+		prepared: {
+			...input.prepared,
+			priorSessionTabTarget: undefined,
+			priorSessionTabTargetUnknown: true,
+			priorRefSnapshotState: undefined,
+			resolvedSemanticActionRefSnapshot: undefined,
+		},
+	};
+}
+
 export async function processBrowserOutput(
-	input: BrowserOutputInvocation,
+	invocation: BrowserOutputInvocation,
 ): Promise<BrowserProcessOutputResult> {
+	const input = coldLaunchOutput(invocation);
 	const ownership = captureBrowserOutputOwnership(input);
 	try {
 		const native = await observeNativeEffects(input, ownership);

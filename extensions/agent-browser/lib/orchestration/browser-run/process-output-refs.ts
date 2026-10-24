@@ -28,7 +28,7 @@ type GetTransitionInvalidationInput = Readonly<
 	>
 > & {
 	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">> & {
-		readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens">>;
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "callerColdLaunch" | "commandTokens">>;
 	};
 };
 type ObservedTransitionInvalidationInput = Readonly<
@@ -132,7 +132,10 @@ type ReconcileOutputRefsInput = Readonly<
 			readonly prepared: Readonly<
 				Pick<
 					PreparedBrowserRun,
-					"commandTokens" | "executionPlan" | "resolvedSemanticActionRefSnapshot"
+					| "callerColdLaunch"
+					| "commandTokens"
+					| "executionPlan"
+					| "resolvedSemanticActionRefSnapshot"
 				>
 			>;
 			readonly state: BrowserRunState;
@@ -212,6 +215,14 @@ function getTransitionInvalidation(
 	if (draft.unsettledWebMcpMutation) {
 		return buildPageTransitionRefSnapshotInvalidation(
 			"A detached WebMCP invocation is still pending or failed to settle and can mutate, rerender, or navigate the page, so prior snapshot refs remain invalid after URL verification. Run webmcp result or cancel, then take a fresh snapshot before using page-scoped refs.",
+		);
+	}
+	if (
+		draft.input.prepared.callerColdLaunch === true &&
+		draft.input.processResult.agentBrowserStarted
+	) {
+		return buildPageTransitionRefSnapshotInvalidation(
+			"The previous caller-owned browser stopped. Take a fresh complete snapshot before using page-scoped refs.",
 		);
 	}
 	return observedTransitionInvalidation(draft, direct ?? planned);

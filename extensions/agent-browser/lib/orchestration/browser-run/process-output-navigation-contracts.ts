@@ -114,6 +114,7 @@ export type ObserveNavigationTargetInput = Readonly<
 			readonly prepared: Readonly<
 				Pick<
 					PreparedBrowserRun,
+					| "callerColdLaunch"
 					| "compiledSemanticAction"
 					| "executionPlan"
 					| "priorSessionTabTarget"

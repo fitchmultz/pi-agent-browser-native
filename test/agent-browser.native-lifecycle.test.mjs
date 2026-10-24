@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -417,6 +418,149 @@ test(
 				assert.equal(reloaded.details.data.pid, status.data.pid);
 			} finally {
 				await ok({ args: ["--session", "default", "close"] });
+			}
+		});
+		await t.test("cold explicit-session auth login keeps launch flags after reload", async () => {
+			const certDir = join(root, "https-fixture");
+			await mkdir(certDir);
+			const keyPath = join(certDir, "key.pem");
+			const certPath = join(certDir, "cert.pem");
+			const subject = ["-subj", "/CN=lifecycle-fixture"];
+			const san = ["-addext", "subjectAltName=IP:127.0.0.1"];
+			execFileSync("openssl", [
+				"req",
+				"-x509",
+				"-newkey",
+				"rsa:2048",
+				"-nodes",
+				"-days",
+				"1",
+				"-keyout",
+				keyPath,
+				"-out",
+				certPath,
+				...subject,
+				...san,
+			]);
+			const https = createHttpsServer(
+				{
+					key: await readFile(keyPath),
+					cert: await readFile(certPath),
+				},
+				(_req, res) => {
+					res.setHeader("content-type", "text/html");
+					res.end(
+						"<!doctype html><title>Login fixture</title><form onsubmit=\"event.preventDefault();document.body.dataset.login=document.querySelector('#user').value+':'+document.querySelector('#pass').value\"><input id=user><input id=pass type=password><button id=go>Sign in</button></form>",
+					);
+				},
+			);
+			await new Promise((done) => https.listen(0, "127.0.0.1", done));
+			const sessionName = `lifecycle-https-${sm.getSessionId()}`;
+			try {
+				await ok({
+					args: [
+						"auth",
+						"save",
+						"fixture",
+						"--url",
+						`https://127.0.0.1:${https.address().port}/`,
+						"--username",
+						"fixture-user",
+						"--username-selector",
+						"#user",
+						"--password-selector",
+						"#pass",
+						"--submit-selector",
+						"#go",
+						"--password-stdin",
+					],
+					stdin: "fixture-only\n",
+				});
+				const loginArgs = [
+					"--session",
+					sessionName,
+					"--ignore-https-errors",
+					"--args",
+					"--disable-gpu",
+					"auth",
+					"login",
+					"fixture",
+				];
+				// Reporter shape: the login is the first call, so it must start the browser itself.
+				const firstLogin = await ok({ args: loginArgs });
+				const login = await ok({
+					args: ["--session", sessionName, "eval", "--stdin"],
+					stdin: "document.body.dataset.login",
+				});
+				assert.equal(login.details.data.result, "fixture-user:fixture-only");
+				await ok({ args: ["--session", sessionName, "get", "url"] });
+				const nativeArgs = ["--json", "--namespace", "", "--session", sessionName];
+				const nativeEnv = {
+					...process.env,
+					AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR,
+				};
+				const readNative = (args) =>
+					JSON.parse(
+						execFileSync("agent-browser", args, {
+							env: nativeEnv,
+							encoding: "utf8",
+							timeout: 15_000,
+						}),
+					);
+				// Stop only this fixture's browser without clearing the extension's remembered target.
+				readNative([...nativeArgs, "close"]);
+				await waitFor(() => readNative([...nativeArgs, "session", "info"]).data.active === false);
+				await session.reload();
+				await ok({ args: loginArgs });
+				const resumedLogin = await ok({
+					args: ["--session", sessionName, "eval", "--stdin"],
+					stdin: "document.body.dataset.login",
+				});
+				assert.equal(resumedLogin.details.data.result, "fixture-user:fixture-only");
+				const previousTarget = resumedLogin.details.sessionTabTarget;
+				assert.equal(typeof previousTarget.targetId, "string");
+				readNative([...nativeArgs, "close"]);
+				await waitFor(() => readNative([...nativeArgs, "session", "info"]).data.active === false);
+				const nativeReadArgs = [...firstLogin.details.effectiveArgs.slice(0, -3), "get", "title"];
+				const nativeControl = {
+					title: readNative(nativeReadArgs).data.title,
+					url: readNative([...nativeArgs, "get", "url"]).data.url,
+					pid: readNative([...nativeArgs, "session", "info"]).data.pid,
+				};
+				assert.equal(typeof nativeControl.title, "string");
+				assert.equal(typeof nativeControl.url, "string");
+				readNative([...nativeArgs, "close"]);
+				await waitFor(() => readNative([...nativeArgs, "session", "info"]).data.active === false);
+				await session.reload();
+				const coldRead = await ok({ args: [...loginArgs.slice(0, -3), "get", "title"] });
+				assert.equal(coldRead.details.data.title, nativeControl.title);
+				assert.equal(coldRead.details.sessionTabTarget.url, nativeControl.url);
+				assert.equal(typeof coldRead.details.sessionTabTarget.targetId, "string");
+				assert.notEqual(coldRead.details.sessionTabTarget.targetId, previousTarget.targetId);
+				assert.equal(coldRead.details.data.navigationSummary, undefined);
+				assert.equal(coldRead.details.pageChangeSummary, undefined);
+				assert.doesNotMatch(
+					coldRead.content[0].text,
+					/Action dispatched; application change unverified/,
+				);
+				const followed = await ok({ args: ["--session", sessionName, "get", "title"] });
+				assert.equal(followed.details.data.title, nativeControl.title);
+				assert.equal(
+					followed.details.sessionTabTarget.targetId,
+					coldRead.details.sessionTabTarget.targetId,
+				);
+				receipts.push({
+					label: "native cold non-navigation read comparison",
+					nativeReadArgs,
+					nativeControl,
+					previousTarget,
+					replacementTarget: coldRead.details.sessionTabTarget,
+					nativeTitle: coldRead.details.data.title,
+				});
+			} finally {
+				await ok({ args: ["--session", sessionName, "close"] });
+				await ok({ args: ["auth", "remove", "fixture"] });
+				await new Promise((done) => https.close(done));
 			}
 		});
 		await t.test("managed fresh browser keeps ordinary ownership and cleanup", async () => {
