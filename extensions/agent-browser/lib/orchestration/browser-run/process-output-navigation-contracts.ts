@@ -43,7 +43,10 @@ export type NavigationObservationRequestedInput = Readonly<
 > & {
 	readonly input: {
 		readonly prepared: Readonly<
-			Pick<PreparedBrowserRun, "compiledSemanticAction" | "executionPlan" | "runtimeToolStdin">
+			Pick<
+				PreparedBrowserRun,
+				"callerColdLaunch" | "compiledSemanticAction" | "executionPlan" | "runtimeToolStdin"
+			>
 		>;
 	};
 };
@@ -114,6 +117,7 @@ export type ObserveNavigationTargetInput = Readonly<
 			readonly prepared: Readonly<
 				Pick<
 					PreparedBrowserRun,
+					| "callerColdLaunch"
 					| "compiledSemanticAction"
 					| "executionPlan"
 					| "priorSessionTabTarget"

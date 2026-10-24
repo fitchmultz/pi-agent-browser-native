@@ -123,6 +123,8 @@ function hasNativeNavigationEvidence(draft: HasNativeNavigationEvidenceInput): b
 function navigationObservationRequested(draft: NavigationObservationRequestedInput): boolean {
 	const { prepared } = draft.input;
 	return (
+		(prepared.callerColdLaunch === true &&
+			!isOpenNavigationCommand(prepared.executionPlan.commandInfo.command)) ||
 		hasNativeNavigationEvidence(draft) ||
 		shouldCaptureSemanticActionNavigationSummary(
 			prepared.compiledSemanticAction,

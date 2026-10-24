@@ -219,7 +219,7 @@ function reconcileTabSelection(
 
 export async function preparePageSelection(
 	pageState: SessionPageState,
-	process: PreparationProcessFacts,
+	process: PreparationPageFacts,
 	hasReadConfirmation: boolean,
 	request: SelectionRequest & {
 		readonly plan: AgentBrowserExecutionPlan;
@@ -232,7 +232,10 @@ export async function preparePageSelection(
 		executionPlan: request.plan,
 		livePageVerified: false,
 	};
-	if (!shouldSelectRememberedTab(request.plan, hasReadConfirmation, request)) {
+	if (
+		!shouldSelectRememberedTab(request.plan, hasReadConfirmation, request) ||
+		(await probeWouldDropLaunchFlags(process))
+	) {
 		return base;
 	}
 	process.signal?.throwIfAborted();
@@ -308,8 +311,8 @@ function verifiedLivePage(
 }
 
 /**
- * A cold caller-owned daemon has no page to verify, and a `get url` probe would start it without the
- * caller's launch flags, which upstream then ignores on the requested command.
+ * A cold caller-owned daemon has no page to verify. Tab selection or a `get url` probe would start
+ * it without the caller's launch flags, which upstream then ignores on the requested command.
  */
 async function probeWouldDropLaunchFlags(process: PreparationPageFacts): Promise<boolean> {
 	return (

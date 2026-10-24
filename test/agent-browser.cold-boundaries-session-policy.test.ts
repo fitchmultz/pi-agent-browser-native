@@ -237,6 +237,29 @@ test(
 	},
 );
 
+test(
+	"cold caller-owned launch preserves flags before remembered-tab helpers",
+	{ concurrency: false },
+	async () => {
+		await withPage(
+			async (page) => {
+				await page.patch({ active: false, browser: false, url: "about:blank" });
+				const result = await page.call({ args: ["--ignore-https-errors", "get", "title"] });
+				assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
+				const firstBrowserCall = (await page.calls()).find(
+					(row) => extractUpstreamCommandTokens(row.args)[0] !== "session",
+				);
+				assert.deepEqual(extractUpstreamCommandTokens(firstBrowserCall?.args ?? []), [
+					"get",
+					"title",
+				]);
+				assert.equal(firstBrowserCall?.args.includes("--ignore-https-errors"), true);
+			},
+			{ explicit: true },
+		);
+	},
+);
+
 for (const options of [{ explicit: true }, { attached: true }, { restoreDisabled: true }]) {
 	test(
 		`cold boundary does not navigate outside automatic restore: ${JSON.stringify(options)}`,

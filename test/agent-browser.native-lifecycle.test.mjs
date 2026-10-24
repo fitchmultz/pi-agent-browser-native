@@ -420,7 +420,7 @@ test(
 				await ok({ args: ["--session", "default", "close"] });
 			}
 		});
-		await t.test("cold explicit-session auth login launches with caller flags", async () => {
+		await t.test("cold explicit-session auth login keeps launch flags after reload", async () => {
 			const certDir = join(root, "https-fixture");
 			await mkdir(certDir);
 			const keyPath = join(certDir, "key.pem");
@@ -476,24 +476,51 @@ test(
 					],
 					stdin: "fixture-only\n",
 				});
+				const loginArgs = [
+					"--session",
+					sessionName,
+					"--ignore-https-errors",
+					"--args",
+					"--disable-gpu",
+					"auth",
+					"login",
+					"fixture",
+				];
 				// Reporter shape: the login is the first call, so it must start the browser itself.
-				await ok({
-					args: [
-						"--session",
-						sessionName,
-						"--ignore-https-errors",
-						"--args",
-						"--disable-gpu",
-						"auth",
-						"login",
-						"fixture",
-					],
-				});
+				await ok({ args: loginArgs });
 				const login = await ok({
 					args: ["--session", sessionName, "eval", "--stdin"],
 					stdin: "document.body.dataset.login",
 				});
 				assert.equal(login.details.data.result, "fixture-user:fixture-only");
+				await ok({ args: ["--session", sessionName, "get", "url"] });
+				const nativeArgs = ["--json", "--namespace", "", "--session", sessionName];
+				const nativeEnv = {
+					...process.env,
+					AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR,
+				};
+				// Stop only this fixture's browser without clearing the extension's remembered target.
+				execFileSync("agent-browser", [...nativeArgs, "close"], {
+					env: nativeEnv,
+					timeout: 5000,
+				});
+				await waitFor(
+					() =>
+						JSON.parse(
+							execFileSync("agent-browser", [...nativeArgs, "session", "info"], {
+								env: nativeEnv,
+								encoding: "utf8",
+								timeout: 5000,
+							}),
+						).data.active === false,
+				);
+				await session.reload();
+				await ok({ args: loginArgs });
+				const resumedLogin = await ok({
+					args: ["--session", sessionName, "eval", "--stdin"],
+					stdin: "document.body.dataset.login",
+				});
+				assert.equal(resumedLogin.details.data.result, "fixture-user:fixture-only");
 			} finally {
 				await ok({ args: ["--session", sessionName, "close"] });
 				await ok({ args: ["auth", "remove", "fixture"] });

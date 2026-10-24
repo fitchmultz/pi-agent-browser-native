@@ -223,6 +223,7 @@ import type {
 } from "./observation-types.js";
 
 export type PreparedBrowserRun = Readonly<{
+	callerColdLaunch?: true;
 	chromeStartupArgs?: string;
 	readConfirmation?: ReadConfirmation;
 	batchScreenshotArtifactRequests?: ReadonlyArray<ScreenshotArtifactRequest | undefined>;

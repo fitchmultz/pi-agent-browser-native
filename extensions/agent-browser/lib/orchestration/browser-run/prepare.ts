@@ -151,6 +151,12 @@ async function preparePagePhases(
 	},
 ): Promise<PrepareBrowserRunResult> {
 	const { plan, session, policy } = planning;
+	const pageControls: PreparationControls = {
+		...controls,
+		callerColdLaunch: hasBrowserLaunchFlag(request.preparedArgs.args)
+			? planning.callerDaemonInactive
+			: undefined,
+	};
 	const initial = controls.initialDaemonObservation;
 	// Only admission, filesystem preparation and pure planning precede this use of the root sample.
 	// Owned policy omits its sample after native attachment verification; later capture receipts stay fresh.
@@ -170,7 +176,7 @@ async function preparePagePhases(
 	});
 	const selection = await preparePageSelection(
 		state.sessionPageState,
-		controls,
+		pageControls,
 		session.readConfirmation !== undefined,
 		{
 			...request,
@@ -186,12 +192,7 @@ async function preparePagePhases(
 		return selection.earlyResult;
 	}
 	const semantic = await prepareSemanticAction(
-		{
-			...controls,
-			callerColdLaunch: hasBrowserLaunchFlag(request.preparedArgs.args)
-				? planning.callerDaemonInactive
-				: undefined,
-		},
+		pageControls,
 		request.sessionFacts,
 		{
 			hasReadConfirmation: session.readConfirmation !== undefined,
@@ -202,7 +203,7 @@ async function preparePagePhases(
 			selection,
 		},
 	);
-	return prepareCommandPhases(state, controls, { ...request, semantic, session, policy });
+	return prepareCommandPhases(state, pageControls, { ...request, semantic, session, policy });
 }
 
 async function prepareRequest(
