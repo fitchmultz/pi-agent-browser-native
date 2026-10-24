@@ -45,7 +45,7 @@ case "$mode" in
     unset GH_TOKEN
     npm run build
     # A separate stock installation, never a dependency or a custom browser build.
-    npm install --global --prefix "$root/browser" agent-browser@0.38.1
+    npm install --global --prefix "$root/browser" agent-browser@0.39.2
     agent-browser install --with-deps
     {
       agent-browser --version

@@ -1,6 +1,6 @@
 {
-	"version": "0.38.1",
-	"source": "https://github.com/vercel-labs/agent-browser/blob/aff6125c023b810ea3f2e5deec5379e9a4270bdc/cli/src/flags.rs#L1136-L1252",
+	"version": "0.39.2",
+	"source": "https://github.com/vercel-labs/agent-browser/blob/50c34e78c98dbe8add0b3ff36b4bcd7a47f1022b/cli/src/flags.rs#L1188-L1301",
 	"globalValueFlags": [
 		"--session",
 		"--restore-save",
@@ -53,6 +53,7 @@
 		"--pin-tab",
 		"--no-pin-tab",
 		"--no-ca-cert",
+		"--use-system-ca",
 		"--annotate",
 		"--content-boundaries",
 		"--confirm-interactive",

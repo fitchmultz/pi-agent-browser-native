@@ -123,6 +123,7 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"-q",
 	"--verbose",
 	"-v",
+	"--use-system-ca",
 	"--webgpu",
 ]);
 

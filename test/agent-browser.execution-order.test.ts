@@ -352,7 +352,7 @@ for (const mode of ["direct", "code", "cancel-waiter"] as const) {
 				encoding: "utf8",
 				timeout: 10_000,
 			}).trim();
-			assert.equal(evidence.version, "agent-browser 0.38.1");
+			assert.equal(evidence.version, "agent-browser 0.39.2");
 			await new Promise<void>((complete) => {
 				server.listen(0, "127.0.0.1", complete);
 			});

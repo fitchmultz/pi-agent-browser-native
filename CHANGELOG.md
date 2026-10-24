@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- Recommend stock `agent-browser` 0.39.2 while retaining the stable 0.35.0 runtime floor and no upper cap. Refresh audited help/source metadata, generated command and prompt guidance, fixtures, and native CI installation.
+- Document CLI HTTPS trust, experimental Obscura limits, lost-response inspection before retry, stricter native click/ref/policy handling, preserved launch-argument values, and upstream provider changes without bundling or emulation.
+
 ### Fixed
 
+- Recognize native `--use-system-ca` optional boolean values during command discovery so `--use-system-ca false read <url>` remains a read command.
 - Read Windows process-start generations through a fresh .NET process lookup and invariant UTC ticks, retaining the existing versioned identity format, native executable, cancellation and probe budgets.
 - Avoid querying a browser execution predecessor's process identity after its immutable claim is confirmed gone, while retaining fresh generation checks for present or unresolved claims and rechecking presence after each query.
 - Retry Windows `EPERM` failures when publishing a browser execution claim only within the original acquisition budget, revalidating the same immutable owner and scope before every retry; cancellation, unknown ownership, and single-attempt probes still fail closed.
