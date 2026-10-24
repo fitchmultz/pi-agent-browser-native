@@ -1,4 +1,4 @@
-import { constants, type Stats } from "node:fs";
+import { constants } from "node:fs";
 import { open, stat, type FileHandle } from "node:fs/promises";
 import type { BrowserJournalManager } from "./browser-journal-contracts.js";
 import {
@@ -20,12 +20,12 @@ import {
 } from "./browser-legacy-projection.js";
 import { LEGACY_BROWSER_FIELDS } from "./browser-legacy-fields.js";
 import { legacySnapshot } from "./browser-legacy-pages.js";
+import { projectJson, readRange, type JournalEntry } from "./browser-journal-reader.js";
 import {
-	projectJson,
-	readRange,
-	scanJournalMetadata,
-	type JournalEntry,
-} from "./browser-journal-reader.js";
+	readPublishedJournalMetadata,
+	sameJournalFingerprint,
+	type JournalFingerprint,
+} from "./browser-journal-cache.js";
 const REPLAY_CUSTOM_TYPES = new Set([
 	BROWSER_TRANSITION_ENTRY,
 	"agent-browser-recording-reservation",
@@ -292,9 +292,13 @@ function replayRelevant(value: Readonly<Record<string, unknown>>): boolean {
 		(isRecord(value.data) && isRecord(value.data.snapshot) && value.data.snapshot.id !== undefined)
 	);
 }
-async function verifyCapturedFile(file: FileHandle, path: string, captured: Stats): Promise<void> {
-	const current = await file.stat();
-	const currentPath = await stat(path);
+async function verifyCapturedFile(
+	file: FileHandle,
+	path: string,
+	captured: JournalFingerprint,
+): Promise<boolean> {
+	const current = await file.stat({ bigint: true });
+	const currentPath = await stat(path, { bigint: true });
 	if (
 		current.dev !== captured.dev ||
 		current.ino !== captured.ino ||
@@ -304,6 +308,10 @@ async function verifyCapturedFile(file: FileHandle, path: string, captured: Stat
 	) {
 		throw new Error("Pi journal replaced or truncated during replay.");
 	}
+	if (current.size === captured.size && !sameJournalFingerprint(current, captured)) {
+		throw new Error("Pi journal changed during replay.");
+	}
+	return sameJournalFingerprint(current, captured) && sameJournalFingerprint(currentPath, captured);
 }
 function validateJournalHeader(metadata: readonly JournalEntry[], sessionId: string): void {
 	const header = metadata.find((entry) => entry.value.type === "session");
@@ -321,6 +329,29 @@ async function openPublishedJournal(path: string): Promise<FileHandle | undefine
 		throw error;
 	}
 }
+interface PublishedSelection {
+	readonly path: string;
+	readonly leaf: string | null;
+	readonly physical: boolean;
+}
+async function replayPublishedJournal(
+	file: FileHandle,
+	manager: BrowserJournalManager,
+	selection: PublishedSelection,
+): Promise<Readonly<{ entries: unknown[]; stable: boolean }>> {
+	const captured = await file.stat({ bigint: true });
+	if (!captured.isFile()) {
+		throw new Error("Pi session journal is not a regular file.");
+	}
+	const metadata = await readPublishedJournalMetadata(file, selection.path, captured);
+	validateJournalHeader(metadata, manager.getHeader()?.id ?? manager.getSessionId());
+	const records = metadata.filter((entry) => entry.value.type !== "session");
+	const selected = selection.physical ? records : branchEntries(records, selection.leaf);
+	const replay = new PublishedJournalReplay(file, selected, legacyOwner(manager));
+	await replay.project(selected);
+	const entries = await replay.resolveWinningDefinitions(selection.physical);
+	return { entries, stable: await verifyCapturedFile(file, selection.path, captured) };
+}
 export async function readBrowserEntries(
 	manager: BrowserJournalManager,
 	physical = false,
@@ -335,19 +366,17 @@ export async function readBrowserEntries(
 		return inMemoryEntries(manager, physical);
 	}
 	try {
-		const captured = await file.stat();
-		if (!captured.isFile()) {
-			throw new Error("Pi session journal is not a regular file.");
+		const selection = { path, leaf, physical };
+		const first = await replayPublishedJournal(file, manager, selection);
+		if (first.stable) {
+			return first.entries;
 		}
-		const metadata = await scanJournalMetadata(file, captured.size);
-		validateJournalHeader(metadata, manager.getHeader()?.id ?? manager.getSessionId());
-		const records = metadata.filter((entry) => entry.value.type !== "session");
-		const selected = physical ? records : branchEntries(records, leaf);
-		const replay = new PublishedJournalReplay(file, selected, legacyOwner(manager));
-		await replay.project(selected);
-		const entries = await replay.resolveWinningDefinitions(physical);
-		await verifyCapturedFile(file, path, captured);
-		return entries;
+		// Growth cannot certify cached ancestry. Revalidate once, retaining the captured leaf.
+		const second = await replayPublishedJournal(file, manager, selection);
+		if (!second.stable) {
+			throw new Error("Pi journal changed repeatedly during replay.");
+		}
+		return second.entries;
 	} finally {
 		await file.close();
 	}

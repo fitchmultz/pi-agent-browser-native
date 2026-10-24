@@ -1,0 +1,2068 @@
+{
+	"issue": "https://github.com/fitchmultz/pi-agent-browser-native/issues/303",
+	"scope": "Synthetic cloud/source measurements only. Not the historical installed macOS runtime or private corpus.",
+	"verdict": "Faster warm unchanged-file replay and real SDK tree navigation. Cold binding is inconclusive; no cold-start speedup claim.",
+	"admission": {
+		"assignment": "PERF-8-20261024 pi-agent-browser-native#303",
+		"chatId": "43bf2197-2323-459a-9163-b219efd8eb07",
+		"modelEvidence": {
+			"source": "Coordinator-provided owner-authenticated read-only GET of this exact chat's canonical AgentDoc-backed configuration",
+			"endpoint": "https://pi-durable.mitchfultz.workers.dev/api/chats/43bf2197-2323-459a-9163-b219efd8eb07",
+			"observedAt": "2026-10-24T13:23:16.312911+00:00",
+			"provider": "openai",
+			"modelId": "gpt-6.1-sol",
+			"thinkingLevel": "xhigh",
+			"contextWindow": 300000,
+			"fastMode": null,
+			"connectionReady": true,
+			"rootRunBusy": true,
+			"configurationVersionSha256": "c52404be6ba45b2e0427d98acc645cf5eeba33d251e1acd2e798807cd4d3d5ea",
+			"rawEvidenceOwner": "coordinator actual-model-evidence.json",
+			"configurationChanged": false
+		},
+		"baseline": "ae821a9b69dc271f3ab69f15a8cead31528f359a",
+		"baselineTree": "4183687ca665464e695caa9dc04ba38560f37b4c",
+		"branch": "perf/issue-303-pi-agent-browser-native",
+		"pstackCommit": "94f83d6fb0581e0602e467f7fafdfd9f87c4b402",
+		"githubSurface": "native Git transport and built-in github PR integration; no local profile or credential changes",
+		"babysitMode": "drive, after code-ready report; no merge authority"
+	},
+	"candidateCodeTree": "888fa28250a516e5965c77d94df8d5ef168c7ca8",
+	"candidateSourceManifestSha256": "7fd29623a8f6251b68d3962a4d7a52a96ba0adeca8a92eea532de1af075d709e",
+	"toolchain": {
+		"node": "v24.22.1",
+		"npm": "12.2.0",
+		"sdk": "@earendil-works/pi-coding-agent@1.4.0",
+		"sdkRoot": "/workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent",
+		"sdkLockSha256": "1e0480e78d6b61396e284edc2c0a113ad03c688ae0edecc3e93c40c14aa47fb9",
+		"extensionDevelopmentLockSha256": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb",
+		"configuration": "PI_OFFLINE=1 PI_TELEMETRY=0; same empty task HOME, actual SDK, fixture, dependency graph, compiled-artifact layout and two warm tree navigations per process. Fresh Node process per sample. No profiler or read spy in comparative samples."
+	},
+	"artifacts": {
+		"A": {
+			"root": "/workspace/issue-303/baseline",
+			"packageJsonSha256": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+			"entrypointSha256": "15f168bee67adbb7997a55e9eb5a93fbdcd8577b322231c12dada0ce966a1d02",
+			"rawReplaySha256": "29419469a3c050bd6652cba68fc04367052093e6d9d4fe58264d706f5d3bbc1a"
+		},
+		"B": {
+			"root": "/workspace/issue-303/candidate",
+			"packageJsonSha256": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+			"entrypointSha256": "08bd184ae6aa88d8511fc49fdd25be5505e50496b5f9dd29c97544a15951534b",
+			"rawReplaySha256": "4a5d76259f0bff7b4ef6f95a36827b40059ceacdb70cceb37881e6b7edef7fe0"
+		}
+	},
+	"fixture": {
+		"bytes": 43231570,
+		"entries": 5184,
+		"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+	},
+	"dataShape": "One thinking-level entry, one assistant seed, 5180 synthetic custom envelopes with 8192-byte ignored strings, and two sibling canonical browser page-state leaves. 5184 entries plus native session header. No owner journal/profile/tool cache used.",
+	"timedRegion": {
+		"micro": "Await compiled readBrowserEntries(manager), consuming returned entries; output correctness is asserted outside the timer.",
+		"tree": "Await real AgentSession.navigateTree(branch-a), including host context restoration and the compiled extension session_tree handler. Validate successful navigation, three emitted tree events, one expected browser record, exact selected URL and zero extension errors.",
+		"startup": "Await session.bindExtensions, recorded separately; no claim of improvement."
+	},
+	"summary": {
+		"A": {
+			"micro": {
+				"unit": "ms",
+				"samples": 5,
+				"median": 1207.2355480000006,
+				"min": 1076.526625999999,
+				"max": 1300.5527029999994
+			},
+			"tree": {
+				"unit": "ms",
+				"samples": 5,
+				"median": 1103.9338339999995,
+				"min": 1010.7000599999992,
+				"max": 1273.2146639999992
+			},
+			"startup": {
+				"unit": "ms",
+				"samples": 5,
+				"median": 1417.5467549999998,
+				"min": 1352.095279,
+				"max": 1601.117965
+			}
+		},
+		"B": {
+			"micro": {
+				"unit": "ms",
+				"samples": 5,
+				"median": 4.080580000000282,
+				"min": 3.732600000000275,
+				"max": 4.66515999999956
+			},
+			"tree": {
+				"unit": "ms",
+				"samples": 5,
+				"median": 11.446288999999979,
+				"min": 10.16121000000021,
+				"max": 15.492929000000004
+			},
+			"startup": {
+				"unit": "ms",
+				"samples": 5,
+				"median": 1374.172358,
+				"min": 1336.347251,
+				"max": 1439.3559639999999
+			}
+		}
+	},
+	"rawSamplesInExecutionOrder": [
+		{
+			"label": "A1",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1555.237907,
+				"cpu": {
+					"user": 1286846,
+					"system": 291733
+				}
+			},
+			"micro": {
+				"ms": 1300.5527029999994,
+				"cpu": {
+					"user": 1056636,
+					"system": 193592
+				}
+			},
+			"tree": {
+				"ms": 1103.9338339999995,
+				"cpu": {
+					"user": 918717,
+					"system": 155966
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "B1",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1362.038509,
+				"cpu": {
+					"user": 1290849,
+					"system": 187134
+				}
+			},
+			"micro": {
+				"ms": 3.732600000000275,
+				"cpu": {
+					"user": 5816,
+					"system": 0
+				}
+			},
+			"tree": {
+				"ms": 10.554169999999885,
+				"cpu": {
+					"user": 16919,
+					"system": 0
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "A2",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1601.117965,
+				"cpu": {
+					"user": 1372473,
+					"system": 229089
+				}
+			},
+			"micro": {
+				"ms": 1228.3593469999996,
+				"cpu": {
+					"user": 1045730,
+					"system": 168305
+				}
+			},
+			"tree": {
+				"ms": 1114.2358539999987,
+				"cpu": {
+					"user": 890830,
+					"system": 172690
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "B2",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1336.347251,
+				"cpu": {
+					"user": 1236003,
+					"system": 191479
+				}
+			},
+			"micro": {
+				"ms": 3.8736300000000483,
+				"cpu": {
+					"user": 7131,
+					"system": 0
+				}
+			},
+			"tree": {
+				"ms": 10.16121000000021,
+				"cpu": {
+					"user": 13995,
+					"system": 185
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "A3",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1409.632756,
+				"cpu": {
+					"user": 1293888,
+					"system": 191923
+				}
+			},
+			"micro": {
+				"ms": 1207.2355480000006,
+				"cpu": {
+					"user": 1066760,
+					"system": 132741
+				}
+			},
+			"tree": {
+				"ms": 1273.2146639999992,
+				"cpu": {
+					"user": 981042,
+					"system": 157505
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "B3",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1374.172358,
+				"cpu": {
+					"user": 1211500,
+					"system": 230851
+				}
+			},
+			"micro": {
+				"ms": 4.66515999999956,
+				"cpu": {
+					"user": 4150,
+					"system": 4133
+				}
+			},
+			"tree": {
+				"ms": 13.171299999999974,
+				"cpu": {
+					"user": 15323,
+					"system": 2976
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "A4",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1417.5467549999998,
+				"cpu": {
+					"user": 1216247,
+					"system": 324802
+				}
+			},
+			"micro": {
+				"ms": 1175.7942699999985,
+				"cpu": {
+					"user": 1011974,
+					"system": 163237
+				}
+			},
+			"tree": {
+				"ms": 1010.7000599999992,
+				"cpu": {
+					"user": 847151,
+					"system": 158337
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "B4",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1439.3559639999999,
+				"cpu": {
+					"user": 1202675,
+					"system": 290556
+				}
+			},
+			"micro": {
+				"ms": 4.556279999999788,
+				"cpu": {
+					"user": 6522,
+					"system": 0
+				}
+			},
+			"tree": {
+				"ms": 15.492929000000004,
+				"cpu": {
+					"user": 18878,
+					"system": 0
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "A5",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1352.095279,
+				"cpu": {
+					"user": 1208910,
+					"system": 217474
+				}
+			},
+			"micro": {
+				"ms": 1076.526625999999,
+				"cpu": {
+					"user": 954449,
+					"system": 156676
+				}
+			},
+			"tree": {
+				"ms": 1040.7715479999988,
+				"cpu": {
+					"user": 843952,
+					"system": 132321
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		},
+		{
+			"label": "B5",
+			"node": "v24.22.1",
+			"sdk": "1.4.0",
+			"fixture": {
+				"bytes": 43231570,
+				"entries": 5184,
+				"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+			},
+			"startup": {
+				"ms": 1413.037565,
+				"cpu": {
+					"user": 1157014,
+					"system": 320499
+				}
+			},
+			"micro": {
+				"ms": 4.080580000000282,
+				"cpu": {
+					"user": 5206,
+					"system": 254
+				}
+			},
+			"tree": {
+				"ms": 11.446288999999979,
+				"cpu": {
+					"user": 17801,
+					"system": 0
+				}
+			},
+			"output": {
+				"records": 1,
+				"url": "https://fixture.test/branch-a"
+			},
+			"errors": 0,
+			"events": {
+				"starts": 1,
+				"trees": 3
+			}
+		}
+	],
+	"machineBeforeAfter": " 14:01:43 up 37 min,  0 users,  load average: 0.10, 0.44, 0.99\n2\n 14:03:06 up 39 min,  0 users,  load average: 1.46, 0.78, 1.06\n",
+	"workCountersAndProfiles": {
+		"A": {
+			"rawProfileSha256": "8ad80c8da9d0b2e875792b95e393f24af091583b478d50675c9c8df0fdfad744",
+			"retainedWorkspacePath": "/workspace/issue-303/evidence/profile-final-A/CPU.20261024.140306.10478.0.001.cpuprofile",
+			"instrumentedWork": {
+				"label": "instrumented-A",
+				"node": "v24.22.1",
+				"sdk": "1.4.0",
+				"fixture": {
+					"bytes": 43231570,
+					"entries": 5184,
+					"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+				},
+				"startup": {
+					"ms": 1440.341964,
+					"cpu": {
+						"user": 1318715,
+						"system": 279107
+					}
+				},
+				"micro": {
+					"ms": 1213.9818270000014,
+					"cpu": {
+						"user": 957591,
+						"system": 234800
+					},
+					"streamBytes": 86463532,
+					"streamReads": 5846
+				},
+				"tree": {
+					"ms": 988.0263809999997,
+					"cpu": {
+						"user": 888052,
+						"system": 127888
+					},
+					"streamBytes": 86463532,
+					"streamReads": 5846
+				},
+				"output": {
+					"records": 1,
+					"url": "https://fixture.test/branch-a"
+				},
+				"errors": 0,
+				"events": {
+					"starts": 1,
+					"trees": 3
+				}
+			},
+			"selfTimeTop25": [
+				{
+					"function": "(idle)",
+					"url": "",
+					"milliseconds": 2500.311
+				},
+				{
+					"function": "journalRanges",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/lib/browser-journal-reader.js",
+					"milliseconds": 1274.421
+				},
+				{
+					"function": "",
+					"url": "file:///workspace/issue-303/worktree/node_modules/stream-json/src/core/parser.js",
+					"milliseconds": 1105.986
+				},
+				{
+					"function": "journalRanges",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/index.js",
+					"milliseconds": 1001.011
+				},
+				{
+					"function": "accept",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/lib/browser-journal-reader.js",
+					"milliseconds": 719.925
+				},
+				{
+					"function": "(garbage collector)",
+					"url": "",
+					"milliseconds": 596.877
+				},
+				{
+					"function": "accept",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/index.js",
+					"milliseconds": 557.982
+				},
+				{
+					"function": "read",
+					"url": "",
+					"milliseconds": 461.266
+				},
+				{
+					"function": "(program)",
+					"url": "",
+					"milliseconds": 237.383
+				},
+				{
+					"function": "compileSourceTextModule",
+					"url": "node:internal/modules/esm/utils",
+					"milliseconds": 213.154
+				},
+				{
+					"function": "resolveSync",
+					"url": "node:internal/modules/esm/loader",
+					"milliseconds": 191.967
+				},
+				{
+					"function": "projectJson",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/lib/browser-journal-projection.js",
+					"milliseconds": 182.975
+				},
+				{
+					"function": "#getOrCreateModuleJobAfterResolve",
+					"url": "node:internal/modules/esm/loader",
+					"milliseconds": 176.419
+				},
+				{
+					"function": "projectJson",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/index.js",
+					"milliseconds": 140.155
+				},
+				{
+					"function": "put",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/lib/browser-journal-projection.js",
+					"milliseconds": 104.382
+				},
+				{
+					"function": "put",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/index.js",
+					"milliseconds": 100.944
+				},
+				{
+					"function": "read",
+					"url": "node:internal/fs/promises",
+					"milliseconds": 92.582
+				},
+				{
+					"function": "",
+					"url": "node:internal/modules/esm/loader",
+					"milliseconds": 83.788
+				},
+				{
+					"function": "consume",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/lib/browser-journal-projection.js",
+					"milliseconds": 80.745
+				},
+				{
+					"function": "update",
+					"url": "node:internal/crypto/hash",
+					"milliseconds": 75.502
+				},
+				{
+					"function": "decode",
+					"url": "node:internal/encoding",
+					"milliseconds": 67.774
+				},
+				{
+					"function": "decodeUTF8",
+					"url": "",
+					"milliseconds": 64.999
+				},
+				{
+					"function": "consume",
+					"url": "file:///workspace/issue-303/baseline/dist/extensions/agent-browser/index.js",
+					"milliseconds": 62.934
+				},
+				{
+					"function": "wrapSafe",
+					"url": "node:internal/modules/cjs/loader",
+					"milliseconds": 62.433
+				},
+				{
+					"function": "createUnsafeBuffer",
+					"url": "node:internal/buffer",
+					"milliseconds": 52.321
+				}
+			],
+			"comparativeTiming": false
+		},
+		"B": {
+			"rawProfileSha256": "2a0937e0be00f15816b8267d9c52fbacaf55540cb834471d71fcbb0426f87838",
+			"retainedWorkspacePath": "/workspace/issue-303/evidence/profile-final-B/CPU.20261024.140318.10493.0.001.cpuprofile",
+			"instrumentedWork": {
+				"label": "instrumented-B",
+				"node": "v24.22.1",
+				"sdk": "1.4.0",
+				"fixture": {
+					"bytes": 43231570,
+					"entries": 5184,
+					"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+				},
+				"startup": {
+					"ms": 1427.8857650000002,
+					"cpu": {
+						"user": 1244913,
+						"system": 275136
+					}
+				},
+				"micro": {
+					"ms": 4.261739999999918,
+					"cpu": {
+						"user": 5756,
+						"system": 429
+					},
+					"streamBytes": 392,
+					"streamReads": 1
+				},
+				"tree": {
+					"ms": 16.754659000000174,
+					"cpu": {
+						"user": 15512,
+						"system": 4967
+					},
+					"streamBytes": 392,
+					"streamReads": 1
+				},
+				"output": {
+					"records": 1,
+					"url": "https://fixture.test/branch-a"
+				},
+				"errors": 0,
+				"events": {
+					"starts": 1,
+					"trees": 3
+				}
+			},
+			"selfTimeTop25": [
+				{
+					"function": "(idle)",
+					"url": "",
+					"milliseconds": 849.906
+				},
+				{
+					"function": "(garbage collector)",
+					"url": "",
+					"milliseconds": 325.259
+				},
+				{
+					"function": "journalRanges",
+					"url": "file:///workspace/issue-303/candidate/dist/extensions/agent-browser/index.js",
+					"milliseconds": 276.127
+				},
+				{
+					"function": "",
+					"url": "file:///workspace/issue-303/worktree/node_modules/stream-json/src/core/parser.js",
+					"milliseconds": 257.957
+				},
+				{
+					"function": "journalRanges",
+					"url": "file:///workspace/issue-303/candidate/dist/extensions/agent-browser/lib/browser-journal-reader.js",
+					"milliseconds": 256.816
+				},
+				{
+					"function": "compileSourceTextModule",
+					"url": "node:internal/modules/esm/utils",
+					"milliseconds": 210.7
+				},
+				{
+					"function": "accept",
+					"url": "file:///workspace/issue-303/candidate/dist/extensions/agent-browser/index.js",
+					"milliseconds": 168.159
+				},
+				{
+					"function": "read",
+					"url": "",
+					"milliseconds": 165.186
+				},
+				{
+					"function": "accept",
+					"url": "file:///workspace/issue-303/candidate/dist/extensions/agent-browser/lib/browser-journal-reader.js",
+					"milliseconds": 155.625
+				},
+				{
+					"function": "(program)",
+					"url": "",
+					"milliseconds": 108.163
+				},
+				{
+					"function": "update",
+					"url": "node:internal/crypto/hash",
+					"milliseconds": 81.722
+				},
+				{
+					"function": "resolveSync",
+					"url": "node:internal/modules/esm/loader",
+					"milliseconds": 50.802
+				},
+				{
+					"function": "projectJson",
+					"url": "file:///workspace/issue-303/candidate/dist/extensions/agent-browser/lib/browser-journal-projection.js",
+					"milliseconds": 47.095
+				},
+				{
+					"function": "wrapSafe",
+					"url": "node:internal/modules/cjs/loader",
+					"milliseconds": 45.993
+				},
+				{
+					"function": "#getOrCreateModuleJobAfterResolve",
+					"url": "node:internal/modules/esm/loader",
+					"milliseconds": 45.101
+				},
+				{
+					"function": "loadEntriesFromFile",
+					"url": "file:///workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js",
+					"milliseconds": 43.779
+				},
+				{
+					"function": "parseSessionEntryLine",
+					"url": "file:///workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent/dist/core/session-manager.js",
+					"milliseconds": 42.234
+				},
+				{
+					"function": "read",
+					"url": "node:internal/fs/promises",
+					"milliseconds": 41.644
+				},
+				{
+					"function": "internalModuleStat",
+					"url": "",
+					"milliseconds": 38.841
+				},
+				{
+					"function": "projectJson",
+					"url": "file:///workspace/issue-303/candidate/dist/extensions/agent-browser/index.js",
+					"milliseconds": 37.359
+				},
+				{
+					"function": "realpathSync",
+					"url": "node:fs",
+					"milliseconds": 34.921
+				},
+				{
+					"function": "write",
+					"url": "node:string_decoder",
+					"milliseconds": 34.387
+				},
+				{
+					"function": "getPackageScopeConfig",
+					"url": "node:internal/modules/package_json_reader",
+					"milliseconds": 30.325
+				},
+				{
+					"function": "decode",
+					"url": "node:internal/encoding",
+					"milliseconds": 22.572
+				},
+				{
+					"function": "",
+					"url": "node:internal/modules/esm/loader",
+					"milliseconds": 22.366
+				}
+			],
+			"comparativeTiming": false
+		}
+	},
+	"limiter": "Baseline separately profiled framing (journalRanges/JournalLineFramer.accept), stream-json parsing/projection and native read work on one core. Each warm restore read 86463532 stream bytes in 5846 reads. Candidate read the selected 392-byte browser body in one read. After reuse, ancestry/index work and SDK navigation dominate; cold scan and changed-file scans remain.",
+	"errorAndOutputCounters": {
+		"samples": 10,
+		"extensionErrors": 0,
+		"recordsPerSample": 1,
+		"startupEventsPerSample": 1,
+		"treeEventsPerSample": 3,
+		"fixtureHashUnchangedEverySample": true
+	},
+	"commands": [
+		"export PATH=/workspace/issue-303/tools/bin:/workspace/issue-303/tools/go/bin:$PATH; npm --version # 12.2.0",
+		"cd /workspace/issue-303/baseline-source; npm run build; cp -a dist/. /workspace/issue-303/baseline/dist/; cp package.json /workspace/issue-303/baseline/package.json",
+		"cd /workspace/issue-303/worktree; npm run build; cp -a dist /workspace/issue-303/candidate/; cp package.json /workspace/issue-303/candidate/package.json # both copies use the same node_modules symlink",
+		"for sample in 1 2 3 4 5; do for side in A B; do target=/workspace/issue-303/baseline; [ \"$side\" = A ] || target=/workspace/issue-303/candidate; BENCH_HOST=/workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent PI_OFFLINE=1 PI_TELEMETRY=0 HOME=/workspace/issue-303/evidence/synthetic-home node restore-benchmark.mjs \"$target\" \"$side$sample\" > \"$side$sample.json\"; done; done",
+		"BENCH_HOST=/workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent PI_OFFLINE=1 PI_TELEMETRY=0 HOME=/workspace/issue-303/evidence/synthetic-home node --cpu-prof --cpu-prof-dir=profile-final-A restore-work.mjs /workspace/issue-303/baseline instrumented-A",
+		"BENCH_HOST=/workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent PI_OFFLINE=1 PI_TELEMETRY=0 HOME=/workspace/issue-303/evidence/synthetic-home node --cpu-prof --cpu-prof-dir=profile-final-B restore-work.mjs /workspace/issue-303/candidate instrumented-B"
+	],
+	"benchmarkProgram": "import assert from 'node:assert/strict';\nimport { createHash } from 'node:crypto';\nimport { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';\nimport { dirname, join, resolve } from 'node:path';\nimport { performance } from 'node:perf_hooks';\nimport { pathToFileURL } from 'node:url';\nconst base = '/workspace/issue-303';\nconst target = resolve(process.argv[2] ?? `${base}/baseline`);\nconst label = process.argv[3] ?? 'baseline';\nconst sdk = await import(pathToFileURL(`${process.env.BENCH_HOST ?? `${base}/worktree/node_modules/@earendil-works/pi-coding-agent`}/dist/index.js`));\nconst {readBrowserEntries} = await import(pathToFileURL(join(target,'dist/extensions/agent-browser/lib/browser-journal.js')));\nconst {SessionPageState} = await import(pathToFileURL(join(target,'dist/extensions/agent-browser/lib/session-page-state.js')));\nconst root = `${base}/evidence/synthetic`;\nawait mkdir(root,{recursive:true});\nconst file=join(root,'large-v2.jsonl');\nconst timestamp='2026-10-24T00:00:00.000Z';\nconst sessionId='11111111-1111-4111-8111-111111111303';\nconst count=5180;\ntry { await stat(file); } catch (e) {\n if (e.code !== 'ENOENT') throw e;\n const handle=await open(file,'wx',0o600);\n try {\n  await handle.write(JSON.stringify({type:'session',version:3,id:sessionId,cwd:root,timestamp})+'\\n');\n  await handle.write(JSON.stringify({type:'thinking_level_change',id:'thinking',parentId:null,timestamp,thinkingLevel:'off'})+'\\n');\n  await handle.write(JSON.stringify({type:'message',id:'seed',parentId:'thinking',timestamp,message:{role:'assistant',content:[{type:'text',text:'Synthetic cloud benchmark.'}],api:'openai-completions',provider:'fixture',model:'fixture',stopReason:'stop',timestamp:1792800000000,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}})+'\\n');\n  for(let n=0;n<count;n++) await handle.write(JSON.stringify({type:'custom',customType:'synthetic-ignored',id:`entry-${n}`,parentId:n===0?'seed':`entry-${n-1}`,timestamp,data:{ignored:'x'.repeat(8192)}})+'\\n');\n  for(const id of ['branch-a','branch-b']) await handle.write(JSON.stringify({type:'custom',customType:'agent-browser-transition',id,parentId:`entry-${count-1}`,timestamp,data:{event:{version:1,phase:'state',operationId:id,toolCallId:id,commandIndex:0,isError:false,state:{},pages:[{key:'synthetic-shared',target:{url:`https://fixture.test/${id}`},refs:{kind:'invalidate'}}]}}})+'\\n');\n } finally {await handle.close();}\n}\nconst inputBytes=await readFile(file); const inputHash=createHash('sha256').update(inputBytes).digest('hex');\nconst sm=sdk.SessionManager.open(file,root);\nconst settingsManager=sdk.SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:false}});\nconst agentDir=join(root,'agent'); await mkdir(agentDir,{recursive:true});\nconst modelRuntime=await sdk.ModelRuntime.create({allowModelNetwork:false,authPath:join(agentDir,'auth.json'),modelsPath:null,modelsStorePath:join(agentDir,'models-store.json')});\nconst errors=[]; let starts=0,trees=0;\nconst loader=new sdk.DefaultResourceLoader({cwd:root,agentDir,settingsManager,noExtensions:true,noContextFiles:true,noSkills:true,noPromptTemplates:true,noThemes:true,additionalExtensionPaths:[join(target,'dist/extensions/agent-browser/index.js')],extensionFactories:[pi=>{pi.on('session_start',()=>{starts++});pi.on('session_tree',()=>{trees++});}]});\nawait loader.reload(); assert.deepEqual(loader.getExtensions().errors,[]);\nconst {session}=await sdk.createAgentSession({cwd:root,agentDir,modelRuntime,resourceLoader:loader,settingsManager,sessionManager:sm,noTools:'builtin'});\nconst timed=async(work)=>{const cpu=process.cpuUsage();const start=performance.now();const result=await work();return {ms:performance.now()-start,cpu:process.cpuUsage(cpu),result}};\nconst verify=async(id)=>{const entries=await readBrowserEntries(sm);assert.equal(entries.length,1); const page=SessionPageState.fromBranch(entries).get('synthetic-shared');assert.equal(page.tabTarget?.url,`https://fixture.test/${id}`);return{records:entries.length,url:page.tabTarget.url}};\ntry {\n const startup=await timed(()=>session.bindExtensions({onError:error=>errors.push(error)}));\n assert.equal(starts,1); assert.deepEqual(errors,[]);\n await verify('branch-b');\n for(const leaf of ['branch-a','branch-b']){await session.navigateTree(leaf);await verify(leaf);}\n const micro=await timed(()=>readBrowserEntries(sm));assert.equal(micro.result.length,1);delete micro.result;\n const tree=await timed(()=>session.navigateTree('branch-a'));assert.equal(tree.result.cancelled,false);delete tree.result;\n const output=await verify('branch-a'); assert.equal(createHash('sha256').update(await readFile(file)).digest('hex'),inputHash,'SDK must not change the matched fixture');\n assert.deepEqual(errors,[]);assert.equal(trees,3);\n console.log(JSON.stringify({label,node:process.version,sdk:JSON.parse(await readFile(`${process.env.BENCH_HOST ?? `${base}/worktree/node_modules/@earendil-works/pi-coding-agent`}/package.json`,'utf8')).version,fixture:{bytes:(await stat(file)).size,entries:count+4,sha256:createHash('sha256').update(await readFile(file)).digest('hex')},startup:{ms:startup.ms,cpu:startup.cpu},micro,tree,output,errors:errors.length,events:{starts,trees}}));\n} finally {session.dispose();}\n",
+	"instrumentedProgram": "import assert from 'node:assert/strict';\nimport { createHash } from 'node:crypto';\nimport { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';\nimport { dirname, join, resolve } from 'node:path';\nimport { performance } from 'node:perf_hooks';\nimport { pathToFileURL } from 'node:url';\nconst base = '/workspace/issue-303';\nconst target = resolve(process.argv[2] ?? `${base}/baseline`);\nconst label = process.argv[3] ?? 'baseline';\nconst sdk = await import(pathToFileURL(`${process.env.BENCH_HOST ?? `${base}/worktree/node_modules/@earendil-works/pi-coding-agent`}/dist/index.js`));\nconst {readBrowserEntries} = await import(pathToFileURL(join(target,'dist/extensions/agent-browser/lib/browser-journal.js')));\nconst {SessionPageState} = await import(pathToFileURL(join(target,'dist/extensions/agent-browser/lib/session-page-state.js')));\nconst root = `${base}/evidence/synthetic`;\nawait mkdir(root,{recursive:true});\nconst file=join(root,'large-v2.jsonl');\nconst timestamp='2026-10-24T00:00:00.000Z';\nconst sessionId='11111111-1111-4111-8111-111111111303';\nconst count=5180;\ntry { await stat(file); } catch (e) {\n if (e.code !== 'ENOENT') throw e;\n const handle=await open(file,'wx',0o600);\n try {\n  await handle.write(JSON.stringify({type:'session',version:3,id:sessionId,cwd:root,timestamp})+'\\n');\n  await handle.write(JSON.stringify({type:'thinking_level_change',id:'thinking',parentId:null,timestamp,thinkingLevel:'off'})+'\\n');\n  await handle.write(JSON.stringify({type:'message',id:'seed',parentId:'thinking',timestamp,message:{role:'assistant',content:[{type:'text',text:'Synthetic cloud benchmark.'}],api:'openai-completions',provider:'fixture',model:'fixture',stopReason:'stop',timestamp:1792800000000,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}}})+'\\n');\n  for(let n=0;n<count;n++) await handle.write(JSON.stringify({type:'custom',customType:'synthetic-ignored',id:`entry-${n}`,parentId:n===0?'seed':`entry-${n-1}`,timestamp,data:{ignored:'x'.repeat(8192)}})+'\\n');\n  for(const id of ['branch-a','branch-b']) await handle.write(JSON.stringify({type:'custom',customType:'agent-browser-transition',id,parentId:`entry-${count-1}`,timestamp,data:{event:{version:1,phase:'state',operationId:id,toolCallId:id,commandIndex:0,isError:false,state:{},pages:[{key:'synthetic-shared',target:{url:`https://fixture.test/${id}`},refs:{kind:'invalidate'}}]}}})+'\\n');\n } finally {await handle.close();}\n}\nconst inputBytes=await readFile(file); const inputHash=createHash('sha256').update(inputBytes).digest('hex');\nlet streamBytes=0,streamReads=0; const probe=await open(file,'r'); const prototype=Object.getPrototypeOf(probe); const originalRead=prototype.read; await probe.close(); prototype.read=async function(...args){const result=await Reflect.apply(originalRead,this,args);streamBytes+=result.bytesRead;streamReads++;return result;};\nconst sm=sdk.SessionManager.open(file,root);\nconst settingsManager=sdk.SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:false}});\nconst agentDir=join(root,'agent'); await mkdir(agentDir,{recursive:true});\nconst modelRuntime=await sdk.ModelRuntime.create({allowModelNetwork:false,authPath:join(agentDir,'auth.json'),modelsPath:null,modelsStorePath:join(agentDir,'models-store.json')});\nconst errors=[]; let starts=0,trees=0;\nconst loader=new sdk.DefaultResourceLoader({cwd:root,agentDir,settingsManager,noExtensions:true,noContextFiles:true,noSkills:true,noPromptTemplates:true,noThemes:true,additionalExtensionPaths:[join(target,'dist/extensions/agent-browser/index.js')],extensionFactories:[pi=>{pi.on('session_start',()=>{starts++});pi.on('session_tree',()=>{trees++});}]});\nawait loader.reload(); assert.deepEqual(loader.getExtensions().errors,[]);\nconst {session}=await sdk.createAgentSession({cwd:root,agentDir,modelRuntime,resourceLoader:loader,settingsManager,sessionManager:sm,noTools:'builtin'});\nconst timed=async(work)=>{streamBytes=0;streamReads=0;const cpu=process.cpuUsage();const start=performance.now();const result=await work();return {ms:performance.now()-start,cpu:process.cpuUsage(cpu),streamBytes,streamReads,result}};\nconst verify=async(id)=>{const entries=await readBrowserEntries(sm);assert.equal(entries.length,1); const page=SessionPageState.fromBranch(entries).get('synthetic-shared');assert.equal(page.tabTarget?.url,`https://fixture.test/${id}`);return{records:entries.length,url:page.tabTarget.url}};\ntry {\n const startup=await timed(()=>session.bindExtensions({onError:error=>errors.push(error)}));\n assert.equal(starts,1); assert.deepEqual(errors,[]);\n await verify('branch-b');\n for(const leaf of ['branch-a','branch-b']){await session.navigateTree(leaf);await verify(leaf);}\n const micro=await timed(()=>readBrowserEntries(sm));assert.equal(micro.result.length,1);delete micro.result;\n const tree=await timed(()=>session.navigateTree('branch-a'));assert.equal(tree.result.cancelled,false);delete tree.result;\n const output=await verify('branch-a'); assert.equal(createHash('sha256').update(await readFile(file)).digest('hex'),inputHash,'SDK must not change the matched fixture');\n assert.deepEqual(errors,[]);assert.equal(trees,3);\n console.log(JSON.stringify({label,node:process.version,sdk:JSON.parse(await readFile(`${process.env.BENCH_HOST ?? `${base}/worktree/node_modules/@earendil-works/pi-coding-agent`}/package.json`,'utf8')).version,fixture:{bytes:(await stat(file)).size,entries:count+4,sha256:createHash('sha256').update(await readFile(file)).digest('hex')},startup:{ms:startup.ms,cpu:startup.cpu},micro,tree,output,errors:errors.length,events:{starts,trees}}));\n} finally {session.dispose();}\n",
+	"actualCliProof": {
+		"label": "official",
+		"node": "v24.22.1",
+		"hostVersion": "1.4.0",
+		"hostCli": "/workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+		"cliSha256": "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774",
+		"args": [
+			"/workspace/issue-303/hosts/official/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+			"--mode",
+			"rpc",
+			"--session",
+			"/workspace/issue-303/evidence/synthetic/large-v2.jsonl",
+			"--session-dir",
+			"/workspace/issue-303/evidence/rpc-official/sessions",
+			"--approve",
+			"--no-extensions",
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-context-files",
+			"--no-themes",
+			"-e",
+			"/workspace/issue-303/candidate/dist/extensions/agent-browser/index.js",
+			"-e",
+			"/workspace/issue-303/evidence/rpc-official/observer.mjs"
+		],
+		"fixtureSha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327",
+		"requests": 3,
+		"lifecycleEvents": 3,
+		"extensionErrors": 0,
+		"exit": {
+			"code": 0,
+			"signal": null
+		},
+		"before": "11111111-1111-4111-8111-111111111303",
+		"after": "11111111-1111-4111-8111-111111111303",
+		"performanceClaim": false
+	},
+	"discardedAttempts": [
+		{
+			"path": "alternating/",
+			"reason": "Baseline copied artifact initially omitted package.json while candidate worktree had type=module. Jiti loading configuration was not comparable. Retained, not used for final claims.",
+			"rawSamples": [
+				{
+					"label": "A1",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 5150.044853,
+						"cpu": {
+							"user": 4196909,
+							"system": 979195
+						}
+					},
+					"micro": {
+						"ms": 951.1677529999979,
+						"cpu": {
+							"user": 792496,
+							"system": 212518
+						}
+					},
+					"tree": {
+						"ms": 4339.908921000002,
+						"cpu": {
+							"user": 3434320,
+							"system": 789123
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "A2",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 4741.133578,
+						"cpu": {
+							"user": 3947496,
+							"system": 853597
+						}
+					},
+					"micro": {
+						"ms": 992.225309999998,
+						"cpu": {
+							"user": 876541,
+							"system": 108685
+						}
+					},
+					"tree": {
+						"ms": 4641.304414000002,
+						"cpu": {
+							"user": 3537854,
+							"system": 924638
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "A3",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 5478.842003,
+						"cpu": {
+							"user": 4453156,
+							"system": 993118
+						}
+					},
+					"micro": {
+						"ms": 1026.901879000001,
+						"cpu": {
+							"user": 873881,
+							"system": 149735
+						}
+					},
+					"tree": {
+						"ms": 4990.722522,
+						"cpu": {
+							"user": 3939233,
+							"system": 884897
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "A4",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 5376.529439999999,
+						"cpu": {
+							"user": 4278357,
+							"system": 1086740
+						}
+					},
+					"micro": {
+						"ms": 1168.5846999999994,
+						"cpu": {
+							"user": 999976,
+							"system": 159390
+						}
+					},
+					"tree": {
+						"ms": 5101.594155999999,
+						"cpu": {
+							"user": 3817047,
+							"system": 944983
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "A5",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 5516.952021,
+						"cpu": {
+							"user": 4392795,
+							"system": 996586
+						}
+					},
+					"micro": {
+						"ms": 1069.8902460000027,
+						"cpu": {
+							"user": 970225,
+							"system": 152075
+						}
+					},
+					"tree": {
+						"ms": 4377.499279,
+						"cpu": {
+							"user": 3502185,
+							"system": 742747
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "B1",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 1217.5857669999998,
+						"cpu": {
+							"user": 1096844,
+							"system": 210660
+						}
+					},
+					"micro": {
+						"ms": 5.731038999999782,
+						"cpu": {
+							"user": 4830,
+							"system": 3412
+						}
+					},
+					"tree": {
+						"ms": 12.596659999999702,
+						"cpu": {
+							"user": 17647,
+							"system": 0
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "B2",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 1268.489835,
+						"cpu": {
+							"user": 1164271,
+							"system": 194707
+						}
+					},
+					"micro": {
+						"ms": 4.503089999999702,
+						"cpu": {
+							"user": 7155,
+							"system": 0
+						}
+					},
+					"tree": {
+						"ms": 10.282378999999764,
+						"cpu": {
+							"user": 14960,
+							"system": 0
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "B3",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 1337.0785399999997,
+						"cpu": {
+							"user": 1209483,
+							"system": 201514
+						}
+					},
+					"micro": {
+						"ms": 4.1740090000002965,
+						"cpu": {
+							"user": 5924,
+							"system": 0
+						}
+					},
+					"tree": {
+						"ms": 10.196450000000368,
+						"cpu": {
+							"user": 12768,
+							"system": 3357
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "B4",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 1641.3269719999998,
+						"cpu": {
+							"user": 1353032,
+							"system": 273184
+						}
+					},
+					"micro": {
+						"ms": 5.523659999999836,
+						"cpu": {
+							"user": 7875,
+							"system": 0
+						}
+					},
+					"tree": {
+						"ms": 12.346438999999918,
+						"cpu": {
+							"user": 16990,
+							"system": 10
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				},
+				{
+					"label": "B5",
+					"node": "v24.22.1",
+					"sdk": "1.4.0",
+					"fixture": {
+						"bytes": 43231570,
+						"entries": 5184,
+						"sha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327"
+					},
+					"startup": {
+						"ms": 1231.7106259999998,
+						"cpu": {
+							"user": 1159822,
+							"system": 157367
+						}
+					},
+					"micro": {
+						"ms": 3.642978999999741,
+						"cpu": {
+							"user": 4734,
+							"system": 134
+						}
+					},
+					"tree": {
+						"ms": 11.569440000000213,
+						"cpu": {
+							"user": 16402,
+							"system": 822
+						}
+					},
+					"output": {
+						"records": 1,
+						"url": "https://fixture.test/branch-a"
+					},
+					"errors": 0,
+					"events": {
+						"starts": 1,
+						"trees": 3
+					}
+				}
+			]
+		},
+		{
+			"path": "baseline-first.json, profile-before/",
+			"reason": "Initial diagnostic SDK was the locked 1.0.2 snapshot, not resolved latest. Custom-only initial fixture caused SDK metadata appends. Retained, not used for comparison."
+		},
+		{
+			"path": "profile-B/stderr",
+			"reason": "Platform doctor triggered npm pack prepare while profiling imported raw worktree dist. Missing helper artifact caused ERR_MODULE_NOT_FOUND. Retained; rebuilt artifacts matched export hashes and final runs use immutable copies."
+		}
+	],
+	"limits": [
+		"Only four indexes per loaded module instance; not a fixed byte bound independent of structural entry count.",
+		"Any append/change invalidates the index and requires a full scan; no incremental suffix claim.",
+		"No SDK in-memory payload fidelity assumption.",
+		"Cold startup still scans; any cold result is inconclusive, not a speedup claim.",
+		"SDK/CLI here are credential-free, not a substitute for required actual-model TUI smoke.",
+		"No claim about new installed macOS native/public dist."
+	],
+	"additionalVerification": {
+		"largeJournal": {
+			"command": "node --max-old-space-size=128 test/helpers/large-browser-journal.mjs",
+			"exitCode": 0,
+			"receipt": {
+				"version": 1,
+				"source": "/tmp/piab-large-journal-iOICgK/original.jsonl",
+				"destination": "/tmp/piab-large-journal-iOICgK/converted.jsonl",
+				"sessionId": "large-session",
+				"sourceSha256": "aa33d1178da555c7d351dee1e533a03cb771264ab0a514e8365baffdceb3245c",
+				"destinationSha256": "7b279bc999df8f41fb864797f029db23f82b199c9e60da1af4f59a0817fdad72",
+				"entryCount": 4223,
+				"convertedRecords": 222,
+				"snapshotDefinitions": 2,
+				"sourceBytes": 1611303769,
+				"destinationBytes": 1078626841,
+				"heapLimitBytes": 335544320,
+				"maxRssKiB": 378868,
+				"selectedRefs": 34683,
+				"recentReceipts": 100,
+				"branchesVerified": 3,
+				"distinctSessionsVerified": 4001,
+				"locatorsVerified": 2
+			},
+			"note": "The argument caps old space, not all V8 heap. Actual reported heap limit is 320 MiB; observed max RSS is about 370 MiB. The existing helper generated only disposable synthetic data and cleaned its own temporary files."
+		},
+		"nativeSuites": {
+			"command": "setpriv --reuid=65534 --regid=65534 --clear-groups env -i ... PI_NATIVE_LIFECYCLE_REQUIRED=1 PI_NATIVE_LIFECYCLE_SDK=<exact-sdk>/dist/index.js PI_NATIVE_LIFECYCLE_EXTENSION=/workspace/issue-303/candidate PI_NATIVE_LIFECYCLE_BROWSER_DIR=<isolated-download> node --test --test-reporter=tap test/agent-browser.native-lifecycle.test.mjs",
+			"nativeVersion": "0.39.2",
+			"nativeSha256": "f721437cad4c2e52c0c46c4df4246e0c7d46440fc31b481584e7242240eeb42a",
+			"official": {
+				"pass": 13,
+				"fail": 0,
+				"skip": 0,
+				"logSha256": "77937bfd9f9946715316e46eed4f5f06cc462d29d97ccf232cfc95ef766703de"
+			},
+			"fork": {
+				"pass": 13,
+				"fail": 0,
+				"skip": 0,
+				"logSha256": "dbbd69687b78a3766d0ea591085f53e15c2070a78e70eb577e76a2edcfef968f"
+			},
+			"failedSetupAttempts": "Two official attempts failed while copying fresh downloaded browser metadata files unreadable to UID65534. The task-owned binary download was made readable, with no source assertion or browser sandbox change. Both failed TAP logs are retained."
+		},
+		"actualForkCliProof": {
+			"label": "fork",
+			"node": "v24.22.1",
+			"hostVersion": "1.4.0",
+			"hostCli": "/workspace/issue-303/hosts/fork-package/installed/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+			"cliSha256": "ded5a256890d696a7aca93e62cf5ba26b0d63e1d176c6c97103b8df476c19e48",
+			"args": [
+				"/workspace/issue-303/hosts/fork-package/installed/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+				"--mode",
+				"rpc",
+				"--session",
+				"/workspace/issue-303/evidence/synthetic/large-v2.jsonl",
+				"--session-dir",
+				"/workspace/issue-303/evidence/rpc-fork/sessions",
+				"--approve",
+				"--no-extensions",
+				"--no-skills",
+				"--no-prompt-templates",
+				"--no-context-files",
+				"--no-themes",
+				"-e",
+				"/workspace/issue-303/candidate/dist/extensions/agent-browser/index.js",
+				"-e",
+				"/workspace/issue-303/evidence/rpc-fork/observer.mjs"
+			],
+			"fixtureSha256": "d852db86c7b1f25338b4afdb5644e4f593d5f7ea3df7c9305d1b7dea51890327",
+			"requests": 3,
+			"lifecycleEvents": 3,
+			"extensionErrors": 0,
+			"exit": {
+				"code": 0,
+				"signal": null
+			},
+			"before": "11111111-1111-4111-8111-111111111303",
+			"after": "11111111-1111-4111-8111-111111111303",
+			"performanceClaim": false
+		},
+		"fullRootContainerPipeline": {
+			"command": "npm run quality",
+			"exitCode": 1,
+			"parallel": {
+				"tests": 1566,
+				"pass": 1513,
+				"fail": 4,
+				"skip": 49
+			},
+			"serial": "NOT RUN; facade correctly stops at failed parallel child",
+			"logSha256": "5e06aa997b62170825cec87156661fbc60abfee049765e7ba78e6b5f93637f23",
+			"unchangedBaselineReproduction": {
+				"tests": 4,
+				"pass": 0,
+				"fail": 4,
+				"logSha256": "d2d15376f9c54544ec97e9299d6218b0fb5fe797d7bf2ea81be9e99b307efff2",
+				"command": "node node_modules/tsx/dist/cli.mjs --test --test-name-pattern='failed Electron startup preserves a live writer|agent-browser socket storage rejects unsafe' test/agent-browser.extension-electron-host-lifecycle.test.ts test/agent-browser.process.test.ts",
+				"note": "Diagnostic focused reproduction, not a successful complete gate. Same four ownership/detached-child assertions failed on untouched main in the root/PID1 container. Complete nonroot+tini latest-host parallel stages subsequently had zero failures; their serial cold-import budget remained red."
+			}
+		},
+		"docsAndContract": {
+			"generatedDocs": {
+				"command": "npm run docs",
+				"exitCode": 0
+			},
+			"format": {
+				"command": "npm run format:check",
+				"exitCode": 0
+			},
+			"liveContract": {
+				"command": "AGENT_BROWSER_SKILLS_DIR=/workspace/issue-303/tools/stock-agent-browser/package/skill-data npm run verify -- command-reference",
+				"exitCode": 0,
+				"stockPackageSha256": "e746426d88300f33f94ec47d24dcee5d8fff3f7c767819f75801aee8f0eb10f3",
+				"setupFailures": "Initial standalone cloud CLI lacked its distributed skills resources. A second attempt mistakenly selected the package skills shim instead of skill-data. Both failures are retained. The successful check used the exact stock 0.39.2 package skill-data via its documented override; no global setting or native binary was changed."
+			}
+		},
+		"actualModelTui": {
+			"gate": "Passed for historical executed source tree888fa28250a516e5965c77d94df8d5ef168c7ca8 only; runtime/build bytes still unchanged. Not an overall delivery waiver.",
+			"originalReceipt": {
+				"verifiedAt": "2026-10-24T15:09:20.574Z",
+				"claim": "Actual-model official Pi checkout/TUI browser smoke passed for the exact frozen candidate, not overall issue303 delivery acceptance",
+				"candidateBase": "ae821a9b69dc271f3ab69f15a8cead31528f359a",
+				"candidateTree": "888fa28250a516e5965c77d94df8d5ef168c7ca8",
+				"sourceAndBuildDigestsBeforeAndAfterMatch": true,
+				"manifests": {
+					"source-sha256.txt": [
+						{
+							"path": "README.md",
+							"sha256": "39ae6258aca6ad91de47da0a02e7d5cd9564929319c2c43a84eec7a3f986ed45"
+						},
+						{
+							"path": "docs/ARCHITECTURE.md",
+							"sha256": "909ddab2f3a52af57cdb24e7e02d7899ca2ef6283cd663d329f440bbeaf0481f"
+						},
+						{
+							"path": "docs/COMMAND_REFERENCE.md",
+							"sha256": "7795dddcfb9400f77414a696d205b18c755da1ce5d9712b2379bf8621e3d41c4"
+						},
+						{
+							"path": "docs/SESSION_STORAGE.md",
+							"sha256": "5d03504a60e161cf469f22d0bb5bf3b6c53273a0322ac3936ea463b7315767f5"
+						},
+						{
+							"path": "docs/SUPPORT_MATRIX.md",
+							"sha256": "56019ae546ba0222aaee76f7ff874e83804f2d92c18bae88dd5528854108a6e7"
+						},
+						{
+							"path": "docs/TOOL_CONTRACT.md",
+							"sha256": "41283bc0a02aa9d6d8d12d3354e933754e6d33b84f23de60619422f8ecc2f97a"
+						},
+						{
+							"path": "extensions/agent-browser/lib/browser-journal-cache.ts",
+							"sha256": "5ec699ec942c6e6336aecd63276ee793ce51bae56dbc87642aede5de8cb26c38"
+						},
+						{
+							"path": "extensions/agent-browser/lib/browser-journal-replay.ts",
+							"sha256": "fa209123a31af3ecafe6b8995d85a546452806253abb8a7f2ca31122d420b8f6"
+						},
+						{
+							"path": "test/agent-browser.journal-cache.test.ts",
+							"sha256": "75ca3c9459dc998b6d8d13c8cf4616b52c46c6769eb1d9ad95a30a9467a33210"
+						}
+					],
+					"build-input-sha256.txt": [
+						{
+							"path": "package-lock.json",
+							"sha256": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+						},
+						{
+							"path": "dist/extensions/agent-browser/index.js",
+							"sha256": "08bd184ae6aa88d8511fc49fdd25be5505e50496b5f9dd29c97544a15951534b"
+						},
+						{
+							"path": "dist/extensions/agent-browser/lib/browser-journal-replay.js",
+							"sha256": "4a5d76259f0bff7b4ef6f95a36827b40059ceacdb70cceb37881e6b7edef7fe0"
+						},
+						{
+							"path": "dist/extensions/agent-browser/lib/browser-journal-cache.js",
+							"sha256": "c4c4a5ff9bff10e7cd0015c6bab51cffaa94221ab032868a9390fffc4456e69f"
+						}
+					]
+				},
+				"host": {
+					"kind": "official",
+					"version": "1.4.0",
+					"source": "4a080252f06caf63a525d7873c5d94d3c23887e0",
+					"cliSha256": "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774",
+					"sdkSha256": "4569157e6038be9840fa514db4b00a27fd0be9e3622cc7b49a281de6c027d7ff",
+					"node": "v24.22.1",
+					"actualInteractiveCli": true,
+					"coherentCompanions": "All 7 Pi packages 1.4.0 plus TypeBox 1.3.27, separately verified"
+				},
+				"model": {
+					"provider": "zai",
+					"modelId": "glm-5.3-flash",
+					"thinking": "low",
+					"nativeSessionModelChangeObserved": true,
+					"allAssistantProviderAndModelFieldsMatched": true,
+					"fallback": false,
+					"separateFromCloudCodeOwnerModel": true
+				},
+				"sessionId": "d02ad4cb-90b8-4e6f-a3f9-b4d93c31657d",
+				"nativeToolResults": [
+					{
+						"args": ["--session", "issue303-smoke", "open", "https://example.com"],
+						"command": "open",
+						"resultCategory": "success",
+						"isError": false
+					},
+					{
+						"args": ["--session", "issue303-smoke", "snapshot", "-i"],
+						"command": "snapshot",
+						"resultCategory": "success",
+						"isError": false
+					},
+					{
+						"args": ["--session", "issue303-smoke", "open", "https://playwright.dev/docs/intro"],
+						"command": "open",
+						"resultCategory": "success",
+						"isError": false
+					},
+					{
+						"args": ["--session", "issue303-smoke", "snapshot", "-i"],
+						"command": "snapshot",
+						"resultCategory": "success",
+						"isError": false
+					},
+					{
+						"args": ["--session", "issue303-smoke", "close"],
+						"command": "close",
+						"resultCategory": "success",
+						"isError": false
+					}
+				],
+				"opens": [
+					{
+						"url": "https://example.com/",
+						"title": "Example Domain"
+					},
+					{
+						"url": "https://playwright.dev/docs/intro",
+						"title": "Installation | Playwright"
+					}
+				],
+				"snapshots": [
+					{
+						"origin": "https://example.com/",
+						"refs": 1,
+						"artifactVerification": null
+					},
+					{
+						"origin": "https://playwright.dev/docs/intro",
+						"refs": 183,
+						"artifactVerification": {
+							"artifacts": [
+								{
+									"kind": "spill",
+									"path": "/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/sessions/.pi-agent-browser-artifacts/d02ad4cb-90b8-4e6f-a3f9-b4d93c31657d/pi-agent-browser-snapshot-337ca8d990cbbc43.json",
+									"retentionState": "live",
+									"state": "verified",
+									"storageScope": "persistent-session"
+								}
+							],
+							"missingCount": 0,
+							"pendingCount": 0,
+							"unverifiedCount": 0,
+							"verified": true,
+							"verifiedCount": 1
+						}
+					}
+				],
+				"cliExit": {
+					"code": 0,
+					"signal": null,
+					"at": "2026-10-24T15:06:47.102Z"
+				},
+				"retained": {
+					"journal": "/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/sessions/2026-10-24T15-02-16-441Z_d02ad4cb-90b8-4e6f-a3f9-b4d93c31657d.jsonl",
+					"journalSha256": "6cdc6959dca088d76a3d78c2d2bb2522b6ff7dffa44f758ac9fe1e6d97d3493c",
+					"journalBytes": 98775,
+					"finalPane": "/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/pane-final.txt",
+					"ptyLog": "/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/pty.log",
+					"launch": "/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/launch.json",
+					"snapshotArtifacts": [
+						{
+							"kind": "spill",
+							"path": "/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/sessions/.pi-agent-browser-artifacts/d02ad4cb-90b8-4e6f-a3f9-b4d93c31657d/pi-agent-browser-snapshot-337ca8d990cbbc43.json",
+							"retentionState": "live",
+							"state": "verified",
+							"storageScope": "persistent-session"
+						}
+					]
+				},
+				"cleanup": {
+					"ownedModelCliExitedNormally": true,
+					"explicitBrowserCloseObserved": true,
+					"privateCredentialEnvironmentRetiredWithProcess": true,
+					"removedOwnedNonJournalPrivateDirectories": [
+						"/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/private-home",
+						"/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke-v2/agent"
+					],
+					"piJournalsDeleted": 0
+				},
+				"failedPreparationAttempt": {
+					"path": "/tmp/pi-perf-8-20261024/browser-candidate/tui-smoke/credential-error.json",
+					"phase": "Doppler lookup before inference/CLI spawn; no actual model failure or fallback",
+					"retained": true
+				},
+				"limits": [
+					"This proves official 1.4.0 macOS TUI/model/native-browser flow only; no maintained-fork local model claim.",
+					"Titles are actual native open observations; the model did not issue separate get-title calls.",
+					"No replay/rollover or latency/cache-hit improvement claim from this smoke.",
+					"Independent cloud CI/benchmark and all remaining issue303 findings still require completion.",
+					"The gate applies to the exact verified source/build bytes; later runtime changes invalidate it.",
+					"No live installed extension/core/model/account/settings change; no key exported or logged."
+				]
+			},
+			"transcriptArchive": "issue-303-model-smoke.tar.gz",
+			"archiveVerification": {
+				"archiveSha256": "0a7c3b11ae8815822699ac1cd5341150b39b2a8d9690098b5e56605bbe517519",
+				"archiveBytes": 46315,
+				"regularMembers": 15,
+				"declaredFilesVerified": 14,
+				"manifestSha256": "0ee3ea2591a26e0709ed6726010cf6e6398cbfdd53adeae5a24df3a51f20045b",
+				"allMemberHashesAndSizesVerified": true,
+				"pathLinkSpecialAndDuplicateChecks": "Passed before extraction",
+				"output": "/workspace/issue-303/evidence/model-smoke/received-originals",
+				"originalReceiptSha256": "4b4086340a32ec86ba179443a963e5b24ef86bdbdf9e05be1aaea4c7068acc71",
+				"journalSha256": "6cdc6959dca088d76a3d78c2d2bb2522b6ff7dffa44f758ac9fe1e6d97d3493c"
+			},
+			"independentGuestJournalCheck": {
+				"nativeModelChange": "zai/glm-5.3-flash",
+				"assistantMessages": 6,
+				"allAssistantProviderModelFieldsMatched": true,
+				"nativeToolResults": 5,
+				"allSuccess": true,
+				"finalStopReason": "stop",
+				"cliExit": 0,
+				"bothOriginalManifestCopiesMatched": true
+			},
+			"laterTestOnlyChange": {
+				"type": "Test-only regression strengthening",
+				"treeWithTestStrengthening": "0c346a0046c3c028c6f5d801c464711ec63d16c1",
+				"description": "Restore mtime at exact whole-second precision and assert matching mtimeNs plus changed ctimeNs before cached header validation. No production source, product docs, project lock or build inputs changed.",
+				"sourceManifest": {
+					"README.md": {
+						"smokeSha256": "39ae6258aca6ad91de47da0a02e7d5cd9564929319c2c43a84eec7a3f986ed45",
+						"currentSha256": "39ae6258aca6ad91de47da0a02e7d5cd9564929319c2c43a84eec7a3f986ed45",
+						"matches": true
+					},
+					"docs/ARCHITECTURE.md": {
+						"smokeSha256": "909ddab2f3a52af57cdb24e7e02d7899ca2ef6283cd663d329f440bbeaf0481f",
+						"currentSha256": "909ddab2f3a52af57cdb24e7e02d7899ca2ef6283cd663d329f440bbeaf0481f",
+						"matches": true
+					},
+					"docs/COMMAND_REFERENCE.md": {
+						"smokeSha256": "7795dddcfb9400f77414a696d205b18c755da1ce5d9712b2379bf8621e3d41c4",
+						"currentSha256": "7795dddcfb9400f77414a696d205b18c755da1ce5d9712b2379bf8621e3d41c4",
+						"matches": true
+					},
+					"docs/SESSION_STORAGE.md": {
+						"smokeSha256": "5d03504a60e161cf469f22d0bb5bf3b6c53273a0322ac3936ea463b7315767f5",
+						"currentSha256": "5d03504a60e161cf469f22d0bb5bf3b6c53273a0322ac3936ea463b7315767f5",
+						"matches": true
+					},
+					"docs/SUPPORT_MATRIX.md": {
+						"smokeSha256": "56019ae546ba0222aaee76f7ff874e83804f2d92c18bae88dd5528854108a6e7",
+						"currentSha256": "56019ae546ba0222aaee76f7ff874e83804f2d92c18bae88dd5528854108a6e7",
+						"matches": true
+					},
+					"docs/TOOL_CONTRACT.md": {
+						"smokeSha256": "41283bc0a02aa9d6d8d12d3354e933754e6d33b84f23de60619422f8ecc2f97a",
+						"currentSha256": "41283bc0a02aa9d6d8d12d3354e933754e6d33b84f23de60619422f8ecc2f97a",
+						"matches": true
+					},
+					"extensions/agent-browser/lib/browser-journal-cache.ts": {
+						"smokeSha256": "5ec699ec942c6e6336aecd63276ee793ce51bae56dbc87642aede5de8cb26c38",
+						"currentSha256": "5ec699ec942c6e6336aecd63276ee793ce51bae56dbc87642aede5de8cb26c38",
+						"matches": true
+					},
+					"extensions/agent-browser/lib/browser-journal-replay.ts": {
+						"smokeSha256": "fa209123a31af3ecafe6b8995d85a546452806253abb8a7f2ca31122d420b8f6",
+						"currentSha256": "fa209123a31af3ecafe6b8995d85a546452806253abb8a7f2ca31122d420b8f6",
+						"matches": true
+					},
+					"test/agent-browser.journal-cache.test.ts": {
+						"smokeSha256": "75ca3c9459dc998b6d8d13c8cf4616b52c46c6769eb1d9ad95a30a9467a33210",
+						"currentSha256": "c41dd520f45cf8836c00a78f4f4d8e6586f8a097d1146613aae9e6a43bfee0b7",
+						"matches": false
+					}
+				},
+				"runtimeBuildInputs": {
+					"package-lock.json": {
+						"expectedSha256": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb",
+						"currentSha256": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb",
+						"verifiedLocator": "/workspace/issue-303/worktree/package-lock.json"
+					},
+					"dist/extensions/agent-browser/index.js": {
+						"expectedSha256": "08bd184ae6aa88d8511fc49fdd25be5505e50496b5f9dd29c97544a15951534b",
+						"currentSha256": "08bd184ae6aa88d8511fc49fdd25be5505e50496b5f9dd29c97544a15951534b",
+						"verifiedLocator": "/workspace/issue-303/worktree/dist/extensions/agent-browser/index.js"
+					},
+					"dist/extensions/agent-browser/lib/browser-journal-replay.js": {
+						"expectedSha256": "4a5d76259f0bff7b4ef6f95a36827b40059ceacdb70cceb37881e6b7edef7fe0",
+						"currentSha256": "4a5d76259f0bff7b4ef6f95a36827b40059ceacdb70cceb37881e6b7edef7fe0",
+						"verifiedLocator": "/workspace/issue-303/candidate/dist/extensions/agent-browser/lib/browser-journal-replay.js"
+					},
+					"dist/extensions/agent-browser/lib/browser-journal-cache.js": {
+						"expectedSha256": "c4c4a5ff9bff10e7cd0015c6bab51cffaa94221ab032868a9390fffc4456e69f",
+						"currentSha256": "c4c4a5ff9bff10e7cd0015c6bab51cffaa94221ab032868a9390fffc4456e69f",
+						"verifiedLocator": "/workspace/issue-303/candidate/dist/extensions/agent-browser/lib/browser-journal-cache.js"
+					}
+				},
+				"green": {
+					"tests": 7,
+					"pass": 7,
+					"fail": 0,
+					"skip": 0
+				},
+				"redControl": "Isolated ctime-omitted mutant:7tests,6pass,1fail exactly Missing expected rejection. No mutant changes in issue worktree."
+			}
+		},
+		"officialFrozen": {
+			"flavor": "official",
+			"version": "1.4.0",
+			"directory": "/workspace/issue-303/hosts/official-frozen",
+			"packageDir": "/workspace/issue-303/hosts/official-frozen/node_modules/@earendil-works/pi-coding-agent",
+			"index": "/workspace/issue-303/hosts/official-frozen/node_modules/@earendil-works/pi-coding-agent/dist/index.js",
+			"cli": "/workspace/issue-303/hosts/official-frozen/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+			"indexSha256": "4569157e6038be9840fa514db4b00a27fd0be9e3622cc7b49a281de6c027d7ff",
+			"cliSha256": "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774",
+			"cohort": {
+				"@earendil-works/pi-coding-agent": "1.4.0",
+				"@earendil-works/pi-agent-core": "1.4.0",
+				"@earendil-works/pi-ai": "1.4.0",
+				"@earendil-works/pi-telemetry": "1.4.0",
+				"@earendil-works/pi-codemode": "1.4.0",
+				"@earendil-works/pi-mcp": "1.4.0",
+				"@earendil-works/pi-tui": "1.4.0"
+			},
+			"companions": {
+				"typebox": "1.3.27"
+			},
+			"runtimeLockSha256": "38820ba07480dda5d082fdf1e155c052281b739701ede3c5192c35c35301b22b",
+			"runtimeGraphSha256": "b6735efb7df42e441b014482e566fb84b0f5de464de6d7eec9db780aa149735c"
+		},
+		"forkExact": {
+			"flavor": "fork",
+			"version": "1.4.0",
+			"directory": "/workspace/issue-303/hosts/fork-package/installed",
+			"packageDir": "/workspace/issue-303/hosts/fork-package/installed/node_modules/@earendil-works/pi-coding-agent",
+			"index": "/workspace/issue-303/hosts/fork-package/installed/node_modules/@earendil-works/pi-coding-agent/dist/index.js",
+			"cli": "/workspace/issue-303/hosts/fork-package/installed/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+			"indexSha256": "8571698d27d098f224e684565fdf7bbcba72c0172b875adf59f0b7c088a94554",
+			"cliSha256": "ded5a256890d696a7aca93e62cf5ba26b0d63e1d176c6c97103b8df476c19e48",
+			"cohort": {
+				"@earendil-works/pi-coding-agent": "1.4.0",
+				"@earendil-works/chord": "1.4.0",
+				"@earendil-works/pi-telemetry": "1.4.0",
+				"@earendil-works/pi-agent-core": "1.4.0",
+				"@earendil-works/pi-ai": "1.4.0",
+				"@earendil-works/pi-codemode": "1.4.0",
+				"@earendil-works/pi-durable": "1.4.0",
+				"@earendil-works/pi-mcp": "1.4.0",
+				"@earendil-works/pi-tui": "1.4.0"
+			},
+			"companions": {
+				"typebox": "1.3.37"
+			},
+			"runtimeLockSha256": "d2fa6195da1b11a4e24161de343429795a4837a757a7058841555c7deb742d45",
+			"runtimeGraphSha256": "8f31cb8db6c4c3685a657c2c2a8d7d60419a928883428ad03dbdb07ab80466fb"
+		},
+		"lockedPackagePi": {
+			"command": "npm run verify -- package-pi",
+			"node": "v24.22.1",
+			"npm": "12.2.0",
+			"sdk": "1.0.2 pinned project snapshot",
+			"exitCode": 0,
+			"packedFiles": 53,
+			"tarballBytes": 940531,
+			"unpackedBytes": 3903521,
+			"toolsFound": 1,
+			"invocation": ["--version"],
+			"limitation": "Native Pi package loader/handler exercised with the existing deterministic fake version binary, not a real-browser/model substitute. Separate native13 and actual-model receipts provide those proofs.",
+			"invalidEarlierAttempt": "An initial post-checkpoint command silently fell through a dangling npm shim to ambient11.19.1; exit0 is retained but not used as pinned-npm qualification. Durable scoped npm12.2.0 was installed and the complete package-pi gate reran successfully."
+		},
+		"latestFullHostGates": {
+			"state": "Initial local full gates failed the unchanged absolute250ms cold-import budget. The one-shot untouched-base diagnosis also failed. These are retained failed runs, not a verdict on later exact-head CI. No test budget/assertion was changed and no retry-until-pass ran.",
+			"official": {
+				"parallel": {
+					"tests": 1556,
+					"pass": 1506,
+					"fail": 0,
+					"skip": 50
+				},
+				"serial": {
+					"tests": 75,
+					"pass": 65,
+					"fail": 1,
+					"skip": 9
+				},
+				"failed": "agent_browser cold startup stays below the issue #84 regression budget",
+				"samplesMs": [225.748021, 297.249417, 251.041888]
+			},
+			"fork": {
+				"parallel": {
+					"tests": 1556,
+					"pass": 1510,
+					"fail": 0,
+					"skip": 46
+				},
+				"serial": {
+					"tests": 75,
+					"pass": 65,
+					"fail": 1,
+					"skip": 9
+				},
+				"failed": "agent_browser cold startup stays below the issue #84 regression budget"
+			},
+			"rootFailureResolution": "Prior root-specific ancestry and detached-child failures are absent under nonroot+tini; zero parallel failures. Original failed root and untouched-main repro logs remain retained.",
+			"baselineDiagnosis": {
+				"classification": "The unchanged exact baseline also fails the absolute startup budget on this machine. No candidate-only regression or full-green qualification is established.",
+				"diagnosticInvocationsPerSide": 1,
+				"unchangedBudgetMs": 250,
+				"records": [
+					{
+						"label": "official-full-gate",
+						"totalsMs": [225.748021, 297.249417, 251.041888],
+						"distinctPids": 3,
+						"allSamplesRegisterBrowser": true
+					},
+					{
+						"label": "fork-full-gate",
+						"totalsMs": [336.41856199999995, 336.915532, 291.674437],
+						"distinctPids": 3,
+						"allSamplesRegisterBrowser": true
+					},
+					{
+						"label": "untouched-baseline-diagnostic-once",
+						"totalsMs": [342.373563, 311.738344, 310.131362],
+						"distinctPids": 3,
+						"allSamplesRegisterBrowser": true
+					},
+					{
+						"label": "candidate-diagnostic-once",
+						"totalsMs": [283.545881, 332.808394, 363.972264],
+						"distinctPids": 3,
+						"allSamplesRegisterBrowser": true
+					}
+				]
+			},
+			"completeStageSummaries": [
+				{
+					"flavor": "official",
+					"result": {
+						"flavor": "official",
+						"completedAt": "2026-10-24T15:14:36.355Z",
+						"exitCode": 1,
+						"signal": null,
+						"protectedFilesBefore": {
+							"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+							"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+						},
+						"protectedFilesAfter": {
+							"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+							"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+						},
+						"metadataUnchanged": true
+					},
+					"stages": [
+						{
+							"command": "/usr/local/bin/node /workspace/issue-303/hosts/fork-package/compat-official/node_modules/tsx/dist/cli.mjs --test --test-reporter=tap test/**/!(*.serial).test.ts",
+							"counts": {
+								"tests": 1556,
+								"suites": 0,
+								"pass": 1506,
+								"fail": 0,
+								"cancelled": 0,
+								"skipped": 50,
+								"todo": 0
+							},
+							"skipRecords": 50,
+							"failures": []
+						},
+						{
+							"command": "/usr/local/bin/node /workspace/issue-303/hosts/fork-package/compat-official/node_modules/tsx/dist/cli.mjs --test --test-reporter=tap --test-concurrency=1 test/**/*.serial.test.ts",
+							"counts": {
+								"tests": 75,
+								"suites": 0,
+								"pass": 65,
+								"fail": 1,
+								"cancelled": 0,
+								"skipped": 9,
+								"todo": 0
+							},
+							"skipRecords": 9,
+							"failures": [
+								"not ok 72 - agent_browser cold startup stays below the issue \\#84 regression budget"
+							]
+						}
+					]
+				},
+				{
+					"flavor": "fork",
+					"result": {
+						"flavor": "fork",
+						"completedAt": "2026-10-24T15:39:38.985Z",
+						"exitCode": 1,
+						"signal": null,
+						"protectedFilesBefore": {
+							"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+							"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+						},
+						"protectedFilesAfter": {
+							"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+							"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+						},
+						"metadataUnchanged": true
+					},
+					"stages": [
+						{
+							"command": "/usr/local/bin/node /workspace/issue-303/hosts/fork-package/compat-fork/node_modules/tsx/dist/cli.mjs --test --test-reporter=tap test/**/!(*.serial).test.ts",
+							"counts": {
+								"tests": 1556,
+								"suites": 0,
+								"pass": 1510,
+								"fail": 0,
+								"cancelled": 0,
+								"skipped": 46,
+								"todo": 0
+							},
+							"skipRecords": 46,
+							"failures": []
+						},
+						{
+							"command": "/usr/local/bin/node /workspace/issue-303/hosts/fork-package/compat-fork/node_modules/tsx/dist/cli.mjs --test --test-reporter=tap --test-concurrency=1 test/**/*.serial.test.ts",
+							"counts": {
+								"tests": 75,
+								"suites": 0,
+								"pass": 65,
+								"fail": 1,
+								"cancelled": 0,
+								"skipped": 9,
+								"todo": 0
+							},
+							"skipRecords": 9,
+							"failures": [
+								"not ok 72 - agent_browser cold startup stays below the issue \\#84 regression budget"
+							]
+						}
+					]
+				}
+			],
+			"separatePackageSmokes": {
+				"fork": {
+					"flavor": "fork",
+					"label": "package-smoke",
+					"completedAt": "2026-10-24T15:41:09.171Z",
+					"exitCode": 0,
+					"signal": null,
+					"protectedFilesBefore": {
+						"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+						"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+					},
+					"protectedFilesAfter": {
+						"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+						"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+					},
+					"metadataUnchanged": true
+				}
+			},
+			"officialStrengthenedSupplement": {
+				"flavor": "official",
+				"label": "strengthened-supplement",
+				"completedAt": "2026-10-24T15:18:27.932Z",
+				"exitCode": 0,
+				"signal": null,
+				"protectedFilesBefore": {
+					"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+					"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+				},
+				"protectedFilesAfter": {
+					"package.json": "31c820f5f747841f08f17b4751074a54535cf9f1b96f167a30d77a5d0d6449cb",
+					"package-lock.json": "6a4c362cb40fdd08ec764492fce3f318270abb756927edecb3d198924f1e55fb"
+				},
+				"metadataUnchanged": true
+			}
+		},
+		"finalLocalChecks": {
+			"phase": "Final pre-commit non-full gates; does not override failed full suites.",
+			"node": "24.22.1",
+			"npm": "12.2.0",
+			"go": "1.27.1",
+			"passed": [
+				"complete corrected-policy lint:0warnings0errors,541files,231rules",
+				"repository formatting",
+				"TypeScript compiler",
+				"build",
+				"all4 frozen runtime/build/lock digest checks",
+				"generated playbook/command reference",
+				"live stock0.39.2 command reference",
+				"pinned1.0.2 compiled package and deterministic Pi handler smoke",
+				"git diff --check"
+			],
+			"logs": {
+				"lint": "26b7a8656b0b45dab989d003a21e442e594ca93413eb87210021017f5d47dcea",
+				"format": "b4917c93d53d7118ce754403daa7e49fdbda0e956626fce9150fa5b9e965c045",
+				"compiler": "1c5f50e56d1ef1523ef84ee0f8ba21fcb4f71f4e7ee05a95d9668e448ce98359",
+				"build": "8ea76c43529e394c28adf1aed4ee94c4c51e7f74c350814498ee8c5c1c9f50a5",
+				"docs": "1f5331ee2bcff5d76e0204117bacce0677ea79e6d35e1d88c51d926938cb09ff",
+				"command-reference": "dea199f8a9f786d1f04d07604d49195edd2483e470bdb6dc4c6e6647f12f36af",
+				"package-pi": "f7f3fee2c1364e55fb87ad67322679edc65942908a059e7bf73641d4d2f76ca8",
+				"model-runtime-hash-check": "3004b24eb099ca7b5a0ad43c479589d3a7b309c9fd4ab012363b02f178641798"
+			}
+		}
+	}
+}

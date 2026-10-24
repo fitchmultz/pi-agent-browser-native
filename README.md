@@ -106,6 +106,8 @@ For remote browsers, use a URL that the browser host can reach. `localhost` refe
 
 Preparatory tab/page checks do not launch a stopped caller-owned explicit `--session` ahead of its launch-flagged command, including after resume. After dispatch, the old browser's tab identity and refs are retired. A successful command observes the replacement page before follow-ups; if it cannot be observed, the target stays unknown. Put launch flags on the launch command; an already-running browser may ignore them.
 
+Repeated session restores reuse unchanged journal metadata without caching browser state. Cold loads and changed journals still need a full scan. See [session storage](docs/SESSION_STORAGE.md#reading-and-retention) for the limits.
+
 For stale references or unexpected tabs, follow the returned recovery actions. Take a fresh snapshot before another interaction. A snapshot inside a batch does not protect refs used after a later page-changing step; add another snapshot after that step or split the batch.
 
 ## More documentation
