@@ -31,6 +31,7 @@ import test, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
+import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import { getAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
 import {
 	applyArtifactChanges,
@@ -385,6 +386,82 @@ if (args.includes("url")) {
 					);
 				}
 				assert.equal(invocations.filter((entry) => entry.args.includes("caller-failed")).length, 1);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test(
+	"agentBrowserExtension lets a cold caller-owned launch keep its flags instead of probing first",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-cold-launch-"));
+		const logPath = join(tempDir, "invocations.log");
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const args = process.argv.slice(2);
+require("node:fs").appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: args.includes("url") ? { url: "https://safe.example/" } : { html: "SAFE" } }));`,
+		);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const read = (sessionName: string, flags: readonly string[]) =>
+					executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", sessionName, ...flags, "get", "html", "body"],
+					});
+				const order = async (sessionName: string) => {
+					const calls = (await readInvocationLog(logPath)).filter(
+						(entry) => entry.args.includes(sessionName) && !entry.args.includes("info"),
+					);
+					await writeFile(logPath, "");
+					return calls.map((entry) => extractUpstreamCommandTokens(entry.args));
+				};
+				const local = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", "cold-flags", "--ignore-https-errors", "auth", "list"],
+				});
+				assert.equal(local.isError, false);
+				assert.deepEqual(
+					await order("cold-flags"),
+					[["auth", "list"]],
+					"a local command must not consume the cold browser launch",
+				);
+				assert.equal((await read("cold-flags", ["--ignore-https-errors"])).isError, false);
+				assert.ok(
+					(await readInvocationLog(logPath))[0]?.args.includes("--ignore-https-errors"),
+					"the first browser command retains the caller's launch flag",
+				);
+				assert.deepEqual(
+					await order("cold-flags"),
+					[
+						["get", "html", "body"],
+						["get", "url"],
+						["get", "title"],
+						["tab", "list"],
+					],
+					"the caller's flagged command precedes observations of its new page",
+				);
+				assert.equal((await read("cold-flags", ["--ignore-https-errors"])).isError, false);
+				assert.deepEqual(
+					await order("cold-flags"),
+					[
+						["get", "url"],
+						["get", "html", "body"],
+					],
+					"warm page stays verified",
+				);
+				assert.equal((await read("cold-plain", [])).isError, false);
+				assert.deepEqual(
+					await order("cold-plain"),
+					[
+						["get", "url"],
+						["get", "html", "body"],
+					],
+					"flagless probe is unchanged",
+				);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });

@@ -2,12 +2,15 @@ import type { ElectronLaunchSuccess } from "../../electron/launch.js";
 import { prepareAgentBrowserSpawnArgs } from "../../process.js";
 import { redactInvocationArgs } from "../../runtime-redaction.js";
 import { getBooleanFlagValue } from "../../argv-grammar.js";
+import { parseArgvDescriptor } from "../../argv-descriptor.js";
+import { needsManagedSession } from "../../command-policy.js";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { PreparationProcessFacts } from "./prepare-contracts.js";
 
 export interface PreparationNativeFacts extends PreparationProcessFacts {
 	readonly managedSessionActive: boolean;
 	readonly preserveAttachedBrowserSession?: boolean;
+	readonly callerColdLaunch?: () => Promise<boolean>;
 	readonly isRestoreDisabled: () => boolean;
 	readonly onUpdate?: (result: AgentToolResult<unknown>) => void;
 }
@@ -145,9 +148,15 @@ export async function prepareNativeCommand(
 	const plan = context.semantic.selection.executionPlan;
 	const page = context.semantic.selection.page;
 	const input = context.input;
+	const callerColdLaunch =
+		!context.session.browserIndependent &&
+		needsManagedSession(parseArgvDescriptor(plan.effectiveArgs), native.processStdin) &&
+		facts.preserveAttachedBrowserSession !== true &&
+		(await facts.callerColdLaunch?.()) === true;
 	return {
 		kind: "ready",
 		prepared: {
+			callerColdLaunch: callerColdLaunch ? true : undefined,
 			compiledElectron: input.compiledElectron,
 			compiledJob: input.compiledJob,
 			compiledNetworkSourceLookup: input.compiledNetworkSourceLookup,

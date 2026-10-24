@@ -224,3 +224,14 @@ export function hasLaunchScopedFlagToken(args: readonly string[], flag: string):
 		args.indexOf(flag) < commandStartIndex
 	);
 }
+
+// Namespace selects the daemon, and helpers already inherit the caller's idle timeout through the environment.
+const HELPER_INHERITED_LAUNCH_FLAGS = new Set<string>(["--namespace", "--idle-timeout"]);
+const BROWSER_LAUNCH_FLAGS = [
+	...new Set<string>([...LAUNCH_SCOPED_FLAGS, ...MANAGED_RESTORE_INCOMPATIBLE_FLAGS]),
+].filter((flag) => !HELPER_INHERITED_LAUNCH_FLAGS.has(flag));
+
+/** Whether argv configures a browser launch that a preparatory helper would not reproduce. */
+export function hasBrowserLaunchFlag(args: readonly string[]): boolean {
+	return BROWSER_LAUNCH_FLAGS.some((flag) => hasLaunchScopedFlagToken(args, flag));
+}

@@ -71,7 +71,7 @@ case "$mode" in
       node --test --test-reporter=tap test/agent-browser.native-lifecycle.test.mjs \
       2>&1 | tee "$root/logs/native-lifecycle.tap" || status=1
     # Missing prerequisites, filtered cases, and skips cannot qualify the gate.
-    for summary in 'tests 12' 'pass 12' 'fail 0' 'cancelled 0' 'skipped 0' 'todo 0'; do
+    for summary in 'tests 13' 'pass 13' 'fail 0' 'cancelled 0' 'skipped 0' 'todo 0'; do
       grep -qx "# $summary" "$root/logs/native-lifecycle.tap" || status=1
     done
     git diff --exit-code || status=1

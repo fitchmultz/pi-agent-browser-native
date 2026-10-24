@@ -39,6 +39,7 @@ export interface PageOutputPhase {
 		readonly prepared: Readonly<
 			Pick<
 				PreparedBrowserRun,
+				| "callerColdLaunch"
 				| "clickDispatchProbe"
 				| "commandTokens"
 				| "compiledJob"

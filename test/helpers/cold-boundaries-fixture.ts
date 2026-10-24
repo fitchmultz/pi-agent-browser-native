@@ -69,7 +69,7 @@ try { state = JSON.parse(fs.readFileSync(${JSON.stringify(statePath)}, 'utf8'));
 const tokens = [];
 for (let i = 0; i < args.length; i++) {
   if (['--session', '--namespace', '--headers', '--user-agent'].includes(args[i])) i++;
-  else if (!['--json', '--no-pin-tab'].includes(args[i])) tokens.push(args[i]);
+  else if (!['--json', '--no-pin-tab', '--ignore-https-errors'].includes(args[i])) tokens.push(args[i]);
 }
 function urlOperand(row) {
   for (let i = 1; i < row.length; i++) {

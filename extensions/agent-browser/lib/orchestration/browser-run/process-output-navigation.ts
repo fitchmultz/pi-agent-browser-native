@@ -196,7 +196,11 @@ function mergeObservedNavigation(draft: MergeObservedNavigationInput): void {
 export async function observeNavigationTarget(draft: ObserveNavigationTargetInput): Promise<void> {
 	resolveResultingPageState(draft);
 	const { prepared, cwd, signal } = draft.input;
-	if (canObserveSuccessfulNavigation(draft) && navigationObservationRequested(draft)) {
+	const navigationRequested = navigationObservationRequested(draft);
+	const coldTargetObservation =
+		prepared.callerColdLaunch === true &&
+		!isOpenNavigationCommand(prepared.executionPlan.commandInfo.command);
+	if (canObserveSuccessfulNavigation(draft) && (navigationRequested || coldTargetObservation)) {
 		draft.navigationSummary = await collectNavigationSummary({
 			cwd,
 			namespace: prepared.executionPlan.namespace,
@@ -217,7 +221,9 @@ export async function observeNavigationTarget(draft: ObserveNavigationTargetInpu
 		});
 		draft.failedTransitionReverification = draft.navigationSummary !== undefined;
 	}
-	mergeObservedNavigation(draft);
+	if (navigationRequested || draft.failedTransitionReverification) {
+		mergeObservedNavigation(draft);
+	}
 }
 
 export async function correctRestoredOpenTab(draft: CorrectRestoredOpenTabInput): Promise<void> {
