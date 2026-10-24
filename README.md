@@ -8,7 +8,7 @@ pi-agent-browser-native adds browser tools to [Pi](https://pi.dev). Use it to re
 
 Use Node 24.21.0 or later and Pi 1.0.0 or later. This extension requires a separate agent-browser installation.
 
-The recommended agent-browser version is 0.38.1. This extension accepts stable versions 0.35.0 or later.
+The recommended agent-browser version is 0.39.2. This extension accepts stable versions 0.35.0 or later. See the [0.39.2 command guide](docs/COMMAND_REFERENCE.md#upstream-0392-rebaseline) for CLI HTTPS trust, experimental Obscura, and inspect-before-retry outcomes.
 
 ```bash
 npm install -g agent-browser

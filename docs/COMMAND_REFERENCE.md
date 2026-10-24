@@ -28,15 +28,32 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.38.1` command/help surface, audited against vercel-labs/agent-browser@aff6125c023b810ea3f2e5deec5379e9a4270bdc. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.39.2` command/help surface, audited against vercel-labs/agent-browser@50c34e78c98dbe8add0b3ff36b4bcd7a47f1022b. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.39.2 rebaseline
+
+The recommended release is the stock npm `agent-browser@0.39.2`, audited against upstream commit `50c34e78c98dbe8add0b3ff36b4bcd7a47f1022b`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation.
+
+- CLI HTTPS requests from `read`, `install`, `upgrade`, and `doctor` now support `--ca-cert <path>` on every platform, `--use-system-ca` / `AGENT_BROWSER_USE_SYSTEM_CA` / native config `useSystemCa` for OS roots, and `SSL_CERT_FILE` as a fallback CA file. Certificate and hostname verification stay enabled. These options do not configure remote CDP/provider TLS or extend Linux Chromium's browser CA support to other platforms. See [trust options](#browser-launch-and-runtime-flags).
+- `--engine obscura` selects a separately installed experimental engine. Its accessibility, iframe, and screenshot gaps are not Chrome parity. Keep Chrome as the default; inspect the [Obscura limits](#obscura-engine-experimental) before choosing it.
+- Native 0.39.1+ does not replay mutating or launch requests after any request bytes were sent and the response was lost. A failed native JSON envelope with `code: "outcome_unknown"` means the command may have run, not that it failed without effects. Inspect the same session's URL, fresh snapshot, and relevant application state before deciding whether to repeat it. The wrapper adds no transport retry.
+- Native 0.39.2 rejects hidden, disabled, and off-viewport click/double-click targets instead of reporting false success. Use `scrollintoview <selector>` and fresh refs before clicking an offscreen control; a native success still needs application-state verification. Ambiguous stale-ref recovery now fails rather than selecting another element.
+- `--args` / `AGENT_BROWSER_ARGS` preserve commas and negative coordinates inside values. Newlines separate arguments; a comma separates them only before another flag. For example, `"--window-position=-1920,-100\n--disable-features=Translate,HttpsUpgrades"` keeps both values intact.
+- Upstream fixes auth-vault hidden-duplicate targeting, CDP attachment persistence, related target/session invalidation, paused network requests, blocked main-document redirects, and invalid/unreadable policy files failing closed. `--auto-connect` can wait up to 30 seconds for Chrome's remote-debugging approval prompt; it does not bypass that prompt.
+- Provider updates remain upstream-owned: Browser Use Cloud V4 adds `BROWSER_USE_PROFILE_ID`, `BROWSER_USE_PROXY_COUNTRY`, and `BROWSER_USE_ENABLE_RECORDING`; Kernel's named-profile fix adds `KERNEL_PROFILE_SAVE_CHANGES` to opt into saving changes. No provider credentials or paid cloud launches are needed for ordinary local qualification.
+
+```json
+{ "args": ["--use-system-ca", "read", "https://example.com"] }
+{ "args": ["--use-system-ca", "false", "read", "https://example.com"] }
+```
+
 ### Upstream 0.38.1 rebaseline
 
-The recommended release keeps the stable 0.35.0 floor. New options require an upstream release that provides them; the wrapper adds no version-specific emulation.
+These observation options arrived in 0.38 and remain available on the recommended release. New options require an upstream release that provides them; the wrapper adds no version-specific emulation.
 
 - `snapshot --delta` returns a nested `snapshot` object: `kind: full` includes `tree`, `refs`, and `revision`; `unchanged` includes `baseRevision` and `revision`; `delta` also includes ref `changes` and an exact `treeChange` line splice. `snapshot --delta --full` resets the native baseline. The wrapper preserves this payload and shows revisions rather than reporting an empty page. Partial results trigger a full native snapshot read for wrapper ref checks without advancing the delta baseline; there is no wrapper revision cache. Wrapper-only search/filter/viewport/diff options use a full tree instead of native delta output.
 - Surviving DOM elements retain refs across same-document snapshots. Navigation and replaced page/iframe documents invalidate them. Keep refreshing after page changes; persistent refs do not remove page-target checks or same-batch mutation boundaries.
@@ -92,7 +109,7 @@ The 0.35.1 baseline is a bug-fix release with no new commands or flags. Browser-
 The 0.35.0 release is the current runtime floor and adds private proxy CA trust plus one bundled workflow skill.
 
 - `--ca-cert <path>` / `AGENT_BROWSER_CA_CERT` loads a PEM bundle or DER certificate into an isolated NSS trust store for locally launched Linux Chromium. Normal hostname, validity, and unrelated-authority checks remain enabled. Equivalent certificate content reuses Chromium; changed content relaunches it. `--no-ca-cert` / `AGENT_BROWSER_CLEAR_CA_CERT` clears retained trust.
-- Use CA trust only with a fresh managed session. The wrapper treats `--ca-cert` and `--no-ca-cert` as launch-scoped for managed-session planning, disables automatic managed restore when CA trust is enabled, and passes caller-selected certificate paths through unchanged. Upstream rejects CA trust with profiles, CDP/auto-connect, providers, Lightpanda, `--ignore-https-errors`, macOS, or Windows, and requires `certutil` (`install --with-deps` installs it on supported Linux systems).
+- For browser CA trust, use a fresh managed session. The wrapper treats `--ca-cert` and `--no-ca-cert` as launch-scoped for managed browser planning, disables automatic managed restore when CA trust is enabled, and passes caller-selected certificate paths through unchanged. Browser CA trust rejects profiles, CDP/auto-connect, providers, non-Chrome engines, `--ignore-https-errors`, macOS, or Windows, and requires `certutil` (`install --with-deps` installs it on supported Linux systems). CLI HTTPS trust is separate and available on every platform from 0.39.0; see [the current baseline](#upstream-0392-rebaseline).
 - `skills get protected-vercel-deployments --full` loads the bundled short-lived Trusted Sources OIDC workflow. It uses `vc project token` and the `x-vercel-trusted-oidc-idp-token` header, avoids persisting tokens, and hands dashboard-only access-control changes to an authorized human.
 - The release also restores ARM64 build artifacts; no wrapper shim is needed.
 
@@ -1039,13 +1056,14 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 
 - `--executable-path <path>`: custom Chromium-compatible browser executable, such as Brave/Edge/Arc/Vivaldi when upstream can launch that binary. Environment: `AGENT_BROWSER_EXECUTABLE_PATH`.
 - `--extension <path>`: load browser extensions; repeatable. Environment: `AGENT_BROWSER_EXTENSIONS`.
-- `--args <args>`: browser launch args, comma or newline separated. Chromium switches belong in this value, for example `{ "args": ["--args", "--no-sandbox", "open", "https://example.com"], "sessionMode": "fresh" }`. A bare `--no-sandbox` is diagnosed when it occupies the command slot (unknown command) or an `open` / `goto` / `navigate` option position (ignored by upstream); literal operands in other commands are left alone. For batches, put `--args` before `batch` in top-level `args`, not inside a row. Environment: `AGENT_BROWSER_ARGS`.
+- `--args <args>`: browser launch args, newline separated or comma separated before another flag; commas and negative coordinates inside values stay intact. Chromium switches belong in this value, for example `{ "args": ["--args", "--no-sandbox", "open", "https://example.com"], "sessionMode": "fresh" }`. A bare `--no-sandbox` is diagnosed when it occupies the command slot (unknown command) or an `open` / `goto` / `navigate` option position (ignored by upstream); literal operands in other commands are left alone. For batches, put `--args` before `batch` in top-level `args`, not inside a row. Environment: `AGENT_BROWSER_ARGS`.
 - `--user-agent <ua>`: custom user agent. Environment: `AGENT_BROWSER_USER_AGENT`.
 - `--proxy <server>`: proxy server URL. Environments: `AGENT_BROWSER_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`.
 - `--proxy-bypass <hosts>`: proxy bypass hosts. Environments: `AGENT_BROWSER_PROXY_BYPASS`, `NO_PROXY`.
 - `--ignore-https-errors`: ignore HTTPS certificate errors. Environment: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`.
-- `--ca-cert <path>`: trust a PEM bundle or DER certificate in an isolated NSS store for locally launched Linux Chromium. Environment: `AGENT_BROWSER_CA_CERT`. Use `sessionMode: "fresh"`; the wrapper disables automatic managed restore for the CA-enabled session while passing the caller-selected certificate path upstream. Upstream requires `certutil` and rejects profiles, CDP/auto-connect, providers, Lightpanda, `--ignore-https-errors`, macOS, and Windows.
-- `--no-ca-cert`: clear retained CA trust. Environment: `AGENT_BROWSER_CLEAR_CA_CERT`. Use `sessionMode: "fresh"` for wrapper-managed sessions.
+- `--ca-cert <path>`: add a PEM bundle or DER certificate to CLI HTTPS trust on every platform. Environment: `AGENT_BROWSER_CA_CERT`. For `read`, explicit CLI trust is retained per native session through daemon restarts until close; `--no-ca-cert` / `AGENT_BROWSER_CLEAR_CA_CERT` clears it. An unusable explicit file fails; an unusable ambient `SSL_CERT_FILE` fallback is ignored with a warning. CLI trust does not launch a browser or configure remote CDP/provider TLS.
+- `--use-system-ca`: use OS roots instead of built-in Mozilla roots for CLI requests from `read`, `install`, `upgrade`, and `doctor`. Environment: `AGENT_BROWSER_USE_SYSTEM_CA`; native config: `useSystemCa`. A separated `--use-system-ca false` overrides it; `read` retains explicit selections until close. A supplied CA file adds to the selected roots. Certificate and hostname verification remain enabled.
+- Browser CA trust is separate: local Linux Chromium imports `--ca-cert` into an isolated NSS store and requires `certutil`. It rejects profiles, CDP/auto-connect, providers, non-Chrome engines, `--ignore-https-errors`, macOS, and Windows. The wrapper treats `--ca-cert` and `--no-ca-cert` as launch-scoped for managed browsers; use `sessionMode: "fresh"`. Automatic managed restore is disabled for CA-enabled browser sessions, and caller certificate paths pass through unchanged.
 - `--allow-file-access`: upstream capability passed through unchanged from argv or `AGENT_BROWSER_ALLOW_FILE_ACCESS`. Raw `--args` / `AGENT_BROWSER_ARGS`, local file navigation, local-page follow-ups, and caller-selected paths remain upstream-owned. The wrapper adds only its fixed compatibility user-agent argument on eligible new managed launches; it does not clear or replace caller launch settings. Ambiguous page-target transitions still require `get url` before later content calls so the agent cannot silently act on the wrong page.
 - `--hide-scrollbars <bool>`: explicitly show or hide native scrollbars in headless Chromium screenshots.
 - `--headed`: ask upstream to show the browser window. Environment: `AGENT_BROWSER_HEADED`. Use it on the first launch, normally with `sessionMode: "fresh"` when changing an existing managed session. Successful first/fresh local wrapper-managed launches can expose `details.browserWindow.visibility: "unverified"` and a login handoff; attached browsers cannot, but still verify actual OS visibility with the user or screenshot/tab evidence.
@@ -1054,7 +1072,7 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 - `--cdp <port|url>`: connect through Chrome DevTools Protocol. Use it, `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
-- `--engine <name>`: browser engine, `chrome` by default or `lightpanda`. Environment: `AGENT_BROWSER_ENGINE`. Launch-scoped; use `sessionMode: "fresh"` when changing a managed browser. See [Lightpanda](#lightpanda-engine).
+- `--engine <name>`: `chrome` by default, `lightpanda`, or experimental `obscura`. Environment: `AGENT_BROWSER_ENGINE`. Launch-scoped; use `sessionMode: "fresh"` when changing a managed browser. See [Lightpanda](#lightpanda-engine) and [Obscura](#obscura-engine-experimental).
 
 On Android/Termux, follow the README setup to install the packaged Linux-musl arm64 upstream binary, install Termux's `which`, and expose its launcher as `$PREFIX/bin/chromium`. Prefer that upstream system-browser discovery over ambient `AGENT_BROWSER_EXECUTABLE_PATH`: it survives isolated `HOME` values and works for ordinary native calls. Code retains the selected browser's normal launch configuration. Wrapper-generated Android managed identities use a compact 80-bit digest so ordinary namespaces and fresh rotations fit upstream's Unix socket path.
 
@@ -1063,7 +1081,7 @@ On Android/Termux, follow the README setup to install the packaged Linux-musl ar
 
 ### Lightpanda engine
 
-[Lightpanda 1.0](https://lightpanda.io/blog/posts/lightpanda-1-0) is an optional headless engine, installed separately from this package and `agent-browser`. The [native engine guide](https://github.com/vercel-labs/agent-browser/blob/v0.38.2/docs/src/app/engines/lightpanda/page.mdx) describes setup. Put its `lightpanda` executable on `PATH`; select it with `--engine lightpanda`, `AGENT_BROWSER_ENGINE=lightpanda`, or native config `engine`. Chrome remains the default.
+[Lightpanda 1.0](https://lightpanda.io/blog/posts/lightpanda-1-0) is an optional headless engine, installed separately from this package and `agent-browser`. The [native engine guide](https://github.com/vercel-labs/agent-browser/blob/v0.39.2/docs/content/docs/engines/lightpanda.mdx) describes setup. Put its `lightpanda` executable on `PATH`; select it with `--engine lightpanda`, `AGENT_BROWSER_ENGINE=lightpanda`, or native config `engine`. Chrome remains the default.
 
 ```json
 { "args": ["--engine", "lightpanda", "open", "https://example.com"], "sessionMode": "fresh" }
@@ -1081,6 +1099,30 @@ On Android/Termux, follow the README setup to install the packaged Linux-musl ar
 - Lightpanda 1.0 enforces CORS by default, so cross-origin page `fetch`/XHR can fail where earlier Lightpanda did not. Preserve that protection; navigation is a separate capability.
 - The 1.0 release provides macOS/Linux x86_64/ARM64 binaries (Linux glibc), not native Windows/Android. Remote CDP or WSL is a separate setup, not native-platform qualification. Telemetry is upstream-owned; `LIGHTPANDA_DISABLE_TELEMETRY=true` opts out.
 
+### Obscura engine (experimental)
+
+[Obscura](https://github.com/vercel-labs/agent-browser/blob/v0.39.2/docs/content/docs/engines/obscura.mdx) is an optional separately installed headless engine. Select it with `--engine obscura`, `AGENT_BROWSER_ENGINE=obscura`, or native config `engine`; `--executable-path <path>` can name its binary. Native owns spawning `obscura serve`, CDP connection, and close cleanup. The wrapper uses the existing engine/fresh-session path, not a second driver or automatic fallback.
+
+```json
+{
+	"args": [
+		"--engine",
+		"obscura",
+		"--executable-path",
+		"/path/to/obscura",
+		"open",
+		"https://example.com"
+	],
+	"sessionMode": "fresh"
+}
+```
+
+- Obscura v0.2.2 has known accessible-name, hidden-element, iframe, and screenshot-fidelity gaps. Successful connection or image verification does not establish Chrome parity. Prefer Chrome for tasks depending on those features.
+- Native rejects Chrome profiles, launch `--state`, extensions, headed mode, file access, WebGPU, browser CA trust, Chromium `--args`, and all proxy-bypass settings, including `NO_PROXY` / `no_proxy`, even without a proxy. Remove bypass only when the task does not need it; otherwise use Chrome.
+- Discovery and CDP initialization each have a 10-second deadline with bounded failed-start cleanup. Explicit Obscura launches validate this invocation's resolved bypass settings, including after clearing old settings.
+- Local/private pages require `OBSCURA_ALLOW_PRIVATE_NETWORK=1` before launch. `AGENT_BROWSER_OBSCURA_STEALTH` enables optional native stealth only when the installed Obscura build supports it; accepted values are `1`, `true`, `yes`, and `on`. These are upstream options, not wrapper policy or proof of fidelity.
+- Package Chrome profile/executable defaults are omitted for non-Chrome engines. Caller-selected settings remain untouched. Neither engine is bundled, and optional-engine/provider execution is separate from stock Chrome baseline qualification.
+
 ### Output, provider, policy, and AI flags
 
 - `--json`: JSON output. The wrapper injects this automatically for normal tool execution. Environment: `AGENT_BROWSER_JSON`.
@@ -1091,12 +1133,12 @@ On Android/Termux, follow the README setup to install the packaged Linux-musl ar
 - `--content-boundaries`: wrap page output in boundary markers. Environment: `AGENT_BROWSER_CONTENT_BOUNDARIES`.
 - `--max-output <chars>`: truncate page output to N characters. Environment: `AGENT_BROWSER_MAX_OUTPUT`.
 - `--allowed-domains <list>`: restrict browser and `read` traffic to exact or `*.` wildcard domain patterns. Environment: `AGENT_BROWSER_ALLOWED_DOMAINS`. Use a fresh local Chrome context; upstream 0.32.0 owns containment and incompatible-mode rejection and disables Chromium `RTCPeerConnection` while active. The wrapper passes the setting and result through unchanged.
-- `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`. Explicit policy values also reach internal helpers for the current call. Keep the action-policy path consistent on follow-ups; changing or omitting it can restart the native daemon and discard pending confirmations. The established `--confirm-actions` setting is retained for same-session follow-ups.
+- `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`. Native 0.39.2 denies actions when the selected policy cannot be read or parsed instead of continuing without it. Explicit policy values also reach internal helpers for the current call. Keep the action-policy path consistent on follow-ups; changing or omitting it can restart the native daemon and discard pending confirmations. The established `--confirm-actions` setting is retained for same-session follow-ups.
 - `--confirm-actions <list>`: action categories requiring confirmation. Environment: `AGENT_BROWSER_CONFIRM_ACTIONS`.
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
 - `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
 - `--device <name>`: iOS device name. Environment: `AGENT_BROWSER_IOS_DEVICE`.
-- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. Common provider variables include `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, `BROWSERLESS_BROWSER_TYPE`, `BROWSERLESS_STEALTH`, `BROWSERLESS_TTL`, `BROWSER_USE_API_KEY`, `KERNEL_API_KEY`, `KERNEL_HEADLESS`, `KERNEL_STEALTH`, `KERNEL_TIMEOUT_SECONDS`, `KERNEL_PROFILE_NAME`, `AGENTCORE_API_KEY`, `AGENTCORE_REGION`, `AGENTCORE_BROWSER_ID`, `AGENTCORE_PROFILE_ID`, `AGENTCORE_SESSION_TIMEOUT`, plus AWS names used by AgentCore such as `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, and `AWS_DEFAULT_REGION`. The wrapper forwards parent environment variables plus provider flags and stays thin; it does not emulate provider setup or cloud browser behavior.
+- Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. Common provider variables include `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, `BROWSERLESS_BROWSER_TYPE`, `BROWSERLESS_STEALTH`, `BROWSERLESS_TTL`, `BROWSER_USE_API_KEY`, `BROWSER_USE_PROFILE_ID`, `BROWSER_USE_PROXY_COUNTRY`, `BROWSER_USE_ENABLE_RECORDING`, `KERNEL_API_KEY`, `KERNEL_HEADLESS`, `KERNEL_STEALTH`, `KERNEL_TIMEOUT_SECONDS`, `KERNEL_PROFILE_NAME`, `KERNEL_PROFILE_SAVE_CHANGES`, `AGENTCORE_API_KEY`, `AGENTCORE_REGION`, `AGENTCORE_BROWSER_ID`, `AGENTCORE_PROFILE_ID`, `AGENTCORE_SESSION_TIMEOUT`, plus AWS names used by AgentCore such as `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, and `AWS_DEFAULT_REGION`. The wrapper forwards parent environment variables plus provider flags and stays thin; it does not emulate provider setup or cloud browser behavior.
 - `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
 - `-v, --verbose`: show tool commands and raw output.
 - `-q, --quiet`: show only AI text responses.
@@ -1146,15 +1188,16 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.38.1</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.39.2</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `aff6125c023b810ea3f2e5deec5379e9a4270bdc`
-- upstream package version: `0.38.1`
+- upstream HEAD: `50c34e78c98dbe8add0b3ff36b4bcd7a47f1022b`
+- upstream package version: `0.39.2`
+- inspected: `stock npm agent-browser@0.39.2 tarball and skill-data/`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1171,14 +1214,19 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `bin/agent-browser.js`
 - inspected: `cli/src/ca_bundle.rs`
 - inspected: `cli/src/commands.rs`
+- inspected: `cli/src/connection.rs`
 - inspected: `cli/src/mcp.rs`
 - inspected: `cli/src/flags.rs`
 - inspected: `cli/src/read.rs`
+- inspected: `cli/src/tls.rs`
 - inspected: `cli/src/doctor/ffmpeg.rs`
 - inspected: `cli/src/doctor/webgpu.rs`
 - inspected: `cli/src/native/actions.rs`
 - inspected: `cli/src/native/a11y/mod.rs`
 - inspected: `cli/src/native/browser.rs`
+- inspected: `cli/src/native/cdp/obscura.rs`
+- inspected: `cli/src/native/policy.rs`
+- inspected: `cli/src/native/providers.rs`
 - inspected: `cli/src/native/tab_binding.rs`
 - inspected: `cli/src/native/daemon.rs`
 - inspected: `cli/src/native/element.rs`
@@ -1192,13 +1240,17 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/test_fixtures/webmcp_probe.html`
 - inspected: `cli/src/native/webmcp.rs`
 - inspected: `cli/src/output.rs`
-- inspected: `docs/src/app/webgpu/page.mdx`
-- inspected: `docs/src/app/webmcp/page.mdx`
-- inspected: `docs/src/app/network/page.mdx`
-- inspected: `docs/src/app/proxy/page.mdx`
-- inspected: `docs/src/app/selectors/page.mdx`
-- inspected: `docs/src/app/skills/page.mdx`
-- inspected: `docs/src/app/commands/page.mdx`
+- inspected: `docs/content/docs/webgpu.mdx`
+- inspected: `docs/content/docs/webmcp.mdx`
+- inspected: `docs/content/docs/network.mdx`
+- inspected: `docs/content/docs/proxy.mdx`
+- inspected: `docs/content/docs/selectors.mdx`
+- inspected: `docs/content/docs/skills.mdx`
+- inspected: `docs/content/docs/commands.mdx`
+- inspected: `docs/content/docs/engines/obscura.mdx`
+- inspected: `docs/content/docs/providers/browser-use.mdx`
+- inspected: `docs/content/docs/providers/kernel.mdx`
+- inspected: `cli/tests/tls_cli.rs`
 - inspected: `skill-data/derive-client/SKILL.md`
 - inspected: `skill-data/core/SKILL.md`
 - inspected: `skill-data/core/references/video-recording.md`
@@ -1211,7 +1263,6 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `packages/@agent-browser/sandbox/README.md`
 - inspected: `packages/@agent-browser/sandbox/src/shared.ts`
 - inspected: `packages/@agent-browser/sandbox/src/vercel.ts`
-- inspected: `packages/@agent-browser/sandbox/src/eve.ts`
 
 #### Upstream help commands sampled
 
@@ -1282,7 +1333,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - Sessions, state, tabs, frames, dialogs, and windows: 28 human-doc token(s), 26 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 62 human-doc token(s), 71 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 37 human-doc token(s), 41 upstream token(s)
-- Global flags, config, providers, policy, and environment: 153 human-doc token(s), 120 upstream token(s)
+- Global flags, config, providers, policy, and environment: 163 human-doc token(s), 129 upstream token(s)
 
 #### Human-authored doc tokens required
 
@@ -1590,6 +1641,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `--no-ca-cert`
 - `AGENT_BROWSER_CA_CERT`
 - `AGENT_BROWSER_CLEAR_CA_CERT`
+- `--use-system-ca`
+- `AGENT_BROWSER_USE_SYSTEM_CA`
+- `SSL_CERT_FILE`
 - `--allow-file-access`
 - `AGENT_BROWSER_ALLOW_FILE_ACCESS`
 - `--hide-scrollbars <bool>`
@@ -1609,6 +1663,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_DOWNLOAD_PATH`
 - `--engine <name>`
 - `AGENT_BROWSER_ENGINE`
+- `--engine obscura`
+- `OBSCURA_ALLOW_PRIVATE_NETWORK`
+- `AGENT_BROWSER_OBSCURA_STEALTH`
 - `--input-mode <mode>`
 - `--no-auto-dialog`
 - `AGENT_BROWSER_NO_AUTO_DIALOG`
@@ -1675,11 +1732,15 @@ This generated block is review data for maintainers. The human-authored referenc
 - `BROWSERLESS_STEALTH`
 - `BROWSERLESS_TTL`
 - `BROWSER_USE_API_KEY`
+- `BROWSER_USE_PROFILE_ID`
+- `BROWSER_USE_PROXY_COUNTRY`
+- `BROWSER_USE_ENABLE_RECORDING`
 - `KERNEL_API_KEY`
 - `KERNEL_HEADLESS`
 - `KERNEL_STEALTH`
 - `KERNEL_TIMEOUT_SECONDS`
 - `KERNEL_PROFILE_NAME`
+- `KERNEL_PROFILE_SAVE_CHANGES`
 - `AGENTCORE_API_KEY`
 - `AGENTCORE_REGION`
 - `AGENTCORE_BROWSER_ID`
@@ -2018,6 +2079,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--no-ca-cert`
 - root help: `AGENT_BROWSER_CA_CERT`
 - root help: `AGENT_BROWSER_CLEAR_CA_CERT`
+- root help: `--use-system-ca`
+- root help: `AGENT_BROWSER_USE_SYSTEM_CA`
+- core skill full: `SSL_CERT_FILE`
 - root help: `--allow-file-access`
 - root help: `AGENT_BROWSER_ALLOW_FILE_ACCESS`
 - root help: `--hide-scrollbars <bool>`
@@ -2034,6 +2098,12 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_DOWNLOAD_PATH`
 - root help: `--engine <name>`
 - root help: `AGENT_BROWSER_ENGINE`
+- root help: `--engine obscura`
+- root help: `OBSCURA_ALLOW_PRIVATE_NETWORK`
+- root help: `AGENT_BROWSER_OBSCURA_STEALTH`
+- root help: `BROWSER_USE_PROFILE_ID`
+- root help: `BROWSER_USE_PROXY_COUNTRY`
+- root help: `BROWSER_USE_ENABLE_RECORDING`
 - root help: `--input-mode <mode>`
 - root help: `--no-auto-dialog`
 - root help: `AGENT_BROWSER_NO_AUTO_DIALOG`

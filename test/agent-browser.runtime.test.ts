@@ -3272,6 +3272,10 @@ test("parseCommandInfo skips optional boolean flag values before commands", () =
 		command: "webmcp",
 		subcommand: "list",
 	});
+	assert.deepEqual(parseCommandInfo(["--use-system-ca", "false", "read", "https://example.com"]), {
+		command: "read",
+		subcommand: "https://example.com",
+	});
 	assert.deepEqual(
 		parseCommandInfo([
 			"--ca-cert",

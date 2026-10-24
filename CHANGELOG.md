@@ -2,8 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- Recommend stock `agent-browser` 0.39.2 while retaining the stable 0.35.0 runtime floor and no upper cap. Refresh audited help/source metadata, generated command and prompt guidance, fixtures, and native CI installation.
+- Document CLI HTTPS trust, experimental Obscura limits, lost-response inspection before retry, stricter native click/ref/policy handling, preserved launch-argument values, and upstream provider changes without bundling or emulation.
+
 ### Fixed
 
+- Recognize native `--use-system-ca` optional boolean values during command discovery so `--use-system-ca false read <url>` remains a read command.
 - Let a first page-dependent call on a caller-owned explicit session, such as `--session s1 --ignore-https-errors auth login <profile>`, start the browser with its own launch flags. When the call carries browser launch flags and native `session info` reports no running daemon, remembered-tab selection and the page-target probe no longer cold-start that browser without them, including after a transcript reload. Retire the stopped browser's tab identity and refs after dispatch, and observe the replacement page after success so ordinary follow-ups cannot reuse the old physical tab; failed or unobserved launches leave the target unknown. Replacement-page observation does not label a read-only command as a mutation or reopen the stopped caller-owned browser's remembered URL. Flagless calls and running browsers keep their checks (#294).
 - Read Windows process-start generations through a fresh .NET process lookup and invariant UTC ticks, retaining the existing versioned identity format, native executable, cancellation and probe budgets.
 - Avoid querying a browser execution predecessor's process identity after its immutable claim is confirmed gone, while retaining fresh generation checks for present or unresolved claims and rechecking presence after each query.
