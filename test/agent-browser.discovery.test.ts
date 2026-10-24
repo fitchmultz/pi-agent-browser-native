@@ -438,7 +438,27 @@ test("full instructions retain trusted config and late web-search guidance witho
 					await session.reload();
 					assert.ok(session.getToolDefinition("agent_browser_web_search"));
 				} finally {
-					session.dispose();
+					try {
+						const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR ?? "";
+						if (evidenceDir !== "") {
+							await mkdir(evidenceDir, { recursive: true });
+							const snapshotDir = await mkdtemp(join(evidenceDir, "piab-discovery-live-"));
+							const manager = session.sessionManager;
+							await writeFile(
+								join(snapshotDir, "live-session.snapshot.json"),
+								JSON.stringify({
+									kind: "live-native-sdk-session-snapshot",
+									nativeSessionFile: manager.getSessionFile() ?? null,
+									header: manager.getHeader(),
+									entries: manager.getEntries(),
+									leafId: manager.getLeafId(),
+								}),
+								{ mode: 0o600 },
+							);
+						}
+					} finally {
+						session.dispose();
+					}
 				}
 			},
 		);

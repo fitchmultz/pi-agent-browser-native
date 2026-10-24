@@ -73,6 +73,7 @@ try {
 	mkdirSync(evidence, { recursive: true });
 	writeJson(join(evidence, "host.json"), receipt);
 	Object.assign(env, {
+		PI_COMPAT_EVIDENCE_DIR: resolve(evidence),
 		PI_COMPAT_HOST: flavor,
 		PI_COMPAT_EXPECTED_VERSION: selected.version,
 		PI_COMPAT_EXPECTED_PACKAGE_DIR: selected.packageDir,

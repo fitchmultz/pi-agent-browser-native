@@ -42,8 +42,16 @@ delete process.env.PI_SESSION_ID;
 export const TEST_SESSION_ID = randomUUID();
 export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
 export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contract.txt";
-const journalFixtures = mkdtempSync(join(tmpdir(), "piab-journal-fixtures-"));
-process.once("exit", () => rmSync(journalFixtures, { recursive: true, force: true }));
+const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR ?? "";
+if (evidenceDir !== "") {
+	mkdirSync(evidenceDir, { recursive: true });
+}
+const journalFixtures = mkdtempSync(
+	join(evidenceDir === "" ? tmpdir() : evidenceDir, "piab-journal-fixtures-"),
+);
+if (evidenceDir === "") {
+	process.once("exit", () => rmSync(journalFixtures, { recursive: true, force: true }));
+}
 
 // macOS caps Unix socket paths at 103 characters, and realpath-canonicalized CI temp roots can push
 // mkdtemp()-based socket directories past that cap. Host browser sockets in a short private 0700

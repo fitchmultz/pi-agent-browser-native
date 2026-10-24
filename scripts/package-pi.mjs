@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -309,6 +309,9 @@ async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
 	const destination = join(tempAgentDir, "converted.jsonl");
 	const bytes = `${JSON.stringify({ type: "session", version: 3, id: "packaged-conversion", timestamp: "2026-01-01T00:00:00.000Z", cwd: tempAgentDir })}\n`;
 	await writeFile(source, bytes, { mode: 0o600 });
+	if (process.env.PI_COMPAT_EVIDENCE_DIR) {
+		await copyFile(source, join(tempAgentDir, "legacy.original.jsonl"));
+	}
 	await execFile(
 		process.execPath,
 		[
@@ -349,10 +352,14 @@ export async function verifyPackagedPiLoad(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
 	const { hostCli } = await import("./compat-host.mjs");
 	const { cleanup, packResult, tarballPath } = await packToTemporaryPackageDir(cwd);
+	const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR;
 	let session;
 	let tempAgentDir;
 	try {
-		tempAgentDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-agent-"));
+		if (evidenceDir) {
+			await mkdir(evidenceDir, { recursive: true });
+		}
+		tempAgentDir = await mkdtemp(join(evidenceDir || tmpdir(), "pi-agent-browser-agent-"));
 		const packageDir = await installRuntimeConsumer(tarballPath);
 		await verifyPackagedRuntimeFiles(packageDir, tempAgentDir);
 		const resourceLoader = new DefaultResourceLoader({
@@ -409,7 +416,7 @@ export async function verifyPackagedPiLoad(options = {}) {
 			session?.dispose();
 		}
 		await cleanup();
-		if (tempAgentDir) {
+		if (tempAgentDir && !evidenceDir) {
 			await rm(tempAgentDir, { force: true, recursive: true });
 		}
 	}

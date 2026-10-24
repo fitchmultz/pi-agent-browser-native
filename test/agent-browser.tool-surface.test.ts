@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readArray, readRecord } from "./helpers/assertions.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -177,7 +177,27 @@ async function withSurface(
 				reload: () => session.reload(),
 			});
 		} finally {
-			session.dispose();
+			try {
+				const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR ?? "";
+				if (evidenceDir !== "") {
+					await mkdir(evidenceDir, { recursive: true });
+					const snapshotDir = await mkdtemp(join(evidenceDir, "piab-tool-surface-live-"));
+					const manager = session.sessionManager;
+					await writeFile(
+						join(snapshotDir, "live-session.snapshot.json"),
+						JSON.stringify({
+							kind: "live-native-sdk-session-snapshot",
+							nativeSessionFile: manager.getSessionFile() ?? null,
+							header: manager.getHeader(),
+							entries: manager.getEntries(),
+							leafId: manager.getLeafId(),
+						}),
+						{ mode: 0o600 },
+					);
+				}
+			} finally {
+				session.dispose();
+			}
 		}
 	} finally {
 		await rm(directory, { recursive: true, force: true });

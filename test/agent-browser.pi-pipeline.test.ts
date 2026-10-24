@@ -312,8 +312,14 @@ async function runPipelinePrompt(options: {
 	readonly runPrompt?: (session: AgentSession) => Promise<void>;
 }): Promise<PipelinePromptResult> {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pipeline-"));
-	// Keep real Pi transcripts outside the disposable executable/workspace fixture.
-	const sessionDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pipeline-sessions-"));
+	// Keep real Pi transcripts outside both workspace and qualifier temp-root cleanup.
+	const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR ?? "";
+	if (evidenceDir !== "") {
+		await mkdir(evidenceDir, { recursive: true });
+	}
+	const sessionDir = await mkdtemp(
+		join(evidenceDir === "" ? tmpdir() : evidenceDir, "pi-agent-browser-pipeline-sessions-"),
+	);
 	const invocationLogPath = join(tempDir, "invocations.log");
 	const basePath = process.env.PATH ?? "";
 	await writeFakeAgentBrowserBinary(

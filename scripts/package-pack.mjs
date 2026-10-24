@@ -1,6 +1,7 @@
 /** Native npm packing/extraction and task-owned tarball cleanup. */
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -37,6 +38,11 @@ export async function packToTemporaryPackageDir(cwd = process.cwd()) {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-"));
 	let tarballPath;
 	const cleanup = async () => {
+		const evidenceDir = process.env.PI_COMPAT_EVIDENCE_DIR;
+		if (evidenceDir && existsSync(tempDir)) {
+			await mkdir(evidenceDir, { recursive: true });
+			await cp(tempDir, join(evidenceDir, basename(tempDir)), { recursive: true });
+		}
 		await rm(tempDir, { force: true, recursive: true });
 		if (tarballPath) {
 			await rm(tarballPath, { force: true });
