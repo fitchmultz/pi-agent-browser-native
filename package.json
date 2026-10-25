@@ -153,5 +153,8 @@
 		"stream-json": "3.7.0",
 		"strip-json-comments": "5.0.3",
 		"which": "2.0.2"
+	},
+	"overrides": {
+		"undici": "8.12.3"
 	}
 }
