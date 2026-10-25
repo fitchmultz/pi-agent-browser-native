@@ -2,6 +2,18 @@ import type { Token } from "stream-json/parser.js";
 import { isRecord } from "./parsing.js";
 
 const ENVELOPE_MAX_BYTES = 16 * 1024 * 1024;
+const MAX_NESTING = 1024;
+/** Each input byte can reserve at most 16 projection bytes (a 2-byte container reserves 32). */
+const RESERVE_PER_BYTE = 16;
+/** Records at most this size can be retained in memory and decoded natively. */
+export const NATIVE_RECORD_BYTES = ENVELOPE_MAX_BYTES / RESERVE_PER_BYTE;
+/**
+ * JSON.parse retains about 8 to 36 heap bytes per `{`, `[`, `,` or `:` (measured on Node 24), so this
+ * keeps a natively parsed record to a few MiB; denser records stream through the token projector.
+ */
+const NATIVE_STRUCTURE_LIMIT = 64 * 1024;
+/** Token input arrives in file-read-sized chunks, so a retained record reports the same first error. */
+export const JOURNAL_CHUNK_BYTES = 64 * 1024;
 type ProjectionFields = readonly (readonly string[])[];
 interface ProjectionFrame {
 	readonly path: readonly (string | number)[];
@@ -156,7 +168,7 @@ class JsonProjection {
 		}
 	}
 	private startContainer(name: "startObject" | "startArray"): void {
-		if (this.stack.length >= 1024) {
+		if (this.stack.length >= MAX_NESTING) {
 			throw new Error("Journal JSON nesting exceeds 1024 levels.");
 		}
 		// Excluded containers cannot contain a requested descendant; don't allocate their keys/paths.
@@ -230,4 +242,139 @@ export async function projectJson(
 	// The raw tokenizer requires an explicit flush to reject incomplete discarded values.
 	consume(chain.none);
 	return projection.result();
+}
+
+/** Index of the quote that closes the string opened at `open`, or -1. */
+function stringEnd(bytes: Uint8Array, open: number): number {
+	for (
+		let quote = bytes.indexOf(0x22, open + 1);
+		quote !== -1;
+		quote = bytes.indexOf(0x22, quote + 1)
+	) {
+		let escapes = 0;
+		while (bytes[quote - 1 - escapes] === 0x5c) {
+			escapes++;
+		}
+		if (escapes % 2 === 0) {
+			return quote;
+		}
+	}
+	return -1;
+}
+
+/** Per-byte depth change and structural count outside strings: `[` `{` open, `]` `}` close, `,` `:` separate. */
+const DEPTH_STEP = new Int8Array(256);
+const STRUCTURE_STEP = new Uint8Array(256);
+for (const byte of [0x5b, 0x7b]) {
+	DEPTH_STEP[byte] = 1;
+	STRUCTURE_STEP[byte] = 1;
+}
+for (const byte of [0x5d, 0x7d]) {
+	DEPTH_STEP[byte] = -1;
+}
+for (const byte of [0x2c, 0x3a]) {
+	STRUCTURE_STEP[byte] = 1;
+}
+
+/**
+ * Allocation-free bound on what native parsing would hold. Outside strings, valid JSON's bracket
+ * depth is its nesting depth; invalid input is rejected later by either path, so it may pass here.
+ */
+function fitsNativeParse(bytes: Uint8Array): boolean {
+	let depth = 0;
+	let structure = 0;
+	for (let index = 0; index < bytes.length; index++) {
+		const byte = bytes[index];
+		if (byte === 0x22) {
+			index = stringEnd(bytes, index);
+			if (index === -1) {
+				return false;
+			}
+			continue;
+		}
+		depth += DEPTH_STEP[byte];
+		structure += STRUCTURE_STEP[byte];
+		if (depth > MAX_NESTING || structure > NATIVE_STRUCTURE_LIMIT) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/** The token projector's selection, applied to an already validated value. */
+function selectValue(
+	value: unknown,
+	path: readonly (string | number)[],
+	fields: ProjectionFields,
+): unknown {
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		fields.some((field) => field.every((key, index) => matches(key, path[index])))
+	) {
+		return value;
+	}
+	if (Array.isArray(value)) {
+		const selected: unknown[] = [];
+		for (const [index, item] of value.entries()) {
+			const itemPath = [...path, index];
+			if (selectedPath(itemPath, fields)) {
+				selected[index] = selectValue(item, itemPath, fields);
+			}
+		}
+		return selected;
+	}
+	const selected: Record<string, unknown> = {};
+	for (const [key, item] of Object.entries(value)) {
+		const itemPath = [...path, key];
+		if (selectedPath(itemPath, fields)) {
+			Object.defineProperty(selected, key, {
+				value: selectValue(item, itemPath, fields),
+				writable: true,
+				enumerable: true,
+				configurable: true,
+			});
+		}
+	}
+	return selected;
+}
+
+function nativeProjection(
+	bytes: Uint8Array,
+	fields: ProjectionFields,
+): Record<string, unknown> | undefined {
+	if (!fitsNativeParse(bytes)) {
+		return undefined;
+	}
+	let value: unknown;
+	try {
+		value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(value)) {
+		return undefined;
+	}
+	const selected = selectValue(value, [], fields);
+	return isRecord(selected) ? selected : undefined;
+}
+
+async function* chunks(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+	for (let start = 0; start < bytes.length; start += JOURNAL_CHUNK_BYTES) {
+		yield bytes.subarray(start, start + JOURNAL_CHUNK_BYTES);
+	}
+}
+
+/**
+ * Same acceptance and result as projectJson for one complete record. Native JSON only answers
+ * records whose selection cannot reach maxBytes; every native rejection is re-decided by tokens.
+ */
+export async function projectJsonBytes(
+	bytes: Uint8Array,
+	fields: ProjectionFields,
+	maxBytes = ENVELOPE_MAX_BYTES,
+): Promise<Record<string, unknown> | undefined> {
+	const native =
+		bytes.length * RESERVE_PER_BYTE <= maxBytes ? nativeProjection(bytes, fields) : undefined;
+	return native ?? projectJson(chunks(bytes), fields, maxBytes);
 }
