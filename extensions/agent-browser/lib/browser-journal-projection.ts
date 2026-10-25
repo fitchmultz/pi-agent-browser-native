@@ -2,6 +2,11 @@ import type { Token } from "stream-json/parser.js";
 import { isRecord } from "./parsing.js";
 
 const ENVELOPE_MAX_BYTES = 16 * 1024 * 1024;
+const MAX_NESTING = 1024;
+/** Each input byte can reserve at most 16 projection bytes (a 2-byte container reserves 32). */
+const RESERVE_PER_BYTE = 16;
+/** Records at most this size can be retained in memory and decoded natively. */
+export const NATIVE_RECORD_BYTES = ENVELOPE_MAX_BYTES / RESERVE_PER_BYTE;
 type ProjectionFields = readonly (readonly string[])[];
 interface ProjectionFrame {
 	readonly path: readonly (string | number)[];
@@ -156,7 +161,7 @@ class JsonProjection {
 		}
 	}
 	private startContainer(name: "startObject" | "startArray"): void {
-		if (this.stack.length >= 1024) {
+		if (this.stack.length >= MAX_NESTING) {
 			throw new Error("Journal JSON nesting exceeds 1024 levels.");
 		}
 		// Excluded containers cannot contain a requested descendant; don't allocate their keys/paths.
@@ -230,4 +235,93 @@ export async function projectJson(
 	// The raw tokenizer requires an explicit flush to reject incomplete discarded values.
 	consume(chain.none);
 	return projection.result();
+}
+
+function nestingWithinLimit(root: object): boolean {
+	const pending: Array<readonly [object, number]> = [[root, 1]];
+	for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+		const [value, depth] = next;
+		if (depth > MAX_NESTING) {
+			return false;
+		}
+		for (const child of Object.values(value)) {
+			if (typeof child === "object" && child !== null) {
+				pending.push([child, depth + 1]);
+			}
+		}
+	}
+	return true;
+}
+
+/** The token projector's selection, applied to an already validated value. */
+function selectValue(
+	value: unknown,
+	path: readonly (string | number)[],
+	fields: ProjectionFields,
+): unknown {
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		fields.some((field) => field.every((key, index) => matches(key, path[index])))
+	) {
+		return value;
+	}
+	if (Array.isArray(value)) {
+		const selected: unknown[] = [];
+		for (const [index, item] of value.entries()) {
+			const itemPath = [...path, index];
+			if (selectedPath(itemPath, fields)) {
+				selected[index] = selectValue(item, itemPath, fields);
+			}
+		}
+		return selected;
+	}
+	const selected: Record<string, unknown> = {};
+	for (const [key, item] of Object.entries(value)) {
+		const itemPath = [...path, key];
+		if (selectedPath(itemPath, fields)) {
+			Object.defineProperty(selected, key, {
+				value: selectValue(item, itemPath, fields),
+				writable: true,
+				enumerable: true,
+				configurable: true,
+			});
+		}
+	}
+	return selected;
+}
+
+function nativeProjection(
+	bytes: Uint8Array,
+	fields: ProjectionFields,
+): Record<string, unknown> | undefined {
+	let value: unknown;
+	try {
+		value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(value) || !nestingWithinLimit(value)) {
+		return undefined;
+	}
+	const selected = selectValue(value, [], fields);
+	return isRecord(selected) ? selected : undefined;
+}
+
+async function* single(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+	yield bytes;
+}
+
+/**
+ * Same acceptance and result as projectJson for one complete record. Native JSON only answers
+ * records whose selection cannot reach maxBytes; every native rejection is re-decided by tokens.
+ */
+export async function projectJsonBytes(
+	bytes: Uint8Array,
+	fields: ProjectionFields,
+	maxBytes = ENVELOPE_MAX_BYTES,
+): Promise<Record<string, unknown> | undefined> {
+	const native =
+		bytes.length * RESERVE_PER_BYTE <= maxBytes ? nativeProjection(bytes, fields) : undefined;
+	return native ?? projectJson(single(bytes), fields, maxBytes);
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -19,6 +19,7 @@ import {
 	captureBrowserBranch,
 	projectJson,
 	readBrowserEntries,
+	scanJournalMetadata,
 } from "../extensions/agent-browser/lib/browser-journal.js";
 import { convertBrowserSession } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
@@ -1897,6 +1898,54 @@ test("token projection validates skipped values, splits Unicode safely and disca
 		yield Buffer.from('","id":"kept"}');
 	}
 	assert.deepEqual(await projectJson(ignored(), [["id"]], 128), { id: "kept" });
+});
+
+test("journal scanning keeps token-projection acceptance for retained and streamed records", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-journal-scan-"));
+	let files = 0;
+	const scan = async (text: string | Uint8Array, sealed = false) => {
+		const file = join(root, `journal-${files++}.jsonl`);
+		await writeFile(file, text);
+		const handle = await open(file, "r");
+		try {
+			return (await scanJournalMetadata(handle, (await handle.stat()).size, sealed)).map(
+				({ value }) => value,
+			);
+		} finally {
+			await handle.close();
+		}
+	};
+	try {
+		const record = (padding: string) =>
+			`{"type":"custom","id":"a","parentId":null,"customType":"agent-browser-transition","ignored":"${padding}","data":{"event":{"version":1,"ignored":true},"other":[1]},"message":"plain"}`;
+		const expected = {
+			type: "custom",
+			id: "a",
+			parentId: null,
+			customType: "agent-browser-transition",
+			data: { event: { version: 1 } },
+			message: "plain",
+		};
+		const journal = (padding: string) => ` \t\r\n${record(padding)}\n \n{"type":"tail"`;
+		assert.deepEqual(
+			await Promise.all([
+				scan(journal("")),
+				scan(journal("x".repeat(2 * 1024 * 1024))),
+				scan('{"type":"tail"}', true),
+			]),
+			[[expected], [expected], [{ type: "tail" }]],
+			"retained and streamed records project alike; blank lines and an unsealed tail are skipped",
+		);
+		const rejected: ReadonlyArray<readonly [string | Uint8Array, RegExp]> = [
+			[`{"ignored":${"[".repeat(1024)}0${"]".repeat(1024)}}\n`, /nesting exceeds 1024/],
+			['{"id":"a"}{"id":"b"}\n', /Parser/],
+			["1\n", /Expected a journal object/],
+			[Buffer.from('{"ignored":"\xe2\x82"}\n', "latin1"), /encoded data/],
+		];
+		await Promise.all(rejected.map(([text, error]) => assert.rejects(scan(text), error)));
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
 test("token projection releases its byte iterator and preserves source error identity", async () => {
