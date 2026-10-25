@@ -5,7 +5,7 @@
 ### Changed
 
 - Recommend stock `agent-browser` 0.39.2 while retaining the stable 0.35.0 runtime floor and no upper cap. Refresh audited help/source metadata, generated command and prompt guidance, fixtures, and native CI installation.
-- Restore browser state from large session journals faster on startup, resume, switch and tree navigation. Journal records up to 1 MiB are framed with native byte search and validated with native JSON; larger records and every native rejection still go through the bounded token projector, so accepted records, errors, ancestry checks and the heap bound are unchanged. On synthetic 38 MB and 277 MB journals, replay CPU fell about 3.5x and 5x with identical replay output (#303).
+- Read large session journals faster when restoring browser state on startup, resume, switch and tree navigation. Records are framed with native byte search, and records up to 1 MiB whose nesting and structure keep native parsing to a few MiB are validated with native JSON. Larger or denser records and every native rejection still use the token projector in file-read-sized chunks, so accepted records, first errors and ancestry checks are unchanged. Each restore still reads the whole journal. On synthetic 40 MB and 285 MB journals whose records are all under 1 MiB, the journal replay read alone fell about 2.5x and 4.5x in median wall time with identical output; end-to-end restore and session switching were not measured (#303).
 - Document CLI HTTPS trust, experimental Obscura limits, lost-response inspection before retry, stricter native click/ref/policy handling, preserved launch-argument values, and upstream provider changes without bundling or emulation.
 
 ### Fixed

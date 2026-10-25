@@ -1916,8 +1916,8 @@ test("journal scanning keeps token-projection acceptance for retained and stream
 		}
 	};
 	try {
-		const record = (padding: string) =>
-			`{"type":"custom","id":"a","parentId":null,"customType":"agent-browser-transition","ignored":"${padding}","data":{"event":{"version":1,"ignored":true},"other":[1]},"message":"plain"}`;
+		const record = (ignored: string) =>
+			`{"type":"custom","id":"a","parentId":null,"customType":"agent-browser-transition","ignored":${ignored},"data":{"event":{"version":1,"ignored":true},"other":[1]},"message":"plain"}`;
 		const expected = {
 			type: "custom",
 			id: "a",
@@ -1926,23 +1926,60 @@ test("journal scanning keeps token-projection acceptance for retained and stream
 			data: { event: { version: 1 } },
 			message: "plain",
 		};
-		const journal = (padding: string) => ` \t\r\n${record(padding)}\n \n{"type":"tail"`;
+		const journal = (ignored: string) => ` \t\r\n${record(ignored)}\n \n{"type":"tail"`;
 		assert.deepEqual(
 			await Promise.all([
-				scan(journal("")),
-				scan(journal("x".repeat(2 * 1024 * 1024))),
+				scan(journal('""')),
+				scan(journal(`[${"[],".repeat(100_000)}[]]`)),
+				scan(journal(`"${"x".repeat(2 * 1024 * 1024)}"`)),
 				scan('{"type":"tail"}', true),
 			]),
-			[[expected], [expected], [{ type: "tail" }]],
-			"retained and streamed records project alike; blank lines and an unsealed tail are skipped",
+			[[expected], [expected], [expected], [{ type: "tail" }]],
+			"retained, structurally dense and streamed records project alike; blank lines and an unsealed tail are skipped",
 		);
+		// A fault in a record's first 64 KiB must win over invalid UTF-8 later in the same record.
+		const laterInvalidUtf8 = (prefix: string) =>
+			Buffer.concat([
+				Buffer.from(`${prefix}"${"x".repeat(70 * 1024)}`),
+				Buffer.from('\xe2\x82"}\n', "latin1"),
+			]);
 		const rejected: ReadonlyArray<readonly [string | Uint8Array, RegExp]> = [
 			[`{"ignored":${"[".repeat(1024)}0${"]".repeat(1024)}}\n`, /nesting exceeds 1024/],
 			['{"id":"a"}{"id":"b"}\n', /Parser/],
 			["1\n", /Expected a journal object/],
 			[Buffer.from('{"ignored":"\xe2\x82"}\n', "latin1"), /encoded data/],
+			[laterInvalidUtf8('{"id":"a" "ignored":'), /Parser/],
+			[
+				laterInvalidUtf8(`{"ignored":${"[".repeat(1024)}0${"]".repeat(1024)},"pad":`),
+				/nesting exceeds 1024/,
+			],
 		];
 		await Promise.all(rejected.map(([text, error]) => assert.rejects(scan(text), error)));
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("a structurally dense record under 1 MiB scans within the per-record heap reserve", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-journal-dense-"));
+	try {
+		// About 1 MiB of empty objects: native parsing alone would retain more than the record's
+		// 16 MiB reserve. The cap allows that reserve above a bare tsx process.
+		const file = join(root, "dense.jsonl");
+		await writeFile(
+			file,
+			`{"type":"custom","id":"dense","ignored":[${"{},".repeat(340_000)}{}]}\n`,
+		);
+		const moduleUrl = new URL("../extensions/agent-browser/lib/browser-journal.ts", import.meta.url)
+			.href;
+		const script = `import { open } from "node:fs/promises"; import { scanJournalMetadata } from ${JSON.stringify(moduleUrl)}; const handle = await open(${JSON.stringify(file)}, "r"); const entries = await scanJournalMetadata(handle, (await handle.stat()).size, false); await handle.close(); process.stdout.write(JSON.stringify(entries.map(({ value }) => value)));`;
+		const child = spawnSync(
+			process.execPath,
+			["--max-old-space-size=24", "--import", "tsx", "--input-type=module", "--eval", script],
+			{ encoding: "utf8" },
+		);
+		assert.equal(child.status, 0, readString(child.stderr).slice(0, 2000));
+		assert.deepEqual(JSON.parse(child.stdout), [{ type: "custom", id: "dense" }]);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

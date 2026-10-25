@@ -1,5 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import {
+	JOURNAL_CHUNK_BYTES,
 	NATIVE_RECORD_BYTES,
 	projectJson,
 	projectJsonBytes,
@@ -16,7 +17,6 @@ export interface JournalRecord extends JournalRange {
 export interface JournalEntry extends JournalRange {
 	readonly value: Readonly<Record<string, unknown>>;
 }
-const CHUNK_BYTES = 64 * 1024;
 
 export async function* readRange(
 	file: FileHandle,
@@ -25,7 +25,7 @@ export async function* readRange(
 	let position = range.offset;
 	const end = range.offset + range.length;
 	while (position < end) {
-		const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, end - position));
+		const buffer = Buffer.allocUnsafe(Math.min(JOURNAL_CHUNK_BYTES, end - position));
 		// The next range read depends on the bytes actually returned by this read.
 		// oxlint-disable-next-line no-await-in-loop
 		const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
@@ -106,7 +106,7 @@ export async function* journalRanges(
 	let position = offset;
 	const framer = new JournalLineFramer(offset);
 	while (position < end) {
-		const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, end - position));
+		const buffer = Buffer.allocUnsafe(Math.min(JOURNAL_CHUNK_BYTES, end - position));
 		// Byte offsets and line framing depend on the preceding read's actual length.
 		// oxlint-disable-next-line no-await-in-loop
 		const { bytesRead } = await file.read(buffer, 0, buffer.length, position);

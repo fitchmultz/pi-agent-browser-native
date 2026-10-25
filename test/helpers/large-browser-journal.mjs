@@ -50,6 +50,20 @@ try {
 			await file.write(chunk);
 		} // The ignored string alone exceeds 1 GiB and Node's whole-string ceiling.
 		await file.write('"}}\n');
+		// Off-branch records near the 1 MiB native-parse boundary: too dense for native JSON, the
+		// densest accepted container shape, and accepted distinct root keys.
+		const dense = [
+			`"data":{"ignored":[${"{},".repeat(349_000)}{}]}`,
+			`"data":{"ignored":[${"{},".repeat(32_000)}{}],"pad":"${"x".repeat(900_000)}"}`,
+			Array.from({ length: 32_000 }, (_, index) => `"k${index}":0`).join(","),
+		];
+		for (const [index, body] of dense.entries()) {
+			// Bounded memory and byte ordering require one completed file write per record.
+			// oxlint-disable-next-line no-await-in-loop
+			await file.write(
+				`{"type":"custom","customType":"unrelated","id":"dense-${index}","parentId":"giant","timestamp":"${timestamp}",${body}}\n`,
+			);
+		}
 		const refIds = Array.from({ length: 34683 }, (_, index) => `e${index + 1}`);
 		const target = { url: "https://fixture.test/large#exact-fragment", targetId: "native-target" };
 		const snapshot = {
