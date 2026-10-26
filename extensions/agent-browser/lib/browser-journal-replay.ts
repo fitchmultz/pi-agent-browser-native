@@ -32,6 +32,50 @@ const REPLAY_CUSTOM_TYPES = new Set([
 	"agent-browser-script-session",
 ]);
 
+interface JournalIndex {
+	readonly path: string;
+	readonly header: ReturnType<BrowserJournalManager["getHeader"]>;
+	readonly captured: Stats;
+	readonly metadata: readonly JournalEntry[];
+}
+// One structural index per live native manager; no payloads, refs or cross-manager ownership.
+const journalIndexes = new WeakMap<BrowserJournalManager, JournalIndex>();
+
+function appendCompatible(previous: Stats, current: Stats): boolean {
+	return (
+		previous.dev === current.dev &&
+		previous.ino === current.ino &&
+		current.size >= previous.size &&
+		(current.size > previous.size ||
+			(current.mtimeMs === previous.mtimeMs && current.ctimeMs === previous.ctimeMs))
+	);
+}
+
+async function readJournalIndex(
+	manager: BrowserJournalManager,
+	file: FileHandle,
+	path: string,
+	captured: Stats,
+): Promise<JournalIndex> {
+	const previous = journalIndexes.get(manager);
+	// A failed read/replay cannot leave an admitted prefix behind.
+	journalIndexes.delete(manager);
+	const reusable =
+		previous?.path === path &&
+		appendCompatible(previous.captured, captured) &&
+		previous.header === manager.getHeader();
+	// Both native hosts append records and replace header objects on reseed. An ordinary
+	// same-size edit, rotation or truncation falls back to the full validating scanner.
+	const prefix = reusable ? previous.metadata : [];
+	const last = prefix.at(-1);
+	const offset = last ? last.offset + last.length : 0;
+	const suffix =
+		reusable && captured.size === previous.captured.size
+			? []
+			: await scanJournalMetadata(file, captured.size, false, offset);
+	return { path, header: manager.getHeader(), captured, metadata: [...prefix, ...suffix] };
+}
+
 function branchEntries(
 	entries: readonly JournalEntry[],
 	selectedLeaf: string | null,
@@ -305,9 +349,9 @@ async function verifyCapturedFile(file: FileHandle, path: string, captured: Stat
 		throw new Error("Pi journal replaced or truncated during replay.");
 	}
 }
-function validateJournalHeader(metadata: readonly JournalEntry[], sessionId: string): void {
-	const header = metadata.find((entry) => entry.value.type === "session");
-	if (header?.value.id !== sessionId) {
+function validateJournalHeader(index: JournalIndex, manager: BrowserJournalManager): void {
+	const header = index.metadata.find((entry) => entry.value.type === "session");
+	if (header?.value.id !== (index.header?.id ?? manager.getSessionId())) {
 		throw new Error("Pi session journal identity does not match the active session.");
 	}
 }
@@ -327,28 +371,36 @@ export async function readBrowserEntries(
 ): Promise<unknown[]> {
 	const path = manager.getSessionFile();
 	if (path === undefined || path.length === 0) {
+		journalIndexes.delete(manager);
 		return inMemoryEntries(manager, physical);
 	}
 	const leaf = physical ? null : manager.getLeafId();
-	const file = await openPublishedJournal(path);
-	if (!file) {
-		return inMemoryEntries(manager, physical);
-	}
+	let file: FileHandle | undefined;
 	try {
+		file = await openPublishedJournal(path);
+		if (!file) {
+			journalIndexes.delete(manager);
+			return inMemoryEntries(manager, physical);
+		}
 		const captured = await file.stat();
 		if (!captured.isFile()) {
 			throw new Error("Pi session journal is not a regular file.");
 		}
-		const metadata = await scanJournalMetadata(file, captured.size);
-		validateJournalHeader(metadata, manager.getHeader()?.id ?? manager.getSessionId());
+		const index = await readJournalIndex(manager, file, path, captured);
+		const { metadata } = index;
+		validateJournalHeader(index, manager);
 		const records = metadata.filter((entry) => entry.value.type !== "session");
 		const selected = physical ? records : branchEntries(records, leaf);
 		const replay = new PublishedJournalReplay(file, selected, legacyOwner(manager));
 		await replay.project(selected);
 		const entries = await replay.resolveWinningDefinitions(physical);
 		await verifyCapturedFile(file, path, captured);
+		journalIndexes.set(manager, index);
 		return entries;
+	} catch (error) {
+		journalIndexes.delete(manager);
+		throw error;
 	} finally {
-		await file.close();
+		await file?.close();
 	}
 }
