@@ -11,7 +11,7 @@
 import { spawn } from "node:child_process";
 import { delimiter, join } from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const nodeCommand = process.execPath;
 const binSuffix = process.platform === "win32" ? ".cmd" : "";
@@ -517,11 +517,7 @@ export async function main(argv = process.argv.slice(2)) {
 	throw new UsageError(`Unknown project command: ${command}`);
 }
 
-function isDirectRun(metaUrl, argv = process.argv) {
-	return Boolean(argv[1]) && metaUrl === pathToFileURL(argv[1]).href;
-}
-
-if (isDirectRun(import.meta.url)) {
+if (import.meta.main) {
 	main()
 		.then((exitCode) => {
 			process.exitCode = exitCode;
