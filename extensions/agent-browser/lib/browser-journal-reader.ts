@@ -141,9 +141,10 @@ export async function scanJournalMetadata(
 	file: FileHandle,
 	end: number,
 	sealed = false,
+	offset = 0,
 ): Promise<JournalEntry[]> {
 	const entries: JournalEntry[] = [];
-	for await (const range of journalRanges(file, end, sealed)) {
+	for await (const range of journalRanges(file, end, sealed, offset)) {
 		const value = range.bytes
 			? await projectJsonBytes(range.bytes, STRUCTURAL_FIELDS)
 			: await projectJson(readRange(file, range), STRUCTURAL_FIELDS);
