@@ -7,12 +7,14 @@ export function getCurrentProcessUid(): number | undefined {
 }
 
 const WINDOWS_PROCESS_START_IDENTITY_PREFIX = "win32-powershell-ticks-v1:";
+const POSIX_PROCESS_START_IDENTITY_PREFIX = "posix-ps-utc-v1:";
 // Native Windows PowerShell startup can exhaust the former five-second probe budget.
 const PROCESS_START_IDENTITY_TIMEOUT_MS = process.platform === "win32" ? 10_000 : 5_000;
 const DEFAULT_WINDOWS_SYSTEM_ROOT = "C:\\Windows";
 
 export interface ProcessStartIdentityCommand {
 	readonly args: readonly string[];
+	readonly env?: NodeJS.ProcessEnv;
 	readonly file: string;
 }
 
@@ -48,6 +50,7 @@ export function buildProcessStartIdentityCommand(
 			}
 		: {
 				args: ["-p", String(pid), "-o", "lstart="],
+				env: { ...process.env, TZ: "UTC0", LC_ALL: "C" },
 				file: platform === "android" ? join(dirname(process.execPath), "ps") : "/bin/ps",
 			};
 }
@@ -112,13 +115,18 @@ async function executeProcessStartIdentityCommand(
 		Math.min(PROCESS_START_IDENTITY_TIMEOUT_MS, (budget.deadline ?? Infinity) - Date.now()),
 	);
 	return await new Promise((resolve) => {
-		execFile(command.file, command.args, { timeout, signal: budget.signal }, (error, stdout) => {
-			const identity = error ? undefined : normalizeProcessStartIdentity(stdout);
-			if (identity === undefined) {
-				debugPolicyFailure("probe.execute", error ? "native-error" : "invalid-output", error);
-			}
-			resolve(identity);
-		});
+		execFile(
+			command.file,
+			command.args,
+			{ env: command.env, timeout, signal: budget.signal },
+			(error, stdout) => {
+				const identity = error ? undefined : normalizeProcessStartIdentity(stdout);
+				if (identity === undefined) {
+					debugPolicyFailure("probe.execute", error ? "native-error" : "invalid-output", error);
+				}
+				resolve(identity);
+			},
+		);
 	});
 }
 
@@ -144,10 +152,13 @@ async function readUncachedProcessStartIdentity(
 	platform: NodeJS.Platform,
 	budget?: ProcessIdentityBudget,
 ): Promise<string | undefined> {
-	return await resolveProcessStartIdentityFromCommands(
+	const identity = await resolveProcessStartIdentityFromCommands(
 		buildProcessStartIdentityCommands(pid, platform),
 		(command) => executeProcessStartIdentityCommand(command, budget),
 	);
+	return identity === undefined || platform === "win32"
+		? identity
+		: `${POSIX_PROCESS_START_IDENTITY_PREFIX}${identity}`;
 }
 
 function identityBudgetExpired(budget: ProcessIdentityBudget | undefined): boolean {
@@ -199,6 +210,17 @@ async function readCachedProcessStartIdentity(
 	return await currentProcessStartIdentityPromise;
 }
 
-export function processStartIdentitiesMatch(recorded: string, current: string): boolean {
+export function processStartIdentitiesMatch(
+	recorded: string,
+	current: string,
+): boolean | undefined {
+	// Persisted local-time identities have no timezone/locale provenance. A mismatch
+	// with a qualified UTC identity cannot establish PID reuse or authorize cleanup.
+	if (
+		recorded.startsWith(POSIX_PROCESS_START_IDENTITY_PREFIX) !==
+		current.startsWith(POSIX_PROCESS_START_IDENTITY_PREFIX)
+	) {
+		return undefined;
+	}
 	return recorded === current;
 }
