@@ -110,7 +110,7 @@ function applyMutation(directory, mutation) {
 
 function verifyRejection(result, mutation) {
 	const stage = [...result.stdout.matchAll(/^> (.+)$/gmu)].at(-1);
-	// Match the printed form: a real failure is only as diagnosable as its shortened log.
+	// Require the diagnostic to survive the shortening applied whenever child output is printed.
 	const stageOutput = stage === undefined ? "" : forLog(result.output.slice(stage.index));
 	if (
 		result.status === 0 ||
