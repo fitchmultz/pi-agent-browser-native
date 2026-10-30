@@ -163,15 +163,31 @@ test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, p
 	]);
 });
 
-test("verify facade release gate composes default verification, lifecycle, packaged Pi smoke, and platform smoke", () => {
-	const release: unknown = verifySteps({ mode: "release", passthrough: [], showHelp: false });
-	assert.deepEqual(labels(release), [
+test("verify facade release gate composes default verification, lifecycle, packaged Pi smoke, and platform smoke with lifecycle-only options", () => {
+	const releaseLabels = (passthrough: readonly string[]) =>
+		labels(verifySteps({ mode: "release", passthrough, showHelp: false }));
+	const releaseSteps = (lifecycle: string) => [
 		...DEFAULT_STEPS,
-		"./scripts/verify-lifecycle.mjs",
+		lifecycle,
 		"./scripts/verify-package.mjs --smoke-pi",
 		"./scripts/platform-smoke.mjs doctor",
 		"./scripts/platform-smoke.mjs run",
-	]);
+	];
+	assert.deepEqual(releaseLabels([]), releaseSteps("./scripts/verify-lifecycle.mjs"));
+	// Lifecycle options reach only the lifecycle step; every other release gate is unchanged.
+	assert.deepEqual(
+		releaseLabels([
+			"--model",
+			"provider/model",
+			"--keep-artifacts",
+			"--verbose",
+			"--timeout-ms",
+			"600000",
+		]),
+		releaseSteps(
+			"./scripts/verify-lifecycle.mjs --model provider/model --keep-artifacts --verbose --timeout-ms 600000",
+		),
+	);
 });
 
 test("verify facade docs mode checks both generated playbook and command-reference blocks", () => {
@@ -189,6 +205,10 @@ test("verify facade rejects unsupported options before running a partial gate", 
 	assert.throws(
 		() => verifySteps({ mode: "pre-pr", passthrough: ["--list-files"], showHelp: false }),
 		/Option --list-files is not supported for verify mode pre-pr/,
+	);
+	assert.throws(
+		() => verifySteps({ mode: "release", passthrough: ["--list-files"], showHelp: false }),
+		/Option --list-files is not supported for verify mode release/,
 	);
 	assert.throws(
 		() => verifySteps({ mode: "dogfood", passthrough: ["--artifact-dir"], showHelp: false }),
@@ -330,6 +350,13 @@ test("the complete test facade rejects filtered paths and options before launchi
 	await assert.rejects(
 		main(["test", "--test-name-pattern", "partial"]),
 		/complete test gate does not accept/,
+	);
+});
+
+test("verify release rejects invalid lifecycle values before running any step", async () => {
+	await assert.rejects(
+		main(["verify", "release", "--timeout-ms", "abc"]),
+		/--timeout-ms must be a positive integer; received "abc"/,
 	);
 });
 
