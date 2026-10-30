@@ -319,9 +319,11 @@ export async function writeFakeElectronProcessApp(options: {
 export async function writeFakeLaunchableElectronApp(options: {
 	readonly applicationsDir: string;
 	readonly bundleId: string;
+	/** Models an unresponsive app that only SIGKILL stops. */
+	readonly ignoreSigterm?: boolean;
 	readonly includeWebview?: boolean;
 	readonly launchLogPath: string;
-	readonly mode?: "ignore-sigterm" | "invalid-cdp" | "no-port-file" | "normal";
+	readonly mode?: "invalid-cdp" | "no-port-file" | "normal";
 	readonly name: string;
 	readonly writeLaunchLog?: boolean;
 }): Promise<Awaited<ReturnType<typeof writeFakeElectronProcessApp>>> {
@@ -334,6 +336,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const mode = ${JSON.stringify(mode)};
+const ignoreSigterm = ${JSON.stringify(options.ignoreSigterm === true)};
 const includeWebview = ${JSON.stringify(options.includeWebview === true)};
 const writeLaunchLog = ${JSON.stringify(options.writeLaunchLog !== false)};
 const args = process.argv.slice(2);
@@ -374,9 +377,8 @@ server.listen(0, "127.0.0.1", () => {
 	if (mode !== "no-port-file") fs.writeFileSync(path.join(userDataDir, "DevToolsActivePort"), String(port) + "\\n/devtools/browser/fake\\n");
 	if (writeLaunchLog) fs.appendFileSync(${JSON.stringify(options.launchLogPath)}, JSON.stringify({ args, mode, pid: process.pid, port, userDataDir }) + "\\n");
 });
-// ignore-sigterm models an unresponsive app that only SIGKILL stops.
 const shutdown = () => server.close(() => process.exit(0));
-process.on("SIGTERM", mode === "ignore-sigterm" ? () => {} : shutdown);
+process.on("SIGTERM", ignoreSigterm ? () => {} : shutdown);
 process.on("SIGINT", shutdown);
 `,
 		"utf8",

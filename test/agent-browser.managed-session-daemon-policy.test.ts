@@ -21,6 +21,7 @@ import { acquireManagedSessionPolicyLock } from "../extensions/agent-browser/lib
 import { ManagedSessionRestoreState } from "../extensions/agent-browser/lib/managed-session-restore.js";
 import { getImplicitSessionCloseTimeoutMs } from "../extensions/agent-browser/lib/runtime.js";
 import { withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
+import { wallClockStepper } from "./helpers/monotonic-clock.js";
 
 test("virtual daemon generation belongs to the fixture owner, not a transient CLI launcher", async () => {
 	const root = await mkdtemp(join(tmpdir(), "piab-fake-launcher-"));
@@ -121,9 +122,12 @@ test(
 	},
 );
 
-for (const stalledPhase of ["daemon inspection", "native close"]) {
+for (const [stalledPhase, stepMs] of [
+	["daemon inspection", -120_000],
+	["native close", 120_000],
+] as const) {
 	test(
-		`cleanup reports its own deadline during ${stalledPhase} without retiring the session`,
+		`cleanup reports its own deadline during ${stalledPhase} across a ${stepMs > 0 ? "forward" : "backward"} system clock step without retiring the session`,
 		{ concurrency: false },
 		async (t) => {
 			const tempDir = await mkdtemp(join(tmpdir(), "pd-"));
@@ -161,6 +165,7 @@ if (inspection === ${JSON.stringify(stalledPhase === "daemon inspection")}) {
 						});
 						assert.ok(policyLock);
 						t.mock.timers.enable({ apis: ["setTimeout"] });
+						const stepWallClock = wallClockStepper(t);
 						const pending = closeManagedSession({
 							cwd: tempDir,
 							namespace: "",
@@ -171,14 +176,18 @@ if (inspection === ${JSON.stringify(stalledPhase === "daemon inspection")}) {
 						});
 						try {
 							await waitForDispatch(join(tempDir, "ready"));
+							stepWallClock(stepMs);
 							t.mock.timers.tick(1500);
 							// Native exit/close and subprocess drain stay real after the parent deadline fires.
 							t.mock.timers.reset();
 							const error = await pending;
-							assert.match(
-								error ?? "",
-								new RegExp(`cleanup timed out after 1500 ms during ${stalledPhase}`),
+							const phaseMs = Number(
+								new RegExp(
+									`cleanup timed out after 1500 ms during ${stalledPhase} \\((\\d+) ms in this phase\\)`,
+								).exec(error ?? "")?.[1],
 							);
+							// Mocked timers fire the deadline early, so real phase time stays below it.
+							assert.ok(phaseMs >= 0 && phaseMs < 1500, error);
 							assert.equal(restoreState.isDisabled(sessionName, ""), true);
 							assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), true);
 							const calls = (await readFile(logPath, "utf8"))

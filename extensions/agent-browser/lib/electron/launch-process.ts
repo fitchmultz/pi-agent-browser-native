@@ -168,12 +168,13 @@ export class ElectronLaunchProcess {
 		}
 	}
 
+	/** Waits for exit until deadlineMs, a performance.now() timestamp unaffected by wall-clock steps. */
 	private async waitForExit(deadlineMs: number): Promise<boolean> {
 		const child = this.process;
 		if (child === undefined) {
 			return true;
 		}
-		while (Date.now() <= deadlineMs) {
+		while (performance.now() <= deadlineMs) {
 			if (child.exitCode !== null || child.signalCode !== null) {
 				return true;
 			}
@@ -207,14 +208,14 @@ export class ElectronLaunchProcess {
 		if (terminateError !== undefined) {
 			return terminateError;
 		}
-		if (await this.waitForExit(Date.now() + 1_000)) {
+		if (await this.waitForExit(performance.now() + 1_000)) {
 			return undefined;
 		}
 		const killError = this.signalChild("SIGKILL");
 		if (killError !== undefined) {
 			return killError;
 		}
-		if (await this.waitForExit(Date.now() + 1_000)) {
+		if (await this.waitForExit(performance.now() + 1_000)) {
 			return undefined;
 		}
 		return `PID ${child.pid} remained alive after failed Electron launch cleanup.`;

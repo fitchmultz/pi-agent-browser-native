@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { readRecord, readString, readNumber, readArray } from "./helpers/assertions.js";
-import { spawn, type ChildProcess } from "node:child_process";
+import childProcess, { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import fsPromises, {
@@ -431,8 +431,8 @@ test(
 			const app = await writeFakeLaunchableElectronApp({
 				applicationsDir: tempDir,
 				bundleId: "com.example.ClockStepCleanup",
+				ignoreSigterm: true,
 				launchLogPath: join(tempDir, "launch.json"),
-				mode: "ignore-sigterm",
 				name: "Clock Step Cleanup",
 			});
 			const launched = await launchElectronApp({ appPath: app.appPath, appArgs: app.appArgs });
@@ -463,6 +463,76 @@ test(
 		}
 	},
 );
+
+for (const stepMs of [120_000, -120_000]) {
+	test(
+		`Electron launch failure keeps its SIGTERM grace across a ${stepMs > 0 ? "forward" : "backward"} system clock step`,
+		{
+			concurrency: false,
+			skip: process.platform === "win32" ? "Windows cannot ignore SIGTERM" : false,
+		},
+		async (t) => {
+			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-clock-terminate-"));
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir: tempDir,
+				bundleId: "com.example.ClockStepTerminate",
+				ignoreSigterm: true,
+				launchLogPath: join(tempDir, "launch.json"),
+				mode: "no-port-file",
+				name: "Clock Step Terminate",
+			});
+			const stepWallClock = wallClockStepper(t);
+			const signals: { readonly signal: string; readonly atMs: number }[] = [];
+			// Observe the launched app's signals, stepping the wall clock 200 ms into the SIGTERM grace.
+			const nativeSpawn = childProcess.spawn;
+			t.mock.method(
+				childProcess,
+				"spawn",
+				(...args: Readonly<Parameters<typeof childProcess.spawn>>): ChildProcess => {
+					const child = nativeSpawn(...args);
+					const nativeKill = child.kill.bind(child);
+					child.kill = (signal?: NodeJS.Signals | number): boolean => {
+						signals.push({ signal: String(signal), atMs: performance.now() });
+						const sent = nativeKill(signal);
+						if (signal === "SIGTERM") {
+							setTimeout(() => {
+								stepWallClock(stepMs);
+							}, 200);
+						}
+						return sent;
+					};
+					return child;
+				},
+			);
+			syncBuiltinESMExports();
+			const launch = launchElectronApp({
+				appPath: app.appPath,
+				appArgs: app.appArgs,
+				timeoutMs: 500,
+			});
+			try {
+				const outcome = await settleWithin(launch, 4_000);
+				const result = outcome === "pending" ? undefined : outcome.value;
+				assert.ok(result, "failed-launch cleanup was still waiting after 4000 ms");
+				assert.equal(result.ok ? "launched" : result.failure.reason, "timeout");
+				assert.equal(result.ok ? "launched" : result.failure.cleanupError, undefined);
+				const [term, kill] = signals;
+				assert.ok(
+					signals.length === 2 && term.signal === "SIGTERM" && kill.signal === "SIGKILL",
+					JSON.stringify(signals),
+				);
+				const graceMs = Math.round(kill.atMs - term.atMs);
+				assert.ok(graceMs >= 1_000, `SIGKILL followed SIGTERM after ${graceMs} ms`);
+			} finally {
+				// Restoring the clock lets an unfixed wall-clock wait end and kill the app.
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+				await launch;
+				await rm(tempDir, { force: true, recursive: true });
+			}
+		},
+	);
+}
 
 test(
 	"agentBrowserExtension supports Electron launch handoff modes",
