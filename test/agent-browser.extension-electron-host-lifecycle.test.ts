@@ -1605,6 +1605,9 @@ test("restored Electron cleanup round-trips a matching start identity and remove
 		};
 		await assertRefusedIdentity(undefined);
 		await assertRefusedIdentity(`${startIdentity}-stale`);
+		if (process.platform !== "win32") {
+			await assertRefusedIdentity(startIdentity.replace(/^posix-ps-utc-v1:/, ""));
+		}
 		const harness = createExtensionHarness({
 			cwd: userDataDir,
 			branch: [

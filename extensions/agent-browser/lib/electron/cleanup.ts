@@ -136,7 +136,7 @@ async function getRestoredProcessVerificationError(
 	if (currentIdentity === undefined) {
 		return `PID ${String(record.pid)} is alive, but its current start identity could not be inspected; refusing to signal a restored PID that may have been reused.`;
 	}
-	if (!processStartIdentitiesMatch(record.startIdentity, currentIdentity)) {
+	if (processStartIdentitiesMatch(record.startIdentity, currentIdentity) !== true) {
 		return `PID ${String(record.pid)} is alive, but its start identity does not match the wrapper launch record; refusing to signal a restored PID that may have been reused.`;
 	}
 	return undefined;

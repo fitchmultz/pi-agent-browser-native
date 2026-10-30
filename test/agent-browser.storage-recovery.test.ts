@@ -2292,6 +2292,188 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 );
 
 test(
+	"restored generation ambiguity preserves live input and proven replacement reopens once",
+	{ concurrency: false, skip: process.platform === "win32" },
+	async () => {
+		const root = await mkdtemp(join(tmpdir(), "piab-live-generation-"));
+		const socketDir = createShortPrivateSocketDir(root);
+		try {
+			const home = join(root, "home");
+			const log = join(root, "calls.jsonl");
+			const native = join(root, "native.json");
+			const url = "https://fixture.test/draft";
+			const draft = "Keep this unsaved draft";
+			await mkdir(home, { mode: 0o700 });
+			assert.equal(spawnSync("git", ["init", "-q", root]).status, 0);
+			await writeFakeAgentBrowserBinary(
+				root,
+				`const fs=require('node:fs'), args=process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args})+'\\n');
+let state=fs.existsSync(${JSON.stringify(native)})?JSON.parse(fs.readFileSync(${JSON.stringify(native)},'utf8')):{active:false,value:''};
+const url=${JSON.stringify(url)}, command=args.find(arg=>['session','open','fill','snapshot','get','tab','close'].includes(arg));
+let data;
+if(command==='session') data={active:state.active,runtime:state.active?{restoreKey:state.restoreKey,backgroundPid:${process.pid},browserLaunched:true,socketDir:state.socketDir??${JSON.stringify(socketDir)}}:null};
+else if(command==='open') {state={active:true,value:'',socketDir:state.socketDir,restoreKey:process.env.AGENT_BROWSER_RESTORE??null};data={url,title:'Draft',targetId:'live-target'};}
+else if(command==='fill') {state.value=args.at(-1);data={filled:true};}
+else if(command==='snapshot') data={origin:url,targetId:'live-target',snapshot:'- textbox "Draft" [ref=e1]',refs:{e1:{role:'textbox',name:'Draft'}}};
+else if(command==='tab') data={tabs:[{tabId:'t1',targetId:'live-target',url,active:true}]};
+else if(command==='get') data=args.includes('value')?{value:state.value}:{url};
+else if(command==='close') {state.active=false;data={closed:true};}
+fs.writeFileSync(${JSON.stringify(native)},JSON.stringify(state));
+process.stdout.write(JSON.stringify({success:true,data}));`,
+			);
+			await withPatchedEnv(
+				{
+					PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+					HOME: home,
+					USERPROFILE: home,
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+					PI_AGENT_BROWSER_TEST_CUSTOM_SESSION_INFO: "1",
+					PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: undefined,
+					AGENT_BROWSER_SESSION: undefined,
+					AGENT_BROWSER_NAMESPACE: undefined,
+				},
+				async () => {
+					const original = createExtensionHarness({ cwd: root });
+					await runExtensionEvent(
+						original.handlers,
+						"session_start",
+						{ reason: "new" },
+						original.ctx,
+					);
+					const opened = await executeRegisteredTool(original.tool, original.ctx, {
+						args: ["open", url],
+						sessionMode: "fresh",
+					});
+					assert.equal(opened.isError, false, JSON.stringify(opened));
+					assert.notEqual(opened.details?.managedSessionRestoreDisabled, true);
+					assert.equal(
+						(
+							await executeRegisteredTool(original.tool, original.ctx, {
+								args: ["fill", "#draft", draft],
+							})
+						).isError,
+						false,
+					);
+					const snapshot = await executeRegisteredTool(original.tool, original.ctx, {
+						args: ["snapshot", "-i"],
+					});
+					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+					assert.match(
+						readString(readRecord(snapshot.details?.refSnapshot).generation),
+						/posix-ps-utc-v1:/,
+					);
+					await runExtensionEvent(
+						original.handlers,
+						"session_shutdown",
+						{ reason: "reload" },
+						original.ctx,
+					);
+					// Retain genuine owner-produced receipts, but persist the previous POSIX timestamp format.
+					const branch = readArray(
+						JSON.parse(
+							JSON.stringify(original.ctx.sessionManager.getBranch()).replaceAll(
+								"posix-ps-utc-v1:",
+								"",
+							),
+						),
+					);
+					const resumed = createExtensionHarness({ cwd: root, branch });
+					await runExtensionEvent(
+						resumed.handlers,
+						"session_start",
+						{ reason: "resume" },
+						resumed.ctx,
+					);
+					const offset = (await readInvocationLog(log)).length;
+					const observed = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+						args: ["get", "value", "#draft"],
+					});
+					assert.equal(observed.isError, false, JSON.stringify(observed));
+					assert.equal(readRecord(observed.details?.data).value, draft);
+					assert.equal(
+						(await readInvocationLog(log)).slice(offset).some((row) => row.args.includes("open")),
+						false,
+						"incomparable start timestamps must not reload a still-live browser",
+					);
+					assert.equal(
+						readRecord(observed.details?.refSnapshotInvalidation).reason,
+						"page-transition",
+					);
+					const stale = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+						args: ["get", "value", "@e1"],
+					});
+					assert.equal(stale.details?.failureCategory, "stale-ref");
+					assert.equal(
+						(await readInvocationLog(log)).slice(offset).some((row) => row.args.includes("@e1")),
+						false,
+						"the old refs cannot be trusted merely because the live page was preserved",
+					);
+					assert.equal(
+						(await executeRegisteredTool(resumed.tool, resumed.ctx, { args: ["snapshot", "-i"] }))
+							.isError,
+						false,
+					);
+					const fresh = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+						args: ["get", "value", "@e1"],
+					});
+					assert.equal(fresh.isError, false, JSON.stringify(fresh));
+					assert.equal(readRecord(fresh.details?.data).value, draft);
+					await runExtensionEvent(
+						resumed.handlers,
+						"session_shutdown",
+						{ reason: "reload" },
+						resumed.ctx,
+					);
+					const restored = createExtensionHarness({
+						cwd: root,
+						branch: [...resumed.ctx.sessionManager.getBranch()],
+					});
+					await runExtensionEvent(
+						restored.handlers,
+						"session_start",
+						{ reason: "resume" },
+						restored.ctx,
+					);
+					const replacementOffset = (await readInvocationLog(log)).length;
+					await writeFile(
+						native,
+						JSON.stringify({
+							...readRecord(JSON.parse(await readFile(native, "utf8"))),
+							socketDir: `${socketDir}-replacement`,
+						}),
+					);
+					const replaced = await executeRegisteredTool(restored.tool, restored.ctx, {
+						args: ["get", "value", "#draft"],
+					});
+					assert.equal(replaced.isError, false, JSON.stringify(replaced));
+					assert.equal(readRecord(replaced.details?.data).value, "");
+					const repeated = await executeRegisteredTool(restored.tool, restored.ctx, {
+						args: ["get", "value", "#draft"],
+					});
+					assert.equal(repeated.isError, false, JSON.stringify(repeated));
+					assert.deepEqual(
+						(await readInvocationLog(log))
+							.slice(replacementOffset)
+							.filter((row) => row.args.includes("open"))
+							.map((row) => row.args.slice(-2)),
+						[["open", url]],
+						"a proven changed generation reopens the remembered URL exactly once",
+					);
+					assert.equal(
+						(await executeRegisteredTool(restored.tool, restored.ctx, { args: ["close"] })).isError,
+						false,
+					);
+				},
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+			await rm(socketDir, { recursive: true, force: true });
+		}
+	},
+);
+
+test(
 	"restart reuses profiled owned daemon provenance only when its native generation still matches",
 	{ concurrency: false },
 	async () => {

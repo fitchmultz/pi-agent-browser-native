@@ -14,7 +14,10 @@ import type { PreparationSessionPlan } from "./prepare-session-plan.js";
 import type { PreparationProcessFacts } from "./prepare-contracts.js";
 import type { BrowserRunState } from "./types.js";
 import type { ExecutionPlan as AgentBrowserExecutionPlan } from "../../runtime-contracts.js";
-import type { ManagedSessionDaemonInspection } from "./managed-session-daemon-inspection.js";
+import {
+	managedSessionDaemonGenerationsMatch,
+	type ManagedSessionDaemonInspection,
+} from "./managed-session-daemon-inspection.js";
 
 export interface PreparationPageState {
 	readonly sessionStateKey?: string;
@@ -121,11 +124,13 @@ async function reconcileGeneration(
 		request.generationInspection,
 	);
 	pageState.bindSnapshotGeneration(key, daemon.status === "active" ? daemon.generation : undefined);
-	const generationKnown = daemon.status === "active" && daemon.generation !== undefined;
-	if (generationKnown && snapshot.generation === daemon.generation) {
+	const generationMatch = managedSessionDaemonGenerationsMatch(
+		snapshot.generation,
+		daemon.status === "active" ? daemon.generation : undefined,
+	);
+	if (generationMatch === true) {
 		return { ...page, nativeGenerationChanged: false };
 	}
-	const nativeGenerationChanged = generationKnown && snapshot.generation !== undefined;
 	const invalidation = buildPageTransitionRefSnapshotInvalidation(
 		"The native browser generation changed or could not be verified. Take a new complete snapshot before using refs, even when the URL is unchanged.",
 	);
@@ -136,7 +141,7 @@ async function reconcileGeneration(
 	});
 	return {
 		...page,
-		nativeGenerationChanged,
+		nativeGenerationChanged: generationMatch === false,
 		priorRefSnapshotState: undefined,
 		priorRefSnapshotInvalidation: invalidation,
 	};
