@@ -1600,7 +1600,7 @@ test("buildToolPresentation command-redacts whole-batch spill data", async (t) =
 		})),
 	];
 	for (const omitCommand of [false, true]) {
-		// Both native row identity forms must redact the complete aggregate, not only its preview.
+		// Complete each node:test subtest and its spill cleanup before starting the next.
 		// oxlint-disable-next-line no-await-in-loop
 		await t.test(omitCommand ? "indexed rows" : "command rows", async () => {
 			const args = ["batch", ...(omitCommand ? ["--omit-command"] : [])];
@@ -1611,14 +1611,8 @@ test("buildToolPresentation command-redacts whole-batch spill data", async (t) =
 				cwd: process.cwd(),
 				envelope: {
 					success: true,
-					data: omitCommand
-						? rows.map((row, index) => ({
-								error: "error" in row ? row.error : undefined,
-								result: row.result,
-								success: row.success,
-								index,
-							}))
-						: rows,
+					// The native output phase restores commands before presentation.
+					data: omitCommand ? rows.map((row, index) => ({ ...row, index })) : rows,
 				},
 			});
 			const spillPath = readString(presentation.fullOutputPath);

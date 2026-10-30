@@ -1,6 +1,4 @@
 import type { ToolPresentation } from "./contracts.js";
-import { extractUpstreamCommandTokens } from "../argv-descriptor.js";
-import { resolveIndexedBatchCommands } from "../orchestration/batch-stdin.js";
 import type { BuildToolPresentationOptions } from "./presentation/input-contracts.js";
 import {
 	completePresentationOutput,
@@ -8,16 +6,8 @@ import {
 } from "./presentation/output-completion.js";
 
 export async function buildToolPresentation(
-	input: BuildToolPresentationOptions,
+	options: BuildToolPresentationOptions,
 ): Promise<ToolPresentation> {
-	const options = {
-		...input,
-		envelope: resolveIndexedBatchCommands(
-			input.envelope,
-			input.commandInfo.commandTokens ?? extractUpstreamCommandTokens(input.args ?? []),
-			input.stdin,
-		),
-	};
 	const { buildPresentationSource, buildSourcePresentation, resolvePresentationCommands } =
 		await import("./presentation/source.js");
 	const { buildEarlyPresentation, sanitizeModelFacingPresentation } =

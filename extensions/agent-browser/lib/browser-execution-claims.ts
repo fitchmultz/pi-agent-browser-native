@@ -22,6 +22,12 @@ import {
 	type ExecutionClaimIdentity,
 } from "./browser-execution-identity.js";
 import {
+	openClaimEndpoint,
+	subscribeClaimEndpoint,
+	type ClaimEndpoint,
+	type ClaimSubscription,
+} from "./browser-execution-claim-endpoint.js";
+import {
 	cleanDeadPolicyArtifacts,
 	readClaim,
 	readClaims,
@@ -49,6 +55,11 @@ interface PreparedClaim {
 	readonly directory: string;
 	readonly candidatePath: string;
 	readonly path: string;
+}
+interface BlockingPredecessor {
+	readonly claim: PolicyLockClaim;
+	/** True only when this scan confirmed the owner's current native process identity. */
+	readonly ownerConfirmed: boolean;
 }
 function claimPrecedes(left: PolicyLockClaim, right: PolicyLockClaim): boolean {
 	if (left.ticket === null) {
@@ -84,29 +95,31 @@ function relevantPredecessor(claim: PolicyLockClaim, ownClaim: PolicyLockClaim):
 		ownSessions.some((session) => sessions.includes(session))
 	);
 }
-async function claimBlocks(
+async function blockingPredecessor(
 	claim: PolicyLockClaim,
 	ownClaim: PolicyLockClaim,
 	budget: ClaimBudget,
-): Promise<boolean> {
+): Promise<BlockingPredecessor | undefined> {
 	if (!relevantPredecessor(claim, ownClaim) || (await hasPublishedLaterTicket(claim, ownClaim))) {
-		return false;
+		return undefined;
 	}
 	// A predecessor may have released since the scan; only confirmed absence skips its query.
 	if (!(await claimStillExists(claim.path))) {
-		return false;
+		return undefined;
 	}
 	const alive = await ownerAlive(claim.owner, budget);
 	if (alive === false) {
 		await removeClaimOwnedBy(claim.path, claim.owner.token);
-		return false;
+		return undefined;
 	}
 	// Native identity queries can outlive the whole critical section. Re-read the immutable
 	// claim so an already released owner, or a newly published later ticket, cannot block us.
 	if (!(await claimStillExists(claim.path))) {
-		return false;
+		return undefined;
 	}
-	return !(await hasPublishedLaterTicket(claim, ownClaim));
+	return (await hasPublishedLaterTicket(claim, ownClaim))
+		? undefined
+		: { claim, ownerConfirmed: alive === true };
 }
 async function claimStillExists(path: string): Promise<boolean> {
 	try {
@@ -120,19 +133,20 @@ async function claimStillExists(path: string): Promise<boolean> {
 		return code !== "ENOENT";
 	}
 }
-async function anyPredecessorBlocks(
+async function firstBlockingPredecessor(
 	claims: readonly PolicyLockClaim[],
 	own: PolicyLockClaim,
 	budget: ClaimBudget,
-): Promise<boolean> {
+): Promise<BlockingPredecessor | undefined> {
 	for (const claim of claims) {
 		// Contender inspection/removal is ordered before the next ticket decision.
 		// oxlint-disable-next-line no-await-in-loop
-		if (await claimBlocks(claim, own, budget)) {
-			return true;
+		const blocking = await blockingPredecessor(claim, own, budget);
+		if (blocking) {
+			return blocking;
 		}
 	}
-	return false;
+	return undefined;
 }
 async function prepareClaim(
 	identity: ExecutionClaimIdentity,
@@ -282,49 +296,102 @@ async function publishTicket(claim: PreparedClaim): Promise<number | undefined> 
 function acquisitionCancelled(budget: ClaimBudget): boolean {
 	return budget.signal?.aborted === true;
 }
+interface PredecessorWait {
+	readonly wait: (
+		blocking: BlockingPredecessor,
+		budget: ClaimBudget,
+		deadline: number,
+	) => Promise<void>;
+	readonly close: () => void;
+}
+function createPredecessorWait(): PredecessorWait {
+	let subscription: ClaimSubscription | undefined;
+	const attempted = new Set<string>();
+	const close = (): void => {
+		subscription?.close();
+		subscription = undefined;
+	};
+	return {
+		close,
+		wait: async (blocking, budget, deadline) => {
+			const { token } = blocking.claim.owner;
+			if (subscription?.token === token && subscription.connected()) {
+				// Arbitration after subscribing still found this predecessor blocking.
+				await subscription.wait(budget.signal, deadline);
+				return;
+			}
+			close();
+			// Unresolved liveness and choosing (null-ticket) predecessors keep timed polling: a
+			// choosing claim may publish a later ticket and then wait for us. Subscribe once per owner.
+			if (blocking.ownerConfirmed && blocking.claim.ticket !== null && !attempted.has(token)) {
+				attempted.add(token);
+				subscription = await subscribeClaimEndpoint(
+					blocking.claim.path,
+					token,
+					budget.signal,
+					deadline,
+				);
+				// Re-run arbitration at once: a release before the subscription connected is then
+				// not missed, and a refused or missing endpoint usually means the owner just released.
+				return;
+			}
+			await waitForRetry(budget.signal);
+		},
+	};
+}
 async function waitForTurn(
 	claim: PreparedClaim,
 	ticket: number,
 	budget: ClaimBudget,
 	deadline: number,
 ): Promise<boolean> {
-	while (budget.signal?.aborted !== true) {
-		// Each poll observes a fresh published ticket set after the previous delay.
-		// oxlint-disable-next-line no-await-in-loop
-		const claims = await readClaims(claim.basePath);
-		if (!claims) {
-			debugPolicyFailure("acquire.wait-scan", "claims-unavailable");
-			return false;
-		}
-		const own = claims.find((entry) => entry.owner.token === claim.owner.token);
-		if (!own || own.ticket !== ticket) {
-			debugPolicyFailure("acquire.own-claim", !own ? "missing" : "ticket-mismatch");
-			return false;
-		}
-		// Liveness checks and stale-claim removal must finish before acquisition.
-		// oxlint-disable-next-line no-await-in-loop
-		if (!(await anyPredecessorBlocks(claims, own, budget))) {
-			// Opportunistic GC must finish before the final cancellation check.
+	const predecessorWait = createPredecessorWait();
+	try {
+		while (budget.signal?.aborted !== true) {
+			// Each wake observes a fresh published ticket set after the previous delay.
 			// oxlint-disable-next-line no-await-in-loop
-			await cleanDeadPolicyArtifacts(claim.directory, budget);
-			// GC stays within the wait budget but cannot revoke a turn this claim already won;
-			// only cancellation can. Callers enforce their own operation deadlines.
-			const cancelled = acquisitionCancelled(budget);
-			if (cancelled) {
-				debugPolicyFailure("acquire.turn", "cancelled");
+			const claims = await readClaims(claim.basePath);
+			if (!claims) {
+				debugPolicyFailure("acquire.wait-scan", "claims-unavailable");
+				return false;
 			}
-			return !cancelled;
+			const own = claims.find((entry) => entry.owner.token === claim.owner.token);
+			if (!own || own.ticket !== ticket) {
+				debugPolicyFailure("acquire.own-claim", !own ? "missing" : "ticket-mismatch");
+				return false;
+			}
+			// Liveness checks and stale-claim removal must finish before acquisition.
+			// oxlint-disable-next-line no-await-in-loop
+			const blocking = await firstBlockingPredecessor(claims, own, budget);
+			if (!blocking) {
+				// Winning ends the loop once GC and the final cancellation check complete.
+				// oxlint-disable-next-line no-await-in-loop
+				return await acquireTurn(claim, budget);
+			}
+			if (Date.now() >= deadline) {
+				debugPolicyFailure("acquire.wait", "deadline");
+				return false;
+			}
+			// Waiting respects ordering and cancellation; contenders cannot run concurrently here.
+			// oxlint-disable-next-line no-await-in-loop
+			await predecessorWait.wait(blocking, budget, deadline);
 		}
-		if (Date.now() >= deadline) {
-			debugPolicyFailure("acquire.wait", "deadline");
-			return false;
-		}
-		// Polling respects ordering and cancellation; contenders cannot run concurrently here.
-		// oxlint-disable-next-line no-await-in-loop
-		await waitForRetry(budget.signal);
+		debugPolicyFailure("acquire.wait", "cancelled");
+		return false;
+	} finally {
+		predecessorWait.close();
 	}
-	debugPolicyFailure("acquire.wait", "cancelled");
-	return false;
+}
+async function acquireTurn(claim: PreparedClaim, budget: ClaimBudget): Promise<boolean> {
+	// Opportunistic GC must finish before the final cancellation check.
+	await cleanDeadPolicyArtifacts(claim.directory, budget);
+	// GC stays within the wait budget but cannot revoke a turn this claim already won;
+	// only cancellation can. Callers enforce their own operation deadlines.
+	const cancelled = acquisitionCancelled(budget);
+	if (cancelled) {
+		debugPolicyFailure("acquire.turn", "cancelled");
+	}
+	return !cancelled;
 }
 function acquisitionDeadline(options: ClaimOptions): number {
 	return options.deadline ?? Date.now() + (options.timeoutMs ?? POLICY_LOCK_WAIT_MS);
@@ -354,6 +421,7 @@ async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicy
 	let published = false;
 	let acquired = false;
 	let cleanupCandidate = true;
+	let endpoint: ClaimEndpoint | undefined;
 	try {
 		if (!(await publishClaim(claim, budget))) {
 			// An observed foreign/unknown candidate also withdraws our cleanup authority.
@@ -361,20 +429,17 @@ async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicy
 			return undefined;
 		}
 		published = true;
+		// Listen before the ticket becomes visible to waiters that may sleep on this claim.
+		endpoint = openClaimEndpoint(claim.path, claim.owner.token);
 		const ticket = await publishTicket(claim);
 		if (ticket === undefined || !(await waitForTurn(claim, ticket, budget, deadline))) {
 			return undefined;
 		}
 		acquired = true;
 		return {
-			release: policyDebugPhase("release", async () => {
-				const removed = await removeClaimOwnedBy(
-					claim.path,
-					claim.owner.token,
-					Date.now() + POLICY_LOCK_WAIT_MS,
-				);
-				debugRemovalResult(removed, "release.complete");
-			}),
+			release: policyDebugPhase("release", async () =>
+				removeOwnClaim(claim, endpoint, "release.complete"),
+			),
 		};
 	} catch (error) {
 		debugPolicyFailure("acquire.complete", "native-error", error);
@@ -382,13 +447,25 @@ async function acquireClaim(options: ClaimOptions): Promise<ManagedSessionPolicy
 	} finally {
 		await cleanupUnpublishedCandidate(claim, cleanupCandidate);
 		if (published && !acquired) {
-			const removed = await removeClaimOwnedBy(
-				claim.path,
-				claim.owner.token,
-				Date.now() + POLICY_LOCK_WAIT_MS,
-			);
-			debugRemovalResult(removed, "cleanup.complete");
+			await removeOwnClaim(claim, endpoint, "cleanup.complete");
 		}
+	}
+}
+async function removeOwnClaim(
+	claim: PreparedClaim,
+	endpoint: ClaimEndpoint | undefined,
+	stage: string,
+): Promise<void> {
+	try {
+		const removed = await removeClaimOwnedBy(
+			claim.path,
+			claim.owner.token,
+			Date.now() + POLICY_LOCK_WAIT_MS,
+		);
+		debugRemovalResult(removed, stage);
+	} finally {
+		// Wake subscribers after removal so their fresh arbitration no longer sees this claim.
+		endpoint?.close();
 	}
 }
 async function cleanupUnpublishedCandidate(

@@ -366,6 +366,43 @@ test(
 								/indexed-cookie-secret|indexed-storage-secret/,
 							);
 						});
+						await t.test(
+							"indexed recording recovery retains unrelated screenshot evidence",
+							async () => {
+								const path = join(dir, "before-inactive-stop.png");
+								const result = await call(
+									["batch", "--omit-command"],
+									JSON.stringify([[], ["screenshot", path], ["record", "stop"]]),
+								);
+								assert.equal(result.isError, true);
+								const details = readRecord(result.details);
+								const recovery = readRecord(details.recordingRecovery);
+								assert.match(
+									readString(readRecord(recovery.attempt).error),
+									/No recording in progress/i,
+								);
+								assert.equal(recovery.healed, false);
+								const steps = readArray(details.batchSteps).map(readRecord);
+								assert.deepEqual(
+									steps.map((step) => step.index),
+									[1, 2],
+								);
+								const screenshotStep = steps.find((step) => step.index === 1);
+								assert.ok(screenshotStep);
+								assert.notEqual(
+									screenshotStep.artifactVerification,
+									undefined,
+									"recording recovery must retain the unrelated screenshot verification",
+								);
+								assert.equal(readRecord(screenshotStep.artifactVerification).verifiedCount, 1);
+								assert.deepEqual(
+									readArray(screenshotStep.artifacts).map(
+										(artifact) => readRecord(artifact).absolutePath,
+									),
+									[path],
+								);
+							},
+						);
 						const screenshot = join(dir, "after-empty.png");
 						const observed = await call(
 							["batch", "--bail", "--omit-command"],
