@@ -166,9 +166,11 @@ launch time. See [the proof contract](REFERENCE.md#proof-and-verification).
 ### Journal and artifact storage
 
 Journal projection uses the installed streaming parser's raw tokenizer instead of
-building a Node stream pipeline for each record. Fatal incremental UTF-8 decoding,
-full JSON validation—including discarded values—and an explicit end-of-input
-flush remain required. The parser is still loaded lazily.
+building a Node stream pipeline for each record. Live replay applies the same
+native-or-token selection as its metadata scan to retained-size records; larger
+records still use the tokenizer. Both paths validate UTF-8 and complete JSON,
+including discarded values. The streaming path retains its explicit end-of-input
+flush, and the parser is still loaded lazily.
 
 Both offline converters retain a branch projection only until its last source
 child consumes it. Linear histories no longer retain every historical state map;
