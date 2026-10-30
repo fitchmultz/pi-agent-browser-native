@@ -3131,6 +3131,16 @@ if (args.includes("batch")) {
 					/BATCH-END-SENTINEL Authorization: Bearer \[REDACTED\]$/,
 				);
 				assert.doesNotMatch(fullBatchText, /raw-cookie-secret|batch-secret|"compacted"/);
+				// The saved-file receipt must survive final observation compaction for the model and structured callers.
+				const largeBatchStructured = readRecord(largeBatchResult.structuredContent);
+				assert.equal(largeBatchStructured.compacted, true);
+				assert.equal(readRecord(largeBatchResult.details.outputFile).status, "saved");
+				const largeBatchText = readString(readRecord(largeBatchResult.content[0]).text);
+				const largeBatchVisible = readRecord(
+					JSON.parse(largeBatchText.slice(largeBatchText.indexOf("{"))),
+				);
+				assert.deepEqual(largeBatchVisible.outputFile, largeBatchResult.details.outputFile);
+				assert.deepEqual(largeBatchStructured.outputFile, largeBatchResult.details.outputFile);
 
 				const jsonResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["stream", "status", "--json"],
@@ -3139,7 +3149,9 @@ if (args.includes("batch")) {
 				assert.equal(jsonResult.isError, false);
 				const jsonText = readString(readRecord(jsonResult.content[0]).text);
 				assert.doesNotMatch(jsonText, /Output file:/);
-				assert.doesNotThrow(() => readRecord(JSON.parse(jsonText)));
+				const jsonVisible = readRecord(JSON.parse(jsonText));
+				assert.equal(readRecord(jsonVisible.outputFile).status, "saved");
+				assert.deepEqual(jsonVisible.outputFile, jsonResult.details?.outputFile);
 				const savedJsonText = await readFile(join(tempDir, "logs/stream-status.json"), "utf8");
 				assert.doesNotThrow(() => readRecord(JSON.parse(savedJsonText)));
 
@@ -3199,6 +3211,23 @@ if (args.includes("batch")) {
 				assert.equal(await titleCalls(), beforeProtectedOutput + 1);
 				assert.deepEqual(
 					JSON.parse(await readFile(join(tempDir, ".agent-browser/states/overwrite.json"), "utf8")),
+					{ result: "Example", title: "Example" },
+				);
+
+				const codeTool = harness.getTool("agent_browser_code");
+				assert.ok(codeTool, "code tool must be registered");
+				const codeResult = await executeRegisteredTool(codeTool, harness.ctx, {
+					code: 'emit((await browser({ args: ["get", "title"] })).data);',
+					outputPath: "logs/code-title.json",
+				});
+				assert.equal(codeResult.isError, false, JSON.stringify(codeResult.content));
+				const codeVisible = readRecord(
+					JSON.parse(readString(readRecord(codeResult.content[0]).text)),
+				);
+				assert.equal(readRecord(codeVisible.outputFile).status, "saved");
+				assert.deepEqual(codeVisible.outputFile, readRecord(codeResult.details).outputFile);
+				assert.deepEqual(
+					JSON.parse(await readFile(join(tempDir, "logs/code-title.json"), "utf8")),
 					{ result: "Example", title: "Example" },
 				);
 

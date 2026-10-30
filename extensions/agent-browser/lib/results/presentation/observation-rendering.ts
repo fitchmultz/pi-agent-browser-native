@@ -95,6 +95,8 @@ function buildCompactObservation(
 		"sessionName",
 		"namespace",
 		"codeRun",
+		// A requested outputPath receipt is small and confirms the caller's side effect; keep it ahead of bulky fields.
+		"outputFile",
 		"error",
 		"failures",
 		"nextActions",
