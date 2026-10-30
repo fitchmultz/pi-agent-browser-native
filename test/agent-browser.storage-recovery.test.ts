@@ -2240,21 +2240,22 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 						args: ["snapshot", "-i"],
 					});
 					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-					assert.match(
-						readString(readRecord(snapshot.details?.refSnapshot).generation),
-						/posix-ps-utc-v1:/,
-					);
+					// Each platform persists its own qualified native start-identity format.
+					const nativeIdentityFormat =
+						process.platform === "linux" ? "linux-proc-boot-ticks-v1:" : "posix-ps-utc-v1:";
+					const generation = readString(readRecord(snapshot.details?.refSnapshot).generation);
+					assert.ok(generation.includes(nativeIdentityFormat), generation);
 					await runExtensionEvent(
 						original.handlers,
 						"session_shutdown",
 						{ reason: "reload" },
 						original.ctx,
 					);
-					// Retain genuine owner-produced receipts, but persist the previous POSIX timestamp format.
+					// Retain genuine owner-produced receipts, but persist them unqualified like earlier releases.
 					const branch = readArray(
 						JSON.parse(
 							JSON.stringify(original.ctx.sessionManager.getBranch()).replaceAll(
-								"posix-ps-utc-v1:",
+								nativeIdentityFormat,
 								"",
 							),
 						),
