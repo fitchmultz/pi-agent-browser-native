@@ -202,9 +202,9 @@ Calls with no redundant observation keep their existing probes.
 A call waiting for another Pi process's browser operation no longer starts a
 process-identity query every 10 ms while that holder is confirmed alive. It sleeps
 on the holder's owner-lifetime socket and re-runs normal arbitration when the
-socket closes on release or exit. Unverifiable and still-choosing claims, older
-owners, unavailable endpoints, socket paths over the platform limit and native
-Windows keep polling. See [execution coordination](ARCHITECTURE.md).
+socket closes on release or exit. Unverifiable and still-choosing claims,
+unavailable endpoints (including socket paths over the platform limit) and
+native Windows keep polling. See [execution coordination](ARCHITECTURE.md).
 
 Independent timeout-artifact retry windows now overlap. Each declared path still
 gets up to three checks, 25 ms apart; results retain native plan order and page
