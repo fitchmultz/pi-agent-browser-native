@@ -25,6 +25,7 @@ const OBSERVATION_DETAIL_FIELDS = [
 	"failures",
 	"artifacts",
 	"artifactVerification",
+	"outputFile",
 	"imageObservations",
 	"fullOutputPath",
 	"fullOutputPaths",

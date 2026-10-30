@@ -238,7 +238,7 @@ Ordinary calls share the root Pi parent/subagent browser unless native config, a
 
 A cooperating-process lock covers each direct helper/action sequence or whole code cell, keyed by actual socket context, canonical namespace, and session. Independent identities remain concurrent; direct namespace-wide close barriers matching work. Restart all participants onto the new version. This is not rollback or protection against human/external-client navigation, and separate tool calls still need coordination.
 
-`outputPath` saves result data or recording receipts, including failed recording evidence, through the existing writer. Keep it distinct from browser artifacts; aliasing fails without overwriting the artifact. `timeoutMs` bounds the requested subprocess; managed policy inspection has its separate budget. Unknown mutation outcomes require inspection before retry.
+`outputPath` saves result data or recording receipts, including failed recording evidence, through the existing writer. The visible observation carries the `outputFile` receipt (`status`, `path`, `source`, and `bytes` or `error`), including compacted, `--json`, and `agent_browser_code` results; confirm the save from it instead of reading the full spill. Keep it distinct from browser artifacts; aliasing fails without overwriting the artifact. `timeoutMs` bounds the requested subprocess; managed policy inspection has its separate budget. Unknown mutation outcomes require inspection before retry.
 
 ### Persistent browser code
 
