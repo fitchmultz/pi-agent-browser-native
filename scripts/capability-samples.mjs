@@ -1,10 +1,10 @@
 /** Audited upstream source evidence and the native help commands sampled for drift. */
 export const sourceEvidence = Object.freeze({
 	repository: "vercel-labs/agent-browser",
-	upstreamHead: "50c34e78c98dbe8add0b3ff36b4bcd7a47f1022b",
-	upstreamPackageVersion: "0.39.2",
+	upstreamHead: "1453dd37a40c730fe00f592bc32198a896ff8747",
+	upstreamPackageVersion: "0.41.0",
 	inspectedSources: Object.freeze([
-		"stock npm agent-browser@0.39.2 tarball and skill-data/",
+		"stock npm agent-browser@0.41.0 tarball and skill-data/",
 		"agent-browser --version",
 		"agent-browser --help",
 		"selected agent-browser <command> --help output",
@@ -24,6 +24,9 @@ export const sourceEvidence = Object.freeze({
 		"cli/src/connection.rs",
 		"cli/src/mcp.rs",
 		"cli/src/flags.rs",
+		"cli/src/main.rs",
+		"cli/src/session_files.rs",
+		"cli/src/plugins.rs",
 		"cli/src/read.rs",
 		"cli/src/tls.rs",
 		"cli/src/doctor/ffmpeg.rs",
@@ -39,6 +42,7 @@ export const sourceEvidence = Object.freeze({
 		"cli/src/native/element.rs",
 		"cli/src/native/recording.rs",
 		"cli/src/native/snapshot.rs",
+		"cli/src/native/state.rs",
 		"cli/src/native/interaction.rs",
 		"cli/src/native/screenshot.rs",
 		"cli/src/native/stream/cdp_loop.rs",

@@ -40,6 +40,7 @@ const RUNTIME_FIELDS = [
 	"compatibilityStatus",
 	"restoreKey",
 	"restoreStatus",
+	"restoreSkippedOrigins",
 	"restoreLoadedPath",
 	"restoreValidationPending",
 	"restoreSave",
@@ -213,6 +214,17 @@ function stateShowText(data: Data): string {
 	return lines.join("\n");
 }
 
+function stateLoadText(data: Data): string {
+	const loaded = `State loaded: ${redactModelFacingText(getStringField(data, "path") ?? getStringField(data, "name") ?? "ok")}`;
+	const skipped = (getArrayField(data, "skippedOrigins") ?? []).filter(
+		(origin): origin is string => typeof origin === "string",
+	);
+	// Native writes storage only while the page stays on the saved origin and lists the rest.
+	return skipped.length === 0
+		? loaded
+		: `${loaded}\nSkipped storage for origins (page did not stay on that origin): ${redactModelFacingText(skipped.join(", "))}`;
+}
+
 export function formatStateText(data: Data, subcommand?: string): string | undefined {
 	if (subcommand === "show") {
 		return stateShowText(data);
@@ -222,7 +234,7 @@ export function formatStateText(data: Data, subcommand?: string): string | undef
 		return states.length === 0 ? "No saved states." : states.map(stateLine).join("\n");
 	}
 	if (data.loaded === true) {
-		return `State loaded: ${redactModelFacingText(getStringField(data, "path") ?? getStringField(data, "name") ?? "ok")}`;
+		return stateLoadText(data);
 	}
 	return data.cleared === true || data.clear === true ? "State cleared." : undefined;
 }
