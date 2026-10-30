@@ -102,6 +102,7 @@ export const SHARED_BROWSER_PLAYBOOK_GUIDELINES = [
 	"For evidence-only screenshots, QA captures, or other audit artifacts, save to an explicit path and branch on details.artifactVerification plus details.artifacts before reporting PASS/FAIL; do not require vision review of inline image attachments unless the user asked for visual inspection.",
 	"Respect explicit user stop boundaries yourself. When the surrounding authenticated employee or automation context is explicitly unattended/auto-approved, ordinary non-destructive form submissions within the requested flow may proceed without separate confirmation. Still require explicit authorization for purchases, production-control actions, destructive or irreversible actions, and account, security, or privacy changes. The wrapper does not infer broad business intent from prompt text; details.promptGuard is reserved for concrete artifact-before-close checks.",
 	"Recording needs ffmpeg on PATH before start. Current upstream checks it at startup; older natives may defer failure. A pending recording is not verified output.",
+	"Native 0.41 mcp call and stdin-driven MCP can finish normally, but this wrapper currently rejects all non-help mcp invocations. Session/namespace coordination and credential/image presentation are not integrated; use ordinary agent_browser commands.",
 	"Do not call --help or other exploratory inspection commands unless the user explicitly asks for them or debugging the browser integration is necessary.",
 ] as const;
 

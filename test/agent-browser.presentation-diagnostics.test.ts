@@ -368,6 +368,7 @@ test("buildToolPresentation limits native session-info text to redacted status m
 		launchHash: "launch-identity",
 		restoreKey: "shared-auth",
 		restoreStatus: "loaded",
+		restoreSkippedOrigins: ["https://sso.example.test"],
 		restoreLoadedPath: "/tmp/shared-auth.json",
 		saveStatus: "saved",
 		restoreSavedPath: "/tmp/shared-auth.json",
@@ -526,6 +527,27 @@ test("buildToolPresentation formats stateful browser-context results without lea
 			summary: "States: 1",
 			matches: [/prod-state\.json/, /REDACTED/],
 			missing: /state-secret/,
+		},
+		{
+			commandInfo: { command: "state", subcommand: "load" },
+			data: {
+				loaded: true,
+				path: "/tmp/prod-state.json",
+				skippedOrigins: ["https://sso.example.test", "http://127.0.0.1:8001"],
+			},
+			summary: "state completed",
+			matches: [
+				/State loaded: \/tmp\/prod-state\.json/,
+				/Skipped storage for origins \(page did not stay on that origin\): https:\/\/sso\.example\.test, http:\/\/127\.0\.0\.1:8001/,
+			],
+			missing: undefined,
+		},
+		{
+			commandInfo: { command: "state", subcommand: "load" },
+			data: { loaded: true, path: "/tmp/prod-state.json", skippedOrigins: [] },
+			summary: "state completed",
+			matches: [/State loaded: \/tmp\/prod-state\.json/],
+			missing: /Skipped storage/,
 		},
 		{
 			commandInfo: { command: "state", subcommand: "show" },

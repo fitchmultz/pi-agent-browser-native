@@ -2,7 +2,17 @@ import { readArray, readBoolean, readRecord, readString } from "./helpers/assert
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+	link,
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	rm,
+	stat,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -30,6 +40,8 @@ import {
 	createShortPrivateSocketDir,
 	createToolBranchEntry,
 	executeRegisteredTool,
+	nativeWaitDownloadMovesFile,
+	readFileIfPresent,
 	readInvocationLog,
 	runExtensionEvent,
 	startAgentBrowserContractFixtureServer,
@@ -279,6 +291,16 @@ test(
 					AGENT_BROWSER_AUTO_CONNECT: undefined,
 				},
 				async () => {
+					const version = (
+						await runAgentBrowserProcess({ args: ["--version"], cwd: dir })
+					).stdout.match(/agent-browser (\d+)\.(\d+)\./);
+					assert.ok(version);
+					if (Number(version[1]) === 0 && Number(version[2]) < 40) {
+						t.skip(
+							"Native indexed batch receipts (`batch --omit-command`) require 0.40.0 or newer.",
+						);
+						return;
+					}
 					const h = createExtensionHarness({ cwd: dir });
 					const session = `indexed-${randomUUID().slice(0, 8)}`;
 					const call = (args: readonly string[], stdin?: string, outputPath?: string) =>
@@ -675,6 +697,9 @@ test(
 					AGENT_BROWSER_AUTO_CONNECT: undefined,
 				},
 				async () => {
+					const nativeSavesDownload = nativeWaitDownloadMovesFile(
+						(await runAgentBrowserProcess({ args: ["--version"], cwd: dir })).stdout,
+					);
 					const session = `av-${randomUUID().slice(0, 8)}`;
 					const prefix = ["--session", session];
 					const h = createExtensionHarness({ cwd: dir, sessionId: randomUUID() });
@@ -774,7 +799,12 @@ test(
 											exists: artifact.exists,
 										}),
 									);
-									assert.equal(artifact.path, path);
+									// Native 0.39.4+ moves the download and reports the joined destination;
+									// supported 0.35.0–0.39.3 natives echo the requested operand without moving it.
+									assert.equal(
+										artifact.path,
+										nativeSavesDownload ? await realpath(join(dir, path)) : path,
+									);
 									await wait.test(
 										"prepares the native retained path's parent directory",
 										async () => {
@@ -787,10 +817,16 @@ test(
 									await wait.test("retains the native requested path in artifact metadata", () =>
 										assert.equal(artifact.requestedPath, path),
 									);
-									// Native 0.36 reports the requested wait path without moving the completed download there.
-									assert.equal(result.isError, true);
-									assert.equal(artifact.exists, false);
-									await assert.rejects(readFile(join(dir, path)), { code: "ENOENT" });
+									assert.equal(result.isError, !nativeSavesDownload, result.content[0].text);
+									assert.equal(artifact.exists, nativeSavesDownload);
+									assert.equal(
+										readRecord(resultDetails.artifactVerification).verified,
+										nativeSavesDownload,
+									);
+									assert.equal(
+										await readFileIfPresent(join(dir, path)),
+										nativeSavesDownload ? "download contract fixture report\n" : undefined,
+									);
 								},
 							);
 						}
