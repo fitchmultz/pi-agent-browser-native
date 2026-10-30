@@ -34,7 +34,10 @@ import {
 	openClaimEndpoint,
 	subscribeClaimEndpoint,
 } from "../extensions/agent-browser/lib/browser-execution-claim-endpoint.js";
-import { cleanDeadPolicyArtifacts } from "../extensions/agent-browser/lib/browser-execution-claim-storage.js";
+import {
+	cleanDeadPolicyArtifacts,
+	removeClaimOwnedBy,
+} from "../extensions/agent-browser/lib/browser-execution-claim-storage.js";
 import { getErrorCode } from "../extensions/agent-browser/lib/process-errors.js";
 import {
 	ensureCoordinationDirectory,
@@ -812,11 +815,10 @@ async function writeChoosingClaim(owner: Readonly<Record<string, unknown>>) {
 		path,
 		token,
 		withdraw: async (): Promise<void> => {
-			// Leave atomically like a real claim removal: a polling waiter that reads a half-removed
-			// claim cannot confirm its absence and fails closed.
-			const withdrawn = join(dirname(path), `.piab-test-withdrawn-${token}`);
-			await fs.rename(path, withdrawn);
-			await rm(withdrawn, { force: true, recursive: true });
+			// Leave through production removal: a polling waiter that reads a half-removed claim
+			// cannot confirm its absence and fails closed, and Windows readers can briefly block
+			// the atomic move, which this retries within its budget.
+			assert.equal(await removeClaimOwnedBy(path, token, performance.now() + 1_000), true);
 		},
 	};
 }
