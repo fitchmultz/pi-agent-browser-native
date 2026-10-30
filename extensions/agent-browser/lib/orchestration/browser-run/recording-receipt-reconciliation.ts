@@ -125,25 +125,25 @@ export function planRecordingRecovery(
 		return undefined;
 	}
 	const { batch, steps, rows } = recoverySource(options);
-	const stopIndex = steps.reduce(
-		(last, step, index) =>
-			isRecordingStop(step) && stopNeedsRecovery(options, rows?.at(index)) ? index : last,
+	const stopPosition = steps.reduce(
+		(last, step, position) =>
+			isRecordingStop(step) && stopNeedsRecovery(options, rows?.at(position)) ? position : last,
 		-1,
 	);
-	if (stopIndex < 0) {
+	if (stopPosition < 0) {
 		return undefined;
 	}
 	let expected = options.reservation;
-	for (const [index, step] of steps.slice(0, stopIndex).entries()) {
-		expected = reservationForStart(options, step, rows?.at(index)) ?? expected;
+	for (const [position, step] of steps.slice(0, stopPosition).entries()) {
+		expected = reservationForStart(options, step, rows?.at(position)) ?? expected;
 	}
 
 	return {
 		batch,
 		rows,
-		stopIndex,
+		stopPosition,
 		expected,
-		attempt: originalAttempt(options, rows?.at(stopIndex)),
+		attempt: originalAttempt(options, rows?.at(stopPosition)),
 	};
 }
 

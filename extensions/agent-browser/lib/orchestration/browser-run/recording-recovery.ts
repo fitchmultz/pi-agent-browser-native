@@ -62,7 +62,7 @@ export async function recoverRecordingStop(
 		batch: plan.batch,
 		envelope: repaired.envelope,
 		partialBatch: plan.batch && plan.rows === undefined,
-		stopIndex: plan.stopIndex,
+		stopPosition: plan.stopPosition,
 		presentation: finishRecordingPresentation(options, presentation, evidence, recovery),
 		recovery,
 	};
@@ -74,7 +74,7 @@ function mergeRecoveryNextActions(
 ): NonNullable<ToolPresentation["nextActions"]> {
 	const laterRecording =
 		base.batchSteps
-			?.slice(result.stopIndex + 1)
+			?.slice(result.stopPosition + 1)
 			.some((step) => step.artifacts?.some(isPendingRecordingArtifact) === true) === true;
 	const unrelatedFailure =
 		base.batchFailure !== undefined && !isRecordingStop(base.batchFailure.failedStep.command ?? []);
@@ -99,8 +99,8 @@ export function mergeRecordingRecoveryPresentation(
 		...base,
 		artifacts,
 		artifactVerification: buildArtifactVerificationSummary(artifacts ?? []),
-		batchSteps: base.batchSteps?.map((step) =>
-			step.index === result.stopIndex
+		batchSteps: base.batchSteps?.map((step, position) =>
+			position === result.stopPosition
 				? {
 						...step,
 						artifacts: result.presentation.artifacts,

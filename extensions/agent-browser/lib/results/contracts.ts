@@ -31,6 +31,7 @@ export interface AgentBrowserEnvelope {
 
 export interface AgentBrowserBatchResult {
 	readonly command?: readonly string[];
+	readonly index?: number;
 	readonly error?: unknown;
 	readonly result?: unknown;
 	readonly success?: boolean;

@@ -4,7 +4,11 @@ import {
 	getDiffFilePathIndices,
 	getExplicitArtifactDestinationIndex,
 } from "./browser-run/artifact-paths.js";
-import { parseBatchCommandArgument, parseUserBatchStdin } from "./batch-stdin.js";
+import {
+	isNativeBatchOption,
+	parseBatchCommandArgument,
+	parseUserBatchStdin,
+} from "./batch-stdin.js";
 
 interface BoundOperationPaths {
 	readonly args: readonly string[];
@@ -81,7 +85,7 @@ class OperationPathBinding {
 
 	bindRawBatchRows(): void {
 		for (let index = 1; index < this.tokens.length; index++) {
-			if (this.tokens[index] === "--bail") {
+			if (isNativeBatchOption(this.tokens[index])) {
 				continue;
 			}
 			const row = parseBatchCommandArgument(this.tokens[index]).step;
@@ -119,7 +123,7 @@ class OperationPathBinding {
 	}
 
 	bindBatch(stdin: string | undefined): BoundOperationPaths {
-		if (this.tokens.slice(1).some((token) => token !== "--bail")) {
+		if (this.tokens.slice(1).some((token) => !isNativeBatchOption(token))) {
 			this.bindRawBatchRows();
 			return { args: this.result, stdin }; // Native ignores stdin when raw rows exist.
 		}

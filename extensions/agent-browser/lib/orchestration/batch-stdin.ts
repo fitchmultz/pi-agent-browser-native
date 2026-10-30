@@ -1,8 +1,14 @@
 import { projectUpstreamGlobalFlags } from "../argv-grammar.js";
 import { isStringArray } from "../input-modes/shared.js";
+import { isRecord } from "../parsing.js";
+import type { AgentBrowserEnvelope } from "../results/contracts.js";
 import { stringifyUnknown } from "../results/text.js";
 
 export type BatchCommandStep = string[];
+
+export function isNativeBatchOption(token: string): boolean {
+	return token === "--bail" || token === "--omit-command";
+}
 
 /** Bare open's native launch action drops prior launch options. URL reads lazily launch without navigating. */
 export function normalizeUrlLessOpen(
@@ -20,7 +26,7 @@ export function normalizeUrlLessOpen(
 	if (tokens[0] !== "batch") {
 		return { args, stdin };
 	}
-	if (tokens.slice(1).some((token) => token !== "--bail")) {
+	if (tokens.slice(1).some((token) => !isNativeBatchOption(token))) {
 		return { args: normalizeRawBatchRows(args, tokens, indices), stdin };
 	}
 	const steps = parseUserBatchStdin(stdin).steps;
@@ -43,7 +49,7 @@ function normalizeRawBatchRows(
 ): readonly string[] {
 	let normalized: string[] | undefined;
 	for (const [offset, token] of tokens.slice(1).entries()) {
-		if (token === "--bail") {
+		if (isNativeBatchOption(token)) {
 			continue;
 		}
 		const step = parseBatchCommandArgument(token).step;
@@ -194,7 +200,7 @@ export function parseUserBatchStdin(stdin: string | undefined): {
 /**
  * The batch steps upstream will actually execute: run_batch uses raw batch
  * arguments exclusively when any exist and reads stdin only otherwise.
- * Upstream filters only the exact `--bail` token, so an equals form such as
+ * Upstream filters only exact `--bail` and `--omit-command` tokens, so an equals form such as
  * `--bail=true` stays a raw command (an unknown-command row) and keeps stdin
  * ignored.
  */
@@ -202,18 +208,59 @@ export function getUpstreamEffectiveBatchSteps(
 	commandTokens: readonly string[],
 	stdin: string | undefined,
 ): BatchCommandStep[] {
+	return getUpstreamBatchInputSteps(commandTokens, stdin).filter((step) => step.length > 0);
+}
+
+function getUpstreamBatchInputSteps(
+	commandTokens: readonly string[],
+	stdin: string | undefined,
+): BatchCommandStep[] {
 	if (commandTokens[0] !== "batch") {
 		return [];
 	}
 	const argumentSteps = commandTokens.slice(1).flatMap((command) => {
-		if (command === "--bail") {
+		if (isNativeBatchOption(command)) {
 			return [];
 		}
 		const step = parseBatchCommandArgument(command).step;
 		return step ? [step] : [];
 	});
-	if (commandTokens.slice(1).some((token) => token !== "--bail")) {
+	if (commandTokens.slice(1).some((token) => !isNativeBatchOption(token))) {
 		return argumentSteps;
 	}
-	return parseUserBatchStdin(stdin).steps?.filter((step) => step.length > 0) ?? [];
+	return parseUserBatchStdin(stdin).steps ?? [];
+}
+
+/** Restore native indexed receipts before command-specific effects and redaction, not from row order. */
+export function resolveIndexedBatchCommands(
+	envelope: AgentBrowserEnvelope | undefined,
+	commandTokens: readonly string[],
+	stdin?: string,
+): AgentBrowserEnvelope | undefined {
+	if (
+		commandTokens[0] !== "batch" ||
+		!commandTokens.slice(1).includes("--omit-command") ||
+		!Array.isArray(envelope?.data) ||
+		!envelope.data.some(
+			(row: unknown) => isRecord(row) && row.command === undefined && row.index !== undefined,
+		)
+	) {
+		return envelope;
+	}
+	// Native indexes retain skipped empty stdin rows, unlike the effective dispatched-command list.
+	const steps = getUpstreamBatchInputSteps(commandTokens, stdin);
+	const data = envelope.data.map((row: unknown) => {
+		if (
+			!isRecord(row) ||
+			row.command !== undefined ||
+			typeof row.index !== "number" ||
+			!Number.isSafeInteger(row.index) ||
+			row.index < 0
+		) {
+			return row;
+		}
+		const command = steps.at(row.index);
+		return command !== undefined && command.length > 0 ? { ...row, command } : row;
+	});
+	return { ...envelope, data };
 }
