@@ -32,7 +32,10 @@ import agentBrowserExtension from "../../extensions/agent-browser/index.js";
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../../scripts/agent-browser-target.mjs";
 import { hasErrorCode } from "./assertions.js";
 
-// Fixtures use their own Pi identity. Root-default tests can opt into delegation explicitly.
+// Fixtures use their own Pi identity, even when the suite runs inside a delegated Pi child.
+// Root-default tests can opt into delegation explicitly.
+delete process.env.PI_INTERCOM_ROOT_SESSION_ID;
+delete process.env.PI_INTERCOM_PARENT_SESSION_ID;
 delete process.env.PI_SUBAGENT_CHILD;
 delete process.env.PI_SUBAGENT_ROOT_SESSION_ID;
 delete process.env.PI_SESSION_ID;

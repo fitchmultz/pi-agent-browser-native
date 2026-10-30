@@ -127,7 +127,9 @@ test(
 		});
 		for (const key of Object.keys(process.env)) {
 			if (
-				/^(AGENT_BROWSER_|PI_AGENT_BROWSER_|PI_SUBAGENT_|EXA_API_KEY$|BRAVE_API_KEY$)/i.test(key) ||
+				/^(AGENT_BROWSER_|PI_AGENT_BROWSER_|PI_SUBAGENT_|PI_INTERCOM_(ROOT|PARENT)_SESSION_ID$|EXA_API_KEY$|BRAVE_API_KEY$)/i.test(
+					key,
+				) ||
 				/^(https?|all|no)_proxy$/i.test(key)
 			) {
 				delete process.env[key];

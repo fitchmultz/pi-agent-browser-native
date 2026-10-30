@@ -142,13 +142,8 @@ class BrowserCodeExecution {
 			includeProjectConfig: shouldIncludeProjectConfig(invocation.ctx),
 		});
 		const profile = config.trustedBrowserDefaultProfile;
-		const root = process.env.PI_SUBAGENT_ROOT_SESSION_ID;
-		const id =
-			process.env.PI_SUBAGENT_CHILD === "1" && root !== undefined && root !== ""
-				? root
-				: invocation.ctx.sessionManager.getSessionId();
 		return {
-			id,
+			sessionId: invocation.ctx.sessionManager.getSessionId(),
 			profile:
 				profile?.policy === "always" && !/[\\/~]/.test(profile.name) ? profile.name : undefined,
 			executablePath: config.trustedBrowserExecutablePath,

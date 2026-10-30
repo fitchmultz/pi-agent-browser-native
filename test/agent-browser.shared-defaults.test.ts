@@ -895,19 +895,54 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "http
 					args: ["--session", readString(a.details?.sessionName), "get", "title"],
 				});
 				assert.equal(followup.isError, false, followup.content[0].text);
-				await withPatchedEnv(
-					{ PI_SUBAGENT_CHILD: "1", PI_SUBAGENT_ROOT_SESSION_ID: "root-one" },
-					async () => {
+				// A delegated child reads through direct and code calls, then quits before the next child.
+				const delegatedChild = (lineage: Readonly<Record<string, string>>) =>
+					withPatchedEnv(lineage, async () => {
 						const child = createExtensionHarness({ cwd: root, sessionId: "child-id" });
-						assert.equal((await read(child)).details?.sessionName, a.details?.sessionName);
+						const codeTool = child.getTool("agent_browser_code");
+						assert.ok(codeTool);
+						const direct = await read(child);
+						const code = await executeRegisteredTool(codeTool, child.ctx, {
+							code: 'emit((await browser({args:["get","title"]})).data.title);',
+						});
 						await runExtensionEvent(
 							child.handlers,
 							"session_shutdown",
 							{ reason: "quit" },
 							child.ctx,
 						);
-					},
-				);
+						return {
+							direct: {
+								isError: direct.isError,
+								sessionName: direct.details?.sessionName,
+								text: direct.content[0].text,
+							},
+							code: {
+								isError: code.isError,
+								sessionName: code.details?.sessionName,
+								text: code.content[0].text,
+							},
+						};
+					});
+				// Current pi-subagents sets the main's ID as both intercom IDs; older releases set
+				// PI_SUBAGENT_CHILD with PI_SUBAGENT_ROOT_SESSION_ID.
+				const current = await delegatedChild({
+					PI_INTERCOM_ROOT_SESSION_ID: "root-one",
+					PI_INTERCOM_PARENT_SESSION_ID: "root-one",
+				});
+				const legacy = await delegatedChild({
+					PI_SUBAGENT_CHILD: "1",
+					PI_SUBAGENT_ROOT_SESSION_ID: "root-one",
+				});
+				const rootName = a.details?.sessionName;
+				assert.equal(current.direct.isError, false, current.direct.text);
+				assert.equal(current.direct.sessionName, rootName);
+				assert.equal(current.code.isError, false, current.code.text);
+				assert.equal(current.code.sessionName, rootName);
+				assert.equal(legacy.direct.isError, false, legacy.direct.text);
+				assert.equal(legacy.direct.sessionName, rootName);
+				assert.equal(legacy.code.isError, false, legacy.code.text);
+				assert.equal(legacy.code.sessionName, rootName);
 				await mkdir(join(root, "other-cwd"));
 				const resumed = createExtensionHarness({
 					cwd: join(root, "other-cwd"),
