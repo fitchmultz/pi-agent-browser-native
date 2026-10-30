@@ -285,6 +285,7 @@ export const optionsAndEnv = section(
 		root("--debug"),
 		root("AGENT_BROWSER_DEBUG"),
 		root("--config <path>"),
+		root("The auto-discovered ./agent-browser.json cannot set executablePath, args or plugins"),
 		root("AGENT_BROWSER_CONFIG"),
 		root("AGENT_BROWSER_DEFAULT_TIMEOUT"),
 		root("AGENT_BROWSER_AUTOSAVE_INTERVAL_MS"),
