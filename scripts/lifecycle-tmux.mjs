@@ -24,8 +24,14 @@ async function run(command, args, options = {}) {
 	return execFile(command, args, { maxBuffer: 20 * 1024 * 1024, ...options });
 }
 
+// A task-owned server starts from this process, so Pi inherits its environment, including provider
+// credentials; a server that is already running would supply its own global environment instead.
+function tmux(tmuxSession, args) {
+	return run("tmux", ["-L", tmuxSession, ...args]);
+}
+
 export async function capturePaneText(tmuxSession) {
-	const { stdout } = await run("tmux", [
+	const { stdout } = await tmux(tmuxSession, [
 		"capture-pane",
 		"-p",
 		"-S",
@@ -59,8 +65,8 @@ export async function capturePane(tmuxSession, artifactPath) {
 }
 
 export async function killTmuxSession(tmuxSession) {
-	await run("tmux", ["kill-session", "-t", tmuxSession]).catch(() => {
-		// The task-owned session may already have exited; cleanup is idempotent.
+	await tmux(tmuxSession, ["kill-server"]).catch(() => {
+		// The task-owned server may already have exited; cleanup is idempotent.
 	});
 }
 
@@ -72,7 +78,7 @@ export async function launchPiInTmux(options) {
 	const { agentDir, cwd, fakeBinDir, fakeStateDir, model, paneLogPath, sessionId, tmuxSession } =
 		options;
 	await killTmuxSession(tmuxSession);
-	await run("tmux", [
+	await tmux(tmuxSession, [
 		"new-session",
 		"-d",
 		"-s",
@@ -88,7 +94,7 @@ export async function launchPiInTmux(options) {
 	]);
 	if (paneLogPath) {
 		await mkdir(dirname(paneLogPath), { recursive: true });
-		await run("tmux", [
+		await tmux(tmuxSession, [
 			"pipe-pane",
 			"-o",
 			"-t",
@@ -100,7 +106,7 @@ export async function launchPiInTmux(options) {
 
 export async function sendLine(tmuxSession, text) {
 	const target = tmuxActiveTarget(tmuxSession);
-	await run("tmux", ["send-keys", "-t", target, "-l", text]);
+	await tmux(tmuxSession, ["send-keys", "-t", target, "-l", text]);
 	await sleep(PROMPT_SUBMIT_PAUSE_MS);
-	await run("tmux", ["send-keys", "-t", target, "Enter"]);
+	await tmux(tmuxSession, ["send-keys", "-t", target, "Enter"]);
 }
