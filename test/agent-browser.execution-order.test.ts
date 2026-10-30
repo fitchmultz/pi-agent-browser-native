@@ -33,6 +33,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import which from "which";
+import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mjs";
 
 const sourceRoot = resolve(
 	process.env.PI_AGENT_BROWSER_EXECUTION_TEST_ROOT ?? fileURLToPath(new URL("..", import.meta.url)),
@@ -352,7 +353,7 @@ for (const mode of ["direct", "code", "cancel-waiter"] as const) {
 				encoding: "utf8",
 				timeout: 10_000,
 			}).trim();
-			assert.equal(evidence.version, "agent-browser 0.39.2");
+			assert.equal(evidence.version, `agent-browser ${TARGET_AGENT_BROWSER_VERSION}`);
 			await new Promise<void>((complete) => {
 				server.listen(0, "127.0.0.1", complete);
 			});

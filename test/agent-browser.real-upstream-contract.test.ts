@@ -13,7 +13,6 @@ import {
 	readString,
 	readNumber,
 	readBoolean,
-	hasErrorCode,
 } from "./helpers/assertions.js";
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -49,6 +48,8 @@ import {
 	createToolBranchEntry,
 	DOWNLOAD_FIXTURE_CONTENT,
 	executeRegisteredTool,
+	nativeWaitDownloadMovesFile,
+	readFileIfPresent,
 	runExtensionEvent,
 	startAgentBrowserContractFixtureServer,
 	withPatchedEnv,
@@ -1025,15 +1026,32 @@ async function runCoreCommand(
 	return assertCoreCommandResult(result, shape, label, managedSessionName);
 }
 
-async function readFileIfPresent(path: string): Promise<string | undefined> {
-	try {
-		return await readFile(path, "utf8");
-	} catch (error) {
-		if (hasErrorCode(error, "ENOENT")) {
-			return undefined;
-		}
-		throw error;
-	}
+/**
+ * Native 0.39.4 moves the completed download to the requested path; supported 0.35.0–0.39.3
+ * natives only report that path, so the wrapper must fail closed there.
+ */
+function expectedWaitDownload(installedVersion: string) {
+	return nativeWaitDownloadMovesFile(installedVersion)
+		? {
+				isError: false,
+				resultCategory: "success",
+				successCategory: "artifact-saved",
+				failureCategory: undefined,
+				text: [/Download saved and verified/],
+				exists: true,
+				verified: true,
+				content: DOWNLOAD_FIXTURE_CONTENT,
+			}
+		: {
+				isError: true,
+				resultCategory: "failure",
+				successCategory: undefined,
+				failureCategory: "artifact-missing",
+				text: [/Artifact verification failed/, /Download event reported; file not verified/],
+				exists: false,
+				verified: false,
+				content: undefined,
+			};
 }
 
 async function assertInstalledAgentBrowserVersion(): Promise<string> {
@@ -4665,10 +4683,11 @@ test(
 					const waitedDownload = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["wait", "--download", downloadPath],
 					});
+					const expectedDownload = expectedWaitDownload(installedVersion);
 					assert.equal(
 						waitedDownload.isError,
-						true,
-						`wait --download should fail closed when the reported file is missing: ${resultText(waitedDownload)}`,
+						expectedDownload.isError,
+						`wait --download must match native ${installedVersion} download persistence: ${resultText(waitedDownload)}`,
 					);
 					assertHasKeys(
 						waitedDownload.details,
@@ -4676,27 +4695,27 @@ test(
 						"wait --download details",
 					);
 					const waitDownloadDetails = readRecord(waitedDownload.details);
-					assert.equal(waitDownloadDetails.resultCategory, "failure");
-					assert.equal(waitDownloadDetails.failureCategory, "artifact-missing");
+					assert.equal(waitDownloadDetails.resultCategory, expectedDownload.resultCategory);
+					assert.equal(waitDownloadDetails.successCategory, expectedDownload.successCategory);
+					assert.equal(waitDownloadDetails.failureCategory, expectedDownload.failureCategory);
 					assert.equal(waitDownloadDetails.sessionName, managedSessionName);
 					assert.equal(waitDownloadDetails.usedImplicitSession, true);
 					assert.equal(waitDownloadDetails.savedFilePath, downloadPath);
 					assert.equal(readRecord(waitDownloadDetails.savedFile).path, downloadPath);
-					assert.match(resultText(waitedDownload), /Artifact verification failed/);
-					assert.match(resultText(waitedDownload), /Download event reported; file not verified/);
-
-					// Upstream tracking: https://github.com/vercel-labs/agent-browser/issues/1300.
-					// Current upstream reports the requested saveAs path but leaves the file in the
-					// browser's default download directory. The wrapper must fail closed so release
-					// docs do not overstate savedFilePath as a verified on-disk artifact.
+					const waitDownloadText = resultText(waitedDownload);
+					assert.deepEqual(
+						expectedDownload.text.filter((pattern) => !pattern.test(waitDownloadText)),
+						[],
+						`wait --download text is missing native ${installedVersion} evidence: ${waitDownloadText}`,
+					);
 					const artifacts = readArray(waitDownloadDetails.artifacts).map(readRecord);
 					assert.equal(artifacts[0].path, downloadPath);
-					assert.equal(artifacts[0].exists, false);
+					assert.equal(artifacts[0].exists, expectedDownload.exists);
 					assert.equal(
-						await readFileIfPresent(downloadPath),
-						undefined,
-						"current upstream reports the requested wait --download path but does not persist the file there; update this contract if upstream saveAs persistence becomes reliable",
+						readRecord(waitDownloadDetails.artifactVerification).verified,
+						expectedDownload.verified,
 					);
+					assert.equal(await readFileIfPresent(downloadPath), expectedDownload.content);
 				},
 			);
 		} finally {
