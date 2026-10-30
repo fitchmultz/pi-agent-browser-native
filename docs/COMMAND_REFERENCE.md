@@ -770,6 +770,8 @@ Comboboxes vary by app. For native `<select>` controls, prefer raw `select <sele
 
 A canceled cold-session reopen returns an aborted result with its exact session identity and the consumed reopen marker once the CLI starts. Reload does not repeat that navigation. Cancellation before the attempt leaves the remembered URL pending for the next current-page operation.
 
+An incomparable saved process-start format does not prove a daemon restarted. When its PID and socket still match, the wrapper invalidates old refs and requires a fresh snapshot without reopening the live page or discarding unsaved input. Restored daemon provenance still requires a positive identity match. A restore-disabled session, such as a fresh profile/state launch, can therefore refuse reuse after an update when its saved identity is incomparable; it requires owner-side close and a fresh launch rather than inferring ownership from PID/socket alone.
+
 <!-- agent-browser-playbook:start inspection -->
 <!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 

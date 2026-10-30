@@ -16,6 +16,7 @@ import { runSessionCommandData } from "./session-state.js";
 import {
 	getHeadedManagedAutosaveEnv,
 	inspectManagedSessionDaemon,
+	managedSessionDaemonGenerationsMatch,
 	type ManagedSessionDaemonInspection,
 } from "./managed-session-daemon-inspection.js";
 
@@ -144,7 +145,10 @@ function reconcileDaemonReceipt(
 	) {
 		return;
 	}
-	if (daemon.generation === receipt.generation && daemon.restoreKey === receipt.restoreKey) {
+	if (
+		managedSessionDaemonGenerationsMatch(receipt.generation, daemon.generation) === true &&
+		daemon.restoreKey === receipt.restoreKey
+	) {
 		context.restoreState.recordDaemonRestoreKey(
 			context.sessionName,
 			context.namespace,
