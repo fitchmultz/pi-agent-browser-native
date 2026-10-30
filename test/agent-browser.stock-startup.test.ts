@@ -120,7 +120,7 @@ test("startup adaptation preserves native argument sources and excludes external
 						input,
 						{
 							cwd: root,
-							root: expectedRoot === undefined ? undefined : { id: "startup-precedence" },
+							root: expectedRoot === undefined ? undefined : { sessionId: "startup-precedence" },
 						},
 						async (planned, withLaunchDefaults) => {
 							assert.equal(planned.chromeStartupArgs, expected, args.join(" "));

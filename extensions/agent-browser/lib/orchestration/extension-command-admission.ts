@@ -240,14 +240,9 @@ class BrowserAdmission {
 		if (!this.canSelectNativeRoot(call)) {
 			return undefined;
 		}
-		const root = process.env.PI_SUBAGENT_ROOT_SESSION_ID;
-		const id =
-			process.env.PI_SUBAGENT_CHILD === "1" && root !== undefined && root !== ""
-				? root
-				: call.ctx.sessionManager.getSessionId();
 		const profile = config.trustedBrowserDefaultProfile;
 		return {
-			id,
+			sessionId: call.ctx.sessionManager.getSessionId(),
 			profile:
 				profile?.policy === "always" && !/[\\/~]/.test(profile.name) ? profile.name : undefined,
 			executablePath: config.trustedBrowserExecutablePath,

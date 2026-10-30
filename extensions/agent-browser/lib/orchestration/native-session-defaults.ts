@@ -31,7 +31,8 @@ export interface NativeSessionCallContext {
 	readonly cwd: string;
 	readonly signal?: AbortSignal;
 	readonly root?: {
-		readonly id: string;
+		/** The calling Pi session; a delegated child resolves to its main session's root. */
+		readonly sessionId: string;
 		readonly profile?: string;
 		readonly executablePath?: string;
 	};
@@ -61,7 +62,26 @@ function requestsConnection(tokens: readonly string[], stdin?: string): boolean 
 	);
 }
 
-function rootBrowserSessionName(rootSessionId: string): string {
+// pi-subagents launches a child with equal, unpadded intercom root and parent IDs naming its main
+// session; earlier releases set PI_SUBAGENT_CHILD and PI_SUBAGENT_ROOT_SESSION_ID. Others are roots.
+function rootPiSessionId(sessionId: string): string {
+	const root = process.env.PI_INTERCOM_ROOT_SESSION_ID;
+	if (
+		root !== undefined &&
+		root !== "" &&
+		root === root.trim() &&
+		root === process.env.PI_INTERCOM_PARENT_SESSION_ID
+	) {
+		return root;
+	}
+	const legacyRoot = process.env.PI_SUBAGENT_ROOT_SESSION_ID;
+	return process.env.PI_SUBAGENT_CHILD === "1" && legacyRoot !== undefined && legacyRoot !== ""
+		? legacyRoot
+		: sessionId;
+}
+
+function rootBrowserSessionName(sessionId: string): string {
+	const rootSessionId = rootPiSessionId(sessionId);
 	return `pi-root-${createHash("sha256").update(rootSessionId).digest("hex").slice(0, 24)}`;
 }
 
@@ -101,7 +121,7 @@ class NativeSessionCall {
 						join(context.cwd, "agent-browser.json"),
 					];
 		this.rootName =
-			context.root === undefined ? undefined : rootBrowserSessionName(context.root.id);
+			context.root === undefined ? undefined : rootBrowserSessionName(context.root.sessionId);
 		this.browserCommand =
 			input.kind !== "electron" &&
 			needsManagedSession(parseArgvDescriptor([...input.toolArgs]), input.toolStdin);
