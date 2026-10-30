@@ -1,7 +1,7 @@
 /** Native tmux transport and lifecycle prompt submission. */
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
-import { delimiter, dirname } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { basename, delimiter, dirname } from "node:path";
 import { promisify } from "node:util";
 import { sleep } from "./lifecycle-transcript.mjs";
 
@@ -65,9 +65,19 @@ export async function capturePane(tmuxSession, artifactPath) {
 }
 
 export async function killTmuxSession(tmuxSession) {
-	await tmux(tmuxSession, ["kill-server"]).catch(() => {
+	// tmux keeps its socket file after kill-server, so remove this run's private socket once its server stops.
+	const socketPath = await tmux(tmuxSession, ["display-message", "-p", "#{socket_path}"]).then(
+		({ stdout }) => stdout.trim(),
+		() => "",
+	);
+	const stopped = await tmux(tmuxSession, ["kill-server"]).then(
+		() => true,
 		// The task-owned server may already have exited; cleanup is idempotent.
-	});
+		() => false,
+	);
+	if (stopped && basename(socketPath) === tmuxSession) {
+		await rm(socketPath, { force: true });
+	}
 }
 
 function shellQuote(value) {
