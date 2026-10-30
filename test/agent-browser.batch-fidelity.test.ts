@@ -13,6 +13,7 @@ import {
 	VALUE_FLAGS,
 } from "../extensions/agent-browser/lib/argv-grammar.js";
 import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mjs";
+import { BROWSER_TRANSITION_ENTRY } from "../extensions/agent-browser/lib/browser-transcript.js";
 import {
 	getGuardedRefUsage,
 	shouldPinSessionTabForCommand,
@@ -251,6 +252,320 @@ test("recording FPS options alone keep the intended tab", () => {
 });
 
 const real = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
+
+test(
+	"real upstream indexed batch identity preserves redaction and ordered observations",
+	{
+		skip: !real,
+		timeout: 150_000,
+	},
+	async (t) => {
+		const dir = await mkdtemp(join(tmpdir(), "piab-indexed-batch-"));
+		const socketDir = createShortPrivateSocketDir(dir);
+		const fixture = await startAgentBrowserContractFixtureServer();
+		try {
+			await withPatchedEnv(
+				{
+					HOME: dir,
+					USERPROFILE: dir,
+					PI_CODING_AGENT_DIR: join(dir, "pi"),
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+					AGENT_BROWSER_SOCKET_DIR: socketDir,
+					AGENT_BROWSER_CONFIG: undefined,
+					AGENT_BROWSER_NAMESPACE: undefined,
+					AGENT_BROWSER_PROFILE: undefined,
+					AGENT_BROWSER_RESTORE: undefined,
+					AGENT_BROWSER_CDP: undefined,
+					AGENT_BROWSER_AUTO_CONNECT: undefined,
+				},
+				async () => {
+					const h = createExtensionHarness({ cwd: dir });
+					const session = `indexed-${randomUUID().slice(0, 8)}`;
+					const call = (args: readonly string[], stdin?: string, outputPath?: string) =>
+						executeRegisteredTool(h.tool, h.ctx, {
+							args: ["--session", session, ...args],
+							stdin,
+							outputPath,
+						});
+					const url = `${fixture.baseUrl}/contract`;
+					const rows = [
+						["storage", "local", "set", "ordinary", "indexed-storage-secret"],
+						["storage", "local", "get", "ordinary"],
+						["cookies", "set", "ordinary", "indexed-cookie-secret", "--url", fixture.baseUrl],
+						["cookies", "get"],
+						["get", "url"],
+					];
+					try {
+						assert.equal((await call(["open", url])).isError, false);
+						for (const mode of ["command", "indexed-stdin", "indexed-argv"]) {
+							// Each input mode uses the same real page and secret-bearing native commands.
+							await t.test(mode, async () => {
+								const args = ["batch", "--bail", ...(mode === "command" ? [] : ["--omit-command"])];
+								const outputPath = join(dir, `${mode}.json`);
+								const result = await call(
+									mode === "indexed-argv" ? [...args, ...rows.map((row) => row.join(" "))] : args,
+									JSON.stringify(
+										mode === "indexed-argv" ? [["open", "https://ignored.invalid"]] : [[], ...rows],
+									),
+									outputPath,
+								);
+								assert.equal(result.isError, false, JSON.stringify(result));
+								assert.doesNotMatch(
+									JSON.stringify(result),
+									/indexed-cookie-secret|indexed-storage-secret/,
+								);
+								assert.doesNotMatch(
+									await readFile(outputPath, "utf8"),
+									/indexed-cookie-secret|indexed-storage-secret/,
+								);
+								assert.doesNotMatch(
+									JSON.stringify(h.appendedEntries),
+									/indexed-cookie-secret|indexed-storage-secret/,
+								);
+								const details = readRecord(result.details);
+								const steps = readArray(details.batchSteps).map(readRecord);
+								assert.deepEqual(
+									steps.map((step) =>
+										step.command === undefined ? [] : readArray(step.command).slice(0, 2),
+									),
+									rows.map((row) => (mode === "command" ? row.slice(0, 2) : [])),
+								);
+								assert.deepEqual(
+									steps.map((step) => step.index),
+									rows.map((_, index) => (mode === "indexed-stdin" ? index + 1 : index)),
+								);
+								const aggregate = readArray(details.data).map(readRecord);
+								assert.equal(Object.hasOwn(aggregate[0], "command"), mode === "command");
+								assert.equal(aggregate.at(-1)?.success, true);
+								assert.equal(readRecord(details.sessionTabTarget).url, url);
+							});
+						}
+						await t.test("code", async () => {
+							const codeTool = h.getTool("agent_browser_code");
+							assert.ok(codeTool);
+							const request = {
+								args: ["batch", "--bail", "--omit-command"],
+								stdin: JSON.stringify([[], ...rows]),
+							};
+							const outputPath = join(dir, "code.json");
+							const result = await executeRegisteredTool(codeTool, h.ctx, {
+								session,
+								code: `const r=await browser(${JSON.stringify(request)}); emit({success:r.success,data:r.data});`,
+								outputPath,
+							});
+							assert.equal(result.isError, false, JSON.stringify(result));
+							assert.doesNotMatch(
+								JSON.stringify(result),
+								/indexed-cookie-secret|indexed-storage-secret/,
+							);
+							assert.doesNotMatch(
+								await readFile(outputPath, "utf8"),
+								/indexed-cookie-secret|indexed-storage-secret/,
+							);
+							assert.doesNotMatch(
+								JSON.stringify(h.appendedEntries),
+								/indexed-cookie-secret|indexed-storage-secret/,
+							);
+						});
+						await t.test(
+							"indexed recording recovery retains unrelated screenshot evidence",
+							async () => {
+								const path = join(dir, "before-inactive-stop.png");
+								const result = await call(
+									["batch", "--omit-command"],
+									JSON.stringify([[], ["screenshot", path], ["record", "stop"]]),
+								);
+								assert.equal(result.isError, true);
+								const details = readRecord(result.details);
+								const recovery = readRecord(details.recordingRecovery);
+								assert.match(
+									readString(readRecord(recovery.attempt).error),
+									/No recording in progress/i,
+								);
+								assert.equal(recovery.healed, false);
+								const steps = readArray(details.batchSteps).map(readRecord);
+								assert.deepEqual(
+									steps.map((step) => step.index),
+									[1, 2],
+								);
+								const screenshotStep = steps.find((step) => step.index === 1);
+								assert.ok(screenshotStep);
+								assert.notEqual(
+									screenshotStep.artifactVerification,
+									undefined,
+									"recording recovery must retain the unrelated screenshot verification",
+								);
+								assert.equal(readRecord(screenshotStep.artifactVerification).verifiedCount, 1);
+								assert.deepEqual(
+									readArray(screenshotStep.artifacts).map(
+										(artifact) => readRecord(artifact).absolutePath,
+									),
+									[path],
+								);
+							},
+						);
+						await t.test("indexed recording output keeps native receipts", async (recording) => {
+							const secrets = /indexed-cookie-secret|indexed-storage-secret/;
+							const argv = /"command":\s*\[/;
+							for (const mode of ["command", "indexed"]) {
+								// Command form is the parity control; indexed receipts must not echo argv.
+								await recording.test(mode, async (receipts) => {
+									const indexed = mode === "indexed";
+									const batch = (plan: readonly (readonly string[])[], outputPath: string) =>
+										call(
+											["batch", "--bail", ...(indexed ? ["--omit-command"] : [])],
+											JSON.stringify(indexed ? [[], ...plan] : plan),
+											outputPath,
+										);
+									const saved = async (result: unknown, outputPath: string) => {
+										const details = readRecord(readRecord(result).details);
+										const outputFile = readRecord(details.outputFile);
+										assert.equal(outputFile.status, "saved", JSON.stringify(details.outputFile));
+										assert.equal(outputFile.source, "recording-receipt");
+										const text = await readFile(outputPath, "utf8");
+										assert.doesNotMatch(JSON.stringify(result), secrets);
+										assert.doesNotMatch(text, secrets);
+										assert.doesNotMatch(JSON.stringify(h.appendedEntries), secrets);
+										assert.equal(argv.test(JSON.stringify(result)), !indexed);
+										assert.equal(argv.test(text), !indexed);
+										return { details, receipt: readRecord(JSON.parse(text)) };
+									};
+									const video = join(dir, `${mode}-receipt.webm`);
+									const failedPath = join(dir, `${mode}-failed-receipt.json`);
+									// --bail leaves the started recording active without a stop row to recover.
+									const failed = await batch(
+										[
+											["record", "start", video],
+											[
+												"cookies",
+												"set",
+												"ordinary",
+												"indexed-cookie-secret",
+												"--url",
+												fixture.baseUrl,
+											],
+											["storage", "local", "get", "ordinary"],
+											["eval", "(() => { throw new Error('planned recording flow failure'); })()"],
+											["record", "stop"],
+										],
+										failedPath,
+									);
+									const stoppedPath = join(dir, `${mode}-stopped-receipt.json`);
+									// Stop before asserting so a failed check cannot leave the native recording active.
+									// Keep the established explicit 12s capture for short/cold native Ubuntu encoders.
+									const stopped = await batch(
+										[
+											["storage", "local", "get", "ordinary"],
+											["wait", "12000"],
+											["record", "stop"],
+										],
+										stoppedPath,
+									);
+									await receipts.test("unrecovered failure", async () => {
+										assert.equal(failed.isError, true, JSON.stringify(failed));
+										const failure = await saved(failed, failedPath);
+										assert.equal(failure.details.recordingRecovery, undefined);
+										assert.equal(
+											readRecord(readRecord(failure.details.batchFailure).failedStep).index,
+											indexed ? 4 : 3,
+										);
+										assert.equal(failure.receipt.success, false);
+										assert.ok(
+											readArray(failure.receipt.artifacts)
+												.map(readRecord)
+												.some(
+													(artifact) =>
+														artifact.absolutePath === video && artifact.status === "pending",
+												),
+											JSON.stringify(failure.receipt.artifacts),
+										);
+									});
+									await receipts.test("success", async () => {
+										assert.equal(stopped.isError, false, JSON.stringify(stopped));
+										const success = await saved(stopped, stoppedPath);
+										assert.equal(success.receipt.success, true);
+										assert.equal(readRecord(success.receipt.artifactVerification).verifiedCount, 1);
+										assert.equal(
+											(await readFile(video)).subarray(0, 4).toString("hex"),
+											"1a45dfa3",
+										);
+									});
+								});
+							}
+						});
+						const screenshot = join(dir, "after-empty.png");
+						const observed = await call(
+							["batch", "--bail", "--omit-command"],
+							JSON.stringify([
+								[],
+								["close"],
+								["open", url],
+								[],
+								["screenshot", screenshot],
+								["snapshot", "-i"],
+							]),
+						);
+						assert.equal(observed.isError, false, JSON.stringify(observed));
+						assert.equal(readRecord(readRecord(observed.details).sessionTabTarget).url, url);
+						assert.notEqual(readRecord(observed.details).refSnapshot, undefined);
+						const observedSteps = readArray(readRecord(observed.details).batchSteps).map(
+							readRecord,
+						);
+						assert.deepEqual(
+							observedSteps.map((step) => step.index),
+							[1, 2, 4, 5],
+						);
+						assert.equal(readRecord(observedSteps[2].artifactVerification).verifiedCount, 1);
+						assert.ok((await readFile(screenshot)).byteLength > 0);
+						const finish = h.appendedEntries
+							.filter((entry) => entry.customType === BROWSER_TRANSITION_ENTRY)
+							.map((entry) => readRecord(readRecord(entry.data).event))
+							.findLast((entry) => entry.phase === "finish");
+						assert.deepEqual(
+							readArray(readRecord(finish?.state).batchSteps).map(
+								(step) => readRecord(step).command,
+							),
+							[["close"], ["open", url], ["screenshot", screenshot], ["snapshot", "-i"]],
+						);
+						const reloaded = createExtensionHarness({
+							cwd: dir,
+							branch: [...h.ctx.sessionManager.getBranch()],
+						});
+						await runExtensionEvent(
+							reloaded.handlers,
+							"session_start",
+							{ reason: "reload" },
+							reloaded.ctx,
+						);
+						const stale = await executeRegisteredTool(reloaded.tool, reloaded.ctx, {
+							args: ["--session", session, "get", "text", "@e999999"],
+						});
+						assert.equal(readRecord(stale.details).failureCategory, "stale-ref");
+						assert.match(
+							readString(readRecord(stale.content[0]).text),
+							/not present in the latest snapshot for this session/,
+						);
+						const savedRefs = readArray(
+							readRecord(readRecord(observed.details).refSnapshot).refIds,
+						);
+						assert.deepEqual(readRecord(stale.details).refIds, ["e999999"]);
+						const resumed = await executeRegisteredTool(reloaded.tool, reloaded.ctx, {
+							args: ["--session", session, "get", "text", `@${readString(savedRefs[0])}`],
+						});
+						assert.equal(resumed.isError, false, JSON.stringify(resumed));
+						assert.equal(readRecord(readRecord(resumed.details).sessionTabTarget).url, url);
+					} finally {
+						await call(["close"]);
+					}
+				},
+			);
+		} finally {
+			await fixture.close();
+			await rm(socketDir, { recursive: true, force: true });
+			await rm(dir, { recursive: true, force: true });
+		}
+	},
+);
 
 test("registered batch keeps empty raw input errors unchanged by ignored stdin", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "piab-empty-batch-"));

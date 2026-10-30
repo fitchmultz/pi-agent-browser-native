@@ -1,6 +1,7 @@
 import { parseArgvDescriptor } from "./argv-descriptor.js";
 import {
 	type BatchCommandStep,
+	isNativeBatchOption,
 	parseBatchCommandArgument,
 	parseUserBatchStdin,
 } from "./orchestration/batch-stdin.js";
@@ -46,7 +47,7 @@ export function getBatchCommandSteps(args: readonly string[], stdin?: string): B
 	}
 	const argumentsToParse = descriptor.upstreamCommandTokens
 		.slice(1)
-		.filter((command) => command !== "--bail");
+		.filter((command) => !isNativeBatchOption(command));
 	if (argumentsToParse.length > 0) {
 		return inspectBatchArguments(argumentsToParse);
 	}

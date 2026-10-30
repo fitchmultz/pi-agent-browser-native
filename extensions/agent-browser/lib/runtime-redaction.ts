@@ -1,6 +1,6 @@
 import { extractUpstreamCommandTokens, findCommandStartIndex } from "./argv-descriptor.js";
 import { projectUpstreamGlobalFlags } from "./argv-grammar.js";
-import { parseBatchCommandArgument } from "./orchestration/batch-stdin.js";
+import { isNativeBatchOption, parseBatchCommandArgument } from "./orchestration/batch-stdin.js";
 import { isRecord } from "./parsing.js";
 import {
 	isSensitiveFieldName,
@@ -103,7 +103,7 @@ function redactBatchRows(args: readonly string[]): ReadonlyMap<number, string> {
 		return replacements;
 	}
 	for (let index = 1; index < batch.tokens.length; index++) {
-		if (batch.tokens[index] === "--bail") {
+		if (isNativeBatchOption(batch.tokens[index])) {
 			continue;
 		}
 		const step = parseBatchCommandArgument(batch.tokens[index]).step;

@@ -83,16 +83,27 @@ export function formatBatchStatusText(
 export function serializeBatchData(
 	steps: readonly BatchPresentedStepObservation[],
 ): AgentBrowserBatchResult[] {
-	return steps.map(({ details }) =>
+	return steps.map(({ details, nativeIndex }) =>
 		details.success
-			? { command: details.command, result: details.data, success: true }
+			? {
+					...batchResultIdentity(details.command, nativeIndex),
+					result: details.data,
+					success: true,
+				}
 			: {
-					command: details.command,
+					...batchResultIdentity(details.command, nativeIndex),
 					error: details.text,
 					...(details.command?.[0] === "record" ? { result: details.data } : {}),
 					success: false,
 				},
 	);
+}
+
+function batchResultIdentity(
+	command: readonly string[] | undefined,
+	index: number | undefined,
+): Pick<AgentBrowserBatchResult, "command" | "index"> {
+	return index === undefined ? { command } : { index };
 }
 
 function formatBatchChangeText(observed: number, unverified: number): string {
