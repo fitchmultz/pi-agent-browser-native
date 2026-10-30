@@ -362,6 +362,7 @@ process.stdout.write(${JSON.stringify(` \n${upgradeText}\n\n`)});`,
 							...metadata,
 							data: upgradeText,
 							summary: "Detected installation via npm.",
+							outputFile: resultDetails.outputFile,
 						});
 					} else {
 						// Exhaustive fixture variant (args.includes("--json")): this selected path must satisfy its own contract.
