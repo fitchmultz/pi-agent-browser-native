@@ -57,8 +57,11 @@ coordination directory or relaxing lock checks. No in-file concurrency is enable
 
 The serial lane contains `test/agent-browser.startup.serial.test.ts` and
 `test/agent-browser.prompt-policy.serial.test.ts` for wall-clock budgets, plus
-`test/agent-browser.managed-session-policy-lock.serial.test.ts` for fixtures in
-the shared policy collector directory. `test/agent-browser.extension-validation-coordination.serial.test.ts`
+`test/agent-browser.managed-session-policy-lock.serial.test.ts` for cross-process
+lock contracts in the shared policy collector directory. Every process's opportunistic
+GC, including other test runs and Pi sessions, reclaims proven-dead artifacts there, so
+GC rule tests run the production sweep on private directories and shared-directory
+fixtures stay live or young. `test/agent-browser.extension-validation-coordination.serial.test.ts`
 retains genuine default-namespace close-all contention and recording ownership cases;
 uniquely namespaced contention cases stay parallel. Their timing, namespace-wide and
 global-GC contracts must not compete with the parallel lane. Build/pack fixtures must use disposable source trees rather

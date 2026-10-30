@@ -32,6 +32,7 @@ import {
 	openClaimEndpoint,
 	subscribeClaimEndpoint,
 } from "../extensions/agent-browser/lib/browser-execution-claim-endpoint.js";
+import { cleanDeadPolicyArtifacts } from "../extensions/agent-browser/lib/browser-execution-claim-storage.js";
 import { getErrorCode } from "../extensions/agent-browser/lib/process-errors.js";
 import {
 	ensureCoordinationDirectory,
@@ -55,10 +56,15 @@ test.after(async () => {
 	await rm(socketDir, { recursive: true, force: true });
 });
 const claimPrefix = `${basename(lockBasePath)}.claim-`;
-const testOrphanPath = join(
-	dirname(lockBasePath),
-	`.pi-agent-browser-policy-remove-test-${process.pid}`,
-);
+
+// Every process's opportunistic GC sweeps the shared coordination directory, so other test runs
+// and Pi sessions can reclaim a dead-owner fixture there first. GC rule tests run the production
+// sweep on a private directory instead.
+async function privateGcDirectory(t: TestContext): Promise<string> {
+	const directory = await fs.mkdtemp(join(tmpdir(), "piab-policy-gc-"));
+	t.after(() => rm(directory, { force: true, recursive: true }));
+	return directory;
+}
 
 async function claimPaths(): Promise<string[]> {
 	try {
@@ -82,7 +88,6 @@ test.afterEach(async () => {
 		// oxlint-disable-next-line no-await-in-loop
 		await rm(path, { force: true, recursive: true });
 	}
-	await rm(testOrphanPath, { force: true, recursive: true });
 });
 
 test("managed session policy lock waits asynchronously and releases only its immutable claim", async () => {
@@ -115,24 +120,23 @@ test("managed session policy lock waits asynchronously and releases only its imm
 });
 
 test("managed session policy lock retains malformed removal tokens and reclaims valid orphan artifacts", async (t) => {
+	const directory = await privateGcDirectory(t);
 	const malformedTokens = [
 		`../../../piab-${randomUUID()}`,
 		`..\\..\\..\\piab-${randomUUID()}`,
 		`piab-${randomUUID()}\0suffix`,
 	];
+	const orphanPath = join(directory, ".pi-agent-browser-policy-remove-test");
 	const malformedPaths = malformedTokens.map((_, index) =>
-		join(
-			dirname(lockBasePath),
-			`.pi-agent-browser-policy-remove-malformed-${process.pid}-${index}-${randomUUID()}`,
-		),
+		join(directory, `.pi-agent-browser-policy-remove-malformed-${index}`),
 	);
 	const fixtures = [
-		{ path: testOrphanPath, token: "orphan" },
+		{ path: orphanPath, token: "orphan" },
 		...malformedPaths.map((path, index) => ({ path, token: malformedTokens[index] })),
 	];
 	const ownerContents = new Map<string, string>();
 	for (const fixture of fixtures) {
-		// Publish each complete owner fixture in order within the shared GC namespace.
+		// Publish each complete owner fixture in order within the private GC directory.
 		// oxlint-disable-next-line no-await-in-loop
 		await mkdir(fixture.path, { mode: 0o700 });
 		const content = JSON.stringify({
@@ -169,26 +173,10 @@ test("managed session policy lock retains malformed removal tokens and reclaims 
 	});
 	syncBuiltinESMExports();
 	try {
-		const candidates = (await readdir(dirname(lockBasePath))).filter(
-			(name) =>
-				name.startsWith(".pi-agent-browser-policy-remove-") ||
-				/^\.pi-agent-browser-policy-[a-f0-9]{64}\.lock-v4\.(?:candidate|claim)-/.test(name),
-		);
-		const maxAttempts = Math.ceil((candidates.length + 1) / 7) + 4;
-		for (
-			let attempt = 0;
-			attempt < maxAttempts && inspected.size < fixturePaths.size;
-			attempt += 1
-		) {
-			// Each acquisition/release advances the same bounded GC cursor.
+		for (let pass = 0; pass < fixtures.length && inspected.size < fixturePaths.size; pass += 1) {
+			// Each production sweep advances the process-wide bounded GC cursor.
 			// oxlint-disable-next-line no-await-in-loop
-			const lock = await acquireManagedSessionPolicyLock({ sessionName });
-			// Every GC pass must acquire its lock; the final check requires all fixtures inspected.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(lock);
-			// Release this acquisition before advancing the GC cursor again.
-			// oxlint-disable-next-line no-await-in-loop
-			await lock.release();
+			await cleanDeadPolicyArtifacts(directory, {});
 		}
 		assert.deepEqual(
 			[...inspected].sort(),
@@ -212,29 +200,25 @@ test("managed session policy lock retains malformed removal tokens and reclaims 
 			await stat(path);
 		}
 		assert.ok(
-			renamed.some(({ source }) => source === testOrphanPath),
+			renamed.some(({ source }) => source === orphanPath),
 			"an ordinary opaque token still uses native rename cleanup",
 		);
-		await assert.rejects(stat(testOrphanPath), (error: unknown) => hasErrorCode(error, "ENOENT"));
+		await assert.rejects(stat(orphanPath), (error: unknown) => hasErrorCode(error, "ENOENT"));
 	} finally {
 		t.mock.restoreAll();
 		syncBuiltinESMExports();
 		for (const { destination } of renamed) {
 			if (!destination.includes("\0")) {
-				// Finish task-owned rename-destination cleanup before fixture-root cleanup.
+				// A regression could rename a malformed token outside the private directory.
 				// oxlint-disable-next-line no-await-in-loop
 				await rm(destination, { force: true, recursive: true });
 			}
 		}
-		for (const { path } of fixtures) {
-			// Remove task-owned fixtures after native mocks have been restored.
-			// oxlint-disable-next-line no-await-in-loop
-			await rm(path, { force: true, recursive: true });
-		}
 	}
 });
 
-test("unrelated lock acquisitions bound and rotate GC without reclaiming live, young or ambiguous claims", async (t) => {
+test("bounded policy GC passes rotate without reclaiming live, young or ambiguous claims", async (t) => {
+	const directory = await privateGcDirectory(t);
 	const first = await acquireManagedSessionPolicyLock({ sessionName });
 	assert.ok(first);
 	const liveOwner = readRecord(
@@ -243,122 +227,121 @@ test("unrelated lock acquisitions bound and rotate GC without reclaiming live, y
 	await first.release();
 	const paths: string[] = [];
 	const old = new Date(Date.now() - 31 * 60 * 1_000);
-	const triggerNamespace = `${sessionName}-gc`;
-	try {
-		for (let index = 0; index < 16; index += 1) {
-			const token = randomUUID();
-			const path = `${lockBasePath}.claim-${token}`;
-			paths.push(path);
-			// Publish native GC candidates in directory/owner/timestamp order.
-			// oxlint-disable-next-line no-await-in-loop
-			await mkdir(path, { mode: 0o700 });
-			const owner: Record<string, unknown> = {
-				...liveOwner,
-				pid: index === 0 ? process.pid : 2_147_483_647,
-				token,
-			};
-			if (index === 2) {
-				owner.version = 2;
-			}
-			if (index === 3) {
-				owner.startIdentity = "";
-			}
-			// The owner must exist before this candidate can receive its stale timestamp.
-			// oxlint-disable-next-line no-await-in-loop
-			await writeFile(join(path, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
-			if (index !== 1) {
-				// Complete this stale candidate before publishing the next one.
-				// oxlint-disable-next-line no-await-in-loop
-				await utimes(path, old, old);
-			}
+	for (let index = 0; index < 16; index += 1) {
+		const token = randomUUID();
+		const path = join(directory, `${basename(lockBasePath)}.claim-${token}`);
+		paths.push(path);
+		// Publish native GC candidates in directory/owner/timestamp order.
+		// oxlint-disable-next-line no-await-in-loop
+		await mkdir(path, { mode: 0o700 });
+		const owner: Record<string, unknown> = {
+			...liveOwner,
+			pid: index === 0 ? process.pid : 2_147_483_647,
+			token,
+		};
+		if (index === 2) {
+			owner.version = 2;
 		}
-		const exists = (path: string) =>
-			stat(path).then(
-				() => true,
-				() => false,
-			);
-		const inspected = new Set<string>();
-		const nativeLstat = fs.lstat;
-		t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
-			if (paths.includes(String(args[0]))) {
-				inspected.add(String(args[0]));
-			}
-			return nativeLstat(...args);
-		});
-		syncBuiltinESMExports();
+		if (index === 3) {
+			owner.startIdentity = "";
+		}
+		// The owner must exist before this candidate can receive its stale timestamp.
+		// oxlint-disable-next-line no-await-in-loop
+		await writeFile(join(path, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
+		if (index !== 1) {
+			// Complete this stale candidate before publishing the next one.
+			// oxlint-disable-next-line no-await-in-loop
+			await utimes(path, old, old);
+		}
+	}
+	const exists = (path: string) =>
+		stat(path).then(
+			() => true,
+			() => false,
+		);
+	const inspected = new Set<string>();
+	const nativeLstat = fs.lstat;
+	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
+		if (paths.includes(String(args[0]))) {
+			inspected.add(String(args[0]));
+		}
+		return nativeLstat(...args);
+	});
+	syncBuiltinESMExports();
+	try {
 		let remaining = 12;
-		for (let attempt = 0; attempt < 32 && remaining > 0; attempt += 1) {
+		for (let pass = 0; pass < 32 && remaining > 0; pass += 1) {
 			inspected.clear();
-			// Each acquisition advances one shared bounded GC experiment.
+			// Each production sweep advances one shared bounded GC experiment.
 			// oxlint-disable-next-line no-await-in-loop
-			const lock = await acquireManagedSessionPolicyLock({
-				sessionName,
-				namespace: triggerNamespace,
-			});
-			// Every pass must acquire; the final assertion requires eventual collection.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(lock, "stale claims must not block a different session");
-			// Release the current lock before observing or starting the next GC pass.
-			// oxlint-disable-next-line no-await-in-loop
-			await lock.release();
+			await cleanDeadPolicyArtifacts(directory, {});
 			// Every pass must respect its independent inspection budget.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.ok(
 				inspected.size <= 8,
-				"each acquisition inspects at most eight GC candidates, including retained ones",
+				"each pass inspects at most eight GC candidates, including retained ones",
 			);
 			// Observe this completed pass before advancing the shared GC experiment.
 			// oxlint-disable-next-line no-await-in-loop
 			const after = (await Promise.all(paths.slice(4).map(exists))).filter(Boolean).length;
 			// Every pass must also respect its deletion budget; final checks require collection.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(remaining - after <= 8, "each acquisition may reclaim at most eight GC candidates");
+			assert.ok(remaining - after <= 8, "each pass may reclaim at most eight GC candidates");
 			remaining = after;
 		}
-		assert.equal(remaining, 0, "unrelated acquisitions must eventually collect old dead claims");
+		assert.equal(remaining, 0, "rotating passes must eventually collect old dead claims");
 		assert.deepEqual(await Promise.all(paths.slice(0, 4).map(exists)), [true, true, true, true]);
 	} finally {
 		t.mock.restoreAll();
 		syncBuiltinESMExports();
-		for (const path of paths) {
-			// Remove task-owned candidates after native mocks and acquisitions have finished.
-			// oxlint-disable-next-line no-await-in-loop
-			await rm(path, { force: true, recursive: true });
-		}
 	}
 });
 
 test("an uncontended acquisition survives opportunistic GC that outlasts its wait budget", async (t) => {
-	await mkdir(testOrphanPath, { mode: 0o700 });
+	// Loaded hosts can make native GC probes outlast the default wait; model that with one slow
+	// inspection of an unrelated entry, longer than the requested budget. GC never reclaims a young
+	// claim, so no process can remove this unrelated fixture while the test runs.
+	const unrelatedToken = randomUUID();
+	const unrelatedClaimPath = `${getBrowserExecutionLockPath({ socketContext: join(socketDir, "gc-fixture") })}.claim-${unrelatedToken}`;
+	await mkdir(unrelatedClaimPath, { mode: 0o700 });
 	await writeFile(
-		join(testOrphanPath, "owner.json"),
+		join(unrelatedClaimPath, "owner.json"),
 		JSON.stringify({
 			pid: 2_147_483_647,
 			startIdentity: "dead",
-			token: "orphan",
+			token: unrelatedToken,
 			sessionNames: null,
 			version: 4,
 		}),
 		{ mode: 0o600 },
 	);
-	// Loaded hosts can make native GC probes outlast the default wait; model that with a slow
-	// inspection of one unrelated orphan, longer than the requested budget.
+	const coordinationDirectory = dirname(lockBasePath);
+	const ownLockFamily = basename(lockBasePath);
 	const nativeLstat = fs.lstat;
-	const gc = { orphanInspected: false };
+	const gc = { acquiring: false, slowInspections: 0 };
 	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
-		if (String(args[0]) === testOrphanPath) {
-			gc.orphanInspected = true;
+		const path = String(args[0]);
+		// While acquiring, only GC reads entries outside this claim's lock family.
+		if (
+			gc.acquiring &&
+			gc.slowInspections === 0 &&
+			dirname(path) === coordinationDirectory &&
+			!basename(path).startsWith(ownLockFamily)
+		) {
+			gc.slowInspections += 1;
 			await delay(150);
 		}
 		return nativeLstat(...args);
 	});
 	syncBuiltinESMExports();
 	try {
-		// GC rotates through at most eight shared candidates per acquisition.
-		for (let attempt = 0; attempt < 16 && !gc.orphanInspected; attempt += 1) {
+		// GC inspects up to eight shared candidates per acquisition, at most one in this lock family.
+		for (let attempt = 0; attempt < 16 && gc.slowInspections === 0; attempt += 1) {
+			gc.acquiring = true;
 			// Each acquisition advances the shared GC cursor before the next attempt.
 			// oxlint-disable-next-line no-await-in-loop
 			const lock = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 });
+			gc.acquiring = false;
 			// Every uncontended pass must acquire, including the one whose GC overran the budget.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
 			assert.ok(lock, "opportunistic GC must not revoke an uncontended acquisition");
@@ -366,100 +349,92 @@ test("an uncontended acquisition survives opportunistic GC that outlasts its wai
 			// oxlint-disable-next-line no-await-in-loop
 			await lock.release();
 		}
-		assert.equal(gc.orphanInspected, true, "GC must reach the slow orphan");
+		assert.equal(gc.slowInspections, 1, "GC must reach a slow unrelated entry");
 	} finally {
 		t.mock.restoreAll();
 		syncBuiltinESMExports();
+		await rm(unrelatedClaimPath, { force: true, recursive: true });
 	}
 });
 
-test("short-lived lock processes randomize GC past retained removal artifacts", async () => {
+test("short-lived processes randomize GC past retained removal artifacts", async (t) => {
+	const directory = await privateGcDirectory(t);
 	const tag = randomUUID();
 	const paths: string[] = [];
-	try {
-		for (let index = 0; index < 12; index += 1) {
-			const token = `${tag}-${index}`;
-			const path = join(
-				dirname(lockBasePath),
-				`.pi-agent-browser-policy-remove-${index < 8 ? "000" : "zzzz"}-${token}`,
-			);
-			paths.push(path);
-			// Publish each shared GC candidate's directory before its owner record.
-			// oxlint-disable-next-line no-await-in-loop
-			await mkdir(path, { mode: 0o700 });
-			// Complete this candidate before publishing the next native GC fixture.
-			// oxlint-disable-next-line no-await-in-loop
-			await writeFile(
-				join(path, "owner.json"),
-				JSON.stringify({
-					pid: 2_147_483_647,
-					startIdentity: "dead",
-					token,
-					sessionNames: null,
-					version: index < 8 ? 2 : 4,
-				}),
-				{ mode: 0o600 },
-			);
-		}
-		for (let attempt = 0; attempt < 4; attempt += 1) {
-			const child = spawn(
-				process.execPath,
-				[
-					"--input-type=module",
-					"-e",
-					`
+	for (let index = 0; index < 12; index += 1) {
+		const token = `${tag}-${index}`;
+		const path = join(
+			directory,
+			`.pi-agent-browser-policy-remove-${index < 8 ? "000" : "zzzz"}-${token}`,
+		);
+		paths.push(path);
+		// Publish each GC candidate's directory before its owner record.
+		// oxlint-disable-next-line no-await-in-loop
+		await mkdir(path, { mode: 0o700 });
+		// Complete this candidate before publishing the next native GC fixture.
+		// oxlint-disable-next-line no-await-in-loop
+		await writeFile(
+			join(path, "owner.json"),
+			JSON.stringify({
+				pid: 2_147_483_647,
+				startIdentity: "dead",
+				token,
+				sessionNames: null,
+				version: index < 8 ? 2 : 4,
+			}),
+			{ mode: 0o600 },
+		);
+	}
+	for (let attempt = 0; attempt < 4; attempt += 1) {
+		const child = spawn(
+			process.execPath,
+			[
+				"--input-type=module",
+				"-e",
+				`
 				import crypto from "node:crypto";
 				import { syncBuiltinESMExports } from "node:module";
 				// Control the random draw; assert actual reclamation below.
 				crypto.randomInt = (max) => max - 1;
 				syncBuiltinESMExports();
-				const { acquireManagedSessionPolicyLock } = await import("./dist/extensions/agent-browser/lib/managed-session-policy-lock.js");
-				const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} });
-				if (!lock) throw new Error("unrelated acquisition failed");
-				await lock.release();
+				const { cleanDeadPolicyArtifacts } = await import("./dist/extensions/agent-browser/lib/browser-execution-claim-storage.js");
+				await cleanDeadPolicyArtifacts(${JSON.stringify(directory)}, {});
 				console.log(JSON.stringify({ done: true }));
 			`,
-				],
-				{ cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
-			);
-			const exited = once(child, "exit");
-			try {
-				// Read this GC process's receipt before starting its successor.
-				// oxlint-disable-next-line no-await-in-loop
-				const receipt = await readChildStdoutJsonLine(child);
-				// Every one of the four fixed GC passes must report success.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.deepEqual(receipt, { done: true });
-				// Join this GC process's exit before starting its successor.
-				// oxlint-disable-next-line no-await-in-loop
-				const [exitCode] = readArray(await exited);
-				// Every one of the four fixed GC passes must exit successfully.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(exitCode, 0);
-			} finally {
-				// Reap this task-owned GC process before starting its successor.
-				// oxlint-disable-next-line no-await-in-loop
-				await stopChildProcess(child);
-			}
-		}
-		assert.deepEqual(
-			await Promise.all(
-				paths.map((path) =>
-					stat(path).then(
-						() => true,
-						() => false,
-					),
-				),
-			),
-			[...Array.from({ length: 8 }, () => true), ...Array.from({ length: 4 }, () => false)],
+			],
+			{ cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
 		);
-	} finally {
-		for (const path of paths) {
-			// Remove task-owned candidates after all short-lived native processes have finished.
+		const exited = once(child, "exit");
+		try {
+			// Read this GC process's receipt before starting its successor.
 			// oxlint-disable-next-line no-await-in-loop
-			await rm(path, { force: true, recursive: true });
+			const receipt = await readChildStdoutJsonLine(child);
+			// Every one of the four fixed GC passes must report success.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.deepEqual(receipt, { done: true });
+			// Join this GC process's exit before starting its successor.
+			// oxlint-disable-next-line no-await-in-loop
+			const [exitCode] = readArray(await exited);
+			// Every one of the four fixed GC passes must exit successfully.
+			// oxlint-disable-next-line node-test/no-conditional-assertion
+			assert.equal(exitCode, 0);
+		} finally {
+			// Reap this task-owned GC process before starting its successor.
+			// oxlint-disable-next-line no-await-in-loop
+			await stopChildProcess(child);
 		}
 	}
+	assert.deepEqual(
+		await Promise.all(
+			paths.map((path) =>
+				stat(path).then(
+					() => true,
+					() => false,
+				),
+			),
+		),
+		[...Array.from({ length: 8 }, () => true), ...Array.from({ length: 4 }, () => false)],
+	);
 });
 
 test("managed session policy lock fails closed without repairing unsafe owner metadata or POSIX permissions", async () => {
