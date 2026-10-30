@@ -20,6 +20,7 @@ import {
 } from "./browser-legacy-projection.js";
 import { LEGACY_BROWSER_FIELDS } from "./browser-legacy-fields.js";
 import { legacySnapshot } from "./browser-legacy-pages.js";
+import { NATIVE_RECORD_BYTES, projectJsonBytes } from "./browser-journal-projection.js";
 import {
 	projectJson,
 	readRange,
@@ -210,6 +211,23 @@ function winningSnapshot(
 		: undefined;
 }
 
+/** A record the framer could retain uses the same native-or-token projection as the metadata scan. */
+async function projectEntryBody(
+	file: FileHandle,
+	entry: JournalEntry,
+	fields: readonly (readonly string[])[],
+	maxBytes?: number,
+): Promise<Record<string, unknown> | undefined> {
+	if (entry.length > NATIVE_RECORD_BYTES) {
+		return projectJson(readRange(file, entry), fields, maxBytes);
+	}
+	const parts: Uint8Array[] = [];
+	for await (const part of readRange(file, entry)) {
+		parts.push(part);
+	}
+	return projectJsonBytes(Buffer.concat(parts), fields, maxBytes);
+}
+
 class PublishedJournalReplay {
 	private readonly projected: unknown[] = [];
 	private readonly definitions = new Map<string, { entry: JournalEntry; legacy: boolean }>();
@@ -244,8 +262,9 @@ class PublishedJournalReplay {
 			return;
 		}
 		// Legacy maps are read one entry at a time, then discarded like non-winning native definitions.
-		const body = await projectJson(
-			readRange(this.file, entry),
+		const body = await projectEntryBody(
+			this.file,
+			entry,
 			replayFields(value, legacy),
 			legacy ? Infinity : undefined,
 		);
@@ -308,8 +327,9 @@ class PublishedJournalReplay {
 		// ponytail: a requested individual snapshot must fit the consumer's memory; upgrade with native per-value paging if needed.
 		const { entry, legacy } = definition;
 		const root = entry.value.type === "message" ? "message" : "data";
-		const body = await projectJson(
-			readRange(this.file, entry),
+		const body = await projectEntryBody(
+			this.file,
+			entry,
 			legacy ? [[root, "details", "refSnapshot"]] : [["data", "snapshot"]],
 			Infinity,
 		);
