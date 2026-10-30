@@ -729,7 +729,7 @@ npm run smoke:platform:doctor
 npm run verify -- release
 ```
 
-`npm run verify -- release` includes the default verification gate, packaged Pi smoke coverage, and the release-blocking Crabbox platform matrix (the same matrix `npm run smoke:platform:all` runs standalone). For the full maintainer release flow, follow [`docs/RELEASE.md`](RELEASE.md). The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
+`npm run verify -- release` includes the default verification gate, the configured-source lifecycle harness, packaged Pi smoke coverage, and the release-blocking Crabbox platform matrix (the same matrix `npm run smoke:platform:all` runs standalone). For the full maintainer release flow, follow [`docs/RELEASE.md`](RELEASE.md). The package also has a `prepublishOnly` hook that runs the same release gate and `npm pack --dry-run` during `npm publish`.
 
 ## How it works
 
@@ -789,7 +789,7 @@ Configured-source lifecycle validation:
 npm run verify -- lifecycle
 ```
 
-The harness defaults to Pi model `zai/glm-5.2` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` when you need different settings (see [Configured-source lifecycle validation](RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches the supported Pi runtime with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, compiled-entrypoint pickup after process restart, persisted spill reachability, and native returned failure status and JSON preservation.
+The harness defaults to Pi model `zai/glm-5.2` and **180000 ms** per-step tmux waits; pass `--model <id>` and/or `--timeout-ms <ms>` after `lifecycle` (or after `release`, which forwards them only to its lifecycle step) when you need different settings (see [Configured-source lifecycle validation](RELEASE.md#configured-source-lifecycle-validation) in `docs/RELEASE.md`). It launches the supported Pi runtime with `--approve` and a deterministic `--session-id`, drives `/reload`, closes Pi, relaunches the exact same session, asserts the JSONL header id, and checks managed-session continuity, compiled-entrypoint pickup after process restart, persisted spill reachability, and native returned failure status and JSON preservation.
 
 Use lifecycle validation when testing `/reload`, exact-session relaunch, `/resume`, managed-session continuity, or persisted artifact behavior. Branch-backed state and `session_tree` cleanup ownership are covered by focused extension harness tests. Maintainers must run the lifecycle harness before every publish; see [Pre-release checks](RELEASE.md#pre-release-checks).
 
