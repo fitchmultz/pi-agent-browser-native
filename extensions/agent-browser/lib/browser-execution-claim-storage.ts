@@ -4,6 +4,7 @@ import type { Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { processStartIdentitiesMatch, readProcessStartIdentity } from "./process-identity.js";
 import { getErrorCode } from "./process-errors.js";
+import { removeClaimEndpoint } from "./browser-execution-claim-endpoint.js";
 import {
 	debugPolicyFailure,
 	policyDebugEnabled,
@@ -269,6 +270,8 @@ export async function removeClaimOwnedBy(
 		debugPolicyFailure("remove.rm", "native-error", error);
 		throw error;
 	}
+	// A dead owner's kernel-closed endpoint leaves its name behind; remove it with the claim.
+	await removeClaimEndpoint(path, token);
 	return true;
 }
 function gcBatch(names: readonly string[]): string[] {

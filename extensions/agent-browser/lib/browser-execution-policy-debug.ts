@@ -25,6 +25,8 @@ const syscalls = new Set([
 	"rm",
 	"kill",
 	"spawn",
+	"connect",
+	"listen",
 ]);
 
 /** Standard NODE_DEBUG facility only; never include paths, records, messages or probe output. */
