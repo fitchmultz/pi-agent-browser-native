@@ -59,7 +59,7 @@ function redactBatchSpillData(
 		const command = isStringArray(row.command) ? row.command : undefined;
 		return {
 			...row,
-			command: command ? redactInvocationArgs(command) : row.command,
+			command: row.index === undefined && command ? redactInvocationArgs(command) : undefined,
 			error: row.error === undefined ? undefined : redactBatchStepErrorData(command, row.error),
 			result:
 				row.result === undefined

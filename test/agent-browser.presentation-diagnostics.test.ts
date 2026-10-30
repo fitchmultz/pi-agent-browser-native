@@ -1574,42 +1574,66 @@ test("buildToolPresentation compacts large diagnostic output and preserves spill
 	await rm(spillPath, { force: true });
 });
 
-test("buildToolPresentation command-redacts whole-batch spill data", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "batch" },
-		cwd: process.cwd(),
-		envelope: {
+test("buildToolPresentation command-redacts whole-batch spill data", async (t) => {
+	const rows = [
+		{
+			command: ["cookies"],
+			result: {
+				cookies: [{ domain: "example.test", name: "session", value: "raw-cookie-secret" }],
+			},
 			success: true,
-			data: [
-				{
-					command: ["cookies"],
-					result: {
-						cookies: [{ domain: "example.test", name: "session", value: "raw-cookie-secret" }],
-					},
-					success: true,
-				},
-				{
-					command: ["clipboard", "write", "raw-clipboard-secret"],
-					error: "write permission denied for raw-clipboard-secret",
-					success: false,
-				},
-				...Array.from({ length: 90 }, (_, index) => ({
-					command: ["eval", "--stdin"],
-					result: { result: `large successful batch row ${index + 1} ${"x".repeat(120)}` },
-					success: true,
-				})),
-			],
 		},
-	});
-
-	assert.equal(readRecord(presentation.data).compacted, true);
-	assert.ok(readString(presentation.fullOutputPath).length > 0);
-	const spill = await readFile(readString(presentation.fullOutputPath), "utf8");
-	assert.doesNotMatch(spill, /raw-cookie-secret/);
-	assert.doesNotMatch(spill, /raw-clipboard-secret/);
-	assert.match(spill, /\[REDACTED\]/);
-	assert.match(spill, /large successful batch row 90/);
-	await rm(readString(presentation.fullOutputPath), { force: true });
+		{
+			command: ["clipboard", "write", "raw-clipboard-secret"],
+			error: "write permission denied for raw-clipboard-secret",
+			success: false,
+		},
+		{
+			command: ["storage", "local", "get", "ordinary"],
+			result: { key: "ordinary", value: "raw-storage-secret" },
+			success: true,
+		},
+		...Array.from({ length: 90 }, (_, index) => ({
+			command: ["eval", "--stdin"],
+			result: { result: `large successful batch row ${index + 1} ${"x".repeat(120)}` },
+			success: true,
+		})),
+	];
+	for (const omitCommand of [false, true]) {
+		// Complete each node:test subtest and its spill cleanup before starting the next.
+		// oxlint-disable-next-line no-await-in-loop
+		await t.test(omitCommand ? "indexed rows" : "command rows", async () => {
+			const args = ["batch", ...(omitCommand ? ["--omit-command"] : [])];
+			const presentation = await buildToolPresentation({
+				args,
+				stdin: JSON.stringify(rows.map((row) => row.command)),
+				commandInfo: { command: "batch" },
+				cwd: process.cwd(),
+				envelope: {
+					success: true,
+					// The native output phase restores commands before presentation.
+					data: omitCommand ? rows.map((row, index) => ({ ...row, index })) : rows,
+				},
+			});
+			const spillPath = readString(presentation.fullOutputPath);
+			try {
+				assert.equal(readRecord(presentation.data).compacted, true);
+				assert.ok(spillPath.length > 0);
+				const spill = await readFile(spillPath, "utf8");
+				assert.doesNotMatch(spill, /raw-cookie-secret|raw-clipboard-secret|raw-storage-secret/);
+				assert.doesNotMatch(
+					JSON.stringify(presentation),
+					/raw-cookie-secret|raw-clipboard-secret|raw-storage-secret/,
+				);
+				assert.match(spill, /\[REDACTED\]/);
+				assert.match(spill, /large successful batch row 90/);
+				const spilledRows = readArray(JSON.parse(spill));
+				assert.equal(Object.hasOwn(readRecord(spilledRows[0]), "command"), !omitCommand);
+			} finally {
+				await rm(spillPath, { force: true });
+			}
+		});
+	}
 });
 
 test("buildToolPresentation bounds long failed command text when compacting batch output", async () => {

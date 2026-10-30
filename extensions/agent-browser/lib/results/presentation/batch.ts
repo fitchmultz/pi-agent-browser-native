@@ -41,6 +41,8 @@ export function isAgentBrowserBatchResultArray(
 			(row: unknown) =>
 				isRecord(row) &&
 				(row.command === undefined || isStringArray(row.command)) &&
+				(row.index === undefined ||
+					(typeof row.index === "number" && Number.isSafeInteger(row.index) && row.index >= 0)) &&
 				(row.success === undefined || typeof row.success === "boolean"),
 		)
 	);

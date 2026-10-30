@@ -102,8 +102,8 @@ export function repairRecordingEnvelope(
 	verified: boolean,
 ): { readonly envelope?: AgentBrowserEnvelope; readonly healed: boolean } {
 	if (plan.rows) {
-		const rows = plan.rows.map((row, index) =>
-			index === plan.stopIndex && isRecord(row)
+		const rows = plan.rows.map((row, position) =>
+			position === plan.stopPosition && isRecord(row)
 				? { ...row, result: data, success: verified, error: verified ? undefined : row.error }
 				: row,
 		);

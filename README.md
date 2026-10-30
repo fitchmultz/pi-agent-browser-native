@@ -72,6 +72,8 @@ Profile access exposes private page content to the model. That content can persi
 
 Credential-like values are redacted, but ordinary page text stays visible. Verify the signed-in page after you select a profile or restore browser state.
 
+Native `batch --omit-command` keeps indexed results without echoed commands. Cookie/storage redaction, ordered close/reopen effects, snapshot refs, and artifact verification still apply, including when empty stdin rows are skipped.
+
 Ask for a headed browser if you need to watch a task or complete a login. Remote environments can keep the window off your desktop.
 
 See [profiles and sessions](docs/REFERENCE.md#authenticatedprofile-workflows) for profile selection, restore limits, and cleanup.

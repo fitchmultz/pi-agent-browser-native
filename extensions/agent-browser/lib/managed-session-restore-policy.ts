@@ -16,7 +16,7 @@ import {
 	hasManagedSessionRestoreProjectIdentity,
 	resolveManagedSessionRestoreHome,
 } from "./managed-session-storage.js";
-import { parseUserBatchStdin } from "./orchestration/batch-stdin.js";
+import { isNativeBatchOption, parseUserBatchStdin } from "./orchestration/batch-stdin.js";
 import { getAgentBrowserProcessEnvironment } from "./process-environment.js";
 import type { ManagedSessionRestoreState } from "./managed-session-restore-state.js";
 import { ownedContextMatches } from "./owned-managed-session-context.js";
@@ -83,7 +83,7 @@ function batchHasManagedSessionRestoreConflict(
 	if (command !== "batch") {
 		return false;
 	}
-	if (commandArgs.some((token) => token !== "--bail")) {
+	if (commandArgs.some((token) => !isNativeBatchOption(token))) {
 		return true;
 	}
 	const parsed = parseUserBatchStdin(stdin);
