@@ -114,7 +114,7 @@ async function waitForProcessExit(
 	pid: number | undefined,
 	deadlineMs: number,
 ): Promise<boolean> {
-	while (Date.now() <= deadlineMs) {
+	while (performance.now() <= deadlineMs) {
 		if (hasProcessExited(child, pid)) {
 			return true;
 		}
@@ -217,7 +217,7 @@ async function cleanupRestoredProcess(
 		return { error: killVerificationError, resource: "process", state: "failed" };
 	}
 	signalRestoredLaunchProcess(record, "SIGKILL");
-	if (await waitForProcessExit(undefined, record.pid, Date.now() + 1_000)) {
+	if (await waitForProcessExit(undefined, record.pid, performance.now() + 1_000)) {
 		return { resource: "process", state: "removed" };
 	}
 	return {
@@ -245,7 +245,7 @@ async function cleanupTrackedProcess(
 	} else {
 		killPid(record.pid, "SIGKILL");
 	}
-	if (await waitForProcessExit(child, record.pid, Date.now() + 1_000)) {
+	if (await waitForProcessExit(child, record.pid, performance.now() + 1_000)) {
 		return { resource: "process", state: "removed" };
 	}
 	return {
@@ -343,7 +343,8 @@ export async function cleanupElectronLaunchResources(options: {
 		options.timeoutMs > 0
 			? options.timeoutMs
 			: ELECTRON_CLEANUP_DEFAULT_TIMEOUT_MS;
-	const deadlineMs = Date.now() + timeoutMs;
+	// Cleanup windows are monotonic, so system clock steps neither cut short nor extend them.
+	const deadlineMs = performance.now() + timeoutMs;
 	const processStep = await cleanupProcess(options.record, options.child, deadlineMs);
 	const debugPortStep = await cleanupDebugPort(options.record);
 	const userDataDirSkipReason = shouldSkipUserDataDirCleanup(processStep, debugPortStep);

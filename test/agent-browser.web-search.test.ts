@@ -37,6 +37,7 @@ import {
 	runExtensionEvent,
 	withPatchedEnv,
 } from "./helpers/agent-browser-harness.js";
+import { mockMonotonicClock, wallClockStepper } from "./helpers/monotonic-clock.js";
 
 async function writeJson(path: string, value: unknown): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
@@ -1125,25 +1126,35 @@ test("normalizes Brave results and strips unsafe or noisy values", () => {
 	);
 });
 
+/** Drives request spacing: the monotonic clock and the mocked timers advance together. */
+function mockSpacingClock(t: TestContext): (ms: number) => void {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const clock = mockMonotonicClock(t, 1000);
+	return (ms) => {
+		clock.tick(ms);
+		t.mock.timers.tick(ms);
+	};
+}
+
 test("WebSearchRequestGate serializes and spaces searches", async (t) => {
-	t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+	const tick = mockSpacingClock(t);
 	const starts: number[] = [];
 	const entered = Promise.withResolvers<undefined>();
 	const release = Promise.withResolvers<undefined>();
 	const gate = new WebSearchRequestGate();
 	const minimumInterval = 1100;
 	const first = gate.run(undefined, async () => {
-		starts.push(Date.now());
+		starts.push(performance.now());
 		entered.resolve(undefined);
 		await release.promise;
 		return "first";
 	});
 	await entered.promise;
 	const second = gate.run(undefined, async () => {
-		starts.push(Date.now());
+		starts.push(performance.now());
 		return "second";
 	});
-	t.mock.timers.tick(minimumInterval * 2);
+	tick(minimumInterval * 2);
 	await nextTurn();
 	assert.deepEqual(starts, [1000], "second cannot start while the first request remains active");
 	release.resolve(undefined);
@@ -1152,23 +1163,52 @@ test("WebSearchRequestGate serializes and spaces searches", async (t) => {
 	assert.deepEqual(starts, [1000, 1000 + minimumInterval * 2]);
 	const failed = assert.rejects(
 		gate.run(undefined, async () => {
-			starts.push(Date.now());
+			starts.push(performance.now());
 			throw new Error("provider failed");
 		}),
 		/provider failed/,
 	);
 	await nextTurn();
-	t.mock.timers.tick(minimumInterval - 1);
+	tick(minimumInterval - 1);
 	await nextTurn();
 	assert.equal(starts.length, 2, "request spacing must not be shortened");
-	t.mock.timers.tick(1);
+	tick(1);
 	await failed;
 	assert.deepEqual(starts, [1000, 1000 + minimumInterval * 2, 1000 + minimumInterval * 3]);
 	const recovered = gate.run(undefined, async () => "recovered");
 	await nextTurn();
-	t.mock.timers.tick(minimumInterval);
+	tick(minimumInterval);
 	assert.equal(await recovered, "recovered", "a failed request must release the queue");
 });
+
+for (const stepMs of [120_000, -120_000]) {
+	test(`WebSearchRequestGate keeps request spacing across a ${stepMs > 0 ? "forward" : "backward"} system clock step`, async (t) => {
+		const tick = mockSpacingClock(t);
+		const stepWallClock = wallClockStepper(t);
+		const gate = new WebSearchRequestGate();
+		const minimumInterval = 1100;
+		const starts: number[] = [];
+		await gate.run(undefined, async () => {
+			starts.push(performance.now());
+		});
+		stepWallClock(stepMs);
+		const second = gate.run(undefined, async () => {
+			starts.push(performance.now());
+		});
+		await nextTurn();
+		tick(minimumInterval - 1);
+		await nextTurn();
+		assert.deepEqual(starts, [1000], "a clock step must not skip request spacing");
+		tick(1);
+		await nextTurn();
+		assert.deepEqual(
+			starts,
+			[1000, 1000 + minimumInterval],
+			"a clock step must not extend request spacing",
+		);
+		await second;
+	});
+}
 
 test("provider fetch helpers do not call fetch when already aborted", async () => {
 	await withFakeFetch(

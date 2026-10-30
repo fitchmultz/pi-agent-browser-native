@@ -321,7 +321,7 @@ export async function writeFakeLaunchableElectronApp(options: {
 	readonly bundleId: string;
 	readonly includeWebview?: boolean;
 	readonly launchLogPath: string;
-	readonly mode?: "invalid-cdp" | "no-port-file" | "normal";
+	readonly mode?: "ignore-sigterm" | "invalid-cdp" | "no-port-file" | "normal";
 	readonly name: string;
 	readonly writeLaunchLog?: boolean;
 }): Promise<Awaited<ReturnType<typeof writeFakeElectronProcessApp>>> {
@@ -374,8 +374,9 @@ server.listen(0, "127.0.0.1", () => {
 	if (mode !== "no-port-file") fs.writeFileSync(path.join(userDataDir, "DevToolsActivePort"), String(port) + "\\n/devtools/browser/fake\\n");
 	if (writeLaunchLog) fs.appendFileSync(${JSON.stringify(options.launchLogPath)}, JSON.stringify({ args, mode, pid: process.pid, port, userDataDir }) + "\\n");
 });
+// ignore-sigterm models an unresponsive app that only SIGKILL stops.
 const shutdown = () => server.close(() => process.exit(0));
-process.on("SIGTERM", shutdown);
+process.on("SIGTERM", mode === "ignore-sigterm" ? () => {} : shutdown);
 process.on("SIGINT", shutdown);
 `,
 		"utf8",
