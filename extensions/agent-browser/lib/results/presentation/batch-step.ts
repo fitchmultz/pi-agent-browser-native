@@ -49,13 +49,14 @@ interface StepScope {
 function createStepIdentity(item: AgentBrowserBatchResult, index: number): StepIdentity {
 	const command = isStringArray(item.command) ? item.command : undefined;
 	const redactedCommand = command ? redactInvocationArgs(command) : undefined;
+	const visibleCommand = hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command;
 	return {
 		command,
 		redactedCommand,
-		index,
+		index: item.index ?? index,
 		commandText: formatBatchStepCommand(
-			hasModelFacingArgRedaction(redactedCommand) ? redactedCommand : command,
-			index,
+			item.index === undefined ? visibleCommand : undefined,
+			item.index ?? index,
 		),
 		lifecycle: extractAgentBrowserLifecycle(item.result),
 	};
@@ -312,12 +313,16 @@ export async function buildBatchStepPresentation(
 	const identity = createStepIdentity(options.item, options.index);
 	const scope = { namespace: options.namespace, sessionName: options.sessionName };
 	if (options.item.success === false && identity.command?.[0] !== "record") {
-		return buildFailedStep(options.item, identity, scope);
+		return {
+			...buildFailedStep(options.item, identity, scope),
+			nativeIndex: options.item.index,
+		};
 	}
 	const request = buildNestedRequest(options, identity.command);
 	const presentation = await options.buildNestedToolPresentation(request);
 	return {
 		details: buildStepDetails(presentation, identity, request.commandInfo, scope),
+		nativeIndex: options.item.index,
 		presentation,
 	};
 }

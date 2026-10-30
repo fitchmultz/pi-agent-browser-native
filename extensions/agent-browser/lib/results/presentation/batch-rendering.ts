@@ -84,6 +84,9 @@ function getTypingStart(
 ):
 	| { readonly firstIndex: number; readonly typingIndex: number; readonly target?: string }
 	| undefined {
+	if (steps.at(index)?.nativeIndex !== undefined) {
+		return undefined;
+	}
 	const details = steps.at(index)?.details;
 	if (!details || !details.success) {
 		return undefined;

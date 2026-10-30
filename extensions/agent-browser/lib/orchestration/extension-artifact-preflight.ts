@@ -5,7 +5,11 @@ import {
 	getExplicitArtifactDestination,
 	getRecordContactSheetDestination,
 } from "./browser-run/artifact-paths.js";
-import { parseBatchCommandArgument, parseUserBatchStdin } from "./batch-stdin.js";
+import {
+	isNativeBatchOption,
+	parseBatchCommandArgument,
+	parseUserBatchStdin,
+} from "./batch-stdin.js";
 import { normalizeRequestedOutputPath } from "./output-file.js";
 import type { ActiveRecordingReservation } from "../recording-reservations.js";
 
@@ -18,7 +22,7 @@ interface ArtifactCommandSteps {
 function parseRawArtifactSteps(commands: readonly string[]): ArtifactCommandSteps {
 	const steps: string[][] = [];
 	for (const command of commands) {
-		if (command === "--bail") {
+		if (isNativeBatchOption(command)) {
 			continue;
 		}
 		const parsed = parseBatchCommandArgument(command);

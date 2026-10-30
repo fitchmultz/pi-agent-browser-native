@@ -35,6 +35,7 @@ export type BuildNestedToolPresentation = (
 
 export interface BatchPresentedStep {
 	readonly details: BatchStepPresentationDetails;
+	readonly nativeIndex?: number;
 	readonly presentation: ToolPresentation;
 }
 

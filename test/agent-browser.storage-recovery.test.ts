@@ -1591,6 +1591,112 @@ process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixture.tes
 	},
 );
 
+test(
+	"an indexed batch whose finish cannot persist keeps index-only public receipts",
+	{ concurrency: false },
+	async (t) => {
+		const root = await mkdtemp(join(tmpdir(), "piab-indexed-finish-"));
+		try {
+			// Native batch JSON is a bare row array; indexed rows keep original input positions.
+			await writeFakeAgentBrowserBinary(
+				root,
+				`const fs=require('node:fs'),args=process.argv.slice(2),stdin=fs.readFileSync(0,'utf8');
+if(!args.includes('batch')){process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixture.test/page'}}));}
+else{const indexed=args.includes('--omit-command');
+process.stdout.write(JSON.stringify(JSON.parse(stdin).flatMap((command,index)=>command.length===0?[]:[{...(indexed?{index}:{command}),...(command[0]==='eval'?{success:false,error:'planned persistence failure'}:{success:true,result:{}})}])));
+process.exitCode=1;}`,
+			);
+			await withPatchedEnv(
+				{
+					PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+					AGENT_BROWSER_SESSION: undefined,
+					AGENT_BROWSER_NAMESPACE: undefined,
+				},
+				async () => {
+					const run = async (indexed: boolean) => {
+						const mode = indexed ? "indexed" : "command";
+						const harness = createExtensionHarness({
+							cwd: root,
+							sessionFile: join(root, `${mode}.jsonl`),
+							onAppendEntry(type, data) {
+								if (
+									type === BROWSER_TRANSITION_ENTRY &&
+									readRecord(readRecord(data).event).phase === "finish"
+								) {
+									throw new Error("finish write failed");
+								}
+							},
+						});
+						await runExtensionEvent(
+							harness.handlers,
+							"session_start",
+							{ reason: "new" },
+							harness.ctx,
+						);
+						const plan = [
+							[
+								"cookies",
+								"set",
+								"ordinary",
+								"persist-cookie-secret",
+								"--url",
+								"https://fixture.test/",
+							],
+							["eval", "(() => { throw new Error('planned persistence failure'); })()"],
+						];
+						const outputPath = join(root, `${mode}-receipt.json`);
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: [
+								"--session",
+								`persist-${mode}`,
+								"batch",
+								"--bail",
+								...(indexed ? ["--omit-command"] : []),
+							],
+							stdin: JSON.stringify(indexed ? [[], ...plan] : plan),
+							outputPath,
+						});
+						const details = readRecord(result.details);
+						assert.equal(result.isError, true, JSON.stringify(result));
+						assert.equal(details.browserStatePersistence, "finish-unconfirmed");
+						assert.deepEqual(
+							readArray(details.nextActions).map((action) => readRecord(action).id),
+							["inspect-after-browser-state-persistence-failure"],
+						);
+						assert.equal(details.outputFile, undefined, "an unconfirmed finish claims no file");
+						await assert.rejects(stat(outputPath), { code: "ENOENT" });
+						const steps = readArray(details.batchSteps).map(readRecord);
+						assert.deepEqual(
+							steps.map((step) => step.index),
+							indexed ? [1, 2] : [0, 1],
+						);
+						assert.deepEqual(
+							steps.map((step) => Object.hasOwn(step, "command")),
+							[!indexed, !indexed],
+						);
+						const failedStep = readRecord(readRecord(details.batchFailure).failedStep);
+						assert.equal(failedStep.index, indexed ? 2 : 1);
+						assert.equal(Object.hasOwn(failedStep, "command"), !indexed);
+						assert.doesNotMatch(JSON.stringify(result), /persist-cookie-secret/);
+						assert.equal(/"command":\s*\[/.test(JSON.stringify(result)), !indexed);
+						await runExtensionEvent(
+							harness.handlers,
+							"session_shutdown",
+							{ reason: "quit" },
+							harness.ctx,
+						);
+					};
+					// Command form is the parity control for the same unconfirmed finish.
+					await t.test("command", () => run(false));
+					await t.test("indexed", () => run(true));
+				},
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	},
+);
+
 test("conversion preserves all original ancestry, interrupted prefixes, snapshots and artifact provenance", async () => {
 	const root = await mkdtemp(join(tmpdir(), "piab-conversion-"));
 	try {

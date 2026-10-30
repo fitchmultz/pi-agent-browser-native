@@ -30,7 +30,7 @@ export interface RecordingStopRecoveryResult {
 	readonly batch: boolean;
 	readonly envelope?: AgentBrowserEnvelope;
 	readonly partialBatch: boolean;
-	readonly stopIndex: number;
+	readonly stopPosition: number;
 	readonly presentation: ToolPresentation;
 	readonly recovery: RecordingRecovery;
 }
@@ -42,7 +42,8 @@ export type RecordingStopRecoveryObservation = Omit<RecordingStopRecoveryResult,
 export interface RecordingRecoveryPlan {
 	readonly batch: boolean;
 	readonly rows?: readonly unknown[];
-	readonly stopIndex: number;
+	/** Compact dispatched-row position; native input indexes can include skipped empty rows. */
+	readonly stopPosition: number;
 	readonly expected?: ActiveRecordingReservation;
 	readonly attempt: RecordingRecovery["attempt"];
 }
