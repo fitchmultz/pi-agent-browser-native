@@ -71,11 +71,10 @@ class BrowserLifecycle {
 			return new Set();
 		}
 		if (scope === "restart" && ctx) {
-			const transferable = await readTransferableManagedSessionKeys(this.runtime, ctx).catch(
-				() => undefined,
-			);
-			if (transferable) {
-				return transferable;
+			try {
+				return await readTransferableManagedSessionKeys(this.runtime, ctx);
+			} catch {
+				// An unreadable journal cannot prove transfer; keep in-process replacement retention.
 			}
 		}
 		return managed.active
