@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { isRecord } from "../../parsing.js";
 import { resolveExplicitAutosaveInterval } from "../../managed-session-restore.js";
 import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
-import { readProcessStartIdentity } from "../../process-identity.js";
+import { processStartIdentitiesMatch, readProcessStartIdentity } from "../../process-identity.js";
 import { runAgentBrowserProcess } from "../../process.js";
 import { parseAgentBrowserEnvelope } from "../../results/envelope.js";
 
@@ -51,6 +51,45 @@ export interface ManagedSessionDaemonInspectionOptions {
 	readonly sessionName: string;
 	readonly signal?: AbortSignal;
 	readonly timeoutMs?: number;
+}
+
+interface DaemonGeneration {
+	readonly pid: number;
+	readonly start: string;
+	readonly socketDir: string;
+}
+
+function isDaemonGeneration(value: unknown): value is DaemonGeneration {
+	return (
+		isRecord(value) &&
+		typeof value.pid === "number" &&
+		Number.isSafeInteger(value.pid) &&
+		value.pid > 0 &&
+		typeof value.start === "string" &&
+		value.start !== "" &&
+		typeof value.socketDir === "string"
+	);
+}
+
+export function managedSessionDaemonGenerationsMatch(
+	recorded: string | undefined,
+	current: string | undefined,
+): boolean | undefined {
+	if (recorded === undefined || current === undefined) {
+		return undefined;
+	}
+	try {
+		const previous: unknown = JSON.parse(recorded);
+		const observed: unknown = JSON.parse(current);
+		if (!isDaemonGeneration(previous) || !isDaemonGeneration(observed)) {
+			return undefined;
+		}
+		return previous.pid !== observed.pid || previous.socketDir !== observed.socketDir
+			? false
+			: processStartIdentitiesMatch(previous.start, observed.start);
+	} catch {
+		return undefined;
+	}
 }
 
 async function readDaemonGeneration(

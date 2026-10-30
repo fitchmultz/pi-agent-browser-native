@@ -1,6 +1,6 @@
 /**
  * Purpose: Verify pure helper behavior for the tmux-driven configured-source lifecycle harness (`npm run verify -- lifecycle`, `scripts/verify-lifecycle.mjs`).
- * Responsibilities: Assert CLI parsing, settings isolation, observed-page checks and JSONL result waits, sentinel source injection, and direct-run guarding without launching Pi or tmux.
+ * Responsibilities: Assert CLI parsing, settings isolation, observed-page checks and JSONL result waits, sentinel source injection, direct-run guarding, and private tmux socket cleanup (against a fake tmux) without launching Pi or tmux.
  * Scope: Unit coverage for `scripts/verify-lifecycle.mjs`; the end-to-end lifecycle path runs only through the explicit `npm run verify -- lifecycle` maintainer command.
  * Usage: Run with `npm test` or as part of `npm run verify`.
  * Invariants/Assumptions: Normal tests must not mutate Pi settings, start tmux, or require a real browser/model configuration.
@@ -11,21 +11,24 @@ import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { execFile as execFileCallback } from "node:child_process";
 import {
 	appendFile,
+	chmod,
 	mkdir,
 	mkdtemp,
 	readFile,
 	readdir,
 	realpath,
 	rm,
+	stat,
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../scripts/agent-browser-target.mjs";
+import { killTmuxSession, launchPiInTmux } from "../scripts/lifecycle-tmux.mjs";
 
 // Node's execFile has custom promisify semantics; its callback API returns ChildProcess,
 // while promisify's ambient callback declaration returns void. Preserve the native adapter.
@@ -156,6 +159,82 @@ test("paneLooksReady accepts exact-session relaunches with non-zero context usag
 test("tmuxActiveTarget uses the active window instead of a hard-coded pane index", () => {
 	assert.equal(tmuxActiveTarget("piab-lifecycle-123"), "piab-lifecycle-123:");
 });
+
+// Models observed tmux 3.8 behavior: new-session starts the server, creates its socket and prints the
+// socket path for -P; every other command fails once the server is gone; and the socket file remains
+// both after kill-server and after the server exits on its own.
+const FAKE_TMUX_SCRIPT = `#!/bin/sh
+state=$(cat "$FAKE_TMUX_STATE" 2>/dev/null)
+case " $* " in
+*" new-session "*)
+	: > "$FAKE_TMUX_SOCKET"
+	echo running > "$FAKE_TMUX_STATE"
+	case " $* " in *" -P "*) printf '%s\\n' "$FAKE_TMUX_SOCKET" ;; esac
+	exit 0 ;;
+esac
+if [ "$state" != running ] && [ "$state" != stuck ]; then
+	echo "no server running on $FAKE_TMUX_SOCKET" >&2
+	exit 1
+fi
+case " $* " in
+*" kill-server "*)
+	[ "$state" = stuck ] && exit 1
+	echo exited > "$FAKE_TMUX_STATE" ;;
+*" display-message "*) printf '%s\\n' "$FAKE_TMUX_SOCKET" ;;
+esac
+exit 0
+`;
+
+for (const [index, scenario] of [
+	{ when: "Pi exited and the server then exited on its own", state: "exited", removed: true },
+	{ when: "the server is still running", state: "running", removed: true },
+	{ when: "kill-server fails while the server still answers", state: "stuck", removed: false },
+	{
+		when: "the launch reported a socket not named for the private server",
+		state: "exited",
+		socketName: "default",
+		removed: false,
+	},
+].entries()) {
+	test(
+		`lifecycle tmux cleanup ${scenario.removed ? "removes" : "keeps"} the launch-reported socket when ${scenario.when}`,
+		{ skip: process.platform === "win32" },
+		async (t) => {
+			const directory = await mkdtemp(join(tmpdir(), "piab-lifecycle-tmux-"));
+			const originalPath = process.env.PATH;
+			t.after(async () => {
+				process.env.PATH = originalPath;
+				delete process.env.FAKE_TMUX_SOCKET;
+				delete process.env.FAKE_TMUX_STATE;
+				await rm(directory, { force: true, recursive: true });
+			});
+			await writeFile(join(directory, "tmux"), FAKE_TMUX_SCRIPT, "utf8");
+			await chmod(join(directory, "tmux"), 0o755);
+			const tmuxSession = `piab-lifecycle-test-${index}`;
+			const socketPath = join(directory, scenario.socketName ?? tmuxSession);
+			const statePath = join(directory, "state");
+			process.env.PATH = `${directory}${delimiter}${originalPath ?? ""}`;
+			process.env.FAKE_TMUX_SOCKET = socketPath;
+			process.env.FAKE_TMUX_STATE = statePath;
+			await launchPiInTmux({
+				agentDir: directory,
+				cwd: directory,
+				fakeBinDir: directory,
+				fakeStateDir: directory,
+				model: "test/model",
+				sessionId: tmuxSession,
+				tmuxSession,
+			});
+			await writeFile(statePath, scenario.state, "utf8");
+			await killTmuxSession(tmuxSession);
+			const socketRemains = await stat(socketPath).then(
+				() => true,
+				() => false,
+			);
+			assert.equal(socketRemains, !scenario.removed);
+		},
+	);
+}
 
 test("buildSettingsPayload isolates the configured package source", () => {
 	const settings = buildSettingsPayload({ packageDir: "/tmp/pkg", sessionDir: "/tmp/sessions" });

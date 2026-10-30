@@ -274,7 +274,7 @@ export async function refreshSecureTempRootLease(tempRoot: string): Promise<void
 			ownershipMarker.ownerProcessStartIdentity,
 			currentProcessStartIdentity,
 		);
-		if (!identitiesMatch) {
+		if (identitiesMatch !== true) {
 			return;
 		}
 	}
@@ -320,5 +320,8 @@ export async function getMarkerOwnerLiveness(
 		ownershipMarker.ownerProcessStartIdentity,
 		currentProcessStartIdentity,
 	);
+	if (identitiesMatch === undefined) {
+		return "unknown";
+	}
 	return identitiesMatch ? "alive" : "dead";
 }

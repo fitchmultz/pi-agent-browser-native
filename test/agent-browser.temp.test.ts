@@ -36,6 +36,11 @@ import {
 	writeSecureTempRootOwnershipMarker,
 } from "../extensions/agent-browser/lib/temp.js";
 import { listArtifactFiles } from "../extensions/agent-browser/lib/temp-artifact-budget.js";
+import { readProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
+import {
+	getMarkerOwnerLiveness,
+	readTempRootOwnershipMarker,
+} from "../extensions/agent-browser/lib/temp-root-ownership.js";
 import {
 	readChildStdoutJsonLine,
 	stopChildProcess,
@@ -446,7 +451,7 @@ for (const shortLived of [false, true]) {
 }
 
 test(
-	"stale temp pruning removes roots whose marker PID was reused",
+	"stale temp pruning preserves unqualified live ownership but removes a proven reused PID",
 	{ concurrency: false },
 	async () => {
 		await cleanupSecureTempArtifacts();
@@ -459,13 +464,31 @@ test(
 
 		try {
 			assert.ok(child.pid !== undefined && child.pid !== 0);
-			await writeSecureTempRootOwnershipMarker(staleRoot, {
+			const startIdentity = await readProcessStartIdentity(child.pid);
+			assert.ok(startIdentity !== undefined && startIdentity !== "");
+			const markerPath = await writeSecureTempRootOwnershipMarker(staleRoot, {
 				createdAtMs: staleTime.getTime(),
 				leaseUpdatedAtMs: staleTime.getTime(),
 				ownerPid: child.pid,
-				ownerProcessStartIdentity: "definitely-not-this-child-process-start",
+				ownerProcessStartIdentity: startIdentity.replace(/^posix-ps-utc-v1:/, ""),
 			});
 			await utimes(staleRoot, staleTime, staleTime);
+			const marker = await readTempRootOwnershipMarker(staleRoot);
+			assert.ok(marker);
+			assert.equal(
+				await getMarkerOwnerLiveness(marker),
+				process.platform === "win32" ? "alive" : "unknown",
+			);
+			const unqualifiedFile = await openSecureTempFile("prune-unqualified", ".txt");
+			await unqualifiedFile.fileHandle.close();
+			await stat(staleRoot);
+			await writeFile(
+				markerPath,
+				JSON.stringify({
+					...marker,
+					ownerProcessStartIdentity: `${startIdentity}-different-generation`,
+				}),
+			);
 
 			const before = await stat(staleRoot).then(
 				() => true,
