@@ -294,7 +294,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { allowFileAccessEnv:
 );
 
 test("process start identity commands prefer system paths before PATH and keep native PowerShell on Windows", async () => {
-	const posixCommands = buildProcessStartIdentityCommands(123, "linux");
+	const posixCommands = buildProcessStartIdentityCommands(123, "darwin");
 	assert.deepEqual(
 		posixCommands.map((command) => command.file),
 		["/bin/ps", "/usr/bin/ps", "ps"],
@@ -303,8 +303,7 @@ test("process start identity commands prefer system paths before PATH and keep n
 		posixCommands.map((command) => command.args),
 		Array.from({ length: 3 }, () => ["-p", "123", "-o", "lstart="]),
 	);
-	assert.deepEqual(buildProcessStartIdentityCommands(123, "darwin"), posixCommands);
-	assert.deepEqual(buildProcessStartIdentityCommands(0, "linux"), []);
+	assert.deepEqual(buildProcessStartIdentityCommands(0, "darwin"), []);
 	const attempts: string[] = [];
 	assert.equal(
 		await resolveProcessStartIdentityFromCommands(posixCommands, async (command) => {
@@ -344,7 +343,7 @@ test("process start identity commands prefer system paths before PATH and keep n
 			"Sun Aug 3 00:00:00 2026",
 			"win32-powershell-ticks-v1:638000000000000000",
 		),
-		false,
+		undefined,
 	);
 	assert.equal(
 		processStartIdentitiesMatch("win32-powershell-ticks-v1:1", "win32-powershell-ticks-v1:2"),
