@@ -155,6 +155,7 @@ export class BrowserPrompt {
 		const compact = !(options?.forceFull ?? false) && isCompactFallbackEnabled();
 		const guidelines = [
 			...buildToolPromptGuidelines({
+				compact,
 				browserDefaultProfile: config.trustedBrowserDefaultProfile,
 				browserExecutablePath: config.trustedBrowserExecutablePath,
 				includeWebSearch: this.webSearchToolRegistered,

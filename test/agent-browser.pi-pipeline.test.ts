@@ -43,7 +43,7 @@ import agentBrowserExtension from "../extensions/agent-browser/index.js";
 import { finalizeAgentBrowserFailure } from "../extensions/agent-browser/lib/pi-tool-rendering.js";
 import {
 	PROJECT_RULE_PROMPT,
-	RUNTIME_PROMPT_GUIDELINES,
+	QUICK_START_GUIDELINES,
 	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
 	ADVANCED_TOOL_PROMPT_GUIDELINES,
 } from "../extensions/agent-browser/lib/playbook.js";
@@ -512,7 +512,7 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 								"complete instructions must reach the model before execution",
 							);
 							for (const guideline of [
-								...RUNTIME_PROMPT_GUIDELINES,
+								...QUICK_START_GUIDELINES,
 								...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
 								...Object.values(ADVANCED_TOOL_PROMPT_GUIDELINES).flat(),
 							]) {

@@ -49,10 +49,9 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 	const active = harness.getActiveTools();
 	const fallback = await getBrowserInstructions(harness);
 	assert.ok(fallback.startsWith(PROJECT_RULE_PROMPT));
-	assert.match(fallback, /ordinary requested non-destructive submissions may proceed/);
 	assert.match(
 		fallback,
-		/require explicit authorization for purchases, production-control, destructive\/irreversible, or account\/security\/privacy changes/,
+		/Still require explicit authorization for purchases, production-control actions, destructive or irreversible actions, and account, security, or privacy changes/,
 	);
 	assert.doesNotMatch(fallback, /Stop before order\/post\/purchase\/submit/);
 	assert.match(
@@ -60,22 +59,35 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 		/ordinary non-destructive form submissions within the requested flow may proceed without separate confirmation/,
 	);
 	assert.match(fallback, /agent_browser for one native command/);
-	assert.match(fallback, /For agent_browser, use open → snapshot -i/);
-	assert.match(fallback, /sessionMode:fresh/);
-	assert.match(fallback, /bare calls share a root Pi browser with descendants/);
+	assert.match(
+		fallback,
+		/Standard workflow: open the page, snapshot -i, interact using current @refs/,
+	);
+	assert.match(fallback, /sessionMode:fresh intentionally launches a separate managed browser/);
+	assert.match(
+		fallback,
+		/Ordinary bare calls share one native browser within your root Pi parent\/subagent group/,
+	);
 	assert.match(fallback, /copied Chrome profiles may omit encrypted cookies/);
-	assert.match(fallback, /exact user paths/);
-	assert.match(fallback, /requested\/configured profiles/);
-	assert.match(fallback, /read <url> for text/);
-	assert.match(fallback, /batch --bail with JSON-array stdin for fixed sequences/);
+	assert.match(fallback, /use the user's exact requested paths when given/);
+	assert.match(fallback, /native config and environment pass through/);
+	assert.match(
+		fallback,
+		/Use requested\/configured profiles and verify authentication after restart/,
+	);
+	assert.match(fallback, /Prefer refs; inspect screenshots only when the task needs vision/);
+	assert.match(fallback, /Use read <url> for readable web text/);
 	assert.match(fallback, /get text\/html\/value\/count <selector>/);
 	assert.match(fallback, /get attr <selector> <name>/);
 	assert.doesNotMatch(fallback, /get title\/url\/text\/html\/value\/attr\/count/);
-	assert.match(fallback, /Use --json only for JSON text/);
+	assert.match(fallback, /Use --json only when JSON text is needed/);
 	assert.doesNotMatch(fallback, /never pass --json/);
-	assert.match(fallback, /ffmpeg before start/);
-	assert.match(fallback, /Verify nested scrolling/);
-	assert.match(fallback, /follow visible nextActions/);
+	assert.match(fallback, /install ffmpeg before starting and pair start with stop/);
+	assert.match(
+		fallback,
+		/nested scroll containers, verify scroll with a screenshot or fresh snapshot -i/,
+	);
+	assert.match(fallback, /Follow model-visible nextActions when present/);
 	assert.match(
 		fallback,
 		/serialize each complete browser operation and code cell by native socket context, namespace, and session/,
@@ -101,7 +113,6 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 	assert.ok(fallback.includes(join(process.cwd(), "docs/COMMAND_REFERENCE.md")));
 	assert.ok(fallback.includes(join(process.cwd(), "docs/TOOL_CONTRACT.md")));
 	for (const line of [
-		...RUNTIME_PROMPT_GUIDELINES,
 		...QUICK_START_GUIDELINES,
 		...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
 		...WRAPPER_TAB_RECOVERY_BEHAVIOR,
@@ -110,6 +121,11 @@ test("browser instruction ownership is synchronous and dynamic, with identical f
 		// Every declared prompt guideline must be included; the inventory is the fixture.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.ok(fallback.includes(line), `missing full guidance: ${line}`);
+	}
+	for (const line of RUNTIME_PROMPT_GUIDELINES) {
+		// Full guidance carries every compact orientation clause in its detailed playbook form.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.ok(!fallback.includes(line), `full guidance repeats compact orientation: ${line}`);
 	}
 	for (const tool of harness.tools.values()) {
 		// Every registered browser tool must avoid eager guidelines; registration is checked below.
@@ -307,6 +323,11 @@ test("compact eager fallback bounds prompt size when AGENT_BROWSER_COMPACT_FALLB
 			const fallback = await getBrowserInstructions(harness);
 			assert.ok(fallback.startsWith(PROJECT_RULE_PROMPT));
 			assert.ok(fallback.includes("Use agent_browser for real browser or live web content."));
+			for (const line of RUNTIME_PROMPT_GUIDELINES) {
+				// Compact fallback replaces the omitted playbook with every orientation line.
+				// oxlint-disable-next-line node-test/no-conditional-assertion
+				assert.ok(fallback.includes(line), `compact fallback missing orientation: ${line}`);
+			}
 			for (const line of SHARED_BROWSER_PLAYBOOK_GUIDELINES) {
 				// Every long playbook line must be absent; the inventory is the fixture.
 				// oxlint-disable-next-line node-test/no-conditional-assertion
