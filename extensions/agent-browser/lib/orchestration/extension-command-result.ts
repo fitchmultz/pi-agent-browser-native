@@ -410,7 +410,30 @@ export class BrowserCommandResult {
 		);
 		return undefined;
 	}
+	private omitIndexedBatchCommands(): void {
+		const details = this.result.details;
+		const tokens = extractUpstreamCommandTokens(this.call.toolArgs);
+		if (
+			!isRecord(details) ||
+			tokens[0] !== "batch" ||
+			!tokens.includes("--omit-command") ||
+			!Array.isArray(details.batchSteps)
+		) {
+			return;
+		}
+		// Canonical finish already owns redacted attribution; native public receipts omit argv.
+		for (const step of details.batchSteps) {
+			if (isRecord(step)) {
+				delete step.command;
+			}
+		}
+		const failure = details.batchFailure;
+		if (isRecord(failure) && isRecord(failure.failedStep)) {
+			delete failure.failedStep.command;
+		}
+	}
 	async complete(): Promise<AgentBrowserToolResult> {
+		this.omitIndexedBatchCommands();
 		if (isRecord(this.result.details)) {
 			this.result.details.browserEventVersion = 1;
 			if (

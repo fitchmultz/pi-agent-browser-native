@@ -13,7 +13,7 @@ import { needsManagedSession } from "../../command-policy.js";
 import { getAgentBrowserSessionIdentityKey, getBooleanFlagValue } from "../../argv-grammar.js";
 import { parseAgentBrowserEnvelope } from "../../results/envelope.js";
 import { isRecord } from "../../parsing.js";
-import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
+import { getUpstreamEffectiveBatchSteps, resolveIndexedBatchCommands } from "../batch-stdin.js";
 import { getPersistentSessionArtifactStore } from "./session-state.js";
 import { repairScreenshotData } from "./prepare.js";
 import { recoverRecordingStop } from "./recording-recovery.js";
@@ -75,6 +75,14 @@ export async function parseNativeOutput(draft: ParseNativeOutputInput): Promise<
 		plainText: draft.plainTextUpgrade,
 		textOutput: draft.textOutput,
 	});
+	draft.parsed = {
+		...draft.parsed,
+		envelope: resolveIndexedBatchCommands(
+			draft.parsed.envelope,
+			draft.input.prepared.commandTokens,
+			draft.input.prepared.runtimeToolStdin,
+		),
+	};
 	observeNativeWebMcp(draft.parsed.envelope?.data);
 	draft.parseError = draft.parsed.parseError;
 	draft.recordingStopRecovery = await recoverRecordingStop({

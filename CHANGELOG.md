@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Preserve native indexed `batch --omit-command` results while retaining cookie/storage/error redaction, ordered close/reopen and snapshot state, and artifact verification. Match native indexes to the effective raw/stdin plan without losing skipped empty-row positions; public receipts and full spills keep command omission.
 - Share the root Pi browser with current pi-subagents delegated children again. Direct and code calls in a child resolve its main session from the equal `PI_INTERCOM_ROOT_SESSION_ID`/`PI_INTERCOM_PARENT_SESSION_ID` pair instead of launching a separate browser (where a bare read saw `about:blank`); older `PI_SUBAGENT_CHILD`/`PI_SUBAGENT_ROOT_SESSION_ID` launches still share their root.
 - Run the maintainer npm facade correctly through symlinked paths, including macOS temporary directories, by using Node's native entrypoint detection instead of comparing noncanonical file URLs.
 - Clear the development-only Undici audit findings (GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472) by overriding the development Pi SDK's exact Undici 8.10.2 to 8.12.3 wherever this repository is the npm root project (checkouts and Git-source installs, which build with the development tree). Published npm-package installs, runtime dependencies and the Pi 1.0 floor are unchanged, and official Pi hosts still run their own Undici 8.10.2 (#302).

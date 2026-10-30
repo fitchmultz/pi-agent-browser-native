@@ -401,6 +401,8 @@ On tabbed or hidden-DOM pages, `get text <selector>` reads the upstream-selected
 
 ### Run a multi-step flow in one browser invocation
 
+On native 0.40+, add exact `--omit-command` to retain each result's zero-based native `index` instead of echoed `command` arrays. Indexes refer to the original plan, including skipped empty `[]` stdin rows. Raw command arguments still take precedence over stdin. The wrapper restores command attribution internally for ordinary credential redaction, lifecycle/ref state, and artifacts, then omits reconstructed commands from public receipts, JSON, and whole-batch spills.
+
 ```json
 { "args": ["batch"], "stdin": "[[\"open\",\"https://example.com\"],[\"snapshot\",\"-i\"]]" }
 ```
