@@ -45,16 +45,19 @@ Examples: npm run lint; npm run lint:agent; npm run quality:scope -- --write`);
 			process.exit(formatter.status ?? 1);
 		}
 	}
-	console.log(
-		JSON.stringify({
-			projects: result.scope.projects,
-			maintained: result.scope.files.length,
-			uncheckedJavaScript: result.scope.unchecked,
-			exceptions: result.scope.exceptions,
-			readonlyBoundaries,
-			mutationBoundaries,
-		}),
-	);
+	const inventory = JSON.stringify({
+		projects: result.scope.projects,
+		maintained: result.scope.files.length,
+		uncheckedJavaScript: result.scope.unchecked,
+		exceptions: result.scope.exceptions,
+		readonlyBoundaries,
+		mutationBoundaries,
+	});
+	// POSIX pipe writes finish asynchronously and spawnSync blocks the event loop, so
+	// flush the whole inventory line before Oxlint writes diagnostics to this stdout.
+	await new Promise((fulfill, reject) => {
+		process.stdout.write(`${inventory}\n`, (error) => (error ? reject(error) : fulfill()));
+	});
 	if (mode === "lint") {
 		const child = spawnSync(
 			process.execPath,
