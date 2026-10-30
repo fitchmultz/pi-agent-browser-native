@@ -163,16 +163,14 @@ export async function closeOwnedManagedSessionsExcept(
 	}>,
 	settings: Readonly<{ restore: ManagedSessionRestoreState; timeoutMs: number }>,
 	options: {
-		readonly keepSessionName?: string;
-		readonly keepNamespace?: string;
+		readonly keepKeys: ReadonlySet<string>;
 		readonly onClosed?: (owner: OwnedManagedSession) => void;
 	},
 ): Promise<void> {
-	const keepKey = getSessionContextKey(options.keepSessionName, options.keepNamespace);
 	// Snapshot ownership before awaiting: callbacks may add owners during shutdown cleanup.
 	const owners = Array.from(sessions);
 	for (const [key, owner] of owners) {
-		if (key === keepKey) {
+		if (options.keepKeys.has(key)) {
 			continue;
 		}
 		// Session close and its durable cleanup callback must finish before the next owner is retired.
