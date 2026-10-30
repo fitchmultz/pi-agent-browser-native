@@ -5,8 +5,8 @@ import {
 	BROWSER_TRANSITION_ENTRY,
 	BROWSER_RESULT_TOOLS,
 	applyArtifactChanges,
+	assertSnapshotDefinition,
 	getBrowserRecord,
-	snapshotFromDefinition,
 	type BrowserRecord,
 } from "./browser-transcript.js";
 import { isRecord } from "./parsing.js";
@@ -344,7 +344,7 @@ class PublishedJournalReplay {
 		if (!isRecord(resolved) || resolved.id !== id) {
 			throw new Error("Winning browser snapshot identity is invalid.");
 		}
-		snapshotFromDefinition(resolved);
+		assertSnapshotDefinition(resolved);
 	}
 }
 function replayRelevant(value: Readonly<Record<string, unknown>>): boolean {

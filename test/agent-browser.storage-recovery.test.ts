@@ -2043,23 +2043,36 @@ test("missing or corrupt winning snapshots fail replay before refs can be used",
 				snapshot: { id: "definition", refs: { e1: { role: "button", name: "Go" } } },
 			},
 		};
-		for (const snapshot of [
-			undefined,
-			{ id: "definition", refs: { e1: "corrupt" } },
-			{ id: "other", refs: {} },
-		]) {
+		const unresolved = {
+			name: "Error",
+			message:
+				"Browser snapshot definition has no ancestral definition; inspect and take a fresh snapshot.",
+		};
+		const invalid = {
+			name: "Error",
+			message:
+				"Missing or invalid browser snapshot definition; take a new complete snapshot before using refs.",
+		};
+		const validRefs = entry.data.snapshot.refs;
+		for (const [snapshot, expected] of [
+			[undefined, unresolved],
+			[{ id: "definition", refs: { e1: "corrupt" } }, invalid],
+			[{ id: "definition", refs: { x1: validRefs.e1 } }, invalid],
+			[{ id: "definition" }, invalid],
+			[{ id: "definition", refs: validRefs, target: { url: 7 } }, invalid],
+			[{ id: "definition", refs: validRefs, generation: 7 }, invalid],
+			[{ id: "other", refs: {} }, unresolved],
+		] as const) {
 			// The next variant overwrites these fixture files; finish this publication and readback first.
 			// oxlint-disable-next-line no-await-in-loop
 			await writeFile(
 				file,
 				`${JSON.stringify(header)}\n${JSON.stringify({ ...entry, data: { ...entry.data, snapshot } })}\n`,
 			);
-			// Missing, malformed and mismatched snapshot definitions must each be rejected.
+			// Missing and mismatched definitions, malformed refs, ref ids, ref maps, targets and
+			// generations must each fail replay itself with their exact error.
 			// oxlint-disable-next-line node-test/no-conditional-assertion
-			const rejected = assert.rejects(
-				readBrowserEntries(manager(file, "capture")),
-				/snapshot|definition/i,
-			);
+			const rejected = assert.rejects(readBrowserEntries(manager(file, "capture")), expected);
 			// The next variant overwrites these fixture files; finish this publication and readback first.
 			// oxlint-disable-next-line no-await-in-loop
 			await rejected;

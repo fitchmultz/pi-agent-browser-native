@@ -121,30 +121,48 @@ function snapshotMetadataValid(definition: Readonly<Record<string, unknown>>): b
 	);
 }
 
-export function snapshotFromDefinition(definition: unknown): SessionRefSnapshot {
+const SNAPSHOT_REF_ID = /^e\d+$/;
+
+function snapshotReferencesValid(refs: Readonly<Record<string, unknown>>): boolean {
+	return Object.keys(refs).every(
+		(id) => SNAPSHOT_REF_ID.test(id) && isBrowserSnapshotReference(refs[id]),
+	);
+}
+
+/** Validates a once-stored definition in one ordered own-key pass without building its ref map. */
+export function assertSnapshotDefinition(
+	definition: unknown,
+): asserts definition is BrowserSnapshot {
 	if (
 		!isRecord(definition) ||
 		typeof definition.id !== "string" ||
 		definition.id.length === 0 ||
 		!isRecord(definition.refs) ||
 		!snapshotMetadataValid(definition) ||
-		!Object.entries(definition.refs).every(
-			([id, ref]) => /^e\d+$/.test(id) && isBrowserSnapshotReference(ref),
-		)
+		!snapshotReferencesValid(definition.refs)
 	) {
 		throw new Error(
 			"Missing or invalid browser snapshot definition; take a new complete snapshot before using refs.",
 		);
 	}
-	const refs = Object.fromEntries(
-		Object.entries(definition.refs).flatMap(([id, ref]) =>
-			isNamedBrowserSnapshotReference(ref) ? [[id, ref]] : [],
-		),
-	);
+}
+
+export function snapshotFromDefinition(definition: unknown): SessionRefSnapshot {
+	assertSnapshotDefinition(definition);
+	const refIds = Object.keys(definition.refs);
+	const refs: Record<string, NonNullable<SessionRefSnapshot["refs"]>[string]> = {};
+	let named = false;
+	for (const id of refIds) {
+		const ref = definition.refs[id];
+		if (isNamedBrowserSnapshotReference(ref)) {
+			refs[id] = ref;
+			named = true;
+		}
+	}
 	return {
 		snapshotId: definition.id,
-		refIds: Object.keys(definition.refs),
-		...(Object.keys(refs).length > 0 ? { refs } : {}),
+		refIds,
+		...(named ? { refs } : {}),
 		target: definition.target === undefined ? undefined : decodeBrowserTarget(definition.target),
 		generation: typeof definition.generation === "string" ? definition.generation : undefined,
 	};
