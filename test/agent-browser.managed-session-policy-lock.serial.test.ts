@@ -12,14 +12,15 @@ import {
 	readArray,
 	hasErrorCode,
 } from "./helpers/assertions.js";
-import { spawn } from "node:child_process";
+import childProcess, { spawn, type execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs, { chmod, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
+import net, { createServer } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -27,6 +28,15 @@ import {
 	getBrowserExecutionLockPath,
 	resolveBrowserExecutionIdentity,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
+import {
+	openClaimEndpoint,
+	subscribeClaimEndpoint,
+} from "../extensions/agent-browser/lib/browser-execution-claim-endpoint.js";
+import { getErrorCode } from "../extensions/agent-browser/lib/process-errors.js";
+import {
+	ensureCoordinationDirectory,
+	getCoordinationDirectory,
+} from "../extensions/agent-browser/lib/browser-execution-identity.js";
 import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
 
 const sessionName = `piab-policy-lock-${process.pid}`;
@@ -617,6 +627,7 @@ test("managed session policy lock replaces only a proven-dead claim and excludes
 	const liveClaimPath = await onlyClaimPath();
 	assert.notEqual(liveClaimPath, staleClaimPath);
 	await assert.rejects(stat(staleClaimPath), { code: "ENOENT" });
+	await assert.rejects(stat(endpointPath(staleClaimPath)), { code: "ENOENT" });
 	assert.equal(await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 }), undefined);
 	assert.deepEqual(await claimPaths(), [liveClaimPath]);
 	child.stdin.end("release");
@@ -626,6 +637,288 @@ test("managed session policy lock replaces only a proven-dead claim and excludes
 	await recovered.release();
 	assert.deepEqual(await claimPaths(), []);
 });
+
+function endpointPath(claimPath: string): string {
+	const token = basename(claimPath).slice(claimPrefix.length);
+	return join(dirname(claimPath), `.l-${token}`);
+}
+
+const windowsSkip =
+	process.platform === "win32"
+		? "Windows keeps polling: busy named-pipe connects are uncancellable"
+		: false;
+
+/** Binds a real endpoint-length socket at the actual coordination root; skips only if native binding fails. */
+async function endpointBindingSkip(): Promise<string | false> {
+	const directory = getCoordinationDirectory();
+	assert.ok(await ensureCoordinationDirectory(directory, process.platform));
+	const server = createServer();
+	const error = await new Promise<unknown>((resolve) => {
+		server.once("error", resolve);
+		server.listen(join(directory, `.l-${randomUUID()}`), () => {
+			resolve(undefined);
+		});
+	});
+	if (error === undefined) {
+		server.close();
+		return false;
+	}
+	const code = getErrorCode(error) ?? "unknown error";
+	return `endpoint binding unavailable in ${directory} (${code}); waiters keep polling`;
+}
+
+const endpointSkip = windowsSkip === false ? await endpointBindingSkip() : windowsSkip;
+
+/** Forwards the waiter's real endpoint connections and resolves once one is established. */
+function forwardEndpointConnections(t: TestContext): Promise<void> {
+	const nativeCreateConnection = net.createConnection;
+	const connection = new Promise<void>((resolve) => {
+		t.mock.method(net, "createConnection", (path: string) => {
+			const socket = nativeCreateConnection(path);
+			socket.once("connect", () => {
+				resolve();
+			});
+			return socket;
+		});
+	});
+	syncBuiltinESMExports();
+	t.after(() => {
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+	});
+	return connection;
+}
+
+async function awaitSubscription(connection: Promise<void>): Promise<void> {
+	const settled = new AbortController();
+	const deadline = async (): Promise<never> => {
+		await delay(5_000, undefined, { signal: settled.signal });
+		throw new Error("the waiter never connected to the holder's endpoint");
+	};
+	try {
+		await Promise.race([connection, deadline()]);
+	} finally {
+		settled.abort();
+	}
+}
+
+function spawnHolder(t: TestContext): ReturnType<typeof spawn> {
+	const moduleUrl = new URL(
+		"../dist/extensions/agent-browser/lib/managed-session-policy-lock.js",
+		import.meta.url,
+	).href;
+	const script = `import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)};
+const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} });
+if (!lock) process.exit(2);
+console.log(JSON.stringify({ acquired: true }));
+for await (const line of createInterface({ input: process.stdin })) {
+  if (line === "spawn") {
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    console.log(JSON.stringify({ grandchild: child.pid }));
+  } else if (line === "release") {
+    await lock.release();
+    console.log(JSON.stringify({ released: true }));
+  }
+}`;
+	const holder = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	t.after(async () => {
+		await stopChildProcess(holder);
+	});
+	return holder;
+}
+
+test(
+	"a waiter sleeps on a live holder without identity polling and wakes on its release",
+	{ skip: endpointSkip },
+	async (t) => {
+		const connection = forwardEndpointConnections(t);
+		const holder = spawnHolder(t);
+		assert.deepEqual(await readChildStdoutJsonLine(holder), { acquired: true });
+		const holderPid = String(readNumber(holder.pid));
+		const nativeExecFile = childProcess.execFile;
+		let holderProbes = 0;
+		t.mock.method(
+			childProcess,
+			"execFile",
+			(
+				file: string,
+				args: readonly string[],
+				options: Parameters<typeof execFile>[2],
+				callback: Parameters<typeof execFile>[3],
+			) => {
+				holderProbes += args[0] === "-p" && args[1] === holderPid ? 1 : 0;
+				// Forward the real identity query; only its count is observed.
+				return nativeExecFile(file, args, options, callback);
+			},
+		);
+		syncBuiltinESMExports();
+		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 10_000 });
+		await awaitSubscription(connection);
+		const subscribedProbes = holderProbes;
+		assert.ok(subscribedProbes > 0, "the waiter must confirm the live holder before subscribing");
+		// One arbitration follows the subscription; every further probe would be polling.
+		await delay(500);
+		assert.ok(
+			holderProbes <= subscribedProbes + 1,
+			`a subscribed waiter re-probed its holder ${holderProbes - subscribedProbes} times`,
+		);
+		const acknowledgement = readChildStdoutJsonLine(holder);
+		holder.stdin?.write("release\n");
+		assert.deepEqual(await acknowledgement, { released: true });
+		const lock = await waiting;
+		assert.ok(lock);
+		await lock.release();
+	},
+);
+
+test(
+	"a subscribed waiter reclaims a killed holder whose surviving child inherited nothing",
+	{ skip: endpointSkip },
+	async (t) => {
+		const connection = forwardEndpointConnections(t);
+		const holder = spawnHolder(t);
+		assert.deepEqual(await readChildStdoutJsonLine(holder), { acquired: true });
+		const holderClaim = await onlyClaimPath();
+		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 10_000 });
+		await awaitSubscription(connection);
+		// Spawn after the waiter connected so both listening and accepted endpoints could leak.
+		const spawned = readChildStdoutJsonLine(holder);
+		holder.stdin?.write("spawn\n");
+		const grandchild = readNumber(readRecord(await spawned).grandchild);
+		t.after(() => {
+			try {
+				process.kill(grandchild, "SIGKILL");
+			} catch {
+				/* Already gone. */
+			}
+		});
+		const killed = Date.now();
+		holder.kill("SIGKILL");
+		const lock = await waiting;
+		assert.ok(lock);
+		assert.ok(
+			Date.now() - killed < 2_000,
+			"holder exit must wake its subscriber, not its deadline",
+		);
+		assert.doesNotThrow(
+			() => process.kill(grandchild, 0),
+			"the holder's child must still be running",
+		);
+		await assert.rejects(stat(holderClaim), { code: "ENOENT" });
+		await assert.rejects(stat(endpointPath(holderClaim)), { code: "ENOENT" });
+		await lock.release();
+	},
+);
+
+test(
+	"a choosing predecessor that publishes a later ticket never puts the earlier waiter to sleep",
+	{ skip: windowsSkip },
+	async () => {
+		const seed = await acquireManagedSessionPolicyLock({ sessionName });
+		assert.ok(seed);
+		const owner = readRecord(
+			JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8")),
+		);
+		await seed.release();
+		owner.token = randomUUID();
+		const choosingPath = `${lockBasePath}.claim-${readString(owner.token)}`;
+		await mkdir(choosingPath, { mode: 0o700 });
+		await writeFile(join(choosingPath, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
+		// A live choosing owner listens before its ticket exists, exactly like a real contender.
+		const endpoint = openClaimEndpoint(choosingPath, readString(owner.token));
+		try {
+			const started = Date.now();
+			const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 3_000 });
+			await delay(150);
+			const candidate = join(choosingPath, ".ticket.tmp");
+			await writeFile(candidate, JSON.stringify({ ticket: 2, token: owner.token, version: 4 }), {
+				mode: 0o600,
+			});
+			await fs.rename(candidate, join(choosingPath, "ticket.json"));
+			const lock = await waiting;
+			assert.ok(lock, "the earlier ticket must acquire once the choosing claim publishes later");
+			assert.ok(
+				Date.now() - started < 1_500,
+				"the earlier waiter must keep polling a choosing claim",
+			);
+			await lock.release();
+		} finally {
+			endpoint?.close();
+		}
+	},
+);
+
+async function endpointFixtureRoot(t: TestContext): Promise<string> {
+	// The product's own coordination parent: /tmp on macOS/Linux, the private tmpdir on Android.
+	const root = await fs.mkdtemp(join(dirname(getCoordinationDirectory()), "piab-ep-"));
+	t.after(async () => {
+		await rm(root, { force: true, recursive: true });
+	});
+	return root;
+}
+
+test(
+	"a short endpoint path binds and accepts a subscription",
+	{ skip: endpointSkip },
+	async (t) => {
+		const claimPath = join(await endpointFixtureRoot(t), "claim");
+		const token = randomUUID();
+		const endpoint = openClaimEndpoint(claimPath, token);
+		const subscription = await subscribeClaimEndpoint(
+			claimPath,
+			token,
+			undefined,
+			Date.now() + 2_000,
+		);
+		try {
+			assert.equal(subscription?.connected(), true);
+		} finally {
+			subscription?.close();
+			endpoint?.close();
+		}
+	},
+);
+
+test(
+	"an endpoint path beyond the Unix socket limit falls back without an unhandled error",
+	{ skip: windowsSkip },
+	async (t) => {
+		// The parent exists, so a native bind of this path fails only for its length.
+		const longParent = join(await endpointFixtureRoot(t), "x".repeat(110));
+		await mkdir(longParent);
+		const token = randomUUID();
+		const probe = createServer();
+		const bindError = await new Promise<unknown>((resolve) => {
+			probe.once("error", resolve);
+			probe.listen(join(longParent, `.l-${token}`));
+		});
+		assert.ok(hasErrorCode(bindError, "EINVAL"), "the native bind must fail for path length");
+		const claimPath = join(longParent, "claim");
+		const endpoint = openClaimEndpoint(claimPath, token);
+		try {
+			const started = Date.now();
+			const subscription = await subscribeClaimEndpoint(
+				claimPath,
+				token,
+				undefined,
+				Date.now() + 2_000,
+			);
+			assert.equal(subscription, undefined);
+			assert.ok(
+				Date.now() - started < 1_000,
+				"an unusable endpoint must not spend the wait budget",
+			);
+			// The listener reports its bind failure asynchronously; an unhandled one fails the run.
+			await delay(10);
+		} finally {
+			endpoint?.close();
+		}
+	},
+);
 
 async function readCriticalJournal(path: string): Promise<string> {
 	try {
