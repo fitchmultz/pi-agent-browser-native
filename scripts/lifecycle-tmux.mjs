@@ -7,6 +7,9 @@ import { sleep } from "./lifecycle-transcript.mjs";
 
 const execFile = promisify(execFileCallback);
 const PROMPT_SUBMIT_PAUSE_MS = 250;
+// tmux keeps a server's socket file after the server stops, both after kill-server and when the server
+// exits on its own because Pi exited or crashed. Each launch records the socket path its server reports.
+const launchedSocketPaths = new Map();
 
 export function createLifecycleSessionId(pid = process.pid) {
 	return `piab-lifecycle-${pid}`;
@@ -65,17 +68,20 @@ export async function capturePane(tmuxSession, artifactPath) {
 }
 
 export async function killTmuxSession(tmuxSession) {
-	// tmux keeps its socket file after kill-server, so remove this run's private socket once its server stops.
-	const socketPath = await tmux(tmuxSession, ["display-message", "-p", "#{socket_path}"]).then(
-		({ stdout }) => stdout.trim(),
-		() => "",
-	);
-	const stopped = await tmux(tmuxSession, ["kill-server"]).then(
-		() => true,
+	await tmux(tmuxSession, ["kill-server"]).catch(() => {
 		// The task-owned server may already have exited; cleanup is idempotent.
+	});
+	const socketPath = launchedSocketPaths.get(tmuxSession);
+	if (socketPath === undefined || basename(socketPath) !== tmuxSession) {
+		return;
+	}
+	// Remove only this run's recorded private socket, and only once no server answers on it.
+	const serverStopped = await run("tmux", ["-S", socketPath, "list-sessions"]).then(
 		() => false,
+		() => true,
 	);
-	if (stopped && basename(socketPath) === tmuxSession) {
+	if (serverStopped) {
+		launchedSocketPaths.delete(tmuxSession);
 		await rm(socketPath, { force: true });
 	}
 }
@@ -88,9 +94,12 @@ export async function launchPiInTmux(options) {
 	const { agentDir, cwd, fakeBinDir, fakeStateDir, model, paneLogPath, sessionId, tmuxSession } =
 		options;
 	await killTmuxSession(tmuxSession);
-	await tmux(tmuxSession, [
+	const { stdout } = await tmux(tmuxSession, [
 		"new-session",
 		"-d",
+		"-P",
+		"-F",
+		"#{socket_path}",
 		"-s",
 		tmuxSession,
 		"-c",
@@ -102,6 +111,7 @@ export async function launchPiInTmux(options) {
 		"pi",
 		...buildPiLaunchArgs({ model, sessionId }),
 	]);
+	launchedSocketPaths.set(tmuxSession, stdout.trim());
 	if (paneLogPath) {
 		await mkdir(dirname(paneLogPath), { recursive: true });
 		await tmux(tmuxSession, [
