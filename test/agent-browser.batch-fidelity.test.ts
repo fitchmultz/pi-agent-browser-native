@@ -13,6 +13,7 @@ import {
 	VALUE_FLAGS,
 } from "../extensions/agent-browser/lib/argv-grammar.js";
 import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mjs";
+import { BROWSER_TRANSITION_ENTRY } from "../extensions/agent-browser/lib/browser-transcript.js";
 import {
 	getGuardedRefUsage,
 	shouldPinSessionTabForCommand,
@@ -256,7 +257,7 @@ test(
 	"real upstream indexed batch identity preserves redaction and ordered observations",
 	{
 		skip: !real,
-		timeout: 60_000,
+		timeout: 150_000,
 	},
 	async (t) => {
 		const dir = await mkdtemp(join(tmpdir(), "piab-indexed-batch-"));
@@ -403,6 +404,95 @@ test(
 								);
 							},
 						);
+						await t.test("indexed recording output keeps native receipts", async (recording) => {
+							const secrets = /indexed-cookie-secret|indexed-storage-secret/;
+							const argv = /"command":\s*\[/;
+							for (const mode of ["command", "indexed"]) {
+								// Command form is the parity control; indexed receipts must not echo argv.
+								await recording.test(mode, async (receipts) => {
+									const indexed = mode === "indexed";
+									const batch = (plan: readonly (readonly string[])[], outputPath: string) =>
+										call(
+											["batch", "--bail", ...(indexed ? ["--omit-command"] : [])],
+											JSON.stringify(indexed ? [[], ...plan] : plan),
+											outputPath,
+										);
+									const saved = async (result: unknown, outputPath: string) => {
+										const details = readRecord(readRecord(result).details);
+										const outputFile = readRecord(details.outputFile);
+										assert.equal(outputFile.status, "saved", JSON.stringify(details.outputFile));
+										assert.equal(outputFile.source, "recording-receipt");
+										const text = await readFile(outputPath, "utf8");
+										assert.doesNotMatch(JSON.stringify(result), secrets);
+										assert.doesNotMatch(text, secrets);
+										assert.doesNotMatch(JSON.stringify(h.appendedEntries), secrets);
+										assert.equal(argv.test(JSON.stringify(result)), !indexed);
+										assert.equal(argv.test(text), !indexed);
+										return { details, receipt: readRecord(JSON.parse(text)) };
+									};
+									const video = join(dir, `${mode}-receipt.webm`);
+									const failedPath = join(dir, `${mode}-failed-receipt.json`);
+									// --bail leaves the started recording active without a stop row to recover.
+									const failed = await batch(
+										[
+											["record", "start", video],
+											[
+												"cookies",
+												"set",
+												"ordinary",
+												"indexed-cookie-secret",
+												"--url",
+												fixture.baseUrl,
+											],
+											["storage", "local", "get", "ordinary"],
+											["eval", "(() => { throw new Error('planned recording flow failure'); })()"],
+											["record", "stop"],
+										],
+										failedPath,
+									);
+									const stoppedPath = join(dir, `${mode}-stopped-receipt.json`);
+									// Stop before asserting so a failed check cannot leave the native recording active.
+									// Keep the established explicit 12s capture for short/cold native Ubuntu encoders.
+									const stopped = await batch(
+										[
+											["storage", "local", "get", "ordinary"],
+											["wait", "12000"],
+											["record", "stop"],
+										],
+										stoppedPath,
+									);
+									await receipts.test("unrecovered failure", async () => {
+										assert.equal(failed.isError, true, JSON.stringify(failed));
+										const failure = await saved(failed, failedPath);
+										assert.equal(failure.details.recordingRecovery, undefined);
+										assert.equal(
+											readRecord(readRecord(failure.details.batchFailure).failedStep).index,
+											indexed ? 4 : 3,
+										);
+										assert.equal(failure.receipt.success, false);
+										assert.ok(
+											readArray(failure.receipt.artifacts)
+												.map(readRecord)
+												.some(
+													(artifact) =>
+														artifact.absolutePath === video && artifact.status === "pending",
+												),
+											JSON.stringify(failure.receipt.artifacts),
+										);
+									});
+									await receipts.test("success", async () => {
+										assert.equal(stopped.isError, false, JSON.stringify(stopped));
+										const success = await saved(stopped, stoppedPath);
+										assert.equal(success.receipt.success, true);
+										assert.equal(readRecord(success.receipt.artifactVerification).verifiedCount, 1);
+										assert.equal(
+											(await readFile(video)).subarray(0, 4).toString("hex"),
+											"1a45dfa3",
+										);
+									});
+								});
+							}
+						});
 						const screenshot = join(dir, "after-empty.png");
 						const observed = await call(
 							["batch", "--bail", "--omit-command"],
@@ -428,6 +518,7 @@ test(
 						assert.equal(readRecord(observedSteps[2].artifactVerification).verifiedCount, 1);
 						assert.ok((await readFile(screenshot)).byteLength > 0);
 						const finish = h.appendedEntries
+							.filter((entry) => entry.customType === BROWSER_TRANSITION_ENTRY)
 							.map((entry) => readRecord(readRecord(entry.data).event))
 							.findLast((entry) => entry.phase === "finish");
 						assert.deepEqual(

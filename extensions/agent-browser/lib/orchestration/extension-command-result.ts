@@ -51,6 +51,12 @@ import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { BrowserRuntime } from "./extension-runtime.js";
 import type { BrowserCommandCall } from "./extension-invocation.js";
 
+function withoutCommand(step: Readonly<Record<string, unknown>>): Record<string, unknown> {
+	const visible = { ...step };
+	delete visible.command;
+	return visible;
+}
+
 export class BrowserCommandResult {
 	result: AgentBrowserToolResult;
 	readonly branchRestoreStillCurrent: boolean;
@@ -401,7 +407,7 @@ export class BrowserCommandResult {
 				throw new Error("The selected Pi branch changed before browser-state confirmation.");
 			}
 		} catch (error) {
-			return this.persistenceFailure(error);
+			return this.omitIndexedBatchCommands(this.persistenceFailure(error));
 		}
 		this.runtime.sessions.pages.applyBrowserRecord(finish);
 		this.runtime.artifacts.manifest = applyArtifactChanges(
@@ -410,8 +416,8 @@ export class BrowserCommandResult {
 		);
 		return undefined;
 	}
-	private omitIndexedBatchCommands(): void {
-		const details = this.result.details;
+	private omitIndexedBatchCommands(result: AgentBrowserToolResult): AgentBrowserToolResult {
+		const details = result.details;
 		const tokens = extractUpstreamCommandTokens(this.call.toolArgs);
 		if (
 			!isRecord(details) ||
@@ -419,21 +425,25 @@ export class BrowserCommandResult {
 			!tokens.includes("--omit-command") ||
 			!Array.isArray(details.batchSteps)
 		) {
-			return;
+			return result;
 		}
-		// Canonical finish already owns redacted attribution; native public receipts omit argv.
-		for (const step of details.batchSteps) {
-			if (isRecord(step)) {
-				delete step.command;
-			}
-		}
+		// Canonical finish and any outputPath receipt read the redacted attribution first; native
+		// public receipts omit argv, so project each returned copy instead of mutating shared rows.
 		const failure = details.batchFailure;
-		if (isRecord(failure) && isRecord(failure.failedStep)) {
-			delete failure.failedStep.command;
-		}
+		return {
+			...result,
+			details: {
+				...details,
+				batchSteps: details.batchSteps.map((step: unknown) =>
+					isRecord(step) ? withoutCommand(step) : step,
+				),
+				...(isRecord(failure) && isRecord(failure.failedStep)
+					? { batchFailure: { ...failure, failedStep: withoutCommand(failure.failedStep) } }
+					: {}),
+			},
+		};
 	}
 	async complete(): Promise<AgentBrowserToolResult> {
-		this.omitIndexedBatchCommands();
 		if (isRecord(this.result.details)) {
 			this.result.details.browserEventVersion = 1;
 			if (
@@ -455,7 +465,7 @@ export class BrowserCommandResult {
 				this.result.details,
 			);
 		}
-		return applyAgentBrowserOutputPath({
+		const result = await applyAgentBrowserOutputPath({
 			cwd: this.call.operationCwd,
 			outputPath: this.call.outputPath,
 			preserveTextContent:
@@ -463,5 +473,6 @@ export class BrowserCommandResult {
 				isBooleanFlagEnabled(this.call.params.args, "--json"),
 			result: warnRecordingPersistence(this.runtime.recordings.dirty, this.result),
 		});
+		return this.omitIndexedBatchCommands(result);
 	}
 }
