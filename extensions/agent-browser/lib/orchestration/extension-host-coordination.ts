@@ -107,7 +107,7 @@ class ElectronHostCoordinator {
 				{
 					identities,
 					signal: this.call.signal,
-					deadline: Date.now() + this.call.executionTimeoutMs,
+					deadline: performance.now() + this.call.executionTimeoutMs,
 					waitOnly: true,
 				},
 				(signal) => this.execute(signal),

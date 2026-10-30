@@ -56,7 +56,7 @@ const identities = await Promise.all(
 		}),
 	),
 );
-const deadline = Date.now() + (options.timeoutMs ?? 10_000);
+const deadline = performance.now() + (options.timeoutMs ?? 10_000);
 const lockOptions = { identities, signal: controller.signal, deadline };
 const run = async (signal: AbortSignal) => {
 	send("acquired");

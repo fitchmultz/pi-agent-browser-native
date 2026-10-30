@@ -47,6 +47,7 @@ import {
 	createRenderContext,
 	isTestPidAlive,
 } from "./helpers/extension-validation-fixtures.js";
+import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 
 test(
 	"built extension prompt doc pointers resolve to package-root docs",
@@ -906,6 +907,7 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 						const controller = new AbortController();
 						// Freeze coordination deadlines while native dispatch and child liveness remain real.
 						t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realNow() });
+						const coordinationClock = mockMonotonicClock(t);
 						const state = { settled: false };
 						const pending = executeRegisteredTool(
 							harness.tool,
@@ -943,6 +945,7 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 							t.mock.timers.tick(1);
 							// Only the selected watchdog is virtual; taskkill/reaping and claim retries are real.
 							t.mock.timers.reset();
+							coordinationClock.restore();
 							let deadlineTimer: NodeJS.Timeout | undefined;
 							try {
 								const result = await Promise.race([
@@ -965,6 +968,7 @@ if (args.includes("dialog") || (args.includes("eval") && stdin.includes("confirm
 							}
 						} finally {
 							t.mock.timers.reset();
+							coordinationClock.restore();
 							controller.abort();
 							await Promise.allSettled([pending]);
 						}

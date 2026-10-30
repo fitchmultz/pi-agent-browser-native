@@ -172,7 +172,7 @@ test("direct-call lock waiting leaves execution to native watchdogs", async (t) 
 	});
 	t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
 	const pending = withBrowserExecutionLock(
-		{ identity: f.identity, deadline: Date.now() + 1_000, waitOnly: true },
+		{ identity: f.identity, deadline: performance.now() + 1_000, waitOnly: true },
 		async (signal) => {
 			const running = new Promise<void>((resolve) => {
 				setTimeout(resolve, 1_100);
@@ -203,7 +203,7 @@ test("cancelled execution can lend an already-held claim to independently bounde
 		{ PI_AGENT_BROWSER_SOCKET_DIR: f.root, AGENT_BROWSER_SOCKET_DIR: f.root },
 		() =>
 			withBrowserExecutionLock(
-				{ identity: f.identity, signal: controller.signal, deadline: Date.now() + 5_000 },
+				{ identity: f.identity, signal: controller.signal, deadline: performance.now() + 5_000 },
 				async (signal) => {
 					controller.abort();
 					assert.equal(signal.aborted, true);
@@ -474,7 +474,7 @@ test(
 
 test("nested siblings serialize, throws release, and scope upgrades or escaped callbacks fail without waiting", async (t) => {
 	const f = await fixture(t);
-	const options = { identity: f.identity, deadline: Date.now() + 10_000 };
+	const options = { identity: f.identity, deadline: performance.now() + 10_000 };
 	let active = 0;
 	let maximum = 0;
 	let escaped!: () => Promise<void>;

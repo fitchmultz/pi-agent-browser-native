@@ -187,7 +187,9 @@ async function prepareClaim(
 }
 function publicationRetryAvailable(budget: ClaimBudget): boolean {
 	return (
-		budget.deadline !== undefined && budget.signal?.aborted !== true && Date.now() < budget.deadline
+		budget.deadline !== undefined &&
+		budget.signal?.aborted !== true &&
+		performance.now() < budget.deadline
 	);
 }
 function candidateMatchesPreparedClaim(
@@ -368,7 +370,7 @@ async function waitForTurn(
 				// oxlint-disable-next-line no-await-in-loop
 				return await acquireTurn(claim, budget);
 			}
-			if (Date.now() >= deadline) {
+			if (performance.now() >= deadline) {
 				debugPolicyFailure("acquire.wait", "deadline");
 				return false;
 			}
@@ -394,7 +396,7 @@ async function acquireTurn(claim: PreparedClaim, budget: ClaimBudget): Promise<b
 	return !cancelled;
 }
 function acquisitionDeadline(options: ClaimOptions): number {
-	return options.deadline ?? Date.now() + (options.timeoutMs ?? POLICY_LOCK_WAIT_MS);
+	return options.deadline ?? performance.now() + (options.timeoutMs ?? POLICY_LOCK_WAIT_MS);
 }
 export function acquireExecutionClaim(
 	options: ClaimOptions,
@@ -460,7 +462,7 @@ async function removeOwnClaim(
 		const removed = await removeClaimOwnedBy(
 			claim.path,
 			claim.owner.token,
-			Date.now() + POLICY_LOCK_WAIT_MS,
+			performance.now() + POLICY_LOCK_WAIT_MS,
 		);
 		debugRemovalResult(removed, stage);
 	} finally {

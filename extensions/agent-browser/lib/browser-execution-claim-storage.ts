@@ -26,6 +26,7 @@ const POLICY_GC_BATCH_SIZE = 8;
 let lastPolicyGcName: string | undefined;
 export interface ClaimBudget {
 	readonly signal?: AbortSignal;
+	/** A performance.now() timestamp: wall-clock steps can neither expire nor extend waits. */
 	readonly deadline?: number;
 }
 function secureEntry(entry: Stats, directory: boolean): boolean {
@@ -226,14 +227,14 @@ async function moveOwnedClaim(
 			if (code === "ENOENT") {
 				return "absent";
 			}
-			if (process.platform !== "win32" || code !== "EPERM" || Date.now() >= deadline) {
+			if (process.platform !== "win32" || code !== "EPERM" || performance.now() >= deadline) {
 				debugPolicyFailure("remove.rename", "native-error", error);
 				return undefined;
 			}
 			// Retry only after a bounded pause, then revalidate the same immutable owner.
 			// oxlint-disable-next-line no-await-in-loop
 			await waitForRetry();
-			if (Date.now() >= deadline) {
+			if (performance.now() >= deadline) {
 				debugPolicyFailure("remove.rename", "retry-deadline", error);
 				return undefined;
 			}
@@ -306,6 +307,7 @@ async function cleanDeadClaim(directory: string, name: string, budget: ClaimBudg
 	const published = name.includes(".lock-v4.claim-");
 	if (published) {
 		const entry = await lstat(path).catch(() => undefined);
+		// Persisted mtimes are wall-clock; removal below still requires a proven-dead owner.
 		if (!entry || entry.mtimeMs >= Date.now() - STALE_CLAIM_MIN_AGE_MS) {
 			return;
 		}
@@ -329,7 +331,7 @@ export async function cleanDeadPolicyArtifacts(
 		return;
 	}
 	for (const name of gcBatch(names)) {
-		if (budget.signal?.aborted === true || Date.now() >= (budget.deadline ?? Infinity)) {
+		if (budget.signal?.aborted === true || performance.now() >= (budget.deadline ?? Infinity)) {
 			return;
 		}
 		// Bounded GC respects the acquisition budget between native liveness probes.

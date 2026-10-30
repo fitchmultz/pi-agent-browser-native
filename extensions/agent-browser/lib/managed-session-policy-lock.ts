@@ -102,7 +102,8 @@ async function runInScope<T>(
  * mid-operation would permit lock-order cycles. One set-valued claim per socket context prevents
  * namespace-wide contenders from deadlocking between individual session acquisitions.
  * Cancellation does not release running callbacks: they must pass the signal to subprocesses
- * and await termination. Finally drains started children before releasing the native claims. */
+ * and await termination. Finally drains started children before releasing the native claims.
+ * The deadline is a performance.now() timestamp so wall-clock steps cannot shorten or extend it. */
 export async function withBrowserExecutionLocks<T>(
 	options: {
 		readonly identities: readonly BrowserExecutionIdentity[];
@@ -132,10 +133,10 @@ export async function withBrowserExecutionLocks<T>(
 	const signal = AbortSignal.any(signals);
 	const expire = () =>
 		controller.abort(new DOMException("Browser execution deadline exceeded.", "TimeoutError"));
-	const remaining = options.deadline - Date.now();
+	const remaining = options.deadline - performance.now();
 	const timer = setTimeout(expire, Math.max(0, Math.min(remaining, 2_147_483_647)));
 	const checkBudget = () => {
-		if (Date.now() >= options.deadline) {
+		if (performance.now() >= options.deadline) {
 			expire();
 		}
 		signal.throwIfAborted();

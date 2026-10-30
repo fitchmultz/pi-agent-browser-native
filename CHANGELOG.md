@@ -27,6 +27,7 @@
 - Read Windows process-start generations through a fresh .NET process lookup and invariant UTC ticks, retaining the existing versioned identity format, native executable, cancellation and probe budgets.
 - Avoid querying a browser execution predecessor's process identity after its immutable claim is confirmed gone, while retaining fresh generation checks for present or unresolved claims and rechecking presence after each query.
 - Retry Windows `EPERM` failures when publishing a browser execution claim only within the original acquisition budget, revalidating the same immutable owner and scope before every retry; cancellation, unknown ownership, and single-attempt probes still fail closed.
+- Time browser execution coordination waits with Node's monotonic `performance.now()` clock instead of the system wall clock. A system clock step (for example an NTP correction or VM resume) no longer makes a waiter give up early or wait past its budget: on Linux a +120 s step had ended a 30 s wait after about 1.5 s, and a −120 s step kept a 5 s wait going until its holder released. This covers polling and owner-endpoint waits, direct-call and code-cell coordination deadlines, and process-identity probe budgets. Persisted claim and file timestamps, including the stale-claim age check, remain wall-clock.
 
 ## 0.9.6 - 2026-10-14
 
