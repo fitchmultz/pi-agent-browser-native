@@ -49,6 +49,31 @@ function closedSessionDetails(sessionName: string) {
 	};
 }
 
+function failedReplacementDetails(currentSessionName: string, replacedSessionName: string) {
+	return {
+		args: ["open", "https://example.com/current"],
+		command: "open",
+		exitCode: 0,
+		managedSessionOutcome: {
+			activeAfter: true,
+			activeBefore: true,
+			attemptedSessionName: currentSessionName,
+			currentSessionName,
+			previousSessionName: replacedSessionName,
+			replacedSessionClosed: false,
+			replacedSessionName,
+			sessionMode: "fresh",
+			status: "replaced",
+			succeeded: true,
+			summary: `Managed session ${replacedSessionName} was replaced by ${currentSessionName}. Previous session ${replacedSessionName} remains wrapper-owned because automatic close failed; retry an explicit close.`,
+		},
+		resultCategory: "success",
+		sessionMode: "fresh",
+		sessionName: currentSessionName,
+		usedImplicitSession: false,
+	};
+}
+
 test(
 	"agentBrowserExtension closes all branch-owned managed sessions on quit",
 	{ concurrency: false },
@@ -196,6 +221,110 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 		}
 	},
 );
+
+for (const { label, shutdown, shutdownCloses } of [
+	{ label: "reload", shutdown: { reason: "reload" }, shutdownCloses: ["off-branch", "leftover"] },
+	{
+		label: "managed restart handoff",
+		shutdown: { reason: "quit", disposition: "handoff" },
+		shutdownCloses: ["off-branch"],
+	},
+	{
+		label: "provisional managed restart",
+		shutdown: { reason: "quit", disposition: "provisional" },
+		shutdownCloses: ["off-branch"],
+	},
+]) {
+	test(
+		`agentBrowserExtension retires only untransferable managed sessions on ${label}`,
+		{ concurrency: false },
+		async () => {
+			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restart-transfer-"));
+			const logPath = join(tempDir, "invocations.log");
+			const basePath = process.env.PATH ?? "";
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includes("close") } }));`,
+			);
+			const baseName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+			const names: Record<string, string> = {
+				current: `${baseName}-fresh-current`,
+				leftover: `${baseName}-fresh-leftover`,
+				"off-branch": baseName,
+			};
+			const closedNames = async () =>
+				(await readInvocationLog(logPath))
+					.map((entry) => entry.args)
+					.filter((args) => args.includes("close"))
+					.map((args) => args[1]);
+			try {
+				await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+					const harness = createExtensionHarness({
+						branch: [
+							createToolBranchEntry({
+								details: ownedSessionDetails(names["off-branch"]),
+								isError: false,
+							}),
+						],
+						cwd: tempDir,
+					});
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "resume" },
+						harness.ctx,
+					);
+					const activeBranch = [
+						createToolBranchEntry({
+							details: ownedSessionDetails(names.leftover, "fresh"),
+							isError: false,
+						}),
+						createToolBranchEntry({
+							details: failedReplacementDetails(names.current, names.leftover),
+							isError: false,
+						}),
+					];
+					harness.setBranch(activeBranch);
+					await runExtensionEvent(
+						harness.handlers,
+						"session_tree",
+						{ newLeafId: "branch-b", oldLeafId: "branch-a" },
+						harness.ctx,
+					);
+					await runExtensionEvent(harness.handlers, "session_shutdown", shutdown, harness.ctx);
+					assert.deepEqual(
+						(await closedNames()).toSorted(),
+						shutdownCloses.map((name) => names[name]).toSorted(),
+					);
+
+					await writeFile(logPath, "");
+					const nextHarness = createExtensionHarness({ branch: activeBranch, cwd: tempDir });
+					await runExtensionEvent(
+						nextHarness.handlers,
+						"session_start",
+						{ reason: "resume" },
+						nextHarness.ctx,
+					);
+					await runExtensionEvent(
+						nextHarness.handlers,
+						"session_shutdown",
+						{ reason: "quit", disposition: "release" },
+						nextHarness.ctx,
+					);
+					assert.deepEqual(
+						(await closedNames()).toSorted(),
+						[names.current, names.leftover].toSorted(),
+					);
+				});
+			} finally {
+				await rm(tempDir, { force: true, recursive: true });
+			}
+		},
+	);
+}
 
 test(
 	"agentBrowserExtension does not double-close a branch-restored explicit close during shutdown",

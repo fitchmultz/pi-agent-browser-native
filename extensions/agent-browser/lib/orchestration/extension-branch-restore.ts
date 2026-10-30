@@ -42,6 +42,31 @@ interface BranchRestorationInput {
 	readonly branch: readonly unknown[];
 	readonly resetRuntimeOwnership: boolean;
 }
+function isActiveOnBranch(events: BranchManagedResourceEvents, key: string): boolean {
+	const active = events.managedSessionActiveRanks.get(key);
+	const closed = events.managedSessionCloseRanks.get(key);
+	return active !== undefined && (closed === undefined || closed < active);
+}
+/** Transcript-proven active wrapper identities that restore reclaims for this base name. */
+function* restorableBranchManagedIdentities(
+	events: BranchManagedResourceEvents,
+	baseName: string,
+): Generator<readonly [string, Readonly<{ sessionName: string; namespace?: string }>]> {
+	for (const [key, identity] of events.managedSessionActiveIdentities) {
+		if (
+			isActiveOnBranch(events, key) &&
+			isRestorableManagedSessionName(identity.sessionName, baseName)
+		) {
+			yield [key, identity];
+		}
+	}
+}
+function getOwnerKey(sessionName: string, namespace: unknown): string {
+	return (
+		getSessionContextKey(sessionName, typeof namespace === "string" ? namespace : undefined) ??
+		sessionName
+	);
+}
 async function readBranchForRestore(
 	runtime: BrowserRuntime,
 	ctx: ExtensionContext,
@@ -208,7 +233,10 @@ class BrowserBranchRestoration {
 		}
 	}
 	restoreManagedOwners(): void {
-		for (const [sessionKey, identity] of this.branchResourceEvents.managedSessionActiveIdentities) {
+		for (const [sessionKey, identity] of restorableBranchManagedIdentities(
+			this.branchResourceEvents,
+			this.runtime.managed.baseName,
+		)) {
 			this.restoreBranchManagedOwner(sessionKey, identity);
 		}
 		if (this.restoredState.active) {
@@ -228,20 +256,12 @@ class BrowserBranchRestoration {
 		}
 	}
 	sessionActiveOnBranch(key: string): boolean {
-		const active = this.branchResourceEvents.managedSessionActiveRanks.get(key);
-		const closed = this.branchResourceEvents.managedSessionCloseRanks.get(key);
-		return active !== undefined && (closed === undefined || closed < active);
+		return isActiveOnBranch(this.branchResourceEvents, key);
 	}
 	restoreBranchManagedOwner(
 		key: string,
 		identity: Readonly<{ sessionName: string; namespace?: string }>,
 	): void {
-		if (
-			!this.sessionActiveOnBranch(key) ||
-			!isRestorableManagedSessionName(identity.sessionName, this.runtime.managed.baseName)
-		) {
-			return;
-		}
 		const launch = this.branchResourceEvents.managedSessionLaunchState.get(key);
 		trackOwnedManagedSession(
 			this.runtime.managed.owned,
@@ -393,4 +413,34 @@ export async function restoreBranchBackedState(
 ): Promise<unknown[]> {
 	const input = await readBranchForRestore(runtime, ctx, options.resetRuntimeOwnership);
 	return new BrowserBranchRestoration(runtime, ctx, input).run();
+}
+
+/**
+ * Managed identities that a replacement worker's `session_start` restore of the active branch
+ * owns again (branch-active identities, the current session, and interrupted owned intents).
+ * Read-only: a managed restart keeps exactly these and closes only what cannot transfer.
+ */
+export async function readTransferableManagedSessionKeys(
+	runtime: BrowserRuntime,
+	ctx: ExtensionContext,
+): Promise<Set<string>> {
+	const branch = await readBrowserEntries(ctx.sessionManager);
+	const { baseName } = runtime.managed;
+	const keys = new Set<string>();
+	for (const [key] of restorableBranchManagedIdentities(
+		collectBranchManagedResourceEvents(branch),
+		baseName,
+	)) {
+		keys.add(key);
+	}
+	const current = restoreManagedSessionStateFromBranch([...branch], baseName);
+	if (current.active) {
+		keys.add(getOwnerKey(current.sessionName, current.namespace));
+	}
+	for (const begin of collectPendingOwnedBrowserIntents(branch, runtime.branch.ownerSessionId)) {
+		if (typeof begin.state.sessionName === "string") {
+			keys.add(getOwnerKey(begin.state.sessionName, begin.state.namespace));
+		}
+	}
+	return keys;
 }

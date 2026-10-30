@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ChildProcess } from "node:child_process";
 import { cleanupSecureTempArtifacts } from "../temp.js";
-import { getActiveElectronRecords } from "./browser-run/session-state.js";
+import { getActiveElectronRecords, getSessionContextKey } from "./browser-run/session-state.js";
 import { cleanupActiveElectronHostLaunches } from "./electron-host/index.js";
 import { loadAgentBrowserConfigSync } from "../config.js";
 import { closeOwnedManagedSessionsExcept } from "./extension-managed-ownership.js";
@@ -14,8 +14,19 @@ import {
 import { shouldIncludeProjectConfig } from "./extension-prompt.js";
 import { notifyRecordingPersistence } from "./extension-recording.js";
 import { recoverScriptSessionLeasesWithinQueue } from "./extension-script-leases.js";
-import { restoreBranchBackedState } from "./extension-branch-restore.js";
+import {
+	readTransferableManagedSessionKeys,
+	restoreBranchBackedState,
+} from "./extension-branch-restore.js";
 import type { BrowserRuntime } from "./extension-runtime.js";
+
+/**
+ * `quit` ends process-lifetime ownership. `restart` is a managed worker replacement: the fork
+ * reports `handoff` (committed) or `provisional` (unready replacement that may roll back) and the
+ * next worker restores ownership from the same branch. `replace` is in-process replacement such
+ * as `/reload`.
+ */
+type ShutdownScope = "quit" | "restart" | "replace";
 
 class BrowserLifecycle {
 	constructor(readonly runtime: BrowserRuntime) {}
@@ -51,8 +62,30 @@ class BrowserLifecycle {
 		);
 	}
 
-	async cleanup(ctx: ExtensionContext | undefined, quitting: boolean): Promise<string[]> {
+	async retainedManagedSessionKeys(
+		ctx: ExtensionContext | undefined,
+		scope: ShutdownScope,
+	): Promise<ReadonlySet<string>> {
+		const { managed } = this.runtime;
+		if (scope === "quit") {
+			return new Set();
+		}
+		if (scope === "restart" && ctx) {
+			const transferable = await readTransferableManagedSessionKeys(this.runtime, ctx).catch(
+				() => undefined,
+			);
+			if (transferable) {
+				return transferable;
+			}
+		}
+		return managed.active
+			? new Set([getSessionContextKey(managed.name, managed.namespace) ?? managed.name])
+			: new Set();
+	}
+
+	async cleanup(ctx: ExtensionContext | undefined, scope: ShutdownScope): Promise<string[]> {
 		const { runtime } = this;
+		const quitting = scope === "quit";
 		const active = getActiveElectronRecords(runtime.electron.records);
 		const preserved = quitting
 			? active
@@ -90,8 +123,7 @@ class BrowserLifecycle {
 				timeoutMs: runtime.implicitSessionCloseTimeoutMs,
 			},
 			{
-				keepSessionName: !quitting && runtime.managed.active ? runtime.managed.name : undefined,
-				keepNamespace: !quitting && runtime.managed.active ? runtime.managed.namespace : undefined,
+				keepKeys: await this.retainedManagedSessionKeys(ctx, scope),
 				onClosed: (owner) => runtime.recordings.retire(owner.sessionName, owner.namespace),
 			},
 		);
@@ -109,23 +141,32 @@ class BrowserLifecycle {
 		runtime.electron.reset();
 	}
 
-	async shutdown(ctx: ExtensionContext | undefined, quitting: boolean): Promise<void> {
+	async shutdown(ctx: ExtensionContext | undefined, scope: ShutdownScope): Promise<void> {
 		await this.runtime.code.settle();
 		this.runtime.branch.invalidate();
 		const preservePaths = await this.runtime.managedSessionExecutionQueue.run(() =>
-			this.runtime.artifacts.queue.run(() => this.cleanup(ctx, quitting)),
+			this.runtime.artifacts.queue.run(() => this.cleanup(ctx, scope)),
 		);
 		this.reset();
 		await cleanupSecureTempArtifacts({ preservePaths });
 	}
 }
 
-function isQuitting(event: { readonly reason?: string } | undefined): boolean {
-	return event?.reason === "quit";
+function getShutdownScope(
+	event: { readonly reason?: string; readonly disposition?: string } | undefined,
+): ShutdownScope {
+	if (event?.reason !== "quit") {
+		return "replace";
+	}
+	return event.disposition === "handoff" || event.disposition === "provisional"
+		? "restart"
+		: "quit";
 }
 export function registerBrowserLifecycle(runtime: BrowserRuntime): void {
 	const lifecycle = new BrowserLifecycle(runtime);
 	runtime.pi.on("session_start", (_event, ctx) => lifecycle.start(ctx));
 	runtime.pi.on("session_tree", (_event, ctx) => lifecycle.tree(ctx));
-	runtime.pi.on("session_shutdown", (event, ctx) => lifecycle.shutdown(ctx, isQuitting(event)));
+	runtime.pi.on("session_shutdown", (event, ctx) =>
+		lifecycle.shutdown(ctx, getShutdownScope(event)),
+	);
 }
