@@ -470,15 +470,13 @@ test(
 				createdAtMs: staleTime.getTime(),
 				leaseUpdatedAtMs: staleTime.getTime(),
 				ownerPid: child.pid,
-				ownerProcessStartIdentity: startIdentity.replace(/^posix-ps-utc-v1:/, ""),
+				// Remove the versioned native format, as identities persisted before it were recorded.
+				ownerProcessStartIdentity: startIdentity.replace(/^[a-z0-9-]+-v1:/, ""),
 			});
 			await utimes(staleRoot, staleTime, staleTime);
 			const marker = await readTempRootOwnershipMarker(staleRoot);
 			assert.ok(marker);
-			assert.equal(
-				await getMarkerOwnerLiveness(marker),
-				process.platform === "win32" ? "alive" : "unknown",
-			);
+			assert.equal(await getMarkerOwnerLiveness(marker), "unknown");
 			const unqualifiedFile = await openSecureTempFile("prune-unqualified", ".txt");
 			await unqualifiedFile.fileHandle.close();
 			await stat(staleRoot);

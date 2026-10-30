@@ -3,7 +3,7 @@ import { readNumber, readRecord, readString } from "./helpers/assertions.js";
 import childProcess, { execFile, spawn } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { existsSync } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import fs, { readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -20,8 +20,14 @@ import {
 	readProcessStartIdentity,
 } from "../extensions/agent-browser/lib/process-identity.js";
 
+const nativeReadFile = fs.readFile;
+
 for (const cancel of [false, true]) {
 	test(`process identity probes honor ${cancel ? "abort" : "the shared deadline"} while a native helper is stalled`, async (t) => {
+		if (process.platform === "linux") {
+			t.skip("Linux reads procfs directly and launches no native helper.");
+			return;
+		}
 		const original = childProcess.execFile;
 		let launched = 0;
 		let dispatched = 0;
@@ -91,6 +97,73 @@ const systemPs = ["/bin/ps", "/usr/bin/ps"].find(existsSync);
 const psLocation =
 	process.env.PI_AGENT_BROWSER_TEST_PS ?? (systemPs !== undefined ? "system" : "path");
 
+// Independent proc_pid_stat(5) reading: comm ends at the final ")", and starttime is field 22.
+async function readKernelProcessIdentity(pid: number): Promise<string> {
+	const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+	const stat = await readFile(`/proc/${String(pid)}/stat`, "latin1");
+	const startTicks = stat
+		.slice(stat.lastIndexOf(")") + 1)
+		.trim()
+		.split(" ")[22 - 3];
+	assert.match(startTicks, /^[0-9]+$/);
+	return `linux-proc-boot-ticks-v1:${bootId}:${startTicks}`;
+}
+
+async function readUtcPsStart(pid: number): Promise<string> {
+	// Node's execFile custom promisify symbol preserves its callback-bearing overload.
+	// oxlint-disable-next-line typescript/strict-void-return
+	const { stdout } = await promisify(execFile)(
+		systemPs ?? "ps",
+		["-p", String(pid), "-o", "lstart="],
+		{ env: { ...process.env, TZ: "UTC0", LC_ALL: "C" } },
+	);
+	const start = normalizeProcessStartIdentity(stdout);
+	assert.ok(start !== undefined && start !== "");
+	return start;
+}
+
+test(
+	"real Linux process identity uses the kernel boot ID and start ticks instead of wall-clock ps",
+	{ skip: process.platform !== "linux" },
+	async () => {
+		// A foreign live process whose kernel comm contains the separators that break naive parsing.
+		const child = spawn(
+			process.execPath,
+			[
+				"-e",
+				'require("node:fs").writeFileSync("/proc/self/comm", "a ) ( b"); console.log("{}"); setInterval(() => undefined, 1_000);',
+			],
+			{ stdio: ["ignore", "pipe", "pipe"] },
+		);
+		try {
+			await readChildStdoutJsonLine(child);
+			const pid = readNumber(child.pid);
+			const stat = await readFile(`/proc/${String(pid)}/stat`, "latin1");
+			const expected = await readKernelProcessIdentity(pid);
+			assert.ok(stat.includes(" (a ) ( b) "), "the native comm must contain separators");
+			assert.notEqual(
+				`:${stat.trim().split(/\s+/)[21]}`,
+				expected.slice(expected.lastIndexOf(":")),
+				"the native control must defeat whole-line whitespace parsing",
+			);
+			assert.equal(await readProcessStartIdentity(pid), expected);
+			const lstart = await readUtcPsStart(pid);
+			assert.deepEqual(
+				[
+					processStartIdentitiesMatch(`posix-ps-utc-v1:${lstart}`, expected),
+					processStartIdentitiesMatch(lstart, expected),
+				],
+				[undefined, undefined],
+				"wall-clock ps identities from earlier releases cannot prove reuse of a live Linux PID",
+			);
+			await stopChildProcess(child);
+			assert.equal(await readProcessStartIdentity(pid), undefined);
+		} finally {
+			await stopChildProcess(child);
+		}
+	},
+);
+
 test(
 	"real POSIX process identity survives observer timezone and locale changes",
 	{ skip: !["darwin", "linux"].includes(process.platform) || psLocation === "missing" },
@@ -159,7 +232,12 @@ test(
 
 test(
 	`real POSIX ${psLocation} ps preserves process identity and lock integrity`,
-	{ skip: !["darwin", "linux"].includes(process.platform) },
+	{
+		// Linux identity reads procfs, so only its ordinary system-ps layout supplies old formats.
+		skip:
+			!["darwin", "linux"].includes(process.platform) ||
+			(process.platform === "linux" && psLocation !== "system"),
+	},
 	async (t) => {
 		assert.ok(["system", "path", "missing"].includes(psLocation));
 		assert.equal(
@@ -186,16 +264,11 @@ test(
 				assert.equal(await acquireManagedSessionPolicyLock({ sessionName, namespace }), undefined);
 				return;
 			}
-			// Node's execFile custom promisify symbol preserves its callback-bearing overload.
-			// oxlint-disable-next-line typescript/strict-void-return
-			const { stdout } = await promisify(execFile)(
-				systemPs ?? "ps",
-				["-p", String(process.pid), "-o", "lstart="],
-				{ env: { ...process.env, TZ: "UTC0", LC_ALL: "C" } },
-			);
-			const nativeStart = normalizeProcessStartIdentity(stdout);
-			assert.ok(nativeStart !== undefined && nativeStart !== "");
-			const expected = `posix-ps-utc-v1:${nativeStart}`;
+			const nativeStart = await readUtcPsStart(process.pid);
+			const expected =
+				process.platform === "linux"
+					? await readKernelProcessIdentity(process.pid)
+					: `posix-ps-utc-v1:${nativeStart}`;
 			const identity = await readProcessStartIdentity(process.pid);
 			lock = await acquireManagedSessionPolicyLock({ sessionName, namespace });
 			assert.deepEqual(
@@ -232,10 +305,20 @@ test(
 			const foreignPid = readNumber(foreignOwner.pid);
 			const foreignIdentity = await readProcessStartIdentity(foreignPid);
 			assert.ok(foreignIdentity !== undefined && foreignIdentity !== "");
-			const unqualifiedStart = foreignIdentity.replace(/^posix-ps-utc-v1:/, "");
-			const foreignRecord = { ...owner, pid: foreignPid, startIdentity: unqualifiedStart };
-			await writeFile(ownerPath, JSON.stringify(foreignRecord));
+			const foreignStart = await readUtcPsStart(foreignPid);
+			assert.equal(
+				foreignIdentity,
+				process.platform === "linux"
+					? await readKernelProcessIdentity(foreignPid)
+					: `posix-ps-utc-v1:${foreignStart}`,
+			);
+			// Every persisted format other than the current one must stay incomparable.
+			const earlierFormats =
+				process.platform === "linux"
+					? [foreignStart, `posix-ps-utc-v1:${foreignStart}`]
+					: [foreignStart];
 			const nativeExecFile = childProcess.execFile;
+			const foreignStat = `/proc/${String(foreignPid)}/stat`;
 			let successfulForeignProbes = 0;
 			t.mock.method(
 				childProcess,
@@ -252,7 +335,7 @@ test(
 							args[0] === "-p" &&
 							args[1] === String(foreignPid) &&
 							error === null &&
-							normalizeProcessStartIdentity(probeStdout.toString()) === unqualifiedStart
+							normalizeProcessStartIdentity(probeStdout.toString()) === foreignStart
 						) {
 							successfulForeignProbes++;
 						}
@@ -260,23 +343,46 @@ test(
 					});
 				},
 			);
+			// Linux reads the owner's kernel start ticks directly instead of launching ps.
+			t.mock.method(fs, "readFile", async (...args: Readonly<Parameters<typeof fs.readFile>>) => {
+				const value = await nativeReadFile(...args);
+				if (args[0] === foreignStat && String(value).startsWith(`${String(foreignPid)} (`)) {
+					successfulForeignProbes++;
+				}
+				return value;
+			});
 			syncBuiltinESMExports();
-			assert.equal(
-				await acquireManagedSessionPolicyLock({ sessionName, namespace }),
-				undefined,
-				"a still-live unqualified owner must not be evicted during activation",
+			const activateAgainst = async (startIdentity: string) => {
+				await writeFile(ownerPath, JSON.stringify({ ...owner, pid: foreignPid, startIdentity }));
+				const probes = successfulForeignProbes;
+				return {
+					lock: await acquireManagedSessionPolicyLock({ sessionName, namespace }),
+					inspected: successfulForeignProbes > probes,
+					recorded: readRecord(JSON.parse(await readFile(ownerPath, "utf8"))),
+				};
+			};
+			const observed = [];
+			for (const startIdentity of earlierFormats) {
+				// Each format is observed against the same live owner before the next rewrite.
+				// oxlint-disable-next-line no-await-in-loop
+				observed.push(await activateAgainst(startIdentity));
+			}
+			assert.deepEqual(
+				observed,
+				earlierFormats.map((startIdentity) => ({
+					lock: undefined,
+					inspected: true,
+					recorded: { ...owner, pid: foreignPid, startIdentity },
+				})),
+				"the contender must inspect a still-live owner recorded in an earlier format and keep it",
 			);
-			assert.ok(
-				successfulForeignProbes > 0,
-				"the contender must inspect a ready live foreign identity, not merely exhaust its budget",
-			);
-			assert.deepEqual(readRecord(JSON.parse(await readFile(ownerPath, "utf8"))), foreignRecord);
 			const retainedProbes = successfulForeignProbes;
 			// A live PID with a different recorded start time represents PID reuse, not a live lock owner.
 			await writeFile(
 				ownerPath,
 				JSON.stringify({
-					...foreignRecord,
+					...owner,
+					pid: foreignPid,
 					startIdentity: `${foreignIdentity}-different-generation`,
 				}),
 			);

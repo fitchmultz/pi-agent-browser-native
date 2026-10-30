@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { dirname, join, win32 } from "node:path";
 import { debugPolicyFailure } from "./browser-execution-policy-debug.js";
 
@@ -8,9 +9,20 @@ export function getCurrentProcessUid(): number | undefined {
 
 const WINDOWS_PROCESS_START_IDENTITY_PREFIX = "win32-powershell-ticks-v1:";
 const POSIX_PROCESS_START_IDENTITY_PREFIX = "posix-ps-utc-v1:";
+const LINUX_PROCESS_START_IDENTITY_PREFIX = "linux-proc-boot-ticks-v1:";
+const PROCESS_START_IDENTITY_FORMATS = [
+	WINDOWS_PROCESS_START_IDENTITY_PREFIX,
+	POSIX_PROCESS_START_IDENTITY_PREFIX,
+	LINUX_PROCESS_START_IDENTITY_PREFIX,
+] as const;
 // Native Windows PowerShell startup can exhaust the former five-second probe budget.
 const PROCESS_START_IDENTITY_TIMEOUT_MS = process.platform === "win32" ? 10_000 : 5_000;
 const DEFAULT_WINDOWS_SYSTEM_ROOT = "C:\\Windows";
+// The kernel formats its per-boot UUID once per boot (drivers/char/random.c proc_do_uuid).
+const LINUX_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id";
+const LINUX_BOOT_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+// proc_pid_stat(5): starttime is field 22, and field 3 is the first field after comm's final ")".
+const LINUX_STAT_START_TICKS_INDEX = 22 - 3;
 
 export interface ProcessStartIdentityCommand {
 	readonly args: readonly string[];
@@ -22,7 +34,8 @@ export function buildProcessStartIdentityCommand(
 	pid: number,
 	platform: NodeJS.Platform = process.platform,
 ): ProcessStartIdentityCommand | undefined {
-	if (!Number.isSafeInteger(pid) || pid <= 0) {
+	// Linux reads its kernel identity from procfs and needs no native helper.
+	if (!Number.isSafeInteger(pid) || pid <= 0 || platform === "linux") {
 		return undefined;
 	}
 	const configuredSystemRoot = process.env.SystemRoot;
@@ -154,11 +167,80 @@ export async function resolveProcessStartIdentityFromCommands(
 	return undefined;
 }
 
+async function readLinuxProcfsText(
+	path: string,
+	budget: ProcessIdentityBudget,
+): Promise<string | undefined> {
+	if (identityBudgetExpired(budget)) {
+		debugIdentityBudget(budget);
+		return undefined;
+	}
+	try {
+		// Node's readFile honors the caller's AbortSignal between its native operations.
+		return await readFile(path, { encoding: "latin1", signal: budget.signal });
+	} catch (error) {
+		debugPolicyFailure("probe.read", "native-error", error);
+		return undefined;
+	}
+}
+
+async function readLinuxBootId(budget: ProcessIdentityBudget): Promise<string | undefined> {
+	const bootId = (await readLinuxProcfsText(LINUX_BOOT_ID_PATH, budget))?.replace(/\n$/, "");
+	if (bootId === undefined || !LINUX_BOOT_ID_PATTERN.test(bootId)) {
+		debugPolicyFailure("probe.boot-id", bootId === undefined ? "unavailable" : "invalid-output");
+		return undefined;
+	}
+	return bootId;
+}
+
+function parseLinuxStartTicks(stat: string, pid: number): string | undefined {
+	const header = `${String(pid)} (`;
+	// comm can contain spaces, newlines and parentheses; only the final ")" closes it.
+	const commEnd = stat.lastIndexOf(")");
+	if (!stat.startsWith(header) || commEnd < header.length || stat[commEnd + 1] !== " ") {
+		return undefined;
+	}
+	const ticks = stat
+		.slice(commEnd + 2)
+		.replace(/\n$/, "")
+		.split(" ")
+		.at(LINUX_STAT_START_TICKS_INDEX);
+	// Keep the kernel's unsigned decimal exactly; Number conversion could lose precision.
+	return ticks !== undefined && /^[0-9]+$/.test(ticks) ? ticks : undefined;
+}
+
+async function readLinuxProcessStartIdentity(
+	pid: number,
+	budget: ProcessIdentityBudget = {},
+): Promise<string | undefined> {
+	if (!Number.isSafeInteger(pid) || pid <= 0) {
+		return undefined;
+	}
+	const bootId = await readLinuxBootId(budget);
+	if (bootId === undefined) {
+		return undefined;
+	}
+	const stat = await readLinuxProcfsText(`/proc/${String(pid)}/stat`, budget);
+	if (stat === undefined) {
+		return undefined;
+	}
+	const ticks = parseLinuxStartTicks(stat, pid);
+	if (ticks === undefined) {
+		debugPolicyFailure("probe.stat", "invalid-output");
+		return undefined;
+	}
+	// The kernel records boot-relative start time once at fork; wall-clock steps cannot change it.
+	return `${LINUX_PROCESS_START_IDENTITY_PREFIX}${bootId}:${ticks}`;
+}
+
 async function readUncachedProcessStartIdentity(
 	pid: number,
 	platform: NodeJS.Platform,
 	budget?: ProcessIdentityBudget,
 ): Promise<string | undefined> {
+	if (platform === "linux") {
+		return await readLinuxProcessStartIdentity(pid, budget);
+	}
 	const identity = await resolveProcessStartIdentityFromCommands(
 		buildProcessStartIdentityCommands(pid, platform),
 		(command) => executeProcessStartIdentityCommand(command, budget),
@@ -221,12 +303,10 @@ export function processStartIdentitiesMatch(
 	recorded: string,
 	current: string,
 ): boolean | undefined {
-	// Persisted local-time identities have no timezone/locale provenance. A mismatch
-	// with a qualified UTC identity cannot establish PID reuse or authorize cleanup.
-	if (
-		recorded.startsWith(POSIX_PROCESS_START_IDENTITY_PREFIX) !==
-		current.startsWith(POSIX_PROCESS_START_IDENTITY_PREFIX)
-	) {
+	// Only identities read through the same native format are comparable. Untagged local times
+	// and other formats can neither prove PID reuse nor authorize cleanup.
+	const format = PROCESS_START_IDENTITY_FORMATS.find((prefix) => current.startsWith(prefix));
+	if (format === undefined || !recorded.startsWith(format)) {
 		return undefined;
 	}
 	return recorded === current;
