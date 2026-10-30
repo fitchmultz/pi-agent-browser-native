@@ -90,15 +90,16 @@ Modes:
   lifecycle           Run the tmux-driven configured-source lifecycle harness.
   platform-target     Fast platform-local gate used inside Crabbox smoke targets.
   platform-smoke      Run required macOS/Ubuntu platform smoke; native Windows is explicit best-effort.
-  release             Run default verification, lifecycle, package-pi, and required macOS/Ubuntu platform smoke.
+  release             Run default verification, lifecycle, package-pi, and required macOS/Ubuntu platform smoke;
+                      lifecycle options reach only its lifecycle step.
 
 Options:
   --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
-  --keep-artifacts    With lifecycle mode, preserve lifecycle temp artifacts; with dogfood, keep temp screenshots.
+  --keep-artifacts    With lifecycle or release mode, preserve lifecycle temp artifacts; with dogfood, keep temp screenshots.
   --json              With dogfood mode, print the machine-readable report only.
-  --model <id>        With lifecycle mode, Pi model for tmux prompts (default zai/glm-5.2).
-  --verbose           With lifecycle mode, print progress details.
-  --timeout-ms <ms>   With lifecycle mode, override the per-step wait timeout (default 180000).
+  --model <id>        With lifecycle or release mode, Pi model for lifecycle tmux prompts (default zai/glm-5.2).
+  --verbose           With lifecycle or release mode, print lifecycle progress details.
+  --timeout-ms <ms>   With lifecycle or release mode, override the lifecycle per-step wait timeout (default 180000).
   --list-files        With package mode, print every packed file path.
   --samples <n>       With startup-profile mode, fresh Node entrypoint samples.
   --json              With startup-profile mode, print machine-readable JSON.
@@ -289,6 +290,7 @@ function validatePassthrough(mode, passthrough) {
 		validatePlatformSmokePassthrough(passthrough);
 		return;
 	}
+	const lifecycleOptions = new Set(["--keep-artifacts", "--model", "--verbose", "--timeout-ms"]);
 	const allowedByMode = {
 		default: new Set(),
 		quality: new Set(),
@@ -300,9 +302,10 @@ function validatePassthrough(mode, passthrough) {
 		dogfood: new Set(["--artifact-dir", "--keep-artifacts", "--json"]),
 		package: new Set(["--list-files"]),
 		"package-pi": new Set(["--list-files"]),
-		lifecycle: new Set(["--keep-artifacts", "--model", "--verbose", "--timeout-ms"]),
+		lifecycle: lifecycleOptions,
 		"platform-target": new Set(),
-		release: new Set(),
+		// Release forwards these options only to its lifecycle step.
+		release: lifecycleOptions,
 	};
 	const allowed = allowedByMode[mode];
 	for (let index = 0; index < passthrough.length; index += 1) {
@@ -323,6 +326,22 @@ function validatePassthrough(mode, passthrough) {
 			}
 			index += 1;
 		}
+	}
+}
+
+// verify-lifecycle.mjs owns lifecycle option values; release must reject them before earlier steps run.
+async function validateLifecycleValues({ mode, passthrough }) {
+	if (mode !== "lifecycle" && mode !== "release") {
+		return;
+	}
+	const { parseCliArgs } = await import("./verify-lifecycle.mjs");
+	try {
+		parseCliArgs(passthrough);
+	} catch (error) {
+		if (error instanceof Error && error.name === "UsageError") {
+			throw new UsageError(error.message);
+		}
+		throw error;
 	}
 }
 
@@ -462,7 +481,7 @@ export function verifySteps(options, platform = process.platform) {
 		case "release":
 			return [
 				...verifySteps({ mode: "default", passthrough: [], showHelp: false }, platform),
-				...verifySteps({ mode: "lifecycle", passthrough: [], showHelp: false }),
+				...verifySteps({ mode: "lifecycle", passthrough: options.passthrough, showHelp: false }),
 				...verifySteps({ mode: "package-pi", passthrough: [], showHelp: false }),
 				scriptStep(["./scripts/platform-smoke.mjs", "doctor"]),
 				scriptStep(["./scripts/platform-smoke.mjs", "run"]),
@@ -511,7 +530,9 @@ export async function main(argv = process.argv.slice(2)) {
 			printVerifyHelp();
 			return 0;
 		}
-		await runSteps(verifySteps(options));
+		const steps = verifySteps(options);
+		await validateLifecycleValues(options);
+		await runSteps(steps);
 		return 0;
 	}
 	throw new UsageError(`Unknown project command: ${command}`);

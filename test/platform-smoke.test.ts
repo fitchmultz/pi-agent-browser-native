@@ -7,7 +7,7 @@ import { main as platformMain } from "../scripts/platform-smoke.mjs";
 import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import config from "../platform-smoke.config.mjs";
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
@@ -26,6 +26,22 @@ import {
 	scanForSecrets,
 	writeManifest,
 } from "../scripts/platform-smoke/artifacts.mjs";
+
+// The CLI honors maintainer PLATFORM_SMOKE_* overrides; fixtures for its defaults must not inherit them.
+function clearPlatformSmokeOverrides(t: TestContext): void {
+	const inherited = new Map<string, string>();
+	for (const [name, value] of Object.entries(process.env)) {
+		if (name.startsWith("PLATFORM_SMOKE_") && value !== undefined) {
+			inherited.set(name, value);
+			delete process.env[name];
+		}
+	}
+	t.after(() => {
+		for (const [name, value] of inherited) {
+			process.env[name] = value;
+		}
+	});
+}
 
 test("platform smoke CLI has working help without dogfood host bootstrap", () => {
 	const powershell = readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8");
@@ -227,6 +243,7 @@ test("artifact manifests and lease cleanup failures are enforced", (t) => {
 // Old config inventories cannot detect doctor probing optional providers or real failure propagation.
 // Public Node subprocess mocks exercise that boundary without a production seam or native qualification.
 test("platform CLI defaults to required targets and preserves an explicitly selected Windows provider failure", async (t) => {
+	clearPlatformSmokeOverrides(t);
 	const root = mkdtempSync(join(tmpdir(), "platform-selection-"));
 	const cwd = process.cwd();
 	const calls: string[][] = [];
@@ -270,6 +287,7 @@ test("platform CLI defaults to required targets and preserves an explicitly sele
 });
 
 test("default platform doctor needs no Windows credentials/provider and keeps selected provisioning failures strict", async (t) => {
+	clearPlatformSmokeOverrides(t);
 	const root = mkdtempSync(join(tmpdir(), "platform-doctor-selection-"));
 	const cwd = process.cwd();
 	const exitCode = process.exitCode;
