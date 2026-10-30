@@ -166,7 +166,14 @@ export async function renderAgentBrowserObservation(options: RenderObservationOp
 		.filter((part) => part.type === "text")
 		.map((part) => part.text)
 		.join("\n\n");
-	const { data: _data, error: _error, summary: _summary, ...metadata } = observation;
+	// Prose already renders data, errors, summaries, and the Output file notice; its metadata line omits them.
+	const {
+		data: _data,
+		error: _error,
+		summary: _summary,
+		outputFile: _outputFile,
+		...metadata
+	} = observation;
 	let text = options.json
 		? JSON.stringify(observation, null, 2)
 		: `${prose}\n\nObservation: ${JSON.stringify(metadata)}`;

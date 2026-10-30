@@ -3031,10 +3031,10 @@ if (args.includes("batch")) {
 					JSON.parse(await readFile(join(tempDir, "logs/eval-state.json"), "utf8")),
 					{ result: { title: "Example", rows: [1, 2, 3] } },
 				);
-				assert.match(
-					readString(readRecord(evalResult.content[0]).text),
-					/Output file: logs\/eval-state\.json/,
-				);
+				const evalText = readString(readRecord(evalResult.content[0]).text);
+				assert.match(evalText, /Output file: logs\/eval-state\.json/);
+				// Uncompacted prose shows the receipt once, as its notice.
+				assert.doesNotMatch(evalText, /"outputFile"/);
 				assert.deepEqual(evalResult.details.outputFile, {
 					path: "logs/eval-state.json",
 					source: "details.data",
