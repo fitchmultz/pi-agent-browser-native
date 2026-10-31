@@ -11,13 +11,13 @@ Use supported Node.js and Pi releases. This extension requires a separate agent-
 The latest stable agent-browser release is recommended. See the [command guide](docs/COMMAND_REFERENCE.md) for native download fixes, daemon-file cleanup, indexed batch output, and the current MCP limitation.
 
 ```bash
-npm install -g agent-browser
+npm install -g agent-browser --allow-scripts=agent-browser
 agent-browser install
 pi install npm:pi-agent-browser-native
 pi
 ```
 
-`agent-browser install` downloads Chrome for Testing. On Linux, use `agent-browser install --with-deps` if browser libraries are missing. Android users need the [Termux setup](docs/REFERENCE.md#android--termux).
+The npm flag permits the browser CLI's install script. `agent-browser install` downloads Chrome for Testing. On Linux, use `agent-browser install --with-deps` if browser libraries are missing. Android users need the [Termux setup](docs/REFERENCE.md#android--termux).
 
 Ask Pi:
 
