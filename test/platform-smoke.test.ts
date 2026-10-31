@@ -20,12 +20,46 @@ import {
 	createLeaseCleanupResult,
 	createLeaseWarmupFailureResult,
 } from "../scripts/platform-smoke/lease-evidence.mjs";
+import { checkForbiddenProjectFiles } from "../scripts/platform-smoke/doctor-support.mjs";
 import {
 	collectSecretValues,
 	redactSecrets,
 	scanForSecrets,
 	writeManifest,
 } from "../scripts/platform-smoke/artifacts.mjs";
+
+test("platform doctor detects forbidden files in the actual npm package", (t) => {
+	const root = mkdtempSync(join(tmpdir(), "platform-doctor-pack-"));
+	const cwd = process.cwd();
+	t.after(() => {
+		process.chdir(cwd);
+		rmSync(root, { recursive: true, force: true });
+	});
+	mkdirSync(join(root, "lib", "nested"), { recursive: true });
+	writeFileSync(
+		join(root, "package.json"),
+		JSON.stringify({ name: "platform-doctor-pack", version: "1.0.0", files: ["lib"] }),
+	);
+	writeFileSync(join(root, "lib", "nested", ".env.local"), "not-a-real-secret");
+	process.chdir(root);
+	const failures: string[] = [];
+	const successes: string[] = [];
+	checkForbiddenProjectFiles({
+		ok(message: string) {
+			successes.push(message);
+		},
+		fail(message: string) {
+			failures.push(message);
+		},
+	});
+	assert.ok(successes.includes("no local .env or package tarball artifacts at repo top level"));
+	assert.ok(
+		failures.some((message) =>
+			message.includes("forbidden npm package path(s): lib/nested/.env.local"),
+		),
+		`Expected packed forbidden file to be rejected; failures: ${JSON.stringify(failures)}`,
+	);
+});
 
 // The CLI honors maintainer PLATFORM_SMOKE_* overrides; fixtures for its defaults must not inherit them.
 function clearPlatformSmokeOverrides(t: TestContext): void {
