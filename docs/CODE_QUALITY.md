@@ -26,7 +26,7 @@ relaxations require concrete evidence and explicit approval.
 | `npm run quality:policy`           | Validate language coverage and parsed suppression comments; emit the current exception inventory                                                                                                       |
 | `npm run quality:scope -- --write` | Regenerate the final exact unchecked-JavaScript override after an intentional scope/tool change                                                                                                        |
 | `npm run quality:probes`           | Run the focused `node:test` real-CLI regression suite                                                                                                                                                  |
-| `npm run quality:mutations`        | Require clean acceptance, then prove the real workflow rejects syntax, semantic, compiler, formatting, and allowance-isolation mutations in disposable copies                                          |
+| `npm run quality:mutations`        | Require clean acceptance, then prove the real workflow rejects syntax, semantic, compiler, formatting, and allowance-isolation mutations in disposable copies, diagnostics surviving log shortening    |
 
 Review fixes before committing; dangerous fixes and suggestion fixes are not part of
 `lint:fix`. Run formatting after reviewed lint fixes and rerun acceptance. Failures
