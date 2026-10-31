@@ -9,7 +9,6 @@ const runtime = new URL("../dist/extensions/agent-browser/lib/", import.meta.url
 const setup = `
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { mock } from 'node:test';
 import { join, dirname, basename } from 'node:path';
@@ -203,11 +202,10 @@ process.stdout.write('refused');
 });
 
 const concurrentAttempts = `
-// Keep native subprocess behavior but use a small deterministic identity command on every host.
-const nativeExec = childProcess.execFile;
-mock.method(childProcess, 'execFile', (_file, _args, options, callback) =>
-  nativeExec(process.execPath, ['-e', 'process.stdout.write("PRIVATE_START_IDENTITY")'], options, callback));
-syncBuiltinESMExports();
+// These claims live in the shared coordination directory, where other processes' GC verifies
+// owner liveness against the real native start identity; a substituted identity reads as PID reuse.
+const startIdentity = await readProcessStartIdentity(process.pid);
+assert.ok(startIdentity);
 const goodIdentity = { socketContext: randomUUID(), sessionNames: ['PRIVATE_SESSION_NAME'] };
 const badIdentity = { socketContext: randomUUID(), sessionNames: ['PRIVATE_SESSION_NAME'] };
 const badBase = getBrowserExecutionLockPath(badIdentity);
@@ -234,24 +232,24 @@ try {
   await fs.writeFile(join(goodPath, 'owner.json'), originalOwner);
   await good.release();
   good = undefined;
-  process.stdout.write('success-and-fail-closed');
+  process.stdout.write('success-and-fail-closed\\n' + startIdentity);
 } finally {
   if (good && goodPath && originalOwner) {
     await fs.writeFile(join(goodPath, 'owner.json'), originalOwner);
     await good.release();
   }
   await fs.rm(badPath, { recursive: true, force: true });
-  mock.reset();
-  syncBuiltinESMExports();
 }
 `;
 
 test("policy debug correlates concurrent acquisition failures and later release without changing outcomes", async () => {
 	const quiet = await runDiagnostic(false, concurrentAttempts);
 	const enabled = await runDiagnostic(true, concurrentAttempts);
-	assert.equal(quiet.stdout, "success-and-fail-closed");
+	const [quietOutcome] = quiet.stdout.split("\n");
+	const [enabledOutcome, startIdentity] = enabled.stdout.split("\n");
+	assert.equal(quietOutcome, "success-and-fail-closed");
 	assert.equal(quiet.stderr, "");
-	assert.equal(enabled.stdout, quiet.stdout);
+	assert.equal(enabledOutcome, quietOutcome);
 	assert.match(
 		enabled.stderr,
 		/attempt=2 phase=acquire stage=claim\.owner-read reason=invalid-owner/,
@@ -269,4 +267,6 @@ test("policy debug correlates concurrent acquisition failures and later release 
 		/attempt=1 phase=release stage=release\.complete reason=claim-not-removed/,
 	);
 	assert.doesNotMatch(enabled.stderr, /PRIVATE_|private-policy-debug|[\\/]/);
+	assert.match(startIdentity, /\S/);
+	assert.equal(enabled.stderr.includes(startIdentity), false);
 });
