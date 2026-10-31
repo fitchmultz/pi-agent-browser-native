@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, cpSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -207,6 +208,48 @@ test("scope drift cannot silently add unchecked files or hide a JS checking dire
 	const nocheck = run(directory, "scripts/code-quality.mjs", ["check"]);
 	assert.equal(nocheck.status, 1);
 	assert.match(nocheck.stderr, /compiler escape hatch/u);
+});
+
+async function lintWithClosedReader(directory: string, args: readonly string[]) {
+	const child = spawn(
+		process.execPath,
+		[path.join(root, "scripts/code-quality.mjs"), "lint", ...args],
+		{
+			cwd: directory,
+			stdio: ["ignore", "pipe", "pipe"],
+			timeout: 30_000,
+		},
+	);
+	// The reader is gone before the first write, as with `| head -c` or a quit pager.
+	child.stdout.destroy();
+	let stderr = "";
+	child.stderr.setEncoding("utf8");
+	child.stderr.on("data", (chunk: string) => {
+		stderr += chunk;
+	});
+	const status = await new Promise<number | null>((fulfill) => {
+		child.on("close", fulfill);
+	});
+	return { status, stderr };
+}
+
+test("lint keeps its real verdict when the stdout reader has already closed", async (t) => {
+	const directory = fixture(t);
+	const file = path.join(directory, "subject.ts");
+	writeFileSync(
+		file,
+		"export function same(left: unknown, right: unknown): boolean {\n\treturn left === right;\n}\n",
+	);
+	assert.equal(run(directory, "scripts/code-quality.mjs", ["scope", "--write"]).status, 0);
+	assert.deepEqual(await lintWithClosedReader(directory, []), { status: 0, stderr: "" });
+	writeFileSync(
+		file,
+		"export function same(left: unknown, right: unknown): boolean {\n\tlet loose = left == right;\n\treturn loose;\n}\n",
+	);
+	const failed = await lintWithClosedReader(directory, ["--fix"]);
+	// The fixed declaration proves Oxlint ran; the unfixable comparison must still fail.
+	assert.match(readFileSync(file, "utf8"), /const loose = left == right/u);
+	assert.deepEqual(failed, { status: 1, stderr: "" });
 });
 
 test("inherited checkJs controls compiler and semantic coverage independently of test role", (t) => {
