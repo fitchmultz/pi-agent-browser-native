@@ -85,12 +85,21 @@ function isForbiddenProjectPath(path) {
 	);
 }
 function npmPackFiles() {
-	const output = silent("npm", ["pack", "--dry-run", "--json"]);
+	const windows = process.platform === "win32";
+	const output = silent(windows ? "npm.cmd" : "npm", ["pack", "--dry-run", "--json"], {
+		timeout: 0,
+		shell: windows,
+	});
 	if (!output) {
 		return null;
 	}
 	try {
-		return JSON.parse(output)[0]?.files?.map((file) => file.path) ?? [];
+		const parsed = JSON.parse(output);
+		const packages = Array.isArray(parsed) ? parsed : Object.values(parsed);
+		if (packages.length !== 1 || !Array.isArray(packages[0]?.files)) {
+			return null;
+		}
+		return packages[0].files.map((file) => file.path);
 	} catch {
 		return null;
 	}
