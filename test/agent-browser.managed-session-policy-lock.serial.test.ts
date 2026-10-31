@@ -735,6 +735,12 @@ test(
 				return nativeExecFile(file, args, options, callback);
 			},
 		);
+		const nativeReadFile = fs.readFile;
+		// Linux reads the holder's kernel start ticks directly instead of launching ps.
+		t.mock.method(fs, "readFile", async (...args: Readonly<Parameters<typeof fs.readFile>>) => {
+			holderProbes += args[0] === `/proc/${holderPid}/stat` ? 1 : 0;
+			return await nativeReadFile(...args);
+		});
 		syncBuiltinESMExports();
 		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 10_000 });
 		await awaitSubscription(connection);

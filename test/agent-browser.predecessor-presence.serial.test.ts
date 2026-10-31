@@ -144,6 +144,10 @@ await ended;`;
 	);
 	t.mock.method(fs, "readFile", async (...args: Readonly<Parameters<typeof fs.readFile>>) => {
 		const value = await nativeReadFile(...args);
+		// Linux reads the holder's kernel start ticks directly instead of launching ps.
+		if (args[0] === `/proc/${String(holderPid)}/stat`) {
+			foreignProbes++;
+		}
 		if (args[0] === ticketPath) {
 			ticketReads++;
 			// The first read is ticket publication's scan; the second is waitForTurn's scan.
