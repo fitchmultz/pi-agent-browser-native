@@ -7,6 +7,10 @@ ssh_dir="$root/ssh"
 
 start_ssh() {
   mkdir -m 700 "$ssh_dir" "$root/bin" "$root/mac-work" "$root/pi"
+  # Crabbox runs the workload in a login Bash shell; macOS path_helper puts
+  # system Node ahead of setup-node unless the isolated profile restores it.
+  node_executable=$(node -p 'process.execPath')
+  printf "export PATH=%q:\"\$PATH\"\n" "$(dirname "$node_executable")" > "$root/home/.bash_profile"
   # sshd's StrictModes rejects authorized_keys beneath the world-writable /tmp.
   auth_dir=$(mktemp -d "${RUNNER_TEMP:?}/piab-auth.XXXXXX")
   printf '%s\n' "$auth_dir" > "$ssh_dir/auth-dir"
@@ -32,9 +36,13 @@ start_ssh() {
     kill -0 "$(< "$ssh_dir/launched.pid")" 2>/dev/null || { echo "Task-owned sshd exited; see $ssh_dir/sshd.log" >&2; return 1; }
     sleep 0.1
   done
-  /usr/bin/ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=5 \
+  actual_node=$(/usr/bin/ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
-    -o IdentitiesOnly=yes -i "$ssh_dir/client" -p "$port" "$user@127.0.0.1" true
+    -o IdentitiesOnly=yes -i "$ssh_dir/client" -p "$port" "$user@127.0.0.1" \
+    "bash -lc 'node -p process.execPath'")
+  [[ "$actual_node" == "$node_executable" ]] || {
+    echo "SSH login selected Node $actual_node instead of $node_executable" >&2; return 1;
+  }
   # Doctor supplies its own insecure first-contact option. For only this owned
   # loopback port, OpenSSH takes these earlier, pinned options instead.
   cat > "$root/bin/ssh" <<'SH'
