@@ -24,7 +24,7 @@ on:
         required: true
         type: string
     secrets:
-      OPENROUTER_API_KEY:
+      ZAI_API_KEY:
         description: Model credential for the real lifecycle and site checks
         required: true
 
@@ -35,6 +35,7 @@ jobs:
   host:
     name: Retained browser on ${{ matrix.host }} Pi
     runs-on: ubuntu-latest
+    environment: release
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +91,7 @@ jobs:
       - name: Run the full selected-host and live candidate checks
         env:
           GH_TOKEN: ${{ github.token }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           SOURCE_REF: ${{ inputs.source-ref }}
           RELEASE_SOURCE: ${{ inputs.release-source }}
           OFFICIAL_VERSION: ${{ inputs.official-version }}

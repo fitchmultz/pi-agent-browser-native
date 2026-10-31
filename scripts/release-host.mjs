@@ -19,7 +19,7 @@ for (const key of ["fork-artifact", "host", "output"]) {
 	assert.ok(values[key], `Missing --${key}`);
 }
 assert.ok(["official", "fork"].includes(values.host), "Host must be official or fork");
-assert.ok(process.env.OPENROUTER_API_KEY, "The live qualification model credential is missing");
+assert.ok(process.env.ZAI_API_KEY, "The live qualification model credential is missing");
 
 const output = resolve(values.output);
 const { candidate, tarball, common } = await inspectCandidate(values);
@@ -60,7 +60,7 @@ writeFileSync(
 	`#!/bin/sh\nexec ${quote(process.execPath)} ${quote(selected.cli)} "$@"\n`,
 	{ mode: 0o700 },
 );
-const model = "openrouter/openai/gpt-5.5:minimal";
+const model = "zai/glm-5.3-flash";
 const runtime = {
 	...env,
 	PATH: `${bin}:${env.PATH}`,
@@ -71,9 +71,12 @@ const runtime = {
 	PI_HOST_CLI: selected.cli,
 	PI_AGENT_BROWSER_RELEASE_TARBALL: tarball,
 };
-const live = {
+const lifecycle = {
 	...runtime,
-	OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+	ZAI_API_KEY: process.env.ZAI_API_KEY,
+};
+const live = {
+	...lifecycle,
 	PIAB_LIVE_MODEL: model,
 	PIAB_LIVE_OUTPUT: join(output, "live-sites"),
 	...(process.env.AGENT_BROWSER_EXECUTABLE_PATH
@@ -84,7 +87,7 @@ const execute = (command, args, environment = runtime) =>
 	run(command, args, { cwd: source, env: environment, timeout: undefined, stdio: "inherit" });
 execute("npm", ["run", "verify"]);
 execute("npm", ["run", "verify", "--", "package-pi"]);
-execute("npm", ["run", "verify", "--", "lifecycle", "--model", model, "--verbose"], live);
+execute("npm", ["run", "verify", "--", "lifecycle", "--model", model, "--verbose"], lifecycle);
 execute(process.execPath, ["scripts/verify-live-sites.mjs"], live);
 assert.equal(sha256(tarball), candidate.sha256, "Candidate tarball changed during qualification");
 assert.equal(
