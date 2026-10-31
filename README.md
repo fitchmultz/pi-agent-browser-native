@@ -6,12 +6,12 @@ pi-agent-browser-native adds browser tools to [Pi](https://pi.dev). Use it to re
 
 ## Install and start
 
-Use Node 24.21.0 or later and Pi 1.0.0 or later. This extension requires a separate agent-browser installation.
+Use supported Node.js and Pi releases. This extension requires a separate agent-browser installation. See the [runtime requirements](docs/REQUIREMENTS.md#runtime-requirements) for minimum versions.
 
-The recommended agent-browser version is 0.41.0. This extension accepts stable versions 0.35.0 or later. See the [0.41.0 command guide](docs/COMMAND_REFERENCE.md#upstream-0410-rebaseline) for native download fixes, daemon-file cleanup, indexed batch output, and the current MCP limitation.
+The latest stable agent-browser release is recommended. See the [command guide](docs/COMMAND_REFERENCE.md) for native download fixes, daemon-file cleanup, indexed batch output, and the current MCP limitation.
 
 ```bash
-npm install -g agent-browser@0.41.0
+npm install -g agent-browser
 agent-browser install
 pi install npm:pi-agent-browser-native
 pi
@@ -100,11 +100,11 @@ It checks the browser CLI, supported versions, and duplicate Pi package sources.
 
 For browser execution coordination failures, launch Pi with Node's standard `NODE_DEBUG=pi-agent-browser-policy` environment setting (PowerShell: `$env:NODE_DEBUG = 'pi-agent-browser-policy'`). This optional channel is silent by default and writes failure-stage breadcrumbs to stderr, not tool results. Lines carry Node's PID plus an opaque per-process attempt number and acquisition or release phase (cleanup has separate stage labels); standalone library inspections use attempt `0`. They contain fixed reasons and normalized native error codes/syscalls, never claim contents, paths, session names, or process-start identities. Normal choosing-state missing tickets and confirmed disappearing claims are quiet. A release/cleanup breadcrumb alone does not explain an acquisition failure. Unset `NODE_DEBUG` after collecting diagnostics; these observations do not change coordination policy or budgets.
 
-This is a pre-1.0 package. **Native Windows is best-effort**, not a required PR or release qualification target. macOS/Linux and official/fork host/API qualification remain strict. Windows has unresolved browser session-locking and restored Electron cleanup test failures; a small nonblocking native CI smoke is not full qualification, and broader Windows suites are explicitly on demand. Release tests do not cover Android. Electron desktop tools do not apply to Android apps. See the [support matrix](docs/SUPPORT_MATRIX.md) for details.
+**Native Windows is best-effort**, not a required PR or release qualification target. macOS/Linux and official/fork host/API qualification remain strict. Windows has unresolved browser session-locking and restored Electron cleanup test failures; a small nonblocking native CI smoke is not full qualification, and broader Windows suites are explicitly on demand. Release tests do not cover Android. Electron desktop tools do not apply to Android apps. See the [support matrix](docs/SUPPORT_MATRIX.md) for details.
 
 For recordings, install `ffmpeg` with the encoder for your WebM or MP4 output. Verify the completed file after you stop the recording.
 
-Native 0.41 supports finite `mcp call` invocations, but this extension currently rejects every non-help `mcp` call. MCP session identity, cross-session coordination, credential presentation, and image handling are not integrated. Use the direct browser tools; see the [MCP boundary](docs/TOOL_CONTRACT.md#native-mcp-boundary).
+Recent agent-browser releases support finite `mcp call` invocations, but this extension currently rejects every non-help `mcp` call. MCP session identity, cross-session coordination, credential presentation, and image handling are not integrated. Use the direct browser tools; see the [MCP boundary](docs/TOOL_CONTRACT.md#native-mcp-boundary).
 
 For remote browsers, use a URL that the browser host can reach. `localhost` refers to the browser host.
 
