@@ -2,7 +2,7 @@ name: Hosted release gate probe
 
 on:
   push:
-    branches: [ci/hosted-auto-release-gates]
+    branches: [ci/hosted-gate-doctor-probe]
 
 permissions:
   contents: read
