@@ -106,6 +106,8 @@ export async function launchPiInTmux(options) {
 	const environment = [`PI_CODING_AGENT_DIR=${agentDir}`];
 	if (fakeStateDir) {
 		environment.push(`AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_STATE_DIR=${fakeStateDir}`);
+		// The harness outlives both Pi launches, as the simulated daemon does.
+		environment.push(`AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_DAEMON_PID=${process.pid}`);
 	}
 	if (fakeBinDir) {
 		environment.push(`PATH=${fakeBinDir}${delimiter}${process.env.PATH ?? ""}`);

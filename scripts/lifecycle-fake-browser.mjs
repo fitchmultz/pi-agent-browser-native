@@ -38,7 +38,12 @@ function execute(tokens) {
   const [command, ...rest] = tokens;
   if (command === "session" && rest[0] === "info") {
     const active = fs.existsSync(statePath);
-    return { result: { active, runtime: active ? { restoreKey: state.restoreKey ?? null } : null } };
+    return { result: { active, runtime: active ? {
+      restoreKey: state.restoreKey ?? null,
+      backgroundPid: Number(process.env.AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_DAEMON_PID),
+      socketDir: process.env.AGENT_BROWSER_SOCKET_DIR ?? "",
+      browserLaunched: true,
+    } : null } };
   }
   if (command === "open") {
     const url = rest[rest.length - 1] || "about:blank";

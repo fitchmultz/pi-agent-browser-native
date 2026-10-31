@@ -1,0 +1,252 @@
+name: Browser release qualification
+
+on:
+  workflow_call:
+    inputs:
+      automation-ref:
+        description: Exact reviewed shared automation revision
+        required: true
+        type: string
+      source-ref:
+        description: Exact candidate commit
+        required: true
+        type: string
+      release-source:
+        description: Original main commit represented by the candidate
+        required: true
+        type: string
+      official-version:
+        description: Official Pi version selected for the candidate
+        required: true
+        type: string
+      fork-ref:
+        description: Maintained Pi fork commit selected for the candidate
+        required: true
+        type: string
+    secrets:
+      ZAI_API_KEY:
+        description: Model credential for the real lifecycle and site checks
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Retained browser on ${{ matrix.host }} Pi
+    runs-on: ubuntu-latest
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [official, fork]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          path: extension
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ inputs.automation-ref }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          check-latest: true
+          package-manager-cache: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Install the reviewed tools
+        working-directory: extension
+        run: |
+          if ! command -v tmux; then
+            sudo rm -f /etc/apt/sources.list.d/google-chrome.sources
+            sudo apt-get update
+            sudo apt-get install -y tmux
+          fi
+          npm install --global "$(node -p 'require("./package.json").packageManager')"
+          version=$(node --input-type=module -e 'import { TARGET_AGENT_BROWSER_VERSION } from "./scripts/agent-browser-target.mjs"; console.log(TARGET_AGENT_BROWSER_VERSION)')
+          npm install --global "agent-browser@$version"
+          echo "AGENT_BROWSER_EXECUTABLE_PATH=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-candidate-${{ inputs.source-ref }}
+          path: ${{ runner.temp }}/npm-candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-fork-host-${{ inputs.source-ref }}
+          path: ${{ runner.temp }}/fork-package
+      - name: Create private host evidence directory
+        id: evidence
+        run: |
+          stat -c '%A %U %G %n' /home "$HOME" "$(dirname "$RUNNER_TEMP")" "$RUNNER_TEMP" /tmp
+          echo "path=$(mktemp -d /tmp/piab-release.XXXXXX)" >> "$GITHUB_OUTPUT"
+      - name: Run the full selected-host and live candidate checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          SOURCE_REF: ${{ inputs.source-ref }}
+          RELEASE_SOURCE: ${{ inputs.release-source }}
+          OFFICIAL_VERSION: ${{ inputs.official-version }}
+          FORK_REF: ${{ inputs.fork-ref }}
+          HOST: ${{ matrix.host }}
+        run: |
+          node extension/scripts/release-host.mjs \
+            --artifact "$RUNNER_TEMP/npm-candidate" --fork-artifact "$RUNNER_TEMP/fork-package" \
+            --automation "$GITHUB_WORKSPACE/automation" --repository "$GITHUB_REPOSITORY" \
+            --source-ref "$SOURCE_REF" --release-source "$RELEASE_SOURCE" \
+            --official-version "$OFFICIAL_VERSION" --fork-ref "$FORK_REF" --host "$HOST" \
+            --output "${{ steps.evidence.outputs.path }}"
+      - name: Retain host, lifecycle and real-site evidence
+        if: always() && steps.evidence.outputs.path != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-release-host-${{ matrix.host }}-${{ inputs.source-ref }}
+          path: |
+            ${{ steps.evidence.outputs.path }}/report.json
+            ${{ steps.evidence.outputs.path }}/live-sites
+            ${{ steps.evidence.outputs.path }}/isolation/tmp/piab-lifecycle-*/artifacts
+            ${{ steps.evidence.outputs.path }}/isolation/tmp/piab-lifecycle-*/sessions
+          if-no-files-found: warn
+          retention-days: 7
+
+  platform:
+    name: Retained browser on ${{ matrix.target }} Crabbox
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos
+            os: macos-15-intel
+          - target: ubuntu
+            os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          path: extension
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/.github
+          ref: ${{ inputs.automation-ref }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          check-latest: true
+          package-manager-cache: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Install Crabbox on macOS
+        if: matrix.target == 'macos'
+        run: brew install openclaw/tap/crabbox
+      - name: Install the current verified Crabbox on Ubuntu
+        if: matrix.target == 'ubuntu'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir="$RUNNER_TEMP/crabbox-install"
+          mkdir -p "$dir" "$RUNNER_TEMP/crabbox-bin"
+          tag=$(gh release view -R openclaw/crabbox --json tagName --jq .tagName)
+          gh release download "$tag" -R openclaw/crabbox -D "$dir" \
+            -p 'crabbox_*_linux_amd64.tar.gz' -p checksums.txt
+          archive=$(find "$dir" -name 'crabbox_*_linux_amd64.tar.gz' -maxdepth 1 -print)
+          (cd "$dir" && grep "$(basename "$archive")$" checksums.txt | sha256sum -c -)
+          tar -xzf "$archive" -C "$dir"
+          install -m 755 "$dir/crabbox" "$RUNNER_TEMP/crabbox-bin/crabbox"
+          cp -R "$dir/crabbox-runtime" "$RUNNER_TEMP/crabbox-bin/crabbox-runtime"
+          echo "$RUNNER_TEMP/crabbox-bin" >> "$GITHUB_PATH"
+      - name: Create isolated run state
+        run: |
+          root=$(mktemp -d "$RUNNER_TEMP/piab.XXXXXX")
+          mkdir -m 700 "$root/home" "$root/tmp" "$root/npm-cache"
+          touch "$root/npmrc" "$root/npm-globalrc"
+          {
+            echo "PIAB_HOST_ROOT=$root"
+            echo "HOME=$root/home"
+            echo "TMPDIR=$root/tmp"
+            echo "NPM_CONFIG_USERCONFIG=$root/npmrc"
+            echo "NPM_CONFIG_GLOBALCONFIG=$root/npm-globalrc"
+            echo "NPM_CONFIG_CACHE=$root/npm-cache"
+            echo 'NPM_CONFIG_REGISTRY=https://registry.npmjs.org/'
+          } >> "$GITHUB_ENV"
+      - name: Install the reviewed tools and locked dependencies
+        working-directory: extension
+        run: |
+          npm install --global "$(node -p 'require("./package.json").packageManager')"
+          version=$(node --input-type=module -e 'import { TARGET_AGENT_BROWSER_VERSION } from "./scripts/agent-browser-target.mjs"; console.log(TARGET_AGENT_BROWSER_VERSION)')
+          npm install --global "agent-browser@$version"
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install the macOS browser and start task-owned SSH
+        if: matrix.target == 'macos'
+        working-directory: extension
+        run: |
+          agent-browser install
+          bash scripts/ci-release-hosted.sh start-ssh
+      - name: Build the Ubuntu Crabbox image
+        if: matrix.target == 'ubuntu'
+        working-directory: extension
+        run: |
+          docker info
+          npm run smoke:platform:ubuntu-image
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-candidate-${{ inputs.source-ref }}
+          path: ${{ runner.temp }}/npm-candidate
+      - name: Verify the exact platform candidate
+        env:
+          SOURCE_REF: ${{ inputs.source-ref }}
+          RELEASE_SOURCE: ${{ inputs.release-source }}
+          OFFICIAL_VERSION: ${{ inputs.official-version }}
+          FORK_REF: ${{ inputs.fork-ref }}
+        run: |
+          node extension/scripts/release-artifact.mjs --artifact "$RUNNER_TEMP/npm-candidate" \
+            --automation "$GITHUB_WORKSPACE/automation" --repository "$GITHUB_REPOSITORY" \
+            --source-ref "$SOURCE_REF" --release-source "$RELEASE_SOURCE" \
+            --official-version "$OFFICIAL_VERSION" --fork-ref "$FORK_REF"
+      - name: Run both required suites on the native target
+        working-directory: extension
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          npm run check:platform-smoke
+          node scripts/platform-smoke.mjs doctor --target "$TARGET"
+          node scripts/platform-smoke.mjs run --target "$TARGET"
+      - name: Recheck the exact candidate and source
+        env:
+          SOURCE_REF: ${{ inputs.source-ref }}
+          RELEASE_SOURCE: ${{ inputs.release-source }}
+          OFFICIAL_VERSION: ${{ inputs.official-version }}
+          FORK_REF: ${{ inputs.fork-ref }}
+        run: |
+          node extension/scripts/release-artifact.mjs --artifact "$RUNNER_TEMP/npm-candidate" \
+            --automation "$GITHUB_WORKSPACE/automation" --repository "$GITHUB_REPOSITORY" \
+            --source-ref "$SOURCE_REF" --release-source "$RELEASE_SOURCE" \
+            --official-version "$OFFICIAL_VERSION" --fork-ref "$FORK_REF"
+      - name: Retain platform evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-release-platform-${{ matrix.target }}-${{ inputs.source-ref }}
+          path: |
+            extension/.artifacts/platform-smoke
+            ${{ env.PIAB_HOST_ROOT }}/ssh/sshd.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Stop task-owned macOS SSH
+        if: always() && matrix.target == 'macos' && env.PIAB_HOST_ROOT != ''
+        working-directory: extension
+        run: bash scripts/ci-release-hosted.sh stop-ssh
