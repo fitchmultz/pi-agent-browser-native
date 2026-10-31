@@ -108,7 +108,7 @@ async function readDaemonGeneration(
 	}
 	const start = await readProcessStartIdentity(runtime.backgroundPid, process.platform, {
 		signal: options.signal,
-		deadline: Date.now() + (options.timeoutMs ?? 5_000),
+		deadline: performance.now() + (options.timeoutMs ?? 5_000),
 	});
 	return start !== undefined && start !== ""
 		? JSON.stringify({

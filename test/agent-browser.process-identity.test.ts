@@ -63,7 +63,7 @@ for (const cancel of [false, true]) {
 					controller.abort();
 				}, 50)
 			: undefined;
-		const started = Date.now();
+		const started = performance.now();
 		try {
 			assert.equal(
 				await readProcessStartIdentity(process.pid, process.platform, {
@@ -75,7 +75,7 @@ for (const cancel of [false, true]) {
 			assert.equal(launched, 1, "exhausted budget must not launch fallback helpers");
 			assert.equal(dispatched, 1, "the deadline must terminate a genuinely spawned native helper");
 			assert.ok(
-				Date.now() - started < 1_000,
+				performance.now() - started < 1_000,
 				"coordination must not wait for the helper's ten-second run",
 			);
 			assert.ok(probes.every((probe) => probe.killed));

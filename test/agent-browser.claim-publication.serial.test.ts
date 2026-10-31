@@ -15,6 +15,7 @@ import {
 } from "../extensions/agent-browser/lib/process-identity.js";
 import { readArray, readRecord, readString, hasErrorCode } from "./helpers/assertions.js";
 import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
+import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 
 type MkdirArguments = readonly [
 	path: Parameters<typeof fs.mkdir>[0],
@@ -414,7 +415,7 @@ test("fault-injection control: timeoutMs zero is an initial publication attempt 
 		await acquireExecutionClaim({
 			identity: f.identity,
 			timeoutMs: 0,
-			deadline: Date.now() + 10_000,
+			deadline: performance.now() + 10_000,
 		}),
 		undefined,
 	);
@@ -449,22 +450,20 @@ for (const boundary of ["first-failure", "wait", "validation"] as const) {
 for (const boundary of ["first-failure", "wait", "validation"] as const) {
 	test(`fault-injection control: original deadline at ${boundary} prevents publication retry`, async (t) => {
 		const f = await fixture(t);
-		const now = Date.now();
-		t.mock.timers.enable({ apis: ["Date"], now });
-		t.after(() => t.mock.timers.reset());
+		const clock = mockMonotonicClock(t);
 		if (boundary === "validation") {
-			f.afterOwnerRead(() => t.mock.timers.tick(1_000));
+			f.afterOwnerRead(() => clock.tick(1_000));
 		}
 		f.intercept(() => {
 			if (boundary === "first-failure") {
-				t.mock.timers.tick(1_000);
+				clock.tick(1_000);
 			} else if (boundary === "wait") {
-				setTimeout(() => t.mock.timers.tick(1_000), 0);
+				setTimeout(() => clock.tick(1_000), 0);
 			}
 			throw injectedFailure();
 		});
 		assert.equal(
-			await acquireExecutionClaim({ identity: f.identity, deadline: now + 100 }),
+			await acquireExecutionClaim({ identity: f.identity, deadline: clock.now() + 100 }),
 			undefined,
 		);
 		assert.equal(f.publications.length, 1);
@@ -475,9 +474,7 @@ for (const boundary of ["first-failure", "wait", "validation"] as const) {
 for (const result of ["success", "EPERM"]) {
 	test(`publication keeps only its initial attempt after preparation spends the budget (${result})`, async (t) => {
 		const f = await fixture(t);
-		const now = Date.now();
-		t.mock.timers.enable({ apis: ["Date"], now });
-		t.after(() => t.mock.timers.reset());
+		const clock = mockMonotonicClock(t);
 		const nativeWriteFile = fs.writeFile;
 		t.mock.method(fs, "writeFile", async (...args: ClaimWriteArguments) => {
 			await nativeWriteFile(...args);
@@ -485,7 +482,7 @@ for (const result of ["success", "EPERM"]) {
 				pathText(args[0]).includes(".candidate-") &&
 				basename(pathText(args[0])) === "owner.json"
 			) {
-				t.mock.timers.tick(1_000);
+				clock.tick(1_000);
 			}
 		});
 		syncBuiltinESMExports();
@@ -494,7 +491,7 @@ for (const result of ["success", "EPERM"]) {
 				throw injectedFailure();
 			}
 		});
-		const lock = await acquireExecutionClaim({ identity: f.identity, deadline: now + 100 });
+		const lock = await acquireExecutionClaim({ identity: f.identity, deadline: clock.now() + 100 });
 		assert.equal(Boolean(lock), result === "success");
 		assert.equal(f.publications.length, 1);
 		assert.equal(f.ownerReads(), 0);
@@ -504,21 +501,20 @@ for (const result of ["success", "EPERM"]) {
 
 test("fault-injection control: default deadline includes coordination preparation time", async (t) => {
 	const f = await fixture(t);
-	t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
-	t.after(() => t.mock.timers.reset());
+	const clock = mockMonotonicClock(t);
 	const nativeLstat = fs.lstat;
 	let prepared = false;
 	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
 		const value = await nativeLstat(...args);
 		if (pathText(args[0]) === dirname(f.base)) {
 			prepared = true;
-			t.mock.timers.tick(900);
+			clock.tick(900);
 		}
 		return value;
 	});
 	syncBuiltinESMExports();
 	f.intercept(() => {
-		t.mock.timers.tick(100);
+		clock.tick(100);
 		throw injectedFailure();
 	});
 	assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);

@@ -305,7 +305,8 @@ class ElectronLaunchAttempt {
 			pid === undefined
 				? undefined
 				: await readProcessStartIdentity(pid, process.platform, {
-						deadline: this.deadlineMs,
+						// Identity budgets are monotonic; carry over the remaining wall-clock launch budget.
+						deadline: performance.now() + (this.deadlineMs - Date.now()),
 						signal: this.options.signal,
 					});
 		const portResult = await pollDevToolsActivePort({

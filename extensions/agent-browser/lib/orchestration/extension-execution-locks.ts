@@ -171,7 +171,7 @@ class BrowserCommandCoordinator {
 	deadline(): number {
 		const url = this.runtime.sessions.pages.get(this.key).tabTarget?.url;
 		return (
-			Date.now() +
+			performance.now() +
 			(this.call.params.timeoutMs ??
 				getCommandAwareProcessTimeoutMs(
 					extractUpstreamCommandTokens(this.call.toolArgs),

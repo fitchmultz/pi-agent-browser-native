@@ -15,6 +15,7 @@ import {
 import childProcess, { spawn, type execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { rmSync } from "node:fs";
 import fs, { chmod, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import net, { createServer } from "node:net";
@@ -27,34 +28,35 @@ import {
 	acquireManagedSessionPolicyLock,
 	getBrowserExecutionLockPath,
 	resolveBrowserExecutionIdentity,
+	withBrowserExecutionLocks,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
 import {
 	openClaimEndpoint,
 	subscribeClaimEndpoint,
 } from "../extensions/agent-browser/lib/browser-execution-claim-endpoint.js";
-import { cleanDeadPolicyArtifacts } from "../extensions/agent-browser/lib/browser-execution-claim-storage.js";
+import {
+	cleanDeadPolicyArtifacts,
+	removeClaimOwnedBy,
+} from "../extensions/agent-browser/lib/browser-execution-claim-storage.js";
 import { getErrorCode } from "../extensions/agent-browser/lib/process-errors.js";
 import {
 	ensureCoordinationDirectory,
 	getCoordinationDirectory,
 } from "../extensions/agent-browser/lib/browser-execution-identity.js";
 import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
+import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 
 const sessionName = `piab-policy-lock-${process.pid}`;
-const originalSocketDir = process.env.PI_AGENT_BROWSER_SOCKET_DIR;
 const socketDir = await fs.mkdtemp(join(tmpdir(), "piab-policy-"));
 process.env.PI_AGENT_BROWSER_SOCKET_DIR = socketDir;
+// node:test can run root after hooks before tests registered after the endpoint probe's top-level
+// await (for example under --test-name-pattern), so this worker keeps its socket root until exit.
+process.once("exit", () => {
+	rmSync(socketDir, { recursive: true, force: true });
+});
 const lockBasePath = getBrowserExecutionLockPath(
 	await resolveBrowserExecutionIdentity({ sessionName, ownedManagedSession: true }),
 );
-test.after(async () => {
-	if (originalSocketDir === undefined) {
-		delete process.env.PI_AGENT_BROWSER_SOCKET_DIR;
-	} else {
-		process.env.PI_AGENT_BROWSER_SOCKET_DIR = originalSocketDir;
-	}
-	await rm(socketDir, { recursive: true, force: true });
-});
 const claimPrefix = `${basename(lockBasePath)}.claim-`;
 
 // Every process's opportunistic GC sweeps the shared coordination directory, so other test runs
@@ -87,6 +89,9 @@ test.afterEach(async () => {
 		// Finish task-owned native claim cleanup before subsequent acquisitions.
 		// oxlint-disable-next-line no-await-in-loop
 		await rm(path, { force: true, recursive: true });
+		// A holder stopped while holding leaves its endpoint name; production removes it with the claim.
+		// oxlint-disable-next-line no-await-in-loop
+		await rm(endpointPath(path), { force: true });
 	}
 });
 
@@ -529,7 +534,7 @@ for (const holdMs of [0, 1_100]) {
 		const lock = await acquireManagedSessionPolicyLock({ sessionName });
 		assert.ok(lock);
 		// A protected native close can outlast the default 1,000 ms acquisition wait.
-		t.mock.timers.enable({ apis: ["Date"], now: Date.now() + holdMs });
+		mockMonotonicClock(t, performance.now() + holdMs);
 		const claimPath = await onlyClaimPath();
 		const reader = await fs.open(join(claimPath, "owner.json"), "r");
 		const nativeRename = fs.rename;
@@ -795,31 +800,51 @@ test(
 	},
 );
 
+/** This process's real owner record, captured before any holder blocks the lock. */
+async function ownOwnerRecord(): Promise<Record<string, unknown>> {
+	const seed = await acquireManagedSessionPolicyLock({ sessionName });
+	assert.ok(seed);
+	const owner = readRecord(
+		JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8")),
+	);
+	await seed.release();
+	return owner;
+}
+
+/** A live contender still choosing its ticket: every waiter polls until it publishes or leaves. */
+async function writeChoosingClaim(owner: Readonly<Record<string, unknown>>) {
+	const token = randomUUID();
+	const path = `${lockBasePath}.claim-${token}`;
+	await mkdir(path, { mode: 0o700 });
+	await writeFile(join(path, "owner.json"), JSON.stringify({ ...owner, token }), { mode: 0o600 });
+	return {
+		path,
+		token,
+		withdraw: async (): Promise<void> => {
+			// Leave through production removal: a polling waiter that reads a half-removed claim
+			// cannot confirm its absence and fails closed, and Windows readers can briefly block
+			// the atomic move, which this retries within its budget.
+			assert.equal(await removeClaimOwnedBy(path, token, performance.now() + 1_000), true);
+		},
+	};
+}
+
 test(
 	"a choosing predecessor that publishes a later ticket never puts the earlier waiter to sleep",
 	{ skip: windowsSkip },
 	async () => {
-		const seed = await acquireManagedSessionPolicyLock({ sessionName });
-		assert.ok(seed);
-		const owner = readRecord(
-			JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8")),
-		);
-		await seed.release();
-		owner.token = randomUUID();
-		const choosingPath = `${lockBasePath}.claim-${readString(owner.token)}`;
-		await mkdir(choosingPath, { mode: 0o700 });
-		await writeFile(join(choosingPath, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
+		const choosing = await writeChoosingClaim(await ownOwnerRecord());
 		// A live choosing owner listens before its ticket exists, exactly like a real contender.
-		const endpoint = openClaimEndpoint(choosingPath, readString(owner.token));
+		const endpoint = openClaimEndpoint(choosing.path, choosing.token);
 		try {
 			const started = Date.now();
 			const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 3_000 });
 			await delay(150);
-			const candidate = join(choosingPath, ".ticket.tmp");
-			await writeFile(candidate, JSON.stringify({ ticket: 2, token: owner.token, version: 4 }), {
+			const candidate = join(choosing.path, ".ticket.tmp");
+			await writeFile(candidate, JSON.stringify({ ticket: 2, token: choosing.token, version: 4 }), {
 				mode: 0o600,
 			});
-			await fs.rename(candidate, join(choosingPath, "ticket.json"));
+			await fs.rename(candidate, join(choosing.path, "ticket.json"));
 			const lock = await waiting;
 			assert.ok(lock, "the earlier ticket must acquire once the choosing claim publishes later");
 			assert.ok(
@@ -832,6 +857,142 @@ test(
 		}
 	},
 );
+
+/** Steps Date.now() like a system wall-clock change while it keeps advancing in real time. */
+function wallClockStepper(t: TestContext): (offsetMs: number) => void {
+	const realNow = Date.now.bind(Date);
+	let offset = 0;
+	t.mock.method(Date, "now", () => realNow() + offset);
+	return (offsetMs) => {
+		offset = offsetMs;
+	};
+}
+
+async function settleWithin<T>(pending: Promise<T>, ms: number): Promise<{ value: T } | "pending"> {
+	const settled = new AbortController();
+	try {
+		return await Promise.race([
+			pending.then((value) => ({ value })),
+			delay(ms, "pending" as const, { signal: settled.signal }),
+		]);
+	} finally {
+		settled.abort();
+	}
+}
+
+/** Settles a waiter that must time out on its budget, then unblocks it before the next test. */
+async function settlePastBudget(
+	waiting: ReturnType<typeof acquireManagedSessionPolicyLock>,
+	started: number,
+	budgetMs: number,
+	unblock: () => Promise<void>,
+): Promise<{ outcome: unknown; elapsedMs: number }> {
+	const outcome = await settleWithin(waiting, budgetMs + 3_000);
+	const elapsedMs = Math.round(performance.now() - started);
+	// A waiter that outlived its budget must still finish before the next test.
+	await unblock();
+	await (await waiting)?.release();
+	return { outcome, elapsedMs };
+}
+
+test("a polling waiter survives a forward wall-clock step and acquires when its blocker leaves", async (t) => {
+	const choosing = await writeChoosingClaim(await ownOwnerRecord());
+	const stepWallClock = wallClockStepper(t);
+	const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 10_000 });
+	await delay(200);
+	stepWallClock(120_000);
+	await delay(300);
+	await choosing.withdraw();
+	const lock = await waiting;
+	assert.ok(lock, "a forward wall-clock step must not expire the remaining wait");
+	await lock.release();
+});
+
+test("a polling waiter times out on its monotonic budget despite a backward wall-clock step", async (t) => {
+	const choosing = await writeChoosingClaim(await ownOwnerRecord());
+	const stepWallClock = wallClockStepper(t);
+	const started = performance.now();
+	const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 1_000 });
+	await delay(200);
+	stepWallClock(-120_000);
+	// A backward wall-clock step must neither extend the wait nor expire it early.
+	const { outcome, elapsedMs } = await settlePastBudget(waiting, started, 1_000, choosing.withdraw);
+	assert.deepEqual(
+		outcome,
+		{ value: undefined },
+		`the 1000 ms wait did not time out by ${elapsedMs} ms`,
+	);
+	assert.ok(elapsedMs >= 1_000, `the 1000 ms wait expired after ${elapsedMs} ms`);
+});
+
+test(
+	"an endpoint waiter woken after a forward wall-clock step keeps waiting for a remaining contender",
+	{ skip: endpointSkip },
+	async (t) => {
+		const owner = await ownOwnerRecord();
+		const connection = forwardEndpointConnections(t);
+		const holder = spawnHolder(t);
+		assert.deepEqual(await readChildStdoutJsonLine(holder), { acquired: true });
+		const stepWallClock = wallClockStepper(t);
+		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 10_000 });
+		await awaitSubscription(connection);
+		// Let the waiter fall asleep on the holder's endpoint before a new contender starts choosing.
+		await delay(300);
+		const choosing = await writeChoosingClaim(owner);
+		stepWallClock(120_000);
+		const released = readChildStdoutJsonLine(holder);
+		holder.stdin?.write("release\n");
+		assert.deepEqual(await released, { released: true });
+		// The release wakes the waiter while the choosing contender still blocks it.
+		await delay(300);
+		await choosing.withdraw();
+		const lock = await waiting;
+		assert.ok(lock, "a forward wall-clock step must not expire the remaining wait");
+		await lock.release();
+	},
+);
+
+test(
+	"an endpoint waiter times out on its monotonic budget despite a backward wall-clock step",
+	{ skip: endpointSkip },
+	async (t) => {
+		const connection = forwardEndpointConnections(t);
+		const holder = spawnHolder(t);
+		assert.deepEqual(await readChildStdoutJsonLine(holder), { acquired: true });
+		const stepWallClock = wallClockStepper(t);
+		const started = performance.now();
+		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 1_000 });
+		await awaitSubscription(connection);
+		stepWallClock(-120_000);
+		const { outcome, elapsedMs } = await settlePastBudget(waiting, started, 1_000, () =>
+			stopChildProcess(holder),
+		);
+		assert.deepEqual(
+			outcome,
+			{ value: undefined },
+			`the 1000 ms wait did not time out by ${elapsedMs} ms`,
+		);
+		assert.ok(elapsedMs >= 1_000, `the 1000 ms wait expired after ${elapsedMs} ms`);
+	},
+);
+
+test("a forward wall-clock step does not expire a direct call's coordination deadline", async (t) => {
+	const choosing = await writeChoosingClaim(await ownOwnerRecord());
+	const stepWallClock = wallClockStepper(t);
+	const identity = await resolveBrowserExecutionIdentity({
+		sessionName,
+		ownedManagedSession: true,
+	});
+	const ran = withBrowserExecutionLocks(
+		{ identities: [identity], deadline: performance.now() + 10_000, waitOnly: true },
+		async () => "ran",
+	);
+	await delay(200);
+	stepWallClock(120_000);
+	await delay(300);
+	await choosing.withdraw();
+	assert.equal(await ran, "ran");
+});
 
 async function endpointFixtureRoot(t: TestContext): Promise<string> {
 	// The product's own coordination parent: /tmp on macOS/Linux, the private tmpdir on Android.
@@ -853,7 +1014,7 @@ test(
 			claimPath,
 			token,
 			undefined,
-			Date.now() + 2_000,
+			performance.now() + 2_000,
 		);
 		try {
 			assert.equal(subscription?.connected(), true);
@@ -886,7 +1047,7 @@ test(
 				claimPath,
 				token,
 				undefined,
-				Date.now() + 2_000,
+				performance.now() + 2_000,
 			);
 			assert.equal(subscription, undefined);
 			assert.ok(

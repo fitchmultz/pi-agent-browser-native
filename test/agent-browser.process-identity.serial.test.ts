@@ -205,8 +205,9 @@ test(
 					undefined,
 			);
 			assert.ok(
-				(await readProcessStartIdentity(foreign.pid, "win32", { deadline: Date.now() - 1 })) ===
-					undefined,
+				(await readProcessStartIdentity(foreign.pid, "win32", {
+					deadline: performance.now() - 1,
+				})) === undefined,
 			);
 			assert.equal(observed.samples().length, 3, "expired or cancelled budgets must not dispatch");
 		} finally {

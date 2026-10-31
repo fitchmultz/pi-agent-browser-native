@@ -93,7 +93,10 @@ function sleep(
 	setWake: (wake: (() => void) | undefined) => void,
 ): Promise<void> {
 	return new Promise((resolve) => {
-		const timer = setTimeout(done, Math.max(0, Math.min(deadline - Date.now(), MAX_TIMER_MS)));
+		const timer = setTimeout(
+			done,
+			Math.max(0, Math.min(deadline - performance.now(), MAX_TIMER_MS)),
+		);
 		function done(): void {
 			clearTimeout(timer);
 			signal?.removeEventListener("abort", done);

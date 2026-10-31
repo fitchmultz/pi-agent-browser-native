@@ -105,6 +105,7 @@ let currentProcessStartIdentity: string | undefined;
 
 interface ProcessIdentityBudget {
 	readonly signal?: AbortSignal;
+	/** A performance.now() timestamp, unaffected by wall-clock steps. */
 	readonly deadline?: number;
 }
 
@@ -118,14 +119,20 @@ async function executeProcessStartIdentityCommand(
 ): Promise<string | undefined> {
 	if (
 		budget.signal?.aborted === true ||
-		(budget.deadline !== undefined && Date.now() >= budget.deadline)
+		(budget.deadline !== undefined && performance.now() >= budget.deadline)
 	) {
 		debugIdentityBudget(budget);
 		return undefined;
 	}
+	// execFile takes whole milliseconds, and 0 would disable its timeout.
 	const timeout = Math.max(
 		1,
-		Math.min(PROCESS_START_IDENTITY_TIMEOUT_MS, (budget.deadline ?? Infinity) - Date.now()),
+		Math.ceil(
+			Math.min(
+				PROCESS_START_IDENTITY_TIMEOUT_MS,
+				(budget.deadline ?? Infinity) - performance.now(),
+			),
+		),
 	);
 	return await new Promise((resolve) => {
 		execFile(
@@ -246,7 +253,7 @@ async function readUncachedProcessStartIdentity(
 function identityBudgetExpired(budget: ProcessIdentityBudget | undefined): boolean {
 	return (
 		budget?.signal?.aborted === true ||
-		(budget?.deadline !== undefined && Date.now() >= budget.deadline)
+		(budget?.deadline !== undefined && performance.now() >= budget.deadline)
 	);
 }
 
