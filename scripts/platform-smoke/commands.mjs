@@ -10,10 +10,19 @@ function psSingleQuote(value) {
 	return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-export function buildPlatformBuildCommand(targetName, packageName, nodeValidationVersion) {
+export function buildPlatformBuildCommand(
+	targetName,
+	packageName,
+	nodeValidationVersion,
+	candidate,
+) {
 	if (platformFor(targetName) === "powershell") {
-		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\platform-build-windows.ps1 -PackageName ${psSingleQuote(packageName)} -NodeValidationVersion ${psSingleQuote(nodeValidationVersion)}`;
+		const candidateArgs = candidate
+			? ` -CandidatePath ${psSingleQuote(candidate.path)} -CandidateSha256 ${psSingleQuote(candidate.sha256)}`
+			: "";
+		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\platform-build-windows.ps1 -PackageName ${psSingleQuote(packageName)} -NodeValidationVersion ${psSingleQuote(nodeValidationVersion)}${candidateArgs}`;
 	}
+	const candidateHash = `node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(process.argv[1])).digest("hex"))' "$PACK_FILE"`;
 	return [
 		`echo "Starting platform-build in $(pwd) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"`,
 		`RUN_ROOT=".platform-smoke-runs/platform-build-$(date -u +%Y%m%dT%H%M%SZ)-$$"`,
@@ -37,11 +46,21 @@ export function buildPlatformBuildCommand(targetName, packageName, nodeValidatio
 		`cat "$PACK_DIR/npm-pack.stderr.txt"`,
 		`PACK_FILE="$PACK_DIR/$PACK_TARBALL"`,
 		`echo "PLATFORM_NPM_PACK_EXIT=$PACK_EXIT"`,
+		...(candidate
+			? [
+					`CANDIDATE_EXIT=0`,
+					`CANDIDATE_SOURCE=${shellQuote(candidate.path)}`,
+					`PACK_FILE="$PACK_DIR/release-candidate.tgz"`,
+					`if cp "$SOURCE_ROOT/$CANDIDATE_SOURCE" "$PACK_FILE"; then CANDIDATE_BEFORE=$(${candidateHash}); else CANDIDATE_BEFORE=""; fi`,
+					`echo "PLATFORM_CANDIDATE_SHA256_BEFORE=$CANDIDATE_BEFORE"`,
+					`if [ "$CANDIDATE_BEFORE" != ${shellQuote(candidate.sha256)} ]; then CANDIDATE_EXIT=1; fi`,
+				]
+			: []),
 		`echo "PLATFORM_PACKED_TARBALL=$PACK_FILE"`,
 		`PI_CLI="$SOURCE_ROOT/node_modules/.bin/pi"`,
 		`if [ ! -x "$PI_CLI" ]; then PI_CLI="$(command -v pi || true)"; fi`,
 		`echo "PLATFORM_PI_CLI=$PI_CLI"`,
-		`if [ -n "$PACK_TARBALL" ] && [ -f "$PACK_FILE" ]; then (cd "$PI_PROJECT" && npm init -y >"$PACK_DIR/packed-node-install.stdout.txt" 2>"$PACK_DIR/packed-node-install.stderr.txt" && npm install --no-save "$PACK_FILE" >>"$PACK_DIR/packed-node-install.stdout.txt" 2>>"$PACK_DIR/packed-node-install.stderr.txt"); PACKED_NODE_INSTALL_EXIT=$?; else echo "missing tarball" >"$PACK_DIR/packed-node-install.stderr.txt"; PACKED_NODE_INSTALL_EXIT=1; fi`,
+		`if [ -n "$PACK_TARBALL" ] && [ -f "$PACK_FILE" ]${candidate ? ' && [ "$CANDIDATE_EXIT" -eq 0 ]' : ""}; then (cd "$PI_PROJECT" && npm init -y >"$PACK_DIR/packed-node-install.stdout.txt" 2>"$PACK_DIR/packed-node-install.stderr.txt" && npm install --no-save "$PACK_FILE" >>"$PACK_DIR/packed-node-install.stdout.txt" 2>>"$PACK_DIR/packed-node-install.stderr.txt"); PACKED_NODE_INSTALL_EXIT=$?; else echo "missing or invalid tarball" >"$PACK_DIR/packed-node-install.stderr.txt"; PACKED_NODE_INSTALL_EXIT=1; fi`,
 		`echo "PLATFORM_PACKED_NODE_INSTALL_EXIT=$PACKED_NODE_INSTALL_EXIT"`,
 		`echo "--- PACKED_NODE_INSTALL_STDOUT START ---"; cat "$PACK_DIR/packed-node-install.stdout.txt" 2>/dev/null || true; echo "--- PACKED_NODE_INSTALL_STDOUT END ---"`,
 		`echo "--- PACKED_NODE_INSTALL_STDERR START ---"; cat "$PACK_DIR/packed-node-install.stderr.txt" 2>/dev/null || true; echo "--- PACKED_NODE_INSTALL_STDERR END ---"`,
@@ -53,7 +72,14 @@ export function buildPlatformBuildCommand(targetName, packageName, nodeValidatio
 		`echo "PLATFORM_PI_LIST_EXIT=$PI_LIST_EXIT"`,
 		`echo "--- PI_LIST_STDOUT START ---"; cat "$PACK_DIR/pi-list.stdout.txt" 2>/dev/null || true; echo "--- PI_LIST_STDOUT END ---"`,
 		`echo "--- PI_LIST_STDERR START ---"; cat "$PACK_DIR/pi-list.stderr.txt" 2>/dev/null || true; echo "--- PI_LIST_STDERR END ---"`,
-		`if [ "$NODE_VERSION_EXIT" -ne 0 ] || [ "$NPM_CI_EXIT" -ne 0 ] || [ "$VERIFY_EXIT" -ne 0 ] || [ "$PACK_EXIT" -ne 0 ] || [ "$PACKED_NODE_INSTALL_EXIT" -ne 0 ] || [ "$PI_INSTALL_EXIT" -ne 0 ] || [ "$PI_LIST_EXIT" -ne 0 ]; then echo "PLATFORM_BUILD_FAILED"; exit 1; fi`,
+		...(candidate
+			? [
+					`CANDIDATE_AFTER=$(${candidateHash})`,
+					`echo "PLATFORM_CANDIDATE_SHA256_AFTER=$CANDIDATE_AFTER"`,
+					`if [ "$CANDIDATE_AFTER" != ${shellQuote(candidate.sha256)} ]; then CANDIDATE_EXIT=1; fi`,
+				]
+			: []),
+		`if [ "$NODE_VERSION_EXIT" -ne 0 ] || [ "$NPM_CI_EXIT" -ne 0 ] || [ "$VERIFY_EXIT" -ne 0 ] || [ "$PACK_EXIT" -ne 0 ] || [ "$PACKED_NODE_INSTALL_EXIT" -ne 0 ] || [ "$PI_INSTALL_EXIT" -ne 0 ] || [ "$PI_LIST_EXIT" -ne 0 ]${candidate ? ' || [ "$CANDIDATE_EXIT" -ne 0 ]' : ""}; then echo "PLATFORM_BUILD_FAILED"; exit 1; fi`,
 		`echo "PLATFORM_BUILD_OK"`,
 	].join("\n");
 }

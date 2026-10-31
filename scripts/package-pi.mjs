@@ -348,7 +348,10 @@ async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
 export async function verifyPackagedPiLoad(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
 	const { hostCli } = await import("./compat-host.mjs");
-	const { cleanup, packResult, tarballPath } = await packToTemporaryPackageDir(cwd);
+	const { cleanup, packResult, tarballPath } = await packToTemporaryPackageDir(
+		cwd,
+		options.tarballPath,
+	);
 	let session;
 	let tempAgentDir;
 	try {

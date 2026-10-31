@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$PackageName,
-  [Parameter(Mandatory=$true)][string]$NodeValidationVersion
+  [Parameter(Mandatory=$true)][string]$NodeValidationVersion,
+  [string]$CandidatePath = "",
+  [string]$CandidateSha256 = ""
 )
 
 $ErrorActionPreference = "Continue"
@@ -40,6 +42,17 @@ $PackTarball = ($PackOutput | Select-Object -Last 1)
 $PackFile = if ($PackTarball) { Join-Path $PackDir $PackTarball } else { "" }
 if (Test-Path $PackStderr) { Get-Content -Raw $PackStderr }
 Write-Output "PLATFORM_NPM_PACK_EXIT=$PackExit"
+$CandidateExit = 0
+if ($CandidatePath) {
+  $PackFile = Join-Path $PackDir "release-candidate.tgz"
+  $CandidateBefore = ""
+  try {
+    Copy-Item -LiteralPath (Join-Path $SourceRoot $CandidatePath) -Destination $PackFile -ErrorAction Stop
+    $CandidateBefore = (Get-FileHash -LiteralPath $PackFile -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+  } catch { $CandidateExit = 1 }
+  Write-Output "PLATFORM_CANDIDATE_SHA256_BEFORE=$CandidateBefore"
+  if ($CandidateBefore -ne $CandidateSha256) { $CandidateExit = 1 }
+}
 Write-Output "PLATFORM_PACKED_TARBALL=$PackFile"
 
 $PiCli = Join-Path $SourceRoot "node_modules/.bin/pi.cmd"
@@ -49,7 +62,7 @@ Write-Output "PLATFORM_PI_CLI=$PiCli"
 
 $PackedNodeInstallStdout = Join-Path $PackDir "packed-node-install.stdout.txt"
 $PackedNodeInstallStderr = Join-Path $PackDir "packed-node-install.stderr.txt"
-if ($PackFile -and (Test-Path $PackFile)) {
+if ($CandidateExit -eq 0 -and $PackFile -and (Test-Path $PackFile)) {
   Push-Location $PiProject
   & npm init -y >$PackedNodeInstallStdout 2>$PackedNodeInstallStderr
   if ($LASTEXITCODE -eq 0) {
@@ -94,7 +107,14 @@ Write-Output "PLATFORM_PI_LIST_EXIT=$PiListExit"
 Write-Section "PI_LIST_STDOUT" $PiListStdout
 Write-Section "PI_LIST_STDERR" $PiListStderr
 
-if ($NodeVersionExit -ne 0 -or $NpmCiExit -ne 0 -or $VerifyExit -ne 0 -or $PackExit -ne 0 -or $PackedNodeInstallExit -ne 0 -or $PiInstallExit -ne 0 -or $PiListExit -ne 0) {
+if ($CandidatePath) {
+  $CandidateAfter = ""
+  try { $CandidateAfter = (Get-FileHash -LiteralPath $PackFile -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant() } catch { $CandidateExit = 1 }
+  Write-Output "PLATFORM_CANDIDATE_SHA256_AFTER=$CandidateAfter"
+  if ($CandidateAfter -ne $CandidateSha256) { $CandidateExit = 1 }
+}
+
+if ($NodeVersionExit -ne 0 -or $NpmCiExit -ne 0 -or $VerifyExit -ne 0 -or $PackExit -ne 0 -or $PackedNodeInstallExit -ne 0 -or $PiInstallExit -ne 0 -or $PiListExit -ne 0 -or $CandidateExit -ne 0) {
   Write-Output "PLATFORM_BUILD_FAILED"
   exit 1
 }
