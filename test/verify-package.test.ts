@@ -540,6 +540,45 @@ try {
 			namespace: "compiled-namespace",
 			spillRemains: false,
 		});
+
+		const candidateBytes = await readFile(packed.tarballPath);
+		const candidateEntrypoint = await readFile(
+			join(packed.packageDir, "dist/extensions/agent-browser/index.js"),
+		);
+		await writeFile(join(directory, "README.md"), "[broken](not-in-the-candidate.md)\n");
+		const candidateReport = await verifyPackageRelease({
+			cwd: directory,
+			tarballPath: packed.tarballPath,
+		});
+		assert.deepEqual(candidateReport.failures, [], "inspect the candidate docs, not the checkout");
+		const candidateIntegrity = readString(readRecord(packed.packResult).integrity);
+		assert.equal(readString(readRecord(candidateReport.packResult).integrity), candidateIntegrity);
+
+		await writeFile(
+			join(directory, "dist/extensions/agent-browser/index.js"),
+			'throw new Error("checkout entrypoint must not be packed");\n',
+		);
+		const candidateCopy = await packToTemporaryPackageDir(directory, packed.tarballPath);
+		try {
+			assert.deepEqual(
+				await readFile(join(candidateCopy.packageDir, "dist/extensions/agent-browser/index.js")),
+				candidateEntrypoint,
+				"extract the candidate, not a new checkout pack",
+			);
+			assert.equal(readString(readRecord(candidateCopy.packResult).integrity), candidateIntegrity);
+		} finally {
+			await candidateCopy.cleanup();
+		}
+		assert.deepEqual(await readFile(packed.tarballPath), candidateBytes);
+
+		const manifestPath = join(directory, "package.json");
+		const manifest = readRecord(JSON.parse(await readFile(manifestPath, "utf8")));
+		await writeFile(manifestPath, JSON.stringify({ ...manifest, version: "999.0.0" }));
+		const wrongVersion = await verifyPackageRelease({
+			cwd: directory,
+			tarballPath: packed.tarballPath,
+		});
+		assert.match(wrongVersion.failures.join("\n"), /does not match checkout/);
 	} finally {
 		if (previousDryRun === undefined) {
 			delete process.env.npm_config_dry_run;

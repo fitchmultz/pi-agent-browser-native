@@ -1,9 +1,9 @@
 /**
  * Purpose: Verify the published npm tarball shape, package-path Pi loadability, and key repo release prerequisites for pi-agent-browser.
- * Responsibilities: Parse CLI options, run `npm pack`, validate required and forbidden repo and packed files, catch repo-local auto-discovery shims, smoke-load and deterministically smoke-execute the packed package in an isolated Pi resource loader when requested, and print concise release reports.
+ * Responsibilities: Inspect a checkout pack or retained candidate, validate required and forbidden repo and packed files, catch repo-local auto-discovery shims, smoke-load and deterministically smoke-execute the packed package in an isolated Pi resource loader when requested, and print concise release reports.
  * Scope: Packaging and release verification only; code compilation/tests stay in the normal npm verify scripts.
  * Usage: Run with `node scripts/verify-package.mjs`, `node scripts/verify-package.mjs --smoke-pi`, `npm run verify -- package`, `npm run verify -- package-pi`, or `npm run verify -- release`.
- * Invariants/Assumptions: The package is built directly from the current repo checkout, npm and tar are available on PATH, installed Pi SDK APIs match the current dev dependency, and the package should publish only canonical docs plus the extension source and license.
+ * Invariants/Assumptions: The candidate identifies the current checkout, npm and tar are available on PATH, installed Pi SDK APIs match the current dev dependency, and the package should publish only canonical docs plus the extension source and license.
  */
 
 import { access, readFile } from "node:fs/promises";
@@ -12,7 +12,7 @@ import { posix as posixPath, resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { getDryRunPackResult } from "./package-pack.mjs";
+import { getDryRunPackResult, packToTemporaryPackageDir } from "./package-pack.mjs";
 import { verifyPackagedPiLoad } from "./package-pi.mjs";
 export { packToTemporaryPackageDir } from "./package-pack.mjs";
 export {
@@ -51,6 +51,9 @@ Options:
                  runtime dependencies (no lifecycle scripts), and execute a
                  deterministic fake-binary-backed agent_browser --version smoke.
   -h, --help     Show this help text.
+
+Set PI_AGENT_BROWSER_RELEASE_TARBALL to inspect and smoke-load a retained
+candidate instead of packing a new tarball.
 
 Checks:
   1. Required repo files exist and conflicting repo-local autoload shims are absent.
@@ -181,41 +184,51 @@ function isRepositoryReadmeArtwork(sourcePath, markdownLink, targetPath) {
 	);
 }
 
+async function inspectPackedMarkdown({
+	cwd,
+	sourcePath,
+	packedPaths,
+	repositoryArtwork,
+	failures,
+}) {
+	let text;
+	try {
+		text = await readFile(resolve(cwd, sourcePath), "utf8");
+	} catch (error) {
+		failures.push(
+			`Packed Markdown file ${sourcePath} could not be read for link verification: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return;
+	}
+	for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
+		const rawTarget = match[1] ?? "";
+		const targetPath = normalizePackedMarkdownTarget(sourcePath, rawTarget);
+		if (!targetPath || packedPathExists(packedPaths, targetPath)) {
+			continue;
+		}
+		// README artwork is hosted by GitHub; verify it in the repo while keeping it out of npm.
+		if (isRepositoryReadmeArtwork(sourcePath, match[0], targetPath)) {
+			repositoryArtwork.add(targetPath);
+			continue;
+		}
+		failures.push(
+			`Packed Markdown link ${sourcePath} -> ${rawTarget} resolves to missing packed file ${targetPath}.`,
+		);
+	}
+}
+
 export async function collectPackedMarkdownLinkFailures(options) {
-	const { cwd = process.cwd(), packedPaths } = options;
+	const { cwd = process.cwd(), repoCwd = cwd, packedPaths } = options;
 	const failures = [];
 	const repositoryArtwork = new Set();
 	const markdownPaths = [...packedPaths].filter((path) => path.endsWith(".md")).sort();
 	for (const sourcePath of markdownPaths) {
-		let text;
-		try {
-			// Inspect one packaged document at a time, bounding memory and retaining sorted failure order.
-			// oxlint-disable-next-line no-await-in-loop
-			text = await readFile(resolve(cwd, sourcePath), "utf8");
-		} catch (error) {
-			failures.push(
-				`Packed Markdown file ${sourcePath} could not be read for link verification: ${error instanceof Error ? error.message : String(error)}`,
-			);
-			continue;
-		}
-		for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
-			const rawTarget = match[1] ?? "";
-			const targetPath = normalizePackedMarkdownTarget(sourcePath, rawTarget);
-			if (!targetPath || packedPathExists(packedPaths, targetPath)) {
-				continue;
-			}
-			// README artwork is hosted by GitHub; verify it in the repo while keeping it out of npm.
-			if (isRepositoryReadmeArtwork(sourcePath, match[0], targetPath)) {
-				repositoryArtwork.add(targetPath);
-				continue;
-			}
-			failures.push(
-				`Packed Markdown link ${sourcePath} -> ${rawTarget} resolves to missing packed file ${targetPath}.`,
-			);
-		}
+		// Inspect one packaged document at a time, bounding memory and retaining sorted failure order.
+		// oxlint-disable-next-line no-await-in-loop
+		await inspectPackedMarkdown({ cwd, sourcePath, packedPaths, repositoryArtwork, failures });
 	}
 	failures.push(
-		...(await collectMissingPaths(repositoryArtwork, cwd)).map(
+		...(await collectMissingPaths(repositoryArtwork, repoCwd)).map(
 			(path) => `README artwork is missing from the repository: ${path}.`,
 		),
 	);
@@ -334,27 +347,50 @@ function printPiSmokeReport(report) {
 	console.log("Pi package smoke passed.");
 }
 
+async function candidateIdentityFailures(candidate, cwd) {
+	if (!candidate) {
+		return [];
+	}
+	const manifest = JSON.parse(await readFile(resolve(cwd, "package.json"), "utf8"));
+	const { name, version } = candidate.packResult;
+	return name === manifest.name && version === manifest.version
+		? []
+		: [
+				`Candidate ${name}@${version} does not match checkout ${manifest.name}@${manifest.version}.`,
+			];
+}
+
 export async function verifyPackageRelease(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
-	const packResult = await getDryRunPackResult(cwd);
-	const publishContract = await loadPublishContract({ cwd });
-	const missingRepoFiles = await collectMissingPaths(publishContract.requiredRepoFiles, cwd);
-	const forbiddenRepoFiles = await collectPresentPaths(publishContract.forbiddenRepoFiles, cwd);
-	const report = evaluatePackResult({
-		forbiddenRepoFiles,
-		missingRepoFiles,
-		packResult,
-		publishContract,
-	});
-	const packedMarkdownLinkFailures = await collectPackedMarkdownLinkFailures({
-		cwd,
-		packedPaths: report.packedPaths,
-	});
-	return {
-		...report,
-		failures: [...report.failures, ...packedMarkdownLinkFailures],
-		packedMarkdownLinkFailures,
-	};
+	const candidate =
+		options.tarballPath === undefined
+			? undefined
+			: await packToTemporaryPackageDir(cwd, options.tarballPath);
+	try {
+		const packResult = candidate?.packResult ?? (await getDryRunPackResult(cwd));
+		const publishContract = await loadPublishContract({ cwd });
+		const missingRepoFiles = await collectMissingPaths(publishContract.requiredRepoFiles, cwd);
+		const forbiddenRepoFiles = await collectPresentPaths(publishContract.forbiddenRepoFiles, cwd);
+		const report = evaluatePackResult({
+			forbiddenRepoFiles,
+			missingRepoFiles,
+			packResult,
+			publishContract,
+		});
+		const packedMarkdownLinkFailures = await collectPackedMarkdownLinkFailures({
+			cwd: candidate?.packageDir ?? cwd,
+			repoCwd: cwd,
+			packedPaths: report.packedPaths,
+		});
+		const identityFailures = await candidateIdentityFailures(candidate, cwd);
+		return {
+			...report,
+			failures: [...report.failures, ...packedMarkdownLinkFailures, ...identityFailures],
+			packedMarkdownLinkFailures,
+		};
+	} finally {
+		await candidate?.cleanup();
+	}
 }
 
 function isDirectRun(metaUrl, argv = process.argv) {
@@ -362,6 +398,26 @@ function isDirectRun(metaUrl, argv = process.argv) {
 		return false;
 	}
 	return metaUrl === pathToFileURL(argv[1]).href;
+}
+
+function releaseTarballPath() {
+	const path = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
+	if (path !== undefined && path.trim().length === 0) {
+		throw new UsageError("PI_AGENT_BROWSER_RELEASE_TARBALL must name a candidate tarball.");
+	}
+	return path;
+}
+
+async function runPiSmoke(tarballPath, report) {
+	const smokeReport = await verifyPackagedPiLoad({ tarballPath });
+	if (
+		tarballPath !== undefined &&
+		smokeReport.packResult.integrity !== report.packResult.integrity
+	) {
+		throw new Error("Candidate tarball changed between package inspection and Pi smoke.");
+	}
+	printPiSmokeReport(smokeReport);
+	return smokeReport.failures.length > 0 ? 1 : 0;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -372,16 +428,18 @@ export async function main(argv = process.argv.slice(2)) {
 			return 0;
 		}
 
-		const report = await verifyPackageRelease();
+		const tarballPath = releaseTarballPath();
+		const report = await verifyPackageRelease({ tarballPath });
 		printVerificationReport(report, cliArgs);
+		if (tarballPath !== undefined) {
+			console.log(`Candidate integrity: ${report.packResult.integrity}`);
+		}
 		if (report.failures.length > 0) {
 			return 1;
 		}
 
 		if (cliArgs.smokePi) {
-			const smokeReport = await verifyPackagedPiLoad();
-			printPiSmokeReport(smokeReport);
-			return smokeReport.failures.length > 0 ? 1 : 0;
+			return await runPiSmoke(tarballPath, report);
 		}
 
 		return 0;

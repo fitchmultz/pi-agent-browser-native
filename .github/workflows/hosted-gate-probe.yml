@@ -1,0 +1,88 @@
+name: Hosted release gate probe
+
+on:
+  push:
+    branches: [ci/hosted-auto-release-gates]
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    name: Probe hosted macOS and Ubuntu platform gates
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          package-manager-cache: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - name: Install task prerequisites
+        run: |
+          brew install colima docker openclaw/tap/crabbox
+          npm install --global "$(node -p 'require("./package.json").packageManager')"
+          version=$(node --input-type=module -e 'import { TARGET_AGENT_BROWSER_VERSION } from "./scripts/agent-browser-target.mjs"; console.log(TARGET_AGENT_BROWSER_VERSION)')
+          npm install --global "agent-browser@$version"
+      - name: Create isolated run state
+        run: |
+          root=$(mktemp -d "$RUNNER_TEMP/piab-release.XXXXXX")
+          mkdir -m 700 "$root/home" "$root/tmp" "$root/npm-cache" "$root/candidate"
+          touch "$root/npmrc" "$root/npm-globalrc"
+          {
+            echo "PIAB_HOST_ROOT=$root"
+            echo "HOME=$root/home"
+            echo "TMPDIR=$root/tmp"
+            echo "NPM_CONFIG_USERCONFIG=$root/npmrc"
+            echo "NPM_CONFIG_GLOBALCONFIG=$root/npm-globalrc"
+            echo "NPM_CONFIG_CACHE=$root/npm-cache"
+            echo 'NPM_CONFIG_REGISTRY=https://registry.npmjs.org/'
+            echo "COLIMA_PROFILE=piab-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_ENV"
+      - name: Install the exact locked project dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install the upstream browser
+        run: agent-browser install
+      - name: Start task-owned localhost SSH
+        run: bash scripts/ci-release-hosted.sh start-ssh
+      - name: Start task-owned Docker host
+        run: |
+          colima start --profile "$COLIMA_PROFILE" --runtime docker --cpu 2 --memory 6
+          docker info
+      - name: Prepare one retained candidate for the probe
+        run: |
+          npm run build
+          npm pack --json --ignore-scripts --pack-destination "$PIAB_HOST_ROOT/candidate" > "$PIAB_HOST_ROOT/pack.json"
+          file=$(node -p 'require(process.argv[1])[0].filename' "$PIAB_HOST_ROOT/pack.json")
+          echo "PI_AGENT_BROWSER_RELEASE_TARBALL=$PIAB_HOST_ROOT/candidate/$file" >> "$GITHUB_ENV"
+          shasum -a 256 "$PIAB_HOST_ROOT/candidate/$file"
+      - name: Verify platform tooling
+        run: npm run check:platform-smoke
+      - name: Build required Ubuntu image
+        run: npm run smoke:platform:ubuntu-image
+      - name: Verify provider setup
+        run: npm run smoke:platform:doctor
+      - name: Run unchanged required platform suites against retained candidate
+        run: npm run smoke:platform:all
+      - name: Retain platform evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hosted-platform-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/platform-smoke
+            ${{ env.PIAB_HOST_ROOT }}/ssh/sshd.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Stop task-owned services
+        if: always() && env.PIAB_HOST_ROOT != ''
+        run: |
+          bash scripts/ci-release-hosted.sh stop-ssh
+          if [[ -d "$HOME/.colima/$COLIMA_PROFILE" ]]; then
+            colima delete --profile "$COLIMA_PROFILE" --data --force
+          fi

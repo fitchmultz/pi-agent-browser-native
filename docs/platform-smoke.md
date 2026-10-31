@@ -114,6 +114,8 @@ Each required target runs `platform-build` and `browser-dogfood-smoke` on one Cr
 8. Run `pi list --approve` and assert the package is registered under project packages from the packed install.
 9. Assert the release proof did not use `pi -e .` or `pi --extension .`.
 
+When `PI_AGENT_BROWSER_RELEASE_TARBALL` names a retained release candidate, the harness copies it through the ordinary Crabbox workspace sync and installs that archive in step 6 instead of the target-local pack. The target-local `npm pack` still runs. Each target records and checks the candidate SHA-256 before and after installation; the caller remains responsible for comparing the original archive with the shared preparation receipt.
+
 ### `browser-dogfood-smoke`
 
 1. Run `npm ci` in the synced checkout if needed.
