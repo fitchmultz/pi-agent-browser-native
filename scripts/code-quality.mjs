@@ -55,8 +55,16 @@ Examples: npm run lint; npm run lint:agent; npm run quality:scope -- --write`);
 	});
 	// POSIX pipe writes finish asynchronously and spawnSync blocks the event loop, so
 	// flush the whole inventory line before Oxlint writes diagnostics to this stdout.
-	await new Promise((fulfill, reject) => {
-		process.stdout.write(`${inventory}\n`, (error) => (error ? reject(error) : fulfill()));
+	// Like console.log, carry on when stdout cannot be written (for example, a reader
+	// that already closed): the stream emits that error after this callback, so absorb
+	// it there instead of crashing before lint runs and reports its own verdict.
+	await new Promise((fulfill) => {
+		process.stdout.write(`${inventory}\n`, (error) => {
+			if (error) {
+				process.stdout.once("error", fulfill);
+			}
+			fulfill();
+		});
 	});
 	if (mode === "lint") {
 		const child = spawnSync(
