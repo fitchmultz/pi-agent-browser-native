@@ -2,8 +2,6 @@
 
 ## Unreleased
 
-## 0.9.7 - 2026-10-31
-
 ### Changed
 
 - Recommend separately installed stock `agent-browser` 0.41.0 while retaining the stable 0.35.0 runtime floor and no upper cap. Refresh audited help/source metadata, generated guidance, fixtures, and native CI installation across 0.39.3–0.41.0. Document native download persistence, daemon `.config` cleanup, route CORS, config trust, restore skipped origins, and the current non-help MCP integration limitation. Updating metadata does not speed an installation already on 0.41.0.
