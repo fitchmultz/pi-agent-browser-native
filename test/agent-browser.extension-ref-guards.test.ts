@@ -25,6 +25,7 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 
 for (const snapshotFlags of [
 	[],
@@ -2252,6 +2253,7 @@ if (args.includes("snapshot")) {
 					// the Windows CMD launch in a single command string. Freeze coordination and
 					// the 900 ms watchdog until the fixture proves the batch is running.
 					t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+					const coordinationClock = mockMonotonicClock(t);
 					const pending = executeRegisteredTool(
 						harness.tool,
 						harness.ctx,
@@ -2264,11 +2266,13 @@ if (args.includes("snapshot")) {
 						t.mock.timers.tick(900);
 						// Reaping/Windows claim retries must use native timers after the watchdog fires.
 						t.mock.timers.reset();
+						coordinationClock.restore();
 						const result = await pending;
 						assert.equal(result.details?.agentBrowserStarted, true);
 						return result;
 					} finally {
 						t.mock.timers.reset();
+						coordinationClock.restore();
 						realClearTimeout(startupTimer);
 						watcher.close();
 						controller.abort();

@@ -76,6 +76,7 @@ function codePreflight(
 	}
 }
 class BrowserCodeExecution {
+	/** A performance.now() timestamp bounding the whole cell, unaffected by wall-clock steps. */
 	readonly deadline: number;
 	readonly output = createBrowserCodeOutput();
 	readonly nativeEnvironment = getAgentBrowserProcessEnvironment();
@@ -91,7 +92,7 @@ class BrowserCodeExecution {
 		readonly operationCwd: string,
 	) {
 		this.deadline =
-			Date.now() + (invocation.params.timeoutMs ?? AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS);
+			performance.now() + (invocation.params.timeoutMs ?? AGENT_BROWSER_SCRIPT_DEFAULT_TIMEOUT_MS);
 	}
 	start(): void {
 		const { runtime, invocation } = this;
@@ -249,8 +250,8 @@ class BrowserCodeExecution {
 							args,
 							stdin: inner.stdin,
 							timeoutMs: Math.min(
-								inner.timeoutMs ?? this.deadline - Date.now(),
-								Math.max(1, this.deadline - Date.now()),
+								inner.timeoutMs ?? this.remainingMs(),
+								Math.max(1, this.remainingMs()),
 							),
 						},
 						signal: innerSignal,
@@ -272,6 +273,11 @@ class BrowserCodeExecution {
 		return this.output.observe(result);
 	}
 
+	/** Whole milliseconds left in the cell: inner calls and the script child take integer timeouts. */
+	remainingMs(): number {
+		return Math.ceil(this.deadline - performance.now());
+	}
+
 	async runCell(
 		signal: AbortSignal,
 		identity: CodeBrowserIdentity,
@@ -279,7 +285,7 @@ class BrowserCodeExecution {
 		const run = await runAgentBrowserScript({
 			code: this.invocation.params.code,
 			signal,
-			timeoutMs: Math.max(1, this.deadline - Date.now()),
+			timeoutMs: Math.max(1, this.remainingMs()),
 			emitImage: (image) => this.output.emitImage(image),
 			dispatch: (inner, innerSignal) => this.dispatch(inner, innerSignal, identity),
 		});
@@ -344,7 +350,7 @@ class BrowserCodeExecution {
 		const timer = setTimeout(
 			() =>
 				this.controller.abort(new DOMException("Browser code deadline exceeded.", "TimeoutError")),
-			Math.max(0, this.deadline - Date.now()),
+			Math.max(0, this.remainingMs()),
 		);
 		try {
 			const input = this.prepare();

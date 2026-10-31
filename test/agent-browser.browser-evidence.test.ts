@@ -19,6 +19,7 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 
 const urlReads = [
 	["read", "https://public.test/guide.md"],
@@ -233,6 +234,8 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`,
 						// Windows launches the CMD fixture through cross-spawn's wrapped argv, not the
 						// original child_process.spawn argv. Observe the ready child instead of that wrapper.
 						t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realNow() });
+						// Coordination deadlines use the monotonic clock; freeze it with the command budget.
+						const coordinationClock = mockMonotonicClock(t);
 						const state = { settled: false };
 						const pending = executeRegisteredTool(
 							harness.tool,
@@ -278,6 +281,7 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`,
 							t.mock.timers.tick(1);
 							// The timeout has fired; let native reaping and Windows claim retries run normally.
 							t.mock.timers.reset();
+							coordinationClock.restore();
 							// Drain this timed-out variant before changing the shared fixture log/state.
 							// oxlint-disable-next-line no-await-in-loop
 							const timeout = await Promise.race([
@@ -311,6 +315,7 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`,
 						} finally {
 							realClearTimeout(deadlineTimer);
 							t.mock.timers.reset();
+							coordinationClock.restore();
 							controller.abort();
 							// Reap each variant on failure before restoring or removing its shared fixture.
 							// oxlint-disable-next-line no-await-in-loop

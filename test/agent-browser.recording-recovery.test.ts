@@ -25,6 +25,7 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 
 async function withRecorder(
 	mode: string,
@@ -193,6 +194,8 @@ async function executeWithRecordingTimeout(
 		);
 	});
 	t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: realDateNow() });
+	// Coordination deadlines use the monotonic clock; freeze it with the command budget.
+	const coordinationClock = mockMonotonicClock(t);
 	const pending = executeRegisteredTool(
 		harness.tool,
 		harness.ctx,
@@ -216,6 +219,7 @@ async function executeWithRecordingTimeout(
 		return await Promise.race([pending, watchdog]);
 	} finally {
 		t.mock.timers.reset();
+		coordinationClock.restore();
 		watcher.close();
 		controller.abort();
 		try {

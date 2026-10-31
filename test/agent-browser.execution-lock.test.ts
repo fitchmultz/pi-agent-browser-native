@@ -16,6 +16,7 @@ import {
 	withBrowserExecutionLock,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
 import { resolveAgentBrowserSocketDir } from "../extensions/agent-browser/lib/process.js";
+import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 import { withAgentBrowserProcessEnvironment } from "../extensions/agent-browser/lib/process-environment.js";
 
 type WorkerOptions = {
@@ -170,9 +171,10 @@ test("direct-call lock waiting leaves execution to native watchdogs", async (t) 
 	const entered = new Promise<void>((resolve) => {
 		started = resolve;
 	});
-	t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const clock = mockMonotonicClock(t);
 	const pending = withBrowserExecutionLock(
-		{ identity: f.identity, deadline: Date.now() + 1_000, waitOnly: true },
+		{ identity: f.identity, deadline: clock.now() + 1_000, waitOnly: true },
 		async (signal) => {
 			const running = new Promise<void>((resolve) => {
 				setTimeout(resolve, 1_100);
@@ -188,10 +190,13 @@ test("direct-call lock waiting leaves execution to native watchdogs", async (t) 
 	);
 	try {
 		await entered;
+		// Pass the coordination deadline on its own clock, then let the native command finish.
+		clock.tick(1_100);
 		t.mock.timers.tick(1_100);
 		await pending;
 	} finally {
 		t.mock.timers.reset();
+		clock.restore();
 	}
 	assert.deepEqual(await f.claims(), []);
 });
@@ -203,7 +208,7 @@ test("cancelled execution can lend an already-held claim to independently bounde
 		{ PI_AGENT_BROWSER_SOCKET_DIR: f.root, AGENT_BROWSER_SOCKET_DIR: f.root },
 		() =>
 			withBrowserExecutionLock(
-				{ identity: f.identity, signal: controller.signal, deadline: Date.now() + 5_000 },
+				{ identity: f.identity, signal: controller.signal, deadline: performance.now() + 5_000 },
 				async (signal) => {
 					controller.abort();
 					assert.equal(signal.aborted, true);
@@ -474,7 +479,7 @@ test(
 
 test("nested siblings serialize, throws release, and scope upgrades or escaped callbacks fail without waiting", async (t) => {
 	const f = await fixture(t);
-	const options = { identity: f.identity, deadline: Date.now() + 10_000 };
+	const options = { identity: f.identity, deadline: performance.now() + 10_000 };
 	let active = 0;
 	let maximum = 0;
 	let escaped!: () => Promise<void>;
