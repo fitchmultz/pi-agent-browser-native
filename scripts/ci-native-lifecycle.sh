@@ -45,9 +45,7 @@ case "$mode" in
     unset GH_TOKEN
     npm run build
     # A separate stock installation, never a dependency or a custom browser build.
-    browser_version=$(node --input-type=module -e \
-      'import { TARGET_AGENT_BROWSER_VERSION } from "./scripts/agent-browser-target.mjs"; console.log(TARGET_AGENT_BROWSER_VERSION)')
-    npm install --global --prefix "$root/browser" "agent-browser@$browser_version"
+    npm install --global --prefix "$root/browser" agent-browser --allow-scripts=agent-browser
     agent-browser install --with-deps
     {
       agent-browser --version
