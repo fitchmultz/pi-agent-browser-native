@@ -90,6 +90,15 @@ npm run verify -- pre-pr
 
 Lifecycle options can follow `release`: `--model <id>`, `--timeout-ms <ms>`, `--verbose`, and `--keep-artifacts` reach only step 2. Other options and invalid lifecycle values fail before any step runs. For example, `npm run verify -- release --model <provider>/<model>` runs the complete gate with the lifecycle prompts on that model. Without options, step 2 keeps the lifecycle defaults.
 
+When release automation has already prepared a candidate, supply its retained tarball to the same complete gate:
+
+```bash
+PI_AGENT_BROWSER_RELEASE_TARBALL=/absolute/path/to/candidate.tgz \
+  npm run verify -- release --keep-artifacts --verbose
+```
+
+Package verification inspects the supplied archive and its packaged Markdown, checks its name, version, and integrity, and installs a private copy of those same bytes for the isolated Pi smoke. The configured-source lifecycle installs a private copy of the candidate and adds its test-only sentinel to that copy's compiled entrypoint for reload/relaunch checks. The required platform-build suites still pack their target-local checkout, then install the supplied candidate and check its SHA-256 before and after installation on each target. The verifier does not rebuild or delete the supplied file. The caller must compare the candidate with the shared preparation receipt before and after qualification and publish those verified bytes.
+
 When using the documented, maintainer-approved [local macOS alternative](platform-smoke.md#alternate-native-transports), run and inspect that target-local suite separately alongside the remaining release checks. The default composition still requires macOS/Ubuntu; alternate evidence must not be labeled a passing Crabbox matrix.
 
 `npm publish` runs npm’s `prepublishOnly` script from `package.json`, which executes the same `npm run verify -- release` gate and then `npm pack --dry-run`. That concatenated gate is everything in the default `npm run verify` step (generated playbook drift, clean `dist/` build, TypeScript, the unit/fake suite, generated command-reference blocks, and live upstream command-reference sampling against the targeted `agent-browser` on `PATH`), the configured-source lifecycle harness, the packaged Pi smoke in `package-pi`, and the release-blocking Crabbox platform matrix. Using `npm publish --ignore-scripts` skips that contract intentionally.

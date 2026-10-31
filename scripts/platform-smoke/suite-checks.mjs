@@ -28,7 +28,7 @@ export function commonChecks(result, secretViolations, stopResult) {
 	];
 }
 
-export function platformBuildChecks(config, result) {
+export function platformBuildChecks(config, result, candidate) {
 	const stdout = result.stdout;
 	const listOutput = section(stdout, "PI_LIST_STDOUT");
 	const nodeVersion = marker(stdout, "PLATFORM_NODE_VERSION");
@@ -48,6 +48,16 @@ export function platformBuildChecks(config, result) {
 				/PLATFORM_NPM_PACK_EXIT=0/.test(stdout) &&
 				marker(stdout, "PLATFORM_PACKED_TARBALL").length > 0,
 		},
+		...(candidate
+			? [
+					{
+						id: "release-candidate-sha256",
+						fn: () =>
+							marker(stdout, "PLATFORM_CANDIDATE_SHA256_BEFORE") === candidate.sha256 &&
+							marker(stdout, "PLATFORM_CANDIDATE_SHA256_AFTER") === candidate.sha256,
+					},
+				]
+			: []),
 		{ id: "packed-node-install", fn: () => /PLATFORM_PACKED_NODE_INSTALL_EXIT=0/.test(stdout) },
 		{ id: "pi-install-local-package", fn: () => /PLATFORM_PI_INSTALL_EXIT=0/.test(stdout) },
 		{

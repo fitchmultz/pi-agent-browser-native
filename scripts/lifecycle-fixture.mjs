@@ -1,8 +1,11 @@
 /** Isolated package/settings preparation and compiled-source sentinel injection for lifecycle verification. */
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, chmod, cp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { packToTemporaryPackageDir } from "./package-pack.mjs";
+import { installRuntimeConsumer } from "./package-pi.mjs";
 
 const execFile = promisify(execFileCallback);
 const SENTINEL_CUSTOM_TYPE = "piab-lifecycle-sentinel";
@@ -44,6 +47,35 @@ export async function writeSettings({ agentDir, packageDir, sessionDir }) {
 }
 
 export async function copyPackageSource({ packageDir, repoRoot }) {
+	const tarball = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
+	if (tarball !== undefined) {
+		if (tarball.trim().length === 0) {
+			throw new Error("PI_AGENT_BROWSER_RELEASE_TARBALL must name a candidate tarball.");
+		}
+		const candidate = await packToTemporaryPackageDir(repoRoot, tarball);
+		try {
+			const sha256 = createHash("sha256")
+				.update(await readFile(candidate.tarballPath))
+				.digest("hex");
+			const installed = await installRuntimeConsumer(candidate.tarballPath);
+			await cp(installed, packageDir, { recursive: true });
+			await cp(dirname(installed), join(packageDir, "node_modules"), {
+				recursive: true,
+				verbatimSymlinks: true,
+				filter: (path) => path !== installed,
+			});
+			const after = createHash("sha256")
+				.update(await readFile(candidate.tarballPath))
+				.digest("hex");
+			if (after !== sha256) {
+				throw new Error("The retained candidate changed during lifecycle setup.");
+			}
+			console.log(`Configured lifecycle candidate SHA-256: ${sha256}`);
+		} finally {
+			await candidate.cleanup();
+		}
+		return;
+	}
 	await execFile(process.execPath, ["./scripts/build.mjs"], {
 		cwd: repoRoot,
 		maxBuffer: 10 * 1024 * 1024,

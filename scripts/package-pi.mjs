@@ -261,7 +261,7 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
 	assert.ok(JSON.parse(await readFile(marker, "utf8")).includes("agent_browser"));
 }
 
-async function installRuntimeConsumer(tarballPath) {
+export async function installRuntimeConsumer(tarballPath) {
 	const consumerDir = join(dirname(tarballPath), "consumer");
 	await mkdir(consumerDir);
 	await writeFile(
@@ -368,7 +368,10 @@ async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
 export async function verifyPackagedPiLoad(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
 	const { hostCli } = await import("./compat-host.mjs");
-	const { cleanup, packResult, tarballPath } = await packToTemporaryPackageDir(cwd);
+	const { cleanup, packResult, tarballPath } = await packToTemporaryPackageDir(
+		cwd,
+		options.tarballPath,
+	);
 	let session;
 	let tempAgentDir;
 	try {
