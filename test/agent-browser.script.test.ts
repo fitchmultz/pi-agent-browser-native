@@ -3,7 +3,8 @@ import { readRecord, readString, readArray } from "./helpers/assertions.js";
 import { cp, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import childProcess, { execFileSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -213,7 +214,7 @@ host:[typeof process,typeof require,typeof fetch,typeof setTimeout,typeof WebSoc
 	assert.match(imported.error ?? "", /sandbox exited before completion|dynamic import callback/i);
 });
 
-test("code enforces call, output, IPC and time limits and retains partial emissions", async () => {
+test("code enforces call, output, IPC and time limits and retains partial emissions", async (t) => {
 	let dispatched = 0;
 	const calls = await runAgentBrowserScript({
 		code: `for(let i=0;i<${AGENT_BROWSER_SCRIPT_MAX_CALLS + 1};i++) await browser({args:["get","title"]});`,
@@ -248,13 +249,80 @@ test("code enforces call, output, IPC and time limits and retains partial emissi
 		dispatch: async () => successEnvelope("x".repeat(512 * 1_024)),
 	});
 	assert.equal(raw.data, 512 * 1_024);
-	const timedOut = await runAgentBrowserScript({
-		code: `emit("completed prefix"); while(true){}`,
-		timeoutMs: 200,
-		dispatch: async () => successEnvelope(null),
+	const loopEntered = Promise.withResolvers<true>();
+	const controller = new AbortController();
+	const realSetTimeout = setTimeout;
+	const realClearTimeout = clearTimeout;
+	let watchdogTimer: NodeJS.Timeout | undefined;
+	const watchdog = new Promise<never>((_resolve, reject) => {
+		watchdogTimer = realSetTimeout(
+			() => reject(new Error("Code timeout fixture stalled.")),
+			15_000,
+		);
 	});
-	assert.equal(timedOut.timedOut, true);
-	assert.equal(timedOut.data, "completed prefix");
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const spawned = t.mock.method(childProcess, "spawn");
+	syncBuiltinESMExports();
+	let settled = false;
+	const pending = runAgentBrowserScript({
+		// Flush the prefix first; the second call is sent from the unbounded loop.
+		code: `emit("completed prefix");
+await browser({args:["get","title"]});
+let reported = false;
+while(true) {
+  if (!reported) { reported = true; void browser({args:["get","url"]}); }
+}`,
+		timeoutMs: 200,
+		signal: controller.signal,
+		dispatch: async (params) => {
+			if (params.args[1] === "url") {
+				loopEntered.resolve(true);
+			}
+			return successEnvelope(null);
+		},
+	}).then((result) => {
+		settled = true;
+		return result;
+	});
+	const child = spawned.mock.calls[0]?.result;
+	try {
+		assert.ok(child, "the permissioned worker must be spawned");
+		const childHasExited = () => child.exitCode !== null || child.signalCode !== null;
+		await Promise.race([
+			loopEntered.promise,
+			watchdog,
+			pending.then((result) =>
+				assert.fail(`Worker stopped before loop entry: ${JSON.stringify(result)}`),
+			),
+		]);
+		// The parent drains the prefix before the loop's call; let that dispatch finish.
+		await new Promise<void>((resolve) => {
+			setImmediate(resolve);
+		});
+		t.mock.timers.tick(199);
+		assert.equal(settled, false);
+		assert.equal(childHasExited(), false);
+		t.mock.timers.tick(1);
+		const timedOut = await Promise.race([pending, watchdog]);
+		assert.equal(timedOut.ok, false);
+		assert.equal(timedOut.failureCategory, "timeout");
+		assert.equal(timedOut.timedOut, true);
+		assert.equal(timedOut.data, "completed prefix");
+		assert.equal(timedOut.emitCount, 1);
+		assert.equal(timedOut.callCount, 2);
+		assert.equal(timedOut.steps.length, 2);
+		assert.equal(childHasExited(), true, "the worker must be reaped");
+	} finally {
+		realClearTimeout(watchdogTimer);
+		t.mock.timers.reset();
+		controller.abort();
+		if (child?.exitCode === null && child.signalCode === null) {
+			child.kill("SIGKILL");
+		}
+		await Promise.allSettled([pending]);
+		spawned.mock.restore();
+		syncBuiltinESMExports();
+	}
 	for (const code of ["emit(undefined);", "emit(()=>1);"]) {
 		// Finish each serialization attempt before launching the next permissioned child.
 		// oxlint-disable-next-line no-await-in-loop
