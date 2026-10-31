@@ -206,7 +206,7 @@ class ElectronLaunchAttempt {
 	private diagnostics(observation: FailureObservation): ElectronLaunchFailureDiagnostics {
 		return {
 			...observation,
-			elapsedMs: Math.max(0, Date.now() - this.startedAtMs),
+			elapsedMs: Math.round(Math.max(0, performance.now() - this.startedAtMs)),
 			exitCode: this.process.exitCode,
 			exitSignal: this.process.exitSignal,
 			outputCaptured: this.process.outputCaptured,
@@ -305,8 +305,7 @@ class ElectronLaunchAttempt {
 			pid === undefined
 				? undefined
 				: await readProcessStartIdentity(pid, process.platform, {
-						// Identity budgets are monotonic; carry over the remaining wall-clock launch budget.
-						deadline: performance.now() + (this.deadlineMs - Date.now()),
+						deadline: this.deadlineMs,
 						signal: this.options.signal,
 					});
 		const portResult = await pollDevToolsActivePort({
@@ -429,7 +428,8 @@ export async function launchElectronApp(
 		};
 	}
 	const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
-	const startedAtMs = Date.now();
+	// Launch timing is monotonic, so system clock steps neither expire nor extend the budget.
+	const startedAtMs = performance.now();
 	const userDataDir = await createSecureTempDirectory(ELECTRON_PROFILE_DIR_PREFIX);
 	if (isElectronLaunchAborted(options.signal)) {
 		return abortedProfileResult(userDataDir, options, target);

@@ -33,6 +33,8 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 export class WebSearchRequestGate {
+	// A performance.now() timestamp (0 before the first request), so a system clock step neither
+	// skips nor extends the spacing between requests.
 	private lastRequestStartedAt = 0;
 	private tail: Promise<unknown> = Promise.resolve();
 
@@ -41,7 +43,7 @@ export class WebSearchRequestGate {
 			const elapsedMs =
 				this.lastRequestStartedAt === 0
 					? WEB_SEARCH_MIN_REQUEST_INTERVAL_MS
-					: Date.now() - this.lastRequestStartedAt;
+					: performance.now() - this.lastRequestStartedAt;
 			const waitMs = Math.max(0, WEB_SEARCH_MIN_REQUEST_INTERVAL_MS - elapsedMs);
 			if (waitMs > 0) {
 				await sleepWithAbort(waitMs, signal);
@@ -49,7 +51,7 @@ export class WebSearchRequestGate {
 			if (signal?.aborted === true) {
 				signal.throwIfAborted();
 			}
-			this.lastRequestStartedAt = Date.now();
+			this.lastRequestStartedAt = performance.now();
 			return task();
 		};
 		const result = this.tail.then(runTask, runTask);

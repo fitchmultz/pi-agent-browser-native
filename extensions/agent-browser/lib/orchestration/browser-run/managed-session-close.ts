@@ -166,17 +166,18 @@ async function closeUnderPolicy(
 async function closeWithDeadline(options: ManagedSessionCloseOptions): Promise<string | undefined> {
 	const controller = new AbortController();
 	let phase = "policy coordination";
-	let phaseStartedAt = Date.now();
+	// Phase time is diagnostic elapsed time, so it uses the monotonic clock like the timer itself.
+	let phaseStartedAt = performance.now();
 	let timeoutError: string | undefined;
 	const timer = setTimeout(() => {
-		timeoutError = `Managed-session cleanup timed out after ${options.timeoutMs} ms during ${phase} (${Date.now() - phaseStartedAt} ms in this phase).`;
+		timeoutError = `Managed-session cleanup timed out after ${options.timeoutMs} ms during ${phase} (${Math.round(performance.now() - phaseStartedAt)} ms in this phase).`;
 		controller.abort();
 	}, options.timeoutMs);
 	const lifecycle: CloseLifecycle = {
 		signal: controller.signal,
 		enterPhase: (nextPhase) => {
 			phase = nextPhase;
-			phaseStartedAt = Date.now();
+			phaseStartedAt = performance.now();
 		},
 		clearTimer: () => {
 			clearTimeout(timer);

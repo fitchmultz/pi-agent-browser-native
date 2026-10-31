@@ -79,7 +79,7 @@ export async function pollDevToolsActivePort(options: {
 	readonly userDataDir: string;
 }): Promise<DevToolsPortResult> {
 	let devToolsActivePort: ElectronDevToolsActivePortRead | undefined;
-	while (Date.now() <= options.deadlineMs) {
+	while (performance.now() <= options.deadlineMs) {
 		if (isElectronLaunchAborted(options.signal)) {
 			return { devToolsActivePort, failure: "aborted" };
 		}
@@ -117,7 +117,7 @@ export async function pollCdpMetadata(
 	deadlineMs: number,
 	signal?: AbortSignal,
 ): Promise<{ readonly aborted: boolean; readonly metadata?: ElectronLaunchMetadata }> {
-	while (Date.now() <= deadlineMs) {
+	while (performance.now() <= deadlineMs) {
 		if (isElectronLaunchAborted(signal)) {
 			return { aborted: true };
 		}

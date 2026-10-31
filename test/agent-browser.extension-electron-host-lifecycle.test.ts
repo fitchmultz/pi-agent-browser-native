@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { readRecord, readString, readNumber, readArray } from "./helpers/assertions.js";
-import { spawn, type ChildProcess } from "node:child_process";
+import childProcess, { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import fsPromises, {
@@ -40,6 +40,7 @@ import {
 } from "../extensions/agent-browser/lib/electron/launch.js";
 import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
 import { readProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
+import { mockMonotonicClock, settleWithin, wallClockStepper } from "./helpers/monotonic-clock.js";
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
@@ -360,6 +361,173 @@ for (const terminateBeforeCleanup of [false, true]) {
 					child.kill("SIGKILL");
 					await exited;
 				}
+				await rm(tempDir, { force: true, recursive: true });
+			}
+		},
+	);
+}
+
+test(
+	"Electron launch keeps its remaining budget across a forward system clock step",
+	{ concurrency: false },
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-clock-launch-"));
+		let child: ChildProcess | undefined;
+		try {
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir: tempDir,
+				bundleId: "com.example.ClockStepLaunch",
+				launchLogPath: join(tempDir, "launch.json"),
+				name: "Clock Step Launch",
+			});
+			// Step the wall clock when launch first looks for the debugging port, while the app starts.
+			const stepWallClock = wallClockStepper(t);
+			const nativeReadFile = fsPromises.readFile;
+			t.mock.method(
+				fsPromises,
+				"readFile",
+				async (...args: Readonly<Parameters<typeof readFile>>) => {
+					if (
+						basename(args[0] instanceof URL ? args[0].pathname : readString(args[0])) ===
+						"DevToolsActivePort"
+					) {
+						stepWallClock(120_000);
+					}
+					return await nativeReadFile(...args);
+				},
+			);
+			syncBuiltinESMExports();
+			const launched = await launchElectronApp({ appPath: app.appPath, appArgs: app.appArgs });
+			assert.equal(launched.ok, true, launched.ok ? undefined : JSON.stringify(launched.failure));
+			child = launched.value.child;
+			const cleanup = await cleanupElectronLaunchResources({
+				child,
+				record: launched.value.record,
+			});
+			assert.equal(cleanup.partial, false, JSON.stringify(cleanup));
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			if (child && child.exitCode === null && child.signalCode === null) {
+				const exited = once(child, "exit", { signal: AbortSignal.timeout(2_000) });
+				child.kill("SIGKILL");
+				await exited;
+			}
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test(
+	"Electron cleanup ends an app ignoring SIGTERM on its budget despite a backward system clock step",
+	{
+		concurrency: false,
+		skip: process.platform === "win32" ? "Windows cannot ignore SIGTERM" : false,
+	},
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-clock-cleanup-"));
+		let child: ChildProcess | undefined;
+		try {
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir: tempDir,
+				bundleId: "com.example.ClockStepCleanup",
+				ignoreSigterm: true,
+				launchLogPath: join(tempDir, "launch.json"),
+				name: "Clock Step Cleanup",
+			});
+			const launched = await launchElectronApp({ appPath: app.appPath, appArgs: app.appArgs });
+			assert.equal(launched.ok, true, launched.ok ? undefined : JSON.stringify(launched.failure));
+			child = launched.value.child;
+			const stepWallClock = wallClockStepper(t);
+			const started = performance.now();
+			const cleanup = cleanupElectronLaunchResources({
+				child,
+				record: launched.value.record,
+				timeoutMs: 1_000,
+			});
+			// Step the wall clock back after cleanup set its deadline, inside the SIGTERM grace window.
+			stepWallClock(-120_000);
+			const outcome = await settleWithin(cleanup, 4_000);
+			const elapsedMs = Math.round(performance.now() - started);
+			const result = outcome === "pending" ? undefined : outcome.value;
+			assert.ok(result, `cleanup was still waiting after ${elapsedMs} ms`);
+			assert.equal(result.partial, false, JSON.stringify(result));
+			assert.equal(child.signalCode, "SIGKILL", "the app ignoring SIGTERM must be killed");
+		} finally {
+			if (child && child.exitCode === null && child.signalCode === null) {
+				const exited = once(child, "exit", { signal: AbortSignal.timeout(2_000) });
+				child.kill("SIGKILL");
+				await exited;
+			}
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+for (const stepMs of [120_000, -120_000]) {
+	test(
+		`Electron launch failure keeps its SIGTERM grace across a ${stepMs > 0 ? "forward" : "backward"} system clock step`,
+		{
+			concurrency: false,
+			skip: process.platform === "win32" ? "Windows cannot ignore SIGTERM" : false,
+		},
+		async (t) => {
+			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-clock-terminate-"));
+			const app = await writeFakeLaunchableElectronApp({
+				applicationsDir: tempDir,
+				bundleId: "com.example.ClockStepTerminate",
+				ignoreSigterm: true,
+				launchLogPath: join(tempDir, "launch.json"),
+				mode: "no-port-file",
+				name: "Clock Step Terminate",
+			});
+			const stepWallClock = wallClockStepper(t);
+			const signals: { readonly signal: string; readonly atMs: number }[] = [];
+			// Observe the launched app's signals, stepping the wall clock 200 ms into the SIGTERM grace.
+			const nativeSpawn = childProcess.spawn;
+			t.mock.method(
+				childProcess,
+				"spawn",
+				(...args: Readonly<Parameters<typeof childProcess.spawn>>): ChildProcess => {
+					const child = nativeSpawn(...args);
+					const nativeKill = child.kill.bind(child);
+					child.kill = (signal?: NodeJS.Signals | number): boolean => {
+						signals.push({ signal: String(signal), atMs: performance.now() });
+						const sent = nativeKill(signal);
+						if (signal === "SIGTERM") {
+							setTimeout(() => {
+								stepWallClock(stepMs);
+							}, 200);
+						}
+						return sent;
+					};
+					return child;
+				},
+			);
+			syncBuiltinESMExports();
+			const launch = launchElectronApp({
+				appPath: app.appPath,
+				appArgs: app.appArgs,
+				timeoutMs: 500,
+			});
+			try {
+				const outcome = await settleWithin(launch, 4_000);
+				const result = outcome === "pending" ? undefined : outcome.value;
+				assert.ok(result, "failed-launch cleanup was still waiting after 4000 ms");
+				assert.equal(result.ok ? "launched" : result.failure.reason, "timeout");
+				assert.equal(result.ok ? "launched" : result.failure.cleanupError, undefined);
+				const [term, kill] = signals;
+				assert.ok(
+					signals.length === 2 && term.signal === "SIGTERM" && kill.signal === "SIGKILL",
+					JSON.stringify(signals),
+				);
+				const graceMs = Math.round(kill.atMs - term.atMs);
+				assert.ok(graceMs >= 1_000, `SIGKILL followed SIGTERM after ${graceMs} ms`);
+			} finally {
+				// Restoring the clock lets an unfixed wall-clock wait end and kill the app.
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+				await launch;
 				await rm(tempDir, { force: true, recursive: true });
 			}
 		},
@@ -870,7 +1038,7 @@ test(
 				writeLaunchLog: true,
 			},
 		] as const) {
-			// Native timer and filesystem mocks must be restored before the next launch.
+			// Clock and filesystem mocks must be restored before the next launch.
 			// oxlint-disable-next-line no-await-in-loop
 			await t.test(jsonBody === undefined ? mode : "invalid-cdp-object", async () => {
 				const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-failed-${mode}-`));
@@ -895,7 +1063,8 @@ test(
 							),
 						);
 					}
-					t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+					// Launch budgets are monotonic; advance that clock instead of mocking Date.
+					const clock = mockMonotonicClock(t);
 					if (mode === "no-port-file") {
 						// This case tests a missing port file, not how quickly native spawn/capture
 						// setup completes. Expire the unchanged budget after the first real read.
@@ -911,7 +1080,7 @@ test(
 										basename(args[0] instanceof URL ? args[0].pathname : readString(args[0])) ===
 										"DevToolsActivePort"
 									) {
-										t.mock.timers.tick(timeoutMs + 1);
+										clock.tick(timeoutMs + 1);
 									}
 								}
 							},
@@ -933,7 +1102,7 @@ test(
 											return (await nativeJson()) as unknown;
 										} finally {
 											// Only a real response from the launched app's port expires readiness.
-											t.mock.timers.tick(timeoutMs + 1);
+											clock.tick(timeoutMs + 1);
 										}
 									});
 								}
@@ -1010,7 +1179,6 @@ test(
 					});
 				} finally {
 					t.mock.restoreAll();
-					t.mock.timers.reset();
 					syncBuiltinESMExports();
 					await rm(tempDir, { force: true, recursive: true });
 				}

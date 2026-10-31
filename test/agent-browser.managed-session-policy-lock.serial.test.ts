@@ -44,7 +44,7 @@ import {
 	getCoordinationDirectory,
 } from "../extensions/agent-browser/lib/browser-execution-identity.js";
 import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
-import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
+import { mockMonotonicClock, settleWithin, wallClockStepper } from "./helpers/monotonic-clock.js";
 
 const sessionName = `piab-policy-lock-${process.pid}`;
 const socketDir = await fs.mkdtemp(join(tmpdir(), "piab-policy-"));
@@ -857,28 +857,6 @@ test(
 		}
 	},
 );
-
-/** Steps Date.now() like a system wall-clock change while it keeps advancing in real time. */
-function wallClockStepper(t: TestContext): (offsetMs: number) => void {
-	const realNow = Date.now.bind(Date);
-	let offset = 0;
-	t.mock.method(Date, "now", () => realNow() + offset);
-	return (offsetMs) => {
-		offset = offsetMs;
-	};
-}
-
-async function settleWithin<T>(pending: Promise<T>, ms: number): Promise<{ value: T } | "pending"> {
-	const settled = new AbortController();
-	try {
-		return await Promise.race([
-			pending.then((value) => ({ value })),
-			delay(ms, "pending" as const, { signal: settled.signal }),
-		]);
-	} finally {
-		settled.abort();
-	}
-}
 
 /** Settles a waiter that must time out on its budget, then unblocks it before the next test. */
 async function settlePastBudget(

@@ -319,6 +319,8 @@ export async function writeFakeElectronProcessApp(options: {
 export async function writeFakeLaunchableElectronApp(options: {
 	readonly applicationsDir: string;
 	readonly bundleId: string;
+	/** Models an unresponsive app that only SIGKILL stops. */
+	readonly ignoreSigterm?: boolean;
 	readonly includeWebview?: boolean;
 	readonly launchLogPath: string;
 	readonly mode?: "invalid-cdp" | "no-port-file" | "normal";
@@ -334,6 +336,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const mode = ${JSON.stringify(mode)};
+const ignoreSigterm = ${JSON.stringify(options.ignoreSigterm === true)};
 const includeWebview = ${JSON.stringify(options.includeWebview === true)};
 const writeLaunchLog = ${JSON.stringify(options.writeLaunchLog !== false)};
 const args = process.argv.slice(2);
@@ -375,7 +378,7 @@ server.listen(0, "127.0.0.1", () => {
 	if (writeLaunchLog) fs.appendFileSync(${JSON.stringify(options.launchLogPath)}, JSON.stringify({ args, mode, pid: process.pid, port, userDataDir }) + "\\n");
 });
 const shutdown = () => server.close(() => process.exit(0));
-process.on("SIGTERM", shutdown);
+process.on("SIGTERM", ignoreSigterm ? () => {} : shutdown);
 process.on("SIGINT", shutdown);
 `,
 		"utf8",
