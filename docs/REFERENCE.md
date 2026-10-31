@@ -757,11 +757,11 @@ The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/
 
 ## Automatic npm releases (maintainers)
 
-Follow the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases): merge a reviewed PR into `main` with an intentional `package.json` version bump and a matching versioned `CHANGELOG.md` section. Automation never bumps versions, overwrites releases, or republishes an existing version. Once configured and enabled, it runs existing compatibility and native lifecycle checks, qualifies one candidate tarball, then publishes it without an approval step.
+Follow the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) for versioning, publication, and recovery. A release must publish the same version on npm and GitHub from qualified `main` and use the exact checked candidate tarball.
 
-Merging publishes, so before merging check the final PR head (up to date with `main`) and version against [the existing release gates](RELEASE.md#pre-release-checks), including required lifecycle/live-site evidence, artifact checks and all three final reviewer approvals. Apply the documented Windows waiver without claiming a Windows or full composed-gate pass. Merging attests genuine satisfaction of those requirements; it does not create proof. Authenticated, model-backed and paid checks stay outside CI. Automated publication disables npm hooks to publish the already checked bytes; the manual publisher instructions and their gates remain valid.
+Check the final source and candidate against [the existing release gates](RELEASE.md#pre-release-checks), including required lifecycle/live-site evidence, artifact checks and all three final reviewer approvals. Apply the documented Windows waiver without claiming a Windows or full composed-gate pass. Workflow validation is not evidence that publication completed on either service.
 
-Failed/unpublished candidates can retry daily at 12:17 UTC or via manual dispatch of `npm release` on `main`, without another bump. Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed. Workflow validation is not evidence of a completed real OIDC publication.
+Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed. Follow the shared procedure to retry an unpublished candidate.
 
 ## Local development
 
