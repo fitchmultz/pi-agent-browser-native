@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import which from "which";
@@ -62,7 +62,8 @@ function resolveScriptWorkerPath(): string {
 			"Compiled script worker is missing; run npm run build or reinstall pi-agent-browser-native.",
 		);
 	}
-	return workerPath;
+	// Node's permissioned entrypoint cannot traverse an ungranted symlink.
+	return realpathSync(workerPath);
 }
 
 export function createAgentBrowserScriptCloseArgs(sessionName: string): string[] {

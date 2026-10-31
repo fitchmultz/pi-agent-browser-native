@@ -553,6 +553,37 @@ test("missing compiled worker returns a setup failure", async (t) => {
 	assert.match(readString(result.error), /Compiled script worker is missing/);
 });
 
+test("permissioned code runs when the installed module path retains a symlink", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "piab-symlink-worker-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const consumer = join(root, "consumer");
+	await cp(join(process.cwd(), "dist"), join(consumer, "dist"), { recursive: true });
+	await writeFile(join(consumer, "package.json"), JSON.stringify({ type: "module" }));
+	await symlink(
+		join(process.cwd(), "node_modules"),
+		join(consumer, "node_modules"),
+		process.platform === "win32" ? "junction" : "dir",
+	);
+	const linked = join(root, "linked-consumer");
+	await symlink(consumer, linked, process.platform === "win32" ? "junction" : "dir");
+	const runnerUrl = pathToFileURL(
+		join(linked, "dist/extensions/agent-browser/lib/input-modes/script.js"),
+	).href;
+	const output = execFileSync(
+		process.execPath,
+		[
+			"--preserve-symlinks",
+			"--input-type=module",
+			"--eval",
+			`const {runAgentBrowserScript}=await import(${JSON.stringify(runnerUrl)}); process.stdout.write(JSON.stringify(await runAgentBrowserScript({ code: "emit({ answer: 42 })", dispatch: async () => { throw new Error("code must not dispatch"); } })));`,
+		],
+		{ encoding: "utf8" },
+	);
+	const result = readRecord(JSON.parse(output));
+	assert.equal(result.ok, true, readString(result.error ?? ""));
+	assert.deepEqual(result.data, { answer: 42 });
+});
+
 type CodeHarnessView = Pick<
 	ReturnType<typeof createExtensionHarness>,
 	"ctx" | "getTool" | "tool"
