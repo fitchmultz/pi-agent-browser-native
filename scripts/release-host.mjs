@@ -70,15 +70,15 @@ const runtime = {
 	PI_HOST_INDEX: selected.index,
 	PI_HOST_CLI: selected.cli,
 	PI_AGENT_BROWSER_RELEASE_TARBALL: tarball,
-	...(process.env.AGENT_BROWSER_EXECUTABLE_PATH
-		? { AGENT_BROWSER_EXECUTABLE_PATH: process.env.AGENT_BROWSER_EXECUTABLE_PATH }
-		: {}),
 };
 const live = {
 	...runtime,
 	OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
 	PIAB_LIVE_MODEL: model,
 	PIAB_LIVE_OUTPUT: join(output, "live-sites"),
+	...(process.env.AGENT_BROWSER_EXECUTABLE_PATH
+		? { AGENT_BROWSER_EXECUTABLE_PATH: process.env.AGENT_BROWSER_EXECUTABLE_PATH }
+		: {}),
 };
 const execute = (command, args, environment = runtime) =>
 	run(command, args, { cwd: source, env: environment, timeout: undefined, stdio: "inherit" });

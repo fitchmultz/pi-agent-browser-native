@@ -82,6 +82,11 @@ jobs:
         with:
           name: npm-fork-host-${{ inputs.source-ref }}
           path: ${{ runner.temp }}/fork-package
+      - name: Create private host evidence directory
+        id: evidence
+        run: |
+          stat -c '%A %U %G %n' /home "$HOME" "$(dirname "$RUNNER_TEMP")" "$RUNNER_TEMP" /tmp
+          echo "path=$(mktemp -d /tmp/piab-release.XXXXXX)" >> "$GITHUB_OUTPUT"
       - name: Run the full selected-host and live candidate checks
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,17 +102,17 @@ jobs:
             --automation "$GITHUB_WORKSPACE/automation" --repository "$GITHUB_REPOSITORY" \
             --source-ref "$SOURCE_REF" --release-source "$RELEASE_SOURCE" \
             --official-version "$OFFICIAL_VERSION" --fork-ref "$FORK_REF" --host "$HOST" \
-            --output "$RUNNER_TEMP/browser-evidence"
+            --output "${{ steps.evidence.outputs.path }}"
       - name: Retain host, lifecycle and real-site evidence
-        if: always()
+        if: always() && steps.evidence.outputs.path != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-release-host-${{ matrix.host }}-${{ inputs.source-ref }}
           path: |
-            ${{ runner.temp }}/browser-evidence/report.json
-            ${{ runner.temp }}/browser-evidence/live-sites
-            ${{ runner.temp }}/browser-evidence/isolation/tmp/piab-lifecycle-*/artifacts
-            ${{ runner.temp }}/browser-evidence/isolation/tmp/piab-lifecycle-*/sessions
+            ${{ steps.evidence.outputs.path }}/report.json
+            ${{ steps.evidence.outputs.path }}/live-sites
+            ${{ steps.evidence.outputs.path }}/isolation/tmp/piab-lifecycle-*/artifacts
+            ${{ steps.evidence.outputs.path }}/isolation/tmp/piab-lifecycle-*/sessions
           if-no-files-found: warn
           retention-days: 7
 
