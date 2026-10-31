@@ -1061,7 +1061,7 @@ See the [migration guide](docs/TOOL_CONTRACT.md#07-migration). Restart participa
 
 ### Validation
 
-- Reproduced the `pi install -l --approve https://github.com/fitchmultz/pi-agent-browser-native@v0.2.50` source-install failure, then verified production-dependency source builds, project-local GitHub install, project-local npm install, and release gates before publish.
+- Reproduced the GitHub source-install failure with `pi install -l --approve` against version `0.2.50`, then verified production-dependency source builds, project-local GitHub install, project-local npm install, and release gates before publish.
 
 ## 0.2.50 - 2026-06-11
 
