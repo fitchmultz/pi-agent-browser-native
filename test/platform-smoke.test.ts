@@ -351,7 +351,7 @@ test("default platform doctor needs no Windows credentials/provider and keeps se
 		if (name === "crabbox" && words[0] === "doctor") {
 			return Buffer.from('{"ok":true}');
 		}
-		if (name === "npm") {
+		if (name === "npm" || name === "npm.cmd") {
 			return Buffer.from('[{"files":[]}]');
 		}
 		throw new Error("unexpected doctor command");

@@ -85,7 +85,11 @@ function isForbiddenProjectPath(path) {
 	);
 }
 function npmPackFiles() {
-	const output = silent("npm", ["pack", "--dry-run", "--json"], { timeout: 0 });
+	const windows = process.platform === "win32";
+	const output = silent(windows ? "npm.cmd" : "npm", ["pack", "--dry-run", "--json"], {
+		timeout: 0,
+		shell: windows,
+	});
 	if (!output) {
 		return null;
 	}
