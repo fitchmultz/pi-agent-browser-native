@@ -110,7 +110,8 @@ function applyMutation(directory, mutation) {
 
 function verifyRejection(result, mutation) {
 	const stage = [...result.stdout.matchAll(/^> (.+)$/gmu)].at(-1);
-	const stageOutput = stage === undefined ? "" : result.output.slice(stage.index);
+	// Require the diagnostic to survive the shortening applied whenever child output is printed.
+	const stageOutput = stage === undefined ? "" : forLog(result.output.slice(stage.index));
 	if (
 		result.status === 0 ||
 		stage === undefined ||
