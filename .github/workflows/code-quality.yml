@@ -39,10 +39,8 @@ jobs:
         run: |
           npm install --global "$(node -p 'require("./package.json").packageManager')"
           npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install the separate upstream command-reference target
-        run: |
-          version=$(node --input-type=module -e 'import { TARGET_AGENT_BROWSER_VERSION } from "./scripts/agent-browser-target.mjs"; console.log(TARGET_AGENT_BROWSER_VERSION)')
-          npm install --global "agent-browser@$version"
+      - name: Install current upstream for the command-reference check
+        run: npm install --global agent-browser --allow-scripts=agent-browser
       - name: Strict quality acceptance and real failure controls
         run: npm run quality:mutations
       - name: Checks must not rewrite maintained artifacts
