@@ -31,7 +31,7 @@ jobs:
           npm install --global "agent-browser@$version"
       - name: Create isolated run state
         run: |
-          root=$(mktemp -d "$RUNNER_TEMP/piab-release.XXXXXX")
+          root=$(mktemp -d "/tmp/piab.XXXXXX")
           mkdir -m 700 "$root/home" "$root/tmp" "$root/npm-cache" "$root/candidate"
           touch "$root/npmrc" "$root/npm-globalrc"
           {
@@ -42,7 +42,7 @@ jobs:
             echo "NPM_CONFIG_GLOBALCONFIG=$root/npm-globalrc"
             echo "NPM_CONFIG_CACHE=$root/npm-cache"
             echo 'NPM_CONFIG_REGISTRY=https://registry.npmjs.org/'
-            echo "COLIMA_PROFILE=piab-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "COLIMA_PROFILE=gate"
           } >> "$GITHUB_ENV"
       - name: Install the exact locked project dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
