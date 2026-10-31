@@ -32,6 +32,7 @@ function suiteDefinition({ config, targetName, suiteName, leaseSession }) {
 				targetName,
 				config.packageName,
 				config.nodeValidationVersion,
+				leaseSession?.candidate,
 			),
 			timeout: 1_500_000,
 			metadata: { suiteName, modelCalls: 0 },
@@ -48,7 +49,7 @@ function suiteDefinition({ config, targetName, suiteName, leaseSession }) {
 			extract: (suiteDir, result, secretValues) => {
 				writePlatformExtracts(suiteDir, result.stdout, secretValues);
 			},
-			checks: (result) => platformBuildChecks(config, result),
+			checks: (result) => platformBuildChecks(config, result, leaseSession?.candidate),
 		};
 	}
 	if (suiteName === "browser-dogfood-smoke") {
@@ -150,7 +151,7 @@ export async function runTargetSuite({
 	return { ok: assertions.ok, suiteDir, assertions };
 }
 
-export async function runTargetSuites(config, targetName, suiteNames) {
+export async function runTargetSuites(config, targetName, suiteNames, candidate) {
 	const slug = `${config.packageName}-${targetName}`;
 	const runId = makeRunId();
 	const lease = await warmupLease(targetName, slug, config);
@@ -172,7 +173,7 @@ export async function runTargetSuites(config, targetName, suiteNames) {
 				config,
 				targetName,
 				suiteName,
-				leaseSession: { ...lease, dependenciesReady, sync },
+				leaseSession: { ...lease, dependenciesReady, sync, candidate },
 				runId,
 			});
 			results.push(result);

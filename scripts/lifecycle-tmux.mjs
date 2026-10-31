@@ -91,8 +91,25 @@ function shellQuote(value) {
 }
 
 export async function launchPiInTmux(options) {
-	const { agentDir, cwd, fakeBinDir, fakeStateDir, model, paneLogPath, sessionId, tmuxSession } =
-		options;
+	const {
+		agentDir,
+		cwd,
+		fakeBinDir,
+		fakeStateDir,
+		model,
+		paneLogPath,
+		sessionId,
+		tmuxSession,
+		piCommand = "pi",
+		launchArgs = buildPiLaunchArgs({ model, sessionId }),
+	} = options;
+	const environment = [`PI_CODING_AGENT_DIR=${agentDir}`];
+	if (fakeStateDir) {
+		environment.push(`AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_STATE_DIR=${fakeStateDir}`);
+	}
+	if (fakeBinDir) {
+		environment.push(`PATH=${fakeBinDir}${delimiter}${process.env.PATH ?? ""}`);
+	}
 	await killTmuxSession(tmuxSession);
 	const { stdout } = await tmux(tmuxSession, [
 		"new-session",
@@ -105,11 +122,9 @@ export async function launchPiInTmux(options) {
 		"-c",
 		cwd,
 		"env",
-		`PI_CODING_AGENT_DIR=${agentDir}`,
-		`AGENT_BROWSER_PIAB_LIFECYCLE_FAKE_STATE_DIR=${fakeStateDir}`,
-		`PATH=${fakeBinDir}${delimiter}${process.env.PATH ?? ""}`,
-		"pi",
-		...buildPiLaunchArgs({ model, sessionId }),
+		...environment,
+		piCommand,
+		...launchArgs,
 	]);
 	launchedSocketPaths.set(tmuxSession, stdout.trim());
 	if (paneLogPath) {

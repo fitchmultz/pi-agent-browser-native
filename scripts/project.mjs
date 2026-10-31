@@ -108,6 +108,10 @@ Options:
   --target <names>    With platform-smoke mode, comma-separated target list.
   --suite <name>      With platform-smoke mode, run one suite.
 
+Environment:
+  PI_AGENT_BROWSER_RELEASE_TARBALL  Inspect and smoke-load this retained candidate,
+                                   including in each release platform-build suite.
+
 Examples:
   npm run verify
   npm run verify -- command-reference

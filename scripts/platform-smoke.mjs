@@ -5,8 +5,10 @@
  * Scope: Maintainer release verification only; target command rendering and artifact assertions live under scripts/platform-smoke/.
  */
 
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -128,23 +130,56 @@ async function runTargets(args) {
 	const targets = selectedTargets(args);
 	const suites = args.suite ? [args.suite] : config.requiredSuites;
 	validateNames("suite", suites, config.requiredSuites);
-	const results = await Promise.all(
-		targets.map(async (targetName) => {
-			console.log(`\n=== Target: ${targetName} ===`);
-			return { targetName, result: await runTargetSuites(config, targetName, suites) };
-		}),
-	);
-	const failed = results.filter(({ result }) => !result.ok);
-	if (failed.length > 0) {
-		console.error(
-			`\nPlatform smoke failed for ${failed.map(({ targetName }) => targetName).join(", ")}. See ${config.artifactRoot}.`,
+	let stagedCandidate;
+	try {
+		const candidatePath = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
+		if (candidatePath !== undefined && suites.includes("platform-build")) {
+			if (candidatePath.trim().length === 0) {
+				throw new Error("PI_AGENT_BROWSER_RELEASE_TARBALL must name a candidate tarball");
+			}
+			const bytes = await readFile(resolve(candidatePath));
+			const directory = await mkdtemp(resolve(process.cwd(), ".npm-release-candidate-"));
+			stagedCandidate = { directory };
+			await writeFile(join(directory, "candidate"), bytes, { flag: "wx", mode: 0o600 });
+			stagedCandidate.path = `${basename(directory)}/candidate`;
+			stagedCandidate.sha256 = createHash("sha256").update(bytes).digest("hex");
+		}
+		const settled = await Promise.allSettled(
+			targets.map(async (targetName) => {
+				console.log(`\n=== Target: ${targetName} ===`);
+				return {
+					targetName,
+					result: await runTargetSuites(config, targetName, suites, stagedCandidate),
+				};
+			}),
 		);
-		return 1;
+		const errors = settled.filter((result) => result.status === "rejected");
+		if (errors.length > 0) {
+			const messages = errors.map((result) =>
+				result.reason instanceof Error ? result.reason.message : String(result.reason),
+			);
+			throw new AggregateError(
+				errors.map((result) => result.reason),
+				`Platform smoke could not complete: ${messages.join("; ")}`,
+			);
+		}
+		const results = settled.map((result) => result.value);
+		const failed = results.filter(({ result }) => !result.ok);
+		if (failed.length > 0) {
+			console.error(
+				`\nPlatform smoke failed for ${failed.map(({ targetName }) => targetName).join(", ")}. See ${config.artifactRoot}.`,
+			);
+			return 1;
+		}
+		console.log(
+			`\nPlatform smoke passed for ${results.map(({ targetName }) => targetName).join(", ")}.`,
+		);
+		return 0;
+	} finally {
+		if (stagedCandidate) {
+			await rm(stagedCandidate.directory, { recursive: true, force: true });
+		}
 	}
-	console.log(
-		`\nPlatform smoke passed for ${results.map(({ targetName }) => targetName).join(", ")}.`,
-	);
-	return 0;
 }
 
 export async function main(argv = process.argv.slice(2)) {
