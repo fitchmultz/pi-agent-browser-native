@@ -2,11 +2,15 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import {
+	createAgentSession,
+	DefaultResourceLoader,
+	SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { npmCommand, npmExecOptions, packToTemporaryPackageDir } from "./package-pack.mjs";
 
 const execFile = promisify(execFileCallback);
@@ -280,7 +284,9 @@ async function installRuntimeConsumer(tarballPath) {
 		],
 		{ ...npmExecOptions, cwd: consumerDir, maxBuffer: 5 * 1024 * 1024 },
 	);
-	const packageDir = join(consumerDir, "node_modules", "pi-agent-browser-native");
+	const linkedConsumerDir = join(dirname(tarballPath), "linked-consumer");
+	await symlink(consumerDir, linkedConsumerDir, "junction");
+	const packageDir = join(linkedConsumerDir, "node_modules", "pi-agent-browser-native");
 	for (const peer of [
 		"@earendil-works/pi-ai",
 		"@earendil-works/pi-coding-agent",
@@ -291,6 +297,20 @@ async function installRuntimeConsumer(tarballPath) {
 		assert.equal(existsSync(join(packageDir, "node_modules", peer)), false, peer);
 	}
 	return packageDir;
+}
+
+async function verifyPackagedCodeSmoke(session, packageDir) {
+	const tool = session.getToolDefinition("agent_browser_code");
+	assert.equal(typeof tool?.execute, "function", "Packaged agent_browser_code is not executable");
+	const result = await tool.execute(
+		"verify-package-agent-browser-code",
+		{ code: "emit({ answer: 42 });" },
+		undefined,
+		undefined,
+		smokeContext(session, packageDir),
+	);
+	assert.equal(result.isError, false, summarizeToolResult(result));
+	assert.deepEqual(result.details?.data, { answer: 42 });
 }
 
 async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
@@ -366,11 +386,18 @@ export async function verifyPackagedPiLoad(options = {}) {
 			noThemes: true,
 		});
 		await resourceLoader.reload();
+		const sessionManager = SessionManager.create(packageDir, tempAgentDir);
+		sessionManager.appendMessage({
+			role: "user",
+			content: "Run the packaged code smoke.",
+			timestamp: Date.now(),
+		});
 		const result = await createAgentSession({
 			agentDir: tempAgentDir,
 			cwd: packageDir,
 			noTools: "builtin",
 			resourceLoader,
+			sessionManager,
 		});
 		session = result.session;
 		const tools = session.getAllTools();
@@ -388,6 +415,7 @@ export async function verifyPackagedPiLoad(options = {}) {
 			);
 			failures.push(...executionReport.failures);
 			invocation = executionReport.invocation;
+			await verifyPackagedCodeSmoke(session, packageDir);
 			await verifyPackagedCli(packageDir, tempAgentDir, hostCli);
 		}
 		return {
