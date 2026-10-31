@@ -238,14 +238,9 @@ export function getArtifactPreflightValidationError(
 ): string | undefined {
 	return new ArtifactPreflight(options).run();
 }
-export function commandClosesAllSessions(
-	args: readonly string[],
-	stdin: string | undefined,
-): boolean {
-	const parsed = getArtifactCommandSteps(args, stdin);
-	return (
-		(parsed.error === undefined || parsed.error === "") && parsed.steps.some(isCloseAllCommand)
-	);
+/** Native batch rows run in the batch's own session; only a direct close --all closes a namespace. */
+export function commandClosesAllSessions(args: readonly string[]): boolean {
+	return isCloseAllCommand(extractUpstreamCommandTokens([...args]));
 }
 export function commandTouchesArtifactLifecycle(
 	args: readonly string[],

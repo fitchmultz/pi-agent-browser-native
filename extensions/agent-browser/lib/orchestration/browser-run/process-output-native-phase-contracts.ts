@@ -64,7 +64,6 @@ export interface NativeOutputPhase {
 	nativeCommandMayHaveExecuted: boolean;
 	nestedBatchClose: SuccessfulBatchCloseLifecycle | undefined;
 	nestedBatchClosed: boolean;
-	nestedBatchClosesAll: boolean;
 	nestedBatchRemainsActive: boolean;
 	networkRoutesBySession: ReadonlyMap<string, readonly NetworkRouteRecord[]>;
 	parseError: string | undefined;

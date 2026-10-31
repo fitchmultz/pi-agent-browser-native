@@ -152,29 +152,17 @@ export class BrowserCommandResult {
 			(this.dispatch.attachedSessionRequested || this.dispatch.attachedSessionKnown)
 		);
 	}
-	retainAfterCloseAll(key: string): void {
-		if (
-			this.shouldRetainAttachment() &&
-			getSuccessfulBatchCloseLifecycle(this.resultDetails?.batchSteps)?.endsClosed === false
-		) {
-			this.retainAttachment(key);
-		}
-	}
 	reconcileAttachments(): void {
 		if (!this.branchRestoreStillCurrent) {
 			return;
 		}
-		const closeAll = this.resultDetails?.closeAllApplied === true;
-		if (closeAll) {
+		if (this.resultDetails?.closeAllApplied === true) {
 			deleteIdentityKeysInNamespace(this.runtime.sessions.attached, this.resultNamespace);
+			return;
 		}
 		const key =
 			getSessionContextKey(this.resultSessionName, this.resultNamespace) ?? this.resultSessionName;
 		if (key === undefined || key === "") {
-			return;
-		}
-		if (closeAll) {
-			this.retainAfterCloseAll(key);
 			return;
 		}
 		if (this.closesAttachment()) {

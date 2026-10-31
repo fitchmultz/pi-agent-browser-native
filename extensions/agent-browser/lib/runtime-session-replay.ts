@@ -66,16 +66,7 @@ class ManagedSessionReplay {
 			this.#state.sessionName,
 			this.#state.namespace,
 		);
-		const sessionName = event.restorableDetailSessionName;
-		const resultKey =
-			sessionName !== undefined && sessionName.length > 0
-				? getAgentBrowserSessionIdentityKey(sessionName, event.namespace)
-				: undefined;
-		const retainsCurrent = event.nestedBatchRemainsActive && resultKey === restoredKey;
-		if (
-			isAgentBrowserSessionIdentityKeyInNamespace(restoredKey, event.namespace) &&
-			!retainsCurrent
-		) {
+		if (isAgentBrowserSessionIdentityKeyInNamespace(restoredKey, event.namespace)) {
 			this.#close(this.#state);
 		}
 	}

@@ -11,10 +11,7 @@ import test from "node:test";
 
 import { convertBrowserEntries } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
-import {
-	batchHasSuccessfulCloseAll,
-	getSuccessfulBatchCloseLifecycle,
-} from "../extensions/agent-browser/lib/batch-lifecycle.js";
+import { getSuccessfulBatchCloseLifecycle } from "../extensions/agent-browser/lib/batch-lifecycle.js";
 import { shouldCaptureNavigationSummary } from "../extensions/agent-browser/lib/orchestration/browser-run/session-state.js";
 import {
 	SessionPageState,
@@ -46,11 +43,6 @@ function toolEntry(details: Readonly<Record<string, unknown>>, isError = false):
 }
 
 test("getSuccessfulBatchCloseLifecycle treats unidentified transcript rows conservatively", () => {
-	assert.equal(batchHasSuccessfulCloseAll([{ command: ["quit", "--all"], success: true }]), true);
-	assert.equal(
-		batchHasSuccessfulCloseAll([{ command: ["close", "--all"], success: false }]),
-		false,
-	);
 	assert.equal(getSuccessfulBatchCloseLifecycle([{ success: true }]), undefined);
 	const pendingClose = {
 		confirmation_required: true,
@@ -60,12 +52,6 @@ test("getSuccessfulBatchCloseLifecycle treats unidentified transcript rows conse
 	assert.equal(
 		getSuccessfulBatchCloseLifecycle([{ command: ["close"], success: true, result: pendingClose }]),
 		undefined,
-	);
-	assert.equal(
-		batchHasSuccessfulCloseAll([
-			{ command: ["close", "--all"], success: true, result: pendingClose },
-		]),
-		false,
 	);
 	assert.deepEqual(
 		getSuccessfulBatchCloseLifecycle([

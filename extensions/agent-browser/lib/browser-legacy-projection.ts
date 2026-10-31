@@ -4,7 +4,7 @@ import {
 	getAgentBrowserSessionIdentityKey,
 	isAgentBrowserSessionIdentityKeyInNamespace,
 } from "./argv-grammar.js";
-import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import {
 	BROWSER_RESULT_TOOLS,
 	BROWSER_TRANSITION_ENTRY,
@@ -16,7 +16,7 @@ import {
 	type BrowserRecord,
 	type BrowserSnapshot,
 } from "./browser-transcript.js";
-import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.js";
+import { isCloseCommand, resultClosedNamespace } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { isSessionArtifactManifest } from "./results/artifact-manifest.js";
 import { isSuccessfulNativeConfirmedClose } from "./native-confirmation.js";
@@ -218,12 +218,8 @@ function closingLifecycle(ctx: LegacyContext): {
 	readonly endsClosed: boolean;
 } {
 	const close = getSuccessfulBatchCloseLifecycle(ctx.details.batchSteps);
-	const closeAll =
-		ctx.details.closeAllApplied === true ||
-		(!ctx.isError && isCloseAllCommand(ctx.tokens)) ||
-		batchHasSuccessfulCloseAll(ctx.details.batchSteps);
 	return {
-		closeAll,
+		closeAll: resultClosedNamespace(ctx.details, ctx.tokens, !ctx.isError),
 		lifecycleReset: (!ctx.isError && isCloseCommand(ctx.command)) || close !== undefined,
 		endsClosed: close?.endsClosed === true,
 	};

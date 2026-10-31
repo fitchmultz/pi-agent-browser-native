@@ -40,7 +40,6 @@ function createNativeOutputPhase(
 		nativeCommandMayHaveExecuted: false,
 		nestedBatchClose: undefined,
 		nestedBatchClosed: false,
-		nestedBatchClosesAll: false,
 		nestedBatchRemainsActive: false,
 		networkRoutesBySession: ownership.networkRoutesBySession,
 		parseError: undefined,

@@ -40,7 +40,6 @@ export async function runCloseAllNamespaceScenarios(
 						named: false,
 						callerOwned: true,
 						override: undefined,
-						batch: false,
 						ambient: undefined,
 						fresh: false,
 					},
@@ -49,7 +48,6 @@ export async function runCloseAllNamespaceScenarios(
 						named: true,
 						callerOwned: false,
 						override: "",
-						batch: false,
 						ambient: undefined,
 						fresh: false,
 					},
@@ -58,7 +56,6 @@ export async function runCloseAllNamespaceScenarios(
 						named: false,
 						callerOwned: false,
 						override: undefined,
-						batch: false,
 						ambient: rawNamedNamespace,
 						fresh: false,
 					},
@@ -69,16 +66,6 @@ export async function runCloseAllNamespaceScenarios(
 						named: true,
 						callerOwned: false,
 						override: undefined,
-						batch: false,
-						ambient: undefined,
-						fresh: false,
-					},
-					{
-						label: "current-named-batch",
-						named: true,
-						callerOwned: false,
-						override: undefined,
-						batch: true,
 						ambient: undefined,
 						fresh: false,
 					},
@@ -87,7 +74,6 @@ export async function runCloseAllNamespaceScenarios(
 						named: true,
 						callerOwned: false,
 						override: otherScopeNamespace,
-						batch: false,
 						ambient: undefined,
 						fresh: false,
 					},
@@ -96,7 +82,6 @@ export async function runCloseAllNamespaceScenarios(
 						named: true,
 						callerOwned: false,
 						override: undefined,
-						batch: false,
 						ambient: rawNamedNamespace,
 						fresh: true,
 					},
@@ -117,7 +102,6 @@ export async function runCloseAllNamespaceScenarios(
 					: [];
 			const closeNamespacePrefix =
 				scenario.override !== undefined ? ["--namespace", scenario.override] : [];
-			const closeCommand = scenario.batch ? ["batch", "close --all"] : ["close", "--all"];
 			const closeMode = scenario.fresh ? "fresh" : "auto";
 			const reportedNamespace = scenario.override ?? (namespace === "" ? undefined : namespace);
 			const tempDir = await mkdtemp(join(tmpdir(), "piab-close-all-queue-"));
@@ -155,7 +139,7 @@ const waitForGate = (gate) => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
 };
-const closesAll = (command === "close" && commandArgs.includes("--all")) || (command === "batch" && commandArgs.includes("close --all"));
+const closesAll = command === "close" && commandArgs.includes("--all");
 if (closesAll) {
   writeEvent("close-start");
   waitForGate(${JSON.stringify(closeGate)});
@@ -167,9 +151,7 @@ if (closesAll) {
 }
 const data = command === "get" ? { result: "https://safe.example/", url: "https://safe.example/" }
   : command === "tab" ? { tabs: [] } : command === "close" ? { closed: true } : { url: "https://safe.example/" };
-process.stdout.write(JSON.stringify(command === "batch"
-  ? [{ command: ["close", "--all"], data: { closed: true }, success: true }]
-  : { success: true, data }));`,
+process.stdout.write(JSON.stringify({ success: true, data }));`,
 			);
 			const readEvents = async () =>
 				(await readInvocationLog(logPath)).map((entry) => ({
@@ -247,7 +229,8 @@ process.stdout.write(JSON.stringify(command === "batch"
 								args: [
 									...closeNamespacePrefix,
 									...(scenario.fresh ? [] : ["--session", closeSessionName]),
-									...closeCommand,
+									"close",
+									"--all",
 								],
 								sessionMode: closeMode,
 							});
@@ -452,6 +435,8 @@ const data = command === "batch"
       ? { command: step, success: false, error: "Navigation failed after browser launch", result: { lifecycle: { effectiveLaunch: { browserLaunched: true } } } }
     : step[0] === "record" && step[1] === "stop" && fs.existsSync(${JSON.stringify(noRecordingMarker)})
       ? { command: step, success: false, error: "No recording in progress" }
+    : step[0] === "close"
+      ? { command: step, success: true, result: { closed: true } }
       : { command: step, success: true, result: {
       command: step[0],
       path: index === postCloseStopIndex ? postCloseStopPath : step[2],

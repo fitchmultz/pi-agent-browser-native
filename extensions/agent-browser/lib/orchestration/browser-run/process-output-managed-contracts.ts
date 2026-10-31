@@ -4,11 +4,9 @@ export type CloseAllClosesManagedSessionInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
 		| "closeAllApplied"
-		| "nestedBatchRemainsActive"
 		| "priorManagedSessionActive"
 		| "priorManagedSessionName"
 		| "priorManagedSessionNamespace"
-		| "sessionStateKey"
 	>
 > & { readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> } };
 export type ManagedCloseTargetInput = Readonly<
@@ -28,8 +26,6 @@ export type ResolveManagedCloseTargetInput = Readonly<
 		| "managedSessionName"
 		| "managedSessionNamespace"
 		| "nestedBatchClosed"
-		| "nestedBatchRemainsActive"
-		| "sessionStateKey"
 		| "succeeded"
 	>
 > &

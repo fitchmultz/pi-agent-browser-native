@@ -5,7 +5,6 @@ import {
 	scanUpstreamGlobalFlagOccurrences,
 } from "../argv-grammar.js";
 import { extractUpstreamCommandTokens } from "../argv-descriptor.js";
-import { getUpstreamEffectiveBatchSteps } from "../orchestration/batch-stdin.js";
 import { isCloseAllCommand } from "../command-taxonomy.js";
 import { validateToolArgs } from "../runtime.js";
 import type { AgentBrowserScriptBrowserParams } from "./script-types.js";
@@ -68,11 +67,8 @@ export function bindBrowserCodeCall(
 			"A code call uses one browser identity. Set session/namespace on agent_browser_code to choose another browser.",
 		);
 	}
-	const tokens = extractUpstreamCommandTokens(args);
-	if (
-		isCloseAllCommand(tokens) ||
-		getUpstreamEffectiveBatchSteps(tokens, params.stdin).some(isCloseAllCommand)
-	) {
+	// A batch close --all row closes only this cell's own session, like a close row.
+	if (isCloseAllCommand(extractUpstreamCommandTokens(args))) {
 		throw new Error(
 			"Run namespace-wide close --all directly with agent_browser, outside a session-scoped code call.",
 		);

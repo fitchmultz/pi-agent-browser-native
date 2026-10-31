@@ -6,7 +6,7 @@ import {
 	deleteIdentityKeysInNamespace,
 } from "../argv-grammar.js";
 import { extractUpstreamCommandTokens } from "../runtime.js";
-import { isCloseCommand } from "../command-taxonomy.js";
+import { isCloseCommand, resultClosedNamespace } from "../command-taxonomy.js";
 import { isSuccessfulNativeConfirmedClose } from "../read-confirmation.js";
 import { isRecord } from "../parsing.js";
 import { getSessionContextKey } from "./browser-run/session-state.js";
@@ -14,7 +14,6 @@ import { getCleanupResultClosedManagedSessionIdentities } from "./extension-elec
 import {
 	getToolResultArgs,
 	getSuccessfulToolResult,
-	detailsReportCloseAllApplied,
 	isAttachedBrowserInvocation,
 } from "./extension-resource-replay.js";
 
@@ -69,18 +68,11 @@ class AttachmentReplay {
 		}
 	}
 	restoreCloseAll(row: AttachmentRow): boolean {
-		if (!detailsReportCloseAllApplied(row.details, row.succeeded)) {
+		const tokens = extractUpstreamCommandTokens([...row.args]);
+		if (!resultClosedNamespace(row.details, tokens, row.succeeded)) {
 			return false;
 		}
 		deleteIdentityKeysInNamespace(this.keys, row.namespace);
-		if (
-			row.sessionName !== undefined &&
-			row.sessionName !== "" &&
-			row.details.attachedBrowserSession === true &&
-			row.batchCloseLifecycle?.endsClosed === false
-		) {
-			this.keys.add(getSessionContextKey(row.sessionName, row.namespace) ?? row.sessionName);
-		}
 		return true;
 	}
 	closesAttachment(row: AttachmentRow): boolean {

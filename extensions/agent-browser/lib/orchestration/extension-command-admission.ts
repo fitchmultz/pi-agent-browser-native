@@ -368,7 +368,7 @@ class BrowserAdmission {
 			callerOwnedSessionNamespace: namespace,
 			serializeBrowserCommand,
 			callerOwnedSessionQueueKey,
-			closesAllSessions: commandClosesAllSessions(call.toolArgs, call.resolvedInput.toolStdin),
+			closesAllSessions: commandClosesAllSessions(call.toolArgs),
 		};
 	}
 

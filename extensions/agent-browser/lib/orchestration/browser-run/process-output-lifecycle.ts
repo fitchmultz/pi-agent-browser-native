@@ -24,10 +24,7 @@ import {
 	deleteIdentityKeysInNamespace,
 	isAgentBrowserSessionIdentityKeyInNamespace,
 } from "../../argv-grammar.js";
-import {
-	batchHasSuccessfulCloseAll,
-	getSuccessfulBatchCloseLifecycle,
-} from "../../batch-lifecycle.js";
+import { getSuccessfulBatchCloseLifecycle } from "../../batch-lifecycle.js";
 import {
 	isCloseAllCommand,
 	isPageMutationCommand,
@@ -56,9 +53,7 @@ export function observeCloseLifecycle(draft: ObserveCloseLifecycleInput): void {
 			: undefined;
 	draft.nestedBatchClosed = draft.nestedBatchClose?.endsClosed === true;
 	draft.nestedBatchRemainsActive = draft.nestedBatchClose?.endsClosed === false;
-	draft.nestedBatchClosesAll =
-		draft.input.prepared.executionPlan.commandInfo.command === "batch" &&
-		batchHasSuccessfulCloseAll(draft.presentationEnvelope?.data, draft.batchCommandSteps);
+	// Native batch rows run in the batch's own session; only a direct close --all closes a namespace.
 	draft.directCloseAllRequested = isCloseAllCommand(
 		extractUpstreamCommandTokens(draft.input.prepared.commandTokens),
 	);
@@ -112,8 +107,7 @@ export function observeInterruptedMutation(draft: ObserveInterruptedMutationInpu
 		draft.input.prepared.executionPlan.sessionName,
 		draft.input.prepared.executionPlan.namespace,
 	);
-	draft.closeAllApplied =
-		draft.nestedBatchClosesAll || (draft.directCloseAllRequested && draft.succeeded);
+	draft.closeAllApplied = draft.directCloseAllRequested && draft.succeeded;
 }
 
 export function applyCloseAndTraceLifecycle(draft: ApplyCloseAndTraceLifecycleInput): void {
@@ -266,14 +260,12 @@ function applyOutputCloseScope(draft: ApplyOutputCloseScopeInput): void {
 			draft.input.prepared.executionPlan.namespace,
 		);
 		draft.input.state.sessionPageState.clearNamespace(draft.input.prepared.executionPlan.namespace);
-		const retainedSessionKey = draft.nestedBatchRemainsActive ? draft.sessionStateKey : undefined;
 		for (const [key, owner] of draft.input.state.ownedManagedSessions) {
 			if (
 				!isAgentBrowserSessionIdentityKeyInNamespace(
 					key,
 					draft.input.prepared.executionPlan.namespace,
-				) ||
-				key === retainedSessionKey
+				)
 			) {
 				continue;
 			}

@@ -487,7 +487,7 @@ Use `agent_browser_code` for loops, branching, or aggregation. Each call gets fr
 }
 ```
 
-Optional `session` and `namespace` select one native identity for the whole code call; omitted fields follow normal browser defaults. Inner native commands can use batch, auth, profiles, state, connect, and close, but cannot change that identity or issue namespace-wide `close --all`. Use the direct tool for those operations. Parent-side native commands keep normal auth/config/environment behavior. The fresh permissioned Node child exposes no host filesystem, network, process APIs, imports, timers, or dynamic code generation.
+Optional `session` and `namespace` select one native identity for the whole code call; omitted fields follow normal browser defaults. Inner native commands can use batch, auth, profiles, state, connect, and close, but cannot change that identity or issue a direct namespace-wide `close --all` (a native `batch` `close --all` row closes only the cell's session). Use the direct tool for those operations. Parent-side native commands keep normal auth/config/environment behavior. The fresh permissioned Node child exposes no host filesystem, network, process APIs, imports, timers, or dynamic code generation.
 
 Limits: 25 attempted browser calls; 64 KiB source and emitted JSON; 1 MiB per IPC message and 8 MiB cumulative IPC; 120 seconds by default, 300 seconds maximum. Inner calls are serial, even with `Promise.all`. Selected images are limited to eight and 20 MiB total, with the normal configurable inline limit (5 MiB per image by default). See the [code contract](TOOL_CONTRACT.md#agent_browser_code) for failure, cancellation, and image rules.
 

@@ -36,16 +36,14 @@ function closeAllClosesManagedSession(draft: CloseAllClosesManagedSessionInput):
 	const priorKey =
 		getSessionContextKey(draft.priorManagedSessionName, draft.priorManagedSessionNamespace) ??
 		draft.priorManagedSessionName;
-	const targetsPrior =
+	return (
 		draft.closeAllApplied &&
 		draft.priorManagedSessionActive &&
 		isAgentBrowserSessionIdentityKeyInNamespace(
 			priorKey,
 			draft.input.prepared.executionPlan.namespace,
-		);
-	const retainsPrior =
-		targetsPrior && draft.nestedBatchRemainsActive && draft.sessionStateKey === priorKey;
-	return targetsPrior && !retainsPrior;
+		)
+	);
 }
 
 function managedCloseTarget(

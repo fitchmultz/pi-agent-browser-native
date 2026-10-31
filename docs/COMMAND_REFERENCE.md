@@ -250,7 +250,7 @@ Call `agent_browser_code` with `{ code, session?, namespace?, timeoutMs?, output
 }
 ```
 
-The selected browser and authentication persist; JavaScript variables reset. Native batch, auth/profile/state/connect/close and ordinary config/environment remain usable. One cell cannot change its parent-selected session/namespace or issue `close --all`; do those directly outside code. No host APIs, imports, process, filesystem/network access, timers, or dynamic code generation are exposed by the fresh permissioned child.
+The selected browser and authentication persist; JavaScript variables reset. Native batch, auth/profile/state/connect/close and ordinary config/environment remain usable. One cell cannot change its parent-selected session/namespace or issue a direct `close --all`; do those directly outside code. A native `batch` `close --all` row closes only the cell's session. No host APIs, imports, process, filesystem/network access, timers, or dynamic code generation are exposed by the fresh permissioned child.
 
 Inner calls are serial even under `Promise.all`. Bounds are 25 calls, 64 KiB source/emitted JSON, 1 MiB per IPC message, 8 MiB cumulative IPC, and 120 seconds default/300 seconds maximum. `emitImage(shot.imageObservations[0])` selects a verified current-cell image; arbitrary paths are not handles. Up to eight images/20 MiB total are allowed under the configurable inline bound (5 MiB per image by default). Conditional unchanged screenshots have no image.
 
@@ -781,7 +781,7 @@ Comboboxes vary by app. For native `<select>` controls, prefer raw `select <sele
 - `dialog status` — Check whether a dialog is pending.
 - `window new` — Open and activate a new blank window. The wrapper keeps that intentional `about:blank` target rather than selecting the old tab. Old refs are invalid; take a fresh snapshot before further interaction.
 - `close` — Close the current browser session.
-- `close --all` — Close every session.
+- `close --all` — Close every session in the namespace. As a native `batch` row it closes only the batch's session, like `close`.
 
 A canceled cold-session reopen returns an aborted result with its exact session identity and the consumed reopen marker once the CLI starts. Reload does not repeat that navigation. Cancellation before the attempt leaves the remembered URL pending for the next current-page operation.
 

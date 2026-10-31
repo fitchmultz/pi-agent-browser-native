@@ -137,9 +137,10 @@ test("code validates JSON calls without restricting native commands or local aut
 		).args,
 		["--namespace", "", "--session", "chosen", "get", "url"],
 	);
-	assert.throws(
-		() => bindBrowserCodeCall({ args: ["batch", "close --all"] }, { sessionName: "chosen" }),
-		/namespace-wide close/,
+	// Native batch rows run in the batch's session, so this row closes only the code call's browser.
+	assert.deepEqual(
+		bindBrowserCodeCall({ args: ["batch", "close --all"] }, { sessionName: "chosen" }).args,
+		["--namespace", "", "--session", "chosen", "batch", "close --all"],
 	);
 });
 

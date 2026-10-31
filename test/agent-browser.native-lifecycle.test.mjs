@@ -579,6 +579,42 @@ test(
 			assert.equal((await ok({ args: ["get", "url"] })).details.data.url, url);
 			await ok({ args: ["close"] });
 		});
+		await t.test("batch close --all row closes only its batch session", async () => {
+			const managed = (await ok({ args: ["open", url], sessionMode: "fresh" })).details.sessionName;
+			const info = async (name) =>
+				(await ok({ args: ["--session", name, "session", "info"] })).details.data;
+			const nativeActive = (name) =>
+				JSON.parse(
+					execFileSync(
+						"agent-browser",
+						["--json", "--namespace", "", "--session", name, "session", "info"],
+						{
+							encoding: "utf8",
+							timeout: 5000,
+							env: {
+								...process.env,
+								AGENT_BROWSER_SOCKET_DIR: process.env.PI_AGENT_BROWSER_SOCKET_DIR,
+							},
+						},
+					),
+				).data.active;
+			const live = await info(managed);
+			const other = "batch-row";
+			await ok({ args: ["--session", other, "open", url] });
+			assert.equal(nativeActive(other), true);
+			const row = await ok({
+				args: ["--session", other, "batch"],
+				stdin: JSON.stringify([["close", "--all"]]),
+			});
+			assert.equal(row.details.closeAllApplied, undefined);
+			// Native replies to the close row before its daemon removes the pid file and exits.
+			await waitFor(() => nativeActive(other) === false);
+			await session.reload();
+			assert.equal((await info(managed)).pid, live.pid);
+			const current = await ok({ args: ["get", "url"] });
+			assert.deepEqual([current.details.sessionName, current.details.data.url], [managed, url]);
+			await ok({ args: ["close"] });
+		});
 		await t.test("failed journal begin prevents stopping a live native recording", async () => {
 			// A failed native append can remain memory-only; isolate this fault rather than
 			// claiming that the public SDK repairs unpublished journal ancestry.

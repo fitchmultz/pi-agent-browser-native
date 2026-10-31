@@ -1,8 +1,8 @@
 import { extractUpstreamCommandTokens, parseCommandInfo } from "./argv-descriptor.js";
 import { canonicalizeAgentBrowserNamespace, extractExplicitSessionName } from "./argv-grammar.js";
-import { batchHasSuccessfulCloseAll, getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
+import { getSuccessfulBatchCloseLifecycle } from "./batch-lifecycle.js";
 import { getBrowserResultMessage } from "./browser-transcript.js";
-import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.js";
+import { isCloseCommand, resultClosedNamespace } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { isPlainTextInspectionArgs } from "./runtime-args-validation.js";
 import { getRestorableManagedSessionName } from "./runtime-session-identity.js";
@@ -17,9 +17,7 @@ export interface ManagedReplayEvent {
 	readonly namespace?: string;
 	readonly detailSessionName?: string;
 	readonly restoreDisabled: boolean;
-	readonly restorableDetailSessionName?: string;
 	readonly closeAllApplied: boolean;
-	readonly nestedBatchRemainsActive: boolean;
 	readonly managedSessionName?: string;
 	readonly closesSession: boolean;
 	readonly closeSucceeded: boolean;
@@ -163,18 +161,6 @@ export function decodeManagedReplayEvent(
 	return decodeLifecycleEvent(details, args, message.isError, fallbackSessionName);
 }
 
-function closeAllApplied(
-	details: Readonly<Record<string, unknown>>,
-	args: readonly string[],
-	messageIsError: unknown,
-): boolean {
-	return (
-		details.closeAllApplied === true ||
-		(messageIsError !== true && isCloseAllCommand(extractUpstreamCommandTokens(args))) ||
-		batchHasSuccessfulCloseAll(details.batchSteps)
-	);
-}
-
 function decodeLifecycleEvent(
 	details: Readonly<Record<string, unknown>>,
 	args: readonly string[],
@@ -217,9 +203,11 @@ function decodeLifecycleEvent(
 		namespace,
 		detailSessionName: sessionName,
 		restoreDisabled: details.managedSessionRestoreDisabled === true,
-		restorableDetailSessionName,
-		closeAllApplied: closeAllApplied(details, args, messageIsError),
-		nestedBatchRemainsActive,
+		closeAllApplied: resultClosedNamespace(
+			details,
+			extractUpstreamCommandTokens(args),
+			messageIsError !== true,
+		),
 		managedSessionName,
 		closesSession: closesSession || outcomeClosed,
 		closeSucceeded: nestedBatchEndsClosed || outcomeClosed || succeeded,

@@ -1,8 +1,4 @@
 import { isAbsolute } from "node:path";
-import {
-	batchHasSuccessfulCloseAll,
-	getSuccessfulBatchCloseLifecycle,
-} from "../batch-lifecycle.js";
 import { getBrowserResultMessage } from "../browser-transcript.js";
 import { canUseHeadlessCompatibilityUserAgent, extractUpstreamCommandTokens } from "../runtime.js";
 import {
@@ -12,7 +8,7 @@ import {
 } from "../argv-grammar.js";
 import { isRecord } from "../parsing.js";
 import { getAgentBrowserProcessEnvironment } from "../process-environment.js";
-import { isCloseAllCommand, isCloseCommand } from "../command-taxonomy.js";
+import { isCloseCommand, resultClosedNamespace } from "../command-taxonomy.js";
 import { hasLaunchScopedFlagToken } from "../launch-scoped-flags.js";
 import { getActiveElectronRecords, getSessionContextKey } from "./browser-run/session-state.js";
 import { isSuccessfulNativeConfirmedClose } from "../read-confirmation.js";
@@ -36,7 +32,6 @@ interface ResourceReplayRow {
 	readonly sessionMode: "fresh" | "auto" | undefined;
 	readonly usedImplicitSession: boolean;
 	readonly explicitSessionName: string | undefined;
-	readonly batchCloseLifecycle: ReturnType<typeof getSuccessfulBatchCloseLifecycle>;
 	readonly closeAllApplied: boolean;
 	readonly outcome: Readonly<Record<string, unknown>> | undefined;
 	readonly outcomeSucceeded: boolean;
@@ -76,6 +71,7 @@ function parseResourceRow(entry: unknown): ResourceReplayRow | undefined {
 	}
 	const args = stringArgs(details.args) ?? [];
 	const command = stringValue(details.command) ?? extractUpstreamCommandTokens(args)[0];
+	const resultTokens = extractUpstreamCommandTokens(getToolResultArgs(details));
 	const succeeded = getSuccessfulToolResult(details, message);
 	const outcome = getManagedSessionOutcome(details);
 	return {
@@ -91,16 +87,11 @@ function parseResourceRow(entry: unknown): ResourceReplayRow | undefined {
 				: undefined,
 		usedImplicitSession: details.usedImplicitSession === true,
 		explicitSessionName: extractExplicitSessionName(args),
-		batchCloseLifecycle: getSuccessfulBatchCloseLifecycle(details.batchSteps),
-		closeAllApplied: detailsReportCloseAllApplied(details, succeeded),
+		closeAllApplied: resultClosedNamespace(details, resultTokens, succeeded),
 		outcome,
 		...parseOutcomeFacts(outcome),
 		closesSession:
-			isCloseCommand(command) ||
-			isSuccessfulNativeConfirmedClose(
-				extractUpstreamCommandTokens(getToolResultArgs(details)),
-				details.data,
-			),
+			isCloseCommand(command) || isSuccessfulNativeConfirmedClose(resultTokens, details.data),
 	};
 }
 class BranchResourceReplay {
@@ -248,12 +239,8 @@ class BranchResourceReplay {
 		if (!row.closeAllApplied) {
 			return;
 		}
-		const retained =
-			row.batchCloseLifecycle?.endsClosed === false
-				? getSessionContextKey(row.sessionName, row.namespace)
-				: undefined;
 		for (const key of this.events.managedSessionActiveIdentities.keys()) {
-			if (key !== retained && isAgentBrowserSessionIdentityKeyInNamespace(key, row.namespace)) {
+			if (isAgentBrowserSessionIdentityKeyInNamespace(key, row.namespace)) {
 				this.events.managedSessionCloseRanks.set(key, this.eventRank);
 			}
 		}
@@ -331,16 +318,6 @@ export function collectBranchManagedResourceEvents(
 }
 export function getToolResultArgs(details: Readonly<Record<string, unknown>>): string[] {
 	return stringArgs(details.args) ?? stringArgs(details.effectiveArgs) ?? [];
-}
-export function detailsReportCloseAllApplied(
-	details: Readonly<Record<string, unknown>>,
-	succeeded: boolean,
-): boolean {
-	return (
-		details.closeAllApplied === true ||
-		(succeeded && isCloseAllCommand(extractUpstreamCommandTokens(getToolResultArgs(details)))) ||
-		batchHasSuccessfulCloseAll(details.batchSteps)
-	);
 }
 export function isAttachedBrowserInvocation(
 	args: readonly string[],

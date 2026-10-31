@@ -2045,7 +2045,6 @@ test(
 	async (t) => {
 		assert.deepEqual(await runCloseAllNamespaceScenarios(t, "named"), [
 			"current-named",
-			"current-named-batch",
 			"explicit-other",
 			"fresh-ambient",
 		]);
@@ -2496,6 +2495,64 @@ test(
 					{ args: ["pdf", "batch-argument-close.webm"] },
 				);
 				assertReleasedPdf(releasedAfterArgumentBatchClose);
+			},
+		);
+	},
+);
+
+test(
+	"agentBrowserExtension keeps the managed session after another session's batch close --all row",
+	{ concurrency: false },
+	async () => {
+		await withRecordingReservationHarness(
+			"batch-close-all-row",
+			"Record a browser workflow.",
+			async (harness, { tempDir }) => {
+				await mkdir(join(tempDir, "ffmpeg"));
+				// Pi starts the session before any tool call; resume then restores this session's names.
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const recording = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["record", "start", "demo.webm"],
+					sessionMode: "fresh",
+				});
+				assert.equal(recording.isError, false, recording.content.at(0)?.text);
+				const managedSession = readString(readRecord(recording.details).sessionName);
+				// Native 0.35.0-0.41.0 run batch rows in the batch's session, so only "other" closes.
+				const rowClose = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", "other", "batch"],
+					stdin: JSON.stringify([["close", "--all"]]),
+				});
+				assert.equal(rowClose.isError, false, rowClose.content.at(0)?.text);
+				assert.equal(readRecord(rowClose.details).closeAllApplied, undefined);
+				const assertManagedRecordingKept = async (
+					view: Pick<typeof harness, "ctx" | "tool">,
+				): Promise<void> => {
+					const current = await executeRegisteredTool(view.tool, view.ctx, {
+						args: ["get", "url"],
+					});
+					assert.equal(readRecord(current.details).sessionName, managedSession);
+					const reserved = await executeRegisteredTool(view.tool, view.ctx, {
+						args: ["pdf", "demo.webm"],
+					});
+					assert.equal(reserved.isError, true);
+					assert.match(
+						readString(readRecord(reserved.content.at(0)).text),
+						/demo\.webm is reserved by an active recording/,
+					);
+				};
+				await assertManagedRecordingKept(harness);
+				const resumed = createExtensionHarness({
+					branch: harness.ctx.sessionManager.getBranch().slice(),
+					cwd: tempDir,
+					sessionFile: join(tempDir, "session.jsonl"),
+				});
+				await runExtensionEvent(
+					resumed.handlers,
+					"session_start",
+					{ reason: "resume" },
+					resumed.ctx,
+				);
+				await assertManagedRecordingKept(resumed);
 			},
 		);
 	},

@@ -1,5 +1,5 @@
 import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
-import { isCloseAllCommand, isCloseCommand } from "./command-taxonomy.js";
+import { isCloseCommand } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { isSuccessfulNativeConfirmedClose } from "./native-confirmation.js";
 import { detectConfirmationRequired } from "./results/confirmation.js";
@@ -62,26 +62,6 @@ function lifecycleStep(
 		browserLaunched: rowBrowserLaunched(value, result),
 		tokens: command === undefined ? undefined : extractUpstreamCommandTokens(command),
 	};
-}
-
-export function batchHasSuccessfulCloseAll(
-	data: unknown,
-	fallbackCommands: readonly (readonly string[])[] = [],
-): boolean {
-	if (!Array.isArray(data)) {
-		return false;
-	}
-	return data.some((row: unknown, index) => {
-		if (!isRecord(row) || row.success !== true) {
-			return false;
-		}
-		const command = rowCommand(row.command, fallbackCommands.at(index));
-		return (
-			command !== undefined &&
-			!detectConfirmationRequired(row.result) &&
-			isCloseAllCommand(extractUpstreamCommandTokens(command))
-		);
-	});
 }
 
 interface ClosedBatchState extends SuccessfulBatchCloseLifecycle {

@@ -11,6 +11,19 @@ export function isCloseAllCommand(commandTokens: readonly string[]): boolean {
 	return isCloseCommand(commandTokens[0]) && commandTokens.slice(1).includes("--all");
 }
 
+/**
+ * Replays the live namespace-close decision: the recorded `closeAllApplied` receipt, or a
+ * successful direct `close --all`. Native batch rows run in the batch's own session, so a batch
+ * `close --all` row closes only that session.
+ */
+export function resultClosedNamespace(
+	details: Readonly<Record<string, unknown>>,
+	tokens: readonly string[],
+	succeeded: boolean,
+): boolean {
+	return details.closeAllApplied === true || (succeeded && isCloseAllCommand(tokens));
+}
+
 export function isOpenNavigationCommand(command: string | undefined): boolean {
 	return hasCommandCapability(command, "openNavigation");
 }

@@ -16,7 +16,6 @@ export type ObserveCloseLifecycleInput = Readonly<
 		| "directCloseAllRequested"
 		| "nestedBatchClose"
 		| "nestedBatchClosed"
-		| "nestedBatchClosesAll"
 		| "nestedBatchRemainsActive"
 		| "rawCloseStatePath"
 	> & {
@@ -58,7 +57,6 @@ export type ObserveInterruptedMutationInput = Readonly<
 		NativeOutputPhase,
 		| "batchCommandSteps"
 		| "directCloseAllRequested"
-		| "nestedBatchClosesAll"
 		| "parseSucceeded"
 		| "plainTextInspection"
 		| "presentationEnvelope"
@@ -137,10 +135,7 @@ export type ClearReopenedTabLatchInput = Readonly<
 	> & { readonly state: BrowserRunState };
 };
 export type ApplyOutputCloseScopeInput = Readonly<
-	Pick<
-		NativeOutputPhase,
-		"closeAllApplied" | "nestedBatchClose" | "nestedBatchRemainsActive" | "sessionStateKey"
-	>
+	Pick<NativeOutputPhase, "closeAllApplied" | "nestedBatchClose" | "sessionStateKey">
 > &
 	Pick<NativeOutputPhase, "networkRoutesBySession"> & {
 		readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> } & {
