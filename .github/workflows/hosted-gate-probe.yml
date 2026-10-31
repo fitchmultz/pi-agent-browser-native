@@ -58,7 +58,7 @@ jobs:
         run: |
           npm run build
           npm pack --json --ignore-scripts --pack-destination "$PIAB_HOST_ROOT/candidate" > "$PIAB_HOST_ROOT/pack.json"
-          file=$(node -p 'require(process.argv[1])[0].filename' "$PIAB_HOST_ROOT/pack.json")
+          file=$(node -e 'const raw=require(process.argv[1]);const packages=Array.isArray(raw)?raw:Object.values(raw);if(packages.length!==1)throw new Error("Expected one packed package");console.log(packages[0].filename)' "$PIAB_HOST_ROOT/pack.json")
           echo "PI_AGENT_BROWSER_RELEASE_TARBALL=$PIAB_HOST_ROOT/candidate/$file" >> "$GITHUB_ENV"
           shasum -a 256 "$PIAB_HOST_ROOT/candidate/$file"
       - name: Verify platform tooling
