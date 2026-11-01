@@ -26,7 +26,7 @@ on:
     secrets:
       ZAI_API_KEY:
         description: Model credential for the real lifecycle and site checks
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -88,7 +88,7 @@ jobs:
         run: |
           stat -c '%A %U %G %n' /home "$HOME" "$(dirname "$RUNNER_TEMP")" "$RUNNER_TEMP" /tmp
           echo "path=$(mktemp -d /tmp/piab-release.XXXXXX)" >> "$GITHUB_OUTPUT"
-      - name: Run the full selected-host and live candidate checks
+      - name: Run selected-host checks and applicable live candidate checks
         env:
           GH_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
@@ -111,6 +111,7 @@ jobs:
           name: browser-release-host-${{ matrix.host }}-${{ inputs.source-ref }}
           path: |
             ${{ steps.evidence.outputs.path }}/report.json
+            ${{ steps.evidence.outputs.path }}/live-scope/report.json
             ${{ steps.evidence.outputs.path }}/live-sites
             ${{ steps.evidence.outputs.path }}/isolation/tmp/piab-lifecycle-*/artifacts
             ${{ steps.evidence.outputs.path }}/isolation/tmp/piab-lifecycle-*/sessions
