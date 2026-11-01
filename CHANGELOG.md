@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.9.7 - 2026-11-01
+
+<!-- npm-release:unreleased:start -->
 ### Changed
 
 - Preserve a retained npm candidate through package verification, configured-source lifecycle checks, and the required macOS and Ubuntu Crabbox suites.
@@ -35,6 +38,59 @@
 - Time browser execution coordination waits with Node's monotonic `performance.now()` clock instead of the system wall clock. A system clock step (for example an NTP correction or VM resume) no longer makes a waiter give up early or wait past its budget: on Linux a +120 s step had ended a 30 s wait after about 1.5 s, and a −120 s step kept a 5 s wait going until its holder released. This covers polling and owner-endpoint waits, direct-call and code-cell coordination deadlines, and process-identity probe budgets. Persisted claim and file timestamps, including the stale-claim age check, remain wall-clock.
 - Time Electron launch readiness, the 1 s SIGTERM grace after a failed launch, `electron.cleanup` process-exit windows, web-search request spacing, and the phase time in managed-session close timeout messages with the same monotonic clock. On a real Ubuntu guest, a +120 s system clock step failed a healthy stock Electron launch as a timeout within about 0.2 s; a −120 s step kept cleanup of an unresponsive app waiting past its 5 s window (still waiting at 15 s); after a failed launch of an app whose main thread was busy, a −120 s step was still delaying its SIGKILL at 11.6 s, while a +120 s step sent SIGKILL 0.35 s after SIGTERM, cutting the grace short; close timeouts reported −117019 ms or 122938 ms in their phase; and real Exa searches either skipped the 1.1 s request spacing after a +120 s step or held the next search for about two minutes after a −120 s step. Persisted launch timestamps remain wall-clock.
 - Keep a live browser execution lock owner on Linux when the system clock steps. Linux process identity now uses the kernel boot ID and the boot-relative start ticks in `/proc/<pid>/stat` instead of wall-clock-derived `ps` start times, which made a held lock look abandoned and let a second caller acquire it. A recorded identity in a different or untagged format is unknown rather than proof of PID reuse.
+<!-- npm-release:unreleased:end -->
+
+- Automate qualified npm releases (#339) ([7420c31](https://github.com/fitchmultz/pi-agent-browser-native/commit/7420c31caf461730c4c148bac33801b63607173c))
+
+### What's Changed
+* docs: establish proactive dependency maintenance policy by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/290
+* fix: allow compact prompt fallback on unmanaged Pi hosts (fixes #270) by @youki258 in https://github.com/fitchmultz/pi-agent-browser-native/pull/271
+* Preserve browser CLI signals and empty-output failure diagnostics by @hara-seihun in https://github.com/fitchmultz/pi-agent-browser-native/pull/273
+* fix(ci): restore blocking official/fork Windows qualification by @pi-durable[bot] in https://github.com/fitchmultz/pi-agent-browser-native/pull/291
+* test: repair current-host Browser qualification fixtures by @pi-durable[bot] in https://github.com/fitchmultz/pi-agent-browser-native/pull/292
+* Make native Windows best-effort (1/2) by @pi-durable[bot] in https://github.com/fitchmultz/pi-agent-browser-native/pull/295
+* fix(build): scope checker compiler long-path support to native Git commands by @pi-durable[bot] in https://github.com/fitchmultz/pi-agent-browser-native/pull/293
+* test(auth): verify global profiles and managed browser login by @pi-durable[bot] in https://github.com/fitchmultz/pi-agent-browser-native/pull/296
+* perf: cache documentation paths per loaded extension instance by @pi-durable[bot] in https://github.com/fitchmultz/pi-agent-browser-native/pull/298
+* fix: let cold caller-owned launches keep their flags by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/299
+* Refresh agent-browser baseline to 0.39.2 by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/301
+* deps(dev): override development Pi SDK Undici to 8.12.3 by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/307
+* perf(agent-browser): validate small journal records natively during replay by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/306
+* perf(browser): replay only appended session metadata by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/308
+* Speed up browser journal replay by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/309
+* Fix delegated browser session sharing by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/310
+* Wake browser execution waiters on holder release instead of polling by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/312
+* Require a Pi restart for coordinated package upgrades by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/314
+* Validate replayed snapshot definitions without rebuilding ref maps by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/316
+* Forward lifecycle options through the release gate by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/317
+* Isolate policy GC test fixtures from concurrent processes by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/319
+* Preserve native indexed batch redaction and replay (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/313
+* Recommend agent-browser 0.41.0 (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/323
+* Stop repeating browser orientation in full instructions by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/321
+* Keep outputPath receipts visible in compacted browser observations by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/318
+* Remove the lifecycle harness's private tmux socket after stopping its server by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/322
+* Fix timezone-dependent POSIX process identity (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/311
+* Keep owned browsers across managed fork restarts by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/325
+* fix: keep Linux lock owners when the system clock steps (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/315
+* Time browser execution waits on the monotonic clock (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/320
+* Keep lint diagnostics visible in piped quality logs by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/326
+* Use the real start identity in the shared-directory policy-debug acquisition test by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/327
+* Stabilize code timeout fixture after emission by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/328
+* Time Electron launch and cleanup, close timeout messages and web-search spacing on the monotonic clock (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/324
+* Prepare npm release automation by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/333
+* Use current upstream for release qualification by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/334
+* Fix code sandbox through symlinked installs by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/335
+* Fix platform doctor package inspection by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/336
+* Preserve the retained release candidate through verification (1/3) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/337
+* Qualify the retained browser candidate on hosted runners (2/3) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/338
+* Automate qualified browser releases (3/3) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/339
+
+### New Contributors
+* @youki258 made their first contribution in https://github.com/fitchmultz/pi-agent-browser-native/pull/271
+* @hara-seihun made their first contribution in https://github.com/fitchmultz/pi-agent-browser-native/pull/273
+* @pi-durable[bot] made their first contribution in https://github.com/fitchmultz/pi-agent-browser-native/pull/291
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.6...v0.9.7
 
 ## 0.9.6 - 2026-10-14
 
