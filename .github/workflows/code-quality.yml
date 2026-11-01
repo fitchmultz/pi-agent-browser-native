@@ -43,6 +43,33 @@ jobs:
         run: npm install --global agent-browser --allow-scripts=agent-browser
       - name: Strict quality acceptance and real failure controls
         run: npm run quality:mutations
+      - name: Install older Node for the diagnostic-only smoke
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "18.19.0"
+          package-manager-cache: false
+      - name: Check doctor startup and unsupported-runtime diagnostic
+        shell: bash
+        run: |
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          node scripts/doctor.mjs --help > "$tmp/help"
+          grep -F 'pi-agent-browser-doctor' "$tmp/help"
+          printf '#!/bin/sh\nprintf "1.0.0\\n"\n' > "$tmp/pi"
+          printf '#!/bin/sh\nprintf "agent-browser 0.41.0\\n"\n' > "$tmp/agent-browser"
+          chmod 755 "$tmp/pi" "$tmp/agent-browser"
+          set +e
+          PATH="$tmp:$PATH" node scripts/doctor.mjs --skip-source-check > "$tmp/report" 2>&1
+          status=$?
+          set -e
+          cat "$tmp/report"
+          test "$status" -eq 1
+          grep -F '✗ Node running this doctor is unsupported: 18.19.0 (requires >=' "$tmp/report"
+          grep -F '✓ agent-browser version ' "$tmp/report"
+          grep -F '✓ Pi version satisfies the minimum runtime floor: 1.0.0' "$tmp/report"
+          test "$(grep -c '^✗ ' "$tmp/report")" -eq 1
+          grep -F 'Pi may use a different runtime or Node executable' "$tmp/report"
+          grep -F 'Doctor found setup failures.' "$tmp/report"
       - name: Checks must not rewrite maintained artifacts
         env:
           QUALITY_SOURCE_REF: ${{ inputs.source-ref || github.sha }}

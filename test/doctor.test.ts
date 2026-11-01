@@ -1,15 +1,17 @@
 /**
  * Purpose: Verify the package-level first-run doctor for pi-agent-browser-native.
- * Responsibilities: Assert CLI parsing, PATH/version diagnostics, duplicate-source remediation text, and read-only injected I/O behavior.
+ * Responsibilities: Assert CLI parsing, runtime/PATH/version diagnostics, duplicate-source remediation text, and read-only injected I/O behavior.
  * Scope: Focused unit coverage for `scripts/doctor.mjs`; real upstream and Pi smoke validation remain in verifier scripts and manual release workflow.
  * Usage: Run with `npx tsx --test test/doctor.test.ts` or via `npm run verify`.
  * Invariants/Assumptions: The doctor is read-only, distinct from upstream `agent-browser doctor`, and compares upstream version to the canonical capability baseline.
  */
 
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { readRecord } from "./helpers/assertions.js";
 
 test("doctor exec options route npm global shims through a shell only on Windows", () => {
 	assert.deepEqual(buildNpmShimExecOptions("win32"), { shell: true });
@@ -20,6 +22,7 @@ test("doctor exec options route npm global shims through a shell only on Windows
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
 
 import {
+	MINIMUM_NODE_VERSION,
 	buildNpmShimExecOptions,
 	evaluateDoctor,
 	formatDoctorReport,
@@ -38,6 +41,127 @@ function passingPiVersion() {
 function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
 	return evaluateDoctor({ runPi: async () => passingPiVersion(), ...options });
 }
+
+test("doctor's Node floor stays aligned with the package engine", async () => {
+	const packageJson = readRecord(
+		JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")),
+	);
+
+	assert.match(MINIMUM_NODE_VERSION, /^\d+\.\d+\.\d+$/);
+	assert.equal(readRecord(packageJson.engines).node, `>=${MINIMUM_NODE_VERSION}`);
+});
+
+test("doctor rejects the reported Node 24.18.0 even when other checks pass", async () => {
+	const report = await evaluateDoctorWithPi({
+		runtime: { node: "24.18.0", releaseName: "node" },
+		runAgentBrowser: async () => passingVersion(),
+		skipSourceCheck: true,
+	});
+	const text = formatDoctorReport(report);
+
+	assert.equal(report.failures.length, 1);
+	assert.match(text, /Node running this doctor is unsupported: 24\.18\.0/);
+	assert.match(text, /requires >=24\.21\.0/);
+	assert.match(text, /Pi may use a different runtime or Node executable/);
+	assert.match(text, /Doctor found setup failures/);
+});
+
+test("doctor accepts the Node floor and newer stable versions", async () => {
+	const versions = ["24.21.0", "24.21.0+custom.1", "24.100.0", "25.0.0"];
+	const reports = await Promise.all(
+		versions.map((nodeVersion) =>
+			evaluateDoctorWithPi({
+				runtime: { node: nodeVersion, releaseName: "node" },
+				runAgentBrowser: async () => passingVersion(),
+				skipSourceCheck: true,
+			}),
+		),
+	);
+
+	assert.deepEqual(
+		reports.map((report) => report.failures.length),
+		[0, 0, 0, 0],
+	);
+	assert.deepEqual(
+		reports.map((report) => report.checks[0]?.title),
+		versions.map((version) => `Node running this doctor meets the package minimum: ${version}`),
+	);
+	assert.deepEqual(
+		reports.map((report) =>
+			formatDoctorReport(report).includes("Pi may use a different runtime or Node executable"),
+		),
+		[true, true, true, true],
+	);
+});
+
+test("doctor does not pass a below-floor or prerelease Node version", async () => {
+	const versions = ["24.20.9", "24.21.0-rc.1", "25.0.0-rc.1"];
+	const reports = await Promise.all(
+		versions.map((nodeVersion) =>
+			evaluateDoctorWithPi({
+				runtime: { node: nodeVersion, releaseName: "node" },
+				runAgentBrowser: async () => passingVersion(),
+				skipSourceCheck: true,
+			}),
+		),
+	);
+
+	assert.deepEqual(
+		reports.map((report) => report.failures.length),
+		[1, 1, 1],
+	);
+	assert.deepEqual(
+		reports.map((report) => report.checks[0]?.title),
+		versions.map(
+			(version) =>
+				`Node running this doctor is unsupported: ${version} (requires >=${MINIMUM_NODE_VERSION}).`,
+		),
+	);
+});
+
+test("doctor leaves non-Node and unknown runtimes unverified rather than passing them", async () => {
+	const runtimes = [
+		{ node: "22.16.0", bun: "1.3.0", releaseName: "node" },
+		{ node: "24.22.1", deno: "2.0.0", releaseName: "node" },
+		{ node: "24.22.1", releaseName: "unknown" },
+		{ node: "unparseable", releaseName: "node" },
+		{ releaseName: "node" },
+	];
+	const reports = await Promise.all(
+		runtimes.map((runtime) =>
+			evaluateDoctorWithPi({
+				runtime,
+				runAgentBrowser: async () => passingVersion(),
+				skipSourceCheck: true,
+			}),
+		),
+	);
+
+	assert.deepEqual(
+		reports.map((report) => report.checks[0]?.status),
+		["warn", "warn", "warn", "warn", "warn"],
+	);
+	assert.deepEqual(
+		reports.map((report) => report.failures.length),
+		[0, 0, 0, 0, 0],
+	);
+	assert.deepEqual(
+		reports.map((report) => formatDoctorReport(report).split("\n").at(-1)),
+		runtimes.map(() => "Doctor completed with warnings."),
+	);
+});
+
+test("doctor summarizes standalone inspection warnings without an unqualified pass", () => {
+	const text = formatDoctorReport({
+		checks: [{ status: "pass", title: "Other checks passed", lines: [] }],
+		failures: [],
+		warnings: ["A settings file could not be inspected."],
+	});
+
+	assert.match(text, /A settings file could not be inspected/);
+	assert.match(text, /Doctor completed with warnings\./);
+	assert.doesNotMatch(text, /Doctor passed\./);
+});
 
 test("doctor reports missing agent-browser with actionable install guidance", async () => {
 	const missing = Object.assign(new Error("spawn agent-browser ENOENT"), { code: "ENOENT" });
@@ -138,7 +262,7 @@ test("doctor warns instead of failing when Pi version cannot be inspected", asyn
 	assert.equal(report.failures.length, 0);
 	assert.match(text, /Could not inspect pi --version/);
 	assert.match(text, /Pi 1\.0\.0 or newer is required/);
-	assert.match(text, /Doctor passed/);
+	assert.match(text, /Doctor completed with warnings/);
 });
 
 test("doctor reports duplicate package and checkout sources with remediation", async () => {
@@ -215,7 +339,7 @@ test("doctor treats no configured source as an informational warning, not a fail
 
 	assert.equal(report.failures.length, 0);
 	assert.match(text, /No configured pi-agent-browser-native source was found/);
-	assert.match(text, /Doctor passed/);
+	assert.match(text, /Doctor completed with warnings/);
 });
 
 test("doctor invokes upstream only for the read-only version probe", async () => {

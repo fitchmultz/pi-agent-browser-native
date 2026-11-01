@@ -105,7 +105,7 @@ Artifact results show known requested paths separately from reported/resolved lo
 
 ## Fastest way to try it
 
-Use Node 24.21.0 or newer and Pi 1.0.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes Pi hosts below 1.0.0 a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
+Use Node 24.21.0 or newer and Pi 1.0.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes unsupported doctor Node versions and Pi hosts below 1.0.0 setup failures through `pi-agent-browser-doctor`. The Node check covers the doctor process; Pi may use a different runtime or executable. There are no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -202,12 +202,13 @@ npm run doctor
 
 The doctor checks:
 
+- the stable Node.js version running the doctor meets the package engine floor (24.21.0)
 - upstream `agent-browser` exists on `PATH`
 - the installed upstream is a stable version at or above the supported 0.35.0 floor; 0.41.0 remains the recommended baseline
 - `pi --version` meets the minimum Pi runtime floor for this release; older Pi versions are setup failures
 - Pi settings do not point at multiple active `pi-agent-browser-native` sources
 
-It does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.
+The Node check covers only the doctor process. When the doctor runs under a non-Node or unidentifiable runtime, the Node check remains unverified and the summary reports warnings. Pi's launcher may use a different runtime or Node executable; verify it separately. The doctor does **not** edit Pi settings and does **not** run upstream `agent-browser doctor --fix`.
 
 Pi hosts that run as uid 0 should set `PI_AGENT_BROWSER_SOCKET_DIR` to a short absolute directory under private root-owned ancestry, create it with mode `0700`, and keep it owned by the Pi user. The extension validates that directory and forwards it as upstream `AGENT_BROWSER_SOCKET_DIR`; ambient upstream socket overrides remain ignored.
 

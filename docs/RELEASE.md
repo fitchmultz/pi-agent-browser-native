@@ -71,7 +71,7 @@ npm run smoke:platform:doctor
 npm run verify -- release
 ```
 
-`npm run doctor` is a read-only first-run diagnostic for PATH, targeted upstream version, the minimum Pi runtime floor, and duplicate package/checkout source conflicts. The package keeps Pi core imports as wildcard `peerDependencies` because installed Pi package docs require the host Pi install to provide those packages, while the doctor fails setup when `pi --version` is below the enforced floor. It does not replace upstream `agent-browser doctor` for browser runtime health and does not edit Pi settings.
+`npm run doctor` is a read-only first-run diagnostic for the Node runtime running the doctor, PATH, targeted upstream version, the minimum Pi runtime floor, and duplicate package/checkout source conflicts. It fails if that Node runtime is unsupported and reports an unverified non-Node runtime as a warning, but Pi may use a different runtime or executable, which must be verified separately. The package keeps Pi core imports as wildcard `peerDependencies` because installed Pi package docs require the host Pi install to provide those packages, while the doctor fails setup when `pi --version` is below the enforced floor. It does not replace upstream `agent-browser doctor` for browser runtime health and does not edit Pi settings.
 
 For PR-ready local confidence before release-only lifecycle and platform cost, run:
 

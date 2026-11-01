@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Report an unsupported Node.js runtime in the package doctor instead of passing the setup check. The doctor checks its own process, not the potentially different runtime or executable running Pi; non-Node and unknown runtimes stay unverified (#253).
 - Inspect npm package-file output correctly in platform doctor, including npm 12 and Windows npm shims, and let native pack preparation finish before reporting repository hygiene.
 - Run the permissioned `agent_browser_code` worker when the installed package path contains symlinks, including macOS temporary directories.
 - Show the actual lint error when quality acceptance fails in CI. `npm run lint` now finishes writing its policy inventory line before Oxlint starts; through a pipe, Oxlint's first diagnostic could otherwise land partway through that line and disappear when `npm run quality:mutations` shortened long lines for the job log. The mutation controls now require each expected diagnostic to survive that shortening.
