@@ -11,7 +11,13 @@ import {
 import { redactEmbeddedStructuredText, redactSerializedJson } from "./redaction-json.js";
 import { redactLooseUrls, redactUrlToken } from "./redaction-url.js";
 
-const SENSITIVE_VALUE_FLAGS = new Set(["--body", "--headers", "--password", "--proxy"]);
+const SENSITIVE_VALUE_FLAGS = new Set([
+	"--body",
+	"--cdp-headers",
+	"--headers",
+	"--password",
+	"--proxy",
+]);
 
 export function redactSensitiveText(text: string): string {
 	// Redact JSON string literals before text heuristics consume their escapes.

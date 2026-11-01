@@ -1,10 +1,10 @@
 /** Audited upstream source evidence and the native help commands sampled for drift. */
 export const sourceEvidence = Object.freeze({
 	repository: "vercel-labs/agent-browser",
-	upstreamHead: "1453dd37a40c730fe00f592bc32198a896ff8747",
-	upstreamPackageVersion: "0.41.0",
+	upstreamHead: "5868f7c05020e047c00e68e4abf9253cce864f41",
+	upstreamPackageVersion: "0.41.1",
 	inspectedSources: Object.freeze([
-		"stock npm agent-browser@0.41.0 tarball and skill-data/",
+		"stock npm agent-browser@0.41.1 package, official release binary, and upstream source",
 		"agent-browser --version",
 		"agent-browser --help",
 		"selected agent-browser <command> --help output",
@@ -35,6 +35,7 @@ export const sourceEvidence = Object.freeze({
 		"cli/src/native/a11y/mod.rs",
 		"cli/src/native/browser.rs",
 		"cli/src/native/cdp/obscura.rs",
+		"cli/src/native/cdp/discovery.rs",
 		"cli/src/native/policy.rs",
 		"cli/src/native/providers.rs",
 		"cli/src/native/tab_binding.rs",

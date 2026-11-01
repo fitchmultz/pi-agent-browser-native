@@ -28,15 +28,19 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.41.0` command/help surface, audited against vercel-labs/agent-browser@1453dd37a40c730fe00f592bc32198a896ff8747. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.41.1` command/help surface, audited against vercel-labs/agent-browser@5868f7c05020e047c00e68e4abf9253cce864f41. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.41.1 qualification
+
+The recommended upstream is 0.41.1. Native owns cookie-attribute parsing, error clearing, MCP selector waits, plugin-error redaction, and output/timeout limit validation. Published npm 0.41.1 help is qualified separately from the [pinned Android source](REFERENCE.md#android--termux), which includes additional CDP transport-header support. The wrapper recognizes that source's `--cdp-headers <json>` as one global value and redacts it from invocation presentation; native owns discovery and authentication. The stable runtime floor remains 0.35.0, with no version-specific shim.
+
 ### Upstream 0.41.0 rebaseline
 
-The recommended release is the separately installed stock npm `agent-browser@0.41.0`, audited against upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. This update crosses [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
+The recommended stock npm `agent-browser@0.41.1` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
 
 - Native 0.39.4+ `wait --download <path>` handles downloads that completed before the wait and moves a locally launched browser's downloaded bytes to the requested destination. Native refuses to move files reported by an attached/remote CDP browser. The wrapper still requires on-disk artifact verification; a reported path alone is not success, so supported 0.35.0–0.39.3 natives, which report the path without moving the file, fail as `artifact-missing`. See [native download handling](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L11403-L11508).
 - Native daemon shutdown removes its own `<session>.config` along with other daemon files, while retaining `.target` and `.log`. This prevents new configuration-file accumulation; it does not sweep all historical orphans or optimize the wrapper's socket-directory scan. Updating this metadata cannot speed an installation already running 0.41.0. See [file ownership](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/session_files.rs#L75-L104) and [shutdown cleanup](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/daemon.rs#L147-L151).
@@ -1087,6 +1091,7 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 - `--webgpu`: enable upstream's platform-specific WebGPU launch preset. Environment: `AGENT_BROWSER_WEBGPU`; config: `"webgpu": true`. Use it on a fresh local launch. It is incompatible while enabled with `--cdp`, `--auto-connect`, and provider launches. `AGENT_BROWSER_NO_XVFB=1` disables upstream's automatic Xvfb for displayless headed Linux sessions.
 - `--no-webmcp`: disable experimental WebMCP support, which upstream 0.36.0 enables by default for locally managed Chrome. Environment: `AGENT_BROWSER_NO_WEBMCP`; config: `noWebmcp`. Use it on a fresh launch; `--no-webmcp false` explicitly enables the launch feature when config or environment disabled it.
 - `--cdp <port|url>`: connect through Chrome DevTools Protocol. Use it, `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
+- `--cdp-headers <json>` (pinned Android source build): send a JSON object of string-valued headers for native CDP HTTP discovery and WebSocket authentication. Environment: `AGENT_BROWSER_CDP_HEADERS`. Supply it with the initial `--cdp` call or an explicit `connect`; these are transport credentials, not page/origin `--headers`. Values pass through unchanged and are redacted from invocation presentation. Published stock 0.41.1 help does not advertise this flag.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
 - `--engine <name>`: `chrome` by default, `lightpanda`, or experimental `obscura`. Environment: `AGENT_BROWSER_ENGINE`. Launch-scoped; use `sessionMode: "fresh"` when changing a managed browser. See [Lightpanda](#lightpanda-engine) and [Obscura](#obscura-engine-experimental).
@@ -1174,9 +1179,9 @@ Standalone `agent-browser` looks for `agent-browser.json` in these locations, fr
 
 Native `session` and `namespace` defaults are honored by ordinary tool calls before implicit-session generation; `sessionName` is only a legacy restore key. Per-call flags override environment, which overrides project/user JSON. `--config` or `AGENT_BROWSER_CONFIG` selects one file instead of merging the discovered files; per-call config also reaches helper subprocesses. Caller-owned native `AGENT_BROWSER_SOCKET_DIR` is honored unless the wrapper-specific socket override is set. Code retains these native defaults while fixing the parent-selected session and namespace for the cell.
 
-Auto-discovered `./agent-browser.json` cannot set `executablePath`, `args`, or `plugins`: native warns and ignores them. Put those values in `~/.agent-browser/config.json`, environment, CLI flags, or explicitly trust the selected file with `--config ./agent-browser.json`. This native rule is separate from Pi's project trust and the package's `.pi/config/...` layers.
+Auto-discovered `./agent-browser.json` cannot set `executablePath`, `args`, or `plugins`: native warns and ignores them. The pinned Android source further restricts auto-discovery to the allowlist in its [native configuration guide](https://github.com/fitchmultz/agent-browser/blob/500be1a391ea3e870dff0893e310011ba634468c/docs/content/docs/configuration.mdx). Put advanced settings in `~/.agent-browser/config.json`, environment, CLI flags, or explicitly select the trusted file with `--config ./agent-browser.json`. This native rule is separate from Pi's project trust, the wrapper's native explicit-file identity inspection, and the package's `.pi/config/...` layers.
 
-Use separated `--config <path>` to load a specific upstream config; upstream 0.33.2 does not recognize `--config=<path>` as the global selector. Browser-backed and sessionless native calls preserve `--config`, `AGENT_BROWSER_CONFIG`, passive project/user config, and other upstream environment exactly as supplied. The Pi-scoped package config under `.pi/config/pi-agent-browser-native/` remains separate. Boolean flags accept optional `true` or `false` values, such as `--headed false`, `--webgpu false`, or `--no-webmcp false`, to override config. Browser extensions from user and project configs are merged rather than replaced.
+Use separated `--config <path>` to load a specific upstream config; upstream 0.33.2 does not recognize `--config=<path>` as the global selector. Browser-backed and sessionless native calls preserve `--config`, `AGENT_BROWSER_CONFIG`, passive project/user config, and other upstream environment exactly as supplied. The Pi-scoped package config under `.pi/config/pi-agent-browser-native/` remains separate. Boolean flags accept optional `true` or `false` values, such as `--headed false`, `--webgpu false`, or `--no-webmcp false`, to override config. For browser extensions, use user config, an explicitly selected trusted file, environment, or CLI flags; the pinned Android source ignores extensions in auto-discovered project config.
 
 Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`, `AGENT_BROWSER_STREAM_PORT`, `AGENT_BROWSER_STREAM_QUALITY`, `AGENT_BROWSER_STREAM_MAX_WIDTH`, `AGENT_BROWSER_STREAM_MAX_HEIGHT`, `AGENT_BROWSER_IDLE_TIMEOUT_MS`, `AGENT_BROWSER_ENCRYPTION_KEY`, `AGENT_BROWSER_STATE_EXPIRE_DAYS`, `AGENT_BROWSER_IOS_DEVICE`, `AGENT_BROWSER_IOS_UDID`, `AI_GATEWAY_URL`, `AI_GATEWAY_API_KEY`, provider credential names, and AWS credential names when using AgentCore. The upstream child receives the parent environment plus wrapper overrides such as the managed socket directory, clamped default operation timeout, canonical owned-session namespace (including empty default), and Pi-transcript- plus Git-checkout-generation-scoped `AGENT_BROWSER_RESTORE` for wrapper-owned managed sessions (`buildAgentBrowserProcessEnv` in `extensions/agent-browser/lib/process.ts`, ownership carried by the wrapper's typed process options and call-scoped managed-session context). Model-facing output still redacts recognized secret values.
 
@@ -1207,16 +1212,16 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.41.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.41.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `1453dd37a40c730fe00f592bc32198a896ff8747`
-- upstream package version: `0.41.0`
-- inspected: `stock npm agent-browser@0.41.0 tarball and skill-data/`
+- upstream HEAD: `5868f7c05020e047c00e68e4abf9253cce864f41`
+- upstream package version: `0.41.1`
+- inspected: `stock npm agent-browser@0.41.1 package, official release binary, and upstream source`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1247,6 +1252,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/a11y/mod.rs`
 - inspected: `cli/src/native/browser.rs`
 - inspected: `cli/src/native/cdp/obscura.rs`
+- inspected: `cli/src/native/cdp/discovery.rs`
 - inspected: `cli/src/native/policy.rs`
 - inspected: `cli/src/native/providers.rs`
 - inspected: `cli/src/native/tab_binding.rs`

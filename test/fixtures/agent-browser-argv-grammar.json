@@ -1,6 +1,6 @@
 {
-	"version": "0.41.0",
-	"source": "https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/flags.rs#L1214-L1331",
+	"version": "0.41.1",
+	"source": "https://github.com/vercel-labs/agent-browser/blob/5868f7c05020e047c00e68e4abf9253cce864f41/cli/src/flags.rs#L1293-L1421",
 	"globalValueFlags": [
 		"--session",
 		"--restore-save",
@@ -11,6 +11,7 @@
 		"--headers",
 		"--executable-path",
 		"--cdp",
+		"--cdp-headers",
 		"--extension",
 		"--init-script",
 		"--enable",

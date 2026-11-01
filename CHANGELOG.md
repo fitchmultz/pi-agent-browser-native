@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Document a pinned Android-native source build for Termux instead of the Linux-musl executable, preserving the existing managed launcher and full dashboard.
+- Recommend separately installed `agent-browser` 0.41.1 without raising the stable 0.35.0 runtime floor. Preserve and redact the pinned Android source's CDP transport-header argument.
+
 ## 0.9.8 - 2026-11-01
 
 <!-- npm-release:unreleased:start -->
