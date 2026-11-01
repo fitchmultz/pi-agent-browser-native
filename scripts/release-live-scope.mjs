@@ -1,7 +1,8 @@
-/** Compare the actual published runtime before deciding whether model calls apply. */
+/** Compare the published Pi agent runtime before deciding whether model calls apply. */
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { parseSinglePackResult } from "./package-pack.mjs";
 
 function normalize(value) {
 	if (Array.isArray(value)) {
@@ -24,7 +25,6 @@ function runtimeManifest(manifest) {
 		"module",
 		"exports",
 		"imports",
-		"bin",
 		"engines",
 		"dependencies",
 		"optionalDependencies",
@@ -50,7 +50,7 @@ export function inspectLiveScope({ tarball, directory, env, common }) {
 		run("tar", ["-xzf", archive, "-C", destination], { env, quiet: true });
 	extract(tarball, candidateDirectory);
 	const candidate = readJson(join(candidateDirectory, "package", "package.json"));
-	const [published] = JSON.parse(
+	const published = parseSinglePackResult(
 		run(
 			"npm",
 			[
@@ -98,7 +98,9 @@ export function inspectLiveScope({ tarball, directory, env, common }) {
 		baselineSha256: sha256(baselineTarball),
 		required: changedPaths.length > 0,
 		changedPaths,
-		reason: changedPaths.length ? "Published runtime changed" : "Published runtime unchanged",
+		reason: changedPaths.length
+			? "Published Pi agent runtime changed"
+			: "Published Pi agent runtime unchanged",
 	};
 	writeJson(join(directory, "report.json"), report);
 	return report;
