@@ -56,7 +56,8 @@ jobs:
           node scripts/doctor.mjs --help > "$tmp/help"
           grep -F 'pi-agent-browser-doctor' "$tmp/help"
           printf '#!/bin/sh\nprintf "1.0.0\\n"\n' > "$tmp/pi"
-          printf '#!/bin/sh\nprintf "agent-browser 0.41.0\\n"\n' > "$tmp/agent-browser"
+          version=$(node --input-type=module -e 'import { TARGET_AGENT_BROWSER_VERSION } from "./scripts/agent-browser-target.mjs"; console.log(TARGET_AGENT_BROWSER_VERSION)')
+          printf '#!/bin/sh\nprintf "agent-browser %s\\n"\n' "$version" > "$tmp/agent-browser"
           chmod 755 "$tmp/pi" "$tmp/agent-browser"
           set +e
           PATH="$tmp:$PATH" node scripts/doctor.mjs --skip-source-check > "$tmp/report" 2>&1

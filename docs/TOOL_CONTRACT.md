@@ -175,7 +175,7 @@ Use exact labels from the latest snapshot. Return to the model when a fresh obse
 
 ### Native capability baseline
 
-The recommended separately installed stock native is 0.41.0; stable support still starts at 0.35.0 without an upper cap or version-specific shims. The [0.41.0 guide](COMMAND_REFERENCE.md#upstream-0410-rebaseline) covers crossed native fixes and current integration limits. Native 0.39.2+ rejects hidden, disabled, and off-viewport click/double-click targets. Scroll the intended control into view and refresh refs before retrying; native success alone does not prove the application changed.
+The recommended separately installed stock native is 0.41.1; stable support still starts at 0.35.0 without an upper cap or version-specific shims. The [0.41.1 guide](COMMAND_REFERENCE.md#upstream-0411-rebaseline) covers crossed native fixes and current integration limits. Native 0.39.2+ rejects hidden, disabled, and off-viewport click/double-click targets. Scroll the intended control into view and refresh refs before retrying; native success alone does not prove the application changed.
 
 `--use-system-ca` accepts an optional separated `true`/`false` and configures CLI HTTPS requests from `read`, `install`, `upgrade`, and `doctor`, not browser launch. `--ca-cert` adds custom roots on every platform for those CLI requests; `SSL_CERT_FILE` is an ambient fallback. Native retains explicit `read` trust choices per session until close, including daemon restarts. Verification stays enabled. Remote CDP/provider TLS is not configured by these options, and browser CA trust remains Linux-Chromium-only.
 

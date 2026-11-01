@@ -1,10 +1,12 @@
 /** Audited upstream source evidence and the native help commands sampled for drift. */
 export const sourceEvidence = Object.freeze({
 	repository: "vercel-labs/agent-browser",
-	upstreamHead: "1453dd37a40c730fe00f592bc32198a896ff8747",
-	upstreamPackageVersion: "0.41.0",
+	upstreamHead: "7ed6afd8b0a8515eaab4a78b56dc6dddb157bf91",
+	upstreamPackageVersion: "0.41.1",
 	inspectedSources: Object.freeze([
-		"stock npm agent-browser@0.41.0 tarball and skill-data/",
+		"stock npm agent-browser@0.41.1 tarball, Linux binary and skill-data/",
+		"npm provenance identifies the release-preparation commit (signature not independently verified)",
+		"v0.41.1 tag (later changes not necessarily in the published npm binary)",
 		"agent-browser --version",
 		"agent-browser --help",
 		"selected agent-browser <command> --help output",
@@ -64,6 +66,7 @@ export const sourceEvidence = Object.freeze({
 		"cli/tests/tls_cli.rs",
 		"skill-data/derive-client/SKILL.md",
 		"skill-data/core/SKILL.md",
+		"skills/agent-browser/SKILL.md",
 		"skill-data/core/references/video-recording.md",
 		"skill-data/protected-vercel-deployments/SKILL.md",
 		"skill-data/webmcp-gen/SKILL.md",

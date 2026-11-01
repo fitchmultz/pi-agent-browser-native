@@ -28,15 +28,26 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.41.0` command/help surface, audited against vercel-labs/agent-browser@1453dd37a40c730fe00f592bc32198a896ff8747. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.41.1` command/help surface, audited against vercel-labs/agent-browser@7ed6afd8b0a8515eaab4a78b56dc6dddb157bf91. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.41.1 rebaseline
+
+The recommended separately installed native is the published npm `agent-browser@0.41.1`; the stable 0.35.0 runtime floor and no-version-specific-shim policy are unchanged. Compare the [0.41.1 release notes](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.1) and real 0.41.0/0.41.1 help before adopting a change.
+
+The published npm tarball's README and bundled skill data match the [release-preparation commit `7ed6afd8`](https://github.com/vercel-labs/agent-browser/commit/7ed6afd8b0a8515eaab4a78b56dc6dddb157bf91). The npm provenance statement identifies that commit and covers the whole tarball, including its binaries; its signature was not independently verified here. The current `v0.41.1` Git tag instead points to `5868f7c05020e047c00e68e4abf9253cce864f41`, 27 commits later: for example, its source documents `--cdp-headers`, which the published npm binary's help does not. Do not infer tag-only features are in the npm artifact. The audited npm tarball has SHA-256 `6316d0f6d33df8dd545eb65da19f36f5f5272035fefdb8aaabd1d815bc3b179d`; its Linux x64 native binary has SHA-256 `2a89295b62ddd497986a9a80b52e1dbe4c1f6bd68ffde67eaae82eec2206af61`. Matching packaged files, provenance subject digest, and help are evidence for the sampled artifact, not independent signature verification or qualification of other platforms.
+
+- `cookies set` now honors `--http-only` and `--same-site`, retains the `--httpOnly` and `--sameSite` aliases, and rejects unknown options or extra operands in single-cookie mode. Older supported releases may require the legacy spellings. The wrapper passes these arguments through; use `cookies get` and verify the returned attributes rather than relying only on a set receipt.
+- `errors --clear` now clears captured page errors. QA still treats ambiguous or matched pre-existing error rows conservatively; a successful clear receipt alone is not evidence that a later page has no errors.
+- Overflowing `--idle-timeout` values warn and are ignored; invalid `--max-output` / `AGENT_BROWSER_MAX_OUTPUT` values warn and leave the existing limit unchanged. Sensitive plugin operations omit unsupported protocol values and response error text; manifest discovery and `plugin run` retain detailed errors. These are native behaviors, not wrapper emulation.
+- Native MCP rejects bare integer selectors that would otherwise become timed waits. The wrapper still rejects non-help MCP commands, including `mcp call`. The release removes `Bash(npx agent-browser:*)` from the `skills/agent-browser/SKILL.md` discovery stub used by the repository-based skills installer; the bundled core and several specialized `skill-data` guides still include it. It also documents stdin MCP connections for Vercel Sandbox; neither changes this extension's MCP boundary.
+
 ### Upstream 0.41.0 rebaseline
 
-The recommended release is the separately installed stock npm `agent-browser@0.41.0`, audited against upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. This update crosses [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
+The previous separately installed stock npm `agent-browser@0.41.0` baseline was audited against upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. That rebaseline crossed [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
 
 - Native 0.39.4+ `wait --download <path>` handles downloads that completed before the wait and moves a locally launched browser's downloaded bytes to the requested destination. Native refuses to move files reported by an attached/remote CDP browser. The wrapper still requires on-disk artifact verification; a reported path alone is not success, so supported 0.35.0–0.39.3 natives, which report the path without moving the file, fail as `artifact-missing`. See [native download handling](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L11403-L11508).
 - Native daemon shutdown removes its own `<session>.config` along with other daemon files, while retaining `.target` and `.log`. This prevents new configuration-file accumulation; it does not sweep all historical orphans or optimize the wrapper's socket-directory scan. Updating this metadata cannot speed an installation already running 0.41.0. See [file ownership](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/session_files.rs#L75-L104) and [shutdown cleanup](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/daemon.rs#L147-L151).
@@ -442,7 +453,7 @@ Paced input uses explicit native rows, preserving the former job's behavior with
 
 For longer text, code can construct the rows and call native batch; keep the former 200-character pacing bound when porting a job. Add a final `press` only when submission is intended. Fixed waits are not postconditions. Timeout partial progress remains available through the same batch path. See [all job step equivalents](TOOL_CONTRACT.md#07-migration).
 
-For quick smoke/QA checks, enable `qa` and call `agent_browser_qa` with flat fields. It clears enabled network/console buffers and snapshots any page-error residue after the unreliable upstream clear, then opens the target URL and gives immediate post-load console/page-error callbacks a bounded 150 ms settle, waits for page readiness, checks expected text/selector, then inspects fresh network requests, console messages, and page errors only if preceding assertions pass, and can capture an evidence screenshot. Successful reset rows are labeled as reset-scoped diagnostic output. If final page-error rows match a nonempty post-clear baseline, QA is non-pass with “page-error check could not be verified”: identical new errors can replace old rows in the native FIFO buffer without changing the result. Those matches are not proof of new application errors. Definitely new rows, including errors after an empty baseline, count separately as page errors; a clean final buffer can pass. Explicit `checkErrors: false` omits this check for a more limited smoke test. The preset compiles to `batch --bail` so a missing text/selector assertion fails crisply instead of letting slower diagnostics burn the wrapper watchdog. Expected text compiles to bounded visible-text `wait --fn … --timeout 5000` predicates after load so dense pages can pass on visible headings/copy without dumping `body` text; missing text reports a crisp QA failure. Text and control values under `display: none` or `opacity: 0` ancestors, or whose computed visibility is hidden, are excluded even when the control itself has a visible layout box; `display: contents` wrappers and `visibility: visible` overrides still count. The readiness wait defaults to `loadState: "domcontentloaded"`; set `loadState` to `"load"` or `"networkidle"` only when that stricter state is useful and the site is not expected to keep background requests alive. QA network diagnostics classify failed requests by likely impact and list failed rows first in the network preview: actionable document/script/API-style failures fail the preset, while common low-impact browser icon misses such as `favicon.ico` are surfaced as warnings (`qaPreset.warnings`) so they do not fail an otherwise healthy page. Successful QA with no failed checks returns compact model-visible prose (page URL/title when known, checks run, optional screenshot verification) while keeping the full step matrix in `details.qaPreset` and `details.batchSteps`. Failed QA presets report `details.resultCategory: "failure"`, `failureCategory: "qa-failure"`, show compact failure reasons with the full matrix in `details.batchSteps`, and real Pi sessions treat the diagnostic as a failed tool result. Prose output also gets a model-visible result-category line including `Pi tool isError: true`; caller-requested `--json` output keeps the JSON string parseable and relies on the patched `isError` plus `details` fields.
+For quick smoke/QA checks, enable `qa` and call `agent_browser_qa` with flat fields. It clears enabled network/console buffers and snapshots any page-error residue after the native clear (fixed in 0.41.1; older supported versions can leave captured rows intact), then opens the target URL and gives immediate post-load console/page-error callbacks a bounded 150 ms settle, waits for page readiness, checks expected text/selector, then inspects fresh network requests, console messages, and page errors only if preceding assertions pass, and can capture an evidence screenshot. Successful reset rows are labeled as reset-scoped diagnostic output. If final page-error rows match a nonempty post-clear baseline, QA is non-pass with “page-error check could not be verified”: identical new errors can replace old rows in the native FIFO buffer without changing the result. Those matches are not proof of new application errors. Definitely new rows, including errors after an empty baseline, count separately as page errors; a clean final buffer can pass. Explicit `checkErrors: false` omits this check for a more limited smoke test. The preset compiles to `batch --bail` so a missing text/selector assertion fails crisply instead of letting slower diagnostics burn the wrapper watchdog. Expected text compiles to bounded visible-text `wait --fn … --timeout 5000` predicates after load so dense pages can pass on visible headings/copy without dumping `body` text; missing text reports a crisp QA failure. Text and control values under `display: none` or `opacity: 0` ancestors, or whose computed visibility is hidden, are excluded even when the control itself has a visible layout box; `display: contents` wrappers and `visibility: visible` overrides still count. The readiness wait defaults to `loadState: "domcontentloaded"`; set `loadState` to `"load"` or `"networkidle"` only when that stricter state is useful and the site is not expected to keep background requests alive. QA network diagnostics classify failed requests by likely impact and list failed rows first in the network preview: actionable document/script/API-style failures fail the preset, while common low-impact browser icon misses such as `favicon.ico` are surfaced as warnings (`qaPreset.warnings`) so they do not fail an otherwise healthy page. Successful QA with no failed checks returns compact model-visible prose (page URL/title when known, checks run, optional screenshot verification) while keeping the full step matrix in `details.qaPreset` and `details.batchSteps`. Failed QA presets report `details.resultCategory: "failure"`, `failureCategory: "qa-failure"`, show compact failure reasons with the full matrix in `details.batchSteps`, and real Pi sessions treat the diagnostic as a failed tool result. Prose output also gets a model-visible result-category line including `Pi tool isError: true`; caller-requested `--json` output keeps the JSON string parseable and relies on the patched `isError` plus `details` fields.
 
 For failed QA, inspect `details.qaPreset.failedChecks` separately from `notRunChecks`: a reported fail-fast error leaves later checks not run, rather than proving their assertions failed. Failure prose leads with the redacted cause and reports received execution coverage; missing timeout receipts mean an unknown executed count. Incomplete receipts without a reported failure are unverified, never proof of a pass or of unreached checks.
 
@@ -808,7 +819,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 - `mouse <action> [args]` — `move <x> <y>`, `down [btn]`, `up [btn]`, `wheel <dy> [dx]`.
 - `set <setting> [value]` — `viewport <w> <h>`, `device <name>`, `geo <lat> <lng>`, `offline [on|off]`, `headers <json>`, `credentials <user> <pass>`, and `set media <features>` (`dark`, `light`, and/or `reduced-motion`).
 - `network <action>` — `network route <url> [--abort|--body <json> [--allow-origin <origin>]] [--resource-type <csv>]`, `network unroute [url]`, `network requests [--clear] [--filter <pattern>] [--type <csv>] [--method <method>] [--status <code|range>]`, `network request <requestId>`, `network har start`, `network har start --content text` (default; embeds text bodies), `network har start --content all`, `network har start --content none`, and `network har stop [path]`. `--resource-type` filters intercepted requests by CDP resource type, such as `script`, `image`, `font`, `xhr`, or `fetch`; request listing filters accept resource types (`xhr,fetch`), methods (`POST`), and statuses (`2xx`, `400-499`). HAR files can include auth headers and bodies—do not share them unredacted. For turning a recording into a reusable API client, load `skills get derive-client`.
-- `cookies [get|set|clear]` — Manage cookies. Full set form: `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`; also supports `cookies set --curl <file>` for JSON, cURL, or bare Cookie-header bulk imports.
+- `cookies [get|set|clear]` — Manage cookies. On 0.41.1, the full set form is `cookies set <name> <value> --url <url> --domain <domain> --path <path> --http-only --secure --same-site <Strict|Lax|None> --expires <timestamp>`. The legacy `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>` remains accepted and works on older supported versions. Single-cookie mode rejects unknown options and extra operands on 0.41.1. `cookies set --curl <file>` imports JSON, cURL, or bare Cookie-header files.
 - `storage <local|session>` — Manage web storage.
 
 `cookies set --curl <file>` selects native file-import mode even when `--curl` follows other set operands. Ordinary import paths remain visible in invocation echoes and failed batch diagnostics; inline cookie values, sensitive flags, and secret-bearing path text still redact. File contents are not echoed by this exception.
@@ -893,7 +904,7 @@ Current upstream still does not parse `wait <selector> --state hidden` / `wait <
 - `record stop` — Finalize video and inspect its native receipt plus wrapper file verification. A failed or recovered stop retains original attempt evidence; use a distinct top-level `outputPath` to save its receipt.
 - `record restart <path> [url]` — Stop any current recording and start a new video. Supports the same formats and `--fps` option; without a URL it keeps the page and refs.
 - `console [--clear]` — View or clear console logs.
-- `errors [--clear]` — View or clear page errors.
+- `errors [--clear]` — View or clear page errors. Native 0.41.1 clears the captured buffer; inspect subsequent errors independently instead of treating the clear receipt as a clean-page verdict.
 - `highlight <sel>` — Highlight an element.
 - `inspect` — Open Chrome DevTools for the active page.
 - `clipboard <op> [text]` — Read/write clipboard: `clipboard read`, `clipboard write <text>`, `clipboard copy`, and `clipboard paste`. Clipboard access is environment-dependent; `NotAllowedError` / permission-denied failures are common in headless, managed-profile, remote, or `file://` sessions.
@@ -959,6 +970,8 @@ browser profiles, or `state save/load` to separate cookies and storage.
 | `mcp --help`                                       | Show MCP server help through the native tool.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `mcp`                                              | Native MCP stdio server for external clients; `mcp call <tool>` is the finite native alternative. The wrapper currently rejects every non-help MCP invocation, including finite calls. External clients can opt into experimental page tools with `mcp --tools core,webmcp`; see the MCP boundary.                                                                                                                                                |
 | `profiles`                                         | List available Chrome profiles.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+On native 0.41.1, credential, browser-provider, and launch-mutation errors omit plugin response error text and unsupported protocol values. Manifest discovery and `plugin run` retain detailed errors; plugins remain trusted local executables.
 
 When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. `session list` and `state list` keep every upstream row and restore identifier visible. Explicit sessions, state/restore paths, broad state lifecycle commands, config, local files, and launch environment pass through unchanged. Local inspection/setup calls remain sessionless unless you explicitly pass `--session`; browser-backed or context-dependent calls keep normal managed-session behavior when no explicit session is supplied. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. If the same session has active wrapper-observed network routes, failed/pending/CORS-looking matched request rows add `details.networkRouteDiagnostics` and executable route-mock next actions before the generic request actions. `data:image` artifact rows are omitted from compact request previews but remain in raw `details.data.requests`. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Clipboard failures that mention `NotAllowedError` or permission denial are usually browser/OS capability limits, not proof that a read, paste, or page mutation happened; prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct typing (`keyboard inserttext` / `keyboard type`) when the workflow allows it, and retry true clipboard flows only from an allowed profile/session on a normal `http(s)` page. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; low-risk primitive storage values may remain visible, while command echoes still redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, `clipboard write` text, cookie/storage set values, and bearer/basic credential text in positional arguments. Raw batch row strings receive the same command-aware redaction in visible output and ordered code journals without changing execution argv. Use upstream HAR or full raw details only when complete data is required.
 
@@ -1094,11 +1107,11 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 On Android/Termux, follow the README setup to install the packaged Linux-musl arm64 upstream binary, install Termux's `which`, and expose its launcher as `$PREFIX/bin/chromium`. Prefer that upstream system-browser discovery over ambient `AGENT_BROWSER_EXECUTABLE_PATH`: it survives isolated `HOME` values and works for ordinary native calls. Code retains the selected browser's normal launch configuration. Wrapper-generated Android managed identities use a compact 80-bit digest so ordinary namespaces and fresh rotations fit upstream's Unix socket path.
 
 - `--no-auto-dialog`: disable automatic dismissal of alert/beforeunload dialogs. Environment: `AGENT_BROWSER_NO_AUTO_DIALOG`. Explicit `true`/`false` reaches all helpers in that call; keep the same selection on follow-ups to avoid native daemon replacement.
-- `--idle-timeout <ms>`: native background browser lifecycle setting (also accepts `10s`, `3m`, `1h`). Caller-owned sessions retain native idle policy; an explicit flag is carried to every helper in that call. Keep it consistent between calls to avoid a native daemon restart. Only wrapper-owned sessions receive the implicit timeout and numeric mismatch check against `PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS`.
+- `--idle-timeout <ms>`: native background browser lifecycle setting (also accepts `10s`, `3m`, `1h`). Native 0.41.1 warns and ignores values that overflow conversion to milliseconds. Caller-owned sessions retain native idle policy; an explicit flag is carried to every helper in that call. Keep it consistent between calls to avoid a native daemon restart. Only wrapper-owned sessions receive the implicit timeout and numeric mismatch check against `PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS`.
 
 ### Lightpanda engine
 
-[Lightpanda 1.0](https://lightpanda.io/blog/posts/lightpanda-1-0) is an optional headless engine, installed separately from this package and `agent-browser`. The [native engine guide](https://github.com/vercel-labs/agent-browser/blob/v0.41.0/docs/content/docs/engines/lightpanda.mdx) describes setup. Put its `lightpanda` executable on `PATH`; select it with `--engine lightpanda`, `AGENT_BROWSER_ENGINE=lightpanda`, or native config `engine`. Chrome remains the default.
+[Lightpanda 1.0](https://lightpanda.io/blog/posts/lightpanda-1-0) is an optional headless engine, installed separately from this package and `agent-browser`. The [native engine guide](https://github.com/vercel-labs/agent-browser/blob/7ed6afd8b0a8515eaab4a78b56dc6dddb157bf91/docs/content/docs/engines/lightpanda.mdx) describes setup. Put its `lightpanda` executable on `PATH`; select it with `--engine lightpanda`, `AGENT_BROWSER_ENGINE=lightpanda`, or native config `engine`. Chrome remains the default.
 
 ```json
 { "args": ["--engine", "lightpanda", "open", "https://example.com"], "sessionMode": "fresh" }
@@ -1118,7 +1131,7 @@ On Android/Termux, follow the README setup to install the packaged Linux-musl ar
 
 ### Obscura engine (experimental)
 
-[Obscura](https://github.com/vercel-labs/agent-browser/blob/v0.41.0/docs/content/docs/engines/obscura.mdx) is an optional separately installed headless engine. Select it with `--engine obscura`, `AGENT_BROWSER_ENGINE=obscura`, or native config `engine`; `--executable-path <path>` can name its binary. Native owns spawning `obscura serve`, CDP connection, and close cleanup. The wrapper uses the existing engine/fresh-session path, not a second driver or automatic fallback.
+[Obscura](https://github.com/vercel-labs/agent-browser/blob/7ed6afd8b0a8515eaab4a78b56dc6dddb157bf91/docs/content/docs/engines/obscura.mdx) is an optional separately installed headless engine. Select it with `--engine obscura`, `AGENT_BROWSER_ENGINE=obscura`, or native config `engine`; `--executable-path <path>` can name its binary. Native owns spawning `obscura serve`, CDP connection, and close cleanup. The wrapper uses the existing engine/fresh-session path, not a second driver or automatic fallback.
 
 ```json
 {
@@ -1148,7 +1161,7 @@ On Android/Termux, follow the README setup to install the packaged Linux-musl ar
 - `--screenshot-quality <n>`: JPEG quality `0-100`. Environment: `AGENT_BROWSER_SCREENSHOT_QUALITY`.
 - `--screenshot-format <fmt>`: `png` or `jpeg`. Environment: `AGENT_BROWSER_SCREENSHOT_FORMAT`.
 - `--content-boundaries`: wrap page output in boundary markers. Environment: `AGENT_BROWSER_CONTENT_BOUNDARIES`.
-- `--max-output <chars>`: truncate page output to N characters. Environment: `AGENT_BROWSER_MAX_OUTPUT`.
+- `--max-output <chars>`: truncate page output to N characters. Environment: `AGENT_BROWSER_MAX_OUTPUT`. Native 0.41.1 warns on invalid values and leaves the existing limit unchanged.
 - `--allowed-domains <list>`: restrict browser and `read` traffic to exact or `*.` wildcard domain patterns. Environment: `AGENT_BROWSER_ALLOWED_DOMAINS`. Use a fresh local Chrome context; upstream 0.32.0 owns containment and incompatible-mode rejection and disables Chromium `RTCPeerConnection` while active. The wrapper passes the setting and result through unchanged.
 - `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`. Native 0.39.2 denies actions when the selected policy cannot be read or parsed instead of continuing without it. Explicit policy values also reach internal helpers for the current call. Keep the action-policy path consistent on follow-ups; changing or omitting it can restart the native daemon and discard pending confirmations. The established `--confirm-actions` setting is retained for same-session follow-ups.
 - `--confirm-actions <list>`: action categories requiring confirmation. Environment: `AGENT_BROWSER_CONFIRM_ACTIONS`.
@@ -1207,16 +1220,18 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.41.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.41.1</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `1453dd37a40c730fe00f592bc32198a896ff8747`
-- upstream package version: `0.41.0`
-- inspected: `stock npm agent-browser@0.41.0 tarball and skill-data/`
+- upstream HEAD: `7ed6afd8b0a8515eaab4a78b56dc6dddb157bf91`
+- upstream package version: `0.41.1`
+- inspected: `stock npm agent-browser@0.41.1 tarball, Linux binary and skill-data/`
+- inspected: `npm provenance identifies the release-preparation commit (signature not independently verified)`
+- inspected: `v0.41.1 tag (later changes not necessarily in the published npm binary)`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1276,6 +1291,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/tests/tls_cli.rs`
 - inspected: `skill-data/derive-client/SKILL.md`
 - inspected: `skill-data/core/SKILL.md`
+- inspected: `skills/agent-browser/SKILL.md`
 - inspected: `skill-data/core/references/video-recording.md`
 - inspected: `skill-data/protected-vercel-deployments/SKILL.md`
 - inspected: `skill-data/webmcp-gen/SKILL.md`
@@ -1354,9 +1370,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - Built-in skills: 19 human-doc token(s), 24 upstream token(s)
 - Core page, element, navigation, and extraction commands: 89 human-doc token(s), 94 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 30 human-doc token(s), 27 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 63 human-doc token(s), 72 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 40 human-doc token(s), 47 upstream token(s)
-- Global flags, config, providers, policy, and environment: 163 human-doc token(s), 130 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 64 human-doc token(s), 76 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 40 human-doc token(s), 48 upstream token(s)
+- Global flags, config, providers, policy, and environment: 163 human-doc token(s), 132 upstream token(s)
 
 #### Human-authored doc tokens required
 
@@ -1521,6 +1537,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `network har start --content text`
 - `network har stop [path]`
 - `cookies [get|set|clear]`
+- `cookies set <name> <value> --url <url> --domain <domain> --path <path> --http-only --secure --same-site <Strict|Lax|None> --expires <timestamp>`
 - `cookies set <name> <value> --url <url> --domain <domain> --path <path> --httpOnly --secure --sameSite <Strict|Lax|None> --expires <timestamp>`
 - `cookies set --curl <file>`
 - `storage <local|session>`
@@ -1950,6 +1967,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - network help: `network har stop ./capture.har`
 - root help: `cookies [get|set|clear]`
 - root help: `cookies set --curl <file>`
+- cookies help: `--http-only`
+- cookies help: `--same-site <Strict|Lax|None>`
+- cookies help: `--httpOnly and --sameSite are still accepted`
+- cookies help: `unknown flags and extra arguments return an error`
 - root help: `storage <local|session>`
 - root help: `webmcp list [tool]`
 - root help: `webmcp invoke <tool>`
@@ -2062,6 +2083,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - plugin help: `plugin add writes ~/.agent-browser/config.json by default`
 - plugin help: `--project`
 - plugin help: `credential.read`
+- plugin help: `unsupported protocol values`
 
 ##### Global flags, config, providers, policy, and environment
 
@@ -2157,6 +2179,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--content-boundaries`
 - root help: `AGENT_BROWSER_CONTENT_BOUNDARIES`
 - root help: `--max-output <chars>`
+- read help: `Invalid --max-output and AGENT_BROWSER_MAX_OUTPUT values warn`
+- root help: `Values too large to convert to milliseconds produce a warning and are ignored`
 - root help: `AGENT_BROWSER_MAX_OUTPUT`
 - root help: `--allowed-domains <list>`
 - root help: `AGENT_BROWSER_ALLOWED_DOMAINS`
