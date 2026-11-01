@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- Recommend separately installed `agent-browser` 0.41.1 while retaining the 0.35.0 stable runtime floor. Refresh the audited command reference and fixtures, including native cookie and error-clearing fixes.
+
+### Fixed
+
+- Report an unsupported Node.js runtime in the package doctor instead of passing the setup check. The doctor checks its own process, not the potentially different runtime or executable running Pi; non-Node and unknown runtimes stay unverified (#253).
+
 ## 0.9.8 - 2026-11-01
 
 <!-- npm-release:unreleased:start -->

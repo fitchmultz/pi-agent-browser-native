@@ -261,6 +261,8 @@ export const optionsAndEnv = section(
 		root("--content-boundaries"),
 		root("AGENT_BROWSER_CONTENT_BOUNDARIES"),
 		root("--max-output <chars>"),
+		["read help", "Invalid --max-output and AGENT_BROWSER_MAX_OUTPUT values warn"],
+		root("Values too large to convert to milliseconds produce a warning and are ignored"),
 		root("AGENT_BROWSER_MAX_OUTPUT"),
 		root("--allowed-domains <list>"),
 		root("AGENT_BROWSER_ALLOWED_DOMAINS"),

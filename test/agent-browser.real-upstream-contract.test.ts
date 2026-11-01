@@ -1,9 +1,9 @@
 /**
  * Purpose: Validate the pi wrapper against the real installed upstream agent-browser binary.
- * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, caller-owned local-daemon pass-through, nested batch-attachment isolation, cross-harness restore persistence, and symlinked managed-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
+ * Responsibilities: Run opt-in deterministic runtime contract checks for inspection and skills (stateless JSON), fresh `open` plus implicit managed-session reuse, caller-owned local-daemon pass-through, nested batch-attachment isolation, cross-harness restore persistence, and symlinked managed-storage fail-closed behavior, a broad interaction and navigation matrix on localhost fixtures (including `batch` stdin, `pushstate`, `vitals`, `network route`, `cookies set --curl`), 0.41.1 cookie attribute aliases and error-buffer clearing, a `react tree` missing-renderer failure shape, `wait --download` artifact reporting versus on-disk presence, and a focused sessionless `plugin list` output-shape probe.
  * Scope: Integration-only tests gated by PI_AGENT_BROWSER_REAL_UPSTREAM=1; the default fast test loop must not require a browser or upstream binary.
  * Usage: Run `npm run verify -- real-upstream` after installing the canonical target agent-browser version.
- * Invariants/Assumptions: The installed upstream version must match scripts/agent-browser-capability-baseline.mjs and all pages are served from a local fixture server.
+ * Invariants/Assumptions: The installed stable upstream version must meet the runtime floor; target-specific cases may skip older natives, and all pages are served from a local fixture server.
  */
 
 import assert from "node:assert/strict";
@@ -1815,6 +1815,141 @@ test(
 			);
 		} finally {
 			await fixture.close();
+			await rm(dir, { recursive: true, force: true });
+		}
+	},
+);
+
+test(
+	"real upstream 0.41.1 cookie aliases and page-error clearing retain native behavior",
+	{ skip: !REAL_UPSTREAM_ENABLED, timeout: 90_000 },
+	async (t) => {
+		const version = await assertInstalledAgentBrowserVersion();
+		const [major, minor, patch] = version.split(".").map(Number);
+		if (major === 0 && (minor < 41 || (minor === 41 && patch < 1))) {
+			t.skip("Cookie and error-buffer fixes first shipped in native 0.41.1.");
+			return;
+		}
+		const dir = await mkdtemp(join(tmpdir(), "piab-native-0411-"));
+		const socketDir = await mkdtemp(join(tmpdir(), "piab-0411-s-"));
+		const fixture = await startAgentBrowserContractFixtureServer();
+		const sessionName = "native-0411";
+		try {
+			await withPatchedEnv(
+				{
+					...Object.fromEntries(
+						Object.keys(process.env)
+							.filter((name) => /^(?:PI_)?AGENT_BROWSER_/.test(name))
+							.map((name) => [name, undefined]),
+					),
+					HOME: dir,
+					USERPROFILE: dir,
+					PI_CODING_AGENT_DIR: join(dir, "pi"),
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+					AGENT_BROWSER_SOCKET_DIR: socketDir,
+					PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0",
+				},
+				async () => {
+					const harness = createExtensionHarness({ cwd: dir });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
+					const call = (args: readonly string[]) =>
+						executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", sessionName, ...args],
+						});
+					const success = async (args: readonly string[]) => {
+						const result = await call(args);
+						assert.equal(result.isError, false, resultText(result));
+						return readRecord(readRecord(result.details).data);
+					};
+					try {
+						await success(["open", `${fixture.baseUrl}/contract`]);
+						await success([
+							"cookies",
+							"set",
+							"kebab_cookie",
+							"example",
+							"--http-only",
+							"--same-site",
+							"Strict",
+						]);
+						await success([
+							"cookies",
+							"set",
+							"legacy_cookie",
+							"example",
+							"--httpOnly",
+							"--sameSite",
+							"Lax",
+						]);
+						const cookies = readArray((await success(["cookies", "get"])).cookies).map(readRecord);
+						const kebab = cookies.find((cookie) => cookie.name === "kebab_cookie");
+						const legacy = cookies.find((cookie) => cookie.name === "legacy_cookie");
+						assert.ok(kebab, "native must return the kebab-case cookie");
+						assert.ok(legacy, "native must return the legacy-alias cookie");
+						assert.equal(kebab.httpOnly, true);
+						assert.equal(kebab.sameSite, "Strict");
+						assert.equal(legacy.httpOnly, true);
+						assert.equal(legacy.sameSite, "Lax");
+
+						const unknownOption = await call([
+							"cookies",
+							"set",
+							"bad_cookie",
+							"example",
+							"--unknown-cookie-option",
+						]);
+						assert.equal(unknownOption.isError, true, resultText(unknownOption));
+						assert.match(resultText(unknownOption), /unknown flag/);
+						const extraOperand = await call(["cookies", "set", "bad_cookie", "example", "extra"]);
+						assert.equal(extraOperand.isError, true, resultText(extraOperand));
+						assert.match(resultText(extraOperand), /unexpected argument/);
+						const afterInvalid = readArray((await success(["cookies", "get"])).cookies).map(
+							readRecord,
+						);
+						assert.equal(
+							afterInvalid.some((cookie) => cookie.name === "bad_cookie"),
+							false,
+						);
+
+						await success([
+							"eval",
+							"setTimeout(() => { throw new Error('before-clear-0411') }, 0); 'scheduled'",
+						]);
+						await success(["wait", "500"]);
+						const before = readArray((await success(["errors"])).errors).map(readRecord);
+						assert.ok(before.some((error) => readString(error.text).includes("before-clear-0411")));
+						assert.equal((await success(["errors", "--clear"])).cleared, true);
+						assert.deepEqual(readArray((await success(["errors"])).errors), []);
+						await success([
+							"eval",
+							"setTimeout(() => { throw new Error('after-clear-0411') }, 0); 'scheduled'",
+						]);
+						await success(["wait", "500"]);
+						const after = readArray((await success(["errors"])).errors).map(readRecord);
+						assert.ok(after.some((error) => readString(error.text).includes("after-clear-0411")));
+						assert.equal(
+							after.some((error) => readString(error.text).includes("before-clear-0411")),
+							false,
+						);
+					} finally {
+						await success(["close"]);
+						await runExtensionEvent(
+							harness.handlers,
+							"session_shutdown",
+							{ reason: "quit" },
+							harness.ctx,
+						);
+					}
+				},
+			);
+		} finally {
+			await fixture.close();
+			await rm(socketDir, { recursive: true, force: true });
 			await rm(dir, { recursive: true, force: true });
 		}
 	},

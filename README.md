@@ -96,7 +96,7 @@ Run the read-only health check:
 npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor
 ```
 
-It checks the browser CLI, supported versions, and duplicate Pi package sources. It does not change settings.
+It checks the Node.js running the doctor, the browser CLI, Pi version, and duplicate Pi package sources. Pi may use a different runtime or Node executable, so verify it separately. The doctor does not change settings.
 
 For browser execution coordination failures, launch Pi with Node's standard `NODE_DEBUG=pi-agent-browser-policy` environment setting (PowerShell: `$env:NODE_DEBUG = 'pi-agent-browser-policy'`). This optional channel is silent by default and writes failure-stage breadcrumbs to stderr, not tool results. Lines carry Node's PID plus an opaque per-process attempt number and acquisition or release phase (cleanup has separate stage labels); standalone library inspections use attempt `0`. They contain fixed reasons and normalized native error codes/syscalls, never claim contents, paths, session names, or process-start identities. Normal choosing-state missing tickets and confirmed disappearing claims are quiet. A release/cleanup breadcrumb alone does not explain an acquisition failure. Unset `NODE_DEBUG` after collecting diagnostics; these observations do not change coordination policy or budgets.
 
