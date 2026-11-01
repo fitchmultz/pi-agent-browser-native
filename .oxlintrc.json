@@ -5092,6 +5092,7 @@
 				"scripts/publish-contract.mjs",
 				"scripts/release-artifact.mjs",
 				"scripts/release-host.mjs",
+				"scripts/release-live-scope.mjs",
 				"scripts/startup-measurement.mjs",
 				"scripts/verify-command-reference.mjs",
 				"scripts/verify-lifecycle.mjs",
