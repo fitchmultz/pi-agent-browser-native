@@ -133,22 +133,30 @@ syscall blocked by Android. Build/type-check scripts therefore use native `tsgo`
 on Termux; macOS/Linux continue using the package-local pinned `tsc`.
 Published precompiled npm packages do not require a compiler at runtime.
 
-Android support currently uses Termux's system Chromium rather than Chrome for Testing. Upstream issue [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks native Android packaging; until upstream ships an Android launcher, install the packaged Linux-musl arm64 binary without lifecycle scripts and point the global command at it. The commands below install the current agent-browser release. The last locally validated Android release was 0.36.0; later releases are not yet qualified on Android.
+Android support uses an Android-native `agent-browser` source build with Termux's system Chromium, not Chrome for Testing. The packaged Linux-musl executable can launch Chromium but fail hostname resolution for CLI HTTP requests such as `read` and `doctor`'s CDN probe. Building for Android fixes those requests without changing TLS verification or the wrapper's HTTP behavior.
+
+The verified source revision is [`agent-browser` 0.41.1 with the native Android repair](https://github.com/fitchmultz/agent-browser/pull/2), commit `500be1a391ea3e870dff0893e310011ba634468c`. There is no published Android binary; [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks that packaging. The [native Android build guide](https://github.com/fitchmultz/agent-browser/blob/500be1a391ea3e870dff0893e310011ba634468c/docs/content/docs/installation.mdx#androidtermux) explains the build requirements and dashboard assets. Use Node.js 24+, native pnpm 11+, and Termux's build tools:
 
 ```bash
-pkg install tur-repo x11-repo
-pkg install chromium ffmpeg which
-npm install -g --ignore-scripts agent-browser
-ln -sfn "$(npm root -g)/agent-browser/bin/agent-browser-linux-musl-arm64" \
-  "$(npm prefix -g)/bin/agent-browser"
+pkg install x11-repo
+pkg install chromium ffmpeg which rust clang make pkg-config
 ln -sfn "$PREFIX/lib/chromium/chromium-launcher.sh" "$PREFIX/bin/chromium"
-agent-browser --version
+git clone https://github.com/fitchmultz/agent-browser agent-browser-termux
+cd agent-browser-termux
+git checkout --detach 500be1a391ea3e870dff0893e310011ba634468c
+pnpm --pm-on-fail=ignore install --frozen-lockfile --filter dashboard --ignore-scripts
+pnpm --pm-on-fail=ignore --dir packages/dashboard exec next build --webpack
+cargo build --release --locked --manifest-path cli/Cargo.toml
+node scripts/copy-native.js
+node bin/agent-browser.js --version
+node bin/agent-browser.js read https://example.com
+node bin/agent-browser.js doctor
 which chromium
 ```
 
-The `which` package and launcher symlink satisfy upstream's existing Linux system-browser discovery even when tests or Pi sessions isolate `HOME`. Browser code uses the same native launch configuration as direct calls.
+Select `bin/agent-browser-android-arm64` through your existing `agent-browser` launcher on `PATH`. Update source-managed launchers in their canonical source rather than replacing them with an ad hoc symlink. Rebuild after source updates; npm upgrades do not provide an Android executable. The `which` package and Chromium launcher symlink satisfy native Android's PATH-based browser discovery even when tests or Pi sessions isolate `HOME`. Browser code uses the same native launch configuration as direct calls.
 
-Reapply the musl command symlink after reinstalling or upgrading upstream until #1587 is resolved. The wrapper uses Termux-private socket/policy storage, compact 80-bit managed identities so ordinary namespaces and fresh rotations fit the Unix socket-path limit, Termux's `ps`, and Android app-sandbox trust rules automatically. Historical 0.6 Android validation covered headless browser flows, managed restore, namespaced sessions, the former script/job inputs, QA, screenshots, and recording; it does not qualify the 0.7 code contract. Electron desktop discovery/lifecycle is not applicable to Android apps. Android remains outside the release-blocking Crabbox macOS/Ubuntu/native-Windows matrix until a repeatable Android provider target is added.
+The wrapper uses Termux-private socket/policy storage, compact 80-bit managed identities so ordinary namespaces and fresh rotations fit the Unix socket-path limit, Termux's `ps`, and Android app-sandbox trust rules automatically. The native 0.41.1 repair passed real HTTPS reads and `doctor` on the Fold8; this is focused native CLI evidence, not full wrapper or Android release qualification. Historical 0.6 Android validation covered headless browser flows, managed restore, namespaced sessions, the former script/job inputs, QA, screenshots, and recording; it does not qualify the 0.7 code contract. Electron desktop discovery/lifecycle is not applicable to Android apps. Android remains outside the release-blocking Crabbox matrix until a repeatable Android provider target is added.
 
 The native tool also gives agents absolute installed-package doc paths in its full browser instructions. Raw `args` are the 1:1 upstream CLI coverage path for the targeted `agent-browser` release; `agent_browser_code` adds bounded JavaScript orchestration over the same browser, while advanced tools preserve semantic actions, diagnostic QA, source lookup, and Electron lifecycle. Agents should read `README.md` for setup/dependencies, `docs/COMMAND_REFERENCE.md` for targeted command workflows, and `docs/TOOL_CONTRACT.md` for result/detail contracts only when deeper guidance is needed.
 
