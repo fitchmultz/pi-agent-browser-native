@@ -757,11 +757,11 @@ The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/
 
 ## Automatic npm releases (maintainers)
 
-Follow the [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) for versioning, publication, and recovery. A release must publish the same version on npm and GitHub from qualified `main` and use the exact checked candidate tarball.
+The [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) creates a reviewed patch-version PR after changes merge to `main`, then publishes the same version on npm and GitHub using the exact qualified candidate tarball.
 
 Check the final source and candidate against [the existing release gates](RELEASE.md#pre-release-checks), including required lifecycle/live-site evidence and artifact checks. Complete enabled reviews and resolve their findings. Apply the documented Windows waiver without claiming a Windows or full composed-gate pass. Workflow validation is not evidence that publication completed on either service.
 
-Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new release plans; cancel pending runs separately when needed. Follow the shared procedure to retry an unpublished candidate.
+Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new version and release plans; cancel pending runs separately when needed. Follow the shared procedure to retry an unpublished candidate.
 
 ## Local development
 
