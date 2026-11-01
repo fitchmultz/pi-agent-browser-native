@@ -11,7 +11,7 @@ export const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 export const npmExecOptions = process.platform === "win32" ? { shell: true } : {};
 const tarCommand = process.platform === "win32" ? "tar.exe" : "tar";
 
-function parseSinglePackResult(stdout, stderr) {
+export function parseSinglePackResult(stdout, stderr = "") {
 	const parsed = JSON.parse(stdout);
 	let results = [];
 	if (Array.isArray(parsed)) {

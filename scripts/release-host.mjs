@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { inspectCandidate, options, source } from "./release-artifact.mjs";
+import { inspectLiveScope } from "./release-live-scope.mjs";
 
 const { values } = parseArgs({
 	options: {
@@ -19,7 +20,6 @@ for (const key of ["fork-artifact", "host", "output"]) {
 	assert.ok(values[key], `Missing --${key}`);
 }
 assert.ok(["official", "fork"].includes(values.host), "Host must be official or fork");
-assert.ok(process.env.ZAI_API_KEY, "The live qualification model credential is missing");
 
 const output = resolve(values.output);
 const { candidate, tarball, common } = await inspectCandidate(values);
@@ -71,24 +71,30 @@ const runtime = {
 	PI_HOST_CLI: selected.cli,
 	PI_AGENT_BROWSER_RELEASE_TARBALL: tarball,
 };
-const lifecycle = {
-	...runtime,
-	ZAI_API_KEY: process.env.ZAI_API_KEY,
-};
-const live = {
-	...lifecycle,
-	PIAB_LIVE_MODEL: model,
-	PIAB_LIVE_OUTPUT: join(output, "live-sites"),
-	...(process.env.AGENT_BROWSER_EXECUTABLE_PATH
-		? { AGENT_BROWSER_EXECUTABLE_PATH: process.env.AGENT_BROWSER_EXECUTABLE_PATH }
-		: {}),
-};
 const execute = (command, args, environment = runtime) =>
 	run(command, args, { cwd: source, env: environment, timeout: undefined, stdio: "inherit" });
 execute("npm", ["run", "verify"]);
 execute("npm", ["run", "verify", "--", "package-pi"]);
-execute("npm", ["run", "verify", "--", "lifecycle", "--model", model, "--verbose"], lifecycle);
-execute(process.execPath, ["scripts/verify-live-sites.mjs"], live);
+const liveScope = inspectLiveScope({
+	tarball,
+	directory: join(output, "live-scope"),
+	env,
+	common,
+});
+if (liveScope.required) {
+	assert.ok(process.env.ZAI_API_KEY, "The live qualification model credential is missing");
+	const lifecycle = { ...runtime, ZAI_API_KEY: process.env.ZAI_API_KEY };
+	const live = {
+		...lifecycle,
+		PIAB_LIVE_MODEL: model,
+		PIAB_LIVE_OUTPUT: join(output, "live-sites"),
+		...(process.env.AGENT_BROWSER_EXECUTABLE_PATH
+			? { AGENT_BROWSER_EXECUTABLE_PATH: process.env.AGENT_BROWSER_EXECUTABLE_PATH }
+			: {}),
+	};
+	execute("npm", ["run", "verify", "--", "lifecycle", "--model", model, "--verbose"], lifecycle);
+	execute(process.execPath, ["scripts/verify-live-sites.mjs"], live);
+}
 assert.equal(sha256(tarball), candidate.sha256, "Candidate tarball changed during qualification");
 assert.equal(
 	hostIdentity(host.directory, env).runtimeGraphSha256,
@@ -107,4 +113,5 @@ writeJson(join(output, "report.json"), {
 	cliSha256: host.cliSha256,
 	runtimeLockSha256: host.runtimeLockSha256,
 	runtimeGraphSha256: host.runtimeGraphSha256,
+	live: { ...liveScope, status: liveScope.required ? "passed" : "not_required" },
 });
