@@ -154,7 +154,20 @@ node bin/agent-browser.js doctor
 which chromium
 ```
 
-Select `bin/agent-browser-android-arm64` through your existing `agent-browser` launcher on `PATH`. Update source-managed launchers in their canonical source rather than replacing them with an ad hoc symlink. Rebuild after source updates; npm upgrades do not provide an Android executable. The `which` package and Chromium launcher symlink satisfy native Android's PATH-based browser discovery even when tests or Pi sessions isolate `HOME`. Browser code uses the same native launch configuration as direct calls.
+Before installing the Pi extension, `agent-browser` must resolve to this native build as an executable on `PATH`. If you already use a managed launcher, update its native target to `bin/agent-browser-android-arm64` in the launcher's canonical source. Preserve the managed launcher itself.
+
+For a fresh Termux install without an existing command, create the named executable in Termux's `$PREFIX/bin`. Run this from the `agent-browser-termux` checkout:
+
+```bash
+if ! command -v agent-browser >/dev/null 2>&1; then
+	ln -s "$PWD/bin/agent-browser-android-arm64" "$PREFIX/bin/agent-browser"
+fi
+agent-browser --version
+agent-browser read https://example.com
+agent-browser doctor
+```
+
+The conditional preserves an existing launcher, and `ln -s` refuses to overwrite an existing destination. If you use a managed launcher, run the same verification commands after updating its native target. Rebuild after source updates; npm upgrades do not provide an Android executable. The `which` package and Chromium launcher symlink satisfy native Android's PATH-based browser discovery even when tests or Pi sessions isolate `HOME`. Browser code uses the same native launch configuration as direct calls.
 
 The wrapper uses Termux-private socket/policy storage, compact 80-bit managed identities so ordinary namespaces and fresh rotations fit the Unix socket-path limit, Termux's `ps`, and Android app-sandbox trust rules automatically. The native 0.41.1 repair passed real HTTPS reads and `doctor` on the Fold8; this is focused native CLI evidence, not full wrapper or Android release qualification. Historical 0.6 Android validation covered headless browser flows, managed restore, namespaced sessions, the former script/job inputs, QA, screenshots, and recording; it does not qualify the 0.7 code contract. Electron desktop discovery/lifecycle is not applicable to Android apps. Android remains outside the release-blocking Crabbox matrix until a repeatable Android provider target is added.
 
