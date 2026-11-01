@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.8 - 2026-11-01
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Skip release inference when the packed runtime is unchanged (#342) ([deda9b2](https://github.com/fitchmultz/pi-agent-browser-native/commit/deda9b225865e6277018a5ee1144f4bebad0354d))
+
+### What's Changed
+
+- Skip release inference when the packed runtime is unchanged by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/342
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.7...v0.9.8
+
 ## 0.9.7 - 2026-11-01
 
 <!-- npm-release:unreleased:start -->
