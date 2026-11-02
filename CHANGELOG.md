@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.11 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- perf: parallelize independent hot-path awaits (#348) ([5b72527](https://github.com/fitchmultz/pi-agent-browser-native/commit/5b725271ab889b60ee222f50fcddd463e7391f70))
+
+### What's Changed
+
+- perf: parallelize independent hot-path awaits by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/348
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.10...v0.9.11
+
 ## 0.9.10 - 2026-11-02
 
 <!-- npm-release:unreleased:start -->
