@@ -2,8 +2,22 @@
 
 ## Unreleased
 
+## 0.9.9 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+
 - Document a pinned Android-native source build for Termux instead of the Linux-musl executable, preserving the existing managed launcher and full dashboard.
 - Recommend separately installed `agent-browser` 0.41.1 without raising the stable 0.35.0 runtime floor. Preserve and redact the pinned Android source's CDP transport-header argument.
+
+<!-- npm-release:unreleased:end -->
+
+- Correct Android browser installation (2/2) (#345) ([89ba3c6](https://github.com/fitchmultz/pi-agent-browser-native/commit/89ba3c6758ef3403476031d84b7fb069f821d04d))
+
+### What's Changed
+
+- Correct Android browser installation (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/345
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.8...v0.9.9
 
 ## 0.9.8 - 2026-11-01
 
