@@ -192,11 +192,11 @@ test("a torn native append is never published from a partial record", async (t) 
 	append.mock.restore();
 	syncBuiltinESMExports();
 	if (manager.getLeafId() === first) {
-		// Official Pi discards an entry whose append throws: the committed leaf stays selected,
-		// and the completed remainder is an unselected record.
+		// Official Pi discards an entry whose append throws, so the committed leaf stays selected.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
 		await fs.appendFile(file, remainder);
+		// The discarded entry's completed record is off the selected branch and stays unpublished.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
 		return;

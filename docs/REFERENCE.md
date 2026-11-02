@@ -8,7 +8,7 @@ It is for Pi users who want agents to browse sites, inspect pages, click through
 
 ## Pi release qualification
 
-CI qualifies the latest stable official Pi and latest maintained fork `main`, resolving their version/commit once per run and retaining SDK/CLI identity evidence. Locked development dependencies are reproducible build snapshots, not qualification targets; runtime peers remain wildcard. The development snapshot overrides Undici to exact 8.12.3 because official Pi 1.0.2 through 1.4.0 pins exact Undici 8.10.2, which has the high/moderate advisories GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685 and GHSA-f72v-6w45-q472; remove the override once the official development SDK depends on 8.12.2 or later. npm applies root overrides only where this repository is the npm root project: checkouts and Git-source installs, whose build-time development tree resolves 8.12.3. Published npm-package consumers never receive it, the extension does not import Undici at runtime, and qualified official Pi hosts keep their own Undici 8.10.2. `npm run check:compat` checks the installed candidate SDK/CLI identity, typechecks, runs the existing offline tests (including the native Pi pipeline with a controlled provider and fake browser), and tests a packed runtime-only installation through both the SDK and the actual bundled RPC CLI. It does not substitute a fork SDK while leaving official types or child CLI installed.
+CI qualifies the latest stable official Pi and latest maintained fork `main`, resolving their version/commit once per run and retaining SDK/CLI identity evidence. Locked development dependencies are reproducible build snapshots, not qualification targets; runtime peers remain wildcard. `npm run check:compat` checks the installed candidate SDK/CLI identity, typechecks, runs the existing offline tests (including the native Pi pipeline with a controlled provider and fake browser), and tests a packed runtime-only installation through both the SDK and the actual bundled RPC CLI. It does not substitute a fork SDK while leaving official types or child CLI installed.
 
 Run in an empty HOME with a **short** TMPDIR outside your real home. Long temporary paths can exceed macOS's 103-byte Unix socket limit; keep the fixture's socket safety checks intact. Native lifecycle controls, live upstream help sampling, lifecycle dogfood, and platform qualification remain the separate gates documented below. A Pi-only compatibility run uses no live browser profiles, credentials, or agent-browser fork, and does not certify those external integrations.
 
@@ -105,7 +105,7 @@ Artifact results show known requested paths separately from reported/resolved lo
 
 ## Fastest way to try it
 
-Use Node 24.21.0 or newer and Pi 1.0.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes Pi hosts below 1.0.0 a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
+Use Node 24.21.0 or newer and Pi 1.5.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes Pi hosts below 1.5.0 a setup failure through `pi-agent-browser-doctor`. There are no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -792,7 +792,7 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
-Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.0.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.5.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
 
 Checkout-only extension smoke test:
 
