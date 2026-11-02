@@ -1696,6 +1696,42 @@ test("validateToolArgs applies global equals exceptions only at top level", () =
 	);
 });
 
+test("buildExecutionPlan preserves and redacts native CDP transport headers", () => {
+	const args = [
+		"--session",
+		"transport",
+		"--cdp-headers",
+		'{"X-Transport-Key":"fixture-secret"}',
+		"connect",
+		"http://127.0.0.1:9222",
+	];
+	const plan = buildExecutionPlan(args, {
+		freshSessionName: createFreshSessionName("piab-demo-123", "seed", 1),
+		managedSessionActive: false,
+		managedSessionName: "piab-demo-123",
+		sessionMode: "auto",
+	});
+	assert.deepEqual(
+		{
+			command: plan.commandInfo.command,
+			effectiveArgs: plan.effectiveArgs,
+			redactedArgs: redactInvocationArgs(args),
+		},
+		{
+			command: "connect",
+			effectiveArgs: ["--json", ...args],
+			redactedArgs: [
+				"--session",
+				"transport",
+				"--cdp-headers",
+				"[REDACTED]",
+				"connect",
+				"http://127.0.0.1:9222",
+			],
+		},
+	);
+});
+
 test("buildExecutionPlan rejects missing values for global value-taking flags before launching upstream", () => {
 	for (const args of [
 		["--session"],
@@ -1711,6 +1747,7 @@ test("buildExecutionPlan rejects missing values for global value-taking flags be
 		["--restore-check-text"],
 		["--restore-check-fn"],
 		["--cdp"],
+		["--cdp-headers"],
 		["--state"],
 		["--init-script"],
 		["--enable"],

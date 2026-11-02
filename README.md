@@ -70,7 +70,7 @@ Shared root browsers survive Pi exit. Ask Pi to close your group's browser when 
 
 Profile access exposes private page content to the model. That content can persist in transcripts and saved files. Use temporary profiles for tests.
 
-Credential-like values are redacted, but ordinary page text stays visible. Verify the signed-in page after you select a profile or restore browser state.
+Credential-like values, including CDP transport headers on the [pinned Android build](docs/REFERENCE.md#android--termux), are redacted, but ordinary page text stays visible. Verify the signed-in page after you select a profile or restore browser state.
 
 Native `batch --omit-command` keeps indexed results without echoed commands. Cookie/storage redaction, ordered close/reopen effects, snapshot refs, and artifact verification still apply, including when empty stdin rows are skipped.
 

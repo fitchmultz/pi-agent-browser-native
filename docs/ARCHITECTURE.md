@@ -12,7 +12,7 @@ Related docs:
 
 Build this as a **thin `pi` extension/package** that exposes native commands and persistent-browser code while keeping upstream `agent-browser` as the source of truth.
 
-The recommended separately installed native is 0.41.0, with the stable 0.35.0 runtime floor unchanged. Native owns the newer download persistence, origin-scoped restore, project-config trust, and daemon `.config` cleanup; the wrapper adds no version-specific emulation. Native finite MCP calls remain outside the current integration: existing validation rejects non-help `mcp`, and inner identity, cross-session locking, secret presentation, and image delivery are unresolved. See the [capability guide](COMMAND_REFERENCE.md#upstream-0410-rebaseline) and [MCP boundary](TOOL_CONTRACT.md#native-mcp-boundary).
+The recommended separately installed native is 0.41.1, with the stable 0.35.0 runtime floor unchanged. Native owns the newer download persistence, origin-scoped restore, project-config trust, and daemon `.config` cleanup; the wrapper adds no version-specific emulation. Native finite MCP calls remain outside the current integration: existing validation rejects non-help `mcp`, and inner identity, cross-session locking, secret presentation, and image delivery are unresolved. See the [capability guide](COMMAND_REFERENCE.md#upstream-0411-qualification) and [MCP boundary](TOOL_CONTRACT.md#native-mcp-boundary).
 
 The package install path is the primary product path. Local checkout development should use explicit CLI loading for isolated smoke tests and configured-source plain `pi` runs for lifecycle validation, while package-manifest behavior and packaged contents matter more.
 

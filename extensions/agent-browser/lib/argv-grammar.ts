@@ -12,6 +12,7 @@ export const GLOBAL_VALUE_FLAGS = [
 	"--session",
 	"--namespace",
 	"--cdp",
+	"--cdp-headers",
 	"--config",
 	"--profile",
 	"--session-name",
