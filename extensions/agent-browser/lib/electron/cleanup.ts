@@ -78,18 +78,25 @@ async function isPortAlive(
 	return { targets, version };
 }
 
+async function inspectUserDataDirState(
+	userDataDir: string,
+): Promise<ElectronLaunchStatus["userDataDirState"]> {
+	try {
+		await lstat(userDataDir);
+		return "present";
+	} catch (error) {
+		return isRecord(error) && error.code === "ENOENT" ? "absent" : "unknown";
+	}
+}
+
 export async function inspectElectronLaunchStatus(
 	record: ElectronLaunchRecord,
 	signal?: AbortSignal,
 ): Promise<ElectronLaunchStatus> {
-	const cdp = await isPortAlive(record.port, signal);
-	let userDataDirState: ElectronLaunchStatus["userDataDirState"];
-	try {
-		await lstat(record.userDataDir);
-		userDataDirState = "present";
-	} catch (error) {
-		userDataDirState = isRecord(error) && error.code === "ENOENT" ? "absent" : "unknown";
-	}
+	const [cdp, userDataDirState] = await Promise.all([
+		isPortAlive(record.port, signal),
+		inspectUserDataDirState(record.userDataDir),
+	]);
 	return {
 		cleanupState: record.cleanupState,
 		launchId: record.launchId,

@@ -357,8 +357,7 @@ function replayRelevant(value: Readonly<Record<string, unknown>>): boolean {
 	);
 }
 async function verifyCapturedFile(file: FileHandle, path: string, captured: Stats): Promise<void> {
-	const current = await file.stat();
-	const currentPath = await stat(path);
+	const [current, currentPath] = await Promise.all([file.stat(), stat(path)]);
 	if (
 		current.dev !== captured.dev ||
 		current.ino !== captured.ino ||

@@ -8,12 +8,17 @@ import {
 export async function buildToolPresentation(
 	options: BuildToolPresentationOptions,
 ): Promise<ToolPresentation> {
-	const { buildPresentationSource, buildSourcePresentation, resolvePresentationCommands } =
-		await import("./presentation/source.js");
-	const { buildEarlyPresentation, sanitizeModelFacingPresentation } =
-		await import("./presentation/early-result.js");
-	const { applyPresentationNotices } = await import("./presentation/notices.js");
-	const { applyPresentationOutcome } = await import("./presentation/outcomes.js");
+	const [
+		{ buildPresentationSource, buildSourcePresentation, resolvePresentationCommands },
+		{ buildEarlyPresentation, sanitizeModelFacingPresentation },
+		{ applyPresentationNotices },
+		{ applyPresentationOutcome },
+	] = await Promise.all([
+		import("./presentation/source.js"),
+		import("./presentation/early-result.js"),
+		import("./presentation/notices.js"),
+		import("./presentation/outcomes.js"),
+	]);
 	const commands = resolvePresentationCommands(options);
 	const early = await buildEarlyPresentation(options, commands);
 	if (early) {

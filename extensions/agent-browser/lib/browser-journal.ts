@@ -180,8 +180,7 @@ async function appendPublishedRecord(
 			sessionId: manager.getHeader()?.id ?? manager.getSessionId(),
 		});
 	} finally {
-		await file?.close();
-		await beforeFile.close();
+		await Promise.all([file?.close(), beforeFile.close()]);
 	}
 	return operation.branch.isCurrent();
 }

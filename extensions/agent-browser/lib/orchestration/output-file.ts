@@ -257,7 +257,8 @@ async function pathsReferToSameFile(left: string, right: string): Promise<boolea
 		return true;
 	}
 	try {
-		if ((await realpath(left)) === (await realpath(right))) {
+		const [leftPath, rightPath] = await Promise.all([realpath(left), realpath(right)]);
+		if (leftPath === rightPath) {
 			return true;
 		}
 	} catch {

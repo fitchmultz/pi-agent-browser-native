@@ -192,12 +192,13 @@ async function inspectProbeIdentity(
 	input: CompiledProbe,
 	visibleInput: CompiledAgentBrowserElectron,
 ): Promise<AgentBrowserToolResult> {
-	const status = identity.record ? await inspectElectronLaunchStatus(identity.record) : undefined;
 	const policy = resolveProbePolicy(options, identity, input.timeoutMs);
-	const probe = await withOwnedElectronManagedSessionPolicy(
-		{ ...policy, args: ["snapshot", "-i"] },
-		() => collectElectronProbe(policy),
-	);
+	const [status, probe] = await Promise.all([
+		identity.record ? inspectElectronLaunchStatus(identity.record) : undefined,
+		withOwnedElectronManagedSessionPolicy({ ...policy, args: ["snapshot", "-i"] }, () =>
+			collectElectronProbe(policy),
+		),
+	]);
 	const managedSession: ElectronManagedSessionTarget = {
 		sessionName: probe.sessionName,
 		title: probe.title ?? probe.activeTab?.title,
