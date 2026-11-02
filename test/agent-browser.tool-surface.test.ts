@@ -290,7 +290,10 @@ test("registered browser code serializes for Anthropic while Pi still rejects in
 		assert.deepEqual(codeCalls, [{ code: "emit(1)", namespace: "" }]);
 		// Pi 1.5 validation truncates a fractional number for an integer field instead of rejecting it.
 		await call(tool.name, { code: "emit(1)", timeoutMs: 1.5 });
-		assert.deepEqual(codeCalls.at(-1), { code: "emit(1)", timeoutMs: 1 });
+		assert.deepEqual(codeCalls, [
+			{ code: "emit(1)", namespace: "" },
+			{ code: "emit(1)", timeoutMs: 1 },
+		]);
 	});
 });
 
