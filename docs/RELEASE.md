@@ -36,9 +36,9 @@ Linux/macOS, declared Node floors, official/fork host and consumer-artifact chec
 
 Docs/workflow-only changes may reuse prior live/platform evidence when the complete compiled runtime, runtime dependencies and relevant tests are unchanged. Changed published files require a new retained tarball checked by `verify-package.mjs --smoke-pi`, including runtime-only SDK and actual CLI loading. Publish those exact checked bytes without repacking.
 
-## Pi 1.0 upgrade and qualification
+## Pi 1.5.0 upgrade and qualification
 
-This contract requires Pi 1.0.0. Do not install or activate it in running pre-1.0 sessions; coordinate the runtime cutover and restart participating agents first. Keep runtime activation separate from isolated checkout/SDK qualification. Preserve auth/profile/state files, explicit artifacts and Pi journals when updating or rolling back; browser mutations are not reversible through a package rollback.
+This contract requires Pi 1.5.0. Do not install or activate it in running pre-1.5 sessions; coordinate the runtime cutover and restart participating agents first. Keep runtime activation separate from isolated checkout/SDK qualification. Preserve auth/profile/state files, explicit artifacts and Pi journals when updating or rolling back; browser mutations are not reversible through a package rollback.
 
 Qualify the exact official and fork host graphs independently, including SDK and actual CLI loading, explicit/defaultTools/loader/initial-resume/tree/reload selections, structured success/failure/redaction and unchanged JSON. Inspect regular and fullscreen native TUI results, including failures and images. Keep the existing 250 ms import/factory and 1,000 ms lock budgets; synthetic research timings are not final-source release evidence or universal performance guarantees. Apply normal required macOS/Linux release gates; Windows is separately labeled best-effort. Host identity and actual supported APIs, not a version label alone, determine qualification.
 
@@ -52,9 +52,9 @@ Rollback is package-level: restore the previously installed 0.6 package from you
 
 ### Changed-path qualification
 
-The minimum Pi runtime is 1.0.0, matching the native APIs used by the new tool contract. Wildcard peers remain host-owned dependency declarations, not support for older runtimes.
+The minimum Pi runtime is 1.5.0, matching the native APIs the tool contract uses. Wildcard peers remain host-owned dependency declarations, not support for older runtimes.
 
-Qualify official Pi 1.0 and the fork independently with the existing host/package/lifecycle infrastructure. Required evidence for the redesign includes compact schema and additive activation/history, native prompt sections, shared direct/code auth continuity, fresh JavaScript globals, selected real images and conservative geometry, visible handled failures/exact recovery, real cross-process helper/action and whole-cell ordering, cancellation/reaping, and ordered transition replay after interruption/branch changes. Retain native batch and advanced action/QA/Electron/source outcome coverage. Small synthetic timing comparisons are not universal performance claims or sandbox certification.
+Qualify official Pi and the fork independently with the existing host/package/lifecycle infrastructure. Required evidence for the redesign includes compact schema and additive activation/history, native prompt sections, shared direct/code auth continuity, fresh JavaScript globals, selected real images and conservative geometry, visible handled failures/exact recovery, real cross-process helper/action and whole-cell ordering, cancellation/reaping, and ordered transition replay after interruption/branch changes. Retain native batch and advanced action/QA/Electron/source outcome coverage. Small synthetic timing comparisons are not universal performance claims or sandbox certification.
 
 Routine GitHub PR and release-call checks include a nonblocking Windows build/import/process smoke; deep official/fork Windows qualification and its environment self-check are manual-only. Retain every failed attempt, including historical waived diagnostics, without claiming a Windows pass from an aggregate that ignored failures. These focused checks complement, rather than replace, the local release and publication gates.
 
@@ -139,7 +139,7 @@ Releases that change the Pi agent runtime also require interactive `tmux`-driven
 
 When reviewing saved session JSONL after a failed smoke or QA reclassification, expect browser tool rows to carry `isError: true` whenever `details.resultCategory` is `failure`. The model-visible observation must also report failure. Canonical JSON stays parseable and unchanged. Final public results return `isError` directly, with a prose failure notice outside explicit JSON, so Pi's transcript matches the wrapper contract ([`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details)). Preserve a normal Pi session directory for those checks; avoiding `--no-session` keeps this evidence intact ([`AGENTS.md`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/AGENTS.md) preferred validation workflow).
 
-The configured-source lifecycle regression harness is required before release because it launches an interactive Pi 1.0.0+ process under `tmux` with `--approve` and validates `/reload`, full relaunch with the same exact `--session-id`, managed-session continuity, persisted artifacts, compiled-entrypoint pickup after process restart, and native returned-failure behavior. Branch-backed `session_tree` rehydration and cleanup ownership are validated by focused extension harness tests:
+The configured-source lifecycle regression harness is required before release because it launches an interactive Pi 1.5.0+ process under `tmux` with `--approve` and validates `/reload`, full relaunch with the same exact `--session-id`, managed-session continuity, persisted artifacts, compiled-entrypoint pickup after process restart, and native returned-failure behavior. Branch-backed `session_tree` rehydration and cleanup ownership are validated by focused extension harness tests:
 
 ```bash
 npm run verify -- lifecycle
@@ -341,7 +341,7 @@ The default unit suite also runs `agentBrowserExtension passes through core comm
 
 ### Native lifecycle qualification
 
-[`test/agent-browser.native-lifecycle.test.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/agent-browser.native-lifecycle.test.mjs) is the model-free portable SDK lifecycle gate. It loads the compiled extension through real native resource discovery and executes browser tools against loopback fixtures. Qualify official and fork Pi 1.0 graphs independently: no removed fork-only APIs are required. It covers branch/reload continuity, detached and queued code cancellation/ordering, managed cleanup, caller-owned attachment and off-branch routing, failed journal-begin refusal during recording, and root save/reopen across fresh checkout/state-directory inodes. This is lifecycle evidence, not serialization of live page JavaScript, forms or recordings.
+[`test/agent-browser.native-lifecycle.test.mjs`](https://github.com/fitchmultz/pi-agent-browser-native/blob/main/test/agent-browser.native-lifecycle.test.mjs) is the model-free portable SDK lifecycle gate. It loads the compiled extension through real native resource discovery and executes browser tools against loopback fixtures. Qualify official and fork Pi graphs independently: no removed fork-only APIs are required. It covers branch/reload continuity, detached and queued code cancellation/ordering, managed cleanup, caller-owned attachment and off-branch routing, failed journal-begin refusal during recording, and root save/reopen across fresh checkout/state-directory inodes. This is lifecycle evidence, not serialization of live page JavaScript, forms or recordings.
 
 Run non-root with an isolated HOME/socket root and stock `agent-browser`, Chrome for Testing and ffmpeg, without personal profiles or inherited credentials/configuration. The browser directory must contain binaries, never a personal profile.
 

@@ -3277,6 +3277,7 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 	const { AgentBrowserResultComponent } =
 		await import("../extensions/agent-browser/lib/pi-tool-rendering.js");
 	const cached = new AgentBrowserResultComponent();
+	const renderState = (isError: boolean) => ({ isError, keyText: () => "ctrl+o" });
 	let colorCalls = 0;
 	let themeVersion = {};
 	let themePrefix = "";
@@ -3296,7 +3297,12 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 			return value;
 		},
 	});
-	cached.setResult(longResult, { expanded: false, isPartial: false }, liveTheme, false);
+	cached.setResult(
+		longResult,
+		{ expanded: false, isPartial: false },
+		liveTheme,
+		renderState(false),
+	);
 	assert.ok(colorCalls > 20, "initial JSON tokens are colorized");
 	const firstCachedLines = cached.render(80);
 	colorCalls = 0;
@@ -3319,7 +3325,7 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 				},
 				{ expanded: index % 2 === 0, isPartial: false },
 				liveTheme,
-				false,
+				renderState(false),
 			);
 		}
 		assert.equal(
@@ -3331,29 +3337,39 @@ test("agentBrowserExtension renders long TUI output compactly without changing m
 			{ ...longResult, details: { summary: "changed summary, identical visible output" } },
 			{ expanded: false, isPartial: false },
 			liveTheme,
-			false,
+			renderState(false),
 		);
 		assert.equal(resets, 0, "identical formatted output must retain the native Text layout cache");
 	} finally {
 		Object.defineProperty(Text.prototype, "setText", setTextDescriptor);
 	}
 	assert.deepEqual(cached.render(80), firstCachedLines);
-	cached.setResult(longResult, { expanded: true, isPartial: false }, liveTheme, false);
+	cached.setResult(longResult, { expanded: true, isPartial: false }, liveTheme, renderState(false));
 	assert.match(cached.render(24).join("\n"), /item-24/);
-	cached.setResult(failedResult, { expanded: false, isPartial: false }, liveTheme, true);
+	cached.setResult(
+		failedResult,
+		{ expanded: false, isPartial: false },
+		liveTheme,
+		renderState(true),
+	);
 	assert.match(cached.render(200).join("\n"), /selector-not-found/);
 	cached.setResult(
 		{ ...failedResult, details: { resultCategory: "failure", failureCategory: "timeout" } },
 		{ expanded: false, isPartial: false },
 		liveTheme,
-		true,
+		renderState(true),
 	);
 	assert.match(cached.render(200).join("\n"), /failureCategory: timeout/);
-	cached.setResult(longResult, { expanded: false, isPartial: true }, liveTheme, false);
+	cached.setResult(longResult, { expanded: false, isPartial: true }, liveTheme, renderState(false));
 	assert.match(cached.render(200).join("\n"), /Running agent-browser/);
 	themeVersion = {};
 	themePrefix = "changed-theme:";
-	cached.setResult(longResult, { expanded: false, isPartial: false }, liveTheme, false);
+	cached.setResult(
+		longResult,
+		{ expanded: false, isPartial: false },
+		liveTheme,
+		renderState(false),
+	);
 	assert.match(cached.render(200).join("\n"), /changed-theme:/);
 
 	const scalarResult: AgentToolResult<unknown> = {

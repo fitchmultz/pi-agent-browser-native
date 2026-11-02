@@ -264,7 +264,6 @@ test("registered browser code serializes for Anthropic while Pi still rejects in
 			{ code: "emit(1)", session: "" },
 			{ code: "emit(1)", timeoutMs: 0 },
 			{ code: "emit(1)", timeoutMs: 300001 },
-			{ code: "emit(1)", timeoutMs: 1.5 },
 			{ code: "emit(1)", args: [] },
 			{ script: "emit(1)" },
 		];
@@ -289,6 +288,12 @@ test("registered browser code serializes for Anthropic while Pi still rejects in
 			outputPath: null,
 		});
 		assert.deepEqual(codeCalls, [{ code: "emit(1)", namespace: "" }]);
+		// Pi 1.5 validation truncates a fractional number for an integer field instead of rejecting it.
+		await call(tool.name, { code: "emit(1)", timeoutMs: 1.5 });
+		assert.deepEqual(codeCalls, [
+			{ code: "emit(1)", namespace: "" },
+			{ code: "emit(1)", timeoutMs: 1 },
+		]);
 	});
 });
 
@@ -727,6 +732,9 @@ test("Electron action schemas preserve field boundaries through native Pi valida
 		assert.deepEqual(calls.at(-1)?.electron, { action: "list", query: "42" });
 		await call("agent_browser_electron", { action: "list", maxResults: "10" });
 		assert.deepEqual(calls.at(-1)?.electron, { action: "list", maxResults: 10 });
+		// Pi 1.5 validation truncates a fractional number for an integer field instead of rejecting it.
+		await call("agent_browser_electron", { action: "list", maxResults: 1.5 });
+		assert.deepEqual(calls.at(-1)?.electron, { action: "list", maxResults: 1 });
 		await call("agent_browser_electron", { action: "list", appPath: null, maxResults: null });
 		assert.deepEqual(calls.at(-1)?.electron, { action: "list" });
 		const fields: JsonObject = {
@@ -799,7 +807,6 @@ test("Electron action schemas preserve field boundaries through native Pi valida
 			{ action: "launch", handoff: "invalid" },
 			{ action: "list", maxResults: 0 },
 			{ action: "list", query: "" },
-			{ action: "list", maxResults: 1.5 },
 			{ action: "launch", allow: [""] },
 			{ action: "status", all: false },
 			{ action: "cleanup", all: false },

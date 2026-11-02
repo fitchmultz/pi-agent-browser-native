@@ -1,5 +1,5 @@
-import type { AgentToolResult, Theme } from "@earendil-works/pi-coding-agent";
-import { getKeybindings, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import type { AgentToolResult, KeybindingHints, Theme } from "@earendil-works/pi-coding-agent";
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 import { compileAgentBrowserElectron } from "./input-modes/electron.js";
 import { compileAgentBrowserQaPreset } from "./input-modes/job.js";
@@ -113,22 +113,14 @@ function colorizeToolOutputLines(outputText: string, theme: Theme, isError: bool
 	});
 }
 
-// ponytail: "app.tools.expand" is a host-registered keybinding id (coding-agent augments pi-tui's
-// Keybindings via declaration merging); getKeys returns [] before the host registers its ids
-// (bare-node tests), so fall back to the stock ctrl+o. pi-tui is already a runtime import at
-// the entrypoint, so getKeybindings() adds no startup tax.
-function formatExpandHint(theme: Theme): string {
-	const key = getKeybindings().getKeys("app.tools.expand")[0] ?? "ctrl+o";
-	return `${theme.fg("dim", key)} ${theme.fg("muted", "to expand")}`;
-}
-
 function formatVisualTruncationNotice(
-	remainingLines: number,
-	totalLines: number,
+	hidden: { readonly remainingLines: number; readonly totalLines: number },
+	expandKey: string,
 	theme: Theme,
 	width: number,
 ): string {
-	const notice = `${theme.fg("muted", `... (${remainingLines} more lines, ${totalLines} total, `)}${formatExpandHint(theme)}${theme.fg("muted", ")")}`;
+	const expandHint = `${theme.fg("dim", expandKey)} ${theme.fg("muted", "to expand")}`;
+	const notice = `${theme.fg("muted", `... (${hidden.remainingLines} more lines, ${hidden.totalLines} total, `)}${expandHint}${theme.fg("muted", ")")}`;
 	return truncateToWidth(notice, Math.max(0, width));
 }
 
@@ -374,8 +366,14 @@ export function finalizeAgentBrowserFailure<T extends AgentToolResult<unknown>>(
 	};
 }
 
+/** Host render-context fields the result component reads on each render pass. */
+export type AgentBrowserResultRenderContext = Pick<KeybindingHints, "keyText"> & {
+	readonly isError: boolean;
+};
+
 export class AgentBrowserResultComponent {
 	private expanded = false;
+	private expandKey = "";
 	private theme: Theme | undefined;
 	private readonly text = new Text("", 0, 0);
 	private value: string | undefined;
@@ -385,8 +383,11 @@ export class AgentBrowserResultComponent {
 		result: AgentToolResult<unknown>,
 		options: { readonly expanded: boolean; readonly isPartial: boolean },
 		theme: Theme,
-		isError: boolean,
+		context: AgentBrowserResultRenderContext,
 	): void {
+		const { isError } = context;
+		// Pi injects the host's current keybinding text; resolve it per pass so rebinding applies.
+		this.expandKey = context.keyText("app.tools.expand");
 		const details = isRecord(result.details) ? result.details : undefined;
 		// Theme is a stable proxy in Pi; its resolved colors identify theme/terminal-color changes.
 		const key = [
@@ -435,7 +436,12 @@ export class AgentBrowserResultComponent {
 		const hiddenLineCount = lines.length - TUI_COLLAPSED_OUTPUT_MAX_LINES;
 		return [
 			...lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES),
-			formatVisualTruncationNotice(hiddenLineCount, lines.length, theme, width),
+			formatVisualTruncationNotice(
+				{ remainingLines: hiddenLineCount, totalLines: lines.length },
+				this.expandKey,
+				theme,
+				width,
+			),
 		];
 	}
 
