@@ -36,9 +36,9 @@ Linux/macOS, declared Node floors, official/fork host and consumer-artifact chec
 
 Docs/workflow-only changes may reuse prior live/platform evidence when the complete compiled runtime, runtime dependencies and relevant tests are unchanged. Changed published files require a new retained tarball checked by `verify-package.mjs --smoke-pi`, including runtime-only SDK and actual CLI loading. Publish those exact checked bytes without repacking.
 
-## Pi 1.0 upgrade and qualification
+## Pi 1.5.0 upgrade and qualification
 
-This contract requires Pi 1.0.0. Do not install or activate it in running pre-1.0 sessions; coordinate the runtime cutover and restart participating agents first. Keep runtime activation separate from isolated checkout/SDK qualification. Preserve auth/profile/state files, explicit artifacts and Pi journals when updating or rolling back; browser mutations are not reversible through a package rollback.
+This contract requires Pi 1.5.0. Do not install or activate it in running pre-1.5 sessions; coordinate the runtime cutover and restart participating agents first. Keep runtime activation separate from isolated checkout/SDK qualification. Preserve auth/profile/state files, explicit artifacts and Pi journals when updating or rolling back; browser mutations are not reversible through a package rollback.
 
 Qualify the exact official and fork host graphs independently, including SDK and actual CLI loading, explicit/defaultTools/loader/initial-resume/tree/reload selections, structured success/failure/redaction and unchanged JSON. Inspect regular and fullscreen native TUI results, including failures and images. Keep the existing 250 ms import/factory and 1,000 ms lock budgets; synthetic research timings are not final-source release evidence or universal performance guarantees. Apply normal required macOS/Linux release gates; Windows is separately labeled best-effort. Host identity and actual supported APIs, not a version label alone, determine qualification.
 

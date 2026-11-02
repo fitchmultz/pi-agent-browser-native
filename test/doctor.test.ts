@@ -32,7 +32,7 @@ function passingVersion() {
 }
 
 function passingPiVersion() {
-	return "1.0.0\n";
+	return "1.5.0\n";
 }
 
 function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
@@ -59,10 +59,10 @@ test("doctor reports missing agent-browser with actionable install guidance", as
 
 test("doctor accepts the supported floor and newer stable versions", async () => {
 	for (const [version, upstreamOutput, piOutput] of [
-		["0.35.0", "agent-browser 0.35.0\n", "pi 1.0.0\n"],
-		["0.35.0", "0.35.0\n", "1.0.0\n"],
-		["0.35.2", "agent-browser 0.35.2\n", "1.0.0\n"],
-		["1.0.0", "agent-browser 1.0.0\n", "1.0.0\n"],
+		["0.35.0", "agent-browser 0.35.0\n", "pi 1.5.0\n"],
+		["0.35.0", "0.35.0\n", "1.5.0\n"],
+		["0.35.2", "agent-browser 0.35.2\n", "1.5.0\n"],
+		["1.0.0", "agent-browser 1.0.0\n", "1.5.0\n"],
 	]) {
 		// Each injected version/source case completes and is asserted before the next begins.
 		// oxlint-disable-next-line no-await-in-loop
@@ -78,7 +78,7 @@ test("doctor accepts the supported floor and newer stable versions", async () =>
 		assert.equal(report.failures.length, 0);
 		// Every version spelling must produce the recognized Pi floor, not an unparseable warning.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(text, /Pi version satisfies the minimum runtime floor: 1\.0\.0/);
+		assert.match(text, /Pi version satisfies the minimum runtime floor: 1\.5\.0/);
 		// Every supported-version fixture must report its exact detected version.
 		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.match(
@@ -114,14 +114,14 @@ test("doctor reports versions below the supported floor", async () => {
 test("doctor fails when Pi is below the minimum runtime floor", async () => {
 	const report = await evaluateDoctor({
 		runAgentBrowser: async () => passingVersion(),
-		runPi: async () => "0.99.2\n",
+		runPi: async () => "1.4.0\n",
 		skipSourceCheck: true,
 	});
 	const text = formatDoctorReport(report);
 
 	assert.equal(report.failures.length, 1);
-	assert.match(text, /Pi 1\.0\.0 or newer is required; found 0\.99\.2/);
-	assert.match(text, /enforces the Pi 1\.0\.0 runtime floor/);
+	assert.match(text, /Pi 1\.5\.0 or newer is required; found 1\.4\.0/);
+	assert.match(text, /enforces the Pi 1\.5\.0 runtime floor/);
 	assert.match(text, /Doctor found setup failures/);
 });
 
@@ -137,7 +137,7 @@ test("doctor warns instead of failing when Pi version cannot be inspected", asyn
 
 	assert.equal(report.failures.length, 0);
 	assert.match(text, /Could not inspect pi --version/);
-	assert.match(text, /Pi 1\.0\.0 or newer is required/);
+	assert.match(text, /Pi 1\.5\.0 or newer is required/);
 	assert.match(text, /Doctor passed/);
 });
 

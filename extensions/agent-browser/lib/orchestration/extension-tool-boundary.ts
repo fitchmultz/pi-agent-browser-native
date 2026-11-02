@@ -22,7 +22,7 @@ export function registerBrowserTools(runtime: BrowserRuntime): void {
 			context.lastComponent instanceof AgentBrowserResultComponent
 				? context.lastComponent
 				: new AgentBrowserResultComponent();
-		component.setResult(result, options, theme, context.isError);
+		component.setResult(result, options, theme, context);
 		return component;
 	};
 	const renderers = {

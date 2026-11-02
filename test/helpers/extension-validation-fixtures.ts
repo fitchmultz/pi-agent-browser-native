@@ -137,6 +137,8 @@ export function createRenderContext(options: {
 		},
 		isError: options.isError ?? false,
 		isPartial: false,
+		keyHint: (_keybinding, description) => `ctrl+o ${description}`,
+		keyText: () => "ctrl+o",
 		lastComponent: options.lastComponent,
 		showImages: true,
 		state: {},

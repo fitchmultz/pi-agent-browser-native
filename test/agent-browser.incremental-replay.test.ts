@@ -168,8 +168,8 @@ for (const change of [
 	});
 }
 
-test("a torn native append stays unpublished until its complete record is readable", async (t) => {
-	const { manager } = await fixture(t);
+test("a torn native append is never published from a partial record", async (t) => {
+	const { manager, first } = await fixture(t);
 	const file = manager.getSessionFile();
 	assert.ok(file !== undefined);
 	await readBrowserEntries(manager);
@@ -191,6 +191,18 @@ test("a torn native append stays unpublished until its complete record is readab
 	);
 	append.mock.restore();
 	syncBuiltinESMExports();
+	if (manager.getLeafId() === first) {
+		// Official Pi discards an entry whose append throws: the committed leaf stays selected,
+		// and the completed remainder is an unselected record.
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+		await fs.appendFile(file, remainder);
+		// oxlint-disable-next-line node-test/no-conditional-assertion
+		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+		return;
+	}
+	// The maintained fork keeps the accepted entry selected and writes it with the next append,
+	// so browser work waits until its complete record is readable.
 	await assert.rejects(readBrowserEntries(manager), /not persisted/);
 	await fs.appendFile(file, remainder);
 	assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e3"]);

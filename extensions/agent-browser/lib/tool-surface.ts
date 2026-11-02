@@ -297,8 +297,8 @@ function hasExplicitToolSelection(): boolean {
 
 function registerAdvancedToolReplay(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
-		// ponytail: official 1.0 SDK supplies initialActiveToolNames on resume, bypassing
-		// native transcript restoration. Remove this additive fallback once the supported SDK restores it.
+		// ponytail: Pi restores a transcript's tool loadout natively only in default-tool sessions;
+		// `--no-builtin-tools` (SDK `noTools: "builtin"`) skips it. Remove once Pi restores that mode too.
 		if (hasExplicitToolSelection()) {
 			return;
 		}

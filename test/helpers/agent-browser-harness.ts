@@ -20,6 +20,7 @@ import { execPath as nodeExecPath, platform as processPlatform } from "node:proc
 
 import type {
 	ExtensionAPI,
+	KeybindingHints,
 	Theme,
 	ToolDefinition,
 	ToolRenderResultOptions,
@@ -483,7 +484,7 @@ export type AgentBrowserToolParams = {
 	readonly timeoutMs?: number;
 };
 
-export interface AgentBrowserToolRenderContext {
+export interface AgentBrowserToolRenderContext extends KeybindingHints {
 	args: unknown;
 	argsComplete: boolean;
 	cwd: string;

@@ -26,7 +26,7 @@ import {
 
 const execFile = promisify(execFileCallback);
 const RECOMMENDED_VERSION = TARGET_AGENT_BROWSER_VERSION;
-export const MINIMUM_PI_VERSION = "1.0.0";
+export const MINIMUM_PI_VERSION = "1.5.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 
 /** @typedef {{readonly status: "pass" | "warn" | "fail", readonly title: string, readonly lines: readonly string[], readonly warnings?: readonly string[]}} DoctorCheck */
