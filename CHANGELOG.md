@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.12 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Recheck unreported Cursor reviews in automatic releases (#351) ([7c2b33d](https://github.com/fitchmultz/pi-agent-browser-native/commit/7c2b33df52282d41774eb9219e6ec0122e6a5b74))
+
+### What's Changed
+
+- Recheck unreported Cursor reviews in automatic releases by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/351
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.11...v0.9.12
+
 ## 0.9.11 - 2026-11-02
 
 <!-- npm-release:unreleased:start -->
