@@ -161,22 +161,25 @@ export async function extractFileArtifacts(
 				)
 			: undefined;
 	const recordingPending = getRecordingPending(options, recording);
-	const current = (
-		await Promise.all(
+	const [currentArtifacts, sheet, previousSheet, previous] = await Promise.all([
+		Promise.all(
 			extractPathStrings(options.data).map((path) =>
 				buildFileArtifactMetadata({ ...options, path, recording, recordingPending }),
 			),
-		)
-	).filter((artifact): artifact is FileArtifactMetadata => artifact !== undefined);
-	const sheet = await extractContactSheet(options, recordingPending);
+		),
+		extractContactSheet(options, recordingPending),
+		extractPreviousContactSheet(options),
+		buildPreviousRestartRecordingArtifact(options),
+	]);
+	const current = currentArtifacts.filter(
+		(artifact): artifact is FileArtifactMetadata => artifact !== undefined,
+	);
 	if (sheet) {
 		current.push(sheet);
 	}
-	const previousSheet = await extractPreviousContactSheet(options);
 	if (previousSheet) {
 		current.unshift(previousSheet);
 	}
-	const previous = await buildPreviousRestartRecordingArtifact(options);
 	return previous ? [previous, ...current] : current;
 }
 

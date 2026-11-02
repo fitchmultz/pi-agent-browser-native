@@ -219,8 +219,10 @@ export async function projectJson(
 	fields: ProjectionFields,
 	maxBytes = ENVELOPE_MAX_BYTES,
 ): Promise<Record<string, unknown> | undefined> {
-	const { jsonParser } = await import("stream-json/core/parser.js");
-	const chain = await import("stream-chain/defs.js");
+	const [{ jsonParser }, chain] = await Promise.all([
+		import("stream-json/core/parser.js"),
+		import("stream-chain/defs.js"),
+	]);
 	const tokenize = jsonParser({ packValues: false, streamValues: true });
 	const projection = new JsonProjection(fields, maxBytes);
 	const decoder = new TextDecoder("utf-8", { fatal: true });

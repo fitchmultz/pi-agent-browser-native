@@ -124,9 +124,11 @@ export async function attachInlineImage(
 	modelVisible = true,
 ): Promise<ToolPresentation> {
 	try {
-		const fileStats = await stat(imagePath);
-		// Pi's dimension API accepts base64. Encode only a bounded header, never the whole code-mode image.
-		const header = await readImageHeader(imagePath, 64 * 1024);
+		const [fileStats, header] = await Promise.all([
+			stat(imagePath),
+			// Pi's dimension API accepts base64. Encode only a bounded header, never the whole code-mode image.
+			readImageHeader(imagePath, 64 * 1024),
+		]);
 		const mimeType = getImageMimeType(header);
 		if (mimeType === undefined) {
 			return presentation;

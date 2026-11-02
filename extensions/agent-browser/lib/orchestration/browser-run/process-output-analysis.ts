@@ -268,9 +268,11 @@ function compactPassedQa(draft: CompactPassedQaInput): void {
 
 export async function analyzeOutputChecks(draft: AnalyzeOutputChecksInput): Promise<void> {
 	analyzeQaEvidence(draft);
-	await collectQaAttachment(draft);
-	await lookupSourceEvidence(draft);
-	await lookupNetworkSourceEvidence(draft);
+	await Promise.all([
+		collectQaAttachment(draft),
+		lookupSourceEvidence(draft),
+		lookupNetworkSourceEvidence(draft),
+	]);
 	if (draft.networkSourceLookup) {
 		prependLookupSummary(draft, draft.networkSourceLookup.summary);
 	}

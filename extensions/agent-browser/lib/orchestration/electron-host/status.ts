@@ -232,12 +232,10 @@ export async function inspectElectronHostLaunches(
 		});
 	}
 	const records = selection.records ?? [];
-	const statuses = await Promise.all(records.map((record) => inspectElectronLaunchStatus(record)));
-	const managedSessions = await collectStatusManagedSessions(
-		options,
-		records,
-		compiledElectron.timeoutMs,
-	);
+	const [statuses, managedSessions] = await Promise.all([
+		Promise.all(records.map((record) => inspectElectronLaunchStatus(record))),
+		collectStatusManagedSessions(options, records, compiledElectron.timeoutMs),
+	]);
 	const mismatches = statusMismatches(records, statuses, managedSessions);
 	return buildElectronStatusResult({
 		compiledElectron: visibleInput,

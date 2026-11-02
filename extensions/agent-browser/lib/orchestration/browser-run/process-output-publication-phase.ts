@@ -88,8 +88,10 @@ export async function publishOutputEffects(
 	await analyzeOutputChecks(draft);
 	renderAttachedQaBanner(draft);
 	collectEvalGuidance(draft);
-	await collectPublicationWarnings(draft);
-	const recovery = await recoverFinalOutput(draft);
+	const [, recovery] = await Promise.all([
+		collectPublicationWarnings(draft),
+		recoverFinalOutput(draft),
+	]);
 	await bindOutputDaemonReceipt(draft);
 	publishConfirmedSnapshot(draft);
 	return { publication: draft, recovery };
