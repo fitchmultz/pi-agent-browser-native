@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.10 - 2026-11-02
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Raise the Pi floor to 1.5.0 (#347) ([5685a6d](https://github.com/fitchmultz/pi-agent-browser-native/commit/5685a6d53d0d6447d222f7e8210991234bde0071))
+
+### What's Changed
+
+- Raise the Pi floor to 1.5.0 by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/347
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.9...v0.9.10
+
 ## 0.9.9 - 2026-11-02
 
 <!-- npm-release:unreleased:start -->
