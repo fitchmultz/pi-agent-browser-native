@@ -2,6 +2,7 @@
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { DEFAULT_LIFECYCLE_MODEL, DEFAULT_TIMEOUT_MS } from "./lifecycle-defaults.mjs";
 import {
 	copyPackageSource,
 	createFakeAgentBrowserBinary,
@@ -325,8 +326,8 @@ export async function verifyLifecycle(options = {}) {
 	const sessionId = createLifecycleSessionId(process.pid);
 	const runtime = {
 		repoRoot: options.repoRoot ?? process.cwd(),
-		model: options.model ?? "zai/glm-5.2",
-		timeoutMs: options.timeoutMs ?? 180_000,
+		model: options.model ?? DEFAULT_LIFECYCLE_MODEL,
+		timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
 		keepArtifacts: options.keepArtifacts ?? false,
 		verbose: options.verbose ?? false,
 		tempRoot,
