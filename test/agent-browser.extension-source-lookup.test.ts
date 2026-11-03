@@ -26,7 +26,7 @@ import {
 	compileAgentBrowserNetworkSourceLookup,
 } from "../extensions/agent-browser/lib/input-modes/lookups.js";
 
-test("network source lookup counts request identities once and correlates only matching failures", async () => {
+test("network source lookup recognizes failed rows, counts request identities once and correlates only matching failures", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-evidence-"));
 	try {
 		const compiled = compileAgentBrowserNetworkSourceLookup({
@@ -81,6 +81,29 @@ test("network source lookup counts request identities once and correlates only m
 			separate.failedRequests.length,
 			4,
 			"same URL is not a request identity; anonymous rows stay distinct",
+		);
+		const signals = await analyzeNetworkSourceLookupResults(
+			[
+				{
+					success: true,
+					result: {
+						requests: [
+							{ requestId: "client-error", status: 400, url: matching.url },
+							{ failed: true, requestId: "failed-flag", url: matching.url },
+							{ error: "net::ERR_CONNECTION_REFUSED", requestId: "error-text", url: matching.url },
+							{ requestId: "succeeded", status: 200, url: matching.url },
+							{ requestId: "pending", resourceType: "Fetch", url: matching.url },
+						],
+					},
+				},
+			],
+			compiled,
+			tempDir,
+		);
+		assert.deepEqual(
+			signals.failedRequests.map((request) => request.requestId),
+			["client-error", "failed-flag", "error-text"],
+			"HTTP status >= 400, failed: true and a string error mark failures; succeeded and pending rows do not",
 		);
 	} finally {
 		await rm(tempDir, { force: true, recursive: true });
