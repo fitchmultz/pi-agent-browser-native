@@ -7,6 +7,8 @@ import {
 	applyArtifactChanges,
 	assertSnapshotDefinition,
 	getBrowserRecord,
+	hasCanonicalBrowserEvent,
+	parseBrowserRecord,
 	type BrowserRecord,
 } from "./browser-transcript.js";
 import { isRecord } from "./parsing.js";
@@ -284,7 +286,7 @@ class PublishedJournalReplay {
 			? convertLegacyBrowserEntry(candidate, parent, this.ownerSessionId)
 			: undefined;
 		this.advance(candidate, conversion?.projection ?? parent);
-		return conversion?.record ?? getBrowserRecord(candidate);
+		return conversion?.record ?? parseBrowserRecord(candidate);
 	}
 	private rememberSnapshot(entry: JournalEntry, legacy: boolean, snapshot: unknown): void {
 		if (isRecord(snapshot) && typeof snapshot.id === "string") {
@@ -355,6 +357,7 @@ function replayRelevant(value: Readonly<Record<string, unknown>>): boolean {
 		(value.type === "custom" &&
 			typeof value.customType === "string" &&
 			REPLAY_CUSTOM_TYPES.has(value.customType)) ||
+		hasCanonicalBrowserEvent(value) ||
 		(isRecord(value.data) && isRecord(value.data.event)) ||
 		(isRecord(value.data) && isRecord(value.data.snapshot) && value.data.snapshot.id !== undefined)
 	);
