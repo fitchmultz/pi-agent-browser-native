@@ -15,8 +15,10 @@ import { readRecord, readString } from "./helpers/assertions.js";
 
 import { parseUserBatchStdin } from "../extensions/agent-browser/lib/orchestration/batch-stdin.js";
 import {
+	appendBrowserTransition,
 	applyArtifactChanges,
 	artifactChanges,
+	getBrowserRecord,
 } from "../extensions/agent-browser/lib/browser-transcript.js";
 import { mergeBrowserRunArtifactManifest } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-merge.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
@@ -1066,6 +1068,59 @@ test(
 				assert.deepEqual(
 					stopped?.entries.map((entry) => [entry.path, entry.subcommand]),
 					[["older.webm", "stop"]],
+				);
+				// A pending take under a redaction-colliding directory is superseded by an ordinary take;
+				// its committed removal must retire the persisted receipt on replay as it does live.
+				const started = mergeSessionArtifactManifest({
+					entries: [
+						{
+							...older,
+							absolutePath: "/tmp/Bearer directory-secret/older.webm",
+							path: "Bearer directory-secret/older.webm",
+						},
+					],
+				});
+				const superseded = mergeSessionArtifactManifest({ base: started, entries: [newer] });
+				const published: unknown[] = [];
+				for (const [index, artifacts] of [
+					artifactChanges(undefined, started),
+					artifactChanges(started, superseded),
+				].entries()) {
+					appendBrowserTransition(
+						{
+							appendEntry: (customType: string, data: unknown) => {
+								published.push({ type: "custom", customType, data });
+							},
+						},
+						{
+							event: {
+								version: 1,
+								phase: "state",
+								operationId: `take-${index}`,
+								toolCallId: "take",
+								commandIndex: index,
+								isError: false,
+								state: {},
+								artifacts,
+							},
+						},
+					);
+				}
+				const replayed = published.reduce<SessionArtifactManifest | undefined>(
+					(manifest, entry) =>
+						applyArtifactChanges(manifest, getBrowserRecord(entry)?.event.artifacts),
+					undefined,
+				);
+				assert.deepEqual(
+					[superseded, replayed].map((manifest) =>
+						manifest?.entries.map((entry) => [entry.path, entry.subcommand]),
+					),
+					[[["newer.webm", "start"]], [["newer.webm", "start"]]],
+					"replay retires the superseded secret-path take like the live view",
+				);
+				assert.doesNotMatch(
+					JSON.stringify(published.map((entry) => getBrowserRecord(entry)?.event.artifacts)),
+					/directory-secret/,
 				);
 			},
 		);

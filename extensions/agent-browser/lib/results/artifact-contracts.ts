@@ -21,6 +21,8 @@ export type FileArtifactStatus =
 export type ArtifactRetentionState = "evicted" | "ephemeral" | "live" | "missing";
 export type ArtifactStorageScope = "explicit-path" | "persistent-session" | "process-temp";
 export type ArtifactVerificationState = "missing" | "pending" | "unverified" | "verified";
+/** Opaque digest of a complete private artifact row key; only manifest validation creates it. */
+export type ArtifactReceiptKey = string & { readonly __artifactReceiptKey: unique symbol };
 
 export interface ArtifactRequestContext {
 	readonly absolutePath: string;
@@ -106,6 +108,7 @@ export interface SessionArtifactManifestEntry {
 	readonly mediaType?: string;
 	readonly namespace?: string;
 	readonly path: string;
+	readonly receiptKey?: ArtifactReceiptKey;
 	readonly requestedPath?: string;
 	readonly retentionState: ArtifactRetentionState;
 	readonly session?: string;

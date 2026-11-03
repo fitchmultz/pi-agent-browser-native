@@ -1,7 +1,14 @@
 import { isRecord } from "../parsing.js";
+import type { ArtifactReceiptKey } from "./artifact-contracts.js";
 import type { SessionArtifactManifest, SessionArtifactManifestEntry } from "./contracts.js";
 
 type EvidenceRow = Readonly<Record<string, unknown>>;
+const ARTIFACT_RECEIPT_KEY = /^sha256:[0-9a-f]{64}$/;
+
+/** Persisted artifact identities are SHA-256 digests of complete private row keys. */
+export function isArtifactReceiptKey(value: unknown): value is ArtifactReceiptKey {
+	return typeof value === "string" && ARTIFACT_RECEIPT_KEY.test(value);
+}
 
 function finiteNonnegative(value: unknown): boolean {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0;
@@ -132,6 +139,7 @@ function optionalEvidenceIsValid(value: EvidenceRow): boolean {
 			"subcommand",
 		]) &&
 		(value.exists === undefined || typeof value.exists === "boolean") &&
+		(value.receiptKey === undefined || isArtifactReceiptKey(value.receiptKey)) &&
 		optionalNumbersAreValid(value) &&
 		optionalRecordingIsValid(value)
 	);

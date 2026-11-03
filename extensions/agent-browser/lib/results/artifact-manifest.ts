@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { getAgentBrowserSessionIdentityKey } from "../argv-grammar.js";
+import { isArtifactReceiptKey } from "./artifact-manifest-validation.js";
 export { isSessionArtifactManifest } from "./artifact-manifest-validation.js";
 import type {
 	FileArtifactKind,
@@ -91,7 +93,8 @@ export function formatSessionArtifactRetentionSummary(manifest: SessionArtifactM
 	return `Session artifacts: ${parts.join(", ")} (${manifest.entries.length}/${manifest.maxEntries} recent).`;
 }
 
-export function getSessionArtifactManifestEntryKey(entry: SessionArtifactManifestEntry): string {
+/** Version-1 logical identity: storage scope, explicit absolute or display path, recording session. */
+function logicalArtifactKey(entry: SessionArtifactManifestEntry): string {
 	const pathKey =
 		entry.storageScope === "explicit-path" &&
 		entry.absolutePath !== undefined &&
@@ -108,6 +111,23 @@ export function getSessionArtifactManifestEntryKey(entry: SessionArtifactManifes
 	return recordingSessionKey !== undefined && recordingSessionKey.length > 0
 		? `${pathKey}\0${recordingSessionKey}`
 		: pathKey;
+}
+
+function digestArtifactKey(logicalKey: string): string {
+	return `sha256:${createHash("sha256").update(logicalKey).digest("hex")}`;
+}
+
+/**
+ * A persisted receipt carries the digest of its private row's complete logical key, so redacted
+ * receipts and private live rows share one identity; rows without a carried key derive it.
+ */
+export function getSessionArtifactManifestEntryKey(entry: SessionArtifactManifestEntry): string {
+	return entry.receiptKey ?? digestArtifactKey(logicalArtifactKey(entry));
+}
+
+/** Current removals name receipt identities; historical version-1 removals name logical keys. */
+export function getArtifactRemovalKey(removal: string): string {
+	return isArtifactReceiptKey(removal) ? removal : digestArtifactKey(removal);
 }
 
 export function retirePendingRecordingManifestEntries(
