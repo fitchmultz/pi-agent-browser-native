@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.16 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: preserve artifact identity across redacted replay (#377) ([113210a](https://github.com/fitchmultz/pi-agent-browser-native/commit/113210a746763b0e0402e87d7c0b0d957492d52a))
+
+### What's Changed
+
+- fix: preserve artifact identity across redacted replay by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/377
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.15...v0.9.16
+
 ## 0.9.15 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
