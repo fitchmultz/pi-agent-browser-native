@@ -12,10 +12,9 @@ import {
 } from "../input-modes/lookups.js";
 import { compileAgentBrowserSemanticAction } from "../input-modes/semantic-action.js";
 import {
+	redactCompiledBatch,
 	redactCompiledElectron,
-	redactCompiledJob,
 	redactCompiledNetworkSourceLookup,
-	redactCompiledSourceLookup,
 } from "./input-redaction.js";
 import type {
 	BatchPreflightValidator,
@@ -109,7 +108,7 @@ class BrowserInputCompiler {
 
 	private projectModes(): ResolvedAgentBrowserInputModeFields {
 		const compiledJob = this.qa.compiled;
-		const redactedCompiledJob = redactCompiledJob(compiledJob);
+		const redactedCompiledJob = redactCompiledBatch(compiledJob);
 		const compiledSemanticAction = this.semanticAction.compiled;
 		return {
 			compiledElectron: this.electron.compiled,
@@ -136,7 +135,7 @@ class BrowserInputCompiler {
 							...compiledSemanticAction,
 							args: redactInvocationArgs([...compiledSemanticAction.args]),
 						},
-			redactedCompiledSourceLookup: redactCompiledSourceLookup(this.sourceLookup.compiled),
+			redactedCompiledSourceLookup: redactCompiledBatch(this.sourceLookup.compiled),
 		};
 	}
 
