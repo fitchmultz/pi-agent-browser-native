@@ -30,11 +30,9 @@ import {
 	resolveBrowserExecutionIdentity,
 	withBrowserExecutionLock,
 } from "../managed-session-policy-lock.js";
-import { loadAgentBrowserConfigSync } from "../config.js";
 import { getArtifactPreflightValidationError } from "./extension-artifact-preflight.js";
 import { browserExecutionFailure } from "./extension-result-state.js";
 import { shouldSerializeBrowserCommand } from "./extension-managed-ownership.js";
-import { shouldIncludeProjectConfig } from "./extension-prompt.js";
 import type { BrowserRuntime } from "./extension-runtime.js";
 import { executeBrowserInvocation } from "./extension-command-admission.js";
 import { createBrowserInvocation } from "./extension-invocation.js";
@@ -134,21 +132,6 @@ class BrowserCodeExecution {
 			return runtime.managed.owned.get(key)?.cwd ?? invocation.ctx.cwd;
 		}
 		return runtime.managed.active ? runtime.managed.cwd : invocation.ctx.cwd;
-	}
-
-	nativeRoot(): NonNullable<Parameters<typeof withNativeSessionDefaults>[1]["root"]> {
-		const { invocation } = this;
-		const config = loadAgentBrowserConfigSync({
-			cwd: invocation.ctx.cwd,
-			includeProjectConfig: shouldIncludeProjectConfig(invocation.ctx),
-		});
-		const profile = config.trustedBrowserDefaultProfile;
-		return {
-			sessionId: invocation.ctx.sessionManager.getSessionId(),
-			profile:
-				profile?.policy === "always" && !/[\\/~]/.test(profile.name) ? profile.name : undefined,
-			executablePath: config.trustedBrowserExecutablePath,
-		};
 	}
 
 	async runAdmitted(
@@ -357,7 +340,9 @@ class BrowserCodeExecution {
 			if (input.status === "invalid") {
 				return buildValidationFailureResult(input);
 			}
-			const root = this.nativeRoot();
+			// Code routing selects only the cell's browser identity; each inner browser() call
+			// receives trusted root launch defaults through command admission.
+			const root = { sessionId: this.invocation.ctx.sessionManager.getSessionId() };
 			const session = this.invocation.params.session;
 			const implicit =
 				(session === undefined || session === "") &&

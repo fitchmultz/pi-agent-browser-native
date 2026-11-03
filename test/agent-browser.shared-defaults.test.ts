@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
 	createExtensionHarness,
+	createShortPrivateSocketDir,
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
@@ -1368,6 +1369,104 @@ console.log(JSON.stringify({ success: true, data: { session: "default", title: "
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("root bootstrap gives direct and code calls the trusted executable and only always profile names", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "pbs-profile-"));
+	const socketDir = createShortPrivateSocketDir(root);
+	const log = join(root, "calls.jsonl");
+	const packageConfig = join(root, "package-config.json");
+	await writeFakeAgentBrowserBinary(
+		root,
+		`
+const args = process.argv.slice(2);
+require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, profile: process.env.AGENT_BROWSER_PROFILE ?? null, executablePath: process.env.AGENT_BROWSER_EXECUTABLE_PATH ?? null }) + "\\n");
+console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "https://fixture.test/" } }));
+`,
+	);
+	try {
+		await withPatchedEnv(
+			{
+				...clearedBrowserEnv,
+				HOME: root,
+				USERPROFILE: root,
+				PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+				PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+				PI_AGENT_BROWSER_CONFIG: packageConfig,
+				PI_SUBAGENT_CHILD: undefined,
+				PI_SUBAGENT_ROOT_SESSION_ID: undefined,
+			},
+			async () => {
+				for (const scenario of [
+					{ name: "always name", policy: "always", profile: "Default", expected: "Default" },
+					{
+						name: "authenticated-only",
+						policy: "authenticated-only",
+						profile: "Default",
+						expected: null,
+					},
+					{ name: "explicit-only", policy: "explicit-only", profile: "Default", expected: null },
+					{ name: "slash path", policy: "always", profile: "profiles/Work", expected: null },
+					{ name: "backslash path", policy: "always", profile: "profiles\\Work", expected: null },
+					{ name: "tilde path", policy: "always", profile: "~Work", expected: null },
+				]) {
+					for (const call of [
+						{ name: "direct", tool: "agent_browser", params: { args: ["get", "title"] } },
+						{
+							name: "code",
+							tool: "agent_browser_code",
+							params: { code: 'emit((await browser({args:["get","title"]})).data.title);' },
+						},
+					]) {
+						// Rows share one package config file, so each must finish before the next rewrites it.
+						// oxlint-disable-next-line no-await-in-loop
+						await t.test(`${scenario.name} via ${call.name}`, async () => {
+							await writeFile(
+								packageConfig,
+								JSON.stringify({
+									browser: {
+										defaultProfile: { name: scenario.profile, policy: scenario.policy },
+										executablePath: "/wrapper/chrome",
+									},
+								}),
+							);
+							const harness = createExtensionHarness({
+								cwd: root,
+								sessionId: `${scenario.name} via ${call.name}`,
+							});
+							const tool = harness.getTool(call.tool);
+							assert.ok(tool);
+							const result = await executeRegisteredTool(tool, harness.ctx, call.params);
+							assert.equal(result.isError, false, result.content[0].text);
+							const session = readString(result.details?.sessionName);
+							assert.match(session, /^pi-root-[a-f0-9]{24}$/);
+							const launch = (await readInvocationLog(log)).find(
+								(entry) => entry.args.includes(session) && entry.args.includes("title"),
+							);
+							assert.ok(launch, "the inactive root browser command reached upstream");
+							assert.deepEqual(
+								{
+									profile: readRecord(launch).profile,
+									executablePath: readRecord(launch).executablePath,
+								},
+								{ profile: scenario.expected, executablePath: "/wrapper/chrome" },
+								"profile paths and other policies stay advisory; the trusted executable still applies",
+							);
+							await runExtensionEvent(
+								harness.handlers,
+								"session_shutdown",
+								{ reason: "quit" },
+								harness.ctx,
+							);
+						});
+					}
+				}
+			},
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+		await rm(socketDir, { recursive: true, force: true });
 	}
 });
 
