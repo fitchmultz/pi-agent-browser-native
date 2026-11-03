@@ -62,10 +62,11 @@ function createStepIdentity(item: AgentBrowserBatchResult, index: number): StepI
 	};
 }
 
-function formatBatchStepError(error: unknown): string {
+function formatBatchStepError(error: unknown, command: string | undefined): string {
 	const text = stringifyModelFacing(error).trim();
 	return appendSelectorRecoveryHint(
 		text.length > 0 ? `Error: ${text}` : "Error: batch step failed.",
+		command,
 	);
 }
 
@@ -93,7 +94,7 @@ interface StepFailure {
 
 function describeStepFailure(command: readonly string[] | undefined, error: unknown): StepFailure {
 	const data = redactBatchStepErrorData(command, error);
-	const text = formatBatchStepError(data);
+	const text = formatBatchStepError(data, command?.[0]);
 	return {
 		data,
 		text,
@@ -193,7 +194,7 @@ function buildNestedRequest(
 		},
 		errorText:
 			options.item.success === false
-				? formatBatchStepError(redactBatchStepErrorData(command, options.item.error))
+				? formatBatchStepError(redactBatchStepErrorData(command, options.item.error), command?.[0])
 				: undefined,
 		piCleanupOwnership: options.piCleanupOwnership,
 		networkRouteDiagnostics:

@@ -181,6 +181,20 @@ function reportsUnsupportedSelector(text: string): boolean {
 	);
 }
 
+/**
+ * Whether failure text warrants selector-dialect guidance. Locator-detail misses keep the
+ * classifier's selector-not-found precedence: they echo supported native locators such as getByRole.
+ */
+export function reportsUnsupportedSelectorDialect(options: {
+	readonly command: string | undefined;
+	readonly errorText: string;
+}): boolean {
+	return (
+		!isUpstreamLocatorMiss(options.errorText, options.command ?? "") &&
+		reportsUnsupportedSelector(options.errorText)
+	);
+}
+
 function classifySelectorFailure(context: FailureContext): AgentBrowserFailureCategory | undefined {
 	const { options, text, command } = context;
 	if (

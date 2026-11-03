@@ -5,7 +5,10 @@ import { redactSensitiveText } from "../../runtime-redaction.js";
 import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.js";
 import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
-import { buildAgentBrowserResultCategoryDetails } from "../categories.js";
+import {
+	buildAgentBrowserResultCategoryDetails,
+	reportsUnsupportedSelectorDialect,
+} from "../categories.js";
 import type { AgentBrowserNextAction, ToolPresentation } from "../contracts.js";
 import { withOptionalSessionArgs } from "../next-actions.js";
 
@@ -31,7 +34,10 @@ const KEYBOARD_PRESS_ERROR_HINT = [
 	'For Enter in text fields, use `keyboard type "\\n"` after focusing the intended control, then verify with a fresh snapshot, URL, or page-state check.',
 ].join(" ");
 
-function getSelectorRecoveryHint(errorText: string): string | undefined {
+function getSelectorRecoveryHint(
+	errorText: string,
+	command: string | undefined,
+): string | undefined {
 	const normalized = errorText.trim();
 	if (normalized.length === 0) {
 		return undefined;
@@ -43,26 +49,9 @@ function getSelectorRecoveryHint(errorText: string): string | undefined {
 		return STALE_REF_ERROR_HINT;
 	}
 
-	const mentionsPlaywrightSelectorDialect =
-		/(?:\btext=|:has-text\(|\bgetByRole\b|\bgetByText\b)/i.test(normalized);
-	const reportsSelectorMatchFailure =
-		/\b(?:no elements? found|failed to find|could not find|unable to find)\b.*\b(?:selector|locator)\b/i.test(
-			normalized,
-		) ||
-		/\b(?:selector|locator)\b.*\b(?:no elements? found|not found|missing|failed to find|could not find|unable to find)\b/i.test(
-			normalized,
-		);
-
-	if (
-		/\b(?:unsupported|unknown|invalid)\s+(?:selector|locator)\b/i.test(normalized) ||
-		/\bfailed to parse selector\b/i.test(normalized) ||
-		/\bselector\b.*\b(?:parse|syntax|unsupported|invalid)\b/i.test(normalized) ||
-		(mentionsPlaywrightSelectorDialect && reportsSelectorMatchFailure)
-	) {
-		return SELECTOR_DIALECT_ERROR_HINT;
-	}
-
-	return undefined;
+	return reportsUnsupportedSelectorDialect({ command, errorText: normalized })
+		? SELECTOR_DIALECT_ERROR_HINT
+		: undefined;
 }
 
 function getClipboardPermissionHint(
@@ -321,8 +310,8 @@ function getLocalhostNavigationHint(
 	].join(" ");
 }
 
-export function appendSelectorRecoveryHint(errorText: string): string {
-	const hint = getSelectorRecoveryHint(errorText);
+export function appendSelectorRecoveryHint(errorText: string, command: string | undefined): string {
+	const hint = getSelectorRecoveryHint(errorText, command);
 	if (hint === undefined || hint.length === 0 || errorText.includes("Agent-browser hint:")) {
 		return errorText;
 	}
@@ -335,7 +324,7 @@ function buildHintedErrorText(
 	unknownSuggestion: string | undefined,
 	profileHint: string | undefined,
 ): string {
-	const selectorHinted = appendSelectorRecoveryHint(errorText);
+	const selectorHinted = appendSelectorRecoveryHint(errorText, commandInfo.command);
 	return [
 		selectorHinted,
 		unknownSuggestion !== undefined &&
