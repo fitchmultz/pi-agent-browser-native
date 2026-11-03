@@ -11,7 +11,7 @@ import {
 	applyArtifactChanges,
 	artifactChanges,
 	browserStateEffects,
-	getBrowserRecord,
+	parseBrowserRecord,
 	type BrowserPageChange,
 	type BrowserRecord,
 	type BrowserSnapshot,
@@ -345,13 +345,6 @@ function convertMessage(
 		...(definition ? { snapshot: definition } : {}),
 	};
 }
-function hasCanonicalBrowserEvent(entry: Readonly<Record<string, unknown>>): boolean {
-	return (
-		isRecord(entry.data) &&
-		Object.hasOwn(entry.data, "event") &&
-		(entry.type === "message" || entry.customType === BROWSER_TRANSITION_ENTRY)
-	);
-}
 
 /** Normalize old receipts into the canonical reducer along their actual parent ancestry. */
 export function convertLegacyBrowserEntry(
@@ -364,13 +357,10 @@ export function convertLegacyBrowserEntry(
 		manifest: parent.manifest,
 		nextIndex: parent.nextIndex,
 	};
-	const canonical = getBrowserRecord(entry);
+	const canonical = parseBrowserRecord(entry);
 	if (canonical) {
 		applyCanonical(current, parent, canonical);
 		return { projection: current };
-	}
-	if (hasCanonicalBrowserEvent(entry)) {
-		throw new Error("Invalid browser event; legacy replay cannot bypass canonical validation.");
 	}
 	const script = scriptRecord(
 		entry,

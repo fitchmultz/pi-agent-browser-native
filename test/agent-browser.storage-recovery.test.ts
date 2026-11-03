@@ -241,6 +241,82 @@ test("legacy replay cannot downgrade native event validation or grant inherited 
 	}
 });
 
+test("published and in-memory replay apply the same canonical validation to message-form browser events", async () => {
+	const root = await mkdtemp(join(tmpdir(), "piab-canonical-message-"));
+	try {
+		const state = { args: ["skills", "list"], command: "skills", subcommand: "list" };
+		const event = {
+			version: 1,
+			phase: "state",
+			operationId: "legacy-skills",
+			toolCallId: "skills",
+			commandIndex: 0,
+			isError: false,
+			state,
+			pages: [],
+		};
+		// Separate-copy conversion stores a converted result's canonical event on its message. A
+		// sessionless result leaves no legacy receipt in the journal.
+		const representations = async (name: string, value: unknown) => {
+			const entry = {
+				type: "message",
+				id: "skills",
+				parentId: null,
+				message: {
+					role: "toolResult",
+					toolName: "agent_browser",
+					toolCallId: "skills",
+					isError: false,
+					content: [{ type: "text", text: "core\nelectron" }],
+					details: state,
+				},
+				data: { event: value },
+			};
+			const file = join(root, `${name}.jsonl`);
+			await writeFile(
+				file,
+				[{ type: "session", version: 3, id: "fixture-session" }, entry]
+					.map((line) => JSON.stringify(line))
+					.join("\n") + "\n",
+			);
+			const published = manager(file, entry.id);
+			const memory = {
+				...published,
+				getSessionFile: (): string | undefined => undefined,
+				getEntry: (id: string) => (id === entry.id ? entry : undefined),
+			};
+			return [
+				{ label: `${name} published`, replay: published },
+				{ label: `${name} in-memory`, replay: memory },
+			];
+		};
+		const [valid, version2, nonrecord] = await Promise.all([
+			representations("valid", event),
+			representations("version-2", { ...event, version: 2 }),
+			representations("nonrecord", "invalid"),
+		]);
+		assert.deepEqual(
+			await Promise.all(
+				valid.map(async ({ replay }) =>
+					(await readBrowserEntries(replay)).map((row) => getBrowserRecord(row)?.event.state),
+				),
+			),
+			[[state], [state]],
+		);
+		const invalid = {
+			name: "Error",
+			message: "Invalid browser event; legacy replay cannot bypass canonical validation.",
+		};
+		await Promise.all(
+			[...version2, ...nonrecord].map(({ label, replay }) =>
+				assert.rejects(readBrowserEntries(replay), invalid, label),
+			),
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 for (const mode of [
 	"direct",
 	"batch",

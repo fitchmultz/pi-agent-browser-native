@@ -88,6 +88,30 @@ export function getBrowserRecord(entry: unknown): BrowserRecord | undefined {
 	return { ...entry.data, event: parseBrowserEvent(event) };
 }
 
+/** A message or transition entry with an own `data.event`, whatever its value, claims a canonical event. */
+export function hasCanonicalBrowserEvent(entry: Readonly<Record<string, unknown>>): boolean {
+	return (
+		isRecord(entry.data) &&
+		Object.hasOwn(entry.data, "event") &&
+		(entry.type === "message" || entry.customType === BROWSER_TRANSITION_ENTRY)
+	);
+}
+
+/**
+ * Admission for replayed and converted journal entries, whatever their representation: a claimed
+ * canonical event must be a valid version 1 event; it is never skipped or decoded as a legacy
+ * receipt. Reducers over admitted entries use getBrowserRecord.
+ */
+export function parseBrowserRecord(
+	entry: Readonly<Record<string, unknown>>,
+): BrowserRecord | undefined {
+	const record = getBrowserRecord(entry);
+	if (record === undefined && hasCanonicalBrowserEvent(entry)) {
+		throw new Error("Invalid browser event; legacy replay cannot bypass canonical validation.");
+	}
+	return record;
+}
+
 /** Replay boundaries normalize legacy receipts before this canonical reducer reads them. */
 export function getBrowserResultMessage(entry: unknown): Record<string, unknown> | undefined {
 	const record = getBrowserRecord(entry);
