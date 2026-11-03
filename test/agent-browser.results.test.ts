@@ -1116,6 +1116,49 @@ test("chooseOpenResultTabCorrection targets the navigated tab without disturbing
 		}),
 		undefined,
 	);
+	assert.equal(
+		chooseOpenResultTabCorrection({
+			tabs: [
+				{ active: true, tabId: "current", title: "Guide", url: "https://example.com/guide#intro" },
+				{ active: false, tabId: "anchor", title: "Guide", url: "https://example.com/guide#setup" },
+			],
+			targetTitle: "Guide",
+			targetUrl: "https://example.com/guide#setup",
+		}),
+		undefined,
+		"a fragment-only difference keeps the already-correct active tab",
+	);
+	assert.deepEqual(
+		chooseOpenResultTabCorrection({
+			tabs: [
+				{ active: true, tabId: "old", title: "Search", url: "https://example.com/search?q=old" },
+				{
+					active: false,
+					tabId: "new",
+					title: "Search",
+					url: "https://example.com/search?q=new#results",
+				},
+			],
+			targetTitle: "Search",
+			targetUrl: "https://example.com/search?q=new#top",
+		}),
+		{
+			selectedTab: "new",
+			selectionKind: "tabId",
+			targetTitle: "Search",
+			targetUrl: "https://example.com/search?q=new",
+		},
+		"query strings stay significant while fragments do not",
+	);
+	assert.equal(
+		chooseOpenResultTabCorrection({
+			tabs: [{ active: false, tabId: "raw", title: "Draft", url: "not a url" }],
+			targetTitle: "Draft",
+			targetUrl: "not a url",
+		}),
+		undefined,
+		"an unparseable target URL never matches raw tab text",
+	);
 });
 
 test("buildToolPresentation renders stable tab ids from tab list output", async () => {
