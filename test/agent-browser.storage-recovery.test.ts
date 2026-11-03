@@ -12,7 +12,9 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	BROWSER_TRANSITION_ENTRY,
 	getBrowserRecord,
+	appendBrowserTransition,
 	applyArtifactChanges,
+	artifactChanges,
 } from "../extensions/agent-browser/lib/browser-transcript.js";
 import {
 	appendBrowserRecord,
@@ -24,7 +26,10 @@ import {
 import { convertBrowserSession } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import { restoreAttachedSessionKeysFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-attachment-replay.js";
+import { restoreArtifactManifestFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-result-state.js";
 import { getScriptSessionLeasesFromBranch } from "../extensions/agent-browser/lib/orchestration/script-mode.js";
+import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
+import type { SessionArtifactManifestEntry } from "../extensions/agent-browser/lib/results/contracts.js";
 import {
 	createExtensionHarness,
 	createShortPrivateSocketDir,
@@ -1843,6 +1848,306 @@ process.exitCode=1;}`,
 	},
 );
 
+test(
+	"redaction-colliding explicit artifacts keep usable live rows and distinct replayed receipts",
+	{ concurrency: false },
+	async () => {
+		const root = await mkdtemp(join(tmpdir(), "piab-artifact-identity-"));
+		try {
+			// Both files share one bearer-shaped directory, so their redacted display paths are identical.
+			const first = join(root, "Bearer directory-secret", "first.png");
+			const second = join(root, "Bearer directory-secret", "second.png");
+			await writeFakeAgentBrowserBinary(
+				root,
+				`const fs=require('node:fs'),path=require('node:path'),args=process.argv.slice(2);
+let data={title:'Fixture',url:'https://fixture.test/'};
+if(args.includes('screenshot')){const output=args[args.length-1];fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,Buffer.from('89504e470d0a1a0a','hex'));data={path:output};}
+else if(args.includes('close')){data={closed:true};}
+process.stdout.write(JSON.stringify({success:true,data}));`,
+			);
+			await withPatchedEnv(
+				{
+					PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+					AGENT_BROWSER_SESSION: undefined,
+					AGENT_BROWSER_NAMESPACE: undefined,
+				},
+				async () => {
+					const journal = join(root, "session.jsonl");
+					const harness = createExtensionHarness({ cwd: root, sessionFile: journal });
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
+					const run = (args: readonly string[]) =>
+						executeRegisteredTool(harness.tool, harness.ctx, { args });
+					const firstShot = await run(["screenshot", first]);
+					const followup = await run(["get", "url"]);
+					const secondShot = await run(["screenshot", second]);
+					const close = await run(["close"]);
+					assert.deepEqual(
+						[firstShot, followup, secondShot, close].map((result) => result.isError),
+						[false, false, false, false],
+					);
+					assert.deepEqual(
+						[followup, secondShot, close].map(
+							(result) => readRecord(result.details).artifactRetentionSummary,
+						),
+						[
+							"Session artifacts: 1 live, 0 evicted (1/100 recent).",
+							"Session artifacts: 2 live, 0 evicted (2/100 recent).",
+							"Session artifacts: 2 live, 0 evicted (2/100 recent).",
+						],
+						"each actual file is one retained row, not a private row plus its redacted receipt",
+					);
+					const returned = [firstShot, secondShot].map((result) =>
+						readRecord(readRecord(result.details).artifactManifest),
+					);
+					assert.deepEqual(
+						returned.map((manifest) => readArray(manifest.entries).length),
+						[1, 1],
+						"each screenshot returns its own receipt",
+					);
+					assert.doesNotMatch(JSON.stringify(returned), /directory-secret/);
+					assert.equal(
+						readArray(readRecord(readRecord(close.details).artifactCleanup).explicitArtifactPaths)
+							.length,
+						2,
+						"close guidance still finds both actual files through the private live rows",
+					);
+					assert.match(
+						readString(readRecord(close.content[0]).text),
+						/Artifact lifecycle: 2 explicit artifacts remain;/,
+					);
+					assert.deepEqual(
+						await Promise.all([first, second].map((path) => readFile(path, "hex"))),
+						["89504e470d0a1a0a", "89504e470d0a1a0a"],
+						"close leaves explicit files unchanged",
+					);
+					await runExtensionEvent(
+						harness.handlers,
+						"session_shutdown",
+						{ reason: "quit" },
+						harness.ctx,
+					);
+					const persisted = (await records(journal)).filter((entry) => entry.type !== "session");
+					assert.doesNotMatch(
+						JSON.stringify(persisted.map((entry) => getBrowserRecord(entry)?.event.artifacts)),
+						/directory-secret/,
+						"published artifact receipts are redacted",
+					);
+					const publishedKeys = persisted.flatMap(
+						(entry) =>
+							getBrowserRecord(entry)?.event.artifacts?.upserts.map((row) => row.receiptKey) ?? [],
+					);
+					assert.deepEqual(
+						returned.map((manifest) => readRecord(readArray(manifest.entries)[0]).receiptKey),
+						publishedKeys,
+						"returned receipts carry the identities their published receipts replay under",
+					);
+					assert.equal(new Set(publishedKeys).size, 2);
+					const replayed = restoreArtifactManifestFromBranch(persisted);
+					assert.deepEqual(
+						[replayed?.entries.length, replayed?.liveCount],
+						[2, 2],
+						"distinct files keep distinct receipts despite identical redacted paths",
+					);
+					const resumed = createExtensionHarness({
+						cwd: root,
+						sessionFile: journal,
+						branch: persisted,
+					});
+					await runExtensionEvent(
+						resumed.handlers,
+						"session_start",
+						{ reason: "resume" },
+						resumed.ctx,
+					);
+					const resumedRead = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+						args: ["get", "url"],
+					});
+					assert.equal(
+						readRecord(resumedRead.details).artifactRetentionSummary,
+						"Session artifacts: 2 live, 0 evicted (2/100 recent).",
+						"selected replay restores both receipts",
+					);
+					const recapture = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+						args: ["screenshot", first],
+					});
+					const resumedClose = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+						args: ["close"],
+					});
+					assert.equal(
+						readRecord(recapture.details).artifactRetentionSummary,
+						"Session artifacts: 2 live, 0 evicted (2/100 recent).",
+						"recapturing a restored file replaces its receipt instead of adding a row",
+					);
+					assert.equal(
+						readArray(
+							readRecord(readRecord(resumedClose.details).artifactCleanup).explicitArtifactPaths,
+						).length,
+						1,
+						"cleanup finds the recaptured private path and skips the restored receipt whose path redaction changed",
+					);
+					await runExtensionEvent(
+						resumed.handlers,
+						"session_shutdown",
+						{ reason: "quit" },
+						resumed.ctx,
+					);
+					// Owner-boundary removals: the delta producer reads raw live rows, while replay holds
+					// only their redacted receipts.
+					const rawRow = (path: string): SessionArtifactManifestEntry => ({
+						absolutePath: path,
+						createdAtMs: 1,
+						kind: "image",
+						path,
+						retentionState: "live",
+						storageScope: "explicit-path",
+					});
+					const rawState = mergeSessionArtifactManifest({
+						entries: [rawRow(first), rawRow(second)],
+						nowMs: 1,
+					});
+					const secondOnly = mergeSessionArtifactManifest({ entries: [rawRow(second)], nowMs: 2 });
+					const withoutFirst = applyArtifactChanges(
+						replayed,
+						artifactChanges(rawState, secondOnly),
+					);
+					assert.equal(
+						withoutFirst?.entries.length,
+						1,
+						"removing one colliding receipt keeps the other",
+					);
+					assert.equal(
+						applyArtifactChanges(withoutFirst, artifactChanges(secondOnly, undefined)),
+						undefined,
+						"a later raw-state removal addresses its replayed receipt",
+					);
+				},
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	},
+);
+
+test("artifact replay keeps literal V1 rows and removals beside identity-bearing receipts", () => {
+	const row = (path: string, createdAtMs: number): SessionArtifactManifestEntry => ({
+		absolutePath: path,
+		createdAtMs,
+		kind: "image",
+		path,
+		retentionState: "live",
+		storageScope: "explicit-path",
+	});
+	const transition = (id: string, artifacts: unknown) => ({
+		type: "custom",
+		customType: BROWSER_TRANSITION_ENTRY,
+		id,
+		data: {
+			event: {
+				version: 1,
+				phase: "state",
+				operationId: id,
+				toolCallId: id,
+				commandIndex: 0,
+				isError: false,
+				state: {},
+				artifacts,
+			},
+		},
+	});
+	// Historical V1 deltas stored rows without an identity and named removals by literal logical key.
+	const historical = [
+		transition("v1-add", {
+			upserts: [row("/fixture/a.png", 1), row("/fixture/b.png", 2)],
+			removals: [],
+			maxEntries: 100,
+			updatedAtMs: 2,
+		}),
+		transition("v1-remove", {
+			upserts: [],
+			removals: ["explicit-path:/fixture/a.png"],
+			maxEntries: 100,
+			updatedAtMs: 3,
+		}),
+	];
+	const restored = restoreArtifactManifestFromBranch(historical);
+	assert.deepEqual(
+		restored?.entries.map((entry) => entry.path),
+		["/fixture/b.png"],
+	);
+	const colliding = [
+		row("/fixture/Bearer directory-secret/c.png", 4),
+		row("/fixture/Bearer directory-secret/d.png", 5),
+	];
+	const live = mergeSessionArtifactManifest({ base: restored, entries: colliding, nowMs: 5 });
+	const kept = mergeSessionArtifactManifest({ entries: [colliding[1]], nowMs: 6 });
+	const published: Array<Record<string, unknown>> = [];
+	for (const [id, artifacts] of [
+		["add", artifactChanges(restored, live)],
+		["remove", artifactChanges(live, kept)],
+	] as const) {
+		appendBrowserTransition(
+			{
+				appendEntry: (customType: string, data: unknown) => {
+					published.push({ type: "custom", customType, id, data });
+				},
+			},
+			{
+				event: {
+					version: 1,
+					phase: "state",
+					operationId: id,
+					toolCallId: id,
+					commandIndex: 0,
+					isError: false,
+					state: {},
+					artifacts,
+				},
+			},
+		);
+	}
+	assert.doesNotMatch(
+		JSON.stringify(published.map((entry) => getBrowserRecord(entry)?.event.artifacts)),
+		/directory-secret/,
+		"current upserts and removals publish no raw path text",
+	);
+	assert.deepEqual(
+		restoreArtifactManifestFromBranch([...historical, published[0]])?.entries.map(
+			(entry) => entry.createdAtMs,
+		),
+		[5, 4, 2],
+		"a V1 row and two current receipts with identical redacted paths replay together",
+	);
+	assert.deepEqual(
+		restoreArtifactManifestFromBranch([...historical, ...published])?.entries.map(
+			(entry) => entry.createdAtMs,
+		),
+		[5],
+		"current removals retire both the V1 row and one colliding receipt",
+	);
+	const malformed = (receiptKey: unknown) => [
+		transition("malformed", {
+			upserts: [{ ...row("/fixture/e.png", 7), receiptKey }],
+			removals: [],
+			maxEntries: 100,
+			updatedAtMs: 7,
+		}),
+	];
+	assert.throws(
+		() => restoreArtifactManifestFromBranch(malformed("sha256:not-a-digest")),
+		/Invalid browser artifact changes; inspect the retained journal\./,
+		"a malformed identity fails validation instead of falling back to its path",
+	);
+	assert.throws(
+		() => restoreArtifactManifestFromBranch(malformed(7)),
+		/Invalid browser artifact changes; inspect the retained journal\./,
+	);
+});
+
 test("conversion preserves all original ancestry, interrupted prefixes, snapshots and artifact provenance", async () => {
 	const root = await mkdtemp(join(tmpdir(), "piab-conversion-"));
 	try {
@@ -1869,10 +2174,20 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 			kind: "image",
 			exists: true,
 		};
+		// Legacy manifests retained raw rows; these two files share one redacted display path.
+		const secretRows = ["first.png", "second.png"].map((name) => ({
+			path: join(root, "Bearer conversion-secret", name),
+			absolutePath: join(root, "Bearer conversion-secret", name),
+			createdAtMs: 0,
+			storageScope: row.storageScope,
+			retentionState: row.retentionState,
+			kind: row.kind,
+			exists: row.exists,
+		}));
 		const manifest = {
 			version: 1,
-			entries: [row],
-			liveCount: 1,
+			entries: [row, ...secretRows],
+			liveCount: 3,
 			evictedCount: 0,
 			updatedAtMs: 1,
 			maxEntries: 100,
@@ -1992,8 +2307,20 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 			2,
 			"repeated completions reuse only ancestral definitions",
 		);
-		const verifyLeaf = async (leaf: string) => {
-			const branch = await readBrowserEntries(manager(destination, leaf));
+		assert.doesNotMatch(
+			JSON.stringify(converted.map((entry) => getBrowserRecord(entry)?.event.artifacts)),
+			/conversion-secret/,
+			"synthesized upserts and removals are redacted receipts",
+		);
+		assert.deepEqual(
+			converted
+				.filter((entry) => getBrowserRecord(entry)?.event.artifacts !== undefined)
+				.map((entry) => entry.id),
+			["capture", "branch-b"],
+			"synthesis compares retained legacy manifests, so unchanged receipts add no deltas",
+		);
+		const verifyLeaf = async (file: string, leaf: string) => {
+			const branch = await readBrowserEntries(manager(file, leaf));
 			const state = SessionPageState.fromBranch(branch).get("shared");
 			if (leaf === "begin") {
 				// Exhaustive fixture variant (leaf === "begin"): this selected path must satisfy its own contract.
@@ -2030,12 +2357,27 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 				recent.entries[0].retentionState,
 				["branch-b", "label-b", "late-result"].includes(leaf) ? "missing" : "live",
 			);
+			assert.equal(
+				recent.entries.length,
+				["branch-b", "label-b", "late-result"].includes(leaf) ? 1 : 3,
+				"distinct legacy files keep distinct receipts until a later legacy manifest retires them",
+			);
 		};
-		await Promise.all(
-			["capture", "begin", "finish", "branch-b", "label-b", "result", "modern", "late-result"].map(
-				verifyLeaf,
-			),
-		);
+		const leaves = [
+			"capture",
+			"begin",
+			"finish",
+			"branch-b",
+			"label-b",
+			"result",
+			"modern",
+			"late-result",
+		];
+		await Promise.all([
+			...leaves.map((leaf) => verifyLeaf(destination, leaf)),
+			// Ordinary replay shares the synthesis projector; the source's unterminated tail is unpublished.
+			...leaves.slice(0, -1).map((leaf) => verifyLeaf(source, leaf)),
+		]);
 		const result = converted.find((entry) => entry.id === "result");
 		assert.ok(result);
 		assert.deepEqual(readRecord(readRecord(result.message).details).data, {
@@ -2056,6 +2398,14 @@ test("conversion preserves all original ancestry, interrupted prefixes, snapshot
 			converted.find((entry) => entry.id === "modern"),
 			originals.find((entry) => entry.id === "modern"),
 			"modern observations retain explicit bodies and cannot overwrite canonical state with an invocation-only receipt",
+		);
+		const convertedText = await readFile(destination, "utf8");
+		assert.deepEqual(
+			["label-b", "modern"].map((id) =>
+				convertedText.includes(`${JSON.stringify(originals.find((entry) => entry.id === id))}\n`),
+			),
+			[true, true],
+			"receipt projection rewrites only synthesized legacy records, never original entry bytes",
 		);
 		assert.equal(readRecord(readRecord(result.data).archive).sourceSha256, receipt.sourceSha256);
 		await assert.rejects(

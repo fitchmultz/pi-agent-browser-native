@@ -4,10 +4,13 @@ import type {
 	ToolPresentation,
 } from "../contracts.js";
 
-// Observation consumers cannot modify the assembly state or any nested evidence.
-type ReadonlyEvidence<Value> = Value extends object
-	? { readonly [Key in keyof Value]: ReadonlyEvidence<Value[Key]> }
-	: Value;
+// Observation consumers cannot modify the assembly state or any nested evidence. Primitives,
+// including branded identities such as artifact receipt keys, are already immutable leaves.
+type ReadonlyEvidence<Value> = Value extends bigint | boolean | number | string | symbol
+	? Value
+	: Value extends object
+		? { readonly [Key in keyof Value]: ReadonlyEvidence<Value[Key]> }
+		: Value;
 
 export type ToolPresentationObservation = ReadonlyEvidence<ToolPresentation>;
 

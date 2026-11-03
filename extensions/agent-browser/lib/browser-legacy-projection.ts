@@ -12,6 +12,7 @@ import {
 	artifactChanges,
 	browserStateEffects,
 	parseBrowserRecord,
+	persistedBrowserRecord,
 	type BrowserPageChange,
 	type BrowserRecord,
 	type BrowserSnapshot,
@@ -330,7 +331,8 @@ function convertMessage(
 		definition = conversion.definition;
 	}
 	const artifacts = updateManifest(current, parent, ctx.details);
-	return {
+	// Synthesized records publish receipts; `current.manifest` keeps the retained comparison rows.
+	return persistedBrowserRecord({
 		event: {
 			version: 1,
 			phase: ctx.phase,
@@ -343,7 +345,7 @@ function convertMessage(
 			artifacts,
 		},
 		...(definition ? { snapshot: definition } : {}),
-	};
+	});
 }
 
 /**

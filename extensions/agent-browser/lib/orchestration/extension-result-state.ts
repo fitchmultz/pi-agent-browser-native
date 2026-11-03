@@ -4,12 +4,13 @@ import type { SessionPageState, SessionPageStateView } from "../session-page-sta
 import {
 	applyArtifactChanges,
 	artifactChanges,
+	artifactReceipt,
 	getBrowserRecord,
 	pageChange,
 	snapshotDefinition,
 	type BrowserRecord,
 } from "../browser-transcript.js";
-import { redactSensitiveText, redactSensitiveValue } from "../runtime.js";
+import { redactSensitiveText } from "../runtime.js";
 import { isRecord } from "../parsing.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
 import type {
@@ -17,10 +18,7 @@ import type {
 	FileArtifactMetadata,
 	SessionArtifactManifest,
 } from "../results/contracts.js";
-import {
-	getSessionArtifactManifestEntryKey,
-	isSessionArtifactManifest,
-} from "../results/artifact-manifest.js";
+import { getSessionArtifactManifestEntryKey } from "../results/artifact-manifest.js";
 
 export function browserExecutionFailure(
 	error: unknown,
@@ -107,13 +105,13 @@ export function invocationArtifactManifest(
 	if (entries.length === 0) {
 		return undefined;
 	}
-	const projected = redactSensitiveValue({
+	// Returned receipts keep identities, so later observation selection reaches the private rows.
+	return {
 		...current,
-		entries,
+		entries: entries.map(artifactReceipt),
 		liveCount: entries.filter((row) => row.retentionState === "live").length,
 		evictedCount: entries.filter((row) => row.retentionState === "evicted").length,
-	});
-	return isSessionArtifactManifest(projected) ? projected : undefined;
+	};
 }
 
 export function restoreArtifactManifestFromBranch(

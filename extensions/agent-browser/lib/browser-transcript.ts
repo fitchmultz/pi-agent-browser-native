@@ -10,6 +10,7 @@ import {
 } from "./session-page-observation.js";
 import {
 	compareSessionArtifactManifestEntries,
+	getArtifactRemovalKey,
 	getSessionArtifactManifestEntryKey,
 	isSessionArtifactManifest,
 } from "./results/artifact-manifest.js";
@@ -241,10 +242,13 @@ function indexedArtifacts(
 	);
 }
 
-function redactedArtifact(row: SessionArtifactManifestEntry): SessionArtifactManifestEntry {
+/** Projects a private row into its published receipt: redacted fields plus its opaque identity. */
+export function artifactReceipt(row: SessionArtifactManifestEntry): SessionArtifactManifestEntry {
 	const manifest = {
 		version: 1,
-		entries: [redactSensitiveValue(row)],
+		entries: [
+			redactSensitiveValue({ ...row, receiptKey: getSessionArtifactManifestEntryKey(row) }),
+		],
 		maxEntries: 1,
 		updatedAtMs: row.createdAtMs,
 		liveCount: 0,
@@ -256,6 +260,7 @@ function redactedArtifact(row: SessionArtifactManifestEntry): SessionArtifactMan
 	return manifest.entries[0];
 }
 
+/** Deltas carry private live rows; `appendBrowserTransition` publishes their receipts instead. */
 export function artifactChanges(
 	previous: SessionArtifactManifest | undefined,
 	next: SessionArtifactManifest | undefined,
@@ -267,7 +272,7 @@ export function artifactChanges(
 	const after = indexedArtifacts(next);
 	const upserts = [...after]
 		.filter(([key, row]) => JSON.stringify(before.get(key)) !== JSON.stringify(row))
-		.map(([, row]) => redactedArtifact(row));
+		.map(([, row]) => row);
 	const removals = [...before.keys()].filter((key) => !after.has(key));
 	return upserts.length > 0 || removals.length > 0
 		? {
@@ -289,8 +294,8 @@ export function applyArtifactChanges(
 	const rows = new Map(
 		(previous?.entries ?? []).map((row) => [getSessionArtifactManifestEntryKey(row), row]),
 	);
-	for (const key of changes.removals) {
-		rows.delete(key);
+	for (const removal of changes.removals) {
+		rows.delete(getArtifactRemovalKey(removal));
 	}
 	for (const row of changes.upserts) {
 		rows.set(getSessionArtifactManifestEntryKey(row), row);
@@ -312,6 +317,23 @@ export function applyArtifactChanges(
 	return entries.length > 0 ? manifest : undefined;
 }
 
-export function appendBrowserTransition(pi: ExtensionAPI, record: BrowserRecord): void {
-	pi.appendEntry(BROWSER_TRANSITION_ENTRY, record);
+/** The journal copy of a record; callers keep the private original for confirmed live state. */
+export function persistedBrowserRecord(record: BrowserRecord): BrowserRecord {
+	const artifacts = record.event.artifacts;
+	return artifacts
+		? {
+				...record,
+				event: {
+					...record.event,
+					artifacts: { ...artifacts, upserts: artifacts.upserts.map(artifactReceipt) },
+				},
+			}
+		: record;
+}
+
+export function appendBrowserTransition(
+	pi: Pick<ExtensionAPI, "appendEntry">,
+	record: BrowserRecord,
+): void {
+	pi.appendEntry(BROWSER_TRANSITION_ENTRY, persistedBrowserRecord(record));
 }
