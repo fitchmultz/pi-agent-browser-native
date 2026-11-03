@@ -229,6 +229,69 @@ test("captures browser defaults with conservative profile policy and executable 
 	assert.deepEqual(state.warnings, []);
 });
 
+for (const { label, defaultProfile, profile, errors } of [
+	{
+		label: "trims the name and defaults an omitted policy",
+		defaultProfile: { name: "  Work Profile  " },
+		profile: { name: "Work Profile", policy: "authenticated-only" },
+		errors: [],
+	},
+	{
+		label: "accepts the explicit-only policy",
+		defaultProfile: { name: "Work Profile", policy: "explicit-only" },
+		profile: { name: "Work Profile", policy: "explicit-only" },
+		errors: [],
+	},
+	{
+		label: "requires an exact policy value",
+		defaultProfile: { name: "Work Profile", policy: " always" },
+		profile: undefined,
+		errors: ["policy must be one of explicit-only, authenticated-only, always."],
+	},
+	{
+		label: "rejects an empty policy instead of defaulting it",
+		defaultProfile: { name: "Work Profile", policy: "" },
+		profile: undefined,
+		errors: ["policy must be one of explicit-only, authenticated-only, always."],
+	},
+	{
+		label: "rejects a blank name before validating the policy",
+		defaultProfile: { name: "   ", policy: 7 },
+		profile: undefined,
+		errors: ["name must not be blank."],
+	},
+	{
+		label: "reports a non-string name as invalid and blank",
+		defaultProfile: { name: 7 },
+		profile: undefined,
+		errors: ["name must be a string.", "name must not be blank."],
+	},
+	{
+		label: "reports a non-string policy and keeps the default policy",
+		defaultProfile: { name: "Work Profile", policy: 7 },
+		profile: { name: "Work Profile", policy: "authenticated-only" },
+		errors: ["policy must be a string."],
+	},
+]) {
+	test(`browser default profile config ${label}`, async (t) => {
+		const fixture = await createConfigFixture(t);
+		await writeJson(fixture.globalPath, { version: 1, browser: { defaultProfile } });
+		const state = loadAgentBrowserConfigSync({ cwd: fixture.cwd, env: fixture.env });
+		assert.deepEqual(
+			{
+				errors: state.errors,
+				profile: state.browserDefaultProfile,
+				trustedProfile: state.trustedBrowserDefaultProfile,
+			},
+			{
+				errors: errors.map((suffix) => `${fixture.globalPath}.browser.defaultProfile.${suffix}`),
+				profile,
+				trustedProfile: profile,
+			},
+		);
+	});
+}
+
 test("records project-local browser guidance scope and uses it for prompt injection", async (t) => {
 	const fixture = await createConfigFixture(t);
 	await writeJson(fixture.projectPath, {

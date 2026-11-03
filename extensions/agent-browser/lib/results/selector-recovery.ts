@@ -11,6 +11,7 @@ import {
 	getSnapshotLineTextByRef,
 	getSnapshotRefRecord,
 	getSnapshotRefRole,
+	normalizeAccessibleName,
 } from "./snapshot-refs.js";
 import { compareRefIds } from "./text.js";
 
@@ -124,11 +125,7 @@ function getCandidateEditableEvidence(
 }
 
 function matchesFallbackName(name: string | undefined, targetName: string): name is string {
-	return (
-		name !== undefined &&
-		name.length > 0 &&
-		normalizeSemanticActionAccessibleName(name) === targetName
-	);
+	return name !== undefined && name.length > 0 && normalizeAccessibleName(name) === targetName;
 }
 
 function isDisallowedEditableFill(
@@ -150,7 +147,7 @@ function getVisibleRefFallbackCandidates(
 	}
 	const snapshotLineByRef = getSnapshotLineTextByRef(snapshotData);
 	const roleOrder = target.roles.map((role) => role.toLowerCase());
-	const targetName = normalizeSemanticActionAccessibleName(target.targetName);
+	const targetName = normalizeAccessibleName(target.targetName);
 	const candidates = Object.entries(refs).flatMap(([ref, entry]): VisibleRefFallbackCandidate[] => {
 		if (!/^e\d+$/.test(ref) || !isRecord(entry)) {
 			return [];
@@ -434,8 +431,4 @@ export function formatRichInputRecoveryText(
 		}),
 		`- ${diagnostic.inputMethodHint}`,
 	].join("\n");
-}
-
-function normalizeSemanticActionAccessibleName(name: string): string {
-	return name.replace(/\s+/g, " ").trim().toLowerCase();
 }

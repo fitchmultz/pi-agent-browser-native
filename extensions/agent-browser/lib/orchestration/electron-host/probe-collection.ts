@@ -1,6 +1,7 @@
 import { boundElectronProbeString } from "../../electron/cdp.js";
 import { normalizeProcessError } from "../../process-errors.js";
-import { extractStringResultField, runSessionCommandData } from "../browser-run/session-state.js";
+import { extractStringResultField } from "../../session-page-state.js";
+import { runSessionCommandData } from "../browser-run/session-state.js";
 import type { ElectronManagedSessionInspection, ElectronProbeResult } from "./contracts.js";
 import {
 	ELECTRON_FOCUSED_ELEMENT_EVAL,

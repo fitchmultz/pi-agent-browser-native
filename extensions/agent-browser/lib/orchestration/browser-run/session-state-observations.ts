@@ -1,27 +1,7 @@
 import { isNavigationObservableCommandName } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
+import { extractStringResultField } from "../../session-page-state.js";
 import type { AboutBlankSessionMismatch, NavigationSummary } from "./types.js";
-
-export function extractStringResultField(
-	data: unknown,
-	fieldName: "result" | "title" | "url" | "value",
-): string | undefined {
-	if (typeof data === "string") {
-		if (fieldName === "value") {
-			return data;
-		}
-		const text = data.trim();
-		return text.length > 0 ? text : undefined;
-	}
-	if (!isRecord(data) || typeof data[fieldName] !== "string") {
-		return;
-	}
-	if (fieldName === "value") {
-		return data[fieldName];
-	}
-	const text = data[fieldName].trim();
-	return text.length > 0 ? text : undefined;
-}
 
 export function extractNavigationSummaryFromData(data: unknown): NavigationSummary | undefined {
 	const result = isRecord(data) && isRecord(data.result) ? data.result : data;
@@ -74,12 +54,4 @@ export function buildAboutBlankRecoveryHint(): string {
 
 export function buildAboutBlankWarning(mismatch: AboutBlankSessionMismatch): string {
 	return `Warning: agent_browser detected that this session returned about:blank while the prior intended tab was ${mismatch.targetUrl}. ${mismatch.recoveryApplied ? "The wrapper re-selected the intended tab for the session." : "No matching tab could be re-selected; run tab list for the same session or retry with sessionMode=fresh."}`;
-}
-
-export function extractBatchResultCommand(item: Readonly<Record<string, unknown>>): string[] {
-	if (!Array.isArray(item.command)) {
-		return [];
-	}
-	const tokens: readonly unknown[] = item.command;
-	return tokens.filter((token): token is string => typeof token === "string");
 }

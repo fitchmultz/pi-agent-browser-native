@@ -77,6 +77,24 @@ function clearPlatformSmokeOverrides(t: TestContext): void {
 	});
 }
 
+// docs/platform-smoke.md documents this absent-override Ubuntu image; PLATFORM_SMOKE_UBUNTU_IMAGE still wins.
+const DOCUMENTED_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${CAPABILITY_BASELINE.targetVersion}`;
+const OVERRIDE_UBUNTU_IMAGE = "registry.example.test/prepared-ubuntu-smoke:override";
+
+async function withUbuntuImageOverride<T>(run: () => Promise<T>): Promise<T> {
+	process.env.PLATFORM_SMOKE_UBUNTU_IMAGE = OVERRIDE_UBUNTU_IMAGE;
+	try {
+		return await run();
+	} finally {
+		delete process.env.PLATFORM_SMOKE_UBUNTU_IMAGE;
+	}
+}
+
+function optionValue(args: readonly string[], option: string): string | undefined {
+	const index = args.indexOf(option);
+	return index < 0 ? undefined : args[index + 1];
+}
+
 test("platform smoke CLI has working help without dogfood host bootstrap", () => {
 	const powershell = readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8");
 	assert.doesNotMatch(powershell, /npm\s+install\s+-g/);
@@ -122,6 +140,41 @@ test("platform smoke config requires macOS/Ubuntu and keeps explicit best-effort
 	assert.deepEqual(config.requiredSuites, ["platform-build", "browser-dogfood-smoke"]);
 	assert.deepEqual(config.requiredTargets, ["macos", "ubuntu"]);
 	assert.deepEqual(config.optionalTargets, ["windows-native"]);
+});
+
+test("Ubuntu image build tags the documented default image with its audited agent-browser version", (t) => {
+	clearPlatformSmokeOverrides(t);
+	const root = mkdtempSync(join(tmpdir(), "platform-ubuntu-image-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const record = join(root, "docker.json");
+	const fakeDocker = String.raw`
+import childProcess from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+childProcess.spawnSync = (command, args) => {
+	writeFileSync(process.env.FAKE_DOCKER_RECORD, JSON.stringify({ command, args }));
+	return { status: 0 };
+};
+syncBuiltinESMExports();
+`;
+	const build = spawnSync(
+		process.execPath,
+		[
+			"--import",
+			`data:text/javascript;base64,${Buffer.from(fakeDocker).toString("base64")}`,
+			"scripts/platform-smoke/build-ubuntu-image.mjs",
+		],
+		{ encoding: "utf8", env: { ...process.env, FAKE_DOCKER_RECORD: record }, timeout: 10_000 },
+	);
+	assert.ifError(build.error);
+	assert.equal(build.status, 0, build.stderr);
+	const docker = readRecord(JSON.parse(readFileSync(record, "utf8")));
+	const args = readArray(docker.args).map(readString);
+	assert.equal(docker.command, "docker");
+	assert.equal(args[0], "build");
+	assert.equal(optionValue(args, "-t"), DOCUMENTED_UBUNTU_IMAGE);
+	const versionArg = args.indexOf(`AGENT_BROWSER_VERSION=${CAPABILITY_BASELINE.targetVersion}`);
+	assert.equal(args[versionArg - 1], "--build-arg");
 });
 
 test("platform command rendering uses POSIX and PowerShell without source-extension shortcuts", () => {
@@ -192,6 +245,7 @@ test("platform command rendering uses POSIX and PowerShell without source-extens
 });
 
 test("artifact manifests and lease cleanup failures are enforced", (t) => {
+	clearPlatformSmokeOverrides(t);
 	const root = mkdtempSync(join(tmpdir(), "pi-agent-browser-platform-smoke-test-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const suiteDir = join(root, "suite");
@@ -261,6 +315,8 @@ test("artifact manifests and lease cleanup failures are enforced", (t) => {
 	assert.equal(successTarget.packageName, "pi-agent-browser-native");
 	assert.equal(readRecord(successTarget.crabbox).provider, "local-container");
 	assert.equal(readRecord(successTarget.crabbox).workRoot, "/work/crabbox");
+	// This caller config names no image, so target evidence records the documented default.
+	assert.equal(readRecord(successTarget.crabbox).image, DOCUMENTED_UBUNTU_IMAGE);
 	assert.equal(warmupFailure.ok, false);
 	assert.match(readFileSync(join(warmupFailure.suiteDir, "failures.md"), "utf8"), /lease-warmup/);
 	const env = { ZAI_API_KEY: "zai-secret-value-1234567890" };
@@ -307,7 +363,17 @@ test("platform CLI defaults to required targets and preserves an explicitly sele
 	assert.equal(calls.length, 2);
 	assert.equal(calls[0]?.includes("ssh"), true);
 	assert.equal(calls[1]?.includes("local-container"), true);
+	assert.equal(optionValue(calls[1], "--local-container-image"), DOCUMENTED_UBUNTU_IMAGE);
 	assert.equal(calls.flat().includes("parallels"), false);
+	calls.length = 0;
+	assert.equal(
+		await withUbuntuImageOverride(() =>
+			platformMain(["run", "--target", "ubuntu", "--suite", "platform-build"]),
+		),
+		1,
+	);
+	assert.equal(calls.length, 1);
+	assert.equal(optionValue(calls[0], "--local-container-image"), OVERRIDE_UBUNTU_IMAGE);
 	calls.length = 0;
 	assert.equal(
 		await platformMain(["run", "--target", "windows-native", "--suite", "platform-build"]),
@@ -318,6 +384,117 @@ test("platform CLI defaults to required targets and preserves an explicitly sele
 	assert.equal(calls[0]?.includes("windows"), true);
 	await assert.rejects(platformMain(["run", "--target", "not-a-target"]), /unknown target/);
 	await assert.rejects(platformMain(["doctor", "--target", ","]), /Select at least one target/);
+});
+
+// Like a real spawned child, this Crabbox double reports close only after its output streams end.
+function crabboxChild(receipt: {
+	readonly stdout?: string;
+	readonly stderr?: string;
+	readonly code: number;
+}): ChildProcess {
+	const child = new ChildProcess();
+	const stdout = new PassThrough();
+	const stderr = new PassThrough();
+	child.stdout = stdout;
+	child.stderr = stderr;
+	let openStreams = 2;
+	const streamEnded = (): void => {
+		openStreams -= 1;
+		if (openStreams === 0) {
+			child.emit("close", receipt.code, null);
+		}
+	};
+	stdout.on("end", streamEnded);
+	stderr.on("end", streamEnded);
+	stdout.end(receipt.stdout ?? "");
+	stderr.end(receipt.stderr ?? "");
+	return child;
+}
+
+// The lease a Crabbox warmup receipt reports owns the follow-up run and stop. Receipts use the real
+// `leased <id> slug=...` and `lease=<id>` line forms; distinct IDs make their precedence observable.
+test("platform CLI runs and stops the lease Crabbox warmup reports, else the target's own lease", async (t) => {
+	clearPlatformSmokeOverrides(t);
+	const root = mkdtempSync(join(tmpdir(), "platform-lease-id-"));
+	const cwd = process.cwd();
+	const calls: string[][] = [];
+	let warmup: { readonly stdout: string; readonly stderr: string } = { stdout: "", stderr: "" };
+	t.after(() => {
+		process.chdir(cwd);
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		rmSync(root, { recursive: true, force: true });
+	});
+	t.mock.method(childProcess, "spawn", (_command: unknown, args: unknown) => {
+		const words = readArray(args).map(readString);
+		calls.push(words);
+		return crabboxChild(words[0] === "warmup" ? { ...warmup, code: 0 } : { code: 0 });
+	});
+	syncBuiltinESMExports();
+	process.chdir(root);
+	// One CLI run per receipt; returns the lease IDs its Crabbox run and stop follow-ups used.
+	const followUpLeaseIds = async (target: string, stdout: string, stderr: string) => {
+		warmup = { stdout, stderr };
+		calls.length = 0;
+		await platformMain(["run", "--target", target, "--suite", "platform-build"]);
+		return calls
+			.filter(([command]) => command === "run" || command === "stop")
+			.map((words) => [words[0], words[words.indexOf("--id") + 1]]);
+	};
+	const leased = "cbx_0123456789ab";
+	const provisioned = "cbx_ba9876543210";
+	assert.deepEqual(
+		await followUpLeaseIds(
+			"ubuntu",
+			`leased ${leased} slug=pi-agent-browser-native-ubuntu provider=local-container\n`,
+			`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
+		),
+		[
+			["run", leased],
+			["stop", leased],
+		],
+		"stdout leased receipt",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds(
+			"ubuntu",
+			"",
+			`provisioning provider=local-container lease=${provisioned} slug=- keep=true\nleased ${leased} slug=-\n`,
+		),
+		[
+			["run", leased],
+			["stop", leased],
+		],
+		"stderr leased receipt after an earlier lease= receipt",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds(
+			"ubuntu",
+			"",
+			`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
+		),
+		[
+			["run", provisioned],
+			["stop", provisioned],
+		],
+		"stderr lease= receipt",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds("ubuntu", "", `released local-container/${provisioned} slug=-\n`),
+		[
+			["run", "pi-agent-browser-native-ubuntu"],
+			["stop", "pi-agent-browser-native-ubuntu"],
+		],
+		"release line is not an acquired lease",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds("macos", "", ""),
+		[
+			["run", "static_localhost"],
+			["stop", "static_localhost"],
+		],
+		"no receipt",
+	);
 });
 
 test("default platform doctor needs no Windows credentials/provider and keeps selected provisioning failures strict", async (t) => {
@@ -398,6 +575,15 @@ test("default platform doctor needs no Windows credentials/provider and keeps se
 		calls.some((call) => call.startsWith("docker info")),
 		true,
 	);
+	const ubuntuProviderCheck = (image: string): string =>
+		`crabbox doctor --provider local-container --local-container-image ${image} --json`;
+	assert.equal(calls.includes(ubuntuProviderCheck(DOCUMENTED_UBUNTU_IMAGE)), true);
+	calls.length = 0;
+	assert.equal(
+		await withUbuntuImageOverride(() => platformMain(["doctor", "--target", "ubuntu"])),
+		0,
+	);
+	assert.equal(calls.includes(ubuntuProviderCheck(OVERRIDE_UBUNTU_IMAGE)), true);
 	calls.length = 0;
 	assert.equal(await platformMain(["doctor", "--target", "windows-native"]), 1);
 	assert.equal(calls.includes("which prlctl"), true);

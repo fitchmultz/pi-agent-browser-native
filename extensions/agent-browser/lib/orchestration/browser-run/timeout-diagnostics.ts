@@ -8,7 +8,8 @@ import type { CompiledAgentBrowserJob } from "../../input-modes/types.js";
 import { redactInvocationArgs, redactSensitiveText } from "../../runtime-redaction.js";
 import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
 import { getExplicitArtifactDestination } from "./artifact-paths.js";
-import { extractStringResultField, runSessionCommandData } from "./session-state.js";
+import { extractStringResultField } from "../../session-page-state.js";
+import { runSessionCommandData } from "./session-state.js";
 import {
 	redactSensitivePathSegmentsForDiagnostic,
 	sanitizeCurrentPageUrlForTimeoutDiagnostic,

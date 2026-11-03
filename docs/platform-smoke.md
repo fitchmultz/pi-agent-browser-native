@@ -68,7 +68,7 @@ PLATFORM_SMOKE_MAC_WORK_ROOT="/Users/$USER/crabbox/pi-agent-browser-native"
 # Optional only when localhost SSH does not use port 22.
 PLATFORM_SMOKE_MAC_PORT=22
 
-# Default local image built by npm run smoke:platform:ubuntu-image.
+# Default local image, defined once in platform-smoke.config.mjs and built by npm run smoke:platform:ubuntu-image.
 # The tag suffix is derived from scripts/agent-browser-capability-baseline.mjs.
 PLATFORM_SMOKE_UBUNTU_IMAGE="pi-agent-browser-native-platform:node24-agent-browser<baseline-version>"
 

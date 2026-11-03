@@ -5064,6 +5064,7 @@
 				"scripts/convert-browser-session.mjs",
 				"scripts/doctor-sources.mjs",
 				"scripts/doctor.mjs",
+				"scripts/lifecycle-defaults.mjs",
 				"scripts/lifecycle-fake-browser.mjs",
 				"scripts/lifecycle-fixture.mjs",
 				"scripts/lifecycle-run.mjs",

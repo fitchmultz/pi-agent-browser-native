@@ -14,6 +14,10 @@ import test from "node:test";
 import { readRecord, readString } from "./helpers/assertions.js";
 
 import { parseUserBatchStdin } from "../extensions/agent-browser/lib/orchestration/batch-stdin.js";
+import {
+	applyArtifactChanges,
+	artifactChanges,
+} from "../extensions/agent-browser/lib/browser-transcript.js";
 import { mergeBrowserRunArtifactManifest } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-merge.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import type {
@@ -21,6 +25,7 @@ import type {
 	SessionArtifactManifestEntry,
 } from "../extensions/agent-browser/lib/results/contracts.js";
 import {
+	buildEvictedSessionArtifactEntries,
 	getSessionArtifactManifestMaxEntries,
 	mergeSessionArtifactManifest,
 } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
@@ -1107,6 +1112,65 @@ test("artifact manifest evicts oldest metadata entries at the configured recent 
 			);
 			assert.equal(manifest.liveCount, 3);
 			assert.equal(manifest.evictedCount, 0);
+		},
+	);
+});
+
+test("committed replay derives the live recent artifact order and window", async () => {
+	const settled = (path: string, createdAtMs: number): SessionArtifactManifestEntry => ({
+		command: "screenshot",
+		createdAtMs,
+		kind: "image",
+		path,
+		retentionState: "live",
+		storageScope: "explicit-path",
+	});
+
+	await withPatchedEnv(
+		{ PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES: "4" },
+		async () => {
+			const first = mergeSessionArtifactManifest({
+				entries: [settled("z-settled.png", 2_000), settled("oldest.png", 1_000)],
+				nowMs: 2_000,
+			});
+			// Eviction time outranks an older creation time, a pending recording leads equal-time rows,
+			// path breaks the remaining tie, and only then does the window drop the oldest row.
+			const second = mergeSessionArtifactManifest({
+				base: first,
+				entries: [
+					settled("a-settled.png", 2_000),
+					{
+						command: "record",
+						createdAtMs: 2_000,
+						kind: "video",
+						path: "y-pending.webm",
+						recordingState: "openRecording",
+						retentionState: "live",
+						session: "shared",
+						status: "pending",
+						storageScope: "explicit-path",
+						subcommand: "start",
+					},
+					...buildEvictedSessionArtifactEntries(
+						[{ mtimeMs: 900, path: "evicted-spill.json", sizeBytes: 1 }],
+						3_000,
+					),
+				],
+				nowMs: 3_000,
+			});
+			const replayed = applyArtifactChanges(
+				applyArtifactChanges(undefined, artifactChanges(undefined, first)),
+				artifactChanges(first, second),
+			);
+			const expected = ["evicted-spill.json", "y-pending.webm", "a-settled.png", "z-settled.png"];
+			assert.deepEqual(
+				second?.entries.map((entry) => entry.path),
+				expected,
+			);
+			assert.deepEqual(
+				replayed?.entries.map((entry) => entry.path),
+				expected,
+			);
 		},
 	);
 });

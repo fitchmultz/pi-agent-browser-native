@@ -107,7 +107,8 @@ export function targetsMatch(
 	return normalizeComparableUrl(left.url) === normalizeComparableUrl(right.url);
 }
 
-function extractStringResultField(
+/** Native getter text from bare data or one string field: `value` is verbatim, others trimmed or undefined when blank. */
+export function extractStringResultField(
 	data: unknown,
 	fieldName: "result" | "title" | "url" | "value",
 ): string | undefined {
@@ -143,7 +144,7 @@ function extractSessionTabTargetFromData(data: unknown): SessionTabTarget | unde
 	return undefined;
 }
 
-function extractBatchResultCommand(item: Readonly<Record<string, unknown>>): string[] {
+export function extractBatchResultCommand(item: Readonly<Record<string, unknown>>): string[] {
 	return browserStringArray(item.command);
 }
 

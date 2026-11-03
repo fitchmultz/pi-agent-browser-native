@@ -3,11 +3,8 @@ import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { withOptionalSessionArgs } from "../../results/next-actions.js";
 import { redactSensitiveText } from "../../runtime-redaction.js";
 import type { CommandInfo } from "../../argv-descriptor.js";
-import {
-	extractBatchResultCommand,
-	extractStringResultField,
-	runSessionCommandData,
-} from "./session-state.js";
+import { extractBatchResultCommand, extractStringResultField } from "../../session-page-state.js";
+import { runSessionCommandData } from "./session-state.js";
 import { rawNumberField, rawStringField } from "./diagnostic-values.js";
 import type {
 	SelectorTextVisibilityCandidate,

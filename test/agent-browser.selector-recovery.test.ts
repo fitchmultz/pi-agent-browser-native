@@ -166,26 +166,25 @@ test("selector recovery parses locator select targets and still requires exact n
 	);
 });
 
-test("semantic visible-ref resolution requires exact role/name matches", () => {
-	const resolution = resolveVisibleRefActionFromSnapshot({
-		compiledAction: {
-			action: "click",
-			args: ["find", "role", "button", "click", "--name", "Submit"],
-			locator: "role",
-		},
-		snapshotData,
-	});
-	assert.deepEqual(resolution?.args, ["click", "@e3"]);
+test("semantic visible-ref resolution requires exact role/name matches after whitespace and case folding", () => {
+	const resolveButtonClick = (name: string) =>
+		resolveVisibleRefActionFromSnapshot({
+			compiledAction: {
+				action: "click",
+				args: ["find", "role", "button", "click", "--name", name],
+				locator: "role",
+			},
+			snapshotData: {
+				...snapshotData,
+				refs: { ...snapshotData.refs, e6: { name: " Save\n\tdraft ", role: "button" } },
+			},
+		})?.args;
 
-	const prefixOnly = resolveVisibleRefActionFromSnapshot({
-		compiledAction: {
-			action: "click",
-			args: ["find", "role", "button", "click", "--name", "Sub"],
-			locator: "role",
-		},
-		snapshotData,
-	});
-	assert.equal(prefixOnly, undefined);
+	assert.deepEqual(resolveButtonClick("Submit"), ["click", "@e3"]);
+	assert.deepEqual(resolveButtonClick("  sUBMIT\n"), ["click", "@e3"]);
+	assert.deepEqual(resolveButtonClick("save  DRAFT"), ["click", "@e6"]);
+	assert.equal(resolveButtonClick("Sub"), undefined);
+	assert.equal(resolveButtonClick("Savedraft"), undefined);
 });
 
 test("semantic fill visible-ref resolution is internal-only and requires one exact editable ref", () => {

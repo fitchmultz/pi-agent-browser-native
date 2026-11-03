@@ -6,6 +6,7 @@
  * Invariants/Assumptions: Pi and tmux are on PATH. The harness preserves transcripts and uses exactly one temporary configured package source with an exact Pi session id.
  */
 import { pathToFileURL } from "node:url";
+import { DEFAULT_LIFECYCLE_MODEL, DEFAULT_TIMEOUT_MS } from "./lifecycle-defaults.mjs";
 import { verifyLifecycle } from "./lifecycle-run.mjs";
 export { buildSettingsPayload, injectLifecycleSentinelSource } from "./lifecycle-fixture.mjs";
 export { fakeAgentBrowserScript } from "./lifecycle-fake-browser.mjs";
@@ -24,9 +25,6 @@ export {
 	paneLooksReady,
 	tmuxActiveTarget,
 } from "./lifecycle-tmux.mjs";
-
-const DEFAULT_TIMEOUT_MS = 180_000;
-const DEFAULT_LIFECYCLE_MODEL = "zai/glm-5.2";
 
 class UsageError extends Error {
 	constructor(message) {

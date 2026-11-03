@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.14 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- test: wait for Electron fixture readiness before grace checks (#356) ([cf726ae](https://github.com/fitchmultz/pi-agent-browser-native/commit/cf726aeee2aa7cd93e04d51864ef74227a71736f))
+
+### What's Changed
+
+- Wait for Electron fixture readiness before clock-grace checks by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/356
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.13...v0.9.14
+
 ## 0.9.13 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->

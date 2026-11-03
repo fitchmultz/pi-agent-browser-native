@@ -3,6 +3,7 @@ import { isRecord } from "../../parsing.js";
 import { redactSensitiveText, redactSensitiveValue } from "../../runtime.js";
 import {
 	classifyNetworkRequestFailure,
+	getNetworkRequestId,
 	isNetworkArtifactNoiseRequest,
 	summarizeNetworkFailures,
 } from "../network.js";
@@ -55,7 +56,7 @@ function networkRequestLine(item: Data, index: number): string[] {
 	const status = typeof item.status === "number" ? String(item.status) : "pending";
 	const type = getStringField(item, "resourceType") ?? getStringField(item, "mimeType");
 	const url = getStringField(item, "url") ?? "(no url)";
-	const requestId = getStringField(item, "requestId") ?? getStringField(item, "id");
+	const requestId = getNetworkRequestId(item);
 	const idText = requestId === undefined ? "" : ` [${redactSensitiveText(requestId)}]`;
 	const classification = classifyNetworkRequestFailure(item);
 	const impactText = classification ? ` [${classification.impact}: ${classification.reason}]` : "";
@@ -147,11 +148,7 @@ export function formatNetworkRequestsText(data: Data, command: CommandInfo): str
 }
 
 export function formatNetworkRequestText(data: Data): string | undefined {
-	if (
-		getStringField(data, "url") === undefined &&
-		getStringField(data, "requestId") === undefined &&
-		getStringField(data, "id") === undefined
-	) {
+	if (getStringField(data, "url") === undefined && getNetworkRequestId(data) === undefined) {
 		return undefined;
 	}
 	return networkRequestLine(data, 0).join("\n");

@@ -11,11 +11,14 @@ import {
 import { isRecord } from "../../parsing.js";
 import type { OpenResultTabCorrection } from "../../runtime-contracts.js";
 import { chooseOpenResultTabCorrection } from "../../runtime-tab-correction.js";
-import { normalizeComparableUrl, type SessionTabTarget } from "../../session-page-state.js";
+import {
+	extractStringResultField,
+	normalizeComparableUrl,
+	type SessionTabTarget,
+} from "../../session-page-state.js";
 import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
 import { findFirstPositionalArgument } from "./prepare/wait-timeouts.js";
 import { runSessionCommandData } from "./session-state-commands.js";
-import { extractStringResultField } from "./session-state-observations.js";
 
 function hasExplicitNavigationOperand(tokens: readonly string[]): boolean {
 	const command = tokens[0];

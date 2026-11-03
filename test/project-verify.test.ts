@@ -364,10 +364,13 @@ function facadeFixture(t: TestContext): string {
 	const directory = mkdtempSync(join(tmpdir(), "piab project (facade)-"));
 	t.after(() => rmSync(directory, { recursive: true, force: true }));
 	mkdirSync(join(directory, "scripts"));
-	copyFileSync(
-		new URL("../scripts/project.mjs", import.meta.url),
-		join(directory, "scripts", "project.mjs"),
-	);
+	// The real facade plus its static lifecycle-defaults import; the focused step scripts are stubs.
+	for (const script of ["project.mjs", "lifecycle-defaults.mjs"]) {
+		copyFileSync(
+			new URL(`../scripts/${script}`, import.meta.url),
+			join(directory, "scripts", script),
+		);
+	}
 	mkdirSync(join(directory, "node_modules", "tsx"), { recursive: true });
 	writeFileSync(
 		join(directory, "node_modules", "tsx", "package.json"),
