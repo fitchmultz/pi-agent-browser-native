@@ -1,7 +1,7 @@
 import { isRecord } from "../parsing.js";
 import { redactSensitiveText } from "../runtime-redaction.js";
 import type { NetworkRouteDiagnostic, NetworkRouteRecord } from "./contracts.js";
-import { getStringRecordField, isApiLikeNetworkRequest } from "./network.js";
+import { getNetworkRequestId, getStringRecordField, isApiLikeNetworkRequest } from "./network.js";
 
 function getArrayField(
 	data: Readonly<Record<string, unknown>>,
@@ -23,7 +23,7 @@ function networkRoutePatternMatchesUrl(pattern: string, url: string): boolean {
 }
 
 function getSafeRequestId(item: Readonly<Record<string, unknown>>): string | undefined {
-	const requestId = getStringRecordField(item, "requestId") ?? getStringRecordField(item, "id");
+	const requestId = getNetworkRequestId(item);
 	if (
 		requestId === undefined ||
 		requestId.length === 0 ||

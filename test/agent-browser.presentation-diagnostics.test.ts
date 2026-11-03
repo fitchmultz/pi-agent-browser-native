@@ -1198,6 +1198,84 @@ test("buildToolPresentation returns bounded network request next actions for ben
 	);
 });
 
+test("buildToolPresentation selects requestId before id for network previews, route diagnostics, and follow-ups", async () => {
+	const cases = [
+		{
+			expected: "native-1",
+			name: "trimmed requestId wins over id",
+			row: { id: "alias-1", requestId: " native-1 " },
+		},
+		{ expected: "alias-1", name: "id fills a missing requestId", row: { id: "alias-1" } },
+		{
+			expected: "alias-1",
+			name: "trimmed id fills a blank requestId",
+			row: { id: " alias-1 ", requestId: "  " },
+		},
+		{ expected: undefined, name: "no alias leaves the request unidentified", row: {} },
+	] as const;
+	const observed = await Promise.all(
+		cases.map(async ({ name, row }) => {
+			const presentation = await buildToolPresentation({
+				commandInfo: { command: "batch" },
+				cwd: process.cwd(),
+				envelope: {
+					success: true,
+					data: [
+						{
+							command: ["network", "requests"],
+							result: {
+								requests: [
+									{
+										...row,
+										method: "GET",
+										resourceType: "fetch",
+										url: "https://example.test/api/items",
+									},
+								],
+							},
+							success: true,
+						},
+					],
+				},
+				networkRoutes: [{ mode: "body", pattern: "**/api/**" }],
+				sessionName: "work",
+			});
+			const step = readRecord(readArray(presentation.batchSteps)[0]);
+			const actions =
+				step.nextActions === undefined ? [] : readArray(step.nextActions).map(readRecord);
+			return {
+				name,
+				preview: readString(step.text)
+					.split("\n")
+					.find((line) => line.startsWith("1. ")),
+				routedRequestId: readRecord(readArray(step.networkRouteDiagnostics)[0]).requestId,
+				requestInspections: actions
+					.filter((action) =>
+						["inspect-routed-network-request", "inspect-network-request"].includes(
+							readString(action.id),
+						),
+					)
+					.map((action) => readRecord(action.params).args),
+			};
+		}),
+	);
+	assert.deepEqual(
+		observed,
+		cases.map(({ expected, name }) => ({
+			name,
+			preview: `1. pending GET https://example.test/api/items (fetch)${expected === undefined ? "" : ` [${expected}]`}`,
+			routedRequestId: expected,
+			requestInspections:
+				expected === undefined
+					? []
+					: [
+							["--session", "work", "network", "request", expected],
+							["--session", "work", "network", "request", expected],
+						],
+		})),
+	);
+});
+
 test("buildToolPresentation keeps failed network rows visible when successful rows would fill the preview", async () => {
 	const requests = Array.from({ length: 45 }, (_, index) => ({
 		method: "GET",
