@@ -1,4 +1,5 @@
 import { isRecord } from "../parsing.js";
+import { isFailedNetworkRequest } from "../results/network.js";
 import { getLookupResultPayload, sourceCandidatesFromValue } from "./lookup-source-evidence.js";
 import { getBatchResultItems } from "./shared.js";
 import type {
@@ -16,12 +17,6 @@ function networkRequestMatchesQuery(
 		url.includes(queryText) ||
 		queryText.includes(url)
 	);
-}
-
-function isFailedNetworkRecord(request: Readonly<Record<string, unknown>>): boolean {
-	const status = typeof request.status === "number" ? request.status : undefined;
-	const error = typeof request.error === "string" ? request.error : undefined;
-	return request.failed === true || error !== undefined || (status !== undefined && status >= 400);
 }
 
 function requestId(request: Readonly<Record<string, unknown>>): string | undefined {
@@ -52,7 +47,7 @@ export function getFailedNetworkRequests(
 				continue;
 			}
 			const url = typeof request.url === "string" ? request.url : undefined;
-			if (!networkRequestMatchesQuery(url, queryText) || !isFailedNetworkRecord(request)) {
+			if (!networkRequestMatchesQuery(url, queryText) || !isFailedNetworkRequest(request)) {
 				continue;
 			}
 			failed.push({
@@ -148,7 +143,7 @@ export function observeInitiatorCandidates(
 			const url = typeof value.url === "string" ? value.url : undefined;
 			if (
 				networkRequestMatchesQuery(url, queryText) &&
-				(correlatesWithFailure(value, failedIds, failedUrls) || isFailedNetworkRecord(value))
+				(correlatesWithFailure(value, failedIds, failedUrls) || isFailedNetworkRequest(value))
 			) {
 				candidates.push(...initiatorCandidates(value));
 			}

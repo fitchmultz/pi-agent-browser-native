@@ -6,9 +6,13 @@ import {
 import type {
 	CompiledAgentBrowserElectron,
 	CompiledAgentBrowserJob,
+	CompiledAgentBrowserJobStep,
 	CompiledAgentBrowserNetworkSourceLookup,
 	CompiledAgentBrowserSourceLookup,
+	CompiledAgentBrowserSourceLookupStep,
 } from "../input-modes/types.js";
+
+type CompiledBatchStep = CompiledAgentBrowserJobStep | CompiledAgentBrowserSourceLookupStep;
 
 export function redactCompiledElectron(
 	compiled: CompiledAgentBrowserElectron | undefined,
@@ -35,30 +39,20 @@ export function redactCompiledElectron(
 	return { ...compiled };
 }
 
-export function redactCompiledJob(
-	compiled: CompiledAgentBrowserJob | undefined,
-): CompiledAgentBrowserJob | undefined {
-	if (compiled === undefined) {
-		return undefined;
-	}
-	const steps = compiled.steps.map((step) => ({
-		...step,
-		args: redactInvocationArgs([...step.args]),
-	}));
-	return { ...compiled, stdin: JSON.stringify(steps.map((step) => step.args)), steps };
+function redactCompiledSteps(steps: readonly CompiledBatchStep[]): {
+	readonly stdin: string;
+	readonly steps: readonly CompiledBatchStep[];
+} {
+	const redacted = steps.map((step) => ({ ...step, args: redactInvocationArgs([...step.args]) }));
+	return { stdin: JSON.stringify(redacted.map((step) => step.args)), steps: redacted };
 }
 
-export function redactCompiledSourceLookup(
-	compiled: CompiledAgentBrowserSourceLookup | undefined,
-): CompiledAgentBrowserSourceLookup | undefined {
-	if (compiled === undefined) {
-		return undefined;
-	}
-	const steps = compiled.steps.map((step) => ({
-		...step,
-		args: redactInvocationArgs([...step.args]),
-	}));
-	return { ...compiled, stdin: JSON.stringify(steps.map((step) => step.args)), steps };
+export function redactCompiledBatch<
+	Compiled extends CompiledAgentBrowserJob | CompiledAgentBrowserSourceLookup,
+>(compiled: Compiled | undefined): Compiled | undefined {
+	return compiled === undefined
+		? undefined
+		: { ...compiled, ...redactCompiledSteps(compiled.steps) };
 }
 
 export function redactCompiledNetworkSourceLookup(
