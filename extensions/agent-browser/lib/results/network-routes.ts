@@ -1,3 +1,4 @@
+import { isCloseCommand } from "../command-taxonomy.js";
 import { isRecord } from "../parsing.js";
 import { redactSensitiveText } from "../runtime-redaction.js";
 import type { NetworkRouteDiagnostic, NetworkRouteRecord } from "./contracts.js";
@@ -92,6 +93,17 @@ export function applyNetworkRouteRecords(
 		return routes;
 	}
 	return updateNetworkRoutes(routes, commandTokens);
+}
+
+/** Ordered batch row: a successful close retires earlier rows' routes; later route rows rebuild them. */
+export function applyBatchRowNetworkRouteRecords(
+	routes: readonly NetworkRouteRecord[] | undefined,
+	commandTokens: readonly string[] | undefined,
+	succeeded: boolean,
+): readonly NetworkRouteRecord[] | undefined {
+	return succeeded && isCloseCommand(commandTokens?.[0])
+		? undefined
+		: applyNetworkRouteRecords(routes, commandTokens, succeeded);
 }
 
 function updateNetworkRoutes(

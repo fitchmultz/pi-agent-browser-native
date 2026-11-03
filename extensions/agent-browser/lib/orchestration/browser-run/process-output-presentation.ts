@@ -27,8 +27,7 @@ import {
 	type ReadConfirmation,
 	buildReadConfirmationNextActions,
 } from "../../read-confirmation.js";
-import { isCloseCommand } from "../../command-taxonomy.js";
-import { applyNetworkRouteRecords } from "../../results/network-routes.js";
+import { applyBatchRowNetworkRouteRecords } from "../../results/network-routes.js";
 import { buildToolPresentation } from "../../results/presentation.js";
 import { compactLargePresentationOutput } from "../../results/presentation/large-output.js";
 import { extractEnvelopeErrorText, getAgentBrowserErrorText } from "../../results/envelope.js";
@@ -411,10 +410,7 @@ function applyBatchNetworkRouteState(draft: ApplyBatchNetworkRouteStateInput): v
 		if (!effect) {
 			continue;
 		}
-		routes =
-			effect.succeeded && isCloseCommand(effect.tokens[0])
-				? undefined
-				: applyNetworkRouteRecords(routes, effect.tokens, effect.succeeded);
+		routes = applyBatchRowNetworkRouteRecords(routes, effect.tokens, effect.succeeded);
 	}
 	draft.networkRoutesBySession = setNetworkRouteState({
 		routes,
