@@ -9,7 +9,7 @@ import {
 
 /** @typedef {import("./config-providers.js").WebSearchProvider} WebSearchProvider */
 /** @typedef {import("./config-providers.js").ExaSearchType} ExaSearchType */
-/** @typedef {"explicit-only" | "authenticated-only" | "always"} BrowserDefaultProfilePolicy */
+/** @typedef {(typeof BROWSER_DEFAULT_PROFILE_POLICIES)[number]} BrowserDefaultProfilePolicy */
 /** @typedef {"global" | "project" | "override"} ConfigLayerScope */
 /** @typedef {{ readonly name: string; readonly policy?: BrowserDefaultProfilePolicy }} BrowserDefaultProfileConfig */
 /** @typedef {{ readonly enabled?: boolean; readonly preferredProvider?: WebSearchProvider; readonly defaultSearchType?: ExaSearchType; readonly braveApiKey?: string; readonly exaApiKey?: string }} WebSearchConfig */
@@ -18,6 +18,14 @@ import {
 /** @typedef {{ readonly config: AgentBrowserConfig; readonly path: string; readonly scope: ConfigLayerScope }} ConfigLayer */
 /** Validation deliberately appends diagnostics to the caller's collectors.
  * @typedef {string[]} ConfigDiagnostics */
+
+const BROWSER_DEFAULT_PROFILE_POLICIES = /** @type {const} */ ([
+	"explicit-only",
+	"authenticated-only",
+	"always",
+]);
+/** @type {BrowserDefaultProfilePolicy} */
+export const DEFAULT_BROWSER_DEFAULT_PROFILE_POLICY = "authenticated-only";
 
 /** @param {unknown} value
  * @returns {value is Readonly<Record<string, unknown>>} */
@@ -91,6 +99,22 @@ function validateExaSearchType(value, path, errors) {
 	return supported;
 }
 
+/** A profile name is trimmed; a blank name is invalid.
+ * @param {string | undefined} name
+ * @returns {string | undefined} */
+export function normalizeBrowserDefaultProfileName(name) {
+	const normalized = name?.trim();
+	return normalized === undefined || normalized.length === 0 ? undefined : normalized;
+}
+
+/** An omitted policy uses the default; any other value must exactly match a supported policy.
+ * @param {string | undefined} policy
+ * @returns {BrowserDefaultProfilePolicy | undefined} */
+export function resolveBrowserDefaultProfilePolicy(policy) {
+	const requested = policy ?? DEFAULT_BROWSER_DEFAULT_PROFILE_POLICY;
+	return BROWSER_DEFAULT_PROFILE_POLICIES.find((candidate) => candidate === requested);
+}
+
 /** @param {unknown} value
  * @param {string} path
  * @param {ConfigDiagnostics} errors
@@ -103,14 +127,18 @@ function validateBrowserDefaultProfile(value, path, errors) {
 		errors.push(`${path} must be an object.`);
 		return;
 	}
-	const name = validateString(value.name, `${path}.name`, errors)?.trim();
-	if (name === undefined || name.length === 0) {
+	const name = normalizeBrowserDefaultProfileName(
+		validateString(value.name, `${path}.name`, errors),
+	);
+	if (name === undefined) {
 		errors.push(`${path}.name must not be blank.`);
 		return;
 	}
-	const policy = validateString(value.policy, `${path}.policy`, errors) ?? "authenticated-only";
-	if (policy !== "explicit-only" && policy !== "authenticated-only" && policy !== "always") {
-		errors.push(`${path}.policy must be one of explicit-only, authenticated-only, always.`);
+	const policy = resolveBrowserDefaultProfilePolicy(
+		validateString(value.policy, `${path}.policy`, errors),
+	);
+	if (policy === undefined) {
+		errors.push(`${path}.policy must be one of ${BROWSER_DEFAULT_PROFILE_POLICIES.join(", ")}.`);
 		return;
 	}
 	return { name, policy };

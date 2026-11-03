@@ -10,11 +10,18 @@ import {
 	getWebSearchProviderDescriptor,
 	getWebSearchProviderEnvVar,
 } from "./config-providers.js";
-import { parseAgentBrowserConfigLayer, describeUnknownError } from "./config-validation.js";
+import {
+	parseAgentBrowserConfigLayer,
+	describeUnknownError,
+	DEFAULT_BROWSER_DEFAULT_PROFILE_POLICY,
+	normalizeBrowserDefaultProfileName,
+} from "./config-validation.js";
 export * from "./config-providers.js";
 export {
+	normalizeBrowserDefaultProfileName,
 	parseAgentBrowserConfigJson,
 	parseAgentBrowserConfigLayer,
+	resolveBrowserDefaultProfilePolicy,
 	validateAgentBrowserConfig,
 	validateWebSearchProvider,
 } from "./config-validation.js";
@@ -131,10 +138,11 @@ export function classifyCredentialSource(rawValue, scope, provider) {
  */
 function getBrowserDefaultProfile(config) {
 	const profile = config.browser?.defaultProfile;
-	if (!profile || profile.name.trim().length === 0) {
+	const name = normalizeBrowserDefaultProfileName(profile?.name);
+	if (profile === undefined || name === undefined) {
 		return;
 	}
-	return { name: profile.name.trim(), policy: profile.policy ?? "authenticated-only" };
+	return { name, policy: profile.policy ?? DEFAULT_BROWSER_DEFAULT_PROFILE_POLICY };
 }
 
 /** @param {AgentBrowserConfig} config */
