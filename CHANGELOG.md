@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.13 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Skip no-op releases and restate malformed remediation dispositions (#354) ([cdae46c](https://github.com/fitchmultz/pi-agent-browser-native/commit/cdae46c8a67ed22726c470f55efccb14354c282c))
+
+### What's Changed
+
+- Skip no-op releases and restate malformed remediation dispositions by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/354
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.12...v0.9.13
+
 ## 0.9.12 - 2026-11-02
 
 <!-- npm-release:unreleased:start -->
