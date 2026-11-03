@@ -198,7 +198,7 @@ function mergeManifestEntry(
 	};
 }
 
-function compareManifestEntries(
+export function compareSessionArtifactManifestEntries(
 	left: SessionArtifactManifestEntry,
 	right: SessionArtifactManifestEntry,
 ): number {
@@ -241,7 +241,9 @@ export function mergeSessionArtifactManifest(options: {
 	if (byPath.size === 0) {
 		return undefined;
 	}
-	const entries = [...byPath.values()].sort(compareManifestEntries).slice(0, maxEntries);
+	const entries = [...byPath.values()]
+		.sort(compareSessionArtifactManifestEntries)
+		.slice(0, maxEntries);
 	return {
 		entries,
 		evictedCount: entries.filter((entry) => entry.retentionState === "evicted").length,

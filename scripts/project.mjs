@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { delimiter, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_LIFECYCLE_MODEL, DEFAULT_TIMEOUT_MS } from "./lifecycle-defaults.mjs";
 
 const nodeCommand = process.execPath;
 const binSuffix = process.platform === "win32" ? ".cmd" : "";
@@ -97,9 +98,9 @@ Options:
   --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
   --keep-artifacts    With lifecycle or release mode, preserve lifecycle temp artifacts; with dogfood, keep temp screenshots.
   --json              With dogfood mode, print the machine-readable report only.
-  --model <id>        With lifecycle or release mode, Pi model for lifecycle tmux prompts (default zai/glm-5.2).
+  --model <id>        With lifecycle or release mode, Pi model for lifecycle tmux prompts (default ${DEFAULT_LIFECYCLE_MODEL}).
   --verbose           With lifecycle or release mode, print lifecycle progress details.
-  --timeout-ms <ms>   With lifecycle or release mode, override the lifecycle per-step wait timeout (default 180000).
+  --timeout-ms <ms>   With lifecycle or release mode, override the lifecycle per-step wait timeout (default ${DEFAULT_TIMEOUT_MS}).
   --list-files        With package mode, print every packed file path.
   --samples <n>       With startup-profile mode, fresh Node entrypoint samples.
   --json              With startup-profile mode, print machine-readable JSON.

@@ -9,8 +9,8 @@ import {
 	targetsMatch,
 } from "./session-page-observation.js";
 import {
+	compareSessionArtifactManifestEntries,
 	getSessionArtifactManifestEntryKey,
-	isPendingRecordingArtifact,
 	isSessionArtifactManifest,
 } from "./results/artifact-manifest.js";
 import type { SessionArtifactManifest, SessionArtifactManifestEntry } from "./results/contracts.js";
@@ -272,14 +272,7 @@ export function applyArtifactChanges(
 		rows.set(getSessionArtifactManifestEntryKey(row), row);
 	}
 	const entries = [...rows.values()]
-		.sort((a, b) => {
-			const age = (b.evictedAtMs ?? b.createdAtMs) - (a.evictedAtMs ?? a.createdAtMs);
-			if (age !== 0) {
-				return age;
-			}
-			const pending = Number(isPendingRecordingArtifact(b)) - Number(isPendingRecordingArtifact(a));
-			return pending !== 0 ? pending : a.path.localeCompare(b.path);
-		})
+		.sort(compareSessionArtifactManifestEntries)
 		.slice(0, changes.maxEntries);
 	const manifest = {
 		version: 1,
