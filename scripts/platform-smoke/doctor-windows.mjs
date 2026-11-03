@@ -1,6 +1,6 @@
 /** Disposable Windows/Parallels doctor probes with native lease cleanup receipts. */
 import { execFileSync } from "node:child_process";
-import { buildTargetBaseArgs } from "./crabbox-runner.mjs";
+import { buildTargetBaseArgs, leaseIdFromWarmup } from "./crabbox-runner.mjs";
 import { commandPath, setting, shell } from "./doctor-support.mjs";
 
 function crabbox(cbox, args, timeout = 300_000) {
@@ -55,11 +55,6 @@ function probeOutcome(run, expectedVersion) {
 		return { ok: false, message: "agent-browser path or browser cache marker missing" };
 	}
 	return { ok: true, message: `${versionLine} | ${pathLine} | ${chromeLine}` };
-}
-
-function leaseIdFromWarmup(warm, fallback) {
-	const text = `${warm.stdout}\n${warm.stderr}`;
-	return text.match(/\bleased\s+(\S+)/)?.[1] ?? text.match(/\blease=(\S+)/)?.[1] ?? fallback;
 }
 
 export function disposableWindowsAgentBrowserProbe(cbox, config, expectedVersion) {
