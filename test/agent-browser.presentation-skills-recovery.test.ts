@@ -492,3 +492,18 @@ test("buildToolPresentation does not append selector guidance to non-dialect sel
 		"Element not visible: getByRole('button', { name: 'Submit' })",
 	);
 });
+
+test("buildToolPresentation keeps selector-dialect guidance off native locator-detail misses", async () => {
+	// Native `find role dialog click --name X` receipt on a page without that dialog.
+	const errorText =
+		"No element found: getByRole('dialog', { name: 'X' }). Verify the selector, role, or name is correct and the element exists in the DOM.";
+	const presentation = await buildToolPresentation({
+		commandInfo: { command: "find", subcommand: "role" },
+		cwd: process.cwd(),
+		errorText,
+	});
+
+	assert.equal(presentation.failureCategory, "selector-not-found");
+	assert.deepEqual(presentation.content, [{ type: "text", text: errorText }]);
+	assert.equal(presentation.summary, errorText);
+});
