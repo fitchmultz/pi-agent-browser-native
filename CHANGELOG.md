@@ -14,6 +14,10 @@
 - Share comparable page URL normalization (1/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/358
 - Share native observation value decoding (2/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/359
 - Share host-side accessible-name normalization (6/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/360
+- Share compiled QA and source-step redaction (3/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/361
+- Share the failed-network-request predicate (4/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/362
+- Share diagnostic request-ID selection (5/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/363
+- Share pending WebMCP mutation classification (7/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/364
 
 **Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.14...v0.9.15
 
