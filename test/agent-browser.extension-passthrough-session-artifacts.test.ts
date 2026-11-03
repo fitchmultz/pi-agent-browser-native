@@ -583,6 +583,61 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 );
 
 test(
+	"agentBrowserExtension keeps explicit --auto-connect false calls unattached under ambient auto-connect",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-auto-connect-false-"));
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/" } }));`,
+		);
+
+		try {
+			await withPatchedEnv(
+				{ AGENT_BROWSER_AUTO_CONNECT: "1", PATH: `${tempDir}:${basePath}` },
+				async () => {
+					const harness = createExtensionHarness({
+						cwd: tempDir,
+						prompt: "Launch a local browser while ambient auto-connect is enabled.",
+					});
+					await runExtensionEvent(
+						harness.handlers,
+						"session_start",
+						{ reason: "new" },
+						harness.ctx,
+					);
+
+					const ambient = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", "ambient-attach", "get", "url"],
+					});
+					const local = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", "cli-local", "--auto-connect", "false", "get", "url"],
+					});
+					assert.ok(ambient.details);
+					assert.ok(local.details);
+					assert.equal(ambient.isError, false, JSON.stringify(ambient));
+					assert.equal(local.isError, false, JSON.stringify(local));
+					assert.equal(ambient.details.attachedBrowserSession, true);
+					assert.equal(local.details.attachedBrowserSession, undefined);
+
+					await withPatchedEnv({ AGENT_BROWSER_AUTO_CONNECT: undefined }, async () => {
+						const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", "cli-local", "get", "url"],
+						});
+						assert.ok(followUp.details);
+						assert.equal(followUp.isError, false, JSON.stringify(followUp));
+						assert.equal(followUp.details.attachedBrowserSession, undefined);
+					});
+				},
+			);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+test(
 	"agentBrowserExtension passes through stateful browser-context workflow commands",
 	{ concurrency: false },
 	async () => {

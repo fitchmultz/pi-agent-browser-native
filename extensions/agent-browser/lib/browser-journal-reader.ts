@@ -126,6 +126,7 @@ const STRUCTURAL_FIELDS = [
 	["type"],
 	["id"],
 	["parentId"],
+	["parentSession"],
 	["timestamp"],
 	["version"],
 	["customType"],

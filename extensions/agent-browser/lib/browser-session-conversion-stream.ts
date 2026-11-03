@@ -130,7 +130,7 @@ export class BrowserConversionWriter {
 		private readonly file: FileHandle,
 		private readonly stage: FileHandle,
 		private readonly source: {
-			readonly sessionId: string;
+			readonly ownerSessionId: string | undefined;
 			readonly checksum: string;
 		},
 		metadata: readonly JournalEntry[],
@@ -175,7 +175,7 @@ export class BrowserConversionWriter {
 		const conversion = convertLegacyBrowserEntry(
 			{ ...entry.value, ...details },
 			parent,
-			this.source.sessionId,
+			this.source.ownerSessionId,
 		);
 		this.branches.advance(id, parentId, conversion.projection);
 		return conversion.record;

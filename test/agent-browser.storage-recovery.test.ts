@@ -24,6 +24,7 @@ import {
 import { convertBrowserSession } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import { restoreAttachedSessionKeysFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-attachment-replay.js";
+import { getScriptSessionLeasesFromBranch } from "../extensions/agent-browser/lib/orchestration/script-mode.js";
 import {
 	createExtensionHarness,
 	createShortPrivateSocketDir,
@@ -240,6 +241,75 @@ test("legacy replay cannot downgrade native event validation or grant inherited 
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+for (const lineage of ["ordinary fork", "original session"] as const) {
+	test(`conversion preserves replayed legacy cleanup ownership for an ${lineage}`, async () => {
+		const root = await mkdtemp(join(tmpdir(), "piab-conversion-owner-"));
+		try {
+			const source = join(root, "source.jsonl"),
+				destination = join(root, "copy.jsonl");
+			const fork = lineage === "ordinary fork";
+			const header = {
+				type: "session",
+				version: 3,
+				id: fork ? "fixture-fork" : "fixture-session",
+				timestamp: "2026-10-13T00:00:00.000Z",
+				cwd: root,
+				...(fork ? { parentSession: join(root, "parent.jsonl") } : {}),
+			};
+			const unowned = "piab-script-12345678-1234-4123-8123-123456789abc";
+			const explicit = "piab-script-87654321-4321-4321-8321-cba987654321";
+			// Pre-owner isolated-script producers recorded leases without ownerSessionId.
+			const lease = (id: string, parentId: string | null, sessionName: string, owner?: string) => ({
+				type: "custom",
+				customType: "agent-browser-script-session",
+				id,
+				parentId,
+				timestamp: header.timestamp,
+				data: {
+					cleanup: "active",
+					closeCommandArgs: ["--namespace", "", "--session", sessionName, "close"],
+					launchAttempted: true,
+					sessionName,
+					...(owner === undefined ? {} : { ownerSessionId: owner }),
+				},
+			});
+			await writeFile(
+				source,
+				[
+					header,
+					lease("unowned", null, unowned),
+					lease("explicit", "unowned", explicit, "original-parent"),
+				]
+					.map((entry) => JSON.stringify(entry))
+					.join("\n") + "\n",
+				{ mode: 0o600 },
+			);
+			await convertBrowserSession({ source, destination, confirmedStopped: true });
+			const cleanupOwnership = async (file: string) => {
+				const native = SessionManager.open(file, root);
+				const branch = await readBrowserEntries(native);
+				return {
+					owners: branch.map(
+						(entry) => readRecord(getBrowserRecord(entry)?.event.state.scriptLease).ownerSessionId,
+					),
+					recoverable: [...getScriptSessionLeasesFromBranch(branch, native.getSessionId()).keys()],
+				};
+			};
+			const expected = {
+				owners: [fork ? undefined : header.id, "original-parent"],
+				recoverable: fork ? [] : [unowned],
+			};
+			assert.deepEqual(
+				[await cleanupOwnership(source), await cleanupOwnership(destination)],
+				[expected, expected],
+				"the copy keeps explicit owners and never grants a fork its parent's unowned lease",
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+}
 
 for (const mode of [
 	"direct",

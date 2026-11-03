@@ -16,6 +16,7 @@ import {
 	convertBrowserEntries,
 	convertLegacyBrowserEntry,
 	emptyProjection,
+	legacyCleanupOwner,
 	type LegacyProjection,
 } from "./browser-legacy-projection.js";
 import { LEGACY_BROWSER_FIELDS } from "./browser-legacy-fields.js";
@@ -173,8 +174,10 @@ function inMemoryEntries(manager: BrowserJournalManager, physical: boolean): unk
 
 function legacyOwner(manager: BrowserJournalManager): string | undefined {
 	const header = manager.getHeader();
-	// A legacy fork without an explicit cleanup owner cannot acquire its parent's leases.
-	return header?.parentSession !== undefined ? undefined : (header?.id ?? manager.getSessionId());
+	return legacyCleanupOwner({
+		id: header?.id ?? manager.getSessionId(),
+		parentSession: header?.parentSession,
+	});
 }
 
 function replayFields(value: Readonly<Record<string, unknown>>, legacy: boolean): string[][] {

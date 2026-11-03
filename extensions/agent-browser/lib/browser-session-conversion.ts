@@ -3,6 +3,7 @@ import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, unlink, type FileHandle } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { scanJournalMetadata } from "./browser-journal-reader.js";
+import { legacyCleanupOwner } from "./browser-legacy-projection.js";
 import { getErrorCode } from "./process-errors.js";
 import { BrowserConversionWriter, sourceChecksum } from "./browser-session-conversion-stream.js";
 export { convertLegacyBrowserEntry, convertBrowserEntries } from "./browser-legacy-projection.js";
@@ -125,7 +126,13 @@ export async function convertBrowserSession(
 		const writer = new BrowserConversionWriter(
 			file,
 			stage,
-			{ sessionId: header.value.id, checksum },
+			{
+				ownerSessionId: legacyCleanupOwner({
+					id: header.value.id,
+					parentSession: header.value.parentSession,
+				}),
+				checksum,
+			},
 			metadata,
 		);
 		for (const entry of metadata) {

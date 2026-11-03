@@ -7,7 +7,7 @@ import type {
 	SessionArtifactManifest,
 	ToolPresentation,
 } from "../contracts.js";
-import { applyNetworkRouteRecords } from "../network-routes.js";
+import { applyBatchRowNetworkRouteRecords } from "../network-routes.js";
 import {
 	appendUniqueAgentBrowserNextActions,
 	applyNamespaceToNextActions,
@@ -79,7 +79,7 @@ async function collectPresentedSteps(options: BuildBatchPresentationOptions): Pr
 		});
 		steps.push(step);
 		manifest = step.presentation.artifactManifest ?? manifest;
-		routes = applyNetworkRouteRecords(
+		routes = applyBatchRowNetworkRouteRecords(
 			routes,
 			isStringArray(item.command) ? extractUpstreamCommandTokens(item.command) : undefined,
 			item.success !== false && step.details.success,
