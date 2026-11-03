@@ -353,6 +353,16 @@ function hasCanonicalBrowserEvent(entry: Readonly<Record<string, unknown>>): boo
 	);
 }
 
+/**
+ * Ownerless legacy cleanup records fall back to the native session UUID. A legacy fork without an
+ * explicit cleanup owner cannot acquire its parent's leases.
+ */
+export function legacyCleanupOwner(
+	header: Readonly<{ id: string; parentSession?: unknown }>,
+): string | undefined {
+	return header.parentSession === undefined ? header.id : undefined;
+}
+
 /** Normalize old receipts into the canonical reducer along their actual parent ancestry. */
 export function convertLegacyBrowserEntry(
 	entry: Readonly<Record<string, unknown>>,
