@@ -37,6 +37,7 @@ import {
 	deriveSessionTabTarget,
 	extractSessionTabTargetFromBatchResults,
 	extractSessionTabTargetFromCommandData,
+	extractStringResultField,
 	normalizeSessionTabTarget,
 	type SessionTabTarget,
 } from "../../session-page-state.js";
@@ -46,7 +47,6 @@ import {
 	applyOpenResultTabCorrection,
 	collectOpenResultTabCorrection,
 	collectSessionTabTarget,
-	extractStringResultField,
 	mergeNavigationSummaryIntoData,
 	shouldCaptureNavigationSummary,
 } from "./session-state.js";

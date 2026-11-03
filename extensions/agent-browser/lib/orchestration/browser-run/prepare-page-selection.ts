@@ -10,7 +10,6 @@ import { buildAgentBrowserResultCategoryDetails } from "../../results/categories
 import {
 	buildStaleRefPreflight,
 	ensureSessionTabTarget,
-	extractStringResultField,
 	runSessionCommandData,
 	shouldPinSessionTabForCommand,
 } from "./session-state.js";
@@ -18,7 +17,7 @@ import { validateStdinCommandContract } from "./prepare-input.js";
 import { preparationFailure, preparationSessionDetails } from "./prepare-failure.js";
 import { planHasValidationError, withPlanValidationError } from "./prepare-session-plan.js";
 import type { PreparationPageState } from "./prepare-page-state.js";
-import type { SessionPageState } from "../../session-page-state.js";
+import { extractStringResultField, type SessionPageState } from "../../session-page-state.js";
 import type { PreparationProcessFacts } from "./prepare-contracts.js";
 
 export interface PreparationPageFacts extends PreparationProcessFacts {

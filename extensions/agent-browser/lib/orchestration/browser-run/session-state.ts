@@ -14,13 +14,11 @@ export {
 	buildManagedSessionFreshFailureNextActions,
 } from "./session-state-outcomes.js";
 export {
-	extractStringResultField,
 	extractNavigationSummaryFromData,
 	shouldCaptureNavigationSummary,
 	mergeNavigationSummaryIntoData,
 	buildAboutBlankRecoveryHint,
 	buildAboutBlankWarning,
-	extractBatchResultCommand,
 } from "./session-state-observations.js";
 export {
 	getStaleRefArgs,
