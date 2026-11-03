@@ -1,4 +1,5 @@
 import type { OpenResultTabCorrection } from "./runtime-contracts.js";
+import { normalizeComparableUrl } from "./session-page-observation.js";
 
 interface Tab {
 	readonly active?: boolean;
@@ -7,20 +8,6 @@ interface Tab {
 	readonly tabId?: string;
 	readonly title?: string;
 	readonly url?: string;
-}
-
-function normalizeComparableUrl(url: string): string | undefined {
-	const normalizedUrl = url.trim();
-	if (normalizedUrl.length === 0) {
-		return;
-	}
-	try {
-		const parsedUrl = new URL(normalizedUrl);
-		parsedUrl.hash = "";
-		return parsedUrl.toString();
-	} catch {
-		return;
-	}
 }
 
 function normalizeTabSelectionValue(value: string | undefined): string | undefined {
