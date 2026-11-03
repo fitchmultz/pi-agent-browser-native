@@ -21,6 +21,20 @@ export function getNativeWebMcpCatalog(data: unknown): Record<string, unknown> |
 		: undefined;
 }
 
+/** An `invoke` or `result` record still reporting `pending` can yet mutate the page; `cancel` never qualifies. */
+export function isPendingWebMcpMutation(
+	command: string | undefined,
+	subcommand: string | undefined,
+	data: unknown,
+): boolean {
+	return (
+		command === "webmcp" &&
+		["invoke", "result"].includes(subcommand ?? "") &&
+		isRecord(data) &&
+		data.status === "pending"
+	);
+}
+
 export function observeNativeWebMcp(data: unknown): void {
 	const current = observation.getStore();
 	if (!current) {
