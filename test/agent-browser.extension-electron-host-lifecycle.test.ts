@@ -473,14 +473,16 @@ for (const stepMs of [120_000, -120_000]) {
 		},
 		async (t) => {
 			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-clock-terminate-"));
+			const launchLogPath = join(tempDir, "launch.json");
 			const app = await writeFakeLaunchableElectronApp({
 				applicationsDir: tempDir,
 				bundleId: "com.example.ClockStepTerminate",
 				ignoreSigterm: true,
-				launchLogPath: join(tempDir, "launch.json"),
+				launchLogPath,
 				mode: "no-port-file",
 				name: "Clock Step Terminate",
 			});
+			const launchClock = mockMonotonicClock(t);
 			const stepWallClock = wallClockStepper(t);
 			const signals: { readonly signal: string; readonly atMs: number }[] = [];
 			// Observe the launched app's signals, stepping the wall clock 200 ms into the SIGTERM grace.
@@ -511,6 +513,12 @@ for (const stepMs of [120_000, -120_000]) {
 				timeoutMs: 500,
 			});
 			try {
+				try {
+					// Start the grace check only after the fixture installs its SIGTERM handler.
+					await waitForLoggedCommand(launchLogPath, "--remote-debugging-port=0");
+				} finally {
+					launchClock.restore();
+				}
 				const outcome = await settleWithin(launch, 4_000);
 				const result = outcome === "pending" ? undefined : outcome.value;
 				assert.ok(result, "failed-launch cleanup was still waiting after 4000 ms");
