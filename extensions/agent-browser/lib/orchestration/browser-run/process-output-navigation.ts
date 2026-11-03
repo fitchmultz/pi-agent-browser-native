@@ -43,6 +43,7 @@ import {
 } from "../../session-page-state.js";
 import { isRecord } from "../../parsing.js";
 import { extractUpstreamCommandTokens } from "../../argv-descriptor.js";
+import { isPendingWebMcpMutation } from "../../webmcp-observation.js";
 import {
 	applyOpenResultTabCorrection,
 	collectOpenResultTabCorrection,
@@ -404,19 +405,6 @@ export async function resolveObservedPageTarget(
 	) {
 		draft.currentSessionTabTarget = fallbackPageTarget(draft, data);
 	}
-}
-
-function isPendingWebMcpMutation(
-	command: string | undefined,
-	subcommand: string | undefined,
-	data: unknown,
-): boolean {
-	return (
-		command === "webmcp" &&
-		["invoke", "result"].includes(subcommand ?? "") &&
-		isRecord(data) &&
-		data.status === "pending"
-	);
 }
 
 function isWebMcpSettlementCommand(

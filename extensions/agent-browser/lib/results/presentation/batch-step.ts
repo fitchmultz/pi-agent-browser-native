@@ -1,6 +1,6 @@
 import { parseCommandInfo, type CommandInfo } from "../../argv-descriptor.js";
-import { isRecord } from "../../parsing.js";
 import { redactInvocationArgs } from "../../runtime-redaction.js";
+import { isPendingWebMcpMutation } from "../../webmcp-observation.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
 import { buildPendingWebMcpNextActions } from "../recovery-next-actions.js";
 import { classifyAgentBrowserFailureCategory } from "../categories.js";
@@ -206,15 +206,6 @@ function buildNestedRequest(
 	};
 }
 
-function isPendingWebMcpMutation(command: CommandInfo, data: unknown): boolean {
-	return (
-		command.command === "webmcp" &&
-		["invoke", "result"].includes(command.subcommand ?? "") &&
-		isRecord(data) &&
-		data.status === "pending"
-	);
-}
-
 function buildStandardStepActions(
 	presentation: ToolPresentationObservation,
 	command: readonly string[] | undefined,
@@ -244,7 +235,7 @@ function getStepNextActions(
 ): readonly AgentBrowserNextAction[] | undefined {
 	const actions =
 		presentation.resultCategory !== "failure" &&
-		isPendingWebMcpMutation(commandInfo, presentation.data)
+		isPendingWebMcpMutation(commandInfo.command, commandInfo.subcommand, presentation.data)
 			? buildPendingWebMcpNextActions(scope.sessionName)
 			: buildStandardStepActions(presentation, command, scope.sessionName);
 	return applyNamespaceToNextActions(actions, scope.namespace);
