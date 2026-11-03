@@ -529,7 +529,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 );
 
 test(
-	"agentBrowserExtension reports routed network mocks inside and after batch",
+	"agentBrowserExtension reports routed network mocks inside and after batch until close retires them",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-route-diagnostics-"));
@@ -544,9 +544,14 @@ process.stdin.on("end", () => {
   const command = args[commandIndex];
   if (command === "batch") {
     const steps = JSON.parse(stdin);
-    const data = steps.map((step) => step[0] === "network" && step[1] === "route"
-      ? { command: step, success: true, result: { routed: step[2] } }
-      : { command: step, success: true, result: { requests: [{ method: "GET", requestId: "batch-mock-1", resourceType: "fetch", url: "https://example.test/api/batch" }] } });
+    const result = (step) => step[0] === "network" && step[1] === "route"
+      ? { routed: step[2] }
+      : step[0] === "close"
+        ? { closed: true, lifecycle: { effectiveLaunch: { browserLaunched: false } } }
+        : step[0] === "open"
+          ? { url: step[1], lifecycle: { effectiveLaunch: { browserLaunched: true } } }
+          : { requests: [{ method: "GET", requestId: "batch-mock-1", resourceType: "fetch", url: "https://example.test/api/batch" }] };
+    const data = steps.map((step) => ({ command: step, success: true, result: result(step) }));
     process.stdout.write(JSON.stringify({ success: true, data }));
     return;
   }
@@ -596,6 +601,40 @@ process.stdin.on("end", () => {
 							.map((item) => item.reason),
 						["pending-routed-request"],
 					);
+
+					const closeBatchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["batch"],
+						stdin: JSON.stringify([
+							["network", "route", "**/api/**", "--body", "{}"],
+							["network", "requests"],
+							["close"],
+							["open", "https://example.test/"],
+							["network", "requests"],
+						]),
+					});
+					assert.ok(closeBatchResult.details);
+					assert.equal(closeBatchResult.isError, false);
+					const closeBatchSteps = readArray(closeBatchResult.details.batchSteps).map(readRecord);
+					assert.deepEqual(
+						closeBatchSteps.map((step) => step.success),
+						[true, true, true, true, true],
+					);
+					// The same request rows are diagnosed only while the earlier route is active.
+					assert.deepEqual(closeBatchSteps[4].data, closeBatchSteps[1].data);
+					assert.deepEqual(
+						readArray(closeBatchSteps[1].networkRouteDiagnostics)
+							.map(readRecord)
+							.map((item) => item.reason),
+						["pending-routed-request"],
+					);
+					assert.equal(closeBatchSteps[4].networkRouteDiagnostics, undefined);
+
+					const requestsAfterCloseResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["network", "requests"],
+					});
+					assert.ok(requestsAfterCloseResult.details);
+					assert.equal(requestsAfterCloseResult.isError, false);
+					assert.equal(requestsAfterCloseResult.details.networkRouteDiagnostics, undefined);
 				},
 			);
 		} finally {
