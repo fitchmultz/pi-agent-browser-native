@@ -18,6 +18,15 @@
 - Share the failed-network-request predicate (4/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/362
 - Share diagnostic request-ID selection (5/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/363
 - Share pending WebMCP mutation classification (7/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/364
+- Share recent-artifact ordering (8/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/366
+- Share browser profile policy validation (10/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/368
+- Share lifecycle model and timeout defaults (11/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/369
+- Share the default Ubuntu image identity (12/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/370
+- Share Crabbox warmup lease-ID parsing (13/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/371
+- Reuse trusted root defaults for code calls (9/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/367
+- Preserve fork cleanup ownership during conversion (14/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/372
+- Honor explicit false in attachment classification (17/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/374
+- Retire batch route diagnostics after plain close (18/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/375
 
 **Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.14...v0.9.15
 
