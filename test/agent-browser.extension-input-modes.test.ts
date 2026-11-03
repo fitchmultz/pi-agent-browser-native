@@ -167,6 +167,60 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 						);
 					});
 				}
+				// Validation failures publish generated plans without the final details redaction pass.
+				await t.test("generated plans expose only redacted step argv", async () => {
+					const qaFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
+						qa: {
+							url: "https://qa.example.test/?token=qa-secret",
+							checkConsole: false,
+							checkNetwork: false,
+						},
+						stdin: "[]",
+					});
+					const qaSteps = [
+						{ action: "wait", args: ["errors", "--clear"] },
+						{ action: "wait", args: ["errors"], generatedFrom: "qa.errorBaselineAfterClear" },
+						{ action: "open", args: ["open", "https://qa.example.test/?token=%5BREDACTED%5D"] },
+						{ action: "wait", args: ["wait", "--load", "domcontentloaded"] },
+						{ action: "wait", args: ["wait", "150"], generatedFrom: "qa.diagnosticSettle" },
+						{ action: "wait", args: ["errors"] },
+					];
+					const qaPlan = {
+						stdin: JSON.stringify(qaSteps.map((step) => step.args)),
+						steps: qaSteps,
+					};
+					const lookupFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
+						sourceLookup: { selector: 'a[href="https://app.test/reset?token=lookup-secret"]' },
+						stdin: "[]",
+					});
+					const lookupSelector = 'a[href="https://app.test/reset?token=%5BREDACTED%5D"]';
+					const lookupSteps = [
+						{ action: "dom", args: ["is", "visible", lookupSelector] },
+						{ action: "dom", args: ["get", "html", lookupSelector] },
+					];
+					const qaDetails = readRecord(qaFailure.details);
+					const lookupDetails = readRecord(lookupFailure.details);
+					assert.deepEqual(
+						[qaDetails, lookupDetails].map((details) => details.failureCategory),
+						["validation-error", "validation-error"],
+					);
+					assert.deepEqual(
+						[
+							qaDetails.compiledJob,
+							qaDetails.compiledQaPreset,
+							lookupDetails.compiledSourceLookup,
+						].map((plan) => {
+							const { stdin, steps } = readRecord(plan);
+							return { stdin, steps };
+						}),
+						[
+							qaPlan,
+							qaPlan,
+							{ stdin: JSON.stringify(lookupSteps.map((step) => step.args)), steps: lookupSteps },
+						],
+					);
+					assert.deepEqual(await readInvocationLog(logPath), []);
+				});
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -1606,6 +1660,16 @@ process.stdin.on("end", () => {
 					assert.equal(
 						readArray(readRecord(readRecord(openBailResult.details).qaPreset).notRunChecks).length,
 						7,
+					);
+					// Redacted plan details are presentation only; dispatch keeps the caller's exact URL.
+					const openBailInvocation = (await readInvocationLog(logPath)).findLast(
+						(entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail",
+					);
+					assert.deepEqual(
+						readArray(JSON.parse(openBailInvocation?.stdin ?? "[]"))
+							.map(readArray)
+							.find((row) => row[0] === "open"),
+						["open", "https://qa.example.test/?token=secret"],
 					);
 
 					process.env.AGENT_BROWSER_FAKE_QA_MODE = "wait-fail";
