@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.9.15 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Share comparable page URL normalization (1/19) (#358) ([ce60a2b](https://github.com/fitchmultz/pi-agent-browser-native/commit/ce60a2b907273f5fdfe89687b18bba89758d6207))
+
+### What's Changed
+
+- Share comparable page URL normalization (1/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/358
+- Share native observation value decoding (2/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/359
+- Share host-side accessible-name normalization (6/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/360
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.14...v0.9.15
+
 ## 0.9.14 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
