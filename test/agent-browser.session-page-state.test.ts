@@ -21,10 +21,12 @@ import {
 	buildNoActivePageRefSnapshotInvalidation,
 	buildPageTransitionRefSnapshotInvalidation,
 	deriveSessionTabTarget,
+	extractBatchResultCommand,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
 	extractSessionTabTargetFromBatchResults,
 	extractSessionTabTargetFromCommandData,
+	extractStringResultField,
 	getSessionPageStateKey,
 	normalizeComparableUrl,
 	targetsMatch,
@@ -725,6 +727,27 @@ test("read fetch metadata does not replace the active browser tab target", () =>
 		}),
 		undefined,
 	);
+});
+
+test("native getter observations trim text, omit blank or malformed fields, and keep string command tokens", () => {
+	// Page-state targets and helper diagnostics share this interpretation of native getter data.
+	assert.equal(extractStringResultField(" https://docs.example/ ", "url"), "https://docs.example/");
+	assert.equal(extractStringResultField({ title: "\tGuide\n" }, "title"), "Guide");
+	assert.equal(extractStringResultField({ title: "" }, "title"), undefined, "untitled page");
+	assert.equal(extractStringResultField({ url: "   " }, "url"), undefined);
+	assert.equal(
+		extractStringResultField({ title: "Guide" }, "result"),
+		undefined,
+		"absent alias falls through to the caller's next field",
+	);
+	assert.equal(extractStringResultField({ url: 7 }, "url"), undefined);
+	assert.equal(extractStringResultField(undefined, "title"), undefined, "skipped helper probe");
+	assert.deepEqual(extractBatchResultCommand({ command: ["get", 7, "text", null, "#panel"] }), [
+		"get",
+		"text",
+		"#panel",
+	]);
+	assert.deepEqual(extractBatchResultCommand({ command: "get text #panel" }), []);
 });
 
 test("SessionPageState invalidation replaces snapshots and later snapshots clear invalidations", () => {

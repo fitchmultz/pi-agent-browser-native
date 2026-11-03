@@ -16,16 +16,13 @@ import {
 	type VisibleRefFallbackDiagnostic,
 } from "../../results/selector-recovery.js";
 import {
+	extractStringResultField,
 	isAboutBlankUrl,
 	normalizeComparableUrl,
 	type SessionTabTarget,
 } from "../../session-page-state.js";
 import { isRecord } from "../../parsing.js";
-import {
-	extractNavigationSummaryFromData,
-	extractStringResultField,
-	runSessionCommandData,
-} from "./session-state.js";
+import { extractNavigationSummaryFromData, runSessionCommandData } from "./session-state.js";
 import type {
 	ArtifactCleanupGuidance,
 	EvalStdinHint,

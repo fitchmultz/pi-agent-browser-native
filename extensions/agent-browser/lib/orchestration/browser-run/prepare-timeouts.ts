@@ -1,10 +1,9 @@
 import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
-import type { SessionRefSnapshot } from "../../session-page-observation.js";
 import {
-	getGuardedRefUsage,
-	runSessionCommandData,
 	extractStringResultField,
-} from "./session-state.js";
+	type SessionRefSnapshot,
+} from "../../session-page-observation.js";
+import { getGuardedRefUsage, runSessionCommandData } from "./session-state.js";
 import {
 	commandTimeoutNeedsActivePageUrl,
 	getCommandAwareProcessTimeoutMs,

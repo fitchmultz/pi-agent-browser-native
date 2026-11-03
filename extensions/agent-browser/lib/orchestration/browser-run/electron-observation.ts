@@ -3,8 +3,12 @@ import { setTimeout as sleepMs } from "node:timers/promises";
 import { boundElectronProbeString } from "../../electron/cdp.js";
 import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { buildNextToolAction, withOptionalSessionArgs } from "../../results/next-actions.js";
-import { extractRefSnapshotFromData, type SessionTabTarget } from "../../session-page-state.js";
-import { extractStringResultField, runSessionCommandData } from "./session-state.js";
+import {
+	extractRefSnapshotFromData,
+	extractStringResultField,
+	type SessionTabTarget,
+} from "../../session-page-state.js";
+import { runSessionCommandData } from "./session-state.js";
 import { diagnosticErrorText } from "./diagnostic-values.js";
 import { presentElectronManagedSessionTarget } from "./final-result-electron.js";
 import type {
