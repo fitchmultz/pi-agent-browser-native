@@ -27,6 +27,7 @@
 - Preserve fork cleanup ownership during conversion (14/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/372
 - Honor explicit false in attachment classification (17/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/374
 - Retire batch route diagnostics after plain close (18/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/375
+- Keep native locator misses free of dialect advice (19/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/376
 
 **Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.14...v0.9.15
 
