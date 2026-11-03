@@ -35,7 +35,9 @@ const {
 	getWebSearchProviderLabel,
 	isWebSearchProvider,
 	loadAgentBrowserConfigStateSync,
+	normalizeBrowserDefaultProfileName,
 	parseAgentBrowserConfigJson,
+	resolveBrowserDefaultProfilePolicy,
 	summarizeConfigFiles,
 } = await loadConfigPolicyModule();
 
@@ -377,14 +379,14 @@ function handleBrowserProfile(args, flags) {
 		return;
 	}
 	if (action === "set") {
-		const name = args.slice(2).join(" ").trim();
-		if (!name) {
+		const name = normalizeBrowserDefaultProfileName(args.slice(2).join(" "));
+		if (name === undefined) {
 			throw new UsageError(
 				"browser profile set requires a profile name or profile directory path.",
 			);
 		}
-		const policy = flags.get("--policy") || "authenticated-only";
-		if (!["explicit-only", "authenticated-only", "always"].includes(policy)) {
+		const policy = resolveBrowserDefaultProfilePolicy(flags.get("--policy"));
+		if (policy === undefined) {
 			throw new UsageError("Invalid --policy value.");
 		}
 		const { path, scope } = selectWritePath(flags);

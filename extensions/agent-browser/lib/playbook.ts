@@ -1,3 +1,4 @@
+import type { BrowserDefaultProfilePolicy } from "./config.js";
 import { LAUNCH_SCOPED_FLAG_LABEL } from "./launch-scoped-flags.js";
 
 export const PROJECT_RULE_PROMPT =
@@ -145,9 +146,7 @@ export function buildBrowserExecutablePathGuideline(
 }
 
 export function buildBrowserDefaultProfileGuideline(
-	profile:
-		| { readonly name: string; readonly policy: "explicit-only" | "authenticated-only" | "always" }
-		| undefined,
+	profile: { readonly name: string; readonly policy: BrowserDefaultProfilePolicy } | undefined,
 ): string | undefined {
 	if (!profile || profile.policy === "explicit-only") {
 		return undefined;
@@ -163,7 +162,7 @@ export function buildToolPromptGuidelines(options: {
 	readonly compact: boolean;
 	readonly browserDefaultProfile?: {
 		readonly name: string;
-		readonly policy: "explicit-only" | "authenticated-only" | "always";
+		readonly policy: BrowserDefaultProfilePolicy;
 	};
 	readonly browserExecutablePath?: string;
 	readonly docs?: {

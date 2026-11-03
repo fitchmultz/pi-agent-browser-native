@@ -521,6 +521,60 @@ test("config CLI writes project env source, project profile, and project executa
 	);
 });
 
+for (const { label, words, policyArgs, profile } of [
+	{
+		label: "joins and trims the name words and defaults an omitted policy",
+		words: ["  Work", "Profile  "],
+		policyArgs: [],
+		profile: { name: "Work Profile", policy: "authenticated-only" },
+	},
+	{
+		label: "saves an explicit canonical policy",
+		words: ["Default"],
+		policyArgs: ["--policy", "always"],
+		profile: { name: "Default", policy: "always" },
+	},
+]) {
+	test(`config CLI browser profile set ${label}`, async (t) => {
+		const fixture = await createFixture(t);
+		await runConfig(["browser", "profile", "set", ...words, ...policyArgs], {
+			cwd: fixture.cwd,
+			env: fixture.env,
+		});
+		const config = readRecord(JSON.parse(await readFile(fixture.globalPath, "utf8")));
+		assert.deepEqual(readRecord(config.browser).defaultProfile, profile);
+	});
+}
+
+for (const { label, words, diagnostic } of [
+	{
+		label: "a blank name before checking the policy",
+		words: ["   "],
+		diagnostic: "browser profile set requires a profile name or profile directory path.",
+	},
+	{
+		label: "an unknown policy",
+		words: ["Default"],
+		diagnostic: "Invalid --policy value.",
+	},
+]) {
+	test(`config CLI browser profile set rejects ${label} without writing config`, async (t) => {
+		const fixture = await createFixture(t);
+		await assert.rejects(
+			runConfig(["browser", "profile", "set", ...words, "--policy", "sometimes"], {
+				cwd: fixture.cwd,
+				env: fixture.env,
+			}),
+			(error: { readonly code?: number; readonly stderr?: string }) => {
+				assert.equal(error.code, 2);
+				assert.equal((error.stderr ?? "").split("\n")[0], diagnostic);
+				return true;
+			},
+		);
+		await assert.rejects(stat(fixture.globalPath), { code: "ENOENT" });
+	});
+}
+
 for (const [provider, alias] of [
 	["exa", "AWS_SECRET_ACCESS_KEY"],
 	["brave", "MY_BRAVE_ALIAS"],
