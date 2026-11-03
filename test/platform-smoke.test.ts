@@ -320,6 +320,117 @@ test("platform CLI defaults to required targets and preserves an explicitly sele
 	await assert.rejects(platformMain(["doctor", "--target", ","]), /Select at least one target/);
 });
 
+// Like a real spawned child, this Crabbox double reports close only after its output streams end.
+function crabboxChild(receipt: {
+	readonly stdout?: string;
+	readonly stderr?: string;
+	readonly code: number;
+}): ChildProcess {
+	const child = new ChildProcess();
+	const stdout = new PassThrough();
+	const stderr = new PassThrough();
+	child.stdout = stdout;
+	child.stderr = stderr;
+	let openStreams = 2;
+	const streamEnded = (): void => {
+		openStreams -= 1;
+		if (openStreams === 0) {
+			child.emit("close", receipt.code, null);
+		}
+	};
+	stdout.on("end", streamEnded);
+	stderr.on("end", streamEnded);
+	stdout.end(receipt.stdout ?? "");
+	stderr.end(receipt.stderr ?? "");
+	return child;
+}
+
+// The lease a Crabbox warmup receipt reports owns the follow-up run and stop. Receipts use the real
+// `leased <id> slug=...` and `lease=<id>` line forms; distinct IDs make their precedence observable.
+test("platform CLI runs and stops the lease Crabbox warmup reports, else the target's own lease", async (t) => {
+	clearPlatformSmokeOverrides(t);
+	const root = mkdtempSync(join(tmpdir(), "platform-lease-id-"));
+	const cwd = process.cwd();
+	const calls: string[][] = [];
+	let warmup: { readonly stdout: string; readonly stderr: string } = { stdout: "", stderr: "" };
+	t.after(() => {
+		process.chdir(cwd);
+		t.mock.restoreAll();
+		syncBuiltinESMExports();
+		rmSync(root, { recursive: true, force: true });
+	});
+	t.mock.method(childProcess, "spawn", (_command: unknown, args: unknown) => {
+		const words = readArray(args).map(readString);
+		calls.push(words);
+		return crabboxChild(words[0] === "warmup" ? { ...warmup, code: 0 } : { code: 0 });
+	});
+	syncBuiltinESMExports();
+	process.chdir(root);
+	// One CLI run per receipt; returns the lease IDs its Crabbox run and stop follow-ups used.
+	const followUpLeaseIds = async (target: string, stdout: string, stderr: string) => {
+		warmup = { stdout, stderr };
+		calls.length = 0;
+		await platformMain(["run", "--target", target, "--suite", "platform-build"]);
+		return calls
+			.filter(([command]) => command === "run" || command === "stop")
+			.map((words) => [words[0], words[words.indexOf("--id") + 1]]);
+	};
+	const leased = "cbx_0123456789ab";
+	const provisioned = "cbx_ba9876543210";
+	assert.deepEqual(
+		await followUpLeaseIds(
+			"ubuntu",
+			`leased ${leased} slug=pi-agent-browser-native-ubuntu provider=local-container\n`,
+			`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
+		),
+		[
+			["run", leased],
+			["stop", leased],
+		],
+		"stdout leased receipt",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds(
+			"ubuntu",
+			"",
+			`provisioning provider=local-container lease=${provisioned} slug=- keep=true\nleased ${leased} slug=-\n`,
+		),
+		[
+			["run", leased],
+			["stop", leased],
+		],
+		"stderr leased receipt after an earlier lease= receipt",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds(
+			"ubuntu",
+			"",
+			`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
+		),
+		[
+			["run", provisioned],
+			["stop", provisioned],
+		],
+		"stderr lease= receipt",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds("ubuntu", "", `released local-container/${provisioned} slug=-\n`),
+		[
+			["run", "pi-agent-browser-native-ubuntu"],
+			["stop", "pi-agent-browser-native-ubuntu"],
+		],
+		"release line is not an acquired lease",
+	);
+	assert.deepEqual(
+		await followUpLeaseIds("macos", "", ""),
+		[
+			["run", "static_localhost"],
+			["stop", "static_localhost"],
+		],
+		"no receipt",
+	);
+});
+
 test("default platform doctor needs no Windows credentials/provider and keeps selected provisioning failures strict", async (t) => {
 	clearPlatformSmokeOverrides(t);
 	const root = mkdtempSync(join(tmpdir(), "platform-doctor-selection-"));

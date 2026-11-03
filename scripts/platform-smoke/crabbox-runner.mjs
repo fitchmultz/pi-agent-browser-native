@@ -138,8 +138,9 @@ export function leaseIdFor(targetName, slug) {
 	return slug;
 }
 
-function parseLeaseId(text) {
-	return text.match(/\bleased\s+(\S+)/)?.[1] ?? text.match(/\blease=(\S+)/)?.[1] ?? null;
+export function leaseIdFromWarmup(warmup, fallback) {
+	const text = `${warmup.stdout}\n${warmup.stderr}`;
+	return text.match(/\bleased\s+(\S+)/)?.[1] ?? text.match(/\blease=(\S+)/)?.[1] ?? fallback;
 }
 
 export function execCrabbox(args, options = {}) {
@@ -231,7 +232,7 @@ export async function warmupLease(targetName, slug, config = {}) {
 	return {
 		...result,
 		ok: result.code === 0,
-		leaseId: parseLeaseId(`${result.stdout}\n${result.stderr}`) ?? leaseIdFor(targetName, slug),
+		leaseId: leaseIdFromWarmup(result, leaseIdFor(targetName, slug)),
 	};
 }
 
