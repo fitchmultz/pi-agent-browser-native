@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 
+import { DEFAULT_UBUNTU_IMAGE } from "../../platform-smoke.config.mjs";
 import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
 
 const version = CAPABILITY_BASELINE.targetVersion;
-const image = `pi-agent-browser-native-platform:node24-agent-browser${version}`;
 const args = [
 	"build",
 	"-t",
-	image,
+	DEFAULT_UBUNTU_IMAGE,
 	"--build-arg",
 	`AGENT_BROWSER_VERSION=${version}`,
 	"-f",
@@ -16,7 +16,7 @@ const args = [
 	".",
 ];
 
-console.log(`Building ${image}`);
+console.log(`Building ${DEFAULT_UBUNTU_IMAGE}`);
 const result = spawnSync("docker", args, { stdio: "inherit" });
 if (result.error) {
 	console.error(result.error.message);

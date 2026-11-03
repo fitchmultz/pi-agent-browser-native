@@ -77,6 +77,24 @@ function clearPlatformSmokeOverrides(t: TestContext): void {
 	});
 }
 
+// docs/platform-smoke.md documents this absent-override Ubuntu image; PLATFORM_SMOKE_UBUNTU_IMAGE still wins.
+const DOCUMENTED_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${CAPABILITY_BASELINE.targetVersion}`;
+const OVERRIDE_UBUNTU_IMAGE = "registry.example.test/prepared-ubuntu-smoke:override";
+
+async function withUbuntuImageOverride<T>(run: () => Promise<T>): Promise<T> {
+	process.env.PLATFORM_SMOKE_UBUNTU_IMAGE = OVERRIDE_UBUNTU_IMAGE;
+	try {
+		return await run();
+	} finally {
+		delete process.env.PLATFORM_SMOKE_UBUNTU_IMAGE;
+	}
+}
+
+function optionValue(args: readonly string[], option: string): string | undefined {
+	const index = args.indexOf(option);
+	return index < 0 ? undefined : args[index + 1];
+}
+
 test("platform smoke CLI has working help without dogfood host bootstrap", () => {
 	const powershell = readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8");
 	assert.doesNotMatch(powershell, /npm\s+install\s+-g/);
@@ -122,6 +140,41 @@ test("platform smoke config requires macOS/Ubuntu and keeps explicit best-effort
 	assert.deepEqual(config.requiredSuites, ["platform-build", "browser-dogfood-smoke"]);
 	assert.deepEqual(config.requiredTargets, ["macos", "ubuntu"]);
 	assert.deepEqual(config.optionalTargets, ["windows-native"]);
+});
+
+test("Ubuntu image build tags the documented default image with its audited agent-browser version", (t) => {
+	clearPlatformSmokeOverrides(t);
+	const root = mkdtempSync(join(tmpdir(), "platform-ubuntu-image-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const record = join(root, "docker.json");
+	const fakeDocker = String.raw`
+import childProcess from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+childProcess.spawnSync = (command, args) => {
+	writeFileSync(process.env.FAKE_DOCKER_RECORD, JSON.stringify({ command, args }));
+	return { status: 0 };
+};
+syncBuiltinESMExports();
+`;
+	const build = spawnSync(
+		process.execPath,
+		[
+			"--import",
+			`data:text/javascript;base64,${Buffer.from(fakeDocker).toString("base64")}`,
+			"scripts/platform-smoke/build-ubuntu-image.mjs",
+		],
+		{ encoding: "utf8", env: { ...process.env, FAKE_DOCKER_RECORD: record }, timeout: 10_000 },
+	);
+	assert.ifError(build.error);
+	assert.equal(build.status, 0, build.stderr);
+	const docker = readRecord(JSON.parse(readFileSync(record, "utf8")));
+	const args = readArray(docker.args).map(readString);
+	assert.equal(docker.command, "docker");
+	assert.equal(args[0], "build");
+	assert.equal(optionValue(args, "-t"), DOCUMENTED_UBUNTU_IMAGE);
+	const versionArg = args.indexOf(`AGENT_BROWSER_VERSION=${CAPABILITY_BASELINE.targetVersion}`);
+	assert.equal(args[versionArg - 1], "--build-arg");
 });
 
 test("platform command rendering uses POSIX and PowerShell without source-extension shortcuts", () => {
@@ -192,6 +245,7 @@ test("platform command rendering uses POSIX and PowerShell without source-extens
 });
 
 test("artifact manifests and lease cleanup failures are enforced", (t) => {
+	clearPlatformSmokeOverrides(t);
 	const root = mkdtempSync(join(tmpdir(), "pi-agent-browser-platform-smoke-test-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const suiteDir = join(root, "suite");
@@ -261,6 +315,8 @@ test("artifact manifests and lease cleanup failures are enforced", (t) => {
 	assert.equal(successTarget.packageName, "pi-agent-browser-native");
 	assert.equal(readRecord(successTarget.crabbox).provider, "local-container");
 	assert.equal(readRecord(successTarget.crabbox).workRoot, "/work/crabbox");
+	// This caller config names no image, so target evidence records the documented default.
+	assert.equal(readRecord(successTarget.crabbox).image, DOCUMENTED_UBUNTU_IMAGE);
 	assert.equal(warmupFailure.ok, false);
 	assert.match(readFileSync(join(warmupFailure.suiteDir, "failures.md"), "utf8"), /lease-warmup/);
 	const env = { ZAI_API_KEY: "zai-secret-value-1234567890" };
@@ -307,7 +363,17 @@ test("platform CLI defaults to required targets and preserves an explicitly sele
 	assert.equal(calls.length, 2);
 	assert.equal(calls[0]?.includes("ssh"), true);
 	assert.equal(calls[1]?.includes("local-container"), true);
+	assert.equal(optionValue(calls[1], "--local-container-image"), DOCUMENTED_UBUNTU_IMAGE);
 	assert.equal(calls.flat().includes("parallels"), false);
+	calls.length = 0;
+	assert.equal(
+		await withUbuntuImageOverride(() =>
+			platformMain(["run", "--target", "ubuntu", "--suite", "platform-build"]),
+		),
+		1,
+	);
+	assert.equal(calls.length, 1);
+	assert.equal(optionValue(calls[0], "--local-container-image"), OVERRIDE_UBUNTU_IMAGE);
 	calls.length = 0;
 	assert.equal(
 		await platformMain(["run", "--target", "windows-native", "--suite", "platform-build"]),
@@ -398,6 +464,15 @@ test("default platform doctor needs no Windows credentials/provider and keeps se
 		calls.some((call) => call.startsWith("docker info")),
 		true,
 	);
+	const ubuntuProviderCheck = (image: string): string =>
+		`crabbox doctor --provider local-container --local-container-image ${image} --json`;
+	assert.equal(calls.includes(ubuntuProviderCheck(DOCUMENTED_UBUNTU_IMAGE)), true);
+	calls.length = 0;
+	assert.equal(
+		await withUbuntuImageOverride(() => platformMain(["doctor", "--target", "ubuntu"])),
+		0,
+	);
+	assert.equal(calls.includes(ubuntuProviderCheck(OVERRIDE_UBUNTU_IMAGE)), true);
 	calls.length = 0;
 	assert.equal(await platformMain(["doctor", "--target", "windows-native"]), 1);
 	assert.equal(calls.includes("which prlctl"), true);

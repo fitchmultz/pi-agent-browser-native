@@ -2,9 +2,7 @@
 
 import { spawn } from "node:child_process";
 
-import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
-
-const DEFAULT_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${CAPABILITY_BASELINE.targetVersion}`;
+import { DEFAULT_UBUNTU_IMAGE } from "../../platform-smoke.config.mjs";
 
 function env(name) {
 	return process.env[name] ?? "";

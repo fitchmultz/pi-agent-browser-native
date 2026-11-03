@@ -1,6 +1,6 @@
 /** Platform smoke doctor. Fails before target runs when Crabbox/platform setup is missing. */
 import { accessSync, constants } from "node:fs";
-import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
+import { DEFAULT_UBUNTU_IMAGE } from "../../platform-smoke.config.mjs";
 import {
 	checkAgentBrowserVersion,
 	checkArtifactRoot,
@@ -15,8 +15,6 @@ import {
 } from "./doctor-support.mjs";
 import { checkWindows } from "./doctor-windows.mjs";
 export { disposableWindowsAgentBrowserProbe } from "./doctor-windows.mjs";
-
-const DEFAULT_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${CAPABILITY_BASELINE.targetVersion}`;
 
 function crabboxProviders(cbox) {
 	const jsonOutput = silent(cbox, ["providers", "--json"]);
