@@ -7,6 +7,7 @@ import { getBrowserResultMessage } from "../browser-transcript.js";
 import { canUseHeadlessCompatibilityUserAgent, extractUpstreamCommandTokens } from "../runtime.js";
 import {
 	extractExplicitSessionName,
+	getBooleanFlagValue,
 	isAgentBrowserSessionIdentityKeyInNamespace,
 	isUpstreamEnvFlagEnabled,
 } from "../argv-grammar.js";
@@ -349,9 +350,9 @@ export function isAttachedBrowserInvocation(
 	return (
 		extractUpstreamCommandTokens([...args])[0] === "connect" ||
 		hasLaunchScopedFlagToken([...args], "--cdp") ||
-		hasLaunchScopedFlagToken([...args], "--auto-connect") ||
 		env.AGENT_BROWSER_CDP !== undefined ||
-		isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT)
+		(getBooleanFlagValue(args, "--auto-connect") ??
+			isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT))
 	);
 }
 export function getManagedSessionOutcome(
