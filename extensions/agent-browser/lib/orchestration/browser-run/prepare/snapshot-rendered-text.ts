@@ -1,4 +1,5 @@
 import { isRecord } from "../../../parsing.js";
+import { normalizeAccessibleName } from "../../../results/snapshot-refs.js";
 import { redactSensitiveText } from "../../../runtime-redaction.js";
 
 interface RenderedTextSearchMatch {
@@ -137,12 +138,12 @@ export function attachRenderedTextMatchRefs(
 		if (match.name === undefined || match.name === "") {
 			return match;
 		}
-		const normalizedName = match.name.replace(/\s+/g, " ").trim().toLowerCase();
+		const normalizedName = normalizeAccessibleName(match.name);
 		const candidates = Object.entries(refs).filter(([, value]) => {
 			if (!isRecord(value) || typeof value.name !== "string") {
 				return false;
 			}
-			const nameMatches = value.name.replace(/\s+/g, " ").trim().toLowerCase() === normalizedName;
+			const nameMatches = normalizeAccessibleName(value.name) === normalizedName;
 			return (
 				nameMatches &&
 				(match.role === undefined ||

@@ -80,6 +80,10 @@ function isEditableSnapshotLine(line: SnapshotLineRefInfo): boolean | undefined 
 		: undefined;
 }
 
+export function normalizeAccessibleName(name: string): string {
+	return normalizeWhitespace(name).toLowerCase();
+}
+
 export function getSnapshotRefRole(
 	entry: { readonly role?: unknown },
 	editableEvidence: boolean | undefined,

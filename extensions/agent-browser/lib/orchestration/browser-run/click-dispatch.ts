@@ -4,6 +4,7 @@ import {
 	withOptionalSessionArgs,
 	type AgentBrowserNextAction,
 } from "../../results/next-actions.js";
+import { normalizeAccessibleName } from "../../results/snapshot-refs.js";
 import type { SessionRefSnapshot } from "../../session-page-state.js";
 import { runSessionCommandData } from "./session-state.js";
 import { getAgentBrowserProcessTimeoutMs } from "../../process.js";
@@ -24,10 +25,6 @@ const ACCESSIBLE_REF_CLICK_DISPATCH_ROLES = new Set([
 	"switch",
 	"tab",
 ]);
-
-function normalizeAccessibleName(name: string): string {
-	return name.replace(/\s+/g, " ").trim().toLowerCase();
-}
 
 function getClickDispatchProbeTarget(
 	commandTokens: readonly string[],
