@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 0.9.15 - 2026-11-03
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Share comparable page URL normalization (1/19) (#358) ([ce60a2b](https://github.com/fitchmultz/pi-agent-browser-native/commit/ce60a2b907273f5fdfe89687b18bba89758d6207))
+
+### What's Changed
+
+- Share comparable page URL normalization (1/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/358
+- Share native observation value decoding (2/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/359
+- Share host-side accessible-name normalization (6/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/360
+- Share compiled QA and source-step redaction (3/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/361
+- Share the failed-network-request predicate (4/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/362
+- Share diagnostic request-ID selection (5/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/363
+- Share pending WebMCP mutation classification (7/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/364
+- Share recent-artifact ordering (8/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/366
+- Share browser profile policy validation (10/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/368
+- Share lifecycle model and timeout defaults (11/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/369
+- Share the default Ubuntu image identity (12/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/370
+- Share Crabbox warmup lease-ID parsing (13/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/371
+- Reuse trusted root defaults for code calls (9/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/367
+- Preserve fork cleanup ownership during conversion (14/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/372
+- Honor explicit false in attachment classification (17/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/374
+- Retire batch route diagnostics after plain close (18/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/375
+- Keep native locator misses free of dialect advice (19/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/376
+- Validate canonical message events consistently (16/19) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/373
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.14...v0.9.15
+
 ## 0.9.14 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
