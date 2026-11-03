@@ -4,6 +4,7 @@ import type { AgentBrowserNextAction } from "../action-contracts.js";
 import type { NetworkRouteDiagnostic } from "../contracts.js";
 import {
 	classifyNetworkRequestFailure,
+	getNetworkRequestId,
 	isApiLikeNetworkRequest,
 	isNetworkArtifactNoiseRequest,
 } from "../network.js";
@@ -99,9 +100,7 @@ function requestCandidate(item: unknown): Candidate[] {
 	if (!isRecord(item) || isNetworkArtifactNoiseRequest(item)) {
 		return [];
 	}
-	const requestId = safeActionValue(
-		getStringField(item, "requestId") ?? getStringField(item, "id"),
-	);
+	const requestId = safeActionValue(getNetworkRequestId(item));
 	return requestId === undefined
 		? []
 		: [{ filter: requestPathFilter(item), item, kind: candidateKind(item), requestId }];

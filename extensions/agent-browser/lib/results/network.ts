@@ -9,6 +9,12 @@ export function getStringRecordField(
 	return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
 }
 
+export function getNetworkRequestId(
+	request: Readonly<Record<string, unknown>>,
+): string | undefined {
+	return getStringRecordField(request, "requestId") ?? getStringRecordField(request, "id");
+}
+
 function getNetworkRequestUrlPath(url: string | undefined): string | undefined {
 	if (url === undefined || url.length === 0) {
 		return undefined;
