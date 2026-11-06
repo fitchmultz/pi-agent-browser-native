@@ -43,8 +43,8 @@ type ProbeInput = Pick<
 >;
 type CompiledProbe = Extract<CompiledAgentBrowserElectron, { action: "probe" }>;
 interface ProbeIdentity {
-	readonly record?: ElectronLaunchRecord;
-	readonly namespace?: string;
+	readonly record?: ElectronLaunchRecord | undefined;
+	readonly namespace?: string | undefined;
 	readonly sessionName: string;
 }
 function resolveLaunchProbe(

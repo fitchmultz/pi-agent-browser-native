@@ -1,7 +1,7 @@
 const SENSITIVE_FIELD_NAME_PATTERN =
 	/^(?:[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret(?:[_-]?(?:key|access[_-]?key))?|token|password|passwd|credentials?|database[_-]?url|db[_-]?url|connection[_-]?string|mongo(?:db)?[_-]?uri|redis[_-]?url)|[A-Za-z0-9]*(?:apiKey|ApiKey|apikey|privateKey|PrivateKey|databaseUrl|DatabaseUrl|dbUrl|DbUrl|connectionString|ConnectionString|mongoUri|MongoUri|mongodbUri|MongodbUri|mongoDbUri|MongoDbUri|redisUrl|RedisUrl|Token|Secret|Password|Credential|Credentials)|auth(?:orization)?|bearer|client(?:_|-)?secret|cookie|id(?:_|-)?token|pass(?:word)?|proxy(?:_|-)?authorization|refresh(?:_|-)?token|sentry(?:_|-)?key|session(?:_|-)?id|set(?:_|-)?cookie|sig(?:nature)?|write(?:_|-)?key|x(?:_|-)?api(?:_|-)?key)$/i;
 const ENV_SECRET_ASSIGNMENT_PATTERN =
-	/\b((?:export\s+)?([A-Za-z_][A-Za-z0-9_-]*)(\s*[:=]\s*))(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/g;
+	/\b((?:export\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/g;
 
 export function isSensitiveFieldName(key: string): boolean {
 	SENSITIVE_FIELD_NAME_PATTERN.lastIndex = 0;
@@ -48,8 +48,8 @@ function redactPasswordAssignment(
 export function redactEnvSecretAssignments(text: string): string {
 	return text.replace(
 		ENV_SECRET_ASSIGNMENT_PATTERN,
-		// String.replace supplies match, three captures, then the source offset.
-		(match: string, prefix: string, key: string, _separator: string, offset: number) => {
+		// String.replace supplies match, prefix/key captures, then the source offset.
+		(match: string, prefix: string, key: string, offset: number) => {
 			if (!isEnvSecretAssignmentKey(key)) {
 				return match;
 			}
@@ -64,31 +64,25 @@ function credentialTrailingPunctuation(credential: string): string {
 	return credential.match(/[,.:;!?]+$/)?.[0] ?? "";
 }
 
-function formatRedactedCredential(label: string, credential: string, trailing = ""): string {
-	return `${label} [REDACTED]${credentialTrailingPunctuation(credential)}${trailing}`;
+function formatRedactedCredential(label: string, credential: string): string {
+	return `${label} [REDACTED]${credentialTrailingPunctuation(credential)}`;
 }
 
 export function redactBearerCredentials(text: string): string {
 	return text
 		.replace(
-			/((?:\b([A-Za-z][A-Za-z0-9_-]*)\s*[:=]\s*|(?:^|\s)(?:-H\s*|--header(?:\s+|=)))["']?Bearer)\s+([^\s"',)[\]]+)([),.]?)/gi,
-			// String.replace supplies the match followed by this expression's four captures.
-			(
-				match: string,
-				label: string,
-				field: string | undefined,
-				credential: string,
-				trailing: string,
-			) => {
+			/((?:\b([A-Za-z][A-Za-z0-9_-]*)\s*[:=]\s*|(?:^|\s)(?:-H\s*|--header(?:\s+|=)))["']?Bearer)\s+([^\s"',)[\]]+)/gi,
+			// Punctuation outside the credential stays in the original text.
+			(match: string, label: string, field: string | undefined, credential: string) => {
 				if (field !== undefined && field.length > 0 && !isSensitiveFieldName(field)) {
 					return match;
 				}
-				return formatRedactedCredential(label, credential, trailing);
+				return formatRedactedCredential(label, credential);
 			},
 		)
 		.replace(
-			/\b(Bearer)\s+([^\s\\"',)[\]]+)([),.]?)/gi,
-			(match: string, label: string, credential: string, trailing: string) => {
+			/\b(Bearer)\s+([^\s\\"',)[\]]+)/gi,
+			(match: string, label: string, credential: string) => {
 				// Require a bearer-token shape without a credential field/header, not prose, HTML or a URL.
 				const token = credential.slice(
 					0,
@@ -97,7 +91,7 @@ export function redactBearerCredentials(text: string): string {
 				if (!/^[A-Za-z0-9._~+/-]+=*$/.test(token) || !/[0-9._~+/=-]/.test(token)) {
 					return match;
 				}
-				return formatRedactedCredential(label, credential, trailing);
+				return formatRedactedCredential(label, credential);
 			},
 		);
 }

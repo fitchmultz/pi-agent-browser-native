@@ -7,7 +7,14 @@
  */
 
 import assert from "node:assert/strict";
-import { readRecord, readString, readNumber, readArray } from "./helpers/assertions.js";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
+import {
+	readRecord,
+	readString,
+	readNumber,
+	readArray,
+	readDefined,
+} from "./helpers/assertions.js";
 import childProcess, { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
@@ -27,7 +34,7 @@ import fsPromises, {
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -71,12 +78,10 @@ async function waitForLoggedCommand(
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		// Poll the observed dispatch/exit state before waiting again; parallel polls would race cancellation.
-		// oxlint-disable-next-line no-await-in-loop
 		if ((await readInvocationLog(logPath)).some((entry) => entry.args.includes(command))) {
 			return;
 		}
 		// Poll the observed dispatch/exit state before waiting again; parallel polls would race cancellation.
-		// oxlint-disable-next-line no-await-in-loop
 		await new Promise<void>((resolve) => {
 			setTimeout(resolve, 10);
 		});
@@ -106,7 +111,7 @@ async function cleanupLoggedElectronApps(logPath: string): Promise<void> {
 	);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension cleans Electron after post-launch managed policy rejection",
 	{ concurrency: false },
 	async () => {
@@ -173,7 +178,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension allows local Electron snapshot handoff",
 	{ concurrency: false },
 	async () => {
@@ -251,7 +256,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension cleans an Electron launch canceled during snapshot handoff",
 	{ concurrency: false },
 	async () => {
@@ -316,7 +321,7 @@ else {
 );
 
 for (const terminateBeforeCleanup of [false, true]) {
-	test(
+	nodeTest(
 		`Electron cleanup awaits tracked child exit before removing owned resources (already signaled: ${terminateBeforeCleanup})`,
 		{ concurrency: false },
 		async () => {
@@ -367,7 +372,7 @@ for (const terminateBeforeCleanup of [false, true]) {
 	);
 }
 
-test(
+nodeTest(
 	"Electron launch keeps its remaining budget across a forward system clock step",
 	{ concurrency: false },
 	async (t) => {
@@ -418,7 +423,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"Electron cleanup ends an app ignoring SIGTERM on its budget despite a backward system clock step",
 	{
 		concurrency: false,
@@ -465,7 +470,7 @@ test(
 );
 
 for (const stepMs of [120_000, -120_000]) {
-	test(
+	nodeTest(
 		`Electron launch failure keeps its SIGTERM grace across a ${stepMs > 0 ? "forward" : "backward"} system clock step`,
 		{
 			concurrency: false,
@@ -524,11 +529,12 @@ for (const stepMs of [120_000, -120_000]) {
 				assert.ok(result, "failed-launch cleanup was still waiting after 4000 ms");
 				assert.equal(result.ok ? "launched" : result.failure.reason, "timeout");
 				assert.equal(result.ok ? "launched" : result.failure.cleanupError, undefined);
-				const [term, kill] = signals;
-				assert.ok(
-					signals.length === 2 && term.signal === "SIGTERM" && kill.signal === "SIGKILL",
-					JSON.stringify(signals),
+				assert.deepEqual(
+					signals.map(({ signal }) => signal),
+					["SIGTERM", "SIGKILL"],
 				);
+				const term = readDefined(signals[0]);
+				const kill = readDefined(signals[1]);
 				const graceMs = Math.round(kill.atMs - term.atMs);
 				assert.ok(graceMs >= 1_000, `SIGKILL followed SIGTERM after ${graceMs} ms`);
 			} finally {
@@ -542,7 +548,7 @@ for (const stepMs of [120_000, -120_000]) {
 	);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension supports Electron launch handoff modes",
 	{ concurrency: false },
 	async (t) => {
@@ -574,7 +580,6 @@ test(
 						["tabs", ["connect", "tab"]],
 					] as const) {
 						// Handoff cases share one native executable and invocation log.
-						// oxlint-disable-next-line no-await-in-loop
 						await t.test(handoff, async (handoffTest) => {
 							await rm(upstreamLogPath, { force: true });
 							const harness = createExtensionHarness({ cwd: tempDir });
@@ -637,7 +642,7 @@ test(
 											},
 										});
 										assert.equal(lookup.isError, false, JSON.stringify(lookup));
-										const text = lookup.content[0].text ?? "";
+										const text = getMessageText(lookup.content);
 										assert.match(text, /Source lookup found no candidate locations/);
 										assert.match(text, /workspace scan was limited/);
 										assert.match(text, /packaged Electron app code may live outside/);
@@ -697,13 +702,12 @@ test(
 										: [];
 								for (const electron of inspections) {
 									// Status/probe calls share one launch before its final cleanup.
-									// oxlint-disable-next-line no-await-in-loop
-									const inspected = await executeRegisteredTool(harness.tool, harness.ctx, {
-										electron,
+									await handoffTest.test(JSON.stringify(electron), async () => {
+										const inspected = await executeRegisteredTool(harness.tool, harness.ctx, {
+											electron,
+										});
+										assert.equal(inspected.isError, false, getMessageText(inspected.content));
 									});
-									// All three fixed selectors must succeed before cleanup.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.equal(inspected.isError, false, inspected.content.at(0)?.text);
 								}
 								const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
 									electron: { action: "cleanup", launchId },
@@ -728,7 +732,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension compares full Electron URLs while keeping status and probe displays bounded",
 	{ concurrency: false },
 	async () => {
@@ -762,7 +766,7 @@ test(
 				const launched = await executeRegisteredTool(harness.tool, harness.ctx, {
 					electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
 				});
-				assert.equal(launched.isError, false, launched.content[0].text);
+				assert.equal(launched.isError, false, getMessageText(launched.content));
 				const record = readRecord(readRecord(launched.details?.electron).launch);
 				const launchId = readString(record.launchId);
 				const status = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -770,7 +774,7 @@ test(
 				});
 				assert.equal(status.isError, false);
 				const statusElectron = readRecord(status.details?.electron);
-				assert.equal(statusElectron.sessionMismatch, undefined, status.content[0].text);
+				assert.equal(statusElectron.sessionMismatch, undefined, getMessageText(status.content));
 				assert.equal(readRecord(statusElectron.managedSession).url, displayUrl);
 				assert.equal(
 					readArray(status.details?.nextActions)
@@ -783,7 +787,7 @@ test(
 				});
 				assert.equal(probe.isError, false);
 				const probeElectron = readRecord(probe.details?.electron);
-				assert.equal(probeElectron.sessionMismatch, undefined, probe.content[0].text);
+				assert.equal(probeElectron.sessionMismatch, undefined, getMessageText(probe.content));
 				assert.equal(readRecord(probeElectron.probe).url, displayUrl);
 				assert.equal(
 					readString(readRecord(readRecord(probeElectron.probe).activeTab).url).length,
@@ -793,7 +797,7 @@ test(
 				const followup = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["get", "title"],
 				});
-				assert.equal(followup.isError, false, followup.content[0].text);
+				assert.equal(followup.isError, false, getMessageText(followup.content));
 				await writeFakeAgentBrowserBinary(tempDir, upstream.replaceAll(url, otherUrl));
 				const drifted = await executeRegisteredTool(harness.tool, harness.ctx, {
 					electron: { action: "status", launchId },
@@ -810,7 +814,7 @@ test(
 				const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
 					electron: { action: "cleanup", launchId },
 				});
-				assert.equal(cleaned.isError, false, cleaned.content[0].text);
+				assert.equal(cleaned.isError, false, getMessageText(cleaned.content));
 				assert.equal(await waitForTestPidExit(readNumber(record.pid)), true);
 				await assert.rejects(stat(readString(record.userDataDir)), { code: "ENOENT" });
 			});
@@ -821,7 +825,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension targets Electron webviews and keeps host cleanup after close failures",
 	{ concurrency: false },
 	async () => {
@@ -901,7 +905,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { connected: true } }
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension aborts Electron launch before and during app startup",
 	{ concurrency: false },
 	async () => {
@@ -951,10 +955,8 @@ test(
 			let launch = (await readOptionalFakeElectronLaunchLog(launchLogPath)).at(0);
 			for (let attempt = 0; launch === undefined && attempt < 750; attempt += 1) {
 				// Wait between native launch-receipt observations.
-				// oxlint-disable-next-line no-await-in-loop
 				await delay(20);
 				// Observe the receipt before another retry or mid-launch abort.
-				// oxlint-disable-next-line no-await-in-loop
 				launch = (await readOptionalFakeElectronLaunchLog(launchLogPath)).at(0);
 			}
 			assert.ok(launch, "fake Electron app should start before mid-launch abort");
@@ -977,7 +979,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension blocks Electron launch by caller policy without spawning",
 	{ concurrency: false },
 	async () => {
@@ -1019,7 +1021,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension cleans Electron resources when launch fails before upstream attach",
 	{ concurrency: false },
 	async (t) => {
@@ -1047,8 +1049,7 @@ test(
 			},
 		] as const) {
 			// Clock and filesystem mocks must be restored before the next launch.
-			// oxlint-disable-next-line no-await-in-loop
-			await t.test(jsonBody === undefined ? mode : "invalid-cdp-object", async () => {
+			await t.test(jsonBody === undefined ? mode : "invalid-cdp-object", async (launchTest) => {
 				const tempDir = await mkdtemp(join(tmpdir(), `pi-agent-browser-electron-failed-${mode}-`));
 				const applicationsDir = join(tempDir, "Applications");
 				const launchLogPath = join(tempDir, "electron-launch.log");
@@ -1149,38 +1150,24 @@ test(
 						const launchLogs = await readOptionalFakeElectronLaunchLog(launchLogPath);
 						const launchLog = launchLogs.find((entry) => entry.pid === diagnosticPid);
 						if (mode === "no-port-file") {
-							// This exhaustive variant deliberately produces no launch receipt.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(launchLogs.length, 0, mode);
-							// This variant must diagnose the missing port file.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(diagnostics.devToolsActivePort).found, false, mode);
-							// The same missing-port evidence must be model-visible.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(result.content.at(0)?.text ?? "", /DevToolsActivePort: missing/, mode);
+							await launchTest.test("missing port file diagnostics", () => {
+								assert.equal(launchLogs.length, 0, mode);
+								assert.equal(readRecord(diagnostics.devToolsActivePort).found, false, mode);
+								assert.match(result.content.at(0)?.text ?? "", /DevToolsActivePort: missing/, mode);
+							});
 						} else {
-							// The other fixed variant must produce a native launch receipt.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(launchLog, mode);
-							// Hard receipt narrowing above requires the matching profile.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(diagnostics.userDataDir, launchLog.userDataDir, mode);
-							// The invalid-CDP variant must still find its native port file.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(diagnostics.devToolsActivePort).found, true, mode);
-							// That port must match the asserted native launch receipt.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(diagnostics.devToolsActivePort).port, launchLog.port, mode);
-							// This exhaustive variant fails at CDP version validation.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(diagnostics.cdpVersionReached, false, mode);
-							// The invalid-CDP evidence must be model-visible.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(
-								result.content.at(0)?.text ?? "",
-								/CDP \/json\/version: did not return a valid payload/,
-								mode,
-							);
+							await launchTest.test("invalid CDP diagnostics match the launch receipt", () => {
+								assert.ok(launchLog, mode);
+								assert.equal(diagnostics.userDataDir, launchLog.userDataDir, mode);
+								assert.equal(readRecord(diagnostics.devToolsActivePort).found, true, mode);
+								assert.equal(readRecord(diagnostics.devToolsActivePort).port, launchLog.port, mode);
+								assert.equal(diagnostics.cdpVersionReached, false, mode);
+								assert.match(
+									result.content.at(0)?.text ?? "",
+									/CDP \/json\/version: did not return a valid payload/,
+									mode,
+								);
+							});
 						}
 						await assert.rejects(stat(diagnosticUserDataDir));
 						assert.equal(isTestPidAlive(diagnosticPid), false, mode);
@@ -1195,7 +1182,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension returns bounded redacted Electron startup output and preserves empty-output failures",
 	{ concurrency: false },
 	async (t) => {
@@ -1227,8 +1214,7 @@ process.exit(42);
 			const harness = createExtensionHarness({ cwd: tempDir });
 			for (const quiet of [false, true]) {
 				// Both captures write the same launch receipt and use the same harness.
-				// oxlint-disable-next-line no-await-in-loop
-				await t.test(quiet ? "quiet" : "full output", async () => {
+				await t.test(quiet ? "quiet" : "full output", async (outputTest) => {
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 						electron: {
 							action: "launch",
@@ -1253,15 +1239,11 @@ process.exit(42);
 						const expected = quiet
 							? ""
 							: (fill.repeat(4096 - Buffer.byteLength(end)) + end).replace(secret, "[REDACTED]");
-						// Both fixed streams must preserve their exact redacted tail.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(failure.diagnostics)[`${stream}Tail`], expected);
-						// Both fixed streams must retain their native truncation evidence.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(failure.diagnostics)[`${stream}Truncated`], !quiet);
-						// Both streams' expected tails or empty status must be visible.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(text.includes(quiet ? `App ${stream}: (empty)` : expected));
+						await outputTest.test(stream, () => {
+							assert.equal(readRecord(failure.diagnostics)[`${stream}Tail`], expected);
+							assert.equal(readRecord(failure.diagnostics)[`${stream}Truncated`], !quiet);
+							assert.ok(text.includes(quiet ? `App ${stream}: (empty)` : expected));
+						});
 					}
 					assert.doesNotMatch(
 						JSON.stringify(result),
@@ -1283,7 +1265,7 @@ process.exit(42);
 	},
 );
 
-test(
+nodeTest(
 	"failed Electron startup preserves a live writer after kill denial and temp cleanup, with native host-exit lifetime",
 	{ concurrency: false },
 	async (t) => {
@@ -1316,10 +1298,9 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 		try {
 			for (const breakMarker of [false, true]) {
 				// Each writer must be reaped and its shared receipt removed before the next case.
-				// oxlint-disable-next-line no-await-in-loop
 				await t.test(
 					breakMarker ? "broken ownership marker" : "valid ownership marker",
-					async () => {
+					async (writerTest) => {
 						const script = `
 				import { ChildProcess } from "node:child_process";
 				import { existsSync } from "node:fs";
@@ -1356,7 +1337,6 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 						const readLaunchReceipt = async () => {
 							for (let attempt = 0; attempt < 100; attempt++) {
 								// Observe the independently writing child's receipt before retrying.
-								// oxlint-disable-next-line no-await-in-loop
 								const receipt: unknown = await readFile(launchLogPath, "utf8").then(
 									JSON.parse,
 									() => {
@@ -1371,7 +1351,6 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 									};
 								}
 								// Delay each missing-receipt retry within the original bounded budget.
-								// oxlint-disable-next-line no-await-in-loop
 								await delay(20);
 							}
 							return;
@@ -1403,7 +1382,7 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 							await delay(60);
 							const after = await Promise.all(paths.map((path) => stat(path)));
 							assert.ok(
-								after.every((stats, index) => stats.size > before[index].size),
+								after.every((stats, index) => stats.size > readDefined(before[index]).size),
 								"both live logs must grow after kill denial and temp cleanup",
 							);
 							const exited = once(host, "exit", { signal: AbortSignal.timeout(5_000) });
@@ -1412,32 +1391,34 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 							// Node/libuv puts non-detached Windows children in a kill-on-host-exit job.
 							// POSIX launches are detached; neither lifetime is an output-pipe contract.
 							if (process.platform === "win32") {
-								// Native Windows host-exit jobs terminate non-detached children.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(await waitForTestPidExit(launch.pid), true);
+								const pid = launch.pid;
+								await writerTest.test("Windows host exit terminates its child", async () => {
+									assert.equal(await waitForTestPidExit(pid), true);
+								});
 							} else {
-								// POSIX detached children must outlive their native host.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(isTestPidAlive(launch.pid), true);
+								const pid = launch.pid;
+								await writerTest.test("POSIX detached child outlives its host", () => {
+									assert.equal(isTestPidAlive(pid), true);
+								});
 							}
 							const beforeExit = await Promise.all(paths.map((path) => stat(path)));
 							await delay(60);
 							const afterExit = await Promise.all(paths.map((path) => stat(path)));
 							afterExit.forEach((stats, index) =>
-								assertPostHostExitLogLifetime(beforeExit[index].size, stats.size),
+								assertPostHostExitLogLifetime(readDefined(beforeExit[index]).size, stats.size),
 							);
 							const markerPath = join(dirname(launch.userDataDir), ".pi-agent-browser-owner.json");
 							if (breakMarker) {
-								// The fixed broken-marker variant must report preservation.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.match(readString(receiptFailure.cleanupError ?? ""), /preserv/i);
+								await writerTest.test("broken marker reports preservation failure", () => {
+									assert.match(readString(receiptFailure.cleanupError ?? ""), /preserv/i);
+								});
 							} else {
-								// The fixed valid-marker variant must retain its child ownership entry.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.deepEqual(
-									readRecord(JSON.parse(await readFile(markerPath, "utf8"))).protectedChildNames,
-									[basename(launch.userDataDir)],
-								);
+								await writerTest.test("valid marker retains child ownership", async () => {
+									assert.deepEqual(
+										readRecord(JSON.parse(await readFile(markerPath, "utf8"))).protectedChildNames,
+										[basename(profile)],
+									);
+								});
 							}
 							await assert.rejects(stat(readString(receipt.sibling)), { code: "ENOENT" });
 						} finally {
@@ -1459,7 +1440,7 @@ setInterval(() => { fs.writeSync(1, "stdout-live\\n"); fs.writeSync(2, "stderr-l
 	},
 );
 
-test(
+nodeTest(
 	"Electron capture closes real file handles and retains startup errors when capture or spawn fails",
 	{ concurrency: false },
 	async (t) => {
@@ -1494,8 +1475,7 @@ test(
 		try {
 			for (fault of ["open-stderr", "spawn-sync", "spawn-async", "read-stdout"] as const) {
 				// The native mock reads the selected fault and mutates one shared executable.
-				// oxlint-disable-next-line no-await-in-loop
-				await t.test(fault, async () => {
+				await t.test(fault, async (captureTest) => {
 					handles.length = 0;
 					await writeFile(app.scriptPath, "process.exit(42);\n");
 					const harness = createExtensionHarness({ cwd: tempDir });
@@ -1517,43 +1497,35 @@ test(
 						`${fault}: all acquired native capture/read handles must close`,
 					);
 					if (fault === "open-stderr") {
-						// This exhaustive fault must identify the failed capture open.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(readString(failure.error), /cannot open stderr capture/);
+						await captureTest.test("capture open error", () => {
+							assert.match(readString(failure.error), /cannot open stderr capture/);
+						});
 					}
 					if (fault === "spawn-sync") {
-						// This exhaustive fault must identify the invalid native argv.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(readString(failure.error), /null bytes/);
+						await captureTest.test("invalid native argv", () => {
+							assert.match(readString(failure.error), /null bytes/);
+						});
 					}
 					if (fault === "spawn-async") {
 						await rename(`${app.executablePath}.held`, app.executablePath);
-						// This exhaustive fault must identify the missing executable.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(readString(failure.error), /ENOENT/);
+						await captureTest.test("missing executable", () => {
+							assert.match(readString(failure.error), /ENOENT/);
+						});
 					}
 					if (fault === "read-stdout") {
-						// This exhaustive capture-read failure must preserve the app's actual exit.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(failure.diagnostics).exitCode, 42);
-						// A failed stdout read must not fabricate a tail.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(failure.diagnostics).stdoutTail, undefined);
-						// The same fixed fault must preserve its explicit read error.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(failure.diagnostics).stdoutError,
-							"fixture: cannot read stdout capture",
-						);
-						// This fault must not corrupt the independently readable stderr.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(failure.diagnostics).stderrTail, "");
-						// This capture-read error must also be model-visible.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							result.content.at(0)?.text ?? "",
-							/App stdout capture error: fixture: cannot read stdout capture/,
-						);
+						await captureTest.test("capture read error preserves exit and stderr", () => {
+							assert.equal(readRecord(failure.diagnostics).exitCode, 42);
+							assert.equal(readRecord(failure.diagnostics).stdoutTail, undefined);
+							assert.equal(
+								readRecord(failure.diagnostics).stdoutError,
+								"fixture: cannot read stdout capture",
+							);
+							assert.equal(readRecord(failure.diagnostics).stderrTail, "");
+							assert.match(
+								result.content.at(0)?.text ?? "",
+								/App stdout capture error: fixture: cannot read stdout capture/,
+							);
+						});
 					}
 					assert.ok(typeof failure.userDataDir === "string" && failure.userDataDir.length > 0);
 					await assert.rejects(stat(failure.userDataDir), { code: "ENOENT" });
@@ -1567,7 +1539,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension cleans Electron resources when upstream connect cannot spawn",
 	{ concurrency: false },
 	async () => {
@@ -1619,194 +1591,207 @@ test(
 	},
 );
 
-test("Electron profile status measures the current path without changing the launch record", async (t) => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-profile-status-"));
-	const present = join(tempDir, "present");
-	const absent = join(tempDir, "removed");
-	const dangling = join(tempDir, "dangling");
-	const parentFile = join(tempDir, "not-a-directory");
-	// Windows reports ENOENT for a file used as a parent; a NUL path instead
-	// exercises a genuine non-ENOENT native path error on that host.
-	const unknown = process.platform === "win32" ? `${parentFile}\0` : join(parentFile, "profile");
-	try {
-		await mkdir(present);
-		await mkdir(absent);
-		await rm(absent, { recursive: true });
-		await writeFile(parentFile, "file");
-		await assert.rejects(lstat(unknown), {
-			code: process.platform === "win32" ? "ERR_INVALID_ARG_VALUE" : "ENOTDIR",
-		});
-		if (process.platform !== "win32") {
-			await symlink(absent, dangling);
-			// Verify the POSIX-only dangling-symlink fixture before status inspection.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal((await lstat(dangling)).isSymbolicLink(), true);
-		}
-		for (const [state, userDataDir] of [
-			["present", present],
-			["absent", absent],
-			["unknown", unknown],
-			["present", dangling],
-		] as const) {
-			// Profile-state cases mutate the same directory; finish each before the next state.
-			// oxlint-disable-next-line no-await-in-loop
-			await t.test(
-				`${state}: ${userDataDir === dangling ? "dangling symlink" : state}`,
-				{ skip: userDataDir === dangling && process.platform === "win32" },
-				async () => {
-					const record: ElectronLaunchRecord = Object.freeze({
-						appName: "Profile status",
-						cleanupState: "cleaned",
-						createdAtMs: 1,
-						executablePath: process.execPath,
-						launchId: "electron-profile-status",
-						launchedByWrapper: true,
-						pid: process.pid,
-						port: 9,
-						userDataDir,
-						version: 1,
-					});
-					const status = await inspectElectronLaunchStatus(record);
-					assert.equal(status.cleanupState, "cleaned");
-					assert.equal(status.pidAlive, true);
-					assert.equal(status.portAlive, false);
-					assert.equal(status.userDataDirState, state);
-					assert.equal("userDataDirState" in record, false);
-					if (userDataDir === present) {
-						await rm(present, { recursive: true });
-						// The fixed present-profile case must observe removal.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal((await inspectElectronLaunchStatus(record)).userDataDirState, "absent");
-						await mkdir(present);
-						// The same case must observe recreation.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal((await inspectElectronLaunchStatus(record)).userDataDirState, "present");
-					}
-				},
-			);
-		}
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
-test("Electron status requires browser version metadata from a live HTTP endpoint", async (t) => {
-	let payload: unknown;
-	const server = createServer((request, response) => {
-		response.writeHead(200, { "content-type": "application/json", connection: "close" });
-		response.end(JSON.stringify(request.url === "/json/version" ? payload : []));
-	});
-	server.listen(0, "127.0.0.1");
-	await once(server, "listening");
-	const address = server.address();
-	assert.ok(address !== null && typeof address === "object");
-	const record: ElectronLaunchRecord = {
-		appName: "Metadata status",
-		cleanupState: "active",
-		createdAtMs: Date.now(),
-		executablePath: process.execPath,
-		launchId: "electron-metadata-status",
-		launchedByWrapper: true,
-		port: address.port,
-		userDataDir: "",
-		version: 1,
-	};
-	try {
-		for (const [name, body, portAlive] of [
-			["empty object", {}, false],
-			["unrelated JSON", { ok: true }, false],
-			["blank browser", { Browser: " " }, false],
-			["minimal browser", { Browser: "Electron/Test" }, true],
-			["lowercase browser", { browser: "Electron/Test" }, true],
-		] as const) {
-			payload = body;
-			// Each real HTTP response must finish before changing the server's metadata.
-			// oxlint-disable-next-line no-await-in-loop
-			await t.test(name, async () => {
-				const status = await inspectElectronLaunchStatus(record);
-				assert.equal(status.portAlive, portAlive);
-				assert.equal(status.version?.browser, portAlive ? "Electron/Test" : undefined);
+nodeTest(
+	"Electron profile status measures the current path without changing the launch record",
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-profile-status-"));
+		const present = join(tempDir, "present");
+		const absent = join(tempDir, "removed");
+		const dangling = join(tempDir, "dangling");
+		const parentFile = join(tempDir, "not-a-directory");
+		// Windows reports ENOENT for a file used as a parent; a NUL path instead
+		// exercises a genuine non-ENOENT native path error on that host.
+		const unknown = process.platform === "win32" ? `${parentFile}\0` : join(parentFile, "profile");
+		try {
+			await mkdir(present);
+			await mkdir(absent);
+			await rm(absent, { recursive: true });
+			await writeFile(parentFile, "file");
+			await assert.rejects(lstat(unknown), {
+				code: process.platform === "win32" ? "ERR_INVALID_ARG_VALUE" : "ENOTDIR",
 			});
+			if (process.platform !== "win32") {
+				await symlink(absent, dangling);
+				await t.test("POSIX dangling symlink fixture", async () => {
+					assert.equal((await lstat(dangling)).isSymbolicLink(), true);
+				});
+			}
+			for (const [state, userDataDir] of [
+				["present", present],
+				["absent", absent],
+				["unknown", unknown],
+				["present", dangling],
+			] as const) {
+				// Profile-state cases mutate the same directory; finish each before the next state.
+				await t.test(
+					`${state}: ${userDataDir === dangling ? "dangling symlink" : state}`,
+					{ skip: userDataDir === dangling && process.platform === "win32" },
+					async (profileTest) => {
+						const record: ElectronLaunchRecord = Object.freeze({
+							appName: "Profile status",
+							cleanupState: "cleaned",
+							createdAtMs: 1,
+							executablePath: process.execPath,
+							launchId: "electron-profile-status",
+							launchedByWrapper: true,
+							pid: process.pid,
+							port: 9,
+							userDataDir,
+							version: 1,
+						});
+						const status = await inspectElectronLaunchStatus(record);
+						assert.equal(status.cleanupState, "cleaned");
+						assert.equal(status.pidAlive, true);
+						assert.equal(status.portAlive, false);
+						assert.equal(status.userDataDirState, state);
+						assert.equal("userDataDirState" in record, false);
+						if (userDataDir === present) {
+							await profileTest.test("observes profile removal and recreation", async () => {
+								await rm(present, { recursive: true });
+								assert.equal(
+									(await inspectElectronLaunchStatus(record)).userDataDirState,
+									"absent",
+								);
+								await mkdir(present);
+								assert.equal(
+									(await inspectElectronLaunchStatus(record)).userDataDirState,
+									"present",
+								);
+							});
+						}
+					},
+				);
+			}
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
 		}
-	} finally {
-		await new Promise<void>((resolve) => {
-			server.close(() => resolve());
-		});
-	}
-});
+	},
+);
 
-test("restored Electron cleanup round-trips a matching start identity and removes a spaces-and-Unicode profile", async () => {
-	const userDataDir = await createSecureTempDirectory("electron-profile-space é-");
-	const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-	const refusalChild = spawn(
-		process.execPath,
-		["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${userDataDir}`],
-		{ stdio: "ignore" },
-	);
-	try {
-		await Promise.all([once(child, "spawn"), once(refusalChild, "spawn")]);
-		assert.ok(child.pid !== undefined && child.pid > 0);
-		assert.ok(refusalChild.pid !== undefined && refusalChild.pid > 0);
-		const startIdentity = await readProcessStartIdentity(child.pid);
-		assert.ok(startIdentity !== undefined && startIdentity.length > 0);
+nodeTest(
+	"Electron status requires browser version metadata from a live HTTP endpoint",
+	async (t) => {
+		let payload: unknown;
+		const server = createServer((request, response) => {
+			response.writeHead(200, { "content-type": "application/json", connection: "close" });
+			response.end(JSON.stringify(request.url === "/json/version" ? payload : []));
+		});
+		server.listen(0, "127.0.0.1");
+		await once(server, "listening");
+		const address = server.address();
+		assert.ok(address !== null && typeof address === "object");
 		const record: ElectronLaunchRecord = {
-			appName: "Start identity ownership",
+			appName: "Metadata status",
 			cleanupState: "active",
 			createdAtMs: Date.now(),
 			executablePath: process.execPath,
-			launchId: "electron-matching-start-identity",
+			launchId: "electron-metadata-status",
 			launchedByWrapper: true,
-			pid: child.pid,
-			port: 9,
-			userDataDir,
+			port: address.port,
+			userDataDir: "",
 			version: 1,
-			startIdentity,
 		};
-		const assertRefusedIdentity = async (recordedIdentity: string | undefined) => {
-			const refused = await cleanupElectronLaunchResources({
-				record: { ...record, pid: refusalChild.pid, startIdentity: recordedIdentity },
+		try {
+			for (const [name, body, portAlive] of [
+				["empty object", {}, false],
+				["unrelated JSON", { ok: true }, false],
+				["blank browser", { Browser: " " }, false],
+				["minimal browser", { Browser: "Electron/Test" }, true],
+				["lowercase browser", { browser: "Electron/Test" }, true],
+			] as const) {
+				payload = body;
+				// Each real HTTP response must finish before changing the server's metadata.
+				await t.test(name, async () => {
+					const status = await inspectElectronLaunchStatus(record);
+					assert.equal(status.portAlive, portAlive);
+					assert.equal(status.version?.browser, portAlive ? "Electron/Test" : undefined);
+				});
+			}
+		} finally {
+			await new Promise<void>((resolve) => {
+				server.close(() => resolve());
 			});
-			assert.equal(isTestPidAlive(refusalChild.pid), true, "unverified PID must not be signaled");
-			assert.equal(refused.partial, true);
-			assert.equal(refused.steps.find((step) => step.resource === "process")?.state, "failed");
-			assert.match(
-				refused.steps.find((step) => step.resource === "process")?.error ?? "",
-				/start identity.*refusing to signal a restored PID/i,
-			);
-			assert.equal(
-				refused.steps.find((step) => step.resource === "user-data-dir")?.state,
-				"skipped",
-			);
-			await stat(userDataDir);
-		};
-		await assertRefusedIdentity(undefined);
-		await assertRefusedIdentity(`${startIdentity}-stale`);
-		// An identity without its versioned native format cannot prove the same process.
-		await assertRefusedIdentity(startIdentity.replace(/^[a-z0-9-]+-v1:/, ""));
-		const harness = createExtensionHarness({
-			cwd: userDataDir,
-			branch: [
-				createToolBranchEntry({ details: { electron: { launch: record } }, isError: false }),
-			],
-		});
-		await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
-		const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
-			electron: { action: "cleanup", launchId: record.launchId },
-		});
-		assert.equal(cleaned.isError, false, JSON.stringify(cleaned));
-		const cleanup = readRecord(readRecord(cleaned.details?.electron).cleanup);
-		const restoredRecord = readRecord(readArray(cleanup.records)[0]);
-		assert.equal(restoredRecord.startIdentity, startIdentity);
-		assert.equal(restoredRecord.cleanupState, "cleaned");
-		assert.equal(await waitForTestPidExit(child.pid), true);
-		await assert.rejects(stat(userDataDir), { code: "ENOENT" });
-	} finally {
-		await Promise.all([stopChildProcess(child), stopChildProcess(refusalChild)]);
-		await rm(userDataDir, { force: true, recursive: true });
-	}
-});
+		}
+	},
+);
 
-test("Electron transcript restore rejects a malformed start identity", async () => {
+nodeTest(
+	"restored Electron cleanup round-trips a matching start identity and removes a spaces-and-Unicode profile",
+	async () => {
+		const userDataDir = await createSecureTempDirectory("electron-profile-space é-");
+		const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+			stdio: "ignore",
+		});
+		const refusalChild = spawn(
+			process.execPath,
+			["-e", "setInterval(() => {}, 1000)", "--", `--user-data-dir=${userDataDir}`],
+			{ stdio: "ignore" },
+		);
+		try {
+			await Promise.all([once(child, "spawn"), once(refusalChild, "spawn")]);
+			assert.ok(child.pid !== undefined && child.pid > 0);
+			assert.ok(refusalChild.pid !== undefined && refusalChild.pid > 0);
+			const startIdentity = await readProcessStartIdentity(child.pid);
+			assert.ok(startIdentity !== undefined && startIdentity.length > 0);
+			const record: ElectronLaunchRecord = {
+				appName: "Start identity ownership",
+				cleanupState: "active",
+				createdAtMs: Date.now(),
+				executablePath: process.execPath,
+				launchId: "electron-matching-start-identity",
+				launchedByWrapper: true,
+				pid: child.pid,
+				port: 9,
+				userDataDir,
+				version: 1,
+				startIdentity,
+			};
+			const assertRefusedIdentity = async (recordedIdentity?: string) => {
+				const refused = await cleanupElectronLaunchResources({
+					record: { ...record, pid: refusalChild.pid, startIdentity: recordedIdentity },
+				});
+				assert.equal(isTestPidAlive(refusalChild.pid), true, "unverified PID must not be signaled");
+				assert.equal(refused.partial, true);
+				assert.equal(refused.steps.find((step) => step.resource === "process")?.state, "failed");
+				assert.match(
+					refused.steps.find((step) => step.resource === "process")?.error ?? "",
+					/start identity.*refusing to signal a restored PID/i,
+				);
+				assert.equal(
+					refused.steps.find((step) => step.resource === "user-data-dir")?.state,
+					"skipped",
+				);
+				await stat(userDataDir);
+			};
+			await assertRefusedIdentity();
+			await assertRefusedIdentity(`${startIdentity}-stale`);
+			// An identity without its versioned native format cannot prove the same process.
+			await assertRefusedIdentity(startIdentity.replace(/^[a-z0-9-]+-v1:/, ""));
+			const harness = createExtensionHarness({
+				cwd: userDataDir,
+				branch: [
+					createToolBranchEntry({ details: { electron: { launch: record } }, isError: false }),
+				],
+			});
+			await runExtensionEvent(harness.handlers, "session_start", { reason: "resume" }, harness.ctx);
+			const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
+				electron: { action: "cleanup", launchId: record.launchId },
+			});
+			assert.equal(cleaned.isError, false, JSON.stringify(cleaned));
+			const cleanup = readRecord(readRecord(cleaned.details?.electron).cleanup);
+			const restoredRecord = readRecord(readArray(cleanup.records)[0]);
+			assert.equal(restoredRecord.startIdentity, startIdentity);
+			assert.equal(restoredRecord.cleanupState, "cleaned");
+			assert.equal(await waitForTestPidExit(child.pid), true);
+			await assert.rejects(stat(userDataDir), { code: "ENOENT" });
+		} finally {
+			await Promise.all([stopChildProcess(child), stopChildProcess(refusalChild)]);
+			await rm(userDataDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest("Electron transcript restore rejects a malformed start identity", async () => {
 	const record = {
 		appName: "Malformed identity",
 		cleanupState: "active",
@@ -1834,7 +1819,7 @@ test("Electron transcript restore rejects a malformed start identity", async () 
 	);
 });
 
-test(
+nodeTest(
 	"agentBrowserExtension restores Electron launch records and cleans them on shutdown",
 	{ concurrency: false },
 	async () => {

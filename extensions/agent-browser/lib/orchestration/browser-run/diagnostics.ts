@@ -37,11 +37,11 @@ export { sleepMs };
 
 interface NavigationObservationOptions {
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly priorTarget?: SessionTabTarget;
+	readonly namespace?: string | undefined;
+	readonly priorTarget?: SessionTabTarget | undefined;
 	readonly reusePriorTitle?: boolean;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }
 
 function comparePriorNavigationUrl(priorUrl: string | undefined, url: string): boolean | undefined {
@@ -213,9 +213,9 @@ function isPlainEmptyObject(value: unknown): boolean {
 }
 
 export function getEvalStdinHint(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly data: unknown;
-	readonly stdin?: string;
+	readonly stdin?: string | undefined;
 }): EvalStdinHint | undefined {
 	if (
 		options.command !== "eval" ||
@@ -243,11 +243,11 @@ export function formatEvalStdinHintText(
 }
 
 interface EvalResultWarningInput {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly data: unknown;
-	readonly navigationSummary?: { readonly url?: string };
-	readonly pageUrl?: string;
-	readonly stdin?: string;
+	readonly navigationSummary?: { readonly url?: string | undefined } | undefined;
+	readonly pageUrl?: string | undefined;
+	readonly stdin?: string | undefined;
 }
 
 function localEvalPageUrl(
@@ -307,7 +307,6 @@ async function collectExistingExplicitArtifactPaths(
 			entry.absolutePath ?? (isAbsolute(entry.path) ? entry.path : resolve(cwd, entry.path));
 		try {
 			// The first ten existing distinct display paths are selected in manifest order.
-			// oxlint-disable-next-line no-await-in-loop
 			await stat(absolutePath);
 		} catch {
 			continue;
@@ -319,9 +318,9 @@ async function collectExistingExplicitArtifactPaths(
 }
 
 export async function getArtifactCleanupGuidance(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly cwd: string;
-	readonly manifest?: SessionArtifactManifest;
+	readonly manifest?: SessionArtifactManifest | undefined;
 	readonly succeeded: boolean;
 }): Promise<ArtifactCleanupGuidance | undefined> {
 	if (!options.succeeded || !isCloseCommand(options.command) || !options.manifest) {
@@ -374,11 +373,11 @@ export {
 
 export async function collectVisibleRefFallbackDiagnostic(options: {
 	readonly commandTokens: readonly string[];
-	readonly compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
+	readonly compiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<VisibleRefFallbackDiagnostic | undefined> {
 	if (options.sessionName === undefined || options.sessionName === "") {
 		return undefined;

@@ -8,22 +8,22 @@ import type {
 import { isPendingRecordingArtifact } from "./artifact-manifest.js";
 
 interface SuccessCategoryOptions {
-	readonly artifacts?: readonly FileArtifactMetadata[];
+	readonly artifacts?: readonly FileArtifactMetadata[] | undefined;
 	readonly inspection?: boolean;
-	readonly savedFile?: SavedFilePresentationDetails;
+	readonly savedFile?: SavedFilePresentationDetails | undefined;
 }
 
 interface FailureCategoryOptions {
-	readonly args?: readonly string[];
-	readonly command?: string;
+	readonly args?: readonly string[] | undefined;
+	readonly command?: string | undefined;
 	readonly confirmationRequired?: boolean;
-	readonly errorText?: string;
-	readonly parseError?: string;
-	readonly spawnError?: string;
+	readonly errorText?: string | undefined;
+	readonly parseError?: string | undefined;
+	readonly spawnError?: string | undefined;
 	readonly stderr?: string;
 	readonly tabDrift?: boolean;
 	readonly timedOut?: boolean;
-	readonly validationError?: string;
+	readonly validationError?: string | undefined;
 }
 
 interface FailureContext {
@@ -255,7 +255,7 @@ export function classifyAgentBrowserFailureCategory(
 export function buildAgentBrowserResultCategoryDetails(
 	options: SuccessCategoryOptions &
 		FailureCategoryOptions & {
-			readonly failureCategory?: AgentBrowserFailureCategory;
+			readonly failureCategory?: AgentBrowserFailureCategory | undefined;
 			readonly succeeded: boolean;
 		},
 ): AgentBrowserResultCategoryDetails {

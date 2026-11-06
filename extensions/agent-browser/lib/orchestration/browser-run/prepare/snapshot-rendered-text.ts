@@ -152,7 +152,10 @@ export function attachRenderedTextMatchRefs(
 					value.role.toLowerCase() === match.role.toLowerCase())
 			);
 		});
-		return candidates.length === 1 ? { ...match, ref: candidates[0][0] } : match;
+		const [candidate, second] = candidates;
+		return candidate !== undefined && second === undefined
+			? { ...match, ref: candidate[0] }
+			: match;
 	});
 }
 

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { readFile } from "node:fs/promises";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 
 import { DIRECT_IMPORT_BUDGET_MS, measureColdStartup } from "../scripts/startup-measurement.mjs";
 
@@ -24,7 +24,7 @@ async function getPackageExtensionEntrypoint(): Promise<string> {
 	return readString(entrypoint);
 }
 
-test("agent_browser cold startup stays below the issue #84 regression budget", async (t) => {
+nodeTest("agent_browser cold startup stays below the issue #84 regression budget", async (t) => {
 	const entrypoint = await getPackageExtensionEntrypoint();
 	assert.equal(entrypoint, "./dist/extensions/agent-browser/index.js");
 	// Measure one cold Pi extension load at a time on every platform. Parallel
@@ -44,17 +44,17 @@ test("agent_browser cold startup stays below the issue #84 regression budget", a
 		"all three cold samples must use distinct fresh children",
 	);
 
-	for (const measurement of measurements) {
-		// Every fresh sample must register handlers; the sample count is asserted separately.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(measurement.events > 0, "extension factory should register lifecycle handlers");
-		// Every fresh sample must register the native tool, not only the fastest sample.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(
-			measurement.tools.includes("agent_browser"),
-			"extension factory should register the native browser tool",
-		);
-	}
+	assert.deepEqual(
+		measurements.map((measurement) => ({
+			handlersRegistered: measurement.events > 0,
+			browserRegistered: measurement.tools.includes("agent_browser"),
+		})),
+		[
+			{ handlersRegistered: true, browserRegistered: true },
+			{ handlersRegistered: true, browserRegistered: true },
+			{ handlersRegistered: true, browserRegistered: true },
+		],
+	);
 	assert.ok(
 		maxTotal < STARTUP_BUDGET_MS,
 		`cold startup exceeded ${STARTUP_BUDGET_MS}ms: ${totals.map((value) => value.toFixed(1)).join(", ")}`,

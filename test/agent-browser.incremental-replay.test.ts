@@ -4,12 +4,12 @@ import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { readBrowserEntries } from "../extensions/agent-browser/lib/browser-journal.js";
 import { BROWSER_TRANSITION_ENTRY } from "../extensions/agent-browser/lib/browser-transcript.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
-import { readRecord } from "./helpers/assertions.js";
+import { readRecord, readDefined } from "./helpers/assertions.js";
 
 function capture(id: string, ref: string) {
 	return {
@@ -76,42 +76,48 @@ function page(entries: readonly unknown[]) {
 	return SessionPageState.fromBranch(entries).get("fixture");
 }
 
-test("native append and tree replay read only new metadata bytes, without caching ref bodies", async (t) => {
-	const { manager, first } = await fixture(t);
-	const reads = observeReads(t);
-	const cold = await readBrowserEntries(manager);
-	assert.deepEqual(page(cold).refSnapshot?.refIds, ["e1"]);
-	const coldBytes = reads();
-	assert.ok(coldBytes > 2 * 1024 * 1024, "cold replay validates the published file");
-	const warm = await readBrowserEntries(manager);
-	assert.deepEqual(page(warm).refSnapshot?.refIds, ["e1"]);
-	const warmBytes = reads();
-	assert.ok(
-		warmBytes < 32 * 1024,
-		"unchanged replay must not reread discarded native message bodies",
-	);
-	const definition = readRecord(readRecord(warm[0]).data).snapshot;
-	readRecord(readRecord(definition).refs).e1 = { role: "button", name: "caller mutation" };
-	assert.equal(page(await readBrowserEntries(manager)).refSnapshot?.refs?.e1.name, "first");
-	reads();
-	manager.appendCustomEntry(BROWSER_TRANSITION_ENTRY, capture("second", "e2"));
-	assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e2"]);
-	const appendBytes = reads();
-	assert.ok(appendBytes < 32 * 1024, "ordinary native append scans only its suffix");
-	manager.branch(first);
-	assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
-	const treeBytes = reads();
-	assert.ok(
-		treeBytes < 32 * 1024,
-		"tree selection reuses metadata, never the last selected ref map",
-	);
-	t.diagnostic(JSON.stringify({ coldBytes, warmBytes, appendBytes, treeBytes }));
-	assert.equal(
-		(await readBrowserEntries(manager, true)).length,
-		2,
-		"physical replay includes both captures",
-	);
-});
+nodeTest(
+	"native append and tree replay read only new metadata bytes, without caching ref bodies",
+	async (t) => {
+		const { manager, first } = await fixture(t);
+		const reads = observeReads(t);
+		const cold = await readBrowserEntries(manager);
+		assert.deepEqual(page(cold).refSnapshot?.refIds, ["e1"]);
+		const coldBytes = reads();
+		assert.ok(coldBytes > 2 * 1024 * 1024, "cold replay validates the published file");
+		const warm = await readBrowserEntries(manager);
+		assert.deepEqual(page(warm).refSnapshot?.refIds, ["e1"]);
+		const warmBytes = reads();
+		assert.ok(
+			warmBytes < 32 * 1024,
+			"unchanged replay must not reread discarded native message bodies",
+		);
+		const definition = readRecord(readRecord(warm[0]).data).snapshot;
+		readRecord(readRecord(definition).refs).e1 = { role: "button", name: "caller mutation" };
+		assert.equal(
+			readDefined(page(await readBrowserEntries(manager)).refSnapshot?.refs?.e1).name,
+			"first",
+		);
+		reads();
+		manager.appendCustomEntry(BROWSER_TRANSITION_ENTRY, capture("second", "e2"));
+		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e2"]);
+		const appendBytes = reads();
+		assert.ok(appendBytes < 32 * 1024, "ordinary native append scans only its suffix");
+		manager.branch(first);
+		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+		const treeBytes = reads();
+		assert.ok(
+			treeBytes < 32 * 1024,
+			"tree selection reuses metadata, never the last selected ref map",
+		);
+		t.diagnostic(JSON.stringify({ coldBytes, warmBytes, appendBytes, treeBytes }));
+		assert.equal(
+			(await readBrowserEntries(manager, true)).length,
+			2,
+			"physical replay includes both captures",
+		);
+	},
+);
 
 for (const change of [
 	"rotation",
@@ -120,7 +126,7 @@ for (const change of [
 	"native reseed",
 	"locator",
 ] as const) {
-	test(`replay invalidates its structural prefix after ${change}`, async (t) => {
+	nodeTest(`replay invalidates its structural prefix after ${change}`, async (t) => {
 		const { manager, first, root } = await fixture(t);
 		const file = manager.getSessionFile();
 		assert.ok(file !== undefined);
@@ -161,14 +167,17 @@ for (const change of [
 		}
 		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e9"]);
 		if (change !== "truncation") {
-			// Each non-truncating variant retains the large user record and must revalidate it.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(reads() > 2 * 1024 * 1024, "changed source must fall back to complete validation");
+			await t.test("revalidates the retained large user record", () => {
+				assert.ok(
+					reads() > 2 * 1024 * 1024,
+					"changed source must fall back to complete validation",
+				);
+			});
 		}
 	});
 }
 
-test("a torn native append is never published from a partial record", async (t) => {
+nodeTest("a torn native append is never published from a partial record", async (t) => {
 	const { manager, first } = await fixture(t);
 	const file = manager.getSessionFile();
 	assert.ok(file !== undefined);
@@ -192,13 +201,11 @@ test("a torn native append is never published from a partial record", async (t) 
 	append.mock.restore();
 	syncBuiltinESMExports();
 	if (manager.getLeafId() === first) {
-		// Official Pi discards an entry whose append throws, so the committed leaf stays selected.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
-		await fs.appendFile(file, remainder);
-		// The discarded entry's completed record is off the selected branch and stays unpublished.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+		await t.test("rolled-back native append stays off the selected branch", async () => {
+			assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+			await fs.appendFile(file, remainder);
+			assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+		});
 		return;
 	}
 	// The maintained fork keeps the accepted entry selected and writes it with the next append,
@@ -208,21 +215,24 @@ test("a torn native append is never published from a partial record", async (t) 
 	assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e3"]);
 });
 
-test("an incomplete unrelated tail stays uncommitted, but a completed malformed suffix still fails", async (t) => {
-	const { manager } = await fixture(t);
-	const file = manager.getSessionFile();
-	assert.ok(file !== undefined);
-	const original = await fs.readFile(file);
-	await readBrowserEntries(manager);
-	await fs.appendFile(file, '{"broken":');
-	assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
-	await fs.appendFile(file, "bad}\n");
-	await assert.rejects(readBrowserEntries(manager), /Parser/);
-	await fs.writeFile(file, original);
-	assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
-});
+nodeTest(
+	"an incomplete unrelated tail stays uncommitted, but a completed malformed suffix still fails",
+	async (t) => {
+		const { manager } = await fixture(t);
+		const file = manager.getSessionFile();
+		assert.ok(file !== undefined);
+		const original = await fs.readFile(file);
+		await readBrowserEntries(manager);
+		await fs.appendFile(file, '{"broken":');
+		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+		await fs.appendFile(file, "bad}\n");
+		await assert.rejects(readBrowserEntries(manager), /Parser/);
+		await fs.writeFile(file, original);
+		assert.deepEqual(page(await readBrowserEntries(manager)).refSnapshot?.refIds, ["e1"]);
+	},
+);
 
-test(
+nodeTest(
 	"a genuine journal open error propagates and discards the previous index",
 	{ skip: process.platform === "win32" || process.getuid?.() === 0 },
 	async (t) => {

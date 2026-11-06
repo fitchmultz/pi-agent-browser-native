@@ -7,23 +7,22 @@ import { isRecord } from "./parsing.js";
 import { isPlainTextInspectionArgs } from "./runtime-args-validation.js";
 import { getRestorableManagedSessionName } from "./runtime-session-identity.js";
 
-export interface ReplayIdentity {
-	readonly namespace?: string;
-	readonly sessionName: string;
-}
+import type { AgentBrowserSessionIdentity } from "./session-identity.js";
+
+export type ReplayIdentity = AgentBrowserSessionIdentity;
 
 export interface ManagedReplayEvent {
 	readonly cleanupSessions: readonly ReplayIdentity[];
-	readonly namespace?: string;
-	readonly detailSessionName?: string;
+	readonly namespace?: string | undefined;
+	readonly detailSessionName?: string | undefined;
 	readonly restoreDisabled: boolean;
-	readonly restorableDetailSessionName?: string;
+	readonly restorableDetailSessionName?: string | undefined;
 	readonly closeAllApplied: boolean;
 	readonly nestedBatchRemainsActive: boolean;
-	readonly managedSessionName?: string;
+	readonly managedSessionName?: string | undefined;
 	readonly closesSession: boolean;
 	readonly closeSucceeded: boolean;
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly succeeded: boolean;
 }
 
@@ -101,9 +100,9 @@ function outcomeClosedSession(
 }
 
 function selectManagedReplaySession(options: {
-	readonly closedSessionName?: string;
-	readonly explicitSessionName?: string;
-	readonly restorableDetailSessionName?: string;
+	readonly closedSessionName?: string | undefined;
+	readonly explicitSessionName?: string | undefined;
+	readonly restorableDetailSessionName?: string | undefined;
 	readonly usedImplicitSession: boolean;
 	readonly freshSession: boolean;
 	readonly closesSession: boolean;
@@ -124,8 +123,8 @@ function selectManagedReplaySession(options: {
 }
 
 function replaySucceeded(options: {
-	readonly outcome?: Readonly<Record<string, unknown>>;
-	readonly managedSessionName?: string;
+	readonly outcome?: Readonly<Record<string, unknown>> | undefined;
+	readonly managedSessionName?: string | undefined;
 	readonly nestedBatchRemainsActive: boolean;
 	readonly messageIsError: unknown;
 	readonly exitCode: unknown;

@@ -36,15 +36,15 @@ function presentProbe(probe: ElectronProbeResult): ElectronProbeResult {
 
 interface ProbePresentation {
 	readonly compiledElectron: CompiledAgentBrowserElectron;
-	readonly headedManagedAutosaveDisabled?: boolean;
-	readonly headedManagedAutosaveInterval?: string;
-	readonly mismatch?: ElectronSessionMismatch;
-	readonly namespace?: string;
+	readonly headedManagedAutosaveDisabled?: boolean | undefined;
+	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly mismatch?: ElectronSessionMismatch | undefined;
+	readonly namespace?: string | undefined;
 	readonly probe: ElectronProbeResult;
 	readonly probeContext: ElectronProbeContext;
-	readonly record?: ElectronLaunchRecord;
-	readonly sessionTabTarget?: SessionTabTarget;
-	readonly status?: ElectronLaunchStatus;
+	readonly record?: ElectronLaunchRecord | undefined;
+	readonly sessionTabTarget?: SessionTabTarget | undefined;
+	readonly status?: ElectronLaunchStatus | undefined;
 }
 function presentStrings(values: readonly (string | undefined)[]): string[] {
 	return values.filter((value): value is string => value !== undefined && value.length > 0);

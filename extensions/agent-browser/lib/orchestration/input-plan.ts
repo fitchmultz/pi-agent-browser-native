@@ -38,7 +38,7 @@ type InputFields = Readonly<Record<string, unknown>>;
 function normalizeExplicitEvalStdinArgs(
 	args: readonly string[],
 	stdin: string | undefined,
-): { args: readonly string[]; stdin?: string } {
+): { args: readonly string[]; stdin?: string | undefined } {
 	if (stdin !== undefined) {
 		return { args, stdin };
 	}
@@ -320,14 +320,20 @@ class BrowserInputCompiler {
 		return undefined;
 	}
 
-	private explicitInput(): { readonly args: readonly string[]; readonly stdin?: string } {
+	private explicitInput(): {
+		readonly args: readonly string[];
+		readonly stdin?: string | undefined;
+	} {
 		return normalizeExplicitEvalStdinArgs(
 			isStringArray(this.params.args) ? this.params.args : [],
 			typeof this.params.stdin === "string" ? this.params.stdin : undefined,
 		);
 	}
 
-	private executionInput(): { readonly args: readonly string[]; readonly stdin?: string } {
+	private executionInput(): {
+		readonly args: readonly string[];
+		readonly stdin?: string | undefined;
+	} {
 		const explicit = this.explicitInput();
 		return {
 			args:

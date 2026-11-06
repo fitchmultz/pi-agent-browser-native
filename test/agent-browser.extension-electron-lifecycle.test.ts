@@ -13,9 +13,15 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { pathToFileURL } from "node:url";
-import { readRecord, readArray, readString, readNumber } from "./helpers/assertions.js";
+import {
+	readRecord,
+	readArray,
+	readString,
+	readNumber,
+	readDefined,
+} from "./helpers/assertions.js";
 
 import { compileAgentBrowserElectron } from "../extensions/agent-browser/lib/input-modes/electron.js";
 
@@ -48,10 +54,10 @@ import {
 	writeFakeMacElectronApp,
 } from "./helpers/extension-validation-fixtures.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension accepts action-specific electron schema and routes list without upstream spawn",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-schema-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -99,74 +105,54 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				assert.equal(readRecord(readRecord(listResult.details).electron).status, "succeeded");
 				assert.equal(readRecord(listResult.details).resultCategory, "success");
 				if (process.platform === "darwin" || process.platform === "linux") {
-					const sensitiveListResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						electron: { action: "list", maxResults: 5, query: "Obsidian" },
+					await t.test("discovery reports sensitive apps and profile isolation", async () => {
+						const sensitiveListResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+							electron: { action: "list", maxResults: 5, query: "Obsidian" },
+						});
+						assert.equal(sensitiveListResult.isError, false);
+						assert.match(
+							readString(readRecord(sensitiveListResult.content[0]).text),
+							/Obsidian.*\[likely sensitive: notes\]/,
+						);
+						assert.match(
+							readString(readRecord(sensitiveListResult.content[0]).text),
+							/Review likely-sensitive apps and use caller-owned allow\/deny policy before launch\./,
+						);
+						assert.match(
+							readString(readRecord(sensitiveListResult.content[0]).text),
+							/Profile note: electron\.launch starts an isolated temporary profile/,
+						);
+						assert.match(
+							readString(readRecord(sensitiveListResult.content[0]).text),
+							/For already-authenticated desktop app content, do not stop here/,
+						);
+						assert.match(
+							readString(readRecord(sensitiveListResult.content[0]).text),
+							/launch the normal app with --remote-debugging-port=<port>/,
+						);
+						const electronDetails = readRecord(readRecord(sensitiveListResult.details).electron);
+						assert.ok(readNumber(electronDetails.sensitiveAppCount ?? 0) >= 1);
+						assert.equal(
+							readRecord(electronDetails.profileIsolation).reusesExistingSignedInProfile,
+							false,
+						);
+						assert.equal(
+							readRecord(electronDetails.profileIsolation).attachesToAlreadyRunningApp,
+							false,
+						);
+						assert.match(
+							readString(readRecord(electronDetails.profileIsolation).hostDebugLaunchExample ?? ""),
+							/open -a <App Name> --args --remote-debugging-port=9222/,
+						);
+						assert.ok(
+							readArray(electronDetails.apps).some(
+								(app) =>
+									readRecord(app).name === "Obsidian" &&
+									readRecord(readRecord(app).sensitivity).level === "likely-sensitive" &&
+									readArray(readRecord(readRecord(app).sensitivity).categories).includes("notes"),
+							),
+						);
 					});
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(sensitiveListResult.isError, false);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(sensitiveListResult.content[0]).text),
-						/Obsidian.*\[likely sensitive: notes\]/,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(sensitiveListResult.content[0]).text),
-						/Review likely-sensitive apps and use caller-owned allow\/deny policy before launch\./,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(sensitiveListResult.content[0]).text),
-						/Profile note: electron\.launch starts an isolated temporary profile/,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(sensitiveListResult.content[0]).text),
-						/For already-authenticated desktop app content, do not stop here/,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(sensitiveListResult.content[0]).text),
-						/launch the normal app with --remote-debugging-port=<port>/,
-					);
-					const electronDetails = readRecord(readRecord(sensitiveListResult.details).electron);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(readNumber(electronDetails.sensitiveAppCount ?? 0) >= 1);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						readRecord(electronDetails.profileIsolation).reusesExistingSignedInProfile,
-						false,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						readRecord(electronDetails.profileIsolation).attachesToAlreadyRunningApp,
-						false,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(electronDetails.profileIsolation).hostDebugLaunchExample ?? ""),
-						/open -a <App Name> --args --remote-debugging-port=9222/,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(
-						readArray(electronDetails.apps).some(
-							(app) =>
-								readRecord(app).name === "Obsidian" &&
-								readRecord(readRecord(app).sensitivity).level === "likely-sensitive" &&
-								readArray(readRecord(readRecord(app).sensitivity).categories).includes("notes"),
-						),
-					);
 				}
 				assert.deepEqual(await readInvocationLog(logPath), []);
 
@@ -199,23 +185,17 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				);
 
 				for (const action of ["status", "cleanup"] as const) {
-					// Complete each replay/status subtest before changing the shared live Electron launch state.
-					// oxlint-disable-next-line no-await-in-loop
-					const allFalse = await executeRegisteredTool(harness.tool, harness.ctx, {
-						electron: { action, all: false },
+					await t.test(`${action} rejects all: false`, async () => {
+						const allFalse = await executeRegisteredTool(harness.tool, harness.ctx, {
+							electron: { action, all: false },
+						});
+						assert.equal(allFalse.isError, true, action);
+						assert.match(
+							readString(readRecord(allFalse.content[0]).text),
+							/electron\.all must be true when provided/,
+						);
+						assert.equal(readRecord(allFalse.details).failureCategory, "validation-error");
 					});
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(allFalse.isError, true, action);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(allFalse.content[0]).text),
-						/electron\.all must be true when provided/,
-					);
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readRecord(allFalse.details).failureCategory, "validation-error");
 				}
 
 				const probeWithListField = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -301,52 +281,55 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	},
 );
 
-test("Electron list timeout guidance never recommends an unsupported nested timeout", async () => {
-	for (const action of ["launch", "status", "cleanup", "probe"] as const) {
-		const result = compileAgentBrowserElectron({
-			action,
-			timeoutMs: 1_000,
-			...(action === "launch" ? { appName: "Demo" } : {}),
+nodeTest(
+	"Electron list timeout guidance never recommends an unsupported nested timeout",
+	async () => {
+		const actions = ["launch", "status", "cleanup", "probe"] as const;
+		assert.deepEqual(
+			actions.map((action) => {
+				const result = compileAgentBrowserElectron({
+					action,
+					timeoutMs: 1_000,
+					...(action === "launch" ? { appName: "Demo" } : {}),
+				});
+				return {
+					action: result.compiled?.action,
+					error: result.error,
+					timeoutMs: result.compiled?.action === "list" ? undefined : result.compiled?.timeoutMs,
+				};
+			}),
+			actions.map((action) => ({ action, error: undefined, timeoutMs: 1_000 })),
+		);
+		const harness = createExtensionHarness({ cwd: process.cwd() });
+		const nested = await executeRegisteredTool(harness.tool, harness.ctx, {
+			electron: { action: "list", timeoutMs: 1_000 },
 		});
-		// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(result.error, undefined, action);
-		// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(result.compiled && result.compiled.action !== "list");
-		// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(result.compiled.timeoutMs, 1_000, action);
-	}
-	const harness = createExtensionHarness({ cwd: process.cwd() });
-	const nested = await executeRegisteredTool(harness.tool, harness.ctx, {
-		electron: { action: "list", timeoutMs: 1_000 },
-	});
-	assert.equal(readRecord(nested.details).failureCategory, "validation-error");
-	assert.match(
-		readString(readRecord(nested.content[0]).text),
-		/list only supports query and maxResults; remove electron\.timeoutMs/,
-	);
-	const top = await executeRegisteredTool(harness.tool, harness.ctx, {
-		electron: { action: "list" },
-		timeoutMs: 1_000,
-	});
-	assert.equal(top.isError, true);
-	assert.equal(readRecord(top.details).failureCategory, "validation-error");
-	assert.match(
-		readString(readRecord(top.content[0]).text),
-		/electron\.list has no configurable timeout/,
-	);
-	assert.doesNotMatch(readString(readRecord(top.content[0]).text), /Use electron\.timeoutMs/);
-	const status = await executeRegisteredTool(harness.tool, harness.ctx, {
-		electron: { action: "status" },
-		timeoutMs: 1_000,
-	});
-	assert.equal(status.isError, true);
-	assert.match(readString(readRecord(status.content[0]).text), /Use electron\.timeoutMs/);
-});
+		assert.equal(readRecord(nested.details).failureCategory, "validation-error");
+		assert.match(
+			readString(readRecord(nested.content[0]).text),
+			/list only supports query and maxResults; remove electron\.timeoutMs/,
+		);
+		const top = await executeRegisteredTool(harness.tool, harness.ctx, {
+			electron: { action: "list" },
+			timeoutMs: 1_000,
+		});
+		assert.equal(top.isError, true);
+		assert.equal(readRecord(top.details).failureCategory, "validation-error");
+		assert.match(
+			readString(readRecord(top.content[0]).text),
+			/electron\.list has no configurable timeout/,
+		);
+		assert.doesNotMatch(readString(readRecord(top.content[0]).text), /Use electron\.timeoutMs/);
+		const status = await executeRegisteredTool(harness.tool, harness.ctx, {
+			electron: { action: "status" },
+			timeoutMs: 1_000,
+		});
+		assert.equal(status.isError, true);
+		assert.match(readString(readRecord(status.content[0]).text), /Use electron\.timeoutMs/);
+	},
+);
 
-test(
+nodeTest(
 	"Electron status separates cleanup history from live resources and preserves replay selection",
 	{ concurrency: false },
 	async (t) => {
@@ -379,83 +362,90 @@ test(
 					const launch = readRecord(readRecord(launched.details).electron).launch;
 					for (const cleanupState of ["active", "partial", "dead", "failed", "cleaned"] as const) {
 						// Complete each replay/status subtest before changing the shared live Electron launch state.
-						// oxlint-disable-next-line no-await-in-loop
-						await t.test(`${cleanupState} history with a currently live PID and port`, async () => {
-							// Replay old cleanup history while the fixture's PID and port are independently live.
-							const record = { ...readRecord(launch), cleanupState, sessionName: undefined };
-							const replay = createExtensionHarness({
-								cwd: tempDir,
-								branch: [
-									createToolBranchEntry({ details: readRecord(launched.details) }),
-									createToolBranchEntry({
-										details: { electron: { cleanup: { records: [record] } } },
-									}),
-								],
-							});
-							await runExtensionEvent(
-								replay.handlers,
-								"session_start",
-								{ reason: "resume" },
-								replay.ctx,
-							);
-							const result = await executeRegisteredTool(replay.tool, replay.ctx, {
-								electron: { action: "status", launchId: readRecord(launch).launchId },
-							});
-							assert.equal(result.isError, false, JSON.stringify(result));
-							const details = readRecord(readRecord(result.details).electron);
-							assert.equal(readRecord(readArray(details.statuses)[0]).cleanupState, cleanupState);
-							assert.equal(readRecord(readArray(details.statuses)[0]).pidAlive, true);
-							assert.equal(readRecord(readArray(details.statuses)[0]).portAlive, true);
-							assert.match(
-								readString(readRecord(result.content[0]).text),
-								/debug port alive, pid alive/,
-							);
-							for (const all of [undefined, true]) {
-								// Complete each replay/status subtest before changing the shared live Electron launch state.
-								// oxlint-disable-next-line no-await-in-loop
-								const selected = await executeRegisteredTool(replay.tool, replay.ctx, {
-									electron: { action: "status", ...(all === true ? { all } : {}) },
+						await t.test(
+							`${cleanupState} history with a currently live PID and port`,
+							async (historyTest) => {
+								// Replay old cleanup history while the fixture's PID and port are independently live.
+								const record = { ...readRecord(launch), cleanupState, sessionName: undefined };
+								const replay = createExtensionHarness({
+									cwd: tempDir,
+									branch: [
+										createToolBranchEntry({ details: readRecord(launched.details) }),
+										createToolBranchEntry({
+											details: { electron: { cleanup: { records: [record] } } },
+										}),
+									],
 								});
-								// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(selected.isError, false, JSON.stringify(selected));
-								// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(
-									readArray(readRecord(readRecord(selected.details).electron).statuses).length,
-									cleanupState === "cleaned" ? 0 : 1,
+								await runExtensionEvent(
+									replay.handlers,
+									"session_start",
+									{ reason: "resume" },
+									replay.ctx,
 								);
-							}
-							assert.deepEqual(
-								readArray(readRecord(result.details).nextActions ?? []).map(
-									(action) => readRecord(action).id,
-								),
-								cleanupState === "cleaned"
-									? []
-									: ["status-electron-launch", "probe-electron-launch", "cleanup-electron-launch"],
-							);
-							if (cleanupState === "cleaned") {
-								// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
+								const result = await executeRegisteredTool(replay.tool, replay.ctx, {
+									electron: { action: "status", launchId: readRecord(launch).launchId },
+								});
+								assert.equal(result.isError, false, JSON.stringify(result));
+								const details = readRecord(readRecord(result.details).electron);
+								assert.equal(readRecord(readArray(details.statuses)[0]).cleanupState, cleanupState);
+								assert.equal(readRecord(readArray(details.statuses)[0]).pidAlive, true);
+								assert.equal(readRecord(readArray(details.statuses)[0]).portAlive, true);
 								assert.match(
 									readString(readRecord(result.content[0]).text),
-									/historical cleaned launch record/,
+									/debug port alive, pid alive/,
 								);
-							} else {
-								// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.doesNotMatch(
+								for (const all of [undefined, true]) {
+									await historyTest.test(
+										all === true ? "all launches" : "current launch",
+										async () => {
+											const selected = await executeRegisteredTool(replay.tool, replay.ctx, {
+												electron: { action: "status", ...(all === true ? { all } : {}) },
+											});
+											assert.equal(selected.isError, false, JSON.stringify(selected));
+											assert.equal(
+												readArray(readRecord(readRecord(selected.details).electron).statuses)
+													.length,
+												cleanupState === "cleaned" ? 0 : 1,
+											);
+										},
+									);
+								}
+								assert.deepEqual(
+									readArray(readRecord(result.details).nextActions ?? []).map(
+										(action) => readRecord(action).id,
+									),
+									cleanupState === "cleaned"
+										? []
+										: [
+												"status-electron-launch",
+												"probe-electron-launch",
+												"cleanup-electron-launch",
+											],
+								);
+								const statusText = readString(readRecord(result.content[0]).text);
+								const historyPattern =
+									cleanupState === "cleaned"
+										? /historical cleaned launch record/
+										: /historical|cleaned launch record/;
+								assert.equal(
+									historyPattern.test(statusText),
+									cleanupState === "cleaned",
+									statusText,
+								);
+								assert.equal(
+									readRecord(readArray(details.statuses)[0]).userDataDirState,
+									"present",
+								);
+								assert.match(
 									readString(readRecord(result.content[0]).text),
-									/historical|cleaned launch record/,
+									/Tracked profile path: present/,
 								);
-							}
-							assert.equal(readRecord(readArray(details.statuses)[0]).userDataDirState, "present");
-							assert.match(
-								readString(readRecord(result.content[0]).text),
-								/Tracked profile path: present/,
-							);
-							assert.equal("userDataDirState" in readRecord(readArray(details.launches)[0]), false);
-						});
+								assert.equal(
+									"userDataDirState" in readRecord(readArray(details.launches)[0]),
+									false,
+								);
+							},
+						);
 					}
 					const cleaned = await executeRegisteredTool(owner.tool, owner.ctx, {
 						electron: { action: "cleanup", launchId: readRecord(launch).launchId },
@@ -508,7 +498,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension launches Electron with isolated profile, snapshot handoff, status, and cleanup",
 	{ concurrency: false },
 	async () => {
@@ -632,9 +622,10 @@ test(
 						.split("\n")
 						.map((line) => readRecord(JSON.parse(line)));
 					assert.equal(launchLog.length, 1);
-					assert.equal(readArray(launchLog[0].args).includes("--remote-debugging-port=0"), true);
-					assert.equal(readArray(launchLog[0].args).includes("--fixture-mode"), true);
-					assert.equal(launchLog[0].userDataDir, launchRecord.userDataDir);
+					const launchedApp = readDefined(launchLog[0]);
+					assert.equal(readArray(launchedApp.args).includes("--remote-debugging-port=0"), true);
+					assert.equal(readArray(launchedApp.args).includes("--fixture-mode"), true);
+					assert.equal(launchedApp.userDataDir, launchRecord.userDataDir);
 					assert.match(readString(launchRecord.userDataDir), /electron-profile-/);
 					await stat(readString(launchRecord.userDataDir));
 
@@ -643,8 +634,8 @@ test(
 						invocationsAfterLaunch.map((entry) => entry.args.at(-2)),
 						["connect", "get", "tab", "snapshot"],
 					);
-					assert.equal(invocationsAfterLaunch[1].args.at(-1), "url");
-					assert.equal(invocationsAfterLaunch[0].args.includes("--session"), true);
+					assert.equal(readDefined(invocationsAfterLaunch[1]).args.at(-1), "url");
+					assert.equal(readDefined(invocationsAfterLaunch[0]).args.includes("--session"), true);
 
 					const snapshotResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["snapshot", "-i"],
@@ -968,7 +959,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension retains headed autosave policy for Electron cleanup close",
 	{ concurrency: false },
 	async () => {
@@ -1067,14 +1058,7 @@ test(
 						true,
 						JSON.stringify(helperInvocations),
 					);
-					if (
-						typeof readRecord(launch).userDataDir === "string" &&
-						readRecord(launch).userDataDir !== ""
-					) {
-						// The profile was validated as present before cleanup; this branch verifies removal of that same tracked path.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						await assert.rejects(stat(readString(readRecord(launch).userDataDir)));
-					}
+					await assert.rejects(stat(readString(readRecord(launch).userDataDir)));
 				},
 			);
 		} finally {
@@ -1086,7 +1070,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension applies managed restore policy to every current-session electron.probe helper",
 	{ concurrency: false },
 	async () => {
@@ -1169,7 +1153,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension allows follow-up inspection on local file pages",
 	{ concurrency: false },
 	async () => {
@@ -1221,7 +1205,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension follows a live Electron probe onto local pages",
 	{ concurrency: false },
 	async () => {
@@ -1283,7 +1267,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports Electron session mismatch and launchId-aware probe",
 	{ concurrency: false },
 	async () => {
@@ -1351,17 +1335,17 @@ test(
 				const currentUrlActionIds = new Set(
 					readArray(currentUrlDetails.nextActions).map((action) => readRecord(action).id),
 				);
-				for (const actionId of [
+				const requiredActionIds = [
 					"status-electron-launch",
 					"probe-electron-launch",
 					"reattach-electron-launch",
 					"cleanup-electron-launch",
 					"snapshot-electron-session",
-				]) {
-					// Fixed Electron platform/action/status variants require their applicable assertions; common schema/outcome checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(currentUrlActionIds.has(actionId), true, actionId);
-				}
+				];
+				assert.deepEqual(
+					requiredActionIds.filter((id) => !currentUrlActionIds.has(id)),
+					[],
+				);
 				assert.ok(
 					readArray(currentUrlDetails.nextActions).some(
 						(action) =>
@@ -1498,7 +1482,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension surfaces Electron post-command death and fill verification",
 	{ concurrency: false },
 	async () => {
@@ -1666,7 +1650,7 @@ else write({ ok: true, title: currentPage().title, url: currentPage().url });`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension applies electron.probe timeoutMs to bounded subprocess probes",
 	{ concurrency: false },
 	async (t) => {

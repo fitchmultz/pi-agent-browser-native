@@ -9,7 +9,7 @@ import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	createExtensionHarness,
@@ -20,7 +20,7 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension does not turn prompt stop-boundary text into click blocks",
 	{ concurrency: false },
 	async () => {
@@ -80,7 +80,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension blocks close until required prompt screenshot artifacts are saved",
 	{ concurrency: false },
 	async () => {
@@ -163,10 +163,10 @@ if (args.includes("screenshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension allows close for reference and negated screenshot paths",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-reference-artifact-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -186,24 +186,22 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 					"Save a screenshot to /var/folders/xx/T/pi-clipboard-input.png",
 				];
 				for (const prompt of prompts) {
-					const harness = createExtensionHarness({ cwd: tempDir, prompt });
-					// Startup establishes this prompt's artifact requirements before its close.
-					// oxlint-disable-next-line no-await-in-loop
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					// Close the current fixture session before the next prompt reuses native state.
-					// oxlint-disable-next-line no-await-in-loop
-					const close = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });
-					// Each fixed prompt fixture must allow closing its own session.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(close.isError, false, JSON.stringify(close));
-					// Every fixed prompt fixture must avoid gating session cleanup.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(close.details?.promptGuard, undefined);
+					await t.test(prompt, async () => {
+						const harness = createExtensionHarness({ cwd: tempDir, prompt });
+						// Startup establishes this prompt's artifact requirements before its close.
+						await runExtensionEvent(
+							harness.handlers,
+							"session_start",
+							{ reason: "new" },
+							harness.ctx,
+						);
+						// Close the current fixture session before the next prompt reuses native state.
+						const close = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["close"],
+						});
+						assert.equal(close.isError, false, JSON.stringify(close));
+						assert.equal(close.details?.promptGuard, undefined);
+					});
 				}
 				const invocations = await readInvocationLog(logPath);
 				assert.equal(

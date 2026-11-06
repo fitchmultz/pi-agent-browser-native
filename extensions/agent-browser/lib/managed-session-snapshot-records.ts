@@ -37,7 +37,7 @@ export function pathExistsOrIsUnreadable(path: string): boolean {
 }
 export function validateOwnedSnapshotPath(options: {
 	readonly home: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly path: string;
 	readonly restoreKey: string;
 }): string | undefined {
@@ -250,7 +250,7 @@ export function writeRecord(
 }
 interface RecordOptions {
 	readonly home: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly path: string;
 	readonly platform: NodeJS.Platform;
 	readonly restoreKey: string;
@@ -304,7 +304,7 @@ function snapshotReceipt(path: string, recordPath: string): SnapshotReceipt | un
 export function scanOwnedSnapshots(options: {
 	readonly home: string;
 	readonly manifestDirectory: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly platform: NodeJS.Platform;
 	readonly restoreKey: string;
 }): SnapshotReceipt[] {

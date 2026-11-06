@@ -13,16 +13,32 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { loadRecordingModules } from "../test/helpers/native-probe-modules.mjs";
+import { readBrowserToolResult, readToolArguments } from "../test/helpers/tool-result.mjs";
+import {
+	readDefined,
+	readRecord,
+	readArray,
+	readString,
+	readNumber,
+	hasErrorCode,
+} from "../test/helpers/assertions.ts";
+import { record, parseJsonl } from "./lifecycle-transcript.mjs";
+/** @import {SessionManager as NativeSessionManager} from "@earendil-works/pi-coding-agent" */
+/** @import {BrowserToolResult} from "../test/helpers/tool-result.mjs" */
+/** @typedef {Awaited<ReturnType<typeof create>>} RecordingRun */
+/** @typedef {readonly ["--namespace", string, "--session", string]} RecordingIdentity */
+/** @typedef {{a: RecordingRun, closed: BrowserToolResult, identity: RecordingIdentity, requestedPrompt: string | undefined, video: string}} RequestedRecordingCase */
 
-const mode = process.argv[2];
-const output = process.env.PROBE_OUTPUT_DIR;
+const mode = readDefined(process.argv[2]);
+const output = readString(process.env.PROBE_OUTPUT_DIR);
 assert.ok(
-	output && path.isAbsolute(output),
+	output.length > 0 && path.isAbsolute(output),
 	"PROBE_OUTPUT_DIR must be a private absolute evidence directory",
 );
 assert.ok(
-	mode,
+	mode.length > 0,
 	"Specify relative, active, active-two, active-partial, active-reload, tree, tree-no-fault, tree-phantom, tree-active, tree-reload, managed-nongit, managed-optout, or managed-git",
 );
 const requestedRecording = process.env.PROBE_REQUESTED_RECORDING === "1";
@@ -34,38 +50,28 @@ fs.mkdirSync(output, { recursive: true });
 const piRoot =
 	process.env.PROBE_PI_ROOT ??
 	fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent", import.meta.url));
-const [
-	{ createAgentSession },
-	{ DefaultResourceLoader },
-	{ SessionManager },
-	{ SettingsManager },
-	{ ModelRuntime },
-] = await Promise.all(
-	["sdk", "resource-loader", "session-manager", "settings-manager", "model-runtime"].map(
-		(name) => import(pathToFileURL(`${piRoot}/dist/core/${name}.js`)),
-	),
-);
-const { AssistantMessageEventStream } = await import(
-	process.env.PROBE_AI_STREAM
-		? pathToFileURL(process.env.PROBE_AI_STREAM).href
-		: "@earendil-works/pi-ai"
-);
 const browserEntry =
 	process.env.PROBE_BROWSER_ENTRY ??
 	fileURLToPath(new URL("../dist/extensions/agent-browser/index.js", import.meta.url));
-const { default: browserExtension } = await import(pathToFileURL(browserEntry));
-const { restoreRecordingReservationStateFromBranch } = await import(
-	pathToFileURL(path.join(path.dirname(browserEntry), "lib/recording-reservations.js"))
-);
-const { getLatestUserPrompt } = await import(
-	pathToFileURL(path.join(path.dirname(browserEntry), "lib/prompt-policy.js"))
-);
+const {
+	sdk: { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime },
+	createAssistantMessageEventStream,
+	browserExtension,
+	restoreRecordingReservationStateFromBranch,
+	getLatestUserMessage,
+	getMessageText,
+} = await loadRecordingModules({
+	sdkRoot: piRoot,
+	browserEntry,
+	streamPath: process.env.PROBE_AI_STREAM,
+});
 const ENTRY = "agent-browser-recording-reservation";
+/** @satisfies {import("@earendil-works/pi-ai").Model<"offline-recording-check">} */
 const model = {
 	id: "offline-recording-check",
 	name: "Offline recording check",
 	provider: "offline-check",
-	api: "openai-completions",
+	api: "offline-recording-check",
 	baseUrl: "http://127.0.0.1:1",
 	input: ["text"],
 	reasoning: false,
@@ -76,34 +82,48 @@ const model = {
 let serial = 0;
 const NAMESPACE = randomUUID();
 const explicit = (name = "A") => ["--namespace", NAMESPACE, "--session", name];
-const readDisk = (file) =>
-	fs
-		.readFileSync(file, "utf8")
-		.trim()
-		.split("\n")
-		.filter(Boolean)
-		.map((line) => JSON.parse(line));
+/** @param {string} file */
+const readDisk = (file) => parseJsonl(fs.readFileSync(file, "utf8")).map(readRecord);
+/** @param {NativeSessionManager} sm */
 const reservationRows = (sm) =>
 	sm.getBranch().filter((entry) => entry.type === "custom" && entry.customType === ENTRY);
+/** @param {unknown} result */
 const protectedResult = (result) => /reserved by an active recording/.test(JSON.stringify(result));
+
+/** @param {unknown} details */
+function manifestEntries(details) {
+	const entries = record(record(details)?.artifactManifest)?.entries;
+	return entries === undefined ? [] : readArray(entries).map(readRecord);
+}
+
+/** @param {BrowserToolResult} result */
+function nextActions(result) {
+	const actions = result.details.nextActions;
+	return actions === undefined ? [] : readArray(actions).map(readRecord);
+}
+/** @param {string} type @param {object} data */
 function log(type, data = {}) {
 	const line = JSON.stringify({ type, ...data });
 	console.log(line);
 	fs.appendFileSync(path.join(output, "events.jsonl"), `${line}\n`);
 }
 
+/** @param {string} name @param {string} [reopenFile] @param {string} [cwd] */
 async function create(name, reopenFile, cwd = output) {
 	const agentDir = path.join(output, `${name}-agent`);
 	fs.mkdirSync(agentDir, { recursive: true });
-	const sm = reopenFile
-		? SessionManager.open(reopenFile)
-		: SessionManager.create(cwd, path.join(output, `${name}-sessions`));
+	const sm =
+		reopenFile === undefined || reopenFile === ""
+			? SessionManager.create(cwd, path.join(output, `${name}-sessions`))
+			: SessionManager.open(reopenFile);
 	const settings = SettingsManager.inMemory({
 		compaction: { enabled: false },
 		retry: { enabled: false },
 		packages: [],
 		extensions: [],
 	});
+	/** @type {import("@earendil-works/pi-ai").JsonObject | undefined} */
+	let nextArgs;
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
@@ -116,9 +136,16 @@ async function create(name, reopenFile, cwd = output) {
 		extensionFactories: [
 			browserExtension,
 			(pi) => {
-				for (const event of ["session_start", "session_tree", "session_shutdown"]) {
-					pi.on(event, (data) => log(`${name}:native-lifecycle`, data));
-				}
+				pi.registerProvider(model.provider, {
+					api: model.api,
+					baseUrl: model.baseUrl,
+					apiKey: "offline-fixture",
+					models: [model],
+					streamSimple: streamFixture,
+				});
+				pi.on("session_start", (data) => log(`${name}:native-lifecycle`, data));
+				pi.on("session_tree", (data) => log(`${name}:native-lifecycle`, data));
+				pi.on("session_shutdown", (data) => log(`${name}:native-lifecycle`, data));
 			},
 		],
 	});
@@ -141,11 +168,10 @@ async function create(name, reopenFile, cwd = output) {
 		tools: ["agent_browser"],
 	});
 	await session.bindExtensions({
-		onError: (event) =>
-			log(`${name}:extension-error`, { error: String(event.error), event: event.event }),
+		onError: (event) => log(`${name}:extension-error`, { error: event.error, event: event.event }),
 	});
-	let nextArgs;
-	session.agent.streamFunction = () => {
+	function streamFixture() {
+		/** @satisfies {import("@earendil-works/pi-ai").AssistantMessage} */
 		const message = {
 			role: "assistant",
 			api: model.api,
@@ -173,23 +199,28 @@ async function create(name, reopenFile, cwd = output) {
 			},
 		};
 		nextArgs = undefined;
-		const stream = new AssistantMessageEventStream();
+		const stream = createAssistantMessageEventStream();
 		stream.push({ type: "start", partial: message });
 		stream.push({ type: "done", reason: message.stopReason, message });
 		return stream;
-	};
+	}
+	/** @param {Record<string, unknown>} params @param {string} [prompt] */
 	async function call(params, prompt) {
-		nextArgs = params;
-		await session.agent.prompt(prompt ?? "Execute the offline recording check.");
+		nextArgs = readToolArguments(params);
+		await session.prompt(prompt ?? "Execute the offline recording check.");
 		await session.waitForIdle();
 		const result = session.agent.state.messages.findLast(
 			(message) => message.role === "toolResult",
 		);
-		assert.ok(result);
+		const receipt = readBrowserToolResult(result);
 		log(`${name}:result`, { params, prompt, result });
 		if (prompt !== undefined) {
-			const branchPrompt = getLatestUserPrompt(sm.getBranch());
-			const persistedPrompt = getLatestUserPrompt(readDisk(sm.getSessionFile()));
+			const branchPrompt = getMessageText(getLatestUserMessage(sm)?.content);
+			const journal = sm.getSessionFile();
+			assert.ok(journal !== undefined && journal !== "", "Expected a persisted recording session");
+			const persistedPrompt = getMessageText(
+				getLatestUserMessage(SessionManager.open(journal))?.content,
+			);
 			log(`${name}:user-prompt`, {
 				prompt,
 				branchPrompt,
@@ -199,13 +230,15 @@ async function create(name, reopenFile, cwd = output) {
 			assert.equal(branchPrompt, prompt);
 			assert.equal(persistedPrompt, prompt);
 		}
-		return result;
+		return receipt;
 	}
+	/** @param {string} destination */
 	async function probe(destination) {
 		const controller = new AbortController();
 		// Reservation protection is the observed boundary. A pre-aborted signal would stop
 		// at queue admission before validation and cannot test destination protection.
 		const tool = session.agent.state.tools.find((entry) => entry.name === "agent_browser");
+		assert.ok(tool, "Expected the real registered browser tool");
 		const result = await tool
 			.execute(
 				`reservation-${++serial}`,
@@ -215,56 +248,70 @@ async function create(name, reopenFile, cwd = output) {
 					// Reservation protection is checked from the final receipt, not intermediate updates.
 				},
 			)
-			.catch((error) => ({ thrown: { name: error.name, message: error.message } }));
+			.catch((/** @type {unknown} */ error) => ({
+				thrown: {
+					name: error instanceof Error ? error.name : undefined,
+					message: error instanceof Error ? error.message : String(error),
+				},
+			}));
 		log(`${name}:destination-probe`, { destination, result });
 		return result;
 	}
-	return { session, sm, call, probe };
-}
+	// Invoke Pi's real _persist against an actual directory at our journal path. Its
+	// in-memory append has already happened; no fabricated session-tree/shutdown events.
+	/** @param {string} state @param {string} [sessionName] */
+	function faultOnce(state, sessionName) {
+		const original = sm._persist.bind(sm);
+		let count = 0;
+		sm._persist = (entry) => {
+			if (
+				count > 0 ||
+				entry.type !== "custom" ||
+				entry.customType !== ENTRY ||
+				record(entry.data)?.state !== state ||
+				(sessionName !== undefined &&
+					sessionName !== "" &&
+					record(entry.data)?.sessionName !== sessionName)
+			) {
+				original(entry);
+				return;
+			}
+			count++;
+			const file = readDefined(sm.getSessionFile());
+			fs.renameSync(file, `${file}.backup`);
+			fs.mkdirSync(file);
+			try {
+				original(entry);
+			} catch (error) {
+				assert.ok(hasErrorCode(error, "EISDIR"));
+				assert.equal(
+					readDisk(`${file}.backup`).some((row) => row.id === entry.id),
+					false,
+					"The injected write must fail before the entry reaches disk",
+				);
+				log("real-journal-EISDIR", {
+					state,
+					sessionName: record(entry.data)?.sessionName,
+					failedEntryId: entry.id,
+				});
+				throw error;
+			} finally {
+				fs.rmdirSync(file);
+				fs.renameSync(`${file}.backup`, file);
+			}
+		};
+		return () => {
+			sm._persist = original;
+			return count;
+		};
+	}
 
-// Invoke Pi's real _persist against an actual directory at our journal path. Its
-// in-memory append has already happened; no fabricated session-tree/shutdown events.
-function faultOnce(sm, state, sessionName) {
-	const original = sm._persist.bind(sm);
-	let count = 0;
-	sm._persist = (entry) => {
-		if (
-			count ||
-			entry.type !== "custom" ||
-			entry.customType !== ENTRY ||
-			entry.data.state !== state ||
-			(sessionName && entry.data.sessionName !== sessionName)
-		) {
-			return original(entry);
-		}
-		count++;
-		const file = sm.getSessionFile();
-		fs.renameSync(file, `${file}.backup`);
-		fs.mkdirSync(file);
-		try {
-			return original(entry);
-		} catch (error) {
-			assert.equal(error.code, "EISDIR");
-			log("real-journal-EISDIR", {
-				state,
-				sessionName: entry.data.sessionName,
-				phantomEntryId: entry.id,
-			});
-			throw error;
-		} finally {
-			fs.rmdirSync(file);
-			fs.renameSync(`${file}.backup`, file);
-		}
-	};
-	return () => {
-		sm._persist = original;
-		return count;
-	};
+	return { session, sm, call, probe, faultOnce };
 }
 
 async function relative() {
 	const a = await create("relative");
-	await a.session.agent.prompt("Seed native journal.");
+	await a.session.prompt("Seed native journal.");
 	await a.session.waitForIdle();
 	const good = {
 		version: 1,
@@ -284,7 +331,7 @@ async function relative() {
 	].entries()) {
 		a.sm.appendCustomEntry(ENTRY, { ...good, ...invalid, sessionName: `malformed-${index}` });
 	}
-	const file = a.sm.getSessionFile();
+	const file = readDefined(a.sm.getSessionFile());
 	a.session.dispose();
 	const b = await create("relative-reopen", file);
 	try {
@@ -320,7 +367,9 @@ async function active() {
 	const a = await create("active");
 	let current = a;
 	const videos = names.map((name) => path.join(output, `${name}.webm`));
+	/** @type {string | undefined} */
 	let startWarning;
+	/** @type {readonly unknown[] | undefined} */
 	let jsonWarnings;
 	try {
 		if (mode === "active-partial") {
@@ -332,7 +381,6 @@ async function active() {
 		}
 		for (const [index, name] of names.entries()) {
 			// Launch each named browser before recording it; sessions share the native host resources.
-			// oxlint-disable-next-line no-await-in-loop
 			const opened = await a.call({
 				args: [
 					...explicit(name),
@@ -341,13 +389,12 @@ async function active() {
 				],
 			});
 			assert.equal(opened.isError, false);
-			const undo = name === "B" ? faultOnce(a.sm, "active", name) : () => 0;
+			const undo = name === "B" ? a.faultOnce("active", name) : () => 0;
 			let started;
 			try {
 				// The per-session append fault must be restored before the next recording starts.
-				// oxlint-disable-next-line no-await-in-loop
 				started = await a.call({
-					args: [...explicit(name), "--json", "record", "start", videos[index]],
+					args: [...explicit(name), "--json", "record", "start", readDefined(videos[index])],
 				});
 			} finally {
 				if (name === "B") {
@@ -355,21 +402,24 @@ async function active() {
 				}
 			}
 			assert.equal(started.isError, false);
-			assert.equal(started.details.artifacts[0].status, "pending");
+			assert.equal(readRecord(readArray(started.details.artifacts)[0]).status, "pending");
 			if (name === "B") {
-				startWarning = started.details.recordingPersistenceWarning;
-				jsonWarnings = JSON.parse(started.content[0].text).warnings;
+				startWarning = readString(started.details.recordingPersistenceWarning);
+				const content = readDefined(started.content[0]);
+				assert.equal(content.type, "text");
+				jsonWarnings = readArray(readRecord(JSON.parse(readString(content.text))).warnings);
 				log("failed-start-warning", { warning: startWarning, jsonWarnings });
 			}
 		}
-		const initialDisk = readDisk(a.sm.getSessionFile());
-		assert.equal(
-			initialDisk.filter((row) => row.customType === ENTRY && row.data.sessionName === "B").length,
-			0,
-		);
+		const initialDisk = readDisk(readDefined(a.sm.getSessionFile()));
+		log("reservation-after-failed-write", {
+			persisted: initialDisk.filter(
+				(row) => row.customType === ENTRY && record(row.data)?.sessionName === "B",
+			),
+		});
 		assert.ok(
 			initialDisk.some((row) =>
-				row.message?.details?.artifactManifest?.entries.some(
+				manifestEntries(record(row.message)?.details).some(
 					(entry) => entry.absolutePath === videos.at(-1),
 				),
 			),
@@ -377,7 +427,7 @@ async function active() {
 		let partial;
 		let partialFaults;
 		if (mode === "active-partial") {
-			const undo = faultOnce(a.sm, "active", "B");
+			const undo = a.faultOnce("active", "B");
 			try {
 				partial = await a.call({ args: [...explicit("A"), "get", "title"] });
 			} finally {
@@ -388,7 +438,7 @@ async function active() {
 			await a.session.reload();
 		}
 		const recovered = await a.call({ args: [...explicit(names[0]), "get", "title"] });
-		const file = a.sm.getSessionFile();
+		const file = readDefined(a.sm.getSessionFile());
 		fs.copyFileSync(file, path.join(output, "before-reopen.jsonl"));
 		a.session.dispose(); // abrupt loss: no shutdown callback
 		current = await create("active-reopen", file);
@@ -401,13 +451,11 @@ async function active() {
 		const protection = [];
 		for (const video of videos) {
 			// Probe destinations serially on one reopened Pi/browser session.
-			// oxlint-disable-next-line no-await-in-loop
 			protection.push(protectedResult(await current.probe(video)));
 		}
 		const stops = [];
 		for (const name of names) {
 			// Finish and verify one native encoder before stopping the next owned recording.
-			// oxlint-disable-next-line no-await-in-loop
 			stops.push(await current.call({ args: [...explicit(name), "record", "stop"] }));
 		}
 		log("active-summary", {
@@ -419,28 +467,31 @@ async function active() {
 			partialFaults,
 			partialWarning: partial?.details.recordingPersistenceWarning,
 			recoveredWarning: recovered.details.recordingPersistenceWarning,
-			verified: stops.map((stop) => stop.details.artifactVerification?.verified),
+			verified: stops.map((stop) => record(stop.details.artifactVerification)?.verified),
 		});
 		assert.deepEqual(restored, [...names].sort());
 		assert.ok(protection.every(Boolean));
 		assert.ok(
 			stops.every(
-				(stop) => stop.isError === false && stop.details.artifactVerification?.verified === true,
+				(stop) =>
+					stop.isError === false && record(stop.details.artifactVerification)?.verified === true,
 			),
 		);
 		assert.equal(recovered.details.recordingPersistenceWarning, undefined);
-		assert.match(startWarning, /not yet durable/);
-		assert.ok(jsonWarnings.includes(startWarning));
+		assert.match(readString(startWarning), /not yet durable/);
+		assert.ok(readDefined(jsonWarnings).includes(startWarning));
 		if (mode === "active-partial") {
 			assert.deepEqual(closed, ["C"]);
 			assert.equal(closedProtected, false);
 			assert.equal(partialFaults, 1);
-			assert.match(partial.details.recordingPersistenceWarning, /not yet durable/);
+			assert.match(
+				readString(readDefined(partial).details.recordingPersistenceWarning),
+				/not yet durable/,
+			);
 		}
 	} finally {
 		for (const name of names) {
 			// Close each owned session in order before disposing the shared Pi runtime.
-			// oxlint-disable-next-line no-await-in-loop
 			await current.call({ args: [...explicit(name), "close"] });
 		}
 		current.session.dispose();
@@ -458,8 +509,9 @@ async function tree() {
 		if (mode === "tree-active") {
 			await a.call({ args: [...explicit(), "record", "start", path.join(output, "older.webm")] });
 			assert.equal(
-				(await a.call({ args: [...explicit(), "record", "stop"] })).details.artifactVerification
-					.verified,
+				readRecord(
+					(await a.call({ args: [...explicit(), "record", "stop"] })).details.artifactVerification,
+				).verified,
 				true,
 			);
 		}
@@ -470,59 +522,80 @@ async function tree() {
 		);
 		const activeTarget = a.sm.getLeafId();
 		let phantom;
+		/** @type {Record<string, unknown> | undefined} */
+		let closeReceipt;
 		if (mode !== "tree-active") {
-			const undo = mode === "tree-no-fault" ? () => 0 : faultOnce(a.sm, "closed");
+			const undo = mode === "tree-no-fault" ? () => 0 : a.faultOnce("closed");
 			try {
-				assert.equal((await a.call({ args: [...explicit(), "close"] })).isError, false);
+				const closed = await a.call({ args: [...explicit(), "close"] });
+				assert.equal(closed.isError, false);
+				closeReceipt = readDefined(
+					manifestEntries(closed.details).find((entry) => entry.absolutePath === video),
+				);
+				assert.equal(closeReceipt.subcommand, "close-abandoned");
 			} finally {
 				if (mode !== "tree-no-fault") {
 					assert.equal(undo(), 1);
 				}
 			}
-			phantom = reservationRows(a.sm).at(-1).id;
+			phantom = readDefined(reservationRows(a.sm).at(-1)).id;
 		}
 		if (mode === "tree-reload") {
 			await a.session.reload();
 		} else {
+			/** @type {string | null | undefined} */
 			let target = activeTarget;
 			if (mode === "tree-active") {
 				target = beforeRecording;
 			} else if (mode === "tree-phantom") {
 				target = phantom;
 			}
-			await a.session.navigateTree(target, { summarize: false });
+			await a.session.navigateTree(readString(target), { summarize: false });
 		}
 		a.sm.appendCustomEntry("native-checkpoint", { tree: true });
-		const file = a.sm.getSessionFile();
+		const file = readDefined(a.sm.getSessionFile());
 		fs.copyFileSync(file, path.join(output, "before-reopen.jsonl"));
 		a.session.dispose();
 		current = await create("tree-reopen", file);
-		const protectedAfterReopen = protectedResult(await current.probe(video));
+		await current.call({ args: [...explicit(), "session", "info"] });
+		if (mode !== "tree-active") {
+			const opened = await current.call({
+				args: [...explicit(), "open", "data:text/html,<title>destination probe</title>"],
+			});
+			assert.equal(opened.isError, false);
+		}
+		const probeResult = readBrowserToolResult(await current.probe(video));
+		const protectedAfterReopen = protectedResult(probeResult);
 		const restored = restoreRecordingReservationStateFromBranch(current.sm.getBranch());
-		const status = await current.call({ args: [...explicit(), "session", "info"] });
-		const manifestRow = status.details.artifactManifest?.entries.find(
-			(entry) => entry.absolutePath === video,
-		);
 		log("tree-summary", {
 			mode,
 			protectedAfterReopen,
 			activeCount: restored.active.size,
 			terminalCount: restored.terminal.size,
-			manifestRow,
+			closeReceipt,
 		});
 		assert.equal(protectedAfterReopen, mode === "tree-active");
+		assert.equal(
+			probeResult.isError,
+			mode === "tree-active",
+			"The unreserved destination must actually be writable, not blocked by another guard",
+		);
 		if (mode !== "tree-active") {
 			assert.equal(restored.active.size, 0);
 			assert.equal(restored.terminal.size, 1);
-			// A phantom parent cuts off older tool results too. The repair republishes
-			// recording protection, not Pi's unrelated message/manifest history.
-			if (mode !== "tree-phantom" || manifestRow) {
-				assert.equal(manifestRow.subcommand, "close-abandoned");
-			}
+			assert.deepEqual(
+				[...restored.terminal.values()].map(({ namespace, sessionName }) => ({
+					namespace,
+					sessionName,
+				})),
+				[{ namespace: NAMESPACE, sessionName: "A" }],
+			);
 		} else {
 			assert.equal(
-				(await current.call({ args: [...explicit(), "record", "stop"] })).details
-					.artifactVerification.verified,
+				readRecord(
+					(await current.call({ args: [...explicit(), "record", "stop"] })).details
+						.artifactVerification,
+				).verified,
 				true,
 			);
 		}
@@ -532,6 +605,7 @@ async function tree() {
 	}
 }
 
+/** @param {readonly BrowserToolResult[]} failures @param {readonly (Record<string, unknown> | undefined)[]} actions @param {BrowserToolResult} start @param {RecordingIdentity} identity */
 function assertCleanupFailures(failures, actions, start, identity) {
 	for (const [index, result] of failures.entries()) {
 		assert.equal(result.isError, true);
@@ -542,47 +616,58 @@ function assertCleanupFailures(failures, actions, start, identity) {
 		assert.equal(result.details.sessionName, start.details.sessionName);
 		assert.equal(result.details.namespace, identity[1]);
 		assert.deepEqual(actions[index]?.params, { args: [...identity, "close"] });
-		assert.ok(!result.details.nextActions.some((action) => action.id === "stop-pending-recording"));
-		assert.match(actions[index].safety, /abandoned\/unverified/);
+		assert.ok(!nextActions(result).some((action) => action.id === "stop-pending-recording"));
+		assert.match(readString(readDefined(actions[index]).safety), /abandoned\/unverified/);
 	}
 }
 
+/** @param {RequestedRecordingCase} options */
 async function verifyRequestedRecording({ a, closed, identity, requestedPrompt, video }) {
 	assert.equal(closed.isError, true);
-	assert.equal(closed.details.promptGuard?.reason, "requested-artifacts-missing-before-close");
+	const guard = readRecord(closed.details.promptGuard);
+	assert.equal(guard.reason, "requested-artifacts-missing-before-close");
 	assert.ok(
-		closed.details.promptGuard.missingArtifacts.some(
-			(artifact) =>
-				artifact.kind === "recording" && artifact.path === video && artifact.required === true,
-		),
+		readArray(guard.missingArtifacts)
+			.map(readRecord)
+			.some(
+				(artifact) =>
+					artifact.kind === "recording" && artifact.path === video && artifact.required === true,
+			),
 	);
-	const permittedStop = closed.details.nextActions?.find(
+	const permittedStop = nextActions(closed).find(
 		(action) => action.id === "stop-pending-recording",
 	);
-	assert.ok(permittedStop?.params, "The guarded close must return the now-permitted stop action");
-	const stopped = await a.call(permittedStop.params, requestedPrompt);
+	assert.ok(
+		permittedStop?.params !== undefined,
+		"The guarded close must return the now-permitted stop action",
+	);
+	const stopped = await a.call(readRecord(permittedStop.params), requestedPrompt);
 	assert.equal(stopped.isError, false, JSON.stringify(stopped));
 	assert.equal(stopped.details.sessionName, identity[3]);
 	assert.equal(stopped.details.namespace ?? "", identity[1]);
-	assert.equal(stopped.details.artifactVerification?.verified, true);
-	const artifact = stopped.details.artifactVerification.artifacts.find(
-		(entry) => entry.absolutePath === video,
-	);
+	const verification = readRecord(stopped.details.artifactVerification);
+	assert.equal(verification.verified, true);
+	const artifact = readArray(verification.artifacts)
+		.map(readRecord)
+		.find((entry) => entry.absolutePath === video);
 	assert.equal(artifact?.state, "verified");
-	assert.ok(artifact.sizeBytes > 0);
-	const ffprobe = JSON.parse(
-		execFileSync(
-			"ffprobe",
-			["-v", "error", "-show_entries", "format=format_name,duration,size", "-of", "json", video],
-			{ encoding: "utf8" },
+	assert.ok(readNumber(readDefined(artifact).sizeBytes) > 0);
+	const ffprobe = readRecord(
+		JSON.parse(
+			execFileSync(
+				"ffprobe",
+				["-v", "error", "-show_entries", "format=format_name,duration,size", "-of", "json", video],
+				{ encoding: "utf8" },
+			),
 		),
 	);
 	fs.writeFileSync(
 		path.join(output, "requested-recording.ffprobe.json"),
 		`${JSON.stringify(ffprobe, null, 2)}\n`,
 	);
-	assert.ok(ffprobe.format.format_name.split(",").includes("webm"));
-	assert.equal(Number(ffprobe.format.size), artifact.sizeBytes);
+	const format = readRecord(ffprobe.format);
+	assert.ok(readString(format.format_name).split(",").includes("webm"));
+	assert.equal(Number(format.size), readDefined(artifact).sizeBytes);
 	const finalClose = await a.call({ args: [...identity, "close"] }, requestedPrompt);
 	assert.equal(finalClose.isError, false, JSON.stringify(finalClose));
 	log("requested-recording-summary", {
@@ -598,6 +683,7 @@ async function verifyRequestedRecording({ a, closed, identity, requestedPrompt, 
 	});
 }
 
+/** @param {Omit<RequestedRecordingCase, "closed"> & {start: BrowserToolResult, stopAction: Record<string, unknown>, sameStop: BrowserToolResult}} options */
 async function verifyManagedAbandonment({
 	a,
 	start,
@@ -609,35 +695,33 @@ async function verifyManagedAbandonment({
 }) {
 	assert.equal(start.details.managedSessionRestoreDisabled, true);
 	const implicit = await a.call({ args: ["snapshot", "-i"] }, requestedPrompt);
-	const failedStop = await a.call(stopAction.params, requestedPrompt);
+	const failedStop = await a.call(readRecord(stopAction.params), requestedPrompt);
 	const explicitNamespaceStop = await a.call(
 		{ args: [...identity, "record", "stop"] },
 		requestedPrompt,
 	);
 	const failures = [implicit, failedStop, explicitNamespaceStop];
 	const actions = failures.map((result) =>
-		result.details.nextActions?.find((action) => action.id === "close-pending-recording"),
+		nextActions(result).find((action) => action.id === "close-pending-recording"),
 	);
 	if (requestedRecording) {
 		assert.ok(
-			actions[0]?.params,
+			actions[0]?.params !== undefined,
 			"The requested-recording control must use the returned close action",
 		);
 	}
 	const closed = await a.call(
-		actions[0]?.params ?? { args: [...identity, "close"] },
+		readRecord(actions[0]?.params ?? { args: [...identity, "close"] }),
 		requestedPrompt,
 	);
-	const manifestRow = closed.details.artifactManifest?.entries.find(
-		(entry) => entry.absolutePath === video,
-	);
+	const manifestRow = manifestEntries(closed.details).find((entry) => entry.absolutePath === video);
 	log("managed-summary", {
 		mode,
 		requestedRecording,
 		identity,
-		sameInstanceVerified: sameStop.details.artifactVerification.verified,
+		sameInstanceVerified: readRecord(sameStop.details.artifactVerification).verified,
 		actions,
-		closed: !closed.isError,
+		closed: closed.isError !== true,
 		manifestRow,
 	});
 	assertCleanupFailures(failures, actions, start, identity);
@@ -645,8 +729,8 @@ async function verifyManagedAbandonment({
 		await verifyRequestedRecording({ a, closed, identity, requestedPrompt, video });
 	} else {
 		assert.equal(closed.isError, false);
-		assert.notEqual(closed.details.artifactVerification?.verified, true);
-		assert.equal(manifestRow.subcommand, "close-abandoned");
+		assert.notEqual(record(closed.details.artifactVerification)?.verified, true);
+		assert.equal(readDefined(manifestRow).subcommand, "close-abandoned");
 	}
 }
 
@@ -668,45 +752,51 @@ async function managed() {
 	const video = path.join(cwd, "reload.webm");
 	const requestedPrompt = requestedRecording ? `Save a recording to ${video}` : undefined;
 	const a = await create(mode, undefined, cwd);
+	/** @type {RecordingIdentity | undefined} */
 	let identity;
 	try {
 		const namespace = mode === "managed-optout" ? ["--namespace", NAMESPACE] : [];
 		const opened = await a.call({
 			args: [...namespace, "open", "data:text/html,<title>reload</title><h1>reload</h1>"],
+			sessionMode: "fresh",
 		});
 		assert.equal(opened.isError, false);
 		identity = [
 			"--namespace",
-			opened.details.namespace ?? "",
+			readString(opened.details.namespace ?? ""),
 			"--session",
-			opened.details.sessionName,
+			readString(opened.details.sessionName),
 		];
 		const sameStart = await a.call({
 			args: ["record", "start", path.join(cwd, "same-instance.webm")],
 		});
 		const sameStop = await a.call(
-			sameStart.details.nextActions.find((action) => action.id === "stop-pending-recording").params,
+			readRecord(
+				readDefined(nextActions(sameStart).find((action) => action.id === "stop-pending-recording"))
+					.params,
+			),
 		);
-		assert.equal(sameStop.details.artifactVerification.verified, true);
+		assert.equal(readRecord(sameStop.details.artifactVerification).verified, true);
 		const start = await a.call({ args: ["record", "start", video] }, requestedPrompt);
 		assert.equal(start.isError, false);
-		const stopAction = start.details.nextActions.find(
-			(action) => action.id === "stop-pending-recording",
+		const stopAction = readDefined(
+			nextActions(start).find((action) => action.id === "stop-pending-recording"),
 		);
 		await a.session.reload();
-		if (process.env.PROBE_AMBIENT_NAMESPACE) {
-			process.env.AGENT_BROWSER_NAMESPACE = process.env.PROBE_AMBIENT_NAMESPACE;
+		const ambientNamespace = process.env.PROBE_AMBIENT_NAMESPACE;
+		if (ambientNamespace !== undefined && ambientNamespace !== "") {
+			process.env.AGENT_BROWSER_NAMESPACE = ambientNamespace;
 		}
 		if (mode === "managed-git") {
 			assert.notEqual(start.details.managedSessionRestoreDisabled, true);
-			const stopped = await a.call(stopAction.params);
+			const stopped = await a.call(readRecord(stopAction.params));
 			log("managed-summary", {
 				mode,
-				sameInstanceVerified: sameStop.details.artifactVerification.verified,
-				reloadVerified: stopped.details.artifactVerification?.verified,
+				sameInstanceVerified: readRecord(sameStop.details.artifactVerification).verified,
+				reloadVerified: record(stopped.details.artifactVerification)?.verified,
 			});
 			assert.equal(stopped.isError, false);
-			assert.equal(stopped.details.artifactVerification.verified, true);
+			assert.equal(readRecord(stopped.details.artifactVerification).verified, true);
 		} else {
 			await verifyManagedAbandonment({
 				a,

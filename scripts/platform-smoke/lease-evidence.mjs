@@ -13,8 +13,9 @@ import {
 } from "./suite-evidence.mjs";
 import { resolve } from "node:path";
 
-/** @typedef {{readonly code: number | null, readonly signal: string | null, readonly stdout?: string, readonly stderr?: string}} ProcessReceipt */
-/** @param {{readonly config: {readonly artifactRoot: string, readonly packageName: string, readonly [key: string]: unknown}, readonly targetName: string, readonly leaseId: string, readonly stopResult: ProcessReceipt, readonly staleCleanupResult?: ProcessReceipt | null, readonly runId?: string}} options */
+/** @import { ProcessReceipt } from "./artifacts.mjs" */
+/** @import { EvidenceConfig } from "./suite-evidence.mjs" */
+/** @param {{readonly config: EvidenceConfig, readonly targetName: string, readonly leaseId: string, readonly stopResult: ProcessReceipt, readonly staleCleanupResult?: ProcessReceipt | null, readonly runId?: string}} options */
 export function createLeaseCleanupResult({
 	config,
 	targetName,
@@ -50,12 +51,12 @@ export function createLeaseCleanupResult({
 			{
 				id: "lease-cleanup",
 				fn: () => stopResult.code === 0,
-				error: `Crabbox stop failed with exit ${stopResult.code}`,
+				error: `Crabbox stop failed with exit ${String(stopResult.code)}`,
 			},
 			{
 				id: "stale-cleanup",
 				fn: () => !staleCleanupResult || staleCleanupResult.code === 0,
-				error: `Crabbox cleanup failed with exit ${staleCleanupResult?.code}`,
+				error: `Crabbox cleanup failed with exit ${String(staleCleanupResult?.code)}`,
 			},
 			{
 				id: "no-secret-artifacts",
@@ -85,6 +86,11 @@ export function createLeaseCleanupResult({
 	return { ok: assertions.ok, suiteDir, assertions };
 }
 
+/** @param {EvidenceConfig} config
+ * @param {string} targetName
+ * @param {ProcessReceipt} warmupResult
+ * @param {string} [runId]
+ */
 export function createLeaseWarmupFailureResult(
 	config,
 	targetName,
@@ -110,7 +116,7 @@ export function createLeaseWarmupFailureResult(
 			{
 				id: "lease-warmup",
 				fn: () => false,
-				error: `Crabbox warmup failed with exit ${warmupResult.code}`,
+				error: `Crabbox warmup failed with exit ${String(warmupResult.code)}`,
 			},
 			{
 				id: "no-secret-artifacts",

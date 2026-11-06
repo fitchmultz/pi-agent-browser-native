@@ -30,10 +30,14 @@ export const HELP_COMMANDS = CAPABILITY_BASELINE.helpCommands;
 export const DOC_REQUIRED_TOKENS = CAPABILITY_BASELINE.docRequiredTokens;
 export const UPSTREAM_EXPECTATIONS = CAPABILITY_BASELINE.upstreamExpectations;
 
+/** @param {string} text
+ * @param {readonly string[]} tokens
+ */
 export function collectMissingTokens(text, tokens) {
 	return tokens.filter((token) => !text.includes(token));
 }
 
+/** @param {string} content */
 export function stripGeneratedCapabilityBaselineBlocks(content) {
 	return content.replace(GENERATED_BLOCK_PATTERN, "");
 }
@@ -64,6 +68,7 @@ Exit codes:
 `);
 }
 
+/** @param {readonly string[]} args */
 async function runAgentBrowser(args) {
 	try {
 		const { stdout, stderr } = await execFile("agent-browser", args, {
@@ -78,6 +83,7 @@ async function runAgentBrowser(args) {
 	}
 }
 
+/** @param {{ readonly cwd?: string; readonly run?: (args: readonly string[]) => Promise<string>; readonly readDoc?: (path: string) => Promise<string> }} [options] */
 export async function verifyCommandReference({
 	cwd = process.cwd(),
 	run = runAgentBrowser,
@@ -89,14 +95,14 @@ export async function verifyCommandReference({
 	const version = versionOutput.trim().replace(/^agent-browser\s+/, "");
 	if (version !== EXPECTED_VERSION) {
 		failures.push(
-			`agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version || "<empty>"}. Update ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, and refresh ${COMMAND_REFERENCE_DOC_PATH}.`,
+			`agent-browser version drift: expected ${EXPECTED_VERSION}, found ${version.length > 0 ? version : "<empty>"}. Update ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, and refresh ${COMMAND_REFERENCE_DOC_PATH}.`,
 		);
 	}
 
+	/** @type {Map<string, string>} */
 	const helpByLabel = new Map();
 	for (const command of HELP_COMMANDS) {
 		// Sample one upstream process at a time; skills commands can load shared native state.
-		// oxlint-disable-next-line no-await-in-loop
 		helpByLabel.set(command.label, await run(command.args));
 	}
 
@@ -110,6 +116,7 @@ export async function verifyCommandReference({
 	];
 }
 
+/** @param {ReadonlyMap<string, string>} helpByLabel */
 function collectHelpFailures(helpByLabel) {
 	const failures = [];
 	for (const expectation of UPSTREAM_EXPECTATIONS) {
@@ -158,7 +165,7 @@ if (import.meta.main) {
 		.then((exitCode) => {
 			process.exitCode = exitCode;
 		})
-		.catch((error) => {
+		.catch((/** @type {unknown} */ error) => {
 			console.error(error instanceof Error ? error.message : error);
 			process.exitCode = 1;
 		});

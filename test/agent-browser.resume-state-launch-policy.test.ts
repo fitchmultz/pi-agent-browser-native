@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
 	createExtensionHarness,
 	createToolBranchEntry,
@@ -12,13 +12,9 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
-import { readRecord, readString } from "./helpers/assertions.js";
+import { readDefined, readRecord, readString } from "./helpers/assertions.js";
 
-function assertIsString(value: unknown): asserts value is string {
-	assert.equal(typeof value, "string");
-}
-
-test(
+nodeTest(
 	"agentBrowserExtension reconstructs managed session state on session_start and keeps startup-scoped flags blocked after resume",
 	{ concurrency: false },
 	async () => {
@@ -161,7 +157,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension retains headed autosave policy across follow-ups and session_tree restore",
 	{ concurrency: false },
 	async () => {
@@ -211,14 +207,13 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					});
 					assert.deepEqual(open.details.lifecycle, { effectiveLaunch: { browserLaunched: true } });
 					assert.match(
-						open.content[0].text ?? "",
+						readDefined(open.content[0]).text ?? "",
 						/Headed browser handoff:.*desktop visibility unverified/,
 					);
-					assert.ok(
-						!(open.content[0].text ?? "")
-							.split("\n\nObservation:")[0]
-							.includes(readString(open.details.sessionName)),
+					const handoffText = readDefined(
+						(readDefined(open.content[0]).text ?? "").split("\n\nObservation:")[0],
 					);
+					assert.equal(handoffText.includes(readString(open.details.sessionName)), false);
 
 					const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["get", "url"],
@@ -226,7 +221,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					assert.equal(followUp.isError, false, JSON.stringify(followUp));
 					assert.equal(followUp.details?.managedSessionHeadedAutosaveDisabled, true);
 					assert.equal(followUp.details.browserWindow, undefined);
-					assert.doesNotMatch(followUp.content[0].text ?? "", /Headed browser handoff/);
+					assert.doesNotMatch(
+						readDefined(followUp.content[0]).text ?? "",
+						/Headed browser handoff/,
+					);
 
 					harness.setBranch(harness.ctx.sessionManager.getBranch().slice());
 					await runExtensionEvent(
@@ -275,10 +273,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension exposes the headed handoff for a first-launch batch but not attachments or providers",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-batch-"));
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
@@ -322,7 +320,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { result: "https
 						visibility: "unverified",
 					});
 					assert.match(
-						batch.content[0].text ?? "",
+						readDefined(batch.content[0]).text ?? "",
 						/Headed browser handoff:.*desktop visibility unverified/,
 					);
 					assert.equal(
@@ -343,7 +341,10 @@ else process.stdout.write(JSON.stringify({ success: true, data: { result: "https
 					assert.equal(attached.isError, false, JSON.stringify(attached));
 					assert.equal(attached.details?.attachedBrowserSession, true);
 					assert.equal(attached.details.browserWindow, undefined);
-					assert.doesNotMatch(attached.content[0].text ?? "", /Headed browser handoff/);
+					assert.doesNotMatch(
+						readDefined(attached.content[0]).text ?? "",
+						/Headed browser handoff/,
+					);
 					assert.equal(
 						(
 							await executeRegisteredTool(attachedHarness.tool, attachedHarness.ctx, {
@@ -370,45 +371,38 @@ else process.stdout.write(JSON.stringify({ success: true, data: { result: "https
 						},
 						{ args: ["--headed", "open", "https://example.com/headed-batch"], env: "browserbase" },
 					]) {
-						// Restore scenarios share environment and browser ownership; complete each transition and cleanup in order.
-						// oxlint-disable-next-line no-await-in-loop
-						await withPatchedEnv({ AGENT_BROWSER_PROVIDER: provider.env }, async () => {
-							const providerHarness = createExtensionHarness({ cwd: tempDir });
-							await runExtensionEvent(
-								providerHarness.handlers,
-								"session_start",
-								{ reason: "new" },
-								providerHarness.ctx,
-							);
-							const launched = await executeRegisteredTool(
-								providerHarness.tool,
-								providerHarness.ctx,
-								{ args: provider.args },
-							);
-							// The nonempty provider fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(launched.isError, false, JSON.stringify(launched));
-							// The nonempty provider fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.deepEqual(launched.details?.lifecycle, {
-								effectiveLaunch: { browserLaunched: true },
+						await t.test(JSON.stringify(provider), async () => {
+							await withPatchedEnv({ AGENT_BROWSER_PROVIDER: provider.env }, async () => {
+								const providerHarness = createExtensionHarness({ cwd: tempDir });
+								await runExtensionEvent(
+									providerHarness.handlers,
+									"session_start",
+									{ reason: "new" },
+									providerHarness.ctx,
+								);
+								const launched = await executeRegisteredTool(
+									providerHarness.tool,
+									providerHarness.ctx,
+									{ args: provider.args },
+								);
+								assert.equal(launched.isError, false, JSON.stringify(launched));
+								assert.deepEqual(launched.details?.lifecycle, {
+									effectiveLaunch: { browserLaunched: true },
+								});
+								assert.equal(launched.details.browserWindow, undefined);
+								assert.doesNotMatch(
+									readDefined(launched.content[0]).text ?? "",
+									/Headed browser handoff/,
+								);
+								assert.equal(
+									(
+										await executeRegisteredTool(providerHarness.tool, providerHarness.ctx, {
+											args: ["close"],
+										})
+									).isError,
+									false,
+								);
 							});
-							// The nonempty provider fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(launched.details.browserWindow, undefined);
-							// The nonempty provider fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.doesNotMatch(launched.content[0].text ?? "", /Headed browser handoff/);
-							// The nonempty provider fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(
-								(
-									await executeRegisteredTool(providerHarness.tool, providerHarness.ctx, {
-										args: ["close"],
-									})
-								).isError,
-								false,
-							);
 						});
 					}
 				},
@@ -419,7 +413,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { result: "https
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension requires a fresh daemon before changing a resumed headed autosave interval",
 	{ concurrency: false },
 	async () => {
@@ -563,7 +557,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension omits headed autosave detail when a failed fresh launch is abandoned",
 	{ concurrency: false },
 	async () => {
@@ -610,7 +604,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension retains headed autosave policy for an older owned session after replacement close fails",
 	{ concurrency: false },
 	async () => {
@@ -665,8 +659,7 @@ if (command === "session") {
 					});
 					assert.equal(headedOpen.isError, false, JSON.stringify(headedOpen));
 					assert.equal(headedOpen.details?.managedSessionHeadedAutosaveDisabled, true);
-					const headedSessionName = headedOpen.details.sessionName;
-					assertIsString(headedSessionName);
+					const headedSessionName = readString(headedOpen.details.sessionName);
 
 					const replacement = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["open", "https://example.com/replacement"],
@@ -764,7 +757,7 @@ if (command === "session") {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reapplies compatibility policy for an inactive older owned session",
 	{ concurrency: false },
 	async () => {
@@ -877,10 +870,10 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension only blocks startup-scoped flags after a successful implicit launch and resets after close",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -919,41 +912,29 @@ process.stdout.write(JSON.stringify(envelope));`,
 
 					const afterFirstOpen = await readInvocationLog(logPath);
 					assert.equal(afterFirstOpen.length, 2);
-					assert.equal(afterFirstOpen[0].args.includes("--session"), true);
-					assert.equal(afterFirstOpen[0].idleTimeout, "1234");
+					assert.equal(readDefined(afterFirstOpen[0]).args.includes("--session"), true);
+					assert.equal(readDefined(afterFirstOpen[0]).idleTimeout, "1234");
 
 					for (const args of [
 						["--profile", "Default", "open", "https://example.com/profile"],
 						["--state", join(tempDir, "auth.json"), "open", "https://example.com/state"],
 						["--auto-connect", "open", "https://example.com/auto"],
 					]) {
-						// Ordered rejection rows share the same active browser; none may dispatch.
-						// oxlint-disable-next-line no-await-in-loop
-						const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args });
-						// Every launch-flag variant must return the same recovery contract.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(blocked.isError, true, `expected ${args[0]} to be blocked`);
-						// Every launch-flag variant must return the same recovery contract.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							readString(blocked.details?.validationError ?? ""),
-							/launch-scoped flags/i,
-						);
-						// Every launch-flag variant must return the same recovery contract.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(blocked.details?.sessionMode, "auto");
-						// Every launch-flag variant must return the same recovery contract.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(blocked.details.sessionRecoveryHint).recommendedSessionMode,
-							"fresh",
-						);
-						// Rejection receipts must be observed before the next variant runs.
-						// oxlint-disable-next-line no-await-in-loop
-						const invocationCount = (await readInvocationLog(logPath)).length;
-						// Every launch-flag variant must be rejected before spawning.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(invocationCount, 2);
+						await t.test(args.join(" "), async () => {
+							const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+							assert.equal(blocked.isError, true, `expected ${args.join(" ")} to be blocked`);
+							assert.match(
+								readString(blocked.details?.validationError ?? ""),
+								/launch-scoped flags/i,
+							);
+							assert.equal(blocked.details?.sessionMode, "auto");
+							assert.equal(
+								readRecord(blocked.details.sessionRecoveryHint).recommendedSessionMode,
+								"fresh",
+							);
+							const invocationCount = (await readInvocationLog(logPath)).length;
+							assert.equal(invocationCount, 2);
+						});
 					}
 
 					const closeResult = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -969,15 +950,15 @@ process.stdout.write(JSON.stringify(envelope));`,
 
 					const finalInvocations = await readInvocationLog(logPath);
 					assert.equal(finalInvocations.length, 6);
-					assert.equal(finalInvocations[3].args.includes("--profile"), true);
-					assert.deepEqual(finalInvocations[4].args, [
+					assert.equal(readDefined(finalInvocations[3]).args.includes("--profile"), true);
+					assert.deepEqual(readDefined(finalInvocations[4]).args, [
 						"--json",
 						"--session",
 						readString(reopened.details?.sessionName),
 						"tab",
 						"list",
 					]);
-					assert.deepEqual(finalInvocations[5].args, [
+					assert.deepEqual(readDefined(finalInvocations[5]).args, [
 						"--json",
 						"--session",
 						readString(reopened.details?.sessionName),

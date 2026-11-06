@@ -64,7 +64,11 @@ function trimmedOptionalValue(value: string | undefined): string | undefined {
 
 export function normalizeSessionTabTarget(
 	target:
-		| { readonly targetId?: string; readonly title?: string; readonly url?: string }
+		| {
+				readonly targetId?: string | undefined;
+				readonly title?: string | undefined;
+				readonly url?: string | undefined;
+		  }
 		| undefined,
 ): SessionTabTarget | undefined {
 	if (!target) {
@@ -259,11 +263,13 @@ export function extractSessionTabTargetFromBatchResults(
 }
 
 export function deriveSessionTabTarget(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly data: unknown;
-	readonly navigationSummary?: { readonly title?: string; readonly url?: string };
-	readonly previousTarget?: SessionTabTarget;
-	readonly subcommand?: string;
+	readonly navigationSummary?:
+		| { readonly title?: string | undefined; readonly url?: string | undefined }
+		| undefined;
+	readonly previousTarget?: SessionTabTarget | undefined;
+	readonly subcommand?: string | undefined;
 }): SessionTabTarget | undefined {
 	if (isCloseCommand(options.command)) {
 		return undefined;
@@ -463,8 +469,8 @@ export function shouldApplyTabTargetUpdate(
 }
 
 export function shouldApplyRefStateUpdate(options: {
-	readonly currentInvalidation?: { readonly order: number };
-	readonly currentSnapshot?: { readonly order: number };
+	readonly currentInvalidation?: { readonly order: number } | undefined;
+	readonly currentSnapshot?: { readonly order: number } | undefined;
 	readonly updateOrder: number;
 }): boolean {
 	const currentOrder = Math.max(

@@ -10,14 +10,14 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { basename, dirname, join } from "node:path";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 import {
 	acquireManagedSessionPolicyLock,
 	getBrowserExecutionLockPath,
 	resolveBrowserExecutionIdentity,
 } from "../extensions/agent-browser/lib/managed-session-policy-lock.js";
 import { readProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
-import { readArray, readNumber, hasErrorCode } from "./helpers/assertions.js";
+import { readArray, readNumber, readString, hasErrorCode } from "./helpers/assertions.js";
 import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
 
 const nativeReadFile = fs.readFile;
@@ -103,7 +103,7 @@ await ended;`;
 		.filter((name) => name.startsWith(`${basename(basePath)}.claim-`))
 		.map((name) => join(dirname(basePath), name));
 	assert.equal(paths.length, 1);
-	const predecessor = paths[0];
+	const predecessor = readString(paths[0]);
 	const ticketPath = join(predecessor, "ticket.json");
 	const ownerBytes = await nativeReadFile(join(predecessor, "owner.json"));
 	const ticketBytes = await nativeReadFile(ticketPath);
@@ -217,7 +217,7 @@ await ended;`;
 	}
 }
 
-test("predecessor presence: confirmed native ENOENT skips a foreign probe", async (t) => {
+nodeTest("predecessor presence: confirmed native ENOENT skips a foreign probe", async (t) => {
 	const observation = await exercisePredecessorPresence(t, "released");
 	assert.ok(observation.ticketReads >= 2, "release must occur in the waiting scan");
 	assert.equal(observation.acquired, true);
@@ -230,7 +230,7 @@ test("predecessor presence: confirmed native ENOENT skips a foreign probe", asyn
 });
 
 for (const code of ["EACCES", "EPERM"] as const) {
-	test(`predecessor presence: ${code} remains conservative`, async (t) => {
+	nodeTest(`predecessor presence: ${code} remains conservative`, async (t) => {
 		const observation = await exercisePredecessorPresence(t, code);
 		assert.ok(observation.ticketReads >= 2, "the fault must occur after a complete waiting scan");
 		assert.equal(observation.acquired, false);

@@ -26,6 +26,7 @@ export const needsRootSessionPageCheck = (args: readonly string[]): boolean => {
 		return subcommand !== "url";
 	}
 	if (
+		command !== undefined &&
 		[
 			"open",
 			"goto",

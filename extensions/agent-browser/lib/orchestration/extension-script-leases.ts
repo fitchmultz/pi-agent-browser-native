@@ -98,7 +98,6 @@ export async function recoverScriptSessionLeasesWithinQueue(
 		});
 		resources.managed.restore.disable(sessionName, AGENT_BROWSER_SCRIPT_NAMESPACE);
 		// Each isolated lease must close and persist its terminal record before the next cleanup.
-		// oxlint-disable-next-line no-await-in-loop
 		await closeScriptSessionLeaseWithinQueue(resources, sessionName, ctx.cwd);
 	}
 }

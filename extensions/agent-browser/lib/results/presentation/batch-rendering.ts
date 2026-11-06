@@ -4,13 +4,15 @@ import { getPresentationImages } from "./content.js";
 interface TypingRun {
 	readonly nextIndex: number;
 	readonly typedCharCount: number;
-	readonly delayMs?: string;
+	readonly delayMs?: string | undefined;
 }
 
 function getTypedTextLength(command: readonly string[] | undefined): number | undefined {
-	return command?.[0] === "keyboard" && command[1] === "type" && typeof command.at(2) === "string"
-		? Array.from(command[2]).length
-		: undefined;
+	if (command?.[0] !== "keyboard" || command[1] !== "type") {
+		return undefined;
+	}
+	const text = command[2];
+	return typeof text === "string" ? Array.from(text).length : undefined;
 }
 
 function getWaitDelayMs(command: readonly string[] | undefined): string | undefined {
@@ -39,7 +41,9 @@ function getTypingDelayBetween(
 function getTypedPulse(
 	steps: readonly BatchPresentedStepObservation[],
 	index: number,
-): { readonly chars: number; readonly delay?: string; readonly nextIndex: number } | undefined {
+):
+	| { readonly chars: number; readonly delay?: string | undefined; readonly nextIndex: number }
+	| undefined {
 	const step = steps.at(index)?.details;
 	if (!step || !step.success) {
 		return undefined;
@@ -82,7 +86,11 @@ function getTypingStart(
 	steps: readonly BatchPresentedStepObservation[],
 	index: number,
 ):
-	| { readonly firstIndex: number; readonly typingIndex: number; readonly target?: string }
+	| {
+			readonly firstIndex: number;
+			readonly typingIndex: number;
+			readonly target?: string | undefined;
+	  }
 	| undefined {
 	if (steps.at(index)?.nativeIndex !== undefined) {
 		return undefined;

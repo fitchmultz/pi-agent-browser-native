@@ -26,15 +26,15 @@ export const MANAGED_SESSION_RESTORE_ENV = "PI_AGENT_BROWSER_MANAGED_SESSION_RES
 export interface ManagedSessionRestorePolicyOptions {
 	readonly args: readonly string[];
 	readonly cwd?: string;
-	readonly env?: NodeJS.ProcessEnv;
-	readonly parentEnv?: NodeJS.ProcessEnv;
-	readonly stdin?: string;
-	readonly wrapperInjectedUserAgent?: boolean;
+	readonly env?: NodeJS.ProcessEnv | undefined;
+	readonly parentEnv?: NodeJS.ProcessEnv | undefined;
+	readonly stdin?: string | undefined;
+	readonly wrapperInjectedUserAgent?: boolean | undefined;
 }
 export interface ManagedSessionRestoreEnvOptions extends ManagedSessionRestorePolicyOptions {
 	readonly cwd: string;
 	readonly ownedManagedSession?: boolean;
-	readonly restoreState?: ManagedSessionRestoreState;
+	readonly restoreState?: ManagedSessionRestoreState | undefined;
 }
 export function isDisabledEnvFlag(value: string | undefined): boolean {
 	return value !== undefined && ["0", "false", "no", "off"].includes(value.trim().toLowerCase());
@@ -164,12 +164,12 @@ export function isManagedSessionRestoreIncompatible(
 export function resolveManagedSessionRestorePolicy(
 	options: ManagedSessionRestoreEnvOptions,
 ): Readonly<{
-	namespace?: string;
+	namespace?: string | undefined;
 	owned: boolean;
 	ownedContext: ReturnType<typeof ownedContextMatches>;
 	parentEnv: NodeJS.ProcessEnv;
-	restoreState?: ManagedSessionRestoreState;
-	sessionName?: string;
+	restoreState?: ManagedSessionRestoreState | undefined;
+	sessionName?: string | undefined;
 }> {
 	const parentEnv = options.parentEnv ?? getAgentBrowserProcessEnvironment();
 	const sessionName = extractExplicitSessionName(options.args);
@@ -181,7 +181,7 @@ export function resolveManagedSessionRestorePolicy(
 		restoreState !== undefined;
 	return { namespace, owned, ownedContext, parentEnv, restoreState, sessionName };
 }
-export function resolveExplicitAutosaveInterval(value: string | undefined): string | undefined {
+export function resolveExplicitAutosaveInterval(value?: string): string | undefined {
 	if (value === undefined) {
 		return undefined;
 	}

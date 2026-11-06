@@ -130,30 +130,30 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 
 export interface UpstreamGlobalFlagOccurrence {
 	readonly index: number;
-	readonly value?: string;
+	readonly value?: string | undefined;
 }
 
 /** Match upstream's last-wins, case-sensitive boolean semantics; only exact `false` disables a present flag. */
 export function getBooleanFlagValue(args: readonly string[], flag: string): boolean | undefined {
 	let enabled: boolean | undefined;
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
+	const entries = args.entries();
+	for (const [index, token] of entries) {
 		if (token === flag) {
 			enabled = args[index + 1] !== "false";
 			if (["true", "false"].includes(args[index + 1] ?? "")) {
-				index += 1;
+				entries.next();
 			}
 			continue;
 		}
 		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
-			index += 1;
+			entries.next();
 			continue;
 		}
 		if (
 			GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token) &&
 			["true", "false"].includes(args[index + 1] ?? "")
 		) {
-			index += 1;
+			entries.next();
 		}
 	}
 	return enabled;
@@ -174,22 +174,22 @@ export function scanUpstreamGlobalFlagOccurrences(
 	targetFlag: string,
 ): UpstreamGlobalFlagOccurrence[] {
 	const occurrences: UpstreamGlobalFlagOccurrence[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
+	const entries = args.entries();
+	for (const [index, token] of entries) {
 		if (token === targetFlag) {
 			occurrences.push({ index, value: args[index + 1] });
-			index += 1;
+			entries.next();
 			continue;
 		}
 		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
-			index += 1;
+			entries.next();
 			continue;
 		}
 		if (
 			GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token) &&
 			["true", "false"].includes(args[index + 1] ?? "")
 		) {
-			index += 1;
+			entries.next();
 		}
 	}
 	return occurrences;
@@ -239,27 +239,22 @@ function getRestoreFlag(
 export function extractRequestedRestoreKey(
 	args: readonly string[],
 	sessionName: string,
-	envValue: string | undefined,
+	envValue?: string,
 ): string | null {
 	let restoreKey = envValue !== undefined && envValue.length > 0 ? envValue : null;
 	let seenCommand = false;
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
+	const entries = args.entries();
+	for (const [index, token] of entries) {
 		const restore = getRestoreFlag(token, args[index + 1], seenCommand, sessionName);
 		if (restore !== undefined) {
 			restoreKey = restore.key;
-			index += restore.consumed;
+			if (restore.consumed === 1) {
+				entries.next();
+			}
 			continue;
 		}
-		if (PREVALIDATED_VALUE_FLAGS.has(token)) {
-			index += 1;
-			continue;
-		}
-		if (
-			GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token) &&
-			["true", "false"].includes(args[index + 1] ?? "")
-		) {
-			index += 1;
+		if (globalFlagWidth(token, args[index + 1], seenCommand) === 2) {
+			entries.next();
 			continue;
 		}
 		if (isKnownCommandToken(token)) {
@@ -289,8 +284,8 @@ export function hasOnlyOptionFlags(
 	allowedBooleanFlags: ReadonlySet<string>,
 	allowedValueFlags: ReadonlySet<string>,
 ): boolean {
-	for (let index = 0; index < tokens.length; index += 1) {
-		const token = tokens[index];
+	const entries = tokens.entries();
+	for (const [index, token] of entries) {
 		if (!token.startsWith("-")) {
 			return false;
 		}
@@ -308,7 +303,7 @@ export function hasOnlyOptionFlags(
 		if (!isNonFlagToken(value)) {
 			return false;
 		}
-		index += 1;
+		entries.next();
 	}
 	return true;
 }
@@ -343,44 +338,46 @@ function globalFlagWidth(token: string, next: string | undefined, seenCommand: b
 	return 0;
 }
 
-export function projectUpstreamGlobalFlags(args: readonly string[]): {
-	indices: number[];
-	tokens: string[];
-} {
-	const indices: number[] = [];
-	const tokens: string[] = [];
+export interface IndexedArgvToken {
+	readonly index: number;
+	readonly token: string;
+}
+
+export function projectUpstreamGlobalFlags(args: readonly string[]): IndexedArgvToken[] {
+	const tokens: IndexedArgvToken[] = [];
 	let seenCommand = false;
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
+	const entries = args.entries();
+	for (const [index, token] of entries) {
 		const width = globalFlagWidth(token, args[index + 1], seenCommand);
 		if (width > 0) {
-			index += width - 1;
+			if (width === 2) {
+				entries.next();
+			}
 			continue;
 		}
-		tokens.push(token);
-		indices.push(index);
+		tokens.push({ index, token });
 		if (isKnownCommandToken(token)) {
 			seenCommand = true;
 		}
 	}
-	return { indices, tokens };
+	return tokens;
 }
 
 /** Mirror upstream clean_args: remove global flags wherever they appear before command parsing. */
 export function stripUpstreamGlobalFlags(args: readonly string[]): string[] {
-	return projectUpstreamGlobalFlags(args).tokens;
+	return projectUpstreamGlobalFlags(args).map(({ token }) => token);
 }
 
 export function stripSessionlessShapeGlobalFlags(commandTokens: readonly string[]): string[] {
 	const stripped: string[] = [];
-	for (let index = 0; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const entries = commandTokens.values();
+	for (const token of entries) {
 		const flagName = getFlagName(token);
 		if (token === "--json") {
 			continue;
 		}
 		if ((flagName === "--session" || flagName === "--namespace") && !token.includes("=")) {
-			index += 1;
+			entries.next();
 			continue;
 		}
 		if (token.startsWith("--session=") || token.startsWith("--namespace=")) {

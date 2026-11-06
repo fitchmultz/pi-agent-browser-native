@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { readRecord, readString } from "./helpers/assertions.js";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { shouldCaptureSemanticActionNavigationSummary } from "../extensions/agent-browser/lib/results/presentation/semantic-action.js";
@@ -15,31 +15,34 @@ const semanticClick = {
 	args: ["find", "text", "Close", "click"],
 };
 
-test("shouldCaptureSemanticActionNavigationSummary probes find click without title or url", () => {
-	assert.equal(
-		shouldCaptureSemanticActionNavigationSummary(semanticClick, {
-			clicked: "[data-agent-browser-located='true']",
-		}),
-		true,
-	);
-	assert.equal(
-		shouldCaptureSemanticActionNavigationSummary(semanticClick, {
-			clicked: true,
-			title: "Example",
-			url: "https://example.test/",
-		}),
-		false,
-	);
-	assert.equal(
-		shouldCaptureSemanticActionNavigationSummary(
-			{ ...semanticClick, action: "fill" },
-			{ filled: true },
-		),
-		false,
-	);
-});
+nodeTest(
+	"shouldCaptureSemanticActionNavigationSummary probes find click without title or url",
+	() => {
+		assert.equal(
+			shouldCaptureSemanticActionNavigationSummary(semanticClick, {
+				clicked: "[data-agent-browser-located='true']",
+			}),
+			true,
+		);
+		assert.equal(
+			shouldCaptureSemanticActionNavigationSummary(semanticClick, {
+				clicked: true,
+				title: "Example",
+				url: "https://example.test/",
+			}),
+			false,
+		);
+		assert.equal(
+			shouldCaptureSemanticActionNavigationSummary(
+				{ ...semanticClick, action: "fill" },
+				{ filled: true },
+			),
+			false,
+		);
+	},
+);
 
-test("buildToolPresentation enriches semanticAction find click like direct click", async () => {
+nodeTest("buildToolPresentation enriches semanticAction find click like direct click", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "find", subcommand: "text" },
 		compiledSemanticAction: semanticClick,

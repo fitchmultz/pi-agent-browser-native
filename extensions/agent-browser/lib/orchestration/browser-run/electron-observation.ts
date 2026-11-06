@@ -20,10 +20,10 @@ import type {
 
 interface SessionObservationOptions {
 	readonly cwd: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly sessionName: string;
-	readonly signal?: AbortSignal;
-	readonly timeoutMs?: number;
+	readonly signal?: AbortSignal | undefined;
+	readonly timeoutMs?: number | undefined;
 }
 
 function sessionResult(data: unknown, field: "title" | "url"): string | undefined {
@@ -44,7 +44,7 @@ async function collectManagedSessionCommandData(
 
 async function collectElectronManagedSessionUrl(options: SessionObservationOptions): Promise<{
 	readonly error?: string;
-	readonly url?: string;
+	readonly url?: string | undefined;
 }> {
 	const urlResult = await collectManagedSessionCommandData({ ...options, args: ["get", "url"] });
 	const url = sessionResult(urlResult.data, "url");
@@ -55,10 +55,10 @@ async function collectElectronManagedSessionUrl(options: SessionObservationOptio
 
 export async function collectElectronManagedSessionTarget(options: {
 	readonly cwd: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
-	readonly timeoutMs?: number;
+	readonly signal?: AbortSignal | undefined;
+	readonly timeoutMs?: number | undefined;
 }): Promise<ElectronManagedSessionTarget | undefined> {
 	if (options.sessionName === undefined || options.sessionName === "") {
 		return undefined;
@@ -88,11 +88,11 @@ export async function collectElectronManagedSessionTarget(options: {
 }
 
 export async function collectQaAttachedTarget(options: {
-	readonly currentTarget?: SessionTabTarget;
+	readonly currentTarget?: SessionTabTarget | undefined;
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<QaAttachedTarget | undefined> {
 	if (options.sessionName === undefined || options.sessionName === "") {
 		return undefined;
@@ -145,9 +145,9 @@ function buildQaAttachedRecoveryNextActions(
 
 export async function validateQaAttachedPrecondition(options: {
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<QaAttachedPreconditionFailure | undefined> {
 	if (options.sessionName === undefined || options.sessionName === "") {
 		return {
@@ -178,9 +178,9 @@ export async function validateQaAttachedPrecondition(options: {
 interface ElectronHandoffOptions {
 	readonly cwd: string;
 	readonly handoff: "connect" | "snapshot" | "tabs";
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 }
 
 async function verifyHandoffUrl(options: ElectronHandoffOptions): Promise<void> {
@@ -236,13 +236,11 @@ async function collectHandoffSnapshot(
 		}
 		snapshotRetryCount += 1;
 		// Renderer startup must settle before retrying the native snapshot.
-		// oxlint-disable-next-line no-await-in-loop
 		await sleepMs(250);
 		if (options.signal?.aborted ?? false) {
 			throw new Error("Electron handoff was aborted.");
 		}
 		// Each retry uses the prior snapshot result and the same session identity.
-		// oxlint-disable-next-line no-await-in-loop
 		snapshot = await runSessionCommandData({
 			args: ["snapshot", "-i"],
 			cwd: options.cwd,

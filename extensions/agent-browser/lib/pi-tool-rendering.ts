@@ -16,12 +16,10 @@ const TUI_INVOCATION_PREVIEW_MAX_CHARS = 160;
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 12;
 const ANSI_CONTROL_SEQUENCE_PATTERN =
 	// Strip terminal escape/control sequences from untrusted browser text, not printable content.
-	// oxlint-disable-next-line no-control-regex
 	/\x1B(?:\][^\x07\x1B\r\n\u2028\u2029]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|_[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|\^[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|[@-Z\\-_])/g;
 const JSON_TOKEN_PATTERN =
 	/"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}[\],:]/g;
 // Replace C0/C1 display controls so browser text cannot execute terminal controls.
-// oxlint-disable-next-line no-control-regex
 const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
 const UNSAFE_DISPLAY_DIRECTIONAL_PATTERN = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 const UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN = /[\u200B-\u200D\u2060\uFEFF]/g;
@@ -45,11 +43,7 @@ function replaceTabsForDisplay(value: string): string {
 }
 
 function trimTrailingBlankLines(lines: readonly string[]): string[] {
-	let end = lines.length;
-	while (end > 0 && lines[end - 1].trim().length === 0) {
-		end -= 1;
-	}
-	return lines.slice(0, end);
+	return lines.slice(0, lines.findLastIndex((line) => line.trim().length > 0) + 1);
 }
 
 function isJsonDocumentText(value: string): boolean {
@@ -286,7 +280,6 @@ function formatModelVisibleFailureCategoryNotice(details: unknown): string | und
 }
 
 type AgentBrowserToolContent = AgentToolResult<unknown>["content"];
-type AgentBrowserToolContentItem = AgentBrowserToolContent[number];
 
 function agentBrowserToolResultRequestedJson(
 	result: AgentToolResult<unknown>,
@@ -324,30 +317,28 @@ function appendModelVisibleFailureCategoryNotice(
 	notice: string,
 ): AgentBrowserToolContent | undefined {
 	const content = result.content;
-	const noticeContent: AgentBrowserToolContentItem = { type: "text", text: notice };
-	const textIndex = content.findIndex(
-		(item) => item.type === "text" && typeof item.text === "string",
-	);
-	if (textIndex === -1) {
-		return [noticeContent, ...content];
+	for (const [index, item] of content.entries()) {
+		if (item.type !== "text" || typeof item.text !== "string") {
+			continue;
+		}
+		if (item.text.includes(notice)) {
+			return undefined;
+		}
+		const updatedContent = [...content];
+		updatedContent[index] = { ...item, text: `${item.text}\n\n${notice}` };
+		return updatedContent;
 	}
-	const textItem = content[textIndex];
-	if (
-		textItem.type !== "text" ||
-		typeof textItem.text !== "string" ||
-		textItem.text.includes(notice)
-	) {
-		return undefined;
-	}
-	const updatedContent = [...content];
-	updatedContent[textIndex] = { ...textItem, text: `${textItem.text}\n\n${notice}` };
-	return updatedContent;
+	return [{ type: "text", text: notice }, ...content];
 }
 
-export function finalizeAgentBrowserFailure<T extends AgentToolResult<unknown>>(
-	result: T,
+export type FinalizedToolResult<Details = unknown> = AgentToolResult<Details> & {
+	isError: boolean;
+};
+
+export function finalizeAgentBrowserFailure<Details>(
+	result: AgentToolResult<Details>,
 	input: unknown,
-): T {
+): FinalizedToolResult<Details> {
 	const failed =
 		result.isError === true ||
 		(isRecord(result.details) && result.details.resultCategory === "failure");

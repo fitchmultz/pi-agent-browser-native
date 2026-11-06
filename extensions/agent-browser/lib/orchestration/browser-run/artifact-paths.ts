@@ -1,7 +1,7 @@
 import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
-import { foldAgentBrowserFilesystemIdentity } from "../../argv-grammar.js";
+import { foldAgentBrowserFilesystemIdentity, type IndexedArgvToken } from "../../argv-grammar.js";
 import { parseWaitCommandTokens } from "../../argv-descriptor.js";
 import {
 	getRecordCommandOperandIndices,
@@ -26,38 +26,35 @@ function isSingleScreenshotPathToken(token: string): boolean {
 	);
 }
 
-export function getScreenshotPositionalIndices(commandTokens: readonly string[]): number[] {
+export function getScreenshotOperands(commandTokens: readonly string[]): IndexedArgvToken[] {
 	if (commandTokens[0] !== "screenshot") {
 		return [];
 	}
-	const positionalIndices: number[] = [];
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const operands: IndexedArgvToken[] = [];
+	const entries = commandTokens.entries();
+	entries.next();
+	for (const [index, token] of entries) {
 		if (token === "--full" || token === "-f" || token === "--if-changed") {
 			continue;
 		}
 		if (token === "--threshold") {
-			index += 1;
+			entries.next();
 			continue;
 		}
-		positionalIndices.push(index);
+		operands.push({ index, token });
 	}
 
-	return positionalIndices;
+	return operands;
 }
 
-export function getScreenshotPathTokenIndex(commandTokens: readonly string[]): number | undefined {
-	const positionalIndices = getScreenshotPositionalIndices(commandTokens);
-	if (positionalIndices.length === 0) {
-		return undefined;
+export function getScreenshotPathOperand(
+	commandTokens: readonly string[],
+): IndexedArgvToken | undefined {
+	const [first, second] = getScreenshotOperands(commandTokens);
+	if (second !== undefined) {
+		return second;
 	}
-	const candidateIndex =
-		positionalIndices.length >= 2 ? positionalIndices[1] : positionalIndices[0];
-	const candidate = commandTokens[candidateIndex];
-	if (positionalIndices.length >= 2 || isSingleScreenshotPathToken(candidate)) {
-		return candidateIndex;
-	}
-	return undefined;
+	return first !== undefined && isSingleScreenshotPathToken(first.token) ? first : undefined;
 }
 
 const DIFF_SCREENSHOT_VALUE_FLAGS = new Set([
@@ -75,30 +72,32 @@ export function getDiffFilePathIndices(commandTokens: readonly string[]): {
 	baseline?: number;
 	output?: number;
 } {
-	if (commandTokens[0] !== "diff" || !["snapshot", "screenshot"].includes(commandTokens[1])) {
+	const [command, subcommand] = commandTokens;
+	if (command !== "diff" || (subcommand !== "snapshot" && subcommand !== "screenshot")) {
 		return {};
 	}
 	const valueFlags =
-		commandTokens[1] === "screenshot"
+		subcommand === "screenshot"
 			? DIFF_SCREENSHOT_VALUE_FLAGS
 			: new Set(["-b", "--baseline", "-s", "--selector", "-d", "--depth"]);
 	const paths: { baseline?: number; output?: number } = {};
-	for (let index = 2; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const entries = commandTokens.entries();
+	entries.next();
+	entries.next();
+	for (const [, token] of entries) {
 		if (!valueFlags.has(token)) {
 			continue;
 		}
-		const value = commandTokens.at(index + 1);
+		const value = entries.next().value;
 		if (value === undefined) {
 			return {};
 		}
 		if (["-o", "--output"].includes(token)) {
-			paths.output = index + 1;
+			paths.output = value[0];
 		}
 		if (["-b", "--baseline"].includes(token)) {
-			paths.baseline = index + 1;
+			paths.baseline = value[0];
 		}
-		index += 1;
 	}
 	return paths;
 }
@@ -190,19 +189,20 @@ export function getRecordContactSheetDestination(
 
 function getCompoundArtifactDestinationIndex(commandTokens: readonly string[]): number | undefined {
 	const [command, subcommand] = commandTokens;
-	if (command === "state" && subcommand === "save") {
-		return 2;
+	switch (command) {
+		case "state":
+			return subcommand === "save" ? 2 : undefined;
+		case "diff":
+			return subcommand === "screenshot" ? getDiffFilePathIndices(commandTokens).output : undefined;
+		case "network":
+			return subcommand === "har" && commandTokens[2] === "stop" ? 3 : undefined;
+		case "trace":
+		case "profiler":
+			return subcommand === "stop" ? 2 : undefined;
+		case undefined:
+		default:
+			return undefined;
 	}
-	if (command === "diff" && subcommand === "screenshot") {
-		return getDiffFilePathIndices(commandTokens).output;
-	}
-	if (command === "network" && subcommand === "har" && commandTokens[2] === "stop") {
-		return 3;
-	}
-	if (["trace", "profiler"].includes(command) && subcommand === "stop") {
-		return 2;
-	}
-	return undefined;
 }
 
 export function getExplicitArtifactDestinationIndex(
@@ -210,7 +210,7 @@ export function getExplicitArtifactDestinationIndex(
 ): number | undefined {
 	const command = commandTokens[0];
 	if (command === "screenshot") {
-		return getScreenshotPathTokenIndex(commandTokens);
+		return getScreenshotPathOperand(commandTokens)?.index;
 	}
 	if (command === "download") {
 		return 2;

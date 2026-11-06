@@ -73,8 +73,8 @@ export class ProcessStdout {
 
 	async finish(): Promise<{
 		readonly stdout: string;
-		readonly stdoutSpillPath?: string;
-		readonly error?: Error;
+		readonly stdoutSpillPath?: string | undefined;
+		readonly error?: Error | undefined;
 	}> {
 		await this.pendingWrite;
 		if (this.handle) {

@@ -3,7 +3,7 @@ import { readArray, readString } from "./helpers/assertions.js";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, relative, dirname, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 // Runtime module edges only: `import`/`export` ... from statements and bare side-effect imports.
 // `type`-only edges are erased at compile time and cannot create runtime cycles, so they are skipped.
@@ -92,7 +92,7 @@ function findCycles(graph: ReadonlyMap<string, ReadonlySet<string>>): string[][]
 	return cycles;
 }
 
-test("browser-run orchestration modules stay acyclic", async (t) => {
+nodeTest("browser-run orchestration modules stay acyclic", async (t) => {
 	const fixture = await mkdtemp(join(tmpdir(), "piab-import-cycle-"));
 	t.after(() => rm(fixture, { recursive: true, force: true }));
 	await writeFile(join(fixture, "a.ts"), 'import "./b.js"; export const value = 1;');

@@ -154,7 +154,7 @@ function selectConnectArg(
 
 function launchFailureMessage(
 	reason: ElectronLaunchFailureReason,
-	target: ElectronAppDiscovery | undefined,
+	target?: ElectronAppDiscovery,
 	detail?: string,
 ): string {
 	const label = target ? `${target.name} (${target.appPath ?? target.executablePath})` : "target";
@@ -389,7 +389,7 @@ export async function launchElectronApp(
 	if (isElectronLaunchAborted(options.signal)) {
 		return {
 			ok: false,
-			failure: { appArgs, error: launchFailureMessage("aborted", undefined), reason: "aborted" },
+			failure: { appArgs, error: launchFailureMessage("aborted"), reason: "aborted" },
 		};
 	}
 	const target = await resolveLaunchTarget(options);
@@ -409,7 +409,7 @@ export async function launchElectronApp(
 			ok: false,
 			failure: {
 				appArgs,
-				error: launchFailureMessage("non-electron-target", undefined),
+				error: launchFailureMessage("non-electron-target"),
 				reason: "non-electron-target",
 			},
 		};

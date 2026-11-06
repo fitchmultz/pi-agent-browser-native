@@ -12,12 +12,18 @@ import { spawn } from "node:child_process";
 import { delimiter, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_LIFECYCLE_MODEL, DEFAULT_TIMEOUT_MS } from "./lifecycle-defaults.mjs";
+import { printTopLevelHelp, printDocsHelp, printVerifyHelp } from "./project-help.mjs";
+
+/** @typedef {"build" | "check" | "built"} StepPhase */
+/** @typedef {{ readonly command: string; readonly args: readonly string[]; readonly env: NodeJS.ProcessEnv | undefined; readonly phase: StepPhase }} ProjectStep */
+/** @typedef {{ readonly mode: string; readonly passthrough: readonly string[]; readonly showHelp: boolean }} VerifyOptions */
+/** @typedef {{ readonly target: string; readonly mode: string }} DocsOptions */
 
 const nodeCommand = process.execPath;
 const binSuffix = process.platform === "win32" ? ".cmd" : "";
 
 class UsageError extends Error {
+	/** @param {string} message */
 	constructor(message) {
 		super(message);
 		this.name = "UsageError";
@@ -25,126 +31,29 @@ class UsageError extends Error {
 }
 
 class CommandFailure extends Error {
+	/** @param {string} message
+	 * @param {number | null | undefined} exitCode */
 	constructor(message, exitCode) {
 		super(message);
 		this.exitCode = exitCode ?? 1;
 	}
 }
 
-function printTopLevelHelp() {
-	console.log(`project.mjs
-
-Usage:
-  node scripts/project.mjs <test|docs|verify> [mode] [options]
-
-Public npm entrypoints:
-  npm test                     Build, prepare, then run every parallel and serial contract test.
-  npm run docs                 Check generated documentation blocks.
-  npm run docs -- write        Rewrite generated documentation blocks.
-  npm run verify               Run the default local verification gate.
-  npm run verify -- release    Run release verification.
-
-Exit codes:
-  0  Requested workflow passed or help was shown.
-  1  Requested workflow failed.
-  2  Usage error.`);
-}
-
-function printDocsHelp() {
-	console.log(`npm run docs -- [target] [mode]
-
-Targets:
-  all                 Playbook and command-reference generated blocks (default).
-  playbook            Only generated playbook blocks.
-  command-reference   Only command-reference baseline blocks.
-
-Modes:
-  check               Verify generated blocks are current (default).
-  write               Rewrite generated blocks in place.
-
-Examples:
-  npm run docs
-  npm run docs -- write
-  npm run docs -- playbook write
-  npm run docs -- command-reference check
-
-Exit codes:
-  0  Documentation blocks matched, were rewritten, or help was shown.
-  1  Drift found or rewrite failed.
-  2  Usage error.`);
-}
-
-function printVerifyHelp() {
-	console.log(`npm run verify -- [mode] [options]
-
-Modes:
-  default             Complete quality, build, typecheck, unit, and documentation gate (default).
-  quality             Alias for the complete default gate.
-  typecheck           Run TypeScript typecheck only.
-  command-reference   Check generated command-reference block and live upstream help drift.
-  pre-pr              Run default verification plus package-content checks for larger local handoffs.
-  startup-profile     Run the safe package entrypoint startup profiler.
-  real-upstream       Run the opt-in real upstream browser contract suite (localhost fixtures, broad core commands).
-  dogfood             Run a deterministic model-free live-browser smoke through the native tool wrapper.
-  package             Verify package contents.
-  package-pi          Verify package contents plus isolated Pi package smoke.
-  lifecycle           Run the tmux-driven configured-source lifecycle harness.
-  platform-target     Fast platform-local gate used inside Crabbox smoke targets.
-  platform-smoke      Run required macOS/Ubuntu platform smoke; native Windows is explicit best-effort.
-  release             Run default verification, lifecycle, package-pi, and required macOS/Ubuntu platform smoke;
-                      lifecycle options reach only its lifecycle step.
-
-Options:
-  --artifact-dir <p>  With dogfood mode, write screenshots to this directory.
-  --keep-artifacts    With lifecycle or release mode, preserve lifecycle temp artifacts; with dogfood, keep temp screenshots.
-  --json              With dogfood mode, print the machine-readable report only.
-  --model <id>        With lifecycle or release mode, Pi model for lifecycle tmux prompts (default ${DEFAULT_LIFECYCLE_MODEL}).
-  --verbose           With lifecycle or release mode, print lifecycle progress details.
-  --timeout-ms <ms>   With lifecycle or release mode, override the lifecycle per-step wait timeout (default ${DEFAULT_TIMEOUT_MS}).
-  --list-files        With package mode, print every packed file path.
-  --samples <n>       With startup-profile mode, fresh Node entrypoint samples.
-  --json              With startup-profile mode, print machine-readable JSON.
-  doctor              With platform-smoke mode, run setup doctor.
-  run                 With platform-smoke mode, run target suites.
-  --target <names>    With platform-smoke mode, comma-separated target list.
-  --suite <name>      With platform-smoke mode, run one suite.
-
-Environment:
-  PI_AGENT_BROWSER_RELEASE_TARBALL  Inspect and smoke-load this retained candidate,
-                                   including in each release platform-build suite.
-
-Examples:
-  npm run verify
-  npm run verify -- command-reference
-  npm run verify -- pre-pr
-  npm run verify -- real-upstream
-  npm run verify -- dogfood --keep-artifacts
-  npm run verify -- startup-profile --samples 3
-  npm run verify -- package --list-files
-  npm run verify -- package-pi
-  npm run verify -- lifecycle --keep-artifacts --verbose
-  npm run verify -- platform-smoke doctor
-  npm run verify -- platform-smoke run --target macos --suite platform-build
-  npm run verify -- release
-
-Publisher note:
-  package.json prepublishOnly runs release (default + lifecycle + package-pi + platform smoke), then npm pack --dry-run during npm publish.
-  It does not run real-upstream or dogfood; see docs/RELEASE.md#pre-release-checks.
-
-Exit codes:
-  0  Verification passed or help was shown.
-  1  Verification failed.
-  2  Usage error.`);
-}
-
+/** @param {string} command
+ * @param {readonly string[]} args */
 function commandLabel(command, args) {
 	return [command, ...args].join(" ");
 }
 
+/** @param {string} command */
 function shouldUseShell(command) {
 	return process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command);
 }
 
+/** @param {string} command
+ * @param {readonly string[]} args
+ * @param {{ readonly env?: NodeJS.ProcessEnv | undefined }} [options]
+ * @returns {Promise<void>} */
 function run(command, args, options = {}) {
 	return new Promise((resolve, reject) => {
 		console.log(`\n> ${commandLabel(command, args)}`);
@@ -156,7 +65,7 @@ function run(command, args, options = {}) {
 		});
 		child.on("error", reject);
 		child.on("close", (code, signal) => {
-			if (signal) {
+			if (signal !== null) {
 				reject(new Error(`${commandLabel(command, args)} was terminated by ${signal}`));
 				return;
 			}
@@ -174,36 +83,70 @@ function run(command, args, options = {}) {
 	});
 }
 
+/** @param {readonly ProjectStep[]} steps */
 export async function runSteps(steps) {
+	/** @type {Error[]} */
+	const failures = [];
+	let buildFailed = false;
 	for (const step of steps) {
-		// Each verification step must pass before dependent checks run or release actions start.
-		// oxlint-disable-next-line no-await-in-loop
-		await run(step.command, step.args, { env: step.env });
+		if (buildFailed && step.phase === "built") {
+			console.error(`Blocked by failed build: ${commandLabel(step.command, step.args)}`);
+			continue;
+		}
+		try {
+			await run(step.command, step.args, { env: step.env });
+		} catch (error) {
+			if (!(error instanceof Error)) {
+				throw error;
+			}
+			failures.push(error);
+			console.error(error.message);
+			buildFailed ||= step.phase === "build";
+		}
+	}
+	const [firstFailure] = failures;
+	if (firstFailure !== undefined) {
+		throw firstFailure;
 	}
 }
 
-function scriptStep(args, env) {
-	return { command: nodeCommand, args, env };
+/** @param {readonly string[]} args
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {StepPhase} [phase]
+ * @returns {ProjectStep} */
+function scriptStep(args, env, phase = "check") {
+	return { command: nodeCommand, args, env, phase };
 }
 
+/** @param {string} [pathValue] */
 export function hostToolPath(pathValue = process.env.PATH ?? "") {
 	return pathValue
 		.split(delimiter)
-		.filter((directory) => directory && !/(^|[\\/])node_modules[\\/]\.bin$/i.test(directory))
+		.filter(
+			(directory) => directory.length > 0 && !/(^|[\\/])node_modules[\\/]\.bin$/i.test(directory),
+		)
 		.join(delimiter);
 }
 
-function localToolStep(command, args, env) {
+/** @param {string} command
+ * @param {readonly string[]} args
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {StepPhase} [phase]
+ * @returns {ProjectStep} */
+function localToolStep(command, args, env, phase = "check") {
 	if (command === "tsc" && process.platform === "android") {
-		return { command: "tsgo", args, env };
+		return { command: "tsgo", args, env, phase };
 	}
 	return {
 		command: join(process.cwd(), "node_modules", ".bin", `${command}${binSuffix}`),
 		args,
 		env,
+		phase,
 	};
 }
 
+/** @param {readonly string[]} argv
+ * @returns {{ readonly showHelp: true } | (DocsOptions & { readonly showHelp: false })} */
 export function parseDocsArgs(argv) {
 	if (argv.includes("-h") || argv.includes("--help")) {
 		return { showHelp: true };
@@ -226,6 +169,7 @@ export function parseDocsArgs(argv) {
 	return { mode, showHelp: false, target };
 }
 
+/** @param {DocsOptions} options */
 export function docsSteps(options) {
 	const modeFlag = `--${options.mode}`;
 	const steps = [];
@@ -238,6 +182,8 @@ export function docsSteps(options) {
 	return steps;
 }
 
+/** @param {readonly string[]} argv
+ * @returns {VerifyOptions} */
 export function parseVerifyArgs(argv) {
 	if (argv.includes("-h") || argv.includes("--help")) {
 		return { mode: "default", passthrough: [], showHelp: true };
@@ -266,12 +212,13 @@ export function parseVerifyArgs(argv) {
 	return { mode, passthrough: rest, showHelp: false };
 }
 
+/** @param {readonly string[]} passthrough */
 function validatePlatformSmokePassthrough(passthrough) {
 	const allowedCommands = new Set(["doctor", "run"]);
 	const allowedFlags = new Set(["--target", "--suite"]);
 	let commandCount = 0;
-	for (let index = 0; index < passthrough.length; index += 1) {
-		const arg = passthrough[index];
+	const args = passthrough.values();
+	for (const arg of args) {
 		if (allowedCommands.has(arg)) {
 			commandCount += 1;
 			if (commandCount > 1) {
@@ -282,20 +229,22 @@ function validatePlatformSmokePassthrough(passthrough) {
 		if (!allowedFlags.has(arg)) {
 			throw new UsageError(`Option ${arg} is not supported for verify mode platform-smoke.`);
 		}
-		const value = passthrough[index + 1];
-		if (!value || value.startsWith("-")) {
+		const value = args.next().value;
+		if (value === undefined || value.length === 0 || value.startsWith("-")) {
 			throw new UsageError(`${arg} requires a value.`);
 		}
-		index += 1;
 	}
 }
 
+/** @param {string} mode
+ * @param {readonly string[]} passthrough */
 function validatePassthrough(mode, passthrough) {
 	if (mode === "platform-smoke") {
 		validatePlatformSmokePassthrough(passthrough);
 		return;
 	}
 	const lifecycleOptions = new Set(["--keep-artifacts", "--model", "--verbose", "--timeout-ms"]);
+	/** @type {Readonly<Record<string, ReadonlySet<string>>>} */
 	const allowedByMode = {
 		default: new Set(),
 		quality: new Set(),
@@ -313,9 +262,9 @@ function validatePassthrough(mode, passthrough) {
 		release: lifecycleOptions,
 	};
 	const allowed = allowedByMode[mode];
-	for (let index = 0; index < passthrough.length; index += 1) {
-		const arg = passthrough[index];
-		if (!allowed.has(arg)) {
+	const args = passthrough.values();
+	for (const arg of args) {
+		if (allowed?.has(arg) !== true) {
 			throw new UsageError(`Option ${arg} is not supported for verify mode ${mode}.`);
 		}
 		const valueFlags = new Map([
@@ -324,17 +273,22 @@ function validatePassthrough(mode, passthrough) {
 			["--artifact-dir", "a path"],
 			["--samples", "a value"],
 		]);
-		if (valueFlags.has(arg)) {
-			const value = passthrough[index + 1];
-			if (!value || (arg !== "--timeout-ms" && value.startsWith("-"))) {
-				throw new UsageError(`${arg} requires ${valueFlags.get(arg)}.`);
+		const requirement = valueFlags.get(arg);
+		if (requirement !== undefined) {
+			const value = args.next().value;
+			if (
+				value === undefined ||
+				value.length === 0 ||
+				(arg !== "--timeout-ms" && value.startsWith("-"))
+			) {
+				throw new UsageError(`${arg} requires ${requirement}.`);
 			}
-			index += 1;
 		}
 	}
 }
 
 // verify-lifecycle.mjs owns lifecycle option values; release must reject them before earlier steps run.
+/** @param {VerifyOptions} options */
 async function validateLifecycleValues({ mode, passthrough }) {
 	if (mode !== "lifecycle" && mode !== "release") {
 		return;
@@ -351,7 +305,7 @@ async function validateLifecycleValues({ mode, passthrough }) {
 }
 
 function buildStep() {
-	return scriptStep(["./scripts/build.mjs"]);
+	return scriptStep(["./scripts/build.mjs"], undefined, "build");
 }
 
 function commandReferenceSteps() {
@@ -361,10 +315,8 @@ function commandReferenceSteps() {
 	];
 }
 
-function prepareCheckerStep() {
-	return scriptStep(["./scripts/prepare-quality-checker.mjs"]);
-}
-
+/** @param {NodeJS.Platform} platform
+ * @param {boolean} [tap] */
 function contractTestSteps(platform, tap = false) {
 	// The pinned qualifier strips NODE_DEBUG before invoking the repository. Enable
 	// exactly this opt-in channel at the owned child boundary, never a wildcard.
@@ -374,21 +326,21 @@ function contractTestSteps(platform, tap = false) {
 	const cli = fileURLToPath(import.meta.resolve("tsx/cli"));
 	const args = [cli, "--test", ...(tap ? ["--test-reporter=tap"] : [])];
 	return [
-		scriptStep([...args, "test/**/!(*.serial).test.ts"], env),
-		scriptStep([...args, "--test-concurrency=1", "test/**/*.serial.test.ts"], env),
+		scriptStep([...args, "test/**/!(*.serial).test.ts"], env, "built"),
+		scriptStep([...args, "--test-concurrency=1", "test/**/*.serial.test.ts"], env, "built"),
 	];
 }
 
 // Platform selects only the diagnostic policy; executable paths stay host-native.
 // Tests can exercise the Windows policy on Linux without spoofing the native host.
+/** @param {NodeJS.Platform} [platform] */
 export function testSteps(platform = process.platform) {
-	return [buildStep(), prepareCheckerStep(), ...contractTestSteps(platform, true)];
+	return [buildStep(), ...contractTestSteps(platform, true)];
 }
 
 function qualitySteps() {
 	return [
 		buildStep(),
-		prepareCheckerStep(),
 		scriptStep(["./scripts/code-quality.mjs", "lint"]),
 		localToolStep("oxfmt", ["--check", "."]),
 	];
@@ -421,24 +373,39 @@ function realUpstreamSteps() {
 	];
 }
 
+function typecheckSteps() {
+	return [
+		localToolStep("tsc", ["--noEmit"]),
+		localToolStep("tsc", ["--noEmit", "-p", "tsconfig.declarations.json"]),
+	];
+}
+
 function platformTargetSteps() {
 	return [
 		...qualitySteps(),
-		localToolStep("tsc", ["--noEmit"]),
-		localToolStep("tsx", [
-			"--test",
-			"--test-concurrency=1",
-			"test/code-quality*.test.ts",
-			"test/project-verify.test.ts",
-			"test/platform-smoke.test.ts",
-			"test/verify-package.test.ts",
-			"test/agent-browser.runtime.test.ts",
-			"test/agent-browser.windows-argv.test.ts",
-		]),
+		...typecheckSteps(),
+		localToolStep(
+			"tsx",
+			[
+				"--test",
+				"--test-concurrency=1",
+				"test/code-quality*.test.ts",
+				"test/project-verify.test.ts",
+				"test/platform-smoke.test.ts",
+				"test/verify-package.test.ts",
+				"test/agent-browser.runtime.test.ts",
+				"test/agent-browser.windows-argv.test.ts",
+			],
+			undefined,
+			"built",
+		),
 		...docsSteps({ mode: "check", target: "all" }),
 	];
 }
 
+/** @param {VerifyOptions} options
+ * @param {NodeJS.Platform} [platform]
+ * @returns {ProjectStep[]} */
 export function verifySteps(options, platform = process.platform) {
 	validatePassthrough(options.mode, options.passthrough);
 	switch (options.mode) {
@@ -446,13 +413,13 @@ export function verifySteps(options, platform = process.platform) {
 		case "quality":
 			return [
 				...qualitySteps(),
-				localToolStep("tsc", ["--noEmit"]),
+				...typecheckSteps(),
 				...contractTestSteps(platform),
 				...docsSteps({ mode: "check", target: "playbook" }),
 				...commandReferenceSteps(),
 			];
 		case "typecheck":
-			return [localToolStep("tsc", ["--noEmit"])];
+			return typecheckSteps();
 		case "command-reference":
 			return commandReferenceSteps();
 		case "pre-pr":
@@ -467,7 +434,12 @@ export function verifySteps(options, platform = process.platform) {
 		case "dogfood":
 			return [
 				buildStep(),
-				localToolStep("tsx", ["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough]),
+				localToolStep(
+					"tsx",
+					["./scripts/verify-agent-browser-dogfood.ts", ...options.passthrough],
+					undefined,
+					"built",
+				),
 			];
 		case "package":
 			return [scriptStep(["./scripts/verify-package.mjs", ...options.passthrough])];
@@ -491,9 +463,12 @@ export function verifySteps(options, platform = process.platform) {
 				scriptStep(["./scripts/platform-smoke.mjs", "doctor"]),
 				scriptStep(["./scripts/platform-smoke.mjs", "run"]),
 			];
+		default:
+			throw new UsageError(`Unknown verify mode: ${options.mode}`);
 	}
 }
 
+/** @param {readonly string[]} args */
 async function runTestCommand(args) {
 	if (args.length > 0) {
 		throw new UsageError("The complete test gate does not accept options or filtered test paths.");
@@ -511,36 +486,41 @@ async function runTestCommand(args) {
 	}
 }
 
+/** @param {readonly string[]} [argv] */
 export async function main(argv = process.argv.slice(2)) {
 	const [command, ...rest] = argv;
-	if (!command || command === "-h" || command === "--help") {
-		printTopLevelHelp();
-		return 0;
-	}
-	if (command === "test") {
-		return runTestCommand(rest);
-	}
-	if (command === "docs") {
-		const options = parseDocsArgs(rest);
-		if (options.showHelp) {
-			printDocsHelp();
+	switch (command) {
+		case undefined:
+		case "":
+		case "-h":
+		case "--help":
+			printTopLevelHelp();
+			return 0;
+		case "test":
+			return runTestCommand(rest);
+		case "docs": {
+			const options = parseDocsArgs(rest);
+			if (options.showHelp) {
+				printDocsHelp();
+				return 0;
+			}
+			await runSteps(docsSteps(options));
 			return 0;
 		}
-		await runSteps(docsSteps(options));
-		return 0;
-	}
-	if (command === "verify") {
-		const options = parseVerifyArgs(rest);
-		if (options.showHelp) {
-			printVerifyHelp();
+		case "verify": {
+			const options = parseVerifyArgs(rest);
+			if (options.showHelp) {
+				printVerifyHelp();
+				return 0;
+			}
+			const steps = verifySteps(options);
+			await validateLifecycleValues(options);
+			await runSteps(steps);
 			return 0;
 		}
-		const steps = verifySteps(options);
-		await validateLifecycleValues(options);
-		await runSteps(steps);
-		return 0;
+		default:
+			throw new UsageError(`Unknown project command: ${command}`);
 	}
-	throw new UsageError(`Unknown project command: ${command}`);
 }
 
 if (import.meta.main) {
@@ -548,7 +528,7 @@ if (import.meta.main) {
 		.then((exitCode) => {
 			process.exitCode = exitCode;
 		})
-		.catch((error) => {
+		.catch((/** @type {unknown} */ error) => {
 			const message = error instanceof Error ? error.message : String(error);
 			console.error(message);
 			process.exitCode = error instanceof UsageError ? 2 : 1;

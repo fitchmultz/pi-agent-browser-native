@@ -7,11 +7,11 @@
  */
 
 import assert from "node:assert/strict";
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { readArray, readRecord, readString, readDefined } from "./helpers/assertions.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	createExtensionHarness,
@@ -21,7 +21,7 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension redacts denied clipboard write payloads from all result surfaces",
 	{ concurrency: false },
 	async () => {
@@ -137,12 +137,15 @@ process.stdin.on("end", () => {
 						/clipboard-secret|second-secret|object-secret/,
 					);
 					const steps = readArray(batch.details.batchSteps).map(readRecord);
-					assert.match(readString(steps[0].commandText), /clipboard write \[REDACTED\]/);
+					assert.match(
+						readString(readDefined(steps[0]).commandText),
+						/clipboard write \[REDACTED\]/,
+					);
 					assert.deepEqual(
 						steps.map((step) => step.success),
 						[false, false, false, false],
 					);
-					const shortBatch = steps[3];
+					const shortBatch = readDefined(steps[3]);
 					assert.equal(shortBatch.resultCategory, "failure");
 					assert.equal(shortBatch.failureCategory, "upstream-error");
 					assert.match(readString(shortBatch.commandText), /clipboard write \[REDACTED\]/);

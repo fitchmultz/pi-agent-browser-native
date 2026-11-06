@@ -1,10 +1,12 @@
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { readDefined, readArray, readRecord, readString } from "./helpers/assertions.js";
+import type { TestToolResult } from "./helpers/tool-result.mjs";
 import assert from "node:assert/strict";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -13,21 +15,18 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-interface ScreenshotResult {
-	readonly details?: Readonly<Record<string, unknown>>;
-	readonly content: readonly { readonly type: string }[];
-}
-
-test("Lightpanda captures stay attached as text-rendered images without coordinate claims across direct, batch and code output", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "piab-text-image-"));
-	const path = join(dir, "image.png");
-	const imageBytes = Buffer.from(
-		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
-		"base64",
-	);
-	await writeFakeAgentBrowserBinary(
-		dir,
-		`
+nodeTest(
+	"Lightpanda captures stay attached as text-rendered images without coordinate claims across direct, batch and code output",
+	async () => {
+		const dir = await mkdtemp(join(tmpdir(), "piab-text-image-"));
+		const path = join(dir, "image.png");
+		const imageBytes = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+			"base64",
+		);
+		await writeFakeAgentBrowserBinary(
+			dir,
+			`
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 const engine = process.env.PIAB_FIXTURE_ENGINE ?? 'lightpanda';
@@ -41,83 +40,84 @@ const data = args.includes('batch') ? [{command:['screenshot',${JSON.stringify(p
   : args.includes('screenshot') ? capture : args.includes('eval') ? {result:sample}
   : {url:'https://fixture.test/',title:'Fixture',lifecycle};
 console.log(JSON.stringify({success:true,data}));`,
-	);
-	try {
-		await withPatchedEnv(
-			{ PATH: `${dir}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
-			async () => {
-				const h = createExtensionHarness({ cwd: dir });
-				const call = async (args: readonly string[], extra = {}) => {
-					const result = await executeRegisteredTool(h.tool, h.ctx, { args, ...extra });
-					assert.equal(result.isError, false, result.content[0].text);
-					return result;
-				};
-				const checkImage = (result: ScreenshotResult) => {
-					const observed = readArray(result.details?.imageObservations).map((value) =>
-						readRecord(value),
-					)[0];
-					assert.equal(observed.rendering, "text");
-					assert.equal(readRecord(observed.geometry).status, "unknown");
-					assert.match(
-						readString(readRecord(observed.geometry).reason),
-						/Lightpanda.*text-rendered/i,
-					);
-					assert.equal(readRecord(observed.geometry).crop, undefined);
-					assert.equal(readRecord(observed.geometry).pixelsPerCssPixel, undefined);
-					const image = result.content.find((part) => part.type === "image");
-					assert.ok(image);
-					assert.deepEqual(Buffer.from(readString(readRecord(image).data), "base64"), imageBytes);
-				};
-				try {
-					await call(["--engine", "lightpanda", "open", "https://fixture.test/"], {
-						sessionMode: "fresh",
-					});
-					const direct = await call(["--json", "screenshot", path]);
-					const directDetails = readRecord(direct.details);
-					checkImage(direct);
-					assert.deepEqual(
-						readRecord(JSON.parse(readString(direct.content[0].text))).imageObservations,
-						directDetails.imageObservations,
-					);
-					const batch = await call(["batch", "--bail"], {
-						stdin: JSON.stringify([["screenshot", path]]),
-					});
-					checkImage(batch);
-					assert.match(readString(batch.content[0].text), /Lightpanda.*text-rendered/i);
-					const code = await executeRegisteredTool(
-						// Missing code-tool registration fails immediately; no passing path skips the code assertions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						h.getTool("agent_browser_code") ?? assert.fail("code tool must be registered"),
-						h.ctx,
-						{
-							code: `const r = await browser({args:["screenshot",${JSON.stringify(path)}]}); emitImage(r.imageObservations[0]);`,
-						},
-					);
-					assert.equal(code.isError, false, code.content[0].text);
-					checkImage(code);
-					for (const engine of ["chrome", "absent"]) {
-						// Engine variants share the browser and screenshot path; capture before changing its environment.
-						// oxlint-disable-next-line no-await-in-loop
-						await withPatchedEnv(
-							{ PIAB_FIXTURE_ENGINE: engine, PIAB_FIXTURE_RENDERING: "text" },
-							async () => {
-								checkImage(await call(["screenshot", path]));
-							},
-						);
-					}
-					assert.deepEqual(await readFile(path), imageBytes);
-				} finally {
-					await call(["close"]);
-				}
-			},
 		);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
+		try {
+			await withPatchedEnv(
+				{ PATH: `${dir}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0" },
+				async () => {
+					const h = createExtensionHarness({ cwd: dir });
+					const call = async (args: readonly string[], extra = {}) => {
+						const result = await executeRegisteredTool(h.tool, h.ctx, { args, ...extra });
+						assert.equal(result.isError, false, getMessageText(result.content));
+						return result;
+					};
+					const checkImage = (result: TestToolResult) => {
+						const observed = readArray(result.details?.imageObservations).map((value) =>
+							readRecord(value),
+						)[0];
+						assert.ok(observed);
+						assert.equal(observed.rendering, "text");
+						assert.equal(readRecord(observed.geometry).status, "unknown");
+						assert.match(
+							readString(readRecord(observed.geometry).reason),
+							/Lightpanda.*text-rendered/i,
+						);
+						assert.equal(readRecord(observed.geometry).crop, undefined);
+						assert.equal(readRecord(observed.geometry).pixelsPerCssPixel, undefined);
+						const image = result.content.find((part) => part.type === "image");
+						assert.ok(image);
+						assert.deepEqual(Buffer.from(readString(readRecord(image).data), "base64"), imageBytes);
+					};
+					try {
+						await call(["--engine", "lightpanda", "open", "https://fixture.test/"], {
+							sessionMode: "fresh",
+						});
+						const direct = await call(["--json", "screenshot", path]);
+						const directDetails = readRecord(direct.details);
+						checkImage(direct);
+						assert.deepEqual(
+							readRecord(JSON.parse(readString(readDefined(direct.content[0]).text)))
+								.imageObservations,
+							directDetails.imageObservations,
+						);
+						const batch = await call(["batch", "--bail"], {
+							stdin: JSON.stringify([["screenshot", path]]),
+						});
+						checkImage(batch);
+						assert.match(
+							readString(readDefined(batch.content[0]).text),
+							/Lightpanda.*text-rendered/i,
+						);
+						const codeTool = h.getTool("agent_browser_code");
+						assert.ok(codeTool, "code tool must be registered");
+						const code = await executeRegisteredTool(codeTool, h.ctx, {
+							code: `const r = await browser({args:["screenshot",${JSON.stringify(path)}]}); emitImage(r.imageObservations[0]);`,
+						});
+						assert.equal(code.isError, false, getMessageText(code.content));
+						checkImage(code);
+						for (const engine of ["chrome", "absent"]) {
+							// Engine variants share the browser and screenshot path; capture before changing its environment.
+							await withPatchedEnv(
+								{ PIAB_FIXTURE_ENGINE: engine, PIAB_FIXTURE_RENDERING: "text" },
+								async () => {
+									checkImage(await call(["screenshot", path]));
+								},
+							);
+						}
+						assert.deepEqual(await readFile(path), imageBytes);
+					} finally {
+						await call(["close"]);
+					}
+				},
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	},
+);
 
 // Based on recon geometry-probe.mjs: CSS1200x800/DPR2, target box(100,160,100,60).
-test(
+nodeTest(
 	"native screenshots expose DPR, viewport/full/element crop and honest unknowns",
 	{ skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1", timeout: 90_000 },
 	async (t) => {
@@ -163,16 +163,16 @@ test(
 						assert.equal(
 							result.isError,
 							false,
-							`${args.join(" ")}: ${readString(result.content[0].text)}`,
+							`${args.join(" ")}: ${readString(getMessageText(result.content))}`,
 						);
 						return result;
 					};
-					const image = (result: ScreenshotResult) => {
+					const image = (result: TestToolResult) => {
 						assert.equal(result.content.filter((part) => part.type === "image").length, 1);
 						const observed = readArray(result.details?.imageObservations).map((value) =>
 							readRecord(value),
 						)[0];
-						assert.notEqual(observed, undefined);
+						assert.ok(observed);
 						return observed;
 					};
 					try {
@@ -189,7 +189,8 @@ test(
 						);
 						assert.deepEqual(readRecord(viewport.geometry).pixelsPerCssPixel, { x: 2, y: 2 });
 						assert.deepEqual(
-							readRecord(JSON.parse(readString(viewportResult.content[0].text))).imageObservations,
+							readRecord(JSON.parse(readString(readDefined(viewportResult.content[0]).text)))
+								.imageObservations,
 							viewportResultDetails.imageObservations,
 						);
 						const element = image(await call(["screenshot", "#target", join(dir, "element.png")]));
@@ -282,7 +283,9 @@ test(
 						});
 						const failureDetails = readRecord(failure.details);
 						assert.equal(failure.isError, true);
-						const payload = readRecord(JSON.parse(readString(failure.content[0].text)));
+						const payload = readRecord(
+							JSON.parse(readString(readDefined(failure.content[0]).text)),
+						);
 						assert.equal(payload.success, false);
 						assert.equal(payload.failureCategory, failureDetails.failureCategory);
 						assert.ok(

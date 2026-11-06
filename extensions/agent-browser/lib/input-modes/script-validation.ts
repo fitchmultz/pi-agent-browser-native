@@ -53,8 +53,8 @@ function normalizeNamespace(namespace: string | undefined): string | undefined {
 
 export function bindBrowserCodeCall(
 	params: AgentBrowserScriptBrowserParams,
-	identity: { readonly sessionName: string; readonly namespace?: string },
-): { args: string[]; stdin?: string; timeoutMs?: number } {
+	identity: { readonly sessionName: string; readonly namespace?: string | undefined },
+): { args: string[]; stdin?: string | undefined; timeoutMs?: number | undefined } {
 	const args = [...params.args];
 	const explicitSession = extractExplicitSessionName(args);
 	const namespaceFlags = scanUpstreamGlobalFlagOccurrences(args, "--namespace");

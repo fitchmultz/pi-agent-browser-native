@@ -10,11 +10,11 @@ export interface ElectronAppSensitivity {
 }
 export interface ElectronAppDiscovery {
 	readonly appPath?: string;
-	readonly bundleId?: string;
-	readonly comment?: string;
+	readonly bundleId?: string | undefined;
+	readonly comment?: string | undefined;
 	readonly desktopId?: string;
 	readonly executablePath: string;
-	readonly icon?: string;
+	readonly icon?: string | undefined;
 	readonly name: string;
 	readonly packageSource?: "desktop" | "flatpak" | "snap";
 	readonly platform: ElectronDiscoveryPlatform;
@@ -32,17 +32,17 @@ export interface ElectronDiscoveryScanLocations {
 }
 export interface DiscoverElectronAppsOptions {
 	readonly locations?: ElectronDiscoveryScanLocations;
-	readonly maxResults?: number;
+	readonly maxResults?: number | undefined;
 	readonly platform?: NodeJS.Platform | ElectronDiscoveryPlatform;
-	readonly query?: string;
+	readonly query?: string | undefined;
 }
 export interface ElectronDiscoveryResult {
 	readonly apps: readonly ElectronAppDiscovery[];
 	readonly maxResults: number;
 	readonly omittedCount: number;
 	readonly platform: ElectronDiscoveryPlatform | "unsupported";
-	readonly query?: string;
-	readonly skippedCount?: number;
+	readonly query?: string | undefined;
+	readonly skippedCount?: number | undefined;
 }
 export interface ResolvedElectronDiscoveryLocations {
 	readonly darwinApplicationDirectories: readonly string[];
@@ -55,11 +55,11 @@ export interface ResolvedElectronDiscoveryLocations {
 	readonly snapMountDirectory: string;
 }
 export interface LinuxDesktopEntry {
-	readonly comment?: string;
+	readonly comment?: string | undefined;
 	readonly desktopId: string;
 	readonly exec: string;
 	readonly filePath: string;
-	readonly icon?: string;
+	readonly icon?: string | undefined;
 	readonly name: string;
 }
 export interface ElectronDiscoveryScan {

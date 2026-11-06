@@ -24,7 +24,6 @@ export async function executableExistsOnPath(command: string): Promise<boolean> 
 		);
 	for (const candidate of candidates) {
 		// Respect PATH/PATHEXT precedence and stop probing after the first executable.
-		// oxlint-disable-next-line no-await-in-loop
 		if (await isExecutableFile(candidate)) {
 			return true;
 		}

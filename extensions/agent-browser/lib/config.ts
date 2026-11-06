@@ -66,7 +66,6 @@ export type {
 } from "./config-policy.js";
 
 // Node's callback-oriented exec returns ChildProcess; promisify intentionally ignores that return.
-// oxlint-disable-next-line typescript/strict-void-return
 const exec = promisify(execCallback);
 
 export interface ResolvedCredential {
@@ -100,8 +99,7 @@ async function resolveCommandCredential(
 		if (signal?.aborted === true) {
 			throw error;
 		}
-		// The native exec error contains the secret command/stdout/stderr; never expose it as a cause.
-		// oxlint-disable-next-line eslint/preserve-caught-error
+		// oxlint-disable-next-line eslint/preserve-caught-error -- QX-004: Native exec errors retain secret command/output; this boundary must discard them.
 		throw new Error(
 			"Credential command failed without exposing command output. Check pi-agent-browser-config web-search status and the configured secret manager command.",
 		);
@@ -110,7 +108,7 @@ async function resolveCommandCredential(
 
 async function resolveCredentialSource(
 	source: CredentialSource | undefined,
-	options: { readonly env?: NodeJS.ProcessEnv; readonly signal?: AbortSignal } = {},
+	options: { readonly env?: NodeJS.ProcessEnv; readonly signal?: AbortSignal | undefined } = {},
 ): Promise<ResolvedCredential | undefined> {
 	if (!source) {
 		return undefined;
@@ -129,7 +127,7 @@ async function resolveCredentialSource(
 export async function resolveWebSearchCredential(
 	state: AgentBrowserConfigState,
 	provider: WebSearchProvider,
-	options: { readonly env?: NodeJS.ProcessEnv; readonly signal?: AbortSignal } = {},
+	options: { readonly env?: NodeJS.ProcessEnv; readonly signal?: AbortSignal | undefined } = {},
 ): Promise<ResolvedCredential | undefined> {
 	if (!state.webSearchEnabled || state.errors.length > 0) {
 		return undefined;
@@ -142,7 +140,7 @@ export async function resolvePreferredWebSearchCredential(
 	options: {
 		readonly env?: NodeJS.ProcessEnv;
 		readonly provider?: WebSearchProvider | "auto";
-		readonly signal?: AbortSignal;
+		readonly signal?: AbortSignal | undefined;
 	} = {},
 ): Promise<
 	{ readonly provider: WebSearchProvider; readonly credential: ResolvedCredential } | undefined
@@ -152,7 +150,6 @@ export async function resolvePreferredWebSearchCredential(
 	}
 	for (const provider of getWebSearchProviderOrder(state, options.provider)) {
 		// Resolve in configured preference order; later secret commands must not run once a key resolves.
-		// oxlint-disable-next-line no-await-in-loop
 		const credential = await resolveWebSearchCredential(state, provider, options);
 		if (credential) {
 			return { provider, credential };

@@ -2,14 +2,23 @@
 import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
 import { platformFor } from "./suite-evidence.mjs";
 
+/** @typedef {{readonly path: string; readonly sha256: string}} ReleaseCandidate */
+
+/** @param {string} value */
 function shellQuote(value) {
-	return `'${String(value).replace(/'/g, `'\\''`)}'`;
+	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+/** @param {string} value */
 function psSingleQuote(value) {
-	return `'${String(value).replace(/'/g, "''")}'`;
+	return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** @param {string} targetName
+ * @param {string} packageName
+ * @param {string} nodeValidationVersion
+ * @param {ReleaseCandidate} [candidate]
+ */
 export function buildPlatformBuildCommand(
 	targetName,
 	packageName,
@@ -35,6 +44,7 @@ export function buildPlatformBuildCommand(
 		`echo "PLATFORM_NODE_VERSION=$NODE_VERSION"`,
 		`if node -e 'process.exit(process.versions.node.localeCompare(process.argv[1], undefined, { numeric: true }) < 0 ? 1 : 0)' ${shellQuote(nodeValidationVersion)}; then NODE_VERSION_EXIT=0; else NODE_VERSION_EXIT=1; fi`,
 		`echo "PLATFORM_NODE_VERSION_EXIT=$NODE_VERSION_EXIT"`,
+		`git init --quiet || exit $?`,
 		`npm ci 2>&1`,
 		`NPM_CI_EXIT=$?`,
 		`echo "PLATFORM_NPM_CI_EXIT=$NPM_CI_EXIT"`,
@@ -84,6 +94,10 @@ export function buildPlatformBuildCommand(
 	].join("\n");
 }
 
+/** @param {string} targetName
+ * @param {string} [agentBrowserVersion]
+ * @param {boolean} [dependenciesReady]
+ */
 export function buildBrowserDogfoodCommand(
 	targetName,
 	agentBrowserVersion = CAPABILITY_BASELINE.targetVersion,
@@ -102,8 +116,8 @@ export function buildBrowserDogfoodCommand(
 		`echo "PLATFORM_RUN_ROOT=$RUN_ROOT"`,
 		`echo "PLATFORM_DOGFOOD_ARTIFACT_DIR=$DOGFOOD_ARTIFACT_DIR"`,
 		`NODE_VERSION=$(node --version)`,
-		`NODE_MAJOR="${"${NODE_VERSION#v}"}"`,
-		`NODE_MAJOR="${"${NODE_MAJOR%%.*}"}"`,
+		`NODE_MAJOR="\${NODE_VERSION#v}"`,
+		`NODE_MAJOR="\${NODE_MAJOR%%.*}"`,
 		`echo "PLATFORM_NODE_VERSION=$NODE_VERSION"`,
 		`EXPECTED_AGENT_BROWSER_VERSION=${shellQuote(`agent-browser ${agentBrowserVersion}`)}`,
 		`AGENT_BROWSER_VERSION_OUTPUT=$(agent-browser --version 2>&1)`,

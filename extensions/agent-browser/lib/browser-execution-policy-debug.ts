@@ -80,8 +80,8 @@ export function policyDebugPhase<T>(phase: "release", run: () => T): () => T {
 }
 /** A bounded allowlisted descriptor, safe to retain until an existing absence check finishes. */
 export function policyDebugError(error: unknown): {
-	readonly code?: string | number;
-	readonly syscall?: string;
+	readonly code?: string | number | undefined;
+	readonly syscall?: string | undefined;
 } {
 	const code = nativeField(error, "code");
 	const syscall = nativeField(error, "syscall");

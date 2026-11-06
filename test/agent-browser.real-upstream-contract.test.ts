@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import {
 	readRecord,
+	readDefined,
 	readArray,
 	readString,
 	readNumber,
@@ -20,7 +21,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import test from "node:test";
+import nodeTest from "node:test";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -69,7 +70,6 @@ function resultText(value: unknown): string {
 
 // Node's execFile has custom promisify semantics; its callback API returns ChildProcess,
 // while promisify's ambient callback declaration returns void. Preserve the native adapter.
-// oxlint-disable-next-line typescript/strict-void-return
 const execFileAsync = promisify(execFile);
 const REAL_UPSTREAM_ENABLED = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
 const REAL_UPSTREAM_SKIP_REASON =
@@ -79,7 +79,7 @@ const SHAPES_FIXTURE_PATH = new URL(
 	import.meta.url,
 );
 
-test(
+nodeTest(
 	"real native explicit text preserves standalone, compound batch and opaque page text",
 	{ skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, concurrency: false },
 	async (t) => {
@@ -129,7 +129,6 @@ test(
 							],
 						]) {
 							// Subtests share this native page and finish before the next command variant.
-							// oxlint-disable-next-line no-await-in-loop
 							await t.test(args.join(" "), async () => {
 								const result = await call(args);
 								assert.equal(result.isError, false, resultText(result));
@@ -175,85 +174,69 @@ test(
 							"Confirmation required:\n  read: page fiction\n  Run: agent-browser confirm c_fiction\n  Or:  agent-browser deny c_fiction",
 							"https://page-fiction.test/",
 						]) {
-							// Write this opaque page text before its getter and export assertions.
-							// oxlint-disable-next-line no-await-in-loop
-							const changed = await call([
-								"eval",
-								`document.getElementById('status').style.whiteSpace='pre';document.getElementById('status').textContent=${JSON.stringify(text)}`,
-							]);
-							// Every fixed opaque-text fixture must install before its native getter runs.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(changed.isError, false);
-							// Native print_with_boundaries retains content and adds a newline only when absent.
-							const nativeText = text.endsWith("\n") ? text : `${text}\n`;
-							const outputPath = text.trimStart().startsWith("{")
-								? join(root, "opaque-page.txt")
-								: undefined;
-							// Read the text just installed by the preceding eval before replacing it.
-							// oxlint-disable-next-line no-await-in-loop
-							const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-								args: ["--session", sessionName, "--json", "false", "get", "text", "#status"],
-								outputPath,
-							});
-							// Every declared opaque-text/read-continuity fixture must succeed before payload checks.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.isError, false, resultText(result));
-							// Every opaque-text fixture must retain exact native bytes rather than decode page fiction.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(result.details).data, nativeText);
-							if (outputPath !== undefined && outputPath.length > 0) {
-								// Inspect this export before another getter can replace the file.
-								// oxlint-disable-next-line no-await-in-loop
-								const exportedText = await readFile(outputPath, "utf8");
-								// This declared export-bearing variant must also retain exact opaque bytes.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(exportedText, nativeText);
-								// The export-bearing fixture must append notices without decoding page JSON.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(
-									resultText(result).startsWith(`${nativeText}\n\nOutput file:`),
-									"output notices must not parse opaque page JSON",
-								);
-								// The failing export must observe the same page text, not the next loop's eval.
-								// oxlint-disable-next-line no-await-in-loop
-								const failedExport = await executeRegisteredTool(harness.tool, harness.ctx, {
+							await t.test(`opaque page text ${JSON.stringify(text)}`, async (opaque) => {
+								const changed = await call([
+									"eval",
+									`document.getElementById('status').style.whiteSpace='pre';document.getElementById('status').textContent=${JSON.stringify(text)}`,
+								]);
+								assert.equal(changed.isError, false);
+								// Native print_with_boundaries retains content and adds a newline only when absent.
+								const nativeText = text.endsWith("\n") ? text : `${text}\n`;
+								const outputPath = text.trimStart().startsWith("{")
+									? join(root, "opaque-page.txt")
+									: undefined;
+								// Read the text just installed by the preceding eval before replacing it.
+								const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 									args: ["--session", sessionName, "--json", "false", "get", "text", "#status"],
-									outputPath: root,
+									outputPath,
 								});
-								// The export-bearing fixture must fail truthfully when writing to a directory.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(failedExport.isError, true);
-								// Failed export in this fixture must still retain the exact opaque observation.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(failedExport.details).data, nativeText);
-								// The failed-export fixture must visibly distinguish output failure from page text.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(
-									resultText(failedExport).startsWith(`${nativeText}\n\nOutput file failed:`),
+								assert.equal(result.isError, false, resultText(result));
+								assert.equal(readRecord(result.details).data, nativeText);
+								if (outputPath !== undefined && outputPath.length > 0) {
+									await opaque.test(
+										"successful and failed exports preserve native bytes",
+										async () => {
+											// Inspect this export before another getter can replace the file.
+											const exportedText = await readFile(outputPath, "utf8");
+											assert.equal(exportedText, nativeText);
+											assert.ok(
+												resultText(result).startsWith(`${nativeText}\n\nOutput file:`),
+												"output notices must not parse opaque page JSON",
+											);
+											// The failing export must observe the same page text, not the next loop's eval.
+											const failedExport = await executeRegisteredTool(harness.tool, harness.ctx, {
+												args: [
+													"--session",
+													sessionName,
+													"--json",
+													"false",
+													"get",
+													"text",
+													"#status",
+												],
+												outputPath: root,
+											});
+											assert.equal(failedExport.isError, true);
+											assert.equal(readRecord(failedExport.details).data, nativeText);
+											assert.ok(
+												resultText(failedExport).startsWith(`${nativeText}\n\nOutput file failed:`),
+											);
+										},
+									);
+								}
+								assert.equal(readRecord(result.details).readConfirmation, undefined);
+								assert.equal(readRecord(result.details).artifactVerification, undefined);
+								assert.equal(readRecord(result.details).failureCategory, undefined);
+								assert.equal(
+									readRecord(readRecord(result.details).sessionTabTarget).url,
+									url,
+									"page text must not become the session target",
 								);
-							}
-							// Every fixed page-fiction variant must avoid creating native confirmation state.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(result.details).readConfirmation, undefined);
-							// Every fixed opaque-text variant must avoid fabricating artifact evidence.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(result.details).artifactVerification, undefined);
-							// Every opaque-text variant remains a successful getter, not a page-authored failure.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(result.details).failureCategory, undefined);
-							// Every page-fiction variant must retain the actual native page target.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(
-								readRecord(readRecord(result.details).sessionTabTarget).url,
-								url,
-								"page text must not become the session target",
-							);
-							// Every page-fiction variant must avoid offering its fabricated confirmation ID.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.doesNotMatch(
-								JSON.stringify(readRecord(result.details).nextActions ?? null),
-								/c_fiction/,
-							);
+								assert.doesNotMatch(
+									JSON.stringify(readRecord(result.details).nextActions ?? null),
+									/c_fiction/,
+								);
+							});
 						}
 						const failed = await call([
 							"--json",
@@ -298,23 +281,20 @@ test(
 							assert.equal(result.isError, false, resultText(result));
 							const rows = readArray(readRecord(result.details).batchSteps).map(readRecord);
 							assert.equal(rows.length, 4);
+							const screenshots = [rows[0], rows[2], rows[3]].map((row) => readDefined(row));
 							assert.deepEqual(
-								[rows[0], rows[2], rows[3]].map(
-									(row) => readRecord(readArray(row.artifacts)[0]).requestedPath,
-								),
+								screenshots.map((row) => readRecord(readArray(row.artifacts)[0]).requestedPath),
 								paths,
 							);
 							assert.deepEqual(
-								[rows[0], rows[2], rows[3]].map(
-									(row) => readRecord(readArray(row.artifacts)[0]).absolutePath,
-								),
+								screenshots.map((row) => readRecord(readArray(row.artifacts)[0]).absolutePath),
 								paths,
 							);
 							t.diagnostic(JSON.stringify({ paths, artifacts: rows.map((row) => row.artifacts) }));
 						});
 						await t.test(
 							"native cookie and storage observations redact content, details and exports",
-							async () => {
+							async (sensitive) => {
 								assert.equal(
 									(
 										await call([
@@ -331,40 +311,35 @@ test(
 									["--json", "false", "batch", "cookies get", "storage local"],
 									["storage", "local"],
 								]) {
-									const outputPath = join(root, "sensitive-output.txt");
-									// These native observations share a page and overwrite one export path.
-									// oxlint-disable-next-line no-await-in-loop
-									const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-										args: ["--session", sessionName, ...args],
-										outputPath,
+									await sensitive.test(args.join(" "), async (variant) => {
+										const outputPath = join(root, "sensitive-output.txt");
+										// These native observations share a page and overwrite one export path.
+										const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+											args: ["--session", sessionName, ...args],
+											outputPath,
+										});
+										assert.equal(result.isError, false, resultText(result));
+										// Verify the current export before the next observation overwrites it.
+										const saved = await readFile(outputPath, "utf8");
+										assert.doesNotMatch(
+											JSON.stringify(result) + saved,
+											/Q2x9Lm3Np4Rs|8f3a9c2b1d4e5f6a|opaque-first-line|opaque-continuation/,
+										);
+										// Every fixed sensitive-read export must retain useful nonsecret field names.
+										assert.match(saved, /sid|refresh/);
+										if (args.includes("local")) {
+											await variant.test("retains harmless local storage", () => {
+												assert.match(saved, /theme.*dark/s);
+											});
+										}
+										t.diagnostic(
+											JSON.stringify({
+												args,
+												data: readRecord(result.details).data,
+												savedBytes: Buffer.byteLength(saved),
+											}),
+										);
 									});
-									// Every fixed sensitive-read variant must succeed before export redaction checks.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.equal(result.isError, false, resultText(result));
-									// Verify the current export before the next observation overwrites it.
-									// oxlint-disable-next-line no-await-in-loop
-									const saved = await readFile(outputPath, "utf8");
-									// Every fixed sensitive-read variant must remove independently seeded secret canaries.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.doesNotMatch(
-										JSON.stringify(result) + saved,
-										/Q2x9Lm3Np4Rs|8f3a9c2b1d4e5f6a|opaque-first-line|opaque-continuation/,
-									);
-									// Every fixed sensitive-read export must retain useful nonsecret field names.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.match(saved, /sid|refresh/);
-									if (args.includes("local")) {
-										// Local-storage variants must additionally retain harmless application data.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.match(saved, /theme.*dark/s);
-									}
-									t.diagnostic(
-										JSON.stringify({
-											args,
-											data: readRecord(result.details).data,
-											savedBytes: Buffer.byteLength(saved),
-										}),
-									);
 								}
 							},
 						);
@@ -384,7 +359,7 @@ test(
 									steps.map((step) => step.success),
 									[true, false, true, true],
 								);
-								assert.equal(readRecord(steps[2].data).result, "🚀");
+								assert.equal(readRecord(readDefined(steps[2]).data).result, "🚀");
 								const bailed = await call(["batch", "--bail"], JSON.stringify(rows));
 								assert.equal(bailed.isError, true);
 								assert.deepEqual(
@@ -426,7 +401,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"contract suite matches confirmation launch policy surviving native nextActions",
 	{ skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, concurrency: false },
 	async (t) => {
@@ -462,7 +437,6 @@ test(
 					try {
 						for (const decision of ["deny", "confirm"] as const) {
 							// Each decision subtest owns native confirmation and session cleanup in this environment.
-							// oxlint-disable-next-line no-await-in-loop
 							await t.test(`native pending then exact ${decision}`, async (decisionTest) => {
 								let harness = createExtensionHarness({ cwd: root });
 								const prefix = ["--session", `policy-${decision}`];
@@ -470,38 +444,34 @@ test(
 									executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, ...args] });
 								try {
 									if (decision === "confirm") {
-										const initial = await call([
-											"--confirm-actions",
-											"navigate,recording_restart,tab_new",
-											"a11y",
-											`${fixture.baseUrl}/next`,
-											"--selector",
-											"body",
-										]);
-										const approve = readArray(readRecord(initial.details).nextActions)
-											.map(readRecord)
-											.find((row) => row.id === "approve-confirmation");
-										// The confirmed-audit fixture must establish a genuine native decision before continuing.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.ok(approve, resultText(initial));
-										// The confirmed-audit fixture must actually approve its native decision.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(
-											(
-												await executeRegisteredTool(harness.tool, harness.ctx, {
-													args: readArray(readRecord(approve.params).args).map(readString),
-												})
-											).isError,
-											false,
-										);
-										const observed = await call(["get", "url"]);
-										// The confirmed variant must establish its nonblank target before the next pending action.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(
-											readRecord(readRecord(observed.details).data).url,
-											`${fixture.baseUrl}/next`,
-											"establish a genuine prior nonblank target before pending navigation",
-										);
+										await decisionTest.test("establishes a confirmed nonblank target", async () => {
+											const initial = await call([
+												"--confirm-actions",
+												"navigate,recording_restart,tab_new",
+												"a11y",
+												`${fixture.baseUrl}/next`,
+												"--selector",
+												"body",
+											]);
+											const approve = readArray(readRecord(initial.details).nextActions)
+												.map(readRecord)
+												.find((row) => row.id === "approve-confirmation");
+											assert.ok(approve, resultText(initial));
+											assert.equal(
+												(
+													await executeRegisteredTool(harness.tool, harness.ctx, {
+														args: readArray(readRecord(approve.params).args).map(readString),
+													})
+												).isError,
+												false,
+											);
+											const observed = await call(["get", "url"]);
+											assert.equal(
+												readRecord(readRecord(observed.details).data).url,
+												`${fixture.baseUrl}/next`,
+												"establish a genuine prior nonblank target before pending navigation",
+											);
+										});
 									}
 									const pending = await call([
 										"--confirm-actions",
@@ -565,7 +535,6 @@ test(
 											nested++
 										) {
 											// Confirm the currently returned native slot before inspecting its next decision.
-											// oxlint-disable-next-line no-await-in-loop
 											settled = await executeRegisteredTool(
 												harness.tool,
 												harness.ctx,
@@ -575,35 +544,28 @@ test(
 									}
 									assert.equal(settled.isError, false, resultText(settled));
 									if (decision === "confirm") {
-										const audit = readRecord(
-											readRecord(readRecord(readRecord(settled.details).data).result).data,
+										await decisionTest.test(
+											"completed audit leaves readable fixture content",
+											async () => {
+												const audit = readRecord(
+													readRecord(readRecord(readRecord(settled.details).data).result).data,
+												);
+												assert.ok(
+													Array.isArray(audit.violations),
+													"the confirmed compound command completes a useful audit",
+												);
+												assert.equal(audit.url, `${fixture.baseUrl}/contract`);
+												const title = await call(["get", "title"]);
+												assert.equal(title.isError, false, resultText(title));
+												assert.match(
+													JSON.stringify(readRecord(title.details).data),
+													/Agent Browser Contract Fixture/,
+												);
+												const body = await call(["get", "text", "body"]);
+												assert.equal(body.isError, false, resultText(body));
+												assert.match(JSON.stringify(readRecord(body.details).data), /Mark ready/);
+											},
 										);
-										// The confirmed variant must produce a useful audit; every decision checks settlement above.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.ok(
-											Array.isArray(audit.violations),
-											"the confirmed compound command completes a useful audit",
-										);
-										// The confirmed variant must audit the actual fixture target.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(audit.url, `${fixture.baseUrl}/contract`);
-										const title = await call(["get", "title"]);
-										// The confirmed variant must retain readable page state after settlement.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(title.isError, false, resultText(title));
-										// The confirmed variant must observe the independent fixture title.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.match(
-											JSON.stringify(readRecord(title.details).data),
-											/Agent Browser Contract Fixture/,
-										);
-										const body = await call(["get", "text", "body"]);
-										// The confirmed variant must support a content read after settlement.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(body.isError, false, resultText(body));
-										// The confirmed variant must observe independently served fixture content.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.match(JSON.stringify(readRecord(body.details).data), /Mark ready/);
 									}
 									const before = await call(["get", "url"]);
 									assert.equal(
@@ -611,97 +573,91 @@ test(
 										decision === "confirm" ? `${fixture.baseUrl}/contract` : "about:blank",
 									);
 									if (decision === "confirm") {
-										const take = join(root, "confirmation-take.webm");
-										const sentinel = join(root, "confirmation-sentinel.webm");
-										await writeFile(sentinel, "NATIVE_CONFIRMATION_SENTINEL");
-										// The confirmed variant must start a real recording before exercising restart denial.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal((await call(["record", "start", take])).isError, false);
-										const restart = await call([
-											"record",
-											"restart",
-											sentinel,
-											`${fixture.baseUrl}/next`,
-										]);
-										// The confirmed variant must require a distinct decision for recording restart.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(
-											readRecord(restart.details).failureCategory,
-											"confirmation-required",
-											resultText(restart),
-										);
-										const denied = await executeRegisteredTool(
-											harness.tool,
-											harness.ctx,
-											action(restart, "deny"),
-										);
-										// The confirmed variant's recording denial must settle successfully.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(denied.isError, false, resultText(denied));
-										// The denied restart must leave this fixture's independent sentinel untouched.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(await readFile(sentinel, "utf8"), "NATIVE_CONFIRMATION_SENTINEL");
 										await decisionTest.test(
-											"patched native recording restart requires a second navigation decision",
-											{
-												skip:
-													process.env.PI_AGENT_BROWSER_NATIVE_COMPOUND_POLICY !== "1" &&
-													"Requires the pinned native recording-policy patch; stock 0.38.1 does not guard this nested navigation.",
-											},
-											async () => {
-												const nested = await call([
+											"recording restart denial preserves the active take",
+											async (recording) => {
+												const take = join(root, "confirmation-take.webm");
+												const sentinel = join(root, "confirmation-sentinel.webm");
+												await writeFile(sentinel, "NATIVE_CONFIRMATION_SENTINEL");
+												assert.equal((await call(["record", "start", take])).isError, false);
+												const restart = await call([
 													"record",
 													"restart",
-													join(root, "nested-take.webm"),
+													sentinel,
 													`${fixture.baseUrl}/next`,
 												]);
-												const advanced = await executeRegisteredTool(
+												assert.equal(
+													readRecord(restart.details).failureCategory,
+													"confirmation-required",
+													resultText(restart),
+												);
+												const denied = await executeRegisteredTool(
 													harness.tool,
 													harness.ctx,
-													action(nested, "confirm"),
+													action(restart, "deny"),
 												);
-												t.diagnostic(
-													JSON.stringify({
-														nested: readRecord(nested.details).data,
-														advanced: readRecord(advanced.details).data,
-													}),
-												);
+												assert.equal(denied.isError, false, resultText(denied));
 												assert.equal(
-													readRecord(advanced.details).failureCategory,
-													"confirmation-required",
-													"confirming recording_restart must still expose its native navigate confirmation",
+													await readFile(sentinel, "utf8"),
+													"NATIVE_CONFIRMATION_SENTINEL",
 												);
-												assert.equal(
-													(
-														await executeRegisteredTool(
+												await recording.test(
+													"patched native recording restart requires a second navigation decision",
+													{
+														skip:
+															process.env.PI_AGENT_BROWSER_NATIVE_COMPOUND_POLICY !== "1" &&
+															"Requires the pinned native recording-policy patch; stock 0.38.1 does not guard this nested navigation.",
+													},
+													async () => {
+														const nested = await call([
+															"record",
+															"restart",
+															join(root, "nested-take.webm"),
+															`${fixture.baseUrl}/next`,
+														]);
+														const advanced = await executeRegisteredTool(
 															harness.tool,
 															harness.ctx,
-															action(advanced, "deny"),
-														)
-													).isError,
-													false,
+															action(nested, "confirm"),
+														);
+														t.diagnostic(
+															JSON.stringify({
+																nested: readRecord(nested.details).data,
+																advanced: readRecord(advanced.details).data,
+															}),
+														);
+														assert.equal(
+															readRecord(advanced.details).failureCategory,
+															"confirmation-required",
+															"confirming recording_restart must still expose its native navigate confirmation",
+														);
+														assert.equal(
+															(
+																await executeRegisteredTool(
+																	harness.tool,
+																	harness.ctx,
+																	action(advanced, "deny"),
+																)
+															).isError,
+															false,
+														);
+													},
+												);
+												const stopped = await call(["record", "stop"]);
+												assert.equal(stopped.isError, false, resultText(stopped));
+												assert.match(
+													JSON.stringify(readRecord(stopped.details).data),
+													/confirmation-take.webm/,
+												);
+												assert.ok((await readFile(take)).length > 0);
+												t.diagnostic(
+													JSON.stringify({
+														restart: restart.details,
+														denied: denied.details,
+														stopped: stopped.details,
+													}),
 												);
 											},
-										);
-										const stopped = await call(["record", "stop"]);
-										// The confirmed variant must stop its real recording before fixture cleanup.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(stopped.isError, false, resultText(stopped));
-										// The confirmed variant's stop must retain the take that was not restarted.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.match(
-											JSON.stringify(readRecord(stopped.details).data),
-											/confirmation-take.webm/,
-										);
-										// The confirmed variant must leave actual recording bytes, not merely a success receipt.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.ok((await readFile(take)).length > 0);
-										t.diagnostic(
-											JSON.stringify({
-												restart: restart.details,
-												denied: denied.details,
-												stopped: stopped.details,
-											}),
 										);
 									}
 									assert.equal(
@@ -974,9 +930,10 @@ function assertJsonIncludes(value: unknown, tokens: readonly string[], label: st
 
 function assertSuccessfulResult(
 	value: unknown,
-	shape: OutputShape,
+	shape: OutputShape | undefined,
 	label: string,
 ): Record<string, unknown> {
+	assert.ok(shape, `expected an output-shape fixture for ${label}`);
 	const result = readRecord(value);
 	assert.equal(result.isError, false, `${label} should succeed: ${resultText(result)}`);
 	assertHasKeys(readRecord(result.details), shape.detailKeys, `${label} details`);
@@ -1005,7 +962,7 @@ function getResultValue(
 
 function assertCoreCommandResult(
 	result: unknown,
-	shape: OutputShape,
+	shape: OutputShape | undefined,
 	label: string,
 	managedSessionName: string,
 ): Record<string, unknown> {
@@ -1018,7 +975,7 @@ function assertCoreCommandResult(
 async function runCoreCommand(
 	harness: Readonly<Pick<ReturnType<typeof createExtensionHarness>, "tool" | "ctx">>,
 	args: readonly string[],
-	shape: OutputShape,
+	shape: OutputShape | undefined,
 	managedSessionName: string,
 	label = args.join(" "),
 ): Promise<Record<string, unknown>> {
@@ -1083,7 +1040,7 @@ async function initializeGitProject(path: string): Promise<void> {
 
 async function closeManagedSessionIfPresent(options: {
 	readonly cwd: string;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 	readonly socketDir?: string;
 	readonly namespace?: string;
 }): Promise<void> {
@@ -1501,7 +1458,6 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 	} finally {
 		for (const name of [sessionName, safeSessionName]) {
 			// Close both daemons in order before their shared socket directory is deleted.
-			// oxlint-disable-next-line no-await-in-loop
 			await execFileAsync(
 				"agent-browser",
 				["--json", "--config", configPath, "--session", name, "close"],
@@ -1517,10 +1473,10 @@ async function assertRealUpstreamLocalDaemonPassesThrough(): Promise<void> {
 }
 
 for (const reconstructed of [false, true]) {
-	test(
+	nodeTest(
 		`real upstream agent-browser contract suite matches owned read continuity (reconstructed=${reconstructed})`,
 		{ skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 },
-		async () => {
+		async (t) => {
 			await assertInstalledAgentBrowserVersion();
 			const dir = await mkdtemp(join(tmpdir(), "or-"));
 			const socketDir = await mkdtemp(
@@ -1561,7 +1517,8 @@ for (const reconstructed of [false, true]) {
 								args: ["open", url],
 								sessionMode: "fresh",
 							});
-							sessionName = readString(readRecord(opened.details).sessionName);
+							const openedSessionName = readString(readRecord(opened.details).sessionName);
+							sessionName = openedSessionName;
 							assert.equal(opened.isError, false, resultText(opened));
 							branch.push(
 								createToolBranchEntry({
@@ -1585,82 +1542,65 @@ for (const reconstructed of [false, true]) {
 							restoreKey = readString(readRecord(nativeBefore.runtime).restoreKey);
 							assert.match(restoreKey, /^piab-r2-/);
 							if (reconstructed) {
-								await runExtensionEvent(
-									harness.handlers,
-									"session_shutdown",
-									{ reason: "reload" },
-									harness.ctx,
-								);
-								harness = createExtensionHarness({ cwd: dir, branch });
-								await runExtensionEvent(
-									harness.handlers,
-									"session_start",
-									{ reason: "resume" },
-									harness.ctx,
-								);
-								// The replay fixture must retain its established native PID; all modes check continuity below.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(
-									Number(await readFile(join(socketDir, `${sessionName}.pid`), "utf8")),
-									nativeBefore.pid,
-								);
+								await t.test("reconstruction preserves the native daemon", async () => {
+									await runExtensionEvent(
+										harness.handlers,
+										"session_shutdown",
+										{ reason: "reload" },
+										harness.ctx,
+									);
+									harness = createExtensionHarness({ cwd: dir, branch });
+									await runExtensionEvent(
+										harness.handlers,
+										"session_start",
+										{ reason: "resume" },
+										harness.ctx,
+									);
+									assert.equal(
+										Number(await readFile(join(socketDir, `${openedSessionName}.pid`), "utf8")),
+										nativeBefore.pid,
+									);
+								});
 							}
 							for (const args of [
 								["read", url],
 								["batch", `read ${url}`],
 							]) {
-								// Each read must retain the owned daemon before the next command touches it.
-								// oxlint-disable-next-line no-await-in-loop
-								const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [...prefix, ...args],
-								});
-								// Every fixed read variant must succeed before daemon continuity checks.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(result.isError, false, resultText(result));
-								// Inspect this command's daemon identity before a later command can replace it.
-								// oxlint-disable-next-line no-await-in-loop
-								const after = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: [...prefix, "session", "info"],
-								});
-								const nativeAfter = readRecord(readRecord(after.details).data);
-								// Every fixed read variant must preserve native daemon identity.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(
-									nativeAfter.pid,
-									nativeBefore.pid,
-									`${args[0]} must not replace the owned daemon`,
-								);
-								// Every fixed read variant must preserve automatic restore identity.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(nativeAfter.runtime).restoreKey, restoreKey);
-								// Verify the retained page before the next loop's browser operation.
-								// oxlint-disable-next-line no-await-in-loop
-								const current = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: ["get", "url"],
-								});
-								// Every fixed continuity variant must remain readable after native inspection.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(current.isError, false, resultText(current));
-								// Every fixed continuity variant must retain routing to the same session.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(current.details).sessionName, sessionName);
-								// Observe in-memory form/storage continuity immediately after this native read.
-								// oxlint-disable-next-line no-await-in-loop
-								const state = await executeRegisteredTool(harness.tool, harness.ctx, {
-									args: ["eval", "--stdin"],
-									stdin:
-										"({ url: location.href, marker: window.__ownedContinuity, form: document.querySelector('#name-input').value, sessionMarker: sessionStorage.getItem('ownedContinuity') })",
-								});
-								// Every fixed continuity variant must observe its retained in-memory page.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(state.isError, false, resultText(state));
-								// Every fixed continuity variant must retain independent form, storage, and JS markers.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.deepEqual(getResultValue(readRecord(state.details), ["result"]), {
-									url,
-									marker,
-									form: marker,
-									sessionMarker: marker,
+								await t.test(args.join(" "), async () => {
+									const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: [...prefix, ...args],
+									});
+									assert.equal(result.isError, false, resultText(result));
+									// Inspect this command's daemon identity before a later command can replace it.
+									const after = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: [...prefix, "session", "info"],
+									});
+									const nativeAfter = readRecord(readRecord(after.details).data);
+									assert.equal(
+										nativeAfter.pid,
+										nativeBefore.pid,
+										`${args.join(" ")} must not replace the owned daemon`,
+									);
+									assert.equal(readRecord(nativeAfter.runtime).restoreKey, restoreKey);
+									// Verify the retained page before the next loop's browser operation.
+									const current = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: ["get", "url"],
+									});
+									assert.equal(current.isError, false, resultText(current));
+									assert.equal(readRecord(current.details).sessionName, sessionName);
+									// Observe in-memory form/storage continuity immediately after this native read.
+									const state = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: ["eval", "--stdin"],
+										stdin:
+											"({ url: location.href, marker: window.__ownedContinuity, form: document.querySelector('#name-input').value, sessionMarker: sessionStorage.getItem('ownedContinuity') })",
+									});
+									assert.equal(state.isError, false, resultText(state));
+									assert.deepEqual(getResultValue(readRecord(state.details), ["result"]), {
+										url,
+										marker,
+										form: marker,
+										sessionMarker: marker,
+									});
 								});
 							}
 						} finally {
@@ -1672,14 +1612,14 @@ for (const reconstructed of [false, true]) {
 								harness.ctx,
 							);
 							if (sessionName !== undefined && sessionName.length > 0) {
-								const closed = await runAgentBrowserProcess({
-									args: ["--json", "--namespace", "", "close", "--all"],
-									cwd: dir,
-									env: { AGENT_BROWSER_SOCKET_DIR: socketDir },
+								await t.test("closes initialized native session", async () => {
+									const closed = await runAgentBrowserProcess({
+										args: ["--json", "--namespace", "", "close", "--all"],
+										cwd: dir,
+										env: { AGENT_BROWSER_SOCKET_DIR: socketDir },
+									});
+									assert.equal(closed.exitCode, 0, closed.stderr);
 								});
-								// Every initialized fixture must close; failed initialization already fails the test.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(closed.exitCode, 0, closed.stderr);
 							}
 							assert.ok(
 								daemonPid !== undefined && daemonPid > 0,
@@ -1702,7 +1642,7 @@ for (const reconstructed of [false, true]) {
 	);
 }
 
-test(
+nodeTest(
 	"real upstream agent-browser contract suite matches navigation availability and tab setup",
 	{ skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 },
 	async (t) => {
@@ -1763,41 +1703,33 @@ test(
 							{ experimental: true, available: true, toolCount: 2 },
 						);
 						if (Number(version[1]) > 0 || Number(version[2]) >= 38) {
-							// Catalog-capable native versions must report readiness; all versions check availability above.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(catalog.status, "ready");
-							// Catalog-capable versions must expose the independent fixture's declared tools.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.deepEqual(
-								readArray(catalog.tools).map((tool) => readRecord(tool).name),
-								["set_message", "wait_for_cancel"],
-							);
-							// Catalog-capable versions must retain native omitted-schema semantics.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(
-								readArray(catalog.tools).every(
-									(tool) => readRecord(tool).inputSchema === undefined,
-								),
-								"automatic discovery omits full schemas",
-							);
+							await t.test("catalog readiness omits full schemas", () => {
+								assert.equal(catalog.status, "ready");
+								assert.deepEqual(
+									readArray(catalog.tools).map((tool) => readRecord(tool).name),
+									["set_message", "wait_for_cancel"],
+								);
+								assert.ok(
+									readArray(catalog.tools).every(
+										(tool) => readRecord(tool).inputSchema === undefined,
+									),
+									"automatic discovery omits full schemas",
+								);
+							});
 						}
 						assert.match(resultText(available), /WebMCP tools are available.*webmcp list/);
 						for (const [headers, expected] of [
 							[{ "x-fixture": "batch-fidelity" }, "present"],
 							[{}, "missing"],
 						] as const) {
-							// Set headers before opening the next fixture tab that must inherit them.
-							// oxlint-disable-next-line no-await-in-loop
-							await call(["set", "headers", JSON.stringify(headers)]);
-							// First-load header inheritance requires tab creation after the preceding set.
-							// oxlint-disable-next-line no-await-in-loop
-							await call(["tab", "new", `${fixture.baseUrl}/headers`]);
-							// Inspect the tab's first-load receipt before clearing or replacing header state.
-							// oxlint-disable-next-line no-await-in-loop
-							const value = await call(["get", "value", "#header-value"]);
-							// Both fixed header-set/clear fixtures must match the independent first-load receipt.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(readRecord(readRecord(value.details).data).value, expected);
+							await t.test(`first-load headers ${expected}`, async () => {
+								await call(["set", "headers", JSON.stringify(headers)]);
+								// First-load header inheritance requires tab creation after the preceding set.
+								await call(["tab", "new", `${fixture.baseUrl}/headers`]);
+								// Inspect the tab's first-load receipt before clearing or replacing header state.
+								const value = await call(["get", "value", "#header-value"]);
+								assert.equal(readRecord(readRecord(value.details).data).value, expected);
+							});
 						}
 						t.diagnostic(
 							"Native WebMCP availability is visible; native first-load header inheritance and clearing both match the fixture.",
@@ -1820,7 +1752,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream agent-browser contract suite matches QA non-pass after same-URL error-buffer rollover",
 	{ skip: !REAL_UPSTREAM_ENABLED, timeout: 90_000 },
 	async (t) => {
@@ -1917,12 +1849,10 @@ test(
 						assert.equal(readRecord(repeated.details).failureCategory, "qa-failure");
 						assert.ok(failedChecks.some((check) => /page.error/.test(check)));
 						if (identicalRows) {
-							// The identical-row fixture must report uncertainty; every fixture checks QA failure above.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(failedChecks.join("\n"), /page-error check could not be verified/);
-							// The identical-row fixture must not invent a measured number of new page errors.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.doesNotMatch(failedChecks.join("\n"), /\d+ page error\(s\)/);
+							await t.test("identical error rows report uncertainty rather than a count", () => {
+								assert.match(failedChecks.join("\n"), /page-error check could not be verified/);
+								assert.doesNotMatch(failedChecks.join("\n"), /\d+ page error\(s\)/);
+							});
 						}
 						assert.doesNotMatch(
 							resultText(repeated),
@@ -1941,7 +1871,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream agent-browser contract suite matches reported browser regressions",
 	{ skip: !REAL_UPSTREAM_ENABLED, timeout: 60_000 },
 	async (t) => {
@@ -2010,7 +1940,7 @@ test(
 						);
 						await t.test(
 							"download runs the export handler and saves its generated CSV",
-							async () => {
+							async (download) => {
 								const path = join(dir, "report.csv");
 								const result = await call({ args: ["download", "#export", path] });
 								assert.equal(await readFile(path, "utf8"), "name,total\nAlice,42\n");
@@ -2028,16 +1958,15 @@ test(
 									1,
 								);
 								for (const selector of ["#static-download", "#redirect-download"]) {
-									const savedPath = join(dir, `${selector.slice(1)}.txt`);
-									// Native downloads share the active page and its event listener.
-									// oxlint-disable-next-line no-await-in-loop
-									await call({ args: ["download", selector, savedPath] });
-									// Verify this download before starting another on the same native page.
-									// oxlint-disable-next-line no-await-in-loop
-									const downloadedText = await readFile(savedPath, "utf8");
-									// Both fixed static/redirect downloads must retain independently served bytes.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.equal(downloadedText, DOWNLOAD_FIXTURE_CONTENT);
+									await download.test(selector, async () => {
+										const savedPath = join(dir, `${selector.slice(1)}.txt`);
+										// Native downloads share the active page and its event listener.
+										await call({ args: ["download", selector, savedPath] });
+										// Verify this download before starting another on the same native page.
+										const downloadedText = await readFile(savedPath, "utf8");
+										// Both fixed static/redirect downloads must retain independently served bytes.
+										assert.equal(downloadedText, DOWNLOAD_FIXTURE_CONTENT);
+									});
 								}
 							},
 						);
@@ -2172,7 +2101,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream agent-browser contract suite matches duplicate-name click mutation",
 	{
 		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
@@ -2231,7 +2160,7 @@ test(
 							async () => {
 								// The first button is now Remove: its old name's ordinal points at the untouched second button.
 								const probe = await prepareClickDispatchProbe({
-									commandTokens: ["click", `@${duplicates[0][0]}`],
+									commandTokens: ["click", `@${readDefined(duplicates[0])[0]}`],
 									cwd: tempDir,
 									refSnapshot,
 									sessionName,
@@ -2314,7 +2243,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream agent-browser contract suite matches cold URL reopen after quit",
 	{
 		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
@@ -2324,7 +2253,6 @@ test(
 		await assertInstalledAgentBrowserVersion();
 		for (const storage of [false, true]) {
 			// Subtests own process-global env overrides until native-session teardown completes.
-			// oxlint-disable-next-line no-await-in-loop
 			await t.test(
 				storage ? "origin storage at a non-root URL" : "empty storage at a non-root URL",
 				async (subtest) => {
@@ -2479,31 +2407,29 @@ test(
 									);
 								} finally {
 									if (sessionName !== undefined && sessionName.length > 0) {
-										const daemon = await observe(["session", "info"]);
-										await runExtensionEvent(
-											harness.handlers,
-											"session_shutdown",
-											{ reason: "quit" },
-											harness.ctx,
-										);
-										// Every initialized fixture must reap its daemon; failed initialization already fails the test.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal(
-											await waitForTestPidExit(
-												daemon.pid === undefined || daemon.pid === null
-													? undefined
-													: readNumber(daemon.pid),
-												10_000,
-											),
-											true,
-											"final owned daemon must exit",
-										);
-										// Every initialized fixture must leave native ownership inactive after shutdown.
-										// oxlint-disable-next-line node-test/no-conditional-assertion
-										assert.equal((await observe(["session", "info"])).active, false);
-										subtest.diagnostic(
-											JSON.stringify({ sessionName, cleanup: "closed", daemonExited: true }),
-										);
+										await subtest.test("shutdown reaps the native daemon", async () => {
+											const daemon = await observe(["session", "info"]);
+											await runExtensionEvent(
+												harness.handlers,
+												"session_shutdown",
+												{ reason: "quit" },
+												harness.ctx,
+											);
+											assert.equal(
+												await waitForTestPidExit(
+													daemon.pid === undefined || daemon.pid === null
+														? undefined
+														: readNumber(daemon.pid),
+													10_000,
+												),
+												true,
+												"final owned daemon must exit",
+											);
+											assert.equal((await observe(["session", "info"])).active, false);
+											subtest.diagnostic(
+												JSON.stringify({ sessionName, cleanup: "closed", daemonExited: true }),
+											);
+										});
 									}
 								}
 							},
@@ -2519,13 +2445,13 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream agent-browser contract suite matches 0.38 observation and recording options",
 	{ skip: !REAL_UPSTREAM_ENABLED, timeout: 120_000 },
 	async (t) => {
 		const version = await assertInstalledAgentBrowserVersion();
-		const [major, minor] = version.split(".").map(Number);
-		if (major === 0 && minor < 38) {
+		const [major, minor] = version.split(".");
+		if (major === "0" && Number(minor) < 38) {
 			t.skip("Observation options require upstream 0.38+");
 			return;
 		}
@@ -2743,7 +2669,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream auth profiles are global while login uses the active managed browser",
 	{ skip: !REAL_UPSTREAM_ENABLED && REAL_UPSTREAM_SKIP_REASON, timeout: 60_000 },
 	async () => {
@@ -2869,13 +2795,13 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream agent-browser contract suite matches wrapper and browser-session expectations",
 	{
 		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
 		timeout: 180_000,
 	},
-	async () => {
+	async (t) => {
 		const installedVersion = await assertInstalledAgentBrowserVersion();
 		const shapes = await readOutputShapesFixture();
 		assert.equal(
@@ -3023,9 +2949,9 @@ test(
 					assert.deepEqual(skillsListDetails.effectiveArgs, ["--json", "skills", "list"]);
 					assert.match(resultText(skillsList), /core/);
 					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
-						// The sampled native release owns this skill; all versions check core skills above.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(resultText(skillsList), /webmcp-gen/);
+						await t.test("sampled release lists the WebMCP skill", () => {
+							assert.match(resultText(skillsList), /webmcp-gen/);
+						});
 					}
 
 					const skillsGetFull = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -3059,20 +2985,21 @@ test(
 					assert.match(resultText(protectedVercelSkill), /x-vercel-trusted-oidc-idp-token/);
 
 					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
-						const webMcpSkill = await executeRegisteredTool(harness.tool, harness.ctx, {
-							args: ["skills", "get", "webmcp-gen", "--full"],
-						});
-						const webMcpSkillDetails = assertSuccessfulResult(
-							webMcpSkill,
-							shapes.commands.skillsGetFull,
-							"skills get webmcp-gen --full",
+						await t.test(
+							"WebMCP skill stays sessionless with native setup instructions",
+							async () => {
+								const webMcpSkill = await executeRegisteredTool(harness.tool, harness.ctx, {
+									args: ["skills", "get", "webmcp-gen", "--full"],
+								});
+								const webMcpSkillDetails = assertSuccessfulResult(
+									webMcpSkill,
+									shapes.commands.skillsGetFull,
+									"skills get webmcp-gen --full",
+								);
+								assert.equal(webMcpSkillDetails.sessionName, undefined);
+								assert.match(resultText(webMcpSkill), /webmcp\.init\.js/);
+							},
 						);
-						// The sampled-release WebMCP skill must retain native sessionless inspection.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(webMcpSkillDetails.sessionName, undefined);
-						// The sampled-release skill must expose its native setup instructions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(resultText(webMcpSkill), /webmcp\.init\.js/);
 					}
 
 					const skillsPath = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -3090,49 +3017,48 @@ test(
 
 					const webMcpUrl = `${fixtureBaseUrl}/webmcp`;
 					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
-						const disabledHarness = createExtensionHarness({
-							cwd: tempDir,
-							sessionId: "87654321876543218765432187654321",
-						});
-						await runExtensionEvent(
-							disabledHarness.handlers,
-							"session_start",
-							{ reason: "new" },
-							disabledHarness.ctx,
-						);
-						try {
-							const disabledOpen = await executeRegisteredTool(
-								disabledHarness.tool,
-								disabledHarness.ctx,
-								{
-									args: ["--no-webmcp", "open", webMcpUrl],
-									sessionMode: "fresh",
-								},
-							);
-							assertSuccessfulResult(disabledOpen, shapes.commands.open, "open with --no-webmcp");
-							// Native releases supporting --no-webmcp must preserve it after successful open.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(
-								readArray(readRecord(disabledOpen.details).effectiveArgs).includes("--no-webmcp"),
-							);
-							const disabledList = await executeRegisteredTool(
-								disabledHarness.tool,
-								disabledHarness.ctx,
-								{ args: ["webmcp", "list"] },
-							);
-							const disabledListDetails = assertSuccessfulResult(
-								disabledList,
-								shapes.commands.coreSubcommand,
-								"webmcp list with feature disabled",
-							);
-							// Feature-disabled native variants must expose no tools after successful inspection.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.deepEqual(readRecord(disabledListDetails.data).tools, []);
-						} finally {
-							await executeRegisteredTool(disabledHarness.tool, disabledHarness.ctx, {
-								args: ["close"],
+						await t.test("native WebMCP disable leaves no tools", async () => {
+							const disabledHarness = createExtensionHarness({
+								cwd: tempDir,
+								sessionId: "87654321876543218765432187654321",
 							});
-						}
+							await runExtensionEvent(
+								disabledHarness.handlers,
+								"session_start",
+								{ reason: "new" },
+								disabledHarness.ctx,
+							);
+							try {
+								const disabledOpen = await executeRegisteredTool(
+									disabledHarness.tool,
+									disabledHarness.ctx,
+									{
+										args: ["--no-webmcp", "open", webMcpUrl],
+										sessionMode: "fresh",
+									},
+								);
+								assertSuccessfulResult(disabledOpen, shapes.commands.open, "open with --no-webmcp");
+								// Native releases supporting --no-webmcp must preserve it after successful open.
+								assert.ok(
+									readArray(readRecord(disabledOpen.details).effectiveArgs).includes("--no-webmcp"),
+								);
+								const disabledList = await executeRegisteredTool(
+									disabledHarness.tool,
+									disabledHarness.ctx,
+									{ args: ["webmcp", "list"] },
+								);
+								const disabledListDetails = assertSuccessfulResult(
+									disabledList,
+									shapes.commands.coreSubcommand,
+									"webmcp list with feature disabled",
+								);
+								assert.deepEqual(readRecord(disabledListDetails.data).tools, []);
+							} finally {
+								await executeRegisteredTool(disabledHarness.tool, disabledHarness.ctx, {
+									args: ["close"],
+								});
+							}
+						});
 					}
 
 					const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -3208,139 +3134,116 @@ test(
 					);
 
 					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
-						await runCoreCommand(
-							harness,
-							["open", webMcpUrl],
-							shapes.commands.open,
-							managedSessionName,
-							"open WebMCP fixture",
-						);
-						const webMcpList = await runCoreCommand(
-							harness,
-							["webmcp", "list"],
-							shapes.commands.coreSubcommand,
-							managedSessionName,
-						);
-						// WebMCP-capable native versions must retain the inspected fixture target.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(webMcpList.sessionTabTarget).url, webMcpUrl);
-						const tools = readArray(readRecord(webMcpList.data).tools).map(readRecord);
-						const setMessageFrame = readString(
-							readRecord(tools.find((tool) => tool.name === "set_message")).frameId,
-						);
-						// The native WebMCP variant must supply an executable frame identity before invocation.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(
-							setMessageFrame.length > 0,
-							"webmcp list should expose set_message and its frame id",
-						);
+						const webMcpSessionName = managedSessionName;
+						await t.test("WebMCP invocation, cancellation and target recovery", async () => {
+							await runCoreCommand(
+								harness,
+								["open", webMcpUrl],
+								shapes.commands.open,
+								webMcpSessionName,
+								"open WebMCP fixture",
+							);
+							const webMcpList = await runCoreCommand(
+								harness,
+								["webmcp", "list"],
+								shapes.commands.coreSubcommand,
+								webMcpSessionName,
+							);
+							assert.equal(readRecord(webMcpList.sessionTabTarget).url, webMcpUrl);
+							const tools = readArray(readRecord(webMcpList.data).tools).map(readRecord);
+							const setMessageFrame = readString(
+								readRecord(tools.find((tool) => tool.name === "set_message")).frameId,
+							);
+							assert.ok(
+								setMessageFrame.length > 0,
+								"webmcp list should expose set_message and its frame id",
+							);
 
-						const webMcpInvoke = await runCoreCommand(
-							harness,
-							[
-								"webmcp",
-								"invoke",
-								"set_message",
-								"--params",
-								'{"message":"WebMCP changed"}',
-								"--frame",
-								setMessageFrame,
-								"--timeout",
-								"5000",
-							],
-							shapes.commands.coreSubcommand,
-							managedSessionName,
-						);
-						// The native WebMCP variant must complete its real fixture invocation.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(webMcpInvoke.data).status, "completed");
-						// The native WebMCP variant must retain the completed invocation target.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(readRecord(webMcpInvoke.data).navigationSummary).url,
-							webMcpUrl,
-						);
-						// The native WebMCP mutation variant must invalidate existing interactive refs.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(webMcpInvoke.refSnapshotInvalidation).reason,
-							"page-transition",
-						);
-						// The native WebMCP mutation variant must offer post-mutation inspection.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.deepEqual(
-							readArray(webMcpInvoke.nextActions)
-								.map(readRecord)
-								.map((action) => action.id),
-							["inspect-after-mutation"],
-						);
-						// The native WebMCP variant must actually mutate the independently served page.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							getResultValue(
-								await runCoreCommand(
-									harness,
-									["get", "text", "#webmcp-result"],
-									shapes.commands.coreSubcommand,
-									managedSessionName,
+							const webMcpInvoke = await runCoreCommand(
+								harness,
+								[
+									"webmcp",
+									"invoke",
+									"set_message",
+									"--params",
+									'{"message":"WebMCP changed"}',
+									"--frame",
+									setMessageFrame,
+									"--timeout",
+									"5000",
+								],
+								shapes.commands.coreSubcommand,
+								webMcpSessionName,
+							);
+							assert.equal(readRecord(webMcpInvoke.data).status, "completed");
+							assert.equal(
+								readRecord(readRecord(webMcpInvoke.data).navigationSummary).url,
+								webMcpUrl,
+							);
+							assert.equal(
+								readRecord(webMcpInvoke.refSnapshotInvalidation).reason,
+								"page-transition",
+							);
+							assert.deepEqual(
+								readArray(webMcpInvoke.nextActions)
+									.map(readRecord)
+									.map((action) => action.id),
+								["inspect-after-mutation"],
+							);
+							assert.equal(
+								getResultValue(
+									await runCoreCommand(
+										harness,
+										["get", "text", "#webmcp-result"],
+										shapes.commands.coreSubcommand,
+										webMcpSessionName,
+									),
+									["text"],
 								),
-								["text"],
-							),
-							"WebMCP changed",
-						);
+								"WebMCP changed",
+							);
 
-						const detached = await runCoreCommand(
-							harness,
-							["webmcp", "invoke", "wait_for_cancel", "--detach"],
-							shapes.commands.coreSubcommand,
-							managedSessionName,
-						);
-						const invocationId = readString(readRecord(detached.data).invocationId);
-						// The detached-invocation variant must supply a usable pending identity.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(
-							invocationId.length > 0,
-							"detached WebMCP invoke should return an invocation id",
-						);
-						// The pending WebMCP variant must not retain an unverified target.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(detached.sessionTabTarget, undefined);
-						// The pending WebMCP variant must explicitly mark target uncertainty.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(detached.sessionTabTargetUnknown, true);
-						// The pending variant must offer target verification instead of stale snapshots.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.deepEqual(
-							readArray(detached.nextActions)
-								.map(readRecord)
-								.map((action) => action.id),
-							["verify-page-target-after-pending-webmcp"],
-						);
-						const canceled = await runCoreCommand(
-							harness,
-							["webmcp", "cancel", invocationId],
-							shapes.commands.coreSubcommand,
-							managedSessionName,
-						);
-						// The cancellation variant must acknowledge its actual pending WebMCP operation.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(canceled.data).status, "canceled");
-						const canceledResult = await runCoreCommand(
-							harness,
-							["webmcp", "result", invocationId],
-							shapes.commands.coreSubcommand,
-							managedSessionName,
-						);
-						// The WebMCP variant must retain cancellation in its later result lookup.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(canceledResult.data).status, "canceled");
-						await runCoreCommand(
-							harness,
-							["open", contractUrl],
-							shapes.commands.open,
-							managedSessionName,
-							"restore contract fixture after WebMCP",
-						);
+							const detached = await runCoreCommand(
+								harness,
+								["webmcp", "invoke", "wait_for_cancel", "--detach"],
+								shapes.commands.coreSubcommand,
+								webMcpSessionName,
+							);
+							const invocationId = readString(readRecord(detached.data).invocationId);
+							assert.ok(
+								invocationId.length > 0,
+								"detached WebMCP invoke should return an invocation id",
+							);
+							assert.equal(detached.sessionTabTarget, undefined);
+							assert.equal(detached.sessionTabTargetUnknown, true);
+							assert.deepEqual(
+								readArray(detached.nextActions)
+									.map(readRecord)
+									.map((action) => action.id),
+								["verify-page-target-after-pending-webmcp"],
+							);
+							const canceled = await runCoreCommand(
+								harness,
+								["webmcp", "cancel", invocationId],
+								shapes.commands.coreSubcommand,
+								webMcpSessionName,
+							);
+							assert.equal(readRecord(canceled.data).status, "canceled");
+							const canceledResult = await runCoreCommand(
+								harness,
+								["webmcp", "result", invocationId],
+								shapes.commands.coreSubcommand,
+								webMcpSessionName,
+							);
+							assert.equal(readRecord(canceledResult.data).status, "canceled");
+							await runCoreCommand(
+								harness,
+								["open", contractUrl],
+								shapes.commands.open,
+								webMcpSessionName,
+								"restore contract fixture after WebMCP",
+							);
+						});
 					}
 
 					await runCoreCommand(
@@ -4338,69 +4241,55 @@ test(
 						},
 						{ args: ["batch", "connect wss://remote.example/devtools/browser/test"] },
 					]) {
-						// Check each rejected batch leaves the same live managed session untouched.
-						// oxlint-disable-next-line no-await-in-loop
-						const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
-						// Every fixed nested-attachment batch shape must fail before upstream spawn.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(blockedBatch.isError, true);
-						// Every nested-attachment fixture must retain preflight failure classification.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(blockedBatch.details).failureCategory,
-							"validation-error",
-							JSON.stringify(blockedBatch.details),
-						);
-						// Every nested-attachment fixture must explain its managed-session mismatch.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							readString(readRecord(blockedBatch.details).validationError),
-							/does not match the requested managed-restore policy|active page became unverified/,
-						);
-						// Every nested-attachment fixture must prove rejection preceded native execution.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(blockedBatch.details).exitCode,
-							undefined,
-							"nested batch attachment must fail before upstream spawn",
-						);
+						await t.test(`rejects nested attachment ${JSON.stringify(params)}`, async () => {
+							const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
+							// Every fixed nested-attachment batch shape must fail before upstream spawn.
+							assert.equal(blockedBatch.isError, true);
+							assert.equal(
+								readRecord(blockedBatch.details).failureCategory,
+								"validation-error",
+								JSON.stringify(blockedBatch.details),
+							);
+							assert.match(
+								readString(readRecord(blockedBatch.details).validationError),
+								/does not match the requested managed-restore policy|active page became unverified/,
+							);
+							assert.equal(
+								readRecord(blockedBatch.details).exitCode,
+								undefined,
+								"nested batch attachment must fail before upstream spawn",
+							);
+						});
 					}
 					for (const subcommand of ["start", "restart"]) {
-						// Each preflight must fail before close can mutate the shared managed browser.
-						// oxlint-disable-next-line no-await-in-loop
-						const blockedRecordingAfterClose = await executeRegisteredTool(
-							harness.tool,
-							harness.ctx,
-							{
-								args: ["batch"],
-								stdin: JSON.stringify([
-									["close"],
-									["record", subcommand, join(tempDir, `after-close-${subcommand}.webm`)],
-								]),
-							},
-						);
-						// Both fixed start/restart-after-close fixtures must fail preflight.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(blockedRecordingAfterClose.isError, true);
-						// Both recording-after-close fixtures must retain validation failure classification.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(blockedRecordingAfterClose.details).failureCategory,
-							"validation-error",
-						);
-						// Both recording-after-close fixtures must name their own forbidden subcommand.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							resultText(blockedRecordingAfterClose),
-							new RegExp(`record ${subcommand} cannot follow close`),
-						);
-						// Both recording-after-close fixtures must prove no native command was dispatched.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(blockedRecordingAfterClose.details).exitCode,
-							undefined,
-							"recording after close must fail before upstream spawn",
-						);
+						await t.test(`rejects recording ${subcommand} after close`, async () => {
+							// Each preflight must fail before close can mutate the shared managed browser.
+							const blockedRecordingAfterClose = await executeRegisteredTool(
+								harness.tool,
+								harness.ctx,
+								{
+									args: ["batch"],
+									stdin: JSON.stringify([
+										["close"],
+										["record", subcommand, join(tempDir, `after-close-${subcommand}.webm`)],
+									]),
+								},
+							);
+							assert.equal(blockedRecordingAfterClose.isError, true);
+							assert.equal(
+								readRecord(blockedRecordingAfterClose.details).failureCategory,
+								"validation-error",
+							);
+							assert.match(
+								resultText(blockedRecordingAfterClose),
+								new RegExp(`record ${subcommand} cannot follow close`),
+							);
+							assert.equal(
+								readRecord(blockedRecordingAfterClose.details).exitCode,
+								undefined,
+								"recording after close must fail before upstream spawn",
+							);
+						});
 					}
 					const lateConfigPath = join(tempDir, "agent-browser.json");
 					await writeFile(
@@ -4658,7 +4547,7 @@ test(
 					);
 					assertHasKeys(
 						reactTree.details,
-						shapes.commands.reactMissingRenderer.detailKeys,
+						readDefined(shapes.commands.reactMissingRenderer).detailKeys,
 						"react tree missing-renderer details",
 					);
 					assert.equal(readRecord(reactTree.details).sessionName, reactSessionName);
@@ -4691,7 +4580,7 @@ test(
 					);
 					assertHasKeys(
 						waitedDownload.details,
-						shapes.commands.waitDownload.detailKeys,
+						readDefined(shapes.commands.waitDownload).detailKeys,
 						"wait --download details",
 					);
 					const waitDownloadDetails = readRecord(waitedDownload.details);
@@ -4709,8 +4598,9 @@ test(
 						`wait --download text is missing native ${installedVersion} evidence: ${waitDownloadText}`,
 					);
 					const artifacts = readArray(waitDownloadDetails.artifacts).map(readRecord);
-					assert.equal(artifacts[0].path, downloadPath);
-					assert.equal(artifacts[0].exists, expectedDownload.exists);
+					const downloaded = readDefined(artifacts[0]);
+					assert.equal(downloaded.path, downloadPath);
+					assert.equal(downloaded.exists, expectedDownload.exists);
 					assert.equal(
 						readRecord(waitDownloadDetails.artifactVerification).verified,
 						expectedDownload.verified,
@@ -4739,7 +4629,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real upstream agent-browser plugin list stays sessionless",
 	{
 		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,

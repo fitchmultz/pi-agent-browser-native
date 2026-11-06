@@ -30,7 +30,7 @@ export interface AgentBrowserEnvelope {
 }
 
 export interface AgentBrowserBatchResult {
-	readonly command?: readonly string[];
+	readonly command?: readonly string[] | undefined;
 	readonly index?: number;
 	readonly error?: unknown;
 	readonly result?: unknown;
@@ -100,7 +100,7 @@ export interface AgentBrowserPageChangeSummary {
 	artifactCount?: number;
 	changeType: "artifact" | "confirmation" | "mutation" | "navigation";
 	command?: string;
-	nextActionIds?: readonly string[];
+	nextActionIds?: readonly string[] | undefined;
 	observed: boolean;
 	savedFilePath?: string;
 	summary: string;
@@ -120,7 +120,7 @@ export interface AgentBrowserWindow {
 }
 
 export interface ScreenshotSample {
-	readonly rendering?: "text";
+	readonly rendering?: "text" | undefined;
 	readonly url: string;
 	readonly frame: "main" | "child";
 	readonly childFrameCount: number;
@@ -129,59 +129,63 @@ export interface ScreenshotSample {
 	readonly scroll: { readonly x: number; readonly y: number };
 	readonly dpr: number;
 	readonly visualViewport: { readonly x: number; readonly y: number; readonly scale: number };
-	readonly element?: {
-		readonly x: number;
-		readonly y: number;
-		readonly width: number;
-		readonly height: number;
-	};
+	readonly element?:
+		| {
+				readonly x: number;
+				readonly y: number;
+				readonly width: number;
+				readonly height: number;
+		  }
+		| undefined;
 }
 
 export interface ImageObservation {
-	readonly rendering?: "text";
+	readonly rendering?: "text" | undefined;
 	readonly id?: string;
 	readonly path: string;
 	readonly mimeType: string;
-	readonly pixels?: { readonly width: number; readonly height: number };
+	readonly pixels?: { readonly width: number; readonly height: number } | undefined;
 	readonly capture: "viewport" | "full-page" | "element" | "unknown";
 	readonly geometry: {
 		readonly status: "measured" | "unknown";
 		readonly reason: string;
-		readonly before?: ScreenshotSample;
-		readonly after?: ScreenshotSample;
+		readonly before?: ScreenshotSample | undefined;
+		readonly after?: ScreenshotSample | undefined;
 		/** CSS document coordinates of the captured rectangle, not mouse coordinates. */
-		readonly crop?: {
-			readonly x: number;
-			readonly y: number;
-			readonly width: number;
-			readonly height: number;
-		};
-		readonly pixelsPerCssPixel?: { readonly x: number; readonly y: number };
+		readonly crop?:
+			| {
+					readonly x: number;
+					readonly y: number;
+					readonly width: number;
+					readonly height: number;
+			  }
+			| undefined;
+		readonly pixelsPerCssPixel?: { readonly x: number; readonly y: number } | undefined;
 	};
 }
 
 export interface BatchStepPresentationDetails {
-	artifactVerification?: ArtifactVerificationSummary;
-	artifacts?: readonly FileArtifactMetadata[];
-	command?: readonly string[];
+	artifactVerification?: ArtifactVerificationSummary | undefined;
+	artifacts?: readonly FileArtifactMetadata[] | undefined;
+	command?: readonly string[] | undefined;
 	commandText: string;
 	data?: unknown;
-	failureCategory?: AgentBrowserFailureCategory;
-	fullOutputPath?: string;
-	fullOutputPaths?: readonly string[];
-	imagePath?: string;
-	imagePaths?: readonly string[];
-	imageObservations?: readonly ImageObservation[];
+	failureCategory?: AgentBrowserFailureCategory | undefined;
+	fullOutputPath?: string | undefined;
+	fullOutputPaths?: readonly string[] | undefined;
+	imagePath?: string | undefined;
+	imagePaths?: readonly string[] | undefined;
+	imageObservations?: readonly ImageObservation[] | undefined;
 	index: number;
-	lifecycle?: AgentBrowserLifecycle;
-	networkRouteDiagnostics?: readonly NetworkRouteDiagnostic[];
-	nextActions?: readonly AgentBrowserNextAction[];
-	pageChangeSummary?: AgentBrowserPageChangeSummary;
+	lifecycle?: AgentBrowserLifecycle | undefined;
+	networkRouteDiagnostics?: readonly NetworkRouteDiagnostic[] | undefined;
+	nextActions?: readonly AgentBrowserNextAction[] | undefined;
+	pageChangeSummary?: AgentBrowserPageChangeSummary | undefined;
 	resultCategory: AgentBrowserResultCategory;
-	savedFile?: SavedFilePresentationDetails;
-	savedFilePath?: string;
+	savedFile?: SavedFilePresentationDetails | undefined;
+	savedFilePath?: string | undefined;
 	success: boolean;
-	successCategory?: AgentBrowserSuccessCategory;
+	successCategory?: AgentBrowserSuccessCategory | undefined;
 	summary: string;
 	text: string;
 }
@@ -196,29 +200,29 @@ export interface BatchFailurePresentationDetails {
 export interface ToolPresentation {
 	readConfirmation?: ReadConfirmation;
 	recordingRecovery?: RecordingRecovery;
-	artifactManifest?: SessionArtifactManifest;
-	artifactRetentionSummary?: string;
-	artifactVerification?: ArtifactVerificationSummary;
-	artifacts?: readonly FileArtifactMetadata[];
-	batchFailure?: BatchFailurePresentationDetails;
-	batchSteps?: readonly BatchStepPresentationDetails[];
+	artifactManifest?: SessionArtifactManifest | undefined;
+	artifactRetentionSummary?: string | undefined;
+	artifactVerification?: ArtifactVerificationSummary | undefined;
+	artifacts?: readonly FileArtifactMetadata[] | undefined;
+	batchFailure?: BatchFailurePresentationDetails | undefined;
+	batchSteps?: readonly BatchStepPresentationDetails[] | undefined;
 	content: Array<
 		{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }
 	>;
 	data?: unknown;
-	failureCategory?: AgentBrowserFailureCategory;
-	fullOutputPath?: string;
-	fullOutputPaths?: readonly string[];
-	imagePath?: string;
-	imagePaths?: readonly string[];
+	failureCategory?: AgentBrowserFailureCategory | undefined;
+	fullOutputPath?: string | undefined;
+	fullOutputPaths?: readonly string[] | undefined;
+	imagePath?: string | undefined;
+	imagePaths?: readonly string[] | undefined;
 	imageObservations?: readonly ImageObservation[];
 	networkRouteDiagnostics?: readonly NetworkRouteDiagnostic[];
-	nextActions?: readonly AgentBrowserNextAction[];
-	pageChangeSummary?: AgentBrowserPageChangeSummary;
+	nextActions?: readonly AgentBrowserNextAction[] | undefined;
+	pageChangeSummary?: AgentBrowserPageChangeSummary | undefined;
 	resultCategory?: AgentBrowserResultCategory;
-	savedFile?: SavedFilePresentationDetails;
-	savedFilePath?: string;
-	successCategory?: AgentBrowserSuccessCategory;
+	savedFile?: SavedFilePresentationDetails | undefined;
+	savedFilePath?: string | undefined;
+	successCategory?: AgentBrowserSuccessCategory | undefined;
 	summary: string;
 }
 
@@ -227,9 +231,9 @@ export type NetworkFailureImpact = "actionable" | "benign";
 export interface NetworkFailureClassification {
 	impact: NetworkFailureImpact;
 	reason: string;
-	resourceType?: string;
-	status?: number;
-	url?: string;
+	resourceType?: string | undefined;
+	status?: number | undefined;
+	url?: string | undefined;
 }
 
 export interface NetworkFailureSummary {

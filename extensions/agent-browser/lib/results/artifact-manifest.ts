@@ -233,7 +233,7 @@ export function compareSessionArtifactManifestEntries(
 }
 
 export function mergeSessionArtifactManifest(options: {
-	readonly base?: SessionArtifactManifest;
+	readonly base?: SessionArtifactManifest | undefined;
 	readonly entries?: readonly SessionArtifactManifestEntry[];
 	readonly nowMs?: number;
 }): SessionArtifactManifest | undefined {

@@ -10,11 +10,11 @@ import { reconcileOutputPinning } from "./process-output-refs.js";
 import {
 	resolveManagedCloseTarget,
 	inspectFailedFreshLaunch,
-	applyManagedTransition,
+	resolveManagedTransition,
 	retireReplacedSession,
 } from "./process-output-managed.js";
 import { reconcileElectronHandoff } from "./process-output-electron.js";
-import { resolveOutputError } from "./process-output-presentation.js";
+import { resolveOutputError } from "./process-output-errors.js";
 import { commitObservedLifecycle } from "./process-output-receipts.js";
 function createLifecycleOutputPhase(
 	input: LifecycleOutputPhase["input"],
@@ -85,14 +85,14 @@ export async function commitLifecycleEffects(
 	ownership: BrowserOutputOwnershipSnapshot,
 ): Promise<LifecycleOutputEvidence> {
 	const draft = createLifecycleOutputPhase(input, native, page, ownership);
-	resolveManagedCloseTarget(draft);
-	await inspectFailedFreshLaunch(draft);
-	applyManagedTransition(draft);
+	Object.assign(draft, resolveManagedCloseTarget(draft));
+	draft.managedTransitionSucceeded = await inspectFailedFreshLaunch(draft);
+	Object.assign(draft, resolveManagedTransition(draft));
 	reconcileOutputPinning(draft);
-	await retireReplacedSession(draft);
-	await reconcileElectronHandoff(draft);
-	resolveOutputError(draft);
-	observeFinalHelperConfirmation(draft);
+	Object.assign(draft, await retireReplacedSession(draft));
+	Object.assign(draft, await reconcileElectronHandoff(draft));
+	Object.assign(draft, resolveOutputError(draft));
+	Object.assign(draft, observeFinalHelperConfirmation(draft));
 	commitObservedLifecycle(draft);
 	return {
 		aboutBlankSessionMismatch: draft.aboutBlankSessionMismatch,

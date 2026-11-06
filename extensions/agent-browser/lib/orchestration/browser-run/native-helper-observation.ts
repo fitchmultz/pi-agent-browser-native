@@ -17,7 +17,7 @@ import type { BrowserRunState, BrowserRunOptions } from "./types.js";
 interface HelperObservation {
 	readonly helper: SessionCommandOptions;
 	readonly processResult: ProcessRunResult;
-	readonly envelope?: AgentBrowserEnvelope;
+	readonly envelope?: AgentBrowserEnvelope | undefined;
 }
 
 export interface NativeHelperObserver {
@@ -84,7 +84,7 @@ function applyHelperConfirmation(
 		key === state.confirmationPolicyIdentity &&
 		!nativePolicyDefinitelyUnestablished(processResult, envelope, helper.args)
 	) {
-		state.confirmationPolicyMayBeEstablished = true;
+		state.recordConfirmationPolicy(true);
 	}
 	const confirmation = nextReadConfirmation({
 		commandTokens: helper.args,
@@ -101,10 +101,7 @@ function applyHelperConfirmation(
 	if (helper.args[0] === "open" && confirmation.state === "pending") {
 		markPendingOpenTargetUnknown(state, update, key);
 	}
-	state.observedBrowserEffects = {
-		...state.observedBrowserEffects,
-		readConfirmation: confirmation,
-	};
+	state.recordReadConfirmation(confirmation);
 }
 
 export function createNativeHelperObserver(

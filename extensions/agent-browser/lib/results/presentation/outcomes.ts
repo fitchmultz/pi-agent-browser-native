@@ -19,31 +19,44 @@ type OutcomeOptions = Pick<
 	"args" | "envelope" | "errorText" | "modelVisible" | "sessionName"
 >;
 
+type FailurePresentationUpdate = Pick<
+	ToolPresentation,
+	"resultCategory" | "failureCategory" | "successCategory" | "summary" | "content"
+>;
+
 function markFailure(
-	draft: ToolPresentation,
+	content: ToolPresentationObservation["content"],
 	category: "artifact-missing" | "upstream-error",
 	text: string,
 	prepend: boolean,
-): void {
-	draft.resultCategory = "failure";
-	draft.failureCategory = category;
-	draft.successCategory = undefined;
-	draft.summary = text;
-	if (!prepend && draft.content[0]?.type === "text") {
-		draft.content[0] = { ...draft.content[0], text: `${text}\n\n${draft.content[0].text}` };
-	} else {
-		draft.content.unshift({ type: "text", text });
-	}
+): FailurePresentationUpdate {
+	const first = content.at(0);
+	return {
+		resultCategory: "failure",
+		failureCategory: category,
+		successCategory: undefined,
+		summary: text,
+		content:
+			!prepend && first?.type === "text"
+				? [{ ...first, text: `${text}\n\n${first.text}` }, ...content.slice(1)]
+				: [{ type: "text", text }, ...content],
+	};
 }
 
-function applyArtifactFailures(draft: ToolPresentation, options: OutcomeOptions): void {
+function applyArtifactFailures(
+	draft: ToolPresentationObservation,
+	options: OutcomeOptions,
+): FailurePresentationUpdate | undefined {
 	const missing = formatMissingArtifactFailureText(draft.artifacts);
 	const hasError = options.errorText !== undefined && options.errorText.length > 0;
 	if (hasError) {
 		return;
 	}
+	let failure: FailurePresentationUpdate | undefined;
+	let content = draft.content;
 	if (missing !== undefined && missing.length > 0 && hasMissingFileArtifact(draft.artifacts)) {
-		markFailure(draft, "artifact-missing", missing, false);
+		failure = markFailure(content, "artifact-missing", missing, false);
+		content = failure.content;
 	}
 	const recording = draft.artifacts?.find(
 		(artifact) =>
@@ -51,27 +64,36 @@ function applyArtifactFailures(draft: ToolPresentation, options: OutcomeOptions)
 			artifact.recording?.output.encoderSucceeded === false,
 	);
 	if (recording) {
-		markFailure(
-			draft,
+		return markFailure(
+			content,
 			"upstream-error",
 			`Recording failed: ${recording.recording?.error ?? "native capture/encoder failure"}`,
 			true,
 		);
 	}
+	return failure;
 }
 
 function classifyOutcome(
-	draft: ToolPresentation,
+	draft: ToolPresentationObservation,
 	options: OutcomeOptions,
 	source: PresentationSource,
-): void {
+): Pick<
+	ToolPresentation,
+	"readConfirmation" | "resultCategory" | "successCategory" | "failureCategory"
+> {
+	const outcome: Pick<
+		ToolPresentation,
+		"readConfirmation" | "resultCategory" | "successCategory" | "failureCategory"
+	> = {};
+	let resultCategory = draft.resultCategory;
 	if (source.readConfirmation?.state === "pending") {
-		draft.readConfirmation = source.readConfirmation;
-		draft.resultCategory = "failure";
-		draft.failureCategory = "confirmation-required";
-		draft.successCategory = undefined;
+		outcome.readConfirmation = source.readConfirmation;
+		resultCategory = "failure";
+		outcome.failureCategory = "confirmation-required";
+		outcome.successCategory = undefined;
 	}
-	if (draft.resultCategory === undefined) {
+	if (resultCategory === undefined) {
 		const categories = buildAgentBrowserResultCategoryDetails({
 			artifacts: draft.artifacts,
 			command: source.presentationCommandInfo.command,
@@ -80,17 +102,19 @@ function classifyOutcome(
 			savedFile: draft.savedFile,
 			succeeded: options.envelope?.success !== false && source.confirmationRequired === undefined,
 		});
-		draft.resultCategory = categories.resultCategory;
-		draft.successCategory = categories.successCategory;
-		draft.failureCategory = categories.failureCategory;
+		resultCategory = categories.resultCategory;
+		outcome.successCategory = categories.successCategory;
+		outcome.failureCategory = categories.failureCategory;
 	}
-	if (draft.resultCategory === "success") {
-		draft.successCategory = classifyPresentationSuccessCategory({
+	if (resultCategory === "success") {
+		outcome.successCategory = classifyPresentationSuccessCategory({
 			artifactVerification: draft.artifactVerification,
 			artifacts: draft.artifacts,
 			savedFile: draft.savedFile,
 		});
 	}
+	outcome.resultCategory = resultCategory;
+	return outcome;
 }
 
 function getGenericNextActions(
@@ -121,10 +145,10 @@ function getGenericNextActions(
 }
 
 function applyNextActions(
-	draft: ToolPresentation,
+	draft: ToolPresentationObservation,
 	options: OutcomeOptions,
 	source: PresentationSource,
-): void {
+): ToolPresentation["nextActions"] {
 	const generic = getGenericNextActions(draft, options, source);
 	const network =
 		source.commandInfo.command === "network" &&
@@ -142,38 +166,53 @@ function applyNextActions(
 			: undefined;
 	const merged = [draft.nextActions, generic, network, stream].flatMap((group) => group ?? []);
 	const fallback = merged.length > 0 ? merged : undefined;
-	draft.nextActions = source.readConfirmation
+	return source.readConfirmation
 		? buildReadConfirmationNextActions(source.readConfirmation, true)
 		: fallback;
 }
 
 export function applyPresentationOutcome(
-	draft: ToolPresentation,
+	draft: ToolPresentationObservation,
 	options: OutcomeOptions,
 	source: PresentationSource,
-): void {
-	applyArtifactFailures(draft, options);
-	classifyOutcome(draft, options, source);
-	applyNextActions(draft, options, source);
-	draft.pageChangeSummary ??= buildPageChangeSummary({
-		artifacts: draft.artifacts,
-		commandInfo: source.presentationCommandInfo,
-		data: source.data,
-		nextActions: draft.nextActions,
-		savedFilePath: draft.savedFilePath,
-		summary: draft.summary,
-	});
+): Partial<ToolPresentation> {
+	const artifacts = applyArtifactFailures(draft, options);
+	const withArtifacts = artifacts ? { ...draft, ...artifacts } : draft;
+	const categories = classifyOutcome(withArtifacts, options, source);
+	const classified = { ...withArtifacts, ...categories };
+	const nextActions = applyNextActions(classified, options, source);
+	const pageChangeSummary =
+		classified.pageChangeSummary ??
+		buildPageChangeSummary({
+			artifacts: classified.artifacts,
+			commandInfo: source.presentationCommandInfo,
+			data: source.data,
+			nextActions,
+			savedFilePath: classified.savedFilePath,
+			summary: classified.summary,
+		});
+	const result: Partial<ToolPresentation> = {
+		...artifacts,
+		...categories,
+		nextActions,
+		pageChangeSummary,
+	};
+	const first = classified.content.at(0);
 	if (
-		draft.pageChangeSummary?.observed === false &&
+		pageChangeSummary?.observed === false &&
 		source.presentationCommandInfo.command !== "batch" &&
-		draft.content[0]?.type === "text"
+		first?.type === "text"
 	) {
-		draft.content[0] = {
-			...draft.content[0],
-			text: `${draft.content[0].text}\n\nAction dispatched; application change unverified. Verify the expected URL, text, state, or external receipt before relying on it.`,
-		};
+		result.content = [
+			{
+				...first,
+				text: `${first.text}\n\nAction dispatched; application change unverified. Verify the expected URL, text, state, or external receipt before relying on it.`,
+			},
+			...classified.content.slice(1),
+		];
 	}
 	if (options.modelVisible === false) {
-		draft.content = [];
+		result.content = [];
 	}
+	return result;
 }

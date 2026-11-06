@@ -18,13 +18,15 @@ type CollectLaunchHandoffInput = {
 	};
 };
 type RecordElectronOwnershipInput = { readonly input: { readonly state: BrowserRunState } };
-type RetireFailedElectronSessionInput = Pick<
-	LifecycleOutputPhase,
-	| "freshSessionOrdinal"
-	| "managedSessionActive"
-	| "managedSessionName"
-	| "managedSessionNamespace"
-	| "networkRoutesBySession"
+type RetireFailedElectronSessionInput = Readonly<
+	Pick<
+		LifecycleOutputPhase,
+		| "freshSessionOrdinal"
+		| "managedSessionActive"
+		| "managedSessionName"
+		| "managedSessionNamespace"
+		| "networkRoutesBySession"
+	>
 > & {
 	readonly input: {
 		readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">>;
@@ -34,20 +36,16 @@ type RetireFailedElectronSessionInput = Pick<
 type FailedHandoffOutcomeInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
-		| "managedSessionActive"
-		| "managedSessionName"
-		| "managedSessionNamespace"
 		| "priorManagedSessionActive"
 		| "priorManagedSessionName"
 		| "priorManagedSessionNamespace"
 		| "replacedManagedSessionName"
 	>
-> &
-	Pick<LifecycleOutputPhase, "managedSessionOutcome"> & {
-		readonly input: {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan" | "sessionMode">>;
-		};
+> & {
+	readonly input: {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan" | "sessionMode">>;
 	};
+};
 type CleanupFailedHandoffInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
@@ -56,46 +54,33 @@ type CleanupFailedHandoffInput = Readonly<
 		| "priorManagedSessionNamespace"
 		| "replacedManagedSessionName"
 		| "sessionStateKey"
-	>
-> &
-	Pick<
-		LifecycleOutputPhase,
-		| "electronFailedConnectCleanup"
-		| "electronLaunchRecord"
 		| "freshSessionOrdinal"
 		| "managedSessionActive"
 		| "managedSessionName"
 		| "managedSessionNamespace"
-		| "managedSessionOutcome"
 		| "networkRoutesBySession"
+	>
+> & {
+	readonly input: Readonly<
+		Pick<
+			ProcessBrowserOutputInput,
+			"cwd" | "implicitSessionCloseTimeoutMs" | "preserveAttachedBrowserSession"
+		>
 	> & {
-		readonly input: Readonly<
+		readonly prepared: Readonly<
 			Pick<
-				ProcessBrowserOutputInput,
-				"cwd" | "implicitSessionCloseTimeoutMs" | "preserveAttachedBrowserSession"
+				PreparedBrowserRun,
+				"executionPlan" | "managedSessionPolicyLock" | "ownedManagedSessionContext" | "sessionMode"
 			>
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					| "executionPlan"
-					| "managedSessionPolicyLock"
-					| "ownedManagedSessionContext"
-					| "sessionMode"
-				>
-			>;
-			readonly state: BrowserRunState;
-		};
+		>;
+		readonly state: BrowserRunState;
 	};
-type ApplyHandoffSnapshotInput = Readonly<Pick<LifecycleOutputPhase, "sessionStateKey">> &
-	Pick<
-		LifecycleOutputPhase,
-		"currentRefSnapshot" | "currentRefSnapshotInvalidation" | "currentSessionTabTarget"
-	> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
-			readonly state: BrowserRunState;
-		};
+};
+type ApplyHandoffSnapshotInput = Readonly<Pick<LifecycleOutputPhase, "sessionStateKey">> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
+		readonly state: BrowserRunState;
 	};
+};
 type ReconcileElectronHandoffInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
@@ -104,51 +89,40 @@ type ReconcileElectronHandoffInput = Readonly<
 		| "priorManagedSessionNamespace"
 		| "replacedManagedSessionName"
 		| "sessionStateKey"
-	>
-> &
-	Pick<
-		LifecycleOutputPhase,
-		| "currentRefSnapshot"
-		| "currentRefSnapshotInvalidation"
-		| "currentSessionTabTarget"
-		| "electronFailedConnectCleanup"
-		| "electronHandoff"
-		| "electronLaunchRecord"
 		| "freshSessionOrdinal"
 		| "managedSessionActive"
 		| "managedSessionName"
 		| "managedSessionNamespace"
-		| "managedSessionOutcome"
 		| "networkRoutesBySession"
-		| "presentationEnvelope"
 		| "succeeded"
+	>
+> & {
+	readonly input: Readonly<
+		Pick<
+			ProcessBrowserOutputInput,
+			| "cwd"
+			| "implicitSessionCloseTimeoutMs"
+			| "preserveAttachedBrowserSession"
+			| "sessionPageStateUpdate"
+			| "signal"
+		>
 	> & {
-		readonly input: Readonly<
+		readonly prepared: Readonly<
 			Pick<
-				ProcessBrowserOutputInput,
-				| "cwd"
-				| "implicitSessionCloseTimeoutMs"
-				| "preserveAttachedBrowserSession"
-				| "sessionPageStateUpdate"
-				| "signal"
+				PreparedBrowserRun,
+				| "compiledElectron"
+				| "electronFailedConnectCleanup"
+				| "electronHandoff"
+				| "electronLaunch"
+				| "executionPlan"
+				| "managedSessionPolicyLock"
+				| "ownedManagedSessionContext"
+				| "sessionMode"
 			>
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					| "compiledElectron"
-					| "electronFailedConnectCleanup"
-					| "electronHandoff"
-					| "electronLaunch"
-					| "executionPlan"
-					| "managedSessionPolicyLock"
-					| "ownedManagedSessionContext"
-					| "sessionMode"
-				>
-			>;
-			readonly state: BrowserRunState;
-		};
+		>;
+		readonly state: BrowserRunState;
 	};
+};
 
 function handoffExceptionMessage(error: unknown): string {
 	// Unstructured thrown objects may hold credentials; only an explicit public string is safe to retain.
@@ -192,36 +166,52 @@ function retireFailedElectronSession(
 	draft: RetireFailedElectronSessionInput,
 	sessionName: string,
 	sessionKey: string,
-): void {
+): Omit<RetireFailedElectronSessionInput, "input"> {
 	draft.input.state.closedManagedSessionNames.add(sessionKey);
-	const routes = new Map(draft.networkRoutesBySession);
-	routes.delete(sessionKey);
-	draft.networkRoutesBySession = routes;
+	const networkRoutesBySession = new Map(draft.networkRoutesBySession);
+	networkRoutesBySession.delete(sessionKey);
 	draft.input.state.sessionPageState.clearSession(sessionKey);
+	let { managedSessionActive, freshSessionOrdinal, managedSessionName, managedSessionNamespace } =
+		draft;
 	if (
-		draft.managedSessionName !== sessionName ||
-		draft.managedSessionNamespace !== draft.input.prepared.executionPlan.namespace
+		managedSessionName === sessionName &&
+		managedSessionNamespace === draft.input.prepared.executionPlan.namespace
 	) {
-		return;
+		managedSessionActive = false;
+		freshSessionOrdinal += 1;
+		managedSessionName = createFreshSessionName(
+			draft.input.state.managedSessionBaseName,
+			draft.input.state.ephemeralSessionSeed,
+			freshSessionOrdinal,
+		);
+		managedSessionNamespace = undefined;
 	}
-	draft.managedSessionActive = false;
-	draft.freshSessionOrdinal += 1;
-	draft.managedSessionName = createFreshSessionName(
-		draft.input.state.managedSessionBaseName,
-		draft.input.state.ephemeralSessionSeed,
-		draft.freshSessionOrdinal,
-	);
-	draft.managedSessionNamespace = undefined;
+	return {
+		networkRoutesBySession,
+		managedSessionActive,
+		freshSessionOrdinal,
+		managedSessionName,
+		managedSessionNamespace,
+	};
 }
 
-function failedHandoffOutcome(draft: FailedHandoffOutcomeInput, sessionName: string): void {
-	draft.managedSessionOutcome = buildManagedSessionOutcome({
-		activeAfter: draft.managedSessionActive,
+function failedHandoffOutcome(
+	draft: FailedHandoffOutcomeInput,
+	current: Readonly<
+		Pick<
+			LifecycleOutputPhase,
+			"managedSessionActive" | "managedSessionName" | "managedSessionNamespace"
+		>
+	>,
+	sessionName: string,
+): LifecycleOutputPhase["managedSessionOutcome"] {
+	return buildManagedSessionOutcome({
+		activeAfter: current.managedSessionActive,
 		activeBefore: draft.priorManagedSessionActive,
 		attemptedSessionName: sessionName,
 		command: draft.input.prepared.executionPlan.commandInfo.command,
-		currentSessionName: draft.managedSessionName,
-		currentSessionNamespace: draft.managedSessionNamespace,
+		currentSessionName: current.managedSessionName,
+		currentSessionNamespace: current.managedSessionNamespace,
 		previousSessionName: draft.priorManagedSessionName,
 		replacedSessionName: draft.replacedManagedSessionName,
 		replacedSessionNamespace: draft.priorManagedSessionNamespace,
@@ -235,7 +225,13 @@ async function cleanupFailedHandoff(
 	launch: ElectronLaunchSuccess,
 	record: ElectronLaunchRecord,
 	sessionName: string,
-): Promise<void> {
+): Promise<
+	Pick<
+		LifecycleOutputPhase,
+		"electronFailedConnectCleanup" | "electronLaunchRecord" | "managedSessionOutcome"
+	> &
+		Partial<Omit<RetireFailedElectronSessionInput, "input">>
+> {
 	const sessionKey = draft.sessionStateKey ?? sessionName;
 	const { prepared, state, cwd, implicitSessionCloseTimeoutMs } = draft.input;
 	const closeError = await closeManagedSession({
@@ -252,29 +248,42 @@ async function cleanupFailedHandoff(
 		sessionName,
 		timeoutMs: implicitSessionCloseTimeoutMs,
 	});
-	draft.electronFailedConnectCleanup = await cleanupElectronLaunchResources({
+	const electronFailedConnectCleanup = await cleanupElectronLaunchResources({
 		child: launch.child,
 		record,
 		timeoutMs: implicitSessionCloseTimeoutMs,
 	});
-	draft.electronLaunchRecord = draft.electronFailedConnectCleanup.record;
-	if (draft.electronFailedConnectCleanup.partial) {
-		recordElectronOwnership(draft, launch, draft.electronLaunchRecord);
+	const electronLaunchRecord = electronFailedConnectCleanup.record;
+	if (electronFailedConnectCleanup.partial) {
+		recordElectronOwnership(draft, launch, electronLaunchRecord);
 	} else {
-		state.electronLaunchRecords.delete(draft.electronLaunchRecord.launchId);
-		state.electronChildProcesses.delete(draft.electronLaunchRecord.launchId);
+		state.electronLaunchRecords.delete(electronLaunchRecord.launchId);
+		state.electronChildProcesses.delete(electronLaunchRecord.launchId);
 	}
-	if (closeError === undefined || closeError.length === 0) {
-		retireFailedElectronSession(draft, sessionName, sessionKey);
-	}
-	failedHandoffOutcome(draft, sessionName);
+	const retirement =
+		closeError === undefined || closeError.length === 0
+			? retireFailedElectronSession(draft, sessionName, sessionKey)
+			: undefined;
+	return {
+		electronFailedConnectCleanup,
+		electronLaunchRecord,
+		managedSessionOutcome: failedHandoffOutcome(draft, retirement ?? draft, sessionName),
+		...retirement,
+	};
 }
 
 function applyHandoffSnapshot(
 	draft: ApplyHandoffSnapshotInput,
 	sessionName: string,
 	handoff: ElectronHandoffSummary,
-): void {
+):
+	| Partial<
+			Pick<
+				LifecycleOutputPhase,
+				"currentRefSnapshot" | "currentRefSnapshotInvalidation" | "currentSessionTabTarget"
+			>
+	  >
+	| undefined {
 	const snapshot = handoff.refSnapshot;
 	if (!snapshot) {
 		return;
@@ -286,48 +295,80 @@ function applyHandoffSnapshot(
 		snapshot,
 		update: sessionPageStateUpdate,
 	});
-	draft.currentRefSnapshot = refUpdate.refSnapshot;
-	draft.currentRefSnapshotInvalidation = refUpdate.refSnapshotInvalidation;
-	if (snapshot.target) {
-		const targetUpdate = state.sessionPageState.applyTabTarget({
-			sessionName: sessionKey,
-			target: snapshot.target,
-			update: sessionPageStateUpdate,
-		});
-		draft.currentSessionTabTarget = targetUpdate.tabTarget;
+	const result = {
+		currentRefSnapshot: refUpdate.refSnapshot,
+		currentRefSnapshotInvalidation: refUpdate.refSnapshotInvalidation,
+	};
+	if (!snapshot.target) {
+		return result;
 	}
+	const targetUpdate = state.sessionPageState.applyTabTarget({
+		sessionName: sessionKey,
+		target: snapshot.target,
+		update: sessionPageStateUpdate,
+	});
+	return { ...result, currentSessionTabTarget: targetUpdate.tabTarget };
 }
 
 export async function reconcileElectronHandoff(
 	draft: ReconcileElectronHandoffInput,
-): Promise<void> {
+): Promise<
+	Pick<LifecycleOutputPhase, "electronFailedConnectCleanup" | "electronHandoff"> &
+		Partial<
+			Pick<
+				LifecycleOutputPhase,
+				| "currentRefSnapshot"
+				| "currentRefSnapshotInvalidation"
+				| "currentSessionTabTarget"
+				| "electronLaunchRecord"
+				| "freshSessionOrdinal"
+				| "managedSessionActive"
+				| "managedSessionName"
+				| "managedSessionNamespace"
+				| "managedSessionOutcome"
+				| "networkRoutesBySession"
+				| "presentationEnvelope"
+				| "succeeded"
+			>
+		>
+> {
 	const { prepared, implicitSessionCloseTimeoutMs } = draft.input;
-	draft.electronFailedConnectCleanup = prepared.electronFailedConnectCleanup;
-	draft.electronHandoff = prepared.electronHandoff;
+	const initial = {
+		electronFailedConnectCleanup: prepared.electronFailedConnectCleanup,
+		electronHandoff: prepared.electronHandoff,
+	};
 	const launch = prepared.electronLaunch;
 	if (!launch) {
-		return;
+		return initial;
 	}
 	const sessionName = prepared.executionPlan.sessionName;
 	if (!draft.succeeded || sessionName === undefined || sessionName.length === 0) {
-		draft.electronFailedConnectCleanup = await cleanupElectronLaunchResources({
+		const electronFailedConnectCleanup = await cleanupElectronLaunchResources({
 			child: launch.child,
 			record: launch.record,
 			timeoutMs: implicitSessionCloseTimeoutMs,
 		});
-		draft.electronLaunchRecord = draft.electronFailedConnectCleanup.record;
-		return;
+		return {
+			...initial,
+			electronFailedConnectCleanup,
+			electronLaunchRecord: electronFailedConnectCleanup.record,
+		};
 	}
 	const record = { ...launch.record, namespace: prepared.executionPlan.namespace, sessionName };
-	draft.electronLaunchRecord = record;
 	const handoff = await collectLaunchHandoff(draft, sessionName);
-	draft.electronHandoff = handoff;
 	if (handoff.error !== undefined && handoff.error.length > 0) {
-		draft.succeeded = false;
-		draft.presentationEnvelope = { error: handoff.error, success: false };
-		await cleanupFailedHandoff(draft, launch, record, sessionName);
-		return;
+		return {
+			electronHandoff: handoff,
+			succeeded: false,
+			presentationEnvelope: { error: handoff.error, success: false },
+			...(await cleanupFailedHandoff(draft, launch, record, sessionName)),
+		};
 	}
 	recordElectronOwnership(draft, launch, record);
-	applyHandoffSnapshot(draft, sessionName, handoff);
+	return {
+		...initial,
+		electronLaunchRecord: record,
+		electronHandoff: handoff,
+		...applyHandoffSnapshot(draft, sessionName, handoff),
+	};
 }

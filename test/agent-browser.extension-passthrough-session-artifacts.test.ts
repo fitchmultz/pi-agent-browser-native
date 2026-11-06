@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { readArray, readDefined, readRecord, readString } from "./helpers/assertions.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -14,7 +14,7 @@ import {
 } from "./helpers/agent-browser-harness.js";
 import { stripWrapperPrefix, needsRootSessionPageCheck } from "./helpers/passthrough-fixture.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects per-call idle timeout changes that would restart the browser",
 	{ concurrency: false },
 	async () => {
@@ -109,7 +109,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Dom
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension preserves one attached Chrome connection across explicit-session follow-ups",
 	{ concurrency: false },
 	async () => {
@@ -582,7 +582,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps explicit --auto-connect false calls unattached under ambient auto-connect",
 	{ concurrency: false },
 	async () => {
@@ -637,10 +637,10 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension passes through stateful browser-context workflow commands",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-stateful-matrix-"));
 		const logPath = join(tempDir, "invocations.log");
 		const statePath = join(tempDir, "missing", "parents", "state.json");
@@ -713,44 +713,35 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 
 				let storageSetResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 				for (const args of commands) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: [...args],
+					await t.test(args.join(" "), async (commandContext) => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: [...args],
+						});
+						const details = result.details;
+						assert.ok(details);
+						assert.equal(
+							result.isError,
+							false,
+							`${args.join(" ")}: ${readString(readRecord(result.content[0]).text)}`,
+						);
+						assert.doesNotMatch(
+							readString(readRecord(result.content[0]).text),
+							/cookie-secret|cookie-get-secret|storage-secret/,
+						);
+						assert.doesNotMatch(
+							JSON.stringify(details),
+							/cookie-secret|cookie-get-secret|storage-secret/,
+						);
+						if (args[0] === "storage" && args[1] === "local" && args[2] === "set") {
+							storageSetResult = result;
+						}
+						if (args[0] === "get" && args.at(1) === "url") {
+							await commandContext.test("explicit URL verification", () => {
+								assert.deepEqual(details.args, ["get", "url"]);
+								assert.equal(readRecord(details.data).url, "https://example.test/current");
+							});
+						}
 					});
-					// Every row in the fixed nonempty stateful sequence checks success and secret redaction.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(result.details);
-					// Every row in the fixed nonempty stateful sequence checks success and secret redaction.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						result.isError,
-						false,
-						`${args.join(" ")}: ${readString(readRecord(result.content[0]).text)}`,
-					);
-					// Every row in the fixed nonempty stateful sequence checks success and secret redaction.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.doesNotMatch(
-						readString(readRecord(result.content[0]).text),
-						/cookie-secret|cookie-get-secret|storage-secret/,
-					);
-					// Every row in the fixed nonempty stateful sequence checks success and secret redaction.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.doesNotMatch(
-						JSON.stringify(result.details),
-						/cookie-secret|cookie-get-secret|storage-secret/,
-					);
-					if (args[0] === "storage" && args[1] === "local" && args[2] === "set") {
-						storageSetResult = result;
-					}
-					if (args[0] === "get" && args.at(1) === "url") {
-						// The literal get-url row checks routing/payload; every stateful row also checks success.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.deepEqual(result.details.args, ["get", "url"]);
-						// The literal get-url row checks routing/payload; every stateful row also checks success.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(result.details.data).url, "https://example.test/current");
-					}
 				}
 				assert.match(readString(readRecord(storageSetResult?.content[0]).text), /theme: dark/);
 				assert.match(JSON.stringify(storageSetResult?.details), /"value":"dark"/);
@@ -770,11 +761,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				assert.equal(jsonResult.isError, false);
 				const textItems = jsonResult.content.filter((item) => item.type === "text");
 				assert.ok(textItems.length > 0, "JSON cookie result must expose visible text");
-				for (const item of textItems) {
-					// The asserted nonempty text-result set checks every visible item for the cookie secret.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.doesNotMatch(item.text, /json-cookie-secret/);
-				}
+				assert.doesNotMatch(textItems.map((item) => item.text).join("\n"), /json-cookie-secret/);
 
 				const invocations = await readInvocationLog(logPath);
 				const isSessionlessAuthRow = (args: readonly string[]) =>
@@ -829,7 +816,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension normalizes and repairs explicit screenshot artifact paths",
 	{ concurrency: false },
 	async () => {
@@ -884,13 +871,13 @@ if (args.includes("get") && args.includes("url")) {
 				assert.match(text, /Session: warden-vfr/);
 				assert.match(text, new RegExp(`CWD: ${tempDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 
-				const artifacts = readArray(result.details.artifacts).map(readRecord);
-				assert.equal(artifacts[0].requestedPath, ".dogfood/run/foo.png");
-				assert.equal(artifacts[0].absolutePath, expectedPath);
-				assert.equal(artifacts[0].cwd, tempDir);
-				assert.equal(artifacts[0].session, "warden-vfr");
-				assert.equal(artifacts[0].status, "repaired-from-temp");
-				assert.equal(artifacts[0].tempPath, upstreamTempPath);
+				const artifact = readDefined(readArray(result.details.artifacts).map(readRecord)[0]);
+				assert.equal(artifact.requestedPath, ".dogfood/run/foo.png");
+				assert.equal(artifact.absolutePath, expectedPath);
+				assert.equal(artifact.cwd, tempDir);
+				assert.equal(artifact.session, "warden-vfr");
+				assert.equal(artifact.status, "repaired-from-temp");
+				assert.equal(artifact.tempPath, upstreamTempPath);
 
 				const invocations = await readInvocationLog(logPath);
 				assert.deepEqual(invocations[0]?.args.at(-2), "get");
@@ -905,7 +892,7 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension normalizes and repairs batch screenshot artifact paths",
 	{ concurrency: false },
 	async () => {
@@ -969,13 +956,13 @@ process.stdin.on("end", () => {
 						new RegExp(`Reported path: ${upstreamTempPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
 					);
 
-					const artifacts = readArray(result.details.artifacts).map(readRecord);
-					assert.equal(artifacts[0].requestedPath, ".dogfood/run/good-batch.png");
-					assert.equal(artifacts[0].absolutePath, expectedPath);
-					assert.equal(artifacts[0].status, "repaired-from-temp");
-					assert.equal(artifacts[0].tempPath, upstreamTempPath);
+					const artifact = readDefined(readArray(result.details.artifacts).map(readRecord)[0]);
+					assert.equal(artifact.requestedPath, ".dogfood/run/good-batch.png");
+					assert.equal(artifact.absolutePath, expectedPath);
+					assert.equal(artifact.status, "repaired-from-temp");
+					assert.equal(artifact.tempPath, upstreamTempPath);
 
-					const [invocation] = await readInvocationLog(logPath);
+					const invocation = readDefined((await readInvocationLog(logPath))[0]);
 					assert.deepEqual(readArray(JSON.parse(readString(invocation.stdin))), [
 						["screenshot", expectedPath],
 					]);
@@ -987,7 +974,7 @@ process.stdin.on("end", () => {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension guards wrapper-known trace and profiler ownership",
 	{ concurrency: false },
 	async () => {

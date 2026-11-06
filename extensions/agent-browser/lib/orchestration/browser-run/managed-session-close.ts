@@ -23,15 +23,15 @@ import {
 } from "./managed-session-daemon-inspection.js";
 
 interface ManagedSessionCloseOptions {
-	readonly confirmActions?: string;
+	readonly confirmActions?: string | undefined;
 	readonly cwd: string;
-	readonly headedManagedAutosaveInterval?: string;
-	readonly namespace?: string;
-	readonly policyLock?: ManagedSessionPolicyLock;
-	readonly preserveAttachedBrowserSession?: boolean;
+	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly namespace?: string | undefined;
+	readonly policyLock?: ManagedSessionPolicyLock | undefined;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
 	readonly restoreState: ManagedSessionRestoreState;
 	readonly sessionName: string;
-	readonly socketDir?: string;
+	readonly socketDir?: string | undefined;
 	readonly timeoutMs: number;
 }
 

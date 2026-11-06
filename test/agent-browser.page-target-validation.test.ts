@@ -2,7 +2,7 @@ import { readString } from "./helpers/assertions.js";
 /** Verify upstream capability pass-through and page-target correctness guards. */
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { parseBatchCommandArgument } from "../extensions/agent-browser/lib/orchestration/batch-stdin.js";
 import {
@@ -20,40 +20,43 @@ function validate(
 	return getPageTargetValidationError({ args: [...args], currentPageUrl, stdin });
 }
 
-test("upstream state, session, config, file, and browser launch capabilities pass through", () => {
-	for (const args of [
-		["--session", "piab-foreign", "snapshot", "-i"],
-		["--restore", `piab-r2-${"a".repeat(32)}`, "open", "https://example.com"],
-		["--state", "/tmp/foreign.json", "open", "https://example.com"],
-		["state", "save", "/other/checkout/state.json"],
-		["state", "load", "/other/checkout/state.json"],
-		["state", "show", "/other/checkout/state.json"],
-		["state", "rename", "old", "new"],
-		["state", "clear", "--all"],
-		["state", "clean", "--older-than", "30"],
-		["--config", "/tmp/agent-browser.json", "open", "https://example.com"],
-		["--allow-file-access", "true", "open", "file:///tmp/page.html"],
-		["--args", "--disable-web-security", "open", "https://example.com"],
-		["open", "file:///tmp/.agent-browser/sessions/auth.html"],
-		["screenshot", "/tmp/.agent-browser/capture.png"],
-	]) {
-		// Each caller-owned session/restore/path variant is asserted to remain available.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(validate(args), undefined, args.join(" "));
-	}
-	assert.equal(
-		validate(
-			["batch"],
-			JSON.stringify([
-				["state", "clear", "--all"],
-				["state", "save", "/other/checkout/state.json"],
-			]),
-		),
-		undefined,
-	);
-});
+nodeTest(
+	"upstream state, session, config, file, and browser launch capabilities pass through",
+	async (t) => {
+		for (const args of [
+			["--session", "piab-foreign", "snapshot", "-i"],
+			["--restore", `piab-r2-${"a".repeat(32)}`, "open", "https://example.com"],
+			["--state", "/tmp/foreign.json", "open", "https://example.com"],
+			["state", "save", "/other/checkout/state.json"],
+			["state", "load", "/other/checkout/state.json"],
+			["state", "show", "/other/checkout/state.json"],
+			["state", "rename", "old", "new"],
+			["state", "clear", "--all"],
+			["state", "clean", "--older-than", "30"],
+			["--config", "/tmp/agent-browser.json", "open", "https://example.com"],
+			["--allow-file-access", "true", "open", "file:///tmp/page.html"],
+			["--args", "--disable-web-security", "open", "https://example.com"],
+			["open", "file:///tmp/.agent-browser/sessions/auth.html"],
+			["screenshot", "/tmp/.agent-browser/capture.png"],
+		]) {
+			await t.test(args.join(" "), () => {
+				assert.equal(validate(args), undefined);
+			});
+		}
+		assert.equal(
+			validate(
+				["batch"],
+				JSON.stringify([
+					["state", "clear", "--all"],
+					["state", "save", "/other/checkout/state.json"],
+				]),
+			),
+			undefined,
+		);
+	},
+);
 
-test("unverified page transitions still require a live URL before content access", () => {
+nodeTest("unverified page transitions still require a live URL before content access", () => {
 	assert.equal(
 		getPageTargetValidationError({ args: ["get", "url"], pageUrlUnknown: true }),
 		undefined,
@@ -104,7 +107,7 @@ test("unverified page transitions still require a live URL before content access
 	);
 });
 
-test("WebMCP page tools require a verified target and may change it", () => {
+nodeTest("WebMCP page tools require a verified target and may change it", () => {
 	assert.match(
 		readString(
 			getExplicitSessionPageVerificationRequirement({
@@ -197,7 +200,7 @@ test("WebMCP page tools require a verified target and may change it", () => {
 	);
 });
 
-test("non-bail batches preserve known prior-page behavior and guard unknown targets", () => {
+nodeTest("non-bail batches preserve known prior-page behavior and guard unknown targets", () => {
 	const stdin = JSON.stringify([
 		["open", "https://safe.example/"],
 		["get", "html", "body"],
@@ -235,63 +238,66 @@ test("non-bail batches preserve known prior-page behavior and guard unknown targ
 	);
 });
 
-test("raw batch command arguments exclusively determine validation and resulting targets", () => {
-	assert.match(
-		getPageTargetValidationError({
-			args: ["batch", "--bail=true"],
-			stdin: '[["get","url"]]',
-			pageUrlUnknown: false,
-		}) ?? "",
-		/exact.*--bail.*stdin.*ignored/i,
-	);
-	assert.match(
-		getPageTargetValidationError({
-			args: ["batch", "--bail=true"],
-			stdin: '[["get","url"]]',
-			pageUrlUnknown: true,
-		}) ?? "",
-		/exact.*--bail.*stdin.*ignored/i,
-	);
-	assert.equal(
-		getPageTargetValidationError({
-			args: ["batch", "fill '#field' '--bail=true'"],
-			pageUrlUnknown: false,
-		}),
-		undefined,
-	);
-	const ignoredStdin = JSON.stringify([
-		["open", "file:///ignored.html"],
-		["snapshot", "-i"],
-	]);
-	assert.equal(
-		getPageTargetValidationError({
-			args: ["batch", "get url"],
-			pageUrlUnknown: true,
-			stdin: ignoredStdin,
-		}),
-		undefined,
-	);
-	assert.equal(
-		commandRequiresLivePageVerification(
-			["batch", "get url"],
-			JSON.stringify([["eval", "document.title"]]),
-		),
-		false,
-	);
-	assert.deepEqual(
-		getResultingPageTargetState({
-			args: ["batch", "open https://raw.example/"],
-			executedBatchSteps: [["open", "https://raw.example/"]],
-		}),
-		{
-			currentPageUrl: "https://raw.example/",
-			pageTargetMayHaveChanged: true,
-			pageUrlUnknown: false,
-		},
-	);
-});
+nodeTest(
+	"raw batch command arguments exclusively determine validation and resulting targets",
+	() => {
+		assert.match(
+			getPageTargetValidationError({
+				args: ["batch", "--bail=true"],
+				stdin: '[["get","url"]]',
+				pageUrlUnknown: false,
+			}) ?? "",
+			/exact.*--bail.*stdin.*ignored/i,
+		);
+		assert.match(
+			getPageTargetValidationError({
+				args: ["batch", "--bail=true"],
+				stdin: '[["get","url"]]',
+				pageUrlUnknown: true,
+			}) ?? "",
+			/exact.*--bail.*stdin.*ignored/i,
+		);
+		assert.equal(
+			getPageTargetValidationError({
+				args: ["batch", "fill '#field' '--bail=true'"],
+				pageUrlUnknown: false,
+			}),
+			undefined,
+		);
+		const ignoredStdin = JSON.stringify([
+			["open", "file:///ignored.html"],
+			["snapshot", "-i"],
+		]);
+		assert.equal(
+			getPageTargetValidationError({
+				args: ["batch", "get url"],
+				pageUrlUnknown: true,
+				stdin: ignoredStdin,
+			}),
+			undefined,
+		);
+		assert.equal(
+			commandRequiresLivePageVerification(
+				["batch", "get url"],
+				JSON.stringify([["eval", "document.title"]]),
+			),
+			false,
+		);
+		assert.deepEqual(
+			getResultingPageTargetState({
+				args: ["batch", "open https://raw.example/"],
+				executedBatchSteps: [["open", "https://raw.example/"]],
+			}),
+			{
+				currentPageUrl: "https://raw.example/",
+				pageTargetMayHaveChanged: true,
+				pageUrlUnknown: false,
+			},
+		);
+	},
+);
 
-test("page-state tracking survives capability pass-through", () => {
+nodeTest("page-state tracking survives capability pass-through", () => {
 	assert.deepEqual(
 		getResultingPageTargetState({ args: ["batch"], executedBatchSteps: [["connect", "9222"]] }),
 		{
@@ -327,7 +333,7 @@ test("page-state tracking survives capability pass-through", () => {
 	);
 });
 
-test("batch command strings match upstream ASCII-space and quoting rules", () => {
+nodeTest("batch command strings match upstream ASCII-space and quoting rules", () => {
 	assert.deepEqual(parseBatchCommandArgument("open https://example.com").step, [
 		"open",
 		"https://example.com",

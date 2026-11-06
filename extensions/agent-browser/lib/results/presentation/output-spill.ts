@@ -27,7 +27,7 @@ function serializePayload(data: unknown, text: string): string {
 
 export async function writeLargeOutputSpillFile(options: {
 	readonly data: unknown;
-	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore>;
+	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
 	readonly text: string;
 }): Promise<LargeOutputSpillWriteResult> {
 	const isStructured =

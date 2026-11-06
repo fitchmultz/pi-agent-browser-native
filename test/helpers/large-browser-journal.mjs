@@ -20,6 +20,7 @@ import { SessionPageState } from "../../dist/extensions/agent-browser/lib/sessio
 const root = await mkdtemp(join(tmpdir(), "piab-large-journal-"));
 const source = join(root, "original.jsonl"),
 	destination = join(root, "converted.jsonl");
+/** @param {string} path */
 const hashFile = async (path) => {
 	const file = await open(path, "r");
 	try {
@@ -46,7 +47,6 @@ try {
 		const chunk = Buffer.alloc(1024 * 1024, 120);
 		for (let index = 0; index < 1025; index++) {
 			// Bounded memory and byte ordering require one completed file write per chunk.
-			// oxlint-disable-next-line no-await-in-loop
 			await file.write(chunk);
 		} // The ignored string alone exceeds 1 GiB and Node's whole-string ceiling.
 		await file.write('"}}\n');
@@ -59,7 +59,6 @@ try {
 		];
 		for (const [index, body] of dense.entries()) {
 			// Bounded memory and byte ordering require one completed file write per record.
-			// oxlint-disable-next-line no-await-in-loop
 			await file.write(
 				`{"type":"custom","customType":"unrelated","id":"dense-${index}","parentId":"giant","timestamp":"${timestamp}",${body}}\n`,
 			);
@@ -88,13 +87,14 @@ try {
 			maxEntries: 100,
 			updatedAtMs: 100,
 		};
-		const legacy = (id, parentId, details) => ({
+		/** @param {string} id @param {string} parentId @param {Readonly<Record<string, unknown>>} observation */
+		const legacy = (id, parentId, observation) => ({
 			type: "custom",
 			customType: "agent-browser-transition",
 			id,
 			parentId,
 			timestamp,
-			data: { toolCallId: "large-outer", isError: false, details },
+			data: { toolCallId: "large-outer", isError: false, details: observation },
 		});
 		const details = {
 			args: ["get", "title"],
@@ -114,7 +114,6 @@ try {
 		for (let index = 0; index < 220; index++) {
 			const id = `read-${index}`;
 			// Journal ancestry and physical append order must advance together.
-			// oxlint-disable-next-line no-await-in-loop
 			await file.write(JSON.stringify(legacy(id, parent, details)) + "\n");
 			parent = id;
 		}
@@ -131,7 +130,6 @@ try {
 		for (let index = 0; index < 4000; index++) {
 			const id = `wide-${index}`;
 			// Distinct-session ancestry exposes retention of every historical growing page map.
-			// oxlint-disable-next-line no-await-in-loop
 			await file.write(
 				JSON.stringify({
 					type: "custom",
@@ -175,6 +173,7 @@ try {
 		receipt.sourceBytes - receipt.destinationBytes > 400 * 1024 * 1024,
 		"repeated legacy maps collapse without dropping the ignored value",
 	);
+	/** @param {string} path @param {string} leaf */
 	const manager = (path, leaf) => ({
 		getSessionFile: () => path,
 		getHeader: () => header,
@@ -190,37 +189,51 @@ try {
 			throw Error("No eager native payload");
 		},
 	});
+	const observations = [];
 	for (const path of [source, destination]) {
 		// Read each retained locator independently; neither replay writes or selects a converted copy.
-		// oxlint-disable-next-line no-await-in-loop
 		const branch = await readBrowserEntries(manager(path, "read-219"));
 		const page = SessionPageState.fromBranch(branch).get("large");
-		assert.equal(page.refSnapshot.refIds.length, 34683);
-		assert.deepEqual(page.refSnapshot.refs.e34683, {
-			role: "textbox",
-			name: "Field",
-			isEditable: true,
-		});
-		assert.equal(page.tabTarget.url, "https://fixture.test/large#exact-fragment");
+
 		let recent;
 		for (const entry of branch) {
 			recent = applyArtifactChanges(recent, getBrowserRecord(entry)?.event.artifacts);
 		}
-		assert.equal(recent.entries.length, 100);
 		// Branch selection on this same file must not borrow refs from its physical sibling.
-		// oxlint-disable-next-line no-await-in-loop
 		const otherBranch = await readBrowserEntries(manager(path, "branch-b"));
 		const other = SessionPageState.fromBranch(otherBranch).get("large");
-		assert.deepEqual(other.refSnapshot.refIds, ["e7"]);
-		assert.equal(other.tabTarget.url, "https://fixture.test/b#branch");
 		// Each locator has its own growing selected ancestry, with bounded released parent projections.
-		// oxlint-disable-next-line no-await-in-loop
 		const wide = SessionPageState.fromBranch(await readBrowserEntries(manager(path, "wide-3999")));
-		assert.equal(wide.views().size, 4001);
-		assert.equal(wide.get("session-0").tabTarget.url, "https://fixture.test/session-0");
-		assert.equal(wide.get("session-3999").tabTarget.url, "https://fixture.test/session-3999");
-		assert.equal(wide.get("large").refSnapshot.refIds.length, 34683);
+		observations.push({
+			path,
+			refCount: page.refSnapshot?.refIds.length,
+			lastRef: page.refSnapshot?.refs?.e34683,
+			targetUrl: page.tabTarget?.url,
+			artifactCount: recent?.entries.length,
+			otherRefs: other.refSnapshot?.refIds,
+			otherUrl: other.tabTarget?.url,
+			wideCount: wide.views().size,
+			wideFirstUrl: wide.get("session-0").tabTarget?.url,
+			wideLastUrl: wide.get("session-3999").tabTarget?.url,
+			wideRefCount: wide.get("large").refSnapshot?.refIds.length,
+		});
 	}
+	assert.deepEqual(
+		observations,
+		[source, destination].map((path) => ({
+			path,
+			refCount: 34683,
+			lastRef: { role: "textbox", name: "Field", isEditable: true },
+			targetUrl: "https://fixture.test/large#exact-fragment",
+			artifactCount: 100,
+			otherRefs: ["e7"],
+			otherUrl: "https://fixture.test/b#branch",
+			wideCount: 4001,
+			wideFirstUrl: "https://fixture.test/session-0",
+			wideLastUrl: "https://fixture.test/session-3999",
+			wideRefCount: 34683,
+		})),
+	);
 	assert.equal(await hashFile(source), before);
 	assert.equal((await stat(source)).size, receipt.sourceBytes);
 	console.log(

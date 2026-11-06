@@ -46,10 +46,10 @@ function canOperateWithoutVerifiedPage(command: string | undefined, subcommand?:
 }
 
 export interface PageTargetGuardOptions {
-	readonly allowUnverifiedPageTransitions?: boolean;
+	readonly allowUnverifiedPageTransitions?: boolean | undefined;
 	readonly args: readonly string[];
 	readonly pageUrlUnknown?: boolean;
-	readonly trustedBatchTabSelection?: boolean;
+	readonly trustedBatchTabSelection?: boolean | undefined;
 }
 
 export function getUnverifiedPageError(options: PageTargetGuardOptions): string | undefined {

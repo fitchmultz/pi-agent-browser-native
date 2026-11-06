@@ -31,7 +31,6 @@ export async function sourceChecksum(file: FileHandle, size: number): Promise<st
 export async function writeBytes(
 	file: FileHandle,
 	// The native async iterator owns its cursor; yielded byte/string contents are read, never changed.
-	// oxlint-disable-next-line typescript/prefer-readonly-parameter-types
 	chunks: AsyncIterable<Uint8Array | string>,
 ): Promise<void> {
 	for await (const chunk of chunks) {
@@ -39,7 +38,6 @@ export async function writeBytes(
 		let offset = 0;
 		while (offset < buffer.length) {
 			// Partial writes determine the offset for the next write.
-			// oxlint-disable-next-line no-await-in-loop
 			const { bytesWritten } = await file.write(buffer, offset, buffer.length - offset);
 			if (bytesWritten === 0) {
 				throw new Error("Could not write converted journal.");
@@ -70,7 +68,6 @@ async function rewriteMessage(
 	});
 	async function* inject(
 		// Native token iteration advances a mutable cursor; token observations themselves remain readonly.
-		// oxlint-disable-next-line typescript/prefer-readonly-parameter-types
 		tokens: AsyncIterable<Readonly<Token>>,
 	): AsyncGenerator<Token> {
 		let depth = 0;

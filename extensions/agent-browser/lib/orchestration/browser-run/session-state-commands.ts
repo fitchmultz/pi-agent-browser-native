@@ -12,15 +12,15 @@ import { observeNativeWebMcp } from "../../webmcp-observation.js";
 export interface SessionCommandOptions {
 	readonly args: readonly string[];
 	readonly cwd: string;
-	readonly env?: Readonly<NodeJS.ProcessEnv>;
-	readonly namespace?: string;
+	readonly env?: Readonly<NodeJS.ProcessEnv> | undefined;
+	readonly namespace?: string | undefined;
 	readonly onProcessResult?: (result: Readonly<ProcessRunResult>) => void;
 	readonly pinNamespace?: boolean;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 	readonly stdin?: string;
 	readonly throwOnFailure?: boolean;
-	readonly timeoutMs?: number;
+	readonly timeoutMs?: number | undefined;
 }
 
 interface SessionCommandObserver {

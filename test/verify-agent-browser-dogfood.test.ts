@@ -7,11 +7,11 @@
  */
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { parseDogfoodArgs } from "../scripts/verify-agent-browser-dogfood.ts";
 
-test("parseDogfoodArgs accepts artifact, retention, json, and help flags", () => {
+nodeTest("parseDogfoodArgs accepts artifact, retention, json, and help flags", () => {
 	assert.deepEqual(
 		parseDogfoodArgs(["--artifact-dir", "/tmp/pi-dogfood", "--keep-artifacts", "--json"]),
 		{
@@ -24,7 +24,7 @@ test("parseDogfoodArgs accepts artifact, retention, json, and help flags", () =>
 	assert.deepEqual(parseDogfoodArgs(["--help"]), { help: true });
 });
 
-test("parseDogfoodArgs rejects unknown options and missing artifact directory values", () => {
+nodeTest("parseDogfoodArgs rejects unknown options and missing artifact directory values", () => {
 	assert.throws(() => parseDogfoodArgs(["--artifact-dir"]), /--artifact-dir requires a path/);
 	assert.throws(
 		() => parseDogfoodArgs(["--artifact-dir", "--json"]),

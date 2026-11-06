@@ -2,7 +2,8 @@ import { isRecord } from "./parsing.js";
 import type { BrowserBranchManager } from "./browser-journal-contracts.js";
 export interface BrowserBranch {
 	readonly sessionId: string;
-	anchorId: string | null;
+	readonly anchorId: string | null;
+	readonly append: (publish: () => void) => void;
 	readonly isCurrent: () => boolean;
 }
 interface NativeEntry {
@@ -15,8 +16,8 @@ interface Endpoint {
 }
 interface WalkResult {
 	readonly current: boolean;
-	readonly selected?: Endpoint;
-	readonly anchor?: Endpoint;
+	readonly selected?: Endpoint | undefined;
+	readonly anchor?: Endpoint | undefined;
 }
 
 /** An admitted branch follows native append-only identity/ancestry, never entry body snapshots. */
@@ -33,6 +34,12 @@ class CapturedBrowserBranch implements BrowserBranch {
 		this.sessionId = manager.getSessionId();
 		this.anchorId = manager.getLeafId();
 		this.trackedAnchor = this.anchorId;
+	}
+	append(publish: () => void): void {
+		publish();
+		if (this.anchorId === null) {
+			this.anchorId = this.manager.getLeafId();
+		}
 	}
 	isCurrent(): boolean {
 		if (!this.isGenerationCurrent() || this.manager.getSessionId() !== this.sessionId) {

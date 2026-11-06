@@ -5,26 +5,49 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 
 const execFile = promisify(execFileCallback);
 export const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 export const npmExecOptions = process.platform === "win32" ? { shell: true } : {};
 const tarCommand = process.platform === "win32" ? "tar.exe" : "tar";
 
+// npm's pack result (lib/utils/tar.js); retain extra native metadata without projecting it away.
+const packResultSchema = Type.Object({
+	name: Type.String(),
+	version: Type.String(),
+	filename: Type.String(),
+	integrity: Type.String(),
+	files: Type.Array(Type.Object({ path: Type.String() })),
+	entryCount: Type.Number(),
+	size: Type.Number(),
+	unpackedSize: Type.Number(),
+});
+
+/** @typedef {import("typebox").Static<typeof packResultSchema>} PackResult */
+
+/** @param {string} stdout */
 export function parseSinglePackResult(stdout, stderr = "") {
+	/** @type {unknown} */
 	const parsed = JSON.parse(stdout);
+	/** @type {unknown[]} */
 	let results = [];
 	if (Array.isArray(parsed)) {
 		results = parsed;
-	} else if (parsed && typeof parsed === "object") {
+	} else if (parsed !== null && typeof parsed === "object") {
 		results = Object.values(parsed);
 	}
-	if (results.length !== 1 || typeof results[0] !== "object" || results[0] === null) {
+	const result = results[0];
+	if (results.length !== 1 || !Check(packResultSchema, result)) {
 		throw new Error(`Unexpected npm pack output.\nstdout:\n${stdout}\n\nstderr:\n${stderr}`);
 	}
-	return results[0];
+	return result;
 }
 
+/** @param {string} [cwd]
+ * @param {string} [tarballPath]
+ */
 export async function getDryRunPackResult(cwd = process.cwd(), tarballPath) {
 	const args = ["pack", "--json", "--dry-run"];
 	if (tarballPath !== undefined) {
@@ -38,6 +61,9 @@ export async function getDryRunPackResult(cwd = process.cwd(), tarballPath) {
 	return parseSinglePackResult(stdout, stderr);
 }
 
+/** @param {string} [cwd]
+ * @param {string} [candidatePath]
+ */
 export async function packToTemporaryPackageDir(cwd = process.cwd(), candidatePath) {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-"));
 	let tarballPath;
@@ -62,7 +88,7 @@ export async function packToTemporaryPackageDir(cwd = process.cwd(), candidatePa
 				{ ...npmExecOptions, cwd, maxBuffer: 5 * 1024 * 1024 },
 			);
 			packResult = parseSinglePackResult(stdout, stderr);
-			if (typeof packResult.filename !== "string" || packResult.filename.length === 0) {
+			if (packResult.filename.length === 0) {
 				throw new Error(
 					`Unexpected npm pack result without a filename.\nstdout:\n${stdout}\n\nstderr:\n${stderr}`,
 				);

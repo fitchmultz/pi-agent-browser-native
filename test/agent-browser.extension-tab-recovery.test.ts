@@ -1,4 +1,5 @@
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
+import { readArray, readRecord, readString, readDefined } from "./helpers/assertions.js";
 /**
  * Purpose: Verify extension tab recovery and focus-drift behavior.
  * Responsibilities: Assert restored-tab selection, pinned follow-up commands, about:blank recovery, and overlapping explicit-session target ordering.
@@ -11,7 +12,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	createExtensionHarness,
@@ -36,19 +37,15 @@ async function waitForInvocation(
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
-		// Read this shared invocation log before issuing the next command or polling retry.
-		// oxlint-disable-next-line no-await-in-loop
 		if ((await readInvocationLog(logPath)).some(predicate)) {
 			return;
 		}
-		// Read this shared invocation log before issuing the next command or polling retry.
-		// oxlint-disable-next-line no-await-in-loop
 		await delay(5);
 	}
 	assert.fail(`Timed out waiting for invocation in ${logPath}`);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension re-selects the navigated tab after profiled opens when restored tabs steal focus",
 	{ concurrency: false },
 	async () => {
@@ -110,7 +107,7 @@ if (args.includes("tab") && args.includes("list")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension recovers and preserves the prior target when a command returns about:blank",
 	{ concurrency: false },
 	async () => {
@@ -245,7 +242,7 @@ if (args.includes("click")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension records about:blank and blocks stale refs when about:blank has no recoverable tab",
 	{ concurrency: false },
 	async () => {
@@ -371,7 +368,7 @@ if (args.includes("click")) {
 					recoveryActions.map((action) => action.id),
 					["list-tabs-for-about-blank-recovery"],
 				);
-				assert.deepEqual(readRecord(recoveryActions[0].params).args, [
+				assert.deepEqual(readRecord(readDefined(recoveryActions[0]).params).args, [
 					"--session",
 					"named",
 					"tab",
@@ -420,7 +417,7 @@ if (args.includes("click")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension accepts about:blank after a batch close reactivates the session",
 	{ concurrency: false },
 	async () => {
@@ -501,10 +498,10 @@ if (args.includes("batch")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension lets URL QA navigate when the remembered tab is missing but still pins attached QA and raw reads",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-missing-tab-"));
 		const logPath = join(tempDir, "invocations.log");
 		const statePath = join(tempDir, "page.json");
@@ -568,27 +565,17 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						]),
 					},
 				]) {
-					// Read this shared invocation log before issuing the next command or polling retry.
-					// oxlint-disable-next-line no-await-in-loop
-					const before = (await readInvocationLog(logPath)).length;
-					// Read this shared invocation log before issuing the next command or polling retry.
-					// oxlint-disable-next-line no-await-in-loop
-					const blocked = await executeRegisteredTool(resumed.tool, resumed.ctx, params);
-					const blockedDetails = readRecord(blocked.details);
-					// QA, snapshot and batch variants each must fail the same unknown-target recovery guard.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(blocked.isError, true, JSON.stringify(blocked));
-					// QA, snapshot and batch variants each must fail the same unknown-target recovery guard.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(blockedDetails.failureCategory, "tab-drift");
-					// QA, snapshot and batch variants each must fail the same unknown-target recovery guard.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.deepEqual(
-						// Read this shared invocation log before issuing the next command or polling retry.
-						// oxlint-disable-next-line no-await-in-loop
-						(await readInvocationLog(logPath)).slice(before).map((entry) => entry.args.slice(-2)),
-						[["tab", "list"]],
-					);
+					await t.test(JSON.stringify(params), async () => {
+						const before = (await readInvocationLog(logPath)).length;
+						const blocked = await executeRegisteredTool(resumed.tool, resumed.ctx, params);
+						const blockedDetails = readRecord(blocked.details);
+						assert.equal(blocked.isError, true, JSON.stringify(blocked));
+						assert.equal(blockedDetails.failureCategory, "tab-drift");
+						assert.deepEqual(
+							(await readInvocationLog(logPath)).slice(before).map((entry) => entry.args.slice(-2)),
+							[["tab", "list"]],
+						);
+					});
 				}
 				const beforeQa = (await readInvocationLog(logPath)).length;
 				const qa = await executeRegisteredTool(resumed.tool, resumed.ctx, {
@@ -622,7 +609,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension allows explicit navigation to about:blank",
 	{ concurrency: false },
 	async () => {
@@ -746,7 +733,7 @@ if (args.includes("tab") && args.includes("list")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension serializes overlapping same-session opens and keeps the newer target",
 	{ concurrency: false },
 	async () => {
@@ -858,7 +845,7 @@ if (args.includes("https://example.com/slow-first")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension serializes a newer unverified target after prior navigation",
 	{ concurrency: false },
 	async () => {
@@ -918,7 +905,7 @@ if (args.includes("https://example.com/slow")) {
 					args: ["--session", "named", "snapshot", "-i"],
 				});
 				assert.equal(snapshot.isError, true, JSON.stringify(snapshot));
-				assert.match(readString(snapshot.content[0].text ?? ""), /active page became unverified/);
+				assert.match(getMessageText(snapshot.content), /active page became unverified/);
 				assert.doesNotMatch(JSON.stringify(snapshot), /SECRET UNVERIFIED CONTENT/);
 				assert.equal((await readInvocationLog(logPath)).length, invocationCount);
 			});
@@ -928,7 +915,7 @@ if (args.includes("https://example.com/slow")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension serializes case-alias session and namespace identities on case-insensitive hosts",
 	{
 		concurrency: false,
@@ -978,7 +965,7 @@ if (args.includes("open")) {
 					writeIdentityArgs: readonly string[],
 					label: string,
 				): Promise<void> => {
-					const session = readIdentityArgs[readIdentityArgs.indexOf("--session") + 1];
+					const session = readString(readIdentityArgs[readIdentityArgs.indexOf("--session") + 1]);
 					const nextUrl = `https://example.com/${label}-secret`;
 					const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...readIdentityArgs, "open", "https://example.com/"],
@@ -1037,7 +1024,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension propagates caller aborts during live page verification",
 	{ concurrency: false },
 	async () => {
@@ -1078,7 +1065,7 @@ if (args.includes("get") && args.includes("url")) {
 				const cancelledDetails = readRecord(cancelled.details);
 				assert.equal(cancelled.isError, true);
 				assert.equal(cancelledDetails.failureCategory, "aborted");
-				assert.match(readString(cancelled.content[0].text ?? ""), /caller cancelled/);
+				assert.match(getMessageText(cancelled.content), /caller cancelled/);
 
 				const reopened = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["--session", "named", "open", "https://example.com/"],
@@ -1100,7 +1087,7 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension re-selects the intended tab after a successful command when focus drifts afterward",
 	{ concurrency: false },
 	async () => {

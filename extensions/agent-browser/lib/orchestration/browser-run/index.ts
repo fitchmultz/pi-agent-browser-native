@@ -15,7 +15,7 @@ import { isPlainTextInspectionArgs } from "../../runtime-args-validation.js";
 import { redactSensitiveValue } from "../../runtime-redaction.js";
 import { withOwnedManagedSessionContext } from "../../managed-session-restore.js";
 import { cleanupClickDispatchProbe } from "./click-dispatch.js";
-import { applyBrowserRunStatePatch, withSessionCommandObservation } from "./session-state.js";
+import { withSessionCommandObservation } from "./session-state.js";
 import {
 	annotateScreenshotImageObservations,
 	collectScreenshotSample,
@@ -114,7 +114,7 @@ async function buildHelperConfirmationResult(
 }
 
 function projectEarlyResult(
-	options: { readonly modelVisible?: boolean; readonly toolArgs: readonly string[] },
+	options: { readonly modelVisible?: boolean | undefined; readonly toolArgs: readonly string[] },
 	result: AgentBrowserToolResult,
 ): AgentBrowserToolResult {
 	if (
@@ -165,13 +165,12 @@ async function runAgentBrowserToolInContext(
 	// Preparation belongs to this call's existing helper/attachment observation context.
 	const { prepareBrowserRun } = await import("./prepare.js");
 	const prepared = await prepareBrowserRun(options);
-	applyBrowserRunStatePatch(
-		options.state,
+	options.state.applyPatch(
 		prepared.kind === "ready" ? prepared.prepared.statePatch : prepared.statePatch,
 	);
 	const preparation = await honorHelperConfirmation(options, prepared);
 	if (preparation.kind === "early-result") {
-		options.state.confirmationPolicyMayBeEstablished ??= false;
+		options.state.recordConfirmationPolicy(false);
 		return projectEarlyResult(
 			{ modelVisible: options.modelVisible, toolArgs: options.input.toolArgs },
 			preparation.result,
@@ -184,8 +183,8 @@ async function runAgentBrowserToolInContext(
 
 interface CapturedBrowserExecution {
 	readonly artifactRunStartedAtMs: number;
-	readonly before?: ScreenshotSample;
-	readonly after?: ScreenshotSample;
+	readonly before?: ScreenshotSample | undefined;
+	readonly after?: ScreenshotSample | undefined;
 	readonly processResult: AgentBrowserProcessResult;
 }
 
@@ -329,7 +328,7 @@ async function executePreparedBrowserRun(
 		const capture = await captureBrowserExecution(options, prepared);
 		const missing = await missingBinaryResult(options, prepared, capture.processResult);
 		if (missing) {
-			options.state.confirmationPolicyMayBeEstablished ??= false;
+			options.state.recordConfirmationPolicy(false);
 			return missing;
 		}
 		// Output presentation is not needed for synchronous registration or failed preparation.
@@ -341,7 +340,7 @@ async function executePreparedBrowserRun(
 			artifactRunStartedAtMs: capture.artifactRunStartedAtMs,
 			processResult: capture.processResult,
 		});
-		applyBrowserRunStatePatch(options.state, output.statePatch);
+		options.state.applyPatch(output.statePatch);
 		return addCaptureGeometry(output.result, capture, prepared.commandTokens);
 	} finally {
 		try {

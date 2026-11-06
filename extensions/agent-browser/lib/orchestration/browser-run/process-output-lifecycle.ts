@@ -4,19 +4,16 @@ import type {
 	ClassifyNativeExecutionInput,
 	ObserveInterruptedMutationInput,
 	ApplyCloseAndTraceLifecycleInput,
-	ObserveCloseStatePathInput,
-	ClassifyNativeEnvelopeInput,
 	ObserveNativePolicyExecutionInput,
-	ObserveNativeConfirmationPolicyInput,
 	NormalizeStreamEnableNoopInput,
 	ClearReopenedTabLatchInput,
 	ApplyOutputCloseScopeInput,
 	RestoreConfirmActionsAfterRelaunchInput,
 	FoldTraceOwnershipInput,
-	ResolveEnvelopeSuccessInput,
 	FoldBatchTraceRowInput,
 	PruneNamespaceNetworkRoutesInput,
 } from "./process-output-lifecycle-contracts.js";
+import type { NativeOutputPhase } from "./process-output-native-phase-contracts.js";
 import { isStringArray } from "../../results/presentation/content.js";
 import type { AgentBrowserEnvelope } from "../../results/contracts.js";
 import { isBrowserIndependentRead } from "../../command-policy.js";
@@ -45,27 +42,57 @@ import {
 	nativePolicyDefinitelyUnestablished,
 } from "./session-state.js";
 import { redactExactSensitiveValue } from "./final-result.js";
-export function observeCloseLifecycle(draft: ObserveCloseLifecycleInput): void {
-	draft.destinationTransition = draft.dispatchedCommands.some((step) => {
+export function observeCloseLifecycle(
+	draft: ObserveCloseLifecycleInput,
+): Pick<
+	NativeOutputPhase,
+	| "destinationTransition"
+	| "nestedBatchClose"
+	| "nestedBatchClosed"
+	| "nestedBatchRemainsActive"
+	| "nestedBatchClosesAll"
+	| "directCloseAllRequested"
+	| "rawCloseStatePath"
+> {
+	const destinationTransition = draft.dispatchedCommands.some((step) => {
 		const [command, subcommand] = extractUpstreamCommandTokens(step);
 		return isWindowOrDiffPageTransitionCommand(command, subcommand);
 	});
-	draft.nestedBatchClose =
+	const nestedBatchClose =
 		draft.input.prepared.executionPlan.commandInfo.command === "batch"
 			? getSuccessfulBatchCloseLifecycle(draft.presentationEnvelope?.data, draft.batchCommandSteps)
 			: undefined;
-	draft.nestedBatchClosed = draft.nestedBatchClose?.endsClosed === true;
-	draft.nestedBatchRemainsActive = draft.nestedBatchClose?.endsClosed === false;
-	draft.nestedBatchClosesAll =
-		draft.input.prepared.executionPlan.commandInfo.command === "batch" &&
-		batchHasSuccessfulCloseAll(draft.presentationEnvelope?.data, draft.batchCommandSteps);
-	draft.directCloseAllRequested = isCloseAllCommand(
-		extractUpstreamCommandTokens(draft.input.prepared.commandTokens),
-	);
-	observeCloseStatePath(draft);
+	return {
+		destinationTransition,
+		nestedBatchClose,
+		nestedBatchClosed: nestedBatchClose?.endsClosed === true,
+		nestedBatchRemainsActive: nestedBatchClose?.endsClosed === false,
+		nestedBatchClosesAll:
+			draft.input.prepared.executionPlan.commandInfo.command === "batch" &&
+			batchHasSuccessfulCloseAll(draft.presentationEnvelope?.data, draft.batchCommandSteps),
+		directCloseAllRequested: isCloseAllCommand(
+			extractUpstreamCommandTokens(draft.input.prepared.commandTokens),
+		),
+		rawCloseStatePath: rawCloseStatePath(draft, nestedBatchClose),
+	};
 }
 
-export function redactNativeEnvelope(draft: RedactNativeEnvelopeInput): void {
+function rawCloseStatePath(
+	draft: Pick<ObserveCloseLifecycleInput, "confirmedData" | "directClose" | "presentationEnvelope">,
+	nestedBatchClose: NativeOutputPhase["nestedBatchClose"],
+): string | undefined {
+	const directCloseData: unknown = draft.confirmedData ?? draft.presentationEnvelope?.data;
+	return draft.directClose &&
+		isRecord(directCloseData) &&
+		typeof directCloseData.statePath === "string"
+		? directCloseData.statePath
+		: nestedBatchClose?.statePath;
+}
+
+export function redactNativeEnvelope(
+	draft: RedactNativeEnvelopeInput,
+): Pick<NativeOutputPhase, "presentationEnvelope" | "parseFailureOutput"> {
+	let presentationEnvelope = draft.presentationEnvelope;
 	if (draft.presentationEnvelope && draft.input.prepared.exactSensitiveValues.length > 0) {
 		const redacted = redactExactSensitiveValue(
 			draft.presentationEnvelope,
@@ -74,9 +101,9 @@ export function redactNativeEnvelope(draft: RedactNativeEnvelopeInput): void {
 		if (!isRecord(redacted) || typeof redacted.success !== "boolean") {
 			throw new Error("Native envelope redaction did not preserve its success field.");
 		}
-		draft.presentationEnvelope = { ...redacted, success: redacted.success };
+		presentationEnvelope = { ...redacted, success: redacted.success };
 	}
-	draft.parseFailureOutput =
+	const parseFailureOutput =
 		draft.parseError !== undefined &&
 		draft.parseError.length > 0 &&
 		draft.input.processResult.stdoutSpillPath !== undefined &&
@@ -86,15 +113,13 @@ export function redactNativeEnvelope(draft: RedactNativeEnvelopeInput): void {
 						"Malformed upstream output was discarded because it may contain sensitive browser data.",
 				}
 			: {};
+	return { presentationEnvelope, parseFailureOutput };
 }
 
-export function classifyNativeExecution(draft: ClassifyNativeExecutionInput): void {
-	observeNativePolicyExecution(draft);
-	classifyNativeEnvelope(draft);
-}
-
-export function observeInterruptedMutation(draft: ObserveInterruptedMutationInput): void {
-	draft.unobservedMutation =
+export function observeInterruptedMutation(
+	draft: ObserveInterruptedMutationInput,
+): Pick<NativeOutputPhase, "unobservedMutation" | "sessionStateKey" | "closeAllApplied"> {
+	const unobservedMutation =
 		draft.input.processResult.agentBrowserStarted &&
 		!draft.plainTextInspection &&
 		(draft.input.processResult.aborted ||
@@ -108,19 +133,26 @@ export function observeInterruptedMutation(draft: ObserveInterruptedMutationInpu
 			const action = step[0] === "find" ? (step[step[1] === "nth" ? 4 : 3] ?? "click") : step[0];
 			return isPageMutationCommand(action, step[1]);
 		});
-	draft.sessionStateKey = getSessionContextKey(
+	const sessionStateKey = getSessionContextKey(
 		draft.input.prepared.executionPlan.sessionName,
 		draft.input.prepared.executionPlan.namespace,
 	);
-	draft.closeAllApplied =
-		draft.nestedBatchClosesAll || (draft.directCloseAllRequested && draft.succeeded);
+	return {
+		unobservedMutation,
+		sessionStateKey,
+		closeAllApplied:
+			draft.nestedBatchClosesAll || (draft.directCloseAllRequested && draft.succeeded),
+	};
 }
 
-export function applyCloseAndTraceLifecycle(draft: ApplyCloseAndTraceLifecycleInput): void {
+export function applyCloseAndTraceLifecycle(
+	draft: ApplyCloseAndTraceLifecycleInput,
+): NativeOutputPhase["networkRoutesBySession"] {
 	clearReopenedTabLatch(draft);
-	applyOutputCloseScope(draft);
+	const networkRoutesBySession = applyOutputCloseScope(draft);
 	restoreConfirmActionsAfterRelaunch(draft);
 	foldTraceOwnership(draft);
+	return networkRoutesBySession;
 }
 
 function nativePrimitiveErrorMessage(error: unknown): string | undefined {
@@ -172,61 +204,95 @@ function isStreamEnableAlreadyEnabledNoop(options: {
 	);
 }
 
-function observeCloseStatePath(draft: ObserveCloseStatePathInput): void {
-	const directCloseData: unknown = draft.confirmedData ?? draft.presentationEnvelope?.data;
-	draft.rawCloseStatePath =
-		draft.directClose && isRecord(directCloseData) && typeof directCloseData.statePath === "string"
-			? directCloseData.statePath
-			: draft.nestedBatchClose?.statePath;
-}
-
-function classifyNativeEnvelope(draft: ClassifyNativeEnvelopeInput): void {
-	observeNativeConfirmationPolicy(draft);
-	draft.processSucceeded =
+export function classifyNativeExecution(
+	draft: ClassifyNativeExecutionInput,
+): Pick<
+	NativeOutputPhase,
+	| "processSucceeded"
+	| "plainTextInspection"
+	| "parseSucceeded"
+	| "presentationEnvelope"
+	| "succeeded"
+	| "inspectionText"
+> {
+	draft.input.state.recordConfirmationPolicy(draft.nativeCommandMayHaveExecuted);
+	const processSucceeded =
 		!draft.input.processResult.timedOut &&
 		!draft.input.processResult.aborted &&
 		!draft.input.processResult.spawnError &&
 		draft.input.processResult.exitCode === 0;
-	draft.plainTextInspection =
-		draft.input.prepared.executionPlan.plainTextInspection && draft.processSucceeded;
-	draft.parseSucceeded = draft.plainTextInspection || draft.parseError === undefined;
-	normalizeStreamEnableNoop(draft);
-	resolveEnvelopeSuccess(draft);
-	draft.inspectionText = draft.plainTextInspection
-		? draft.input.processResult.stdout.trim()
-		: undefined;
+	const plainTextInspection =
+		draft.input.prepared.executionPlan.plainTextInspection && processSucceeded;
+	const parseSucceeded = plainTextInspection || draft.parseError === undefined;
+	const presentationEnvelope = normalizeStreamEnableNoop(draft, processSucceeded);
+	const succeeded = resolveEnvelopeSuccess({
+		processSucceeded,
+		plainTextInspection,
+		parseSucceeded,
+		presentationEnvelope,
+		recordingStopRecovery: draft.recordingStopRecovery,
+	});
+	return {
+		processSucceeded,
+		plainTextInspection,
+		parseSucceeded,
+		presentationEnvelope,
+		succeeded,
+		inspectionText: plainTextInspection ? draft.input.processResult.stdout.trim() : undefined,
+	};
 }
 
-function observeNativePolicyExecution(draft: ObserveNativePolicyExecutionInput): void {
-	draft.browserIndependentRead =
-		isBrowserIndependentConfirmation(draft.input.prepared.readConfirmation) ||
-		isBrowserIndependentRead(
-			draft.input.prepared.commandTokens,
-			draft.input.prepared.runtimeToolStdin,
-		);
-	draft.nativeCommandMayHaveExecuted = !nativePolicyDefinitelyUnestablished(
-		draft.input.processResult,
-		draft.parsed.envelope,
-		draft.input.prepared.commandTokens,
+function resolveEnvelopeSuccess(
+	observation: Pick<
+		NativeOutputPhase,
+		| "plainTextInspection"
+		| "presentationEnvelope"
+		| "processSucceeded"
+		| "parseSucceeded"
+		| "recordingStopRecovery"
+	>,
+): boolean {
+	const envelopeSuccess = observation.plainTextInspection
+		? true
+		: observation.presentationEnvelope?.success !== false &&
+			!detectConfirmationRequired(observation.presentationEnvelope?.data);
+	return (
+		(observation.processSucceeded && observation.parseSucceeded && envelopeSuccess) ||
+		observation.recordingStopRecovery?.recovery.healed === true
 	);
 }
 
-function observeNativeConfirmationPolicy(draft: ObserveNativeConfirmationPolicyInput): void {
-	if (draft.input.state.confirmationPolicyMayBeEstablished !== true) {
-		draft.input.state.confirmationPolicyMayBeEstablished = draft.nativeCommandMayHaveExecuted;
-	}
+export function observeNativePolicyExecution(
+	draft: ObserveNativePolicyExecutionInput,
+): Pick<NativeOutputPhase, "browserIndependentRead" | "nativeCommandMayHaveExecuted"> {
+	return {
+		browserIndependentRead:
+			isBrowserIndependentConfirmation(draft.input.prepared.readConfirmation) ||
+			isBrowserIndependentRead(
+				draft.input.prepared.commandTokens,
+				draft.input.prepared.runtimeToolStdin,
+			),
+		nativeCommandMayHaveExecuted: !nativePolicyDefinitelyUnestablished(
+			draft.input.processResult,
+			draft.parsed.envelope,
+			draft.input.prepared.commandTokens,
+		),
+	};
 }
 
-function normalizeStreamEnableNoop(draft: NormalizeStreamEnableNoopInput): void {
+function normalizeStreamEnableNoop(
+	draft: NormalizeStreamEnableNoopInput,
+	processSucceeded: boolean,
+): NativeOutputPhase["presentationEnvelope"] {
 	if (
 		isStreamEnableAlreadyEnabledNoop({
 			command: draft.input.prepared.executionPlan.commandInfo.command,
 			envelope: draft.presentationEnvelope,
-			processSucceeded: draft.processSucceeded,
+			processSucceeded,
 			subcommand: draft.input.prepared.executionPlan.commandInfo.subcommand,
 		})
 	) {
-		draft.presentationEnvelope = {
+		return {
 			success: true,
 			data: {
 				alreadyEnabled: true,
@@ -235,6 +301,7 @@ function normalizeStreamEnableNoop(draft: NormalizeStreamEnableNoopInput): void 
 			},
 		};
 	}
+	return draft.presentationEnvelope;
 }
 
 function clearReopenedTabLatch(draft: ClearReopenedTabLatchInput): void {
@@ -254,9 +321,11 @@ function clearReopenedTabLatch(draft: ClearReopenedTabLatchInput): void {
 	}
 }
 
-function applyOutputCloseScope(draft: ApplyOutputCloseScopeInput): void {
+function applyOutputCloseScope(
+	draft: ApplyOutputCloseScopeInput,
+): NativeOutputPhase["networkRoutesBySession"] {
 	if (draft.closeAllApplied) {
-		pruneNamespaceNetworkRoutes(draft);
+		const routes = pruneNamespaceNetworkRoutes(draft);
 		deleteIdentityKeysInNamespace(
 			draft.input.state.attachedSessionKeys,
 			draft.input.prepared.executionPlan.namespace,
@@ -280,6 +349,7 @@ function applyOutputCloseScope(draft: ApplyOutputCloseScopeInput): void {
 			draft.input.state.closedManagedSessionNames.add(key);
 			draft.input.state.managedSessionRestoreState.clear(owner.sessionName, owner.namespace);
 		}
+		return routes;
 	} else if (
 		draft.nestedBatchClose &&
 		draft.sessionStateKey !== undefined &&
@@ -287,9 +357,10 @@ function applyOutputCloseScope(draft: ApplyOutputCloseScopeInput): void {
 	) {
 		const routes = new Map(draft.networkRoutesBySession);
 		routes.delete(draft.sessionStateKey);
-		draft.networkRoutesBySession = routes;
 		draft.input.state.sessionPageState.clearSession(draft.sessionStateKey);
+		return routes;
 	}
+	return draft.networkRoutesBySession;
 }
 
 function restoreConfirmActionsAfterRelaunch(draft: RestoreConfirmActionsAfterRelaunchInput): void {
@@ -324,16 +395,6 @@ function foldTraceOwnership(draft: FoldTraceOwnershipInput): void {
 	}
 }
 
-function resolveEnvelopeSuccess(draft: ResolveEnvelopeSuccessInput): void {
-	const envelopeSuccess: boolean = draft.plainTextInspection
-		? true
-		: draft.presentationEnvelope?.success !== false &&
-			!detectConfirmationRequired(draft.presentationEnvelope?.data);
-	draft.succeeded =
-		(draft.processSucceeded && draft.parseSucceeded && envelopeSuccess) ||
-		draft.recordingStopRecovery?.recovery.healed === true;
-}
-
 function foldBatchTraceRow(draft: FoldBatchTraceRowInput, row: unknown, index: number): void {
 	if (!isRecord(row)) {
 		return;
@@ -352,8 +413,10 @@ function foldBatchTraceRow(draft: FoldBatchTraceRowInput, row: unknown, index: n
 	});
 }
 
-function pruneNamespaceNetworkRoutes(draft: PruneNamespaceNetworkRoutesInput): void {
-	draft.networkRoutesBySession = new Map(
+function pruneNamespaceNetworkRoutes(
+	draft: PruneNamespaceNetworkRoutesInput,
+): NativeOutputPhase["networkRoutesBySession"] {
+	return new Map(
 		[...draft.networkRoutesBySession].filter(
 			([key]) =>
 				!isAgentBrowserSessionIdentityKeyInNamespace(

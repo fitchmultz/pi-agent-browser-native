@@ -36,10 +36,7 @@ type UnexpectedBlankTargetInput = Readonly<
 		readonly prepared: Readonly<Pick<PreparedBrowserRun, "priorSessionTabTarget">>;
 	};
 };
-type InspectBlankElectronMismatchInput = Pick<
-	PageOutputPhase,
-	"electronSessionMismatch" | "electronStatusAfterCommand"
-> & {
+type InspectBlankElectronMismatchInput = {
 	readonly input: {
 		readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">>;
 		readonly state: BrowserRunState;
@@ -48,6 +45,7 @@ type InspectBlankElectronMismatchInput = Pick<
 type RecoverUnexpectedBlankTargetInput = Readonly<
 	Pick<
 		PageOutputPhase,
+		| "currentSessionTabTarget"
 		| "destinationTransition"
 		| "dispatchedCommands"
 		| "nestedBatchClose"
@@ -55,22 +53,14 @@ type RecoverUnexpectedBlankTargetInput = Readonly<
 		| "succeeded"
 		| "tabTransition"
 	>
-> &
-	Pick<
-		PageOutputPhase,
-		| "aboutBlankSessionMismatch"
-		| "currentSessionTabTarget"
-		| "electronSessionMismatch"
-		| "electronStatusAfterCommand"
-		| "sessionTabCorrection"
-	> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
-			readonly prepared: Readonly<
-				Pick<PreparedBrowserRun, "executionPlan" | "priorSessionTabTarget" | "sessionTabCorrection">
-			>;
-			readonly state: BrowserRunState;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
+		readonly prepared: Readonly<
+			Pick<PreparedBrowserRun, "executionPlan" | "priorSessionTabTarget" | "sessionTabCorrection">
+		>;
+		readonly state: BrowserRunState;
 	};
+};
 type NeedsPostCommandPinningInput = Readonly<
 	Pick<PageOutputPhase, "aboutBlankSessionMismatch" | "sessionTabCorrection" | "succeeded">
 > & {
@@ -84,35 +74,34 @@ type NeedsPostCommandPinningInput = Readonly<
 	};
 };
 type PinPostCommandTargetInput = Readonly<
-	Pick<PageOutputPhase, "aboutBlankSessionMismatch" | "observedSessionTabTarget" | "succeeded">
-> &
-	Pick<PageOutputPhase, "sessionTabCorrection"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"commandTokens" | "executionPlan" | "priorSessionTabTarget" | "sessionTabPinningReason"
-				>
-			>;
-		};
-	};
-type InspectElectronHealthInput = Readonly<
-	Pick<PageOutputPhase, "currentSessionTabTarget" | "observedSessionTabTarget">
-> &
 	Pick<
 		PageOutputPhase,
-		| "electronPostCommandHealth"
-		| "electronRecordForCommand"
+		"aboutBlankSessionMismatch" | "observedSessionTabTarget" | "succeeded" | "sessionTabCorrection"
+	>
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				"commandTokens" | "executionPlan" | "priorSessionTabTarget" | "sessionTabPinningReason"
+			>
+		>;
+	};
+};
+type InspectElectronHealthInput = Readonly<
+	Pick<
+		PageOutputPhase,
+		| "currentSessionTabTarget"
+		| "observedSessionTabTarget"
 		| "electronStatusAfterCommand"
 		| "succeeded"
-	> & {
-		readonly input: Readonly<
-			Pick<ProcessBrowserOutputInput, "electronPostCommandStatusSettleMs">
-		> & {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">>;
-			readonly state: BrowserRunState;
-		};
+	>
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "electronPostCommandStatusSettleMs">> & {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">>;
+		readonly state: BrowserRunState;
 	};
+};
 
 function unexpectedBlankTarget(draft: UnexpectedBlankTargetInput): boolean {
 	const explicitBlank = draft.dispatchedCommands.some((step) =>
@@ -133,7 +122,9 @@ function unexpectedBlankTarget(draft: UnexpectedBlankTargetInput): boolean {
 async function inspectBlankElectronMismatch(
 	draft: InspectBlankElectronMismatchInput,
 	observed: SessionTabTarget | undefined,
-): Promise<void> {
+): Promise<
+	Pick<PageOutputPhase, "electronStatusAfterCommand" | "electronSessionMismatch"> | undefined
+> {
 	const { prepared, state } = draft.input;
 	const record = findElectronLaunchRecordForSession(
 		prepared.executionPlan.sessionName,
@@ -144,22 +135,35 @@ async function inspectBlankElectronMismatch(
 	if (!record || sessionName === undefined || sessionName.length === 0) {
 		return;
 	}
-	draft.electronStatusAfterCommand = await inspectElectronLaunchStatus(record);
-	draft.electronSessionMismatch = buildElectronSessionMismatch({
-		managedSession: { sessionName, title: observed?.title, url: observed?.url ?? "about:blank" },
-		record,
-		statusTargets: draft.electronStatusAfterCommand.targets,
-	});
+	const electronStatusAfterCommand = await inspectElectronLaunchStatus(record);
+	return {
+		electronStatusAfterCommand,
+		electronSessionMismatch: buildElectronSessionMismatch({
+			managedSession: { sessionName, title: observed?.title, url: observed?.url ?? "about:blank" },
+			record,
+			statusTargets: electronStatusAfterCommand.targets,
+		}),
+	};
 }
 
 export async function recoverUnexpectedBlankTarget(
 	draft: RecoverUnexpectedBlankTargetInput,
-): Promise<void> {
+): Promise<
+	Pick<PageOutputPhase, "sessionTabCorrection"> &
+		Partial<
+			Pick<
+				PageOutputPhase,
+				| "currentSessionTabTarget"
+				| "aboutBlankSessionMismatch"
+				| "electronStatusAfterCommand"
+				| "electronSessionMismatch"
+			>
+		>
+> {
 	const { prepared, cwd, signal } = draft.input;
-	draft.sessionTabCorrection = prepared.sessionTabCorrection;
 	const prior = prepared.priorSessionTabTarget;
 	if (!unexpectedBlankTarget(draft) || !prior) {
-		return;
+		return { sessionTabCorrection: prepared.sessionTabCorrection };
 	}
 	const observed = draft.observedSessionTabTarget ?? draft.currentSessionTabTarget;
 	const correction = await collectSessionTabSelection({
@@ -178,20 +182,21 @@ export async function recoverUnexpectedBlankTarget(
 				signal,
 			})
 		: undefined;
-	if (applied) {
-		draft.sessionTabCorrection = applied;
-		draft.currentSessionTabTarget = prior;
-	} else {
-		draft.currentSessionTabTarget = observed ?? normalizeSessionTabTarget({ url: "about:blank" });
-	}
-	draft.aboutBlankSessionMismatch = {
-		activeUrl: "about:blank",
-		recoveryApplied: applied !== undefined,
-		recoveryHint: buildAboutBlankRecoveryHint(),
-		targetTitle: prior.title,
-		targetUrl: prior.url,
+	const currentSessionTabTarget = applied
+		? prior
+		: (observed ?? normalizeSessionTabTarget({ url: "about:blank" }));
+	return {
+		sessionTabCorrection: applied ?? prepared.sessionTabCorrection,
+		currentSessionTabTarget,
+		aboutBlankSessionMismatch: {
+			activeUrl: "about:blank",
+			recoveryApplied: applied !== undefined,
+			recoveryHint: buildAboutBlankRecoveryHint(),
+			targetTitle: prior.title,
+			targetUrl: prior.url,
+		},
+		...(await inspectBlankElectronMismatch(draft, observed)),
 	};
-	await inspectBlankElectronMismatch(draft, observed);
 }
 
 function needsPostCommandPinning(draft: NeedsPostCommandPinningInput): boolean {
@@ -210,10 +215,12 @@ function needsPostCommandPinning(draft: NeedsPostCommandPinningInput): boolean {
 	);
 }
 
-export async function pinPostCommandTarget(draft: PinPostCommandTargetInput): Promise<void> {
+export async function pinPostCommandTarget(
+	draft: PinPostCommandTargetInput,
+): Promise<PageOutputPhase["sessionTabCorrection"]> {
 	const target = draft.observedSessionTabTarget;
 	if (!needsPostCommandPinning(draft) || !target) {
-		return;
+		return draft.sessionTabCorrection;
 	}
 	const { prepared, cwd, signal } = draft.input;
 	const correction = await collectSessionTabSelection({
@@ -224,7 +231,7 @@ export async function pinPostCommandTarget(draft: PinPostCommandTargetInput): Pr
 		target,
 	});
 	if (!correction) {
-		return;
+		return draft.sessionTabCorrection;
 	}
 	const applied = await applyOpenResultTabCorrection({
 		correction,
@@ -233,48 +240,55 @@ export async function pinPostCommandTarget(draft: PinPostCommandTargetInput): Pr
 		sessionName: prepared.executionPlan.sessionName,
 		signal,
 	});
-	// The draft is per-call and is never passed to either helper; no external writer can install a correction here.
-	if (applied) {
-		draft.sessionTabCorrection = applied;
-	}
+	return applied ?? draft.sessionTabCorrection;
 }
 
-export async function inspectElectronHealth(draft: InspectElectronHealthInput): Promise<void> {
+export async function inspectElectronHealth(
+	draft: InspectElectronHealthInput,
+): Promise<
+	Pick<PageOutputPhase, "electronRecordForCommand"> &
+		Partial<
+			Pick<
+				PageOutputPhase,
+				"electronStatusAfterCommand" | "electronPostCommandHealth" | "succeeded"
+			>
+		>
+> {
 	const { prepared, state } = draft.input;
-	draft.electronRecordForCommand = findElectronLaunchRecordForSession(
+	const record = findElectronLaunchRecordForSession(
 		prepared.executionPlan.sessionName,
 		state.electronLaunchRecords,
 		prepared.executionPlan.namespace,
 	);
-	const record = draft.electronRecordForCommand;
 	if (
 		!draft.succeeded ||
 		!record ||
 		!shouldInspectElectronPostCommandHealth(prepared.executionPlan.commandInfo.command)
 	) {
-		return;
+		return { electronRecordForCommand: record };
 	}
-	draft.electronStatusAfterCommand ??= await inspectElectronLaunchStatus(record);
-	draft.electronPostCommandHealth = buildElectronPostCommandHealthDiagnostic({
+	let electronStatusAfterCommand =
+		draft.electronStatusAfterCommand ?? (await inspectElectronLaunchStatus(record));
+	let electronPostCommandHealth = buildElectronPostCommandHealthDiagnostic({
 		command: prepared.executionPlan.commandInfo.command,
 		record,
-		status: draft.electronStatusAfterCommand,
+		status: electronStatusAfterCommand,
 		target: draft.observedSessionTabTarget ?? draft.currentSessionTabTarget,
 	});
-	if (
-		draft.electronPostCommandHealth &&
-		draft.electronPostCommandHealth.reason !== "process-dead"
-	) {
+	if (electronPostCommandHealth && electronPostCommandHealth.reason !== "process-dead") {
 		await sleepMs(draft.input.electronPostCommandStatusSettleMs);
-		draft.electronStatusAfterCommand = await inspectElectronLaunchStatus(record);
-		draft.electronPostCommandHealth = buildElectronPostCommandHealthDiagnostic({
+		electronStatusAfterCommand = await inspectElectronLaunchStatus(record);
+		electronPostCommandHealth = buildElectronPostCommandHealthDiagnostic({
 			command: prepared.executionPlan.commandInfo.command,
 			record,
-			status: draft.electronStatusAfterCommand,
+			status: electronStatusAfterCommand,
 			target: draft.observedSessionTabTarget ?? draft.currentSessionTabTarget,
 		});
 	}
-	if (draft.electronPostCommandHealth) {
-		draft.succeeded = false;
-	}
+	return {
+		electronRecordForCommand: record,
+		electronStatusAfterCommand,
+		electronPostCommandHealth,
+		succeeded: electronPostCommandHealth ? false : draft.succeeded,
+	};
 }

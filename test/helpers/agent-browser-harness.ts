@@ -23,6 +23,7 @@ import type {
 	KeybindingHints,
 	Theme,
 	ToolDefinition,
+	ToolInfo,
 	ToolRenderResultOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
@@ -32,6 +33,8 @@ import { Check } from "typebox/value";
 import agentBrowserExtension from "../../extensions/agent-browser/index.js";
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../../scripts/agent-browser-target.mjs";
 import { hasErrorCode } from "./assertions.js";
+import { readToolResult, type TestToolResult } from "./tool-result.mjs";
+export type { TestToolResult } from "./tool-result.mjs";
 
 // Fixtures use their own Pi identity, even when the suite runs inside a delegated Pi child.
 // Root-default tests can opt into delegation explicitly.
@@ -55,7 +58,9 @@ export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contrac
 export function nativeWaitDownloadMovesFile(versionOutput: string): boolean {
 	const match = /(\d+)\.(\d+)\.(\d+)/.exec(versionOutput);
 	assert.ok(match, `Unrecognized agent-browser version output: ${versionOutput}`);
-	const [major, minor, patch] = match.slice(1).map(Number);
+	const major = Number(match[1]);
+	const minor = Number(match[2]);
+	const patch = Number(match[3]);
 	return major > 0 || minor > 39 || (minor === 39 && patch >= 4);
 }
 
@@ -372,7 +377,7 @@ export function buildUserBranch(prompt = ""): unknown[] {
 
 export function createToolBranchEntry(options: {
 	readonly details: Readonly<Record<string, unknown>>;
-	readonly isError?: boolean;
+	readonly isError?: boolean | undefined;
 }): unknown {
 	return {
 		type: "message",
@@ -499,37 +504,6 @@ export interface AgentBrowserToolRenderContext extends KeybindingHints {
 	toolCallId: string;
 }
 
-const JSON_VALUE = Type.Cyclic(
-	{
-		Json: Type.Union([
-			Type.Null(),
-			Type.Boolean(),
-			Type.Number(),
-			Type.String(),
-			Type.Array(Type.Ref("Json")),
-			Type.Record(Type.String(), Type.Ref("Json")),
-		]),
-	},
-	"Json",
-);
-const TOOL_RESULT = Type.Object({
-	content: Type.Array(
-		Type.Union([
-			Type.Object({ type: Type.Literal("text"), text: Type.String() }),
-			Type.Object({
-				type: Type.Literal("image"),
-				data: Type.String(),
-				mimeType: Type.String(),
-				text: Type.Optional(Type.String()),
-			}),
-		]),
-	),
-	details: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-	isError: Type.Optional(Type.Boolean()),
-	structuredContent: Type.Optional(JSON_VALUE),
-});
-export type TestToolResult = Static<typeof TOOL_RESULT>;
-
 export type RegisteredTool = {
 	readonly description: string;
 	readonly parameters: TSchema;
@@ -545,13 +519,15 @@ export type RegisteredTool = {
 	readonly name: string;
 	readonly promptGuidelines: readonly string[];
 	readonly promptSnippet: string;
-	readonly renderCall?: (args: unknown, theme: Theme, context: unknown) => Component;
-	readonly renderResult?: (
-		result: unknown,
-		options: Readonly<ToolRenderResultOptions>,
-		theme: Theme,
-		context: unknown,
-	) => Component;
+	readonly renderCall?: ((args: unknown, theme: Theme, context: unknown) => Component) | undefined;
+	readonly renderResult?:
+		| ((
+				result: unknown,
+				options: Readonly<ToolRenderResultOptions>,
+				theme: Theme,
+				context: unknown,
+		  ) => Component)
+		| undefined;
 };
 
 function assertComponent(value: unknown): asserts value is Component {
@@ -601,8 +577,7 @@ function adaptRegisteredTool<TParams extends TSchema, TDetails, TState>(
 				onUpdate,
 				ctx,
 			]);
-			assert.ok(Check(TOOL_RESULT, result), "registered tool returned an invalid result envelope");
-			return result;
+			return readToolResult(result);
 		},
 		name: tool.name,
 		parameters: tool.parameters,
@@ -810,22 +785,27 @@ export function createExtensionHarness(options: ExtensionHarnessOptions): Extens
 			return [...activeTools];
 		},
 		getAllTools() {
-			return [...registeredTools.values()].map((tool) => ({
-				name: tool.name,
-				description: tool.description,
-				parameters: tool.parameters,
-				promptGuidelines: [...tool.promptGuidelines],
-				namespace: tool.namespace,
-				outputSchema: tool.outputSchema,
-				id: tool.name,
-				exposure: "direct",
-				sourceInfo: {
-					path: "test",
-					source: "test",
-					scope: "temporary",
-					origin: "top-level",
-				},
-			}));
+			return [...registeredTools.values()].map((tool) => {
+				const info: ToolInfo & { id: string; outputSchema: RegisteredTool["outputSchema"] } = {
+					name: tool.name,
+					description: tool.description,
+					parameters: tool.parameters,
+					promptGuidelines: [...tool.promptGuidelines],
+					outputSchema: tool.outputSchema,
+					id: tool.name,
+					exposure: "direct",
+					sourceInfo: {
+						path: "test",
+						source: "test",
+						scope: "temporary",
+						origin: "top-level",
+					},
+				};
+				if (tool.namespace !== undefined) {
+					info.namespace = tool.namespace;
+				}
+				return info;
+			});
 		},
 		setActiveTools(names) {
 			activeTools = [...names];
@@ -943,7 +923,6 @@ export async function runExtensionEvent(
 ): Promise<void> {
 	for (const handler of handlers.get(eventName) ?? []) {
 		// Registered handlers share event/context state and must execute in registration order.
-		// oxlint-disable-next-line no-await-in-loop
 		await handler(...args);
 	}
 }
@@ -971,7 +950,6 @@ export async function runExtensionEventResults(
 	const results: unknown[] = [];
 	for (const handler of handlers.get(eventName) ?? []) {
 		// Result handlers must observe preceding handler mutations.
-		// oxlint-disable-next-line no-await-in-loop
 		const result = await handler(...args);
 		if (result !== undefined) {
 			results.push(result);

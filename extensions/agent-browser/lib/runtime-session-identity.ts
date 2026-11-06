@@ -11,11 +11,11 @@ function namespaceFields(namespace: string | undefined): { readonly namespace?: 
 }
 
 export function resolveManagedSessionState(options: {
-	readonly command?: string;
-	readonly managedSessionName?: string;
-	readonly managedSessionNamespace?: string;
+	readonly command?: string | undefined;
+	readonly managedSessionName?: string | undefined;
+	readonly managedSessionNamespace?: string | undefined;
 	readonly priorActive: boolean;
-	readonly priorNamespace?: string;
+	readonly priorNamespace?: string | undefined;
 	readonly priorSessionName: string;
 	readonly succeeded: boolean;
 }): ManagedSessionState {

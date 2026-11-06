@@ -270,7 +270,6 @@ class ScriptChildRun {
 					break;
 				}
 				// Every reply/emit depends on the preceding message and browser dispatch.
-				// oxlint-disable-next-line no-await-in-loop
 				await this.handleMessage(message);
 			}
 		} finally {

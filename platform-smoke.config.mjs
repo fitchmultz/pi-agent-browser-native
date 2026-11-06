@@ -4,10 +4,29 @@
 import packageJson from "./package.json" with { type: "json" };
 import { CAPABILITY_BASELINE } from "./scripts/agent-browser-capability-baseline.mjs";
 
+/**
+ * @typedef {{
+ *   readonly packageName: string;
+ *   readonly artifactRoot: string;
+ *   readonly requiredTargets: readonly string[];
+ *   readonly optionalTargets?: readonly string[];
+ *   readonly requiredSuites: readonly string[];
+ *   readonly requiredCrabbox?: { readonly install?: string; readonly minVersion?: string };
+ *   readonly macos?: { readonly host?: string; readonly port?: string | number; readonly workRoot?: string };
+ *   readonly ubuntuContainerImage?: string;
+ *   readonly localContainer?: { readonly workRoot?: string };
+ *   readonly windowsParallels?: { readonly sourceVm?: string; readonly snapshot?: string; readonly user?: string; readonly workRoot?: string };
+ *   readonly nodeValidationVersion: string;
+ *   readonly agentBrowserVersion: string;
+ *   readonly defaultAuthEnv?: readonly string[];
+ * }} PlatformSmokeConfig
+ */
+
 const PLATFORM_SMOKE_AGENT_BROWSER_VERSION = CAPABILITY_BASELINE.targetVersion;
 export const DEFAULT_UBUNTU_IMAGE = `pi-agent-browser-native-platform:node24-agent-browser${PLATFORM_SMOKE_AGENT_BROWSER_VERSION}`;
 
-export default {
+/** @satisfies {PlatformSmokeConfig} */
+const config = {
 	packageName: "pi-agent-browser-native",
 	artifactRoot: ".artifacts/platform-smoke",
 	requiredTargets: ["macos", "ubuntu"],
@@ -31,3 +50,5 @@ export default {
 	nodeValidationVersion: packageJson.engines.node.replace(/^>=/, ""),
 	agentBrowserVersion: PLATFORM_SMOKE_AGENT_BROWSER_VERSION,
 };
+
+export default config;

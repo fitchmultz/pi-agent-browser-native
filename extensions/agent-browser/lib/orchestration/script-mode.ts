@@ -16,6 +16,7 @@ import type {
 	ProjectedAgentBrowserObservation,
 	AgentBrowserFailureCategory,
 	ImageObservation,
+	ToolPresentation,
 } from "../results/contracts.js";
 import { attachInlineImage } from "../results/presentation/artifacts.js";
 import { projectAgentBrowserObservation } from "../results/presentation/content.js";
@@ -30,13 +31,13 @@ import {
 import { parseCodeImageObservation } from "./code-image-observation.js";
 
 interface BrowserCodeObservation extends ProjectedAgentBrowserObservation {
-	readonly imageObservations?: readonly ImageObservation[];
+	readonly imageObservations?: readonly ImageObservation[] | undefined;
 }
 
 type ScriptSessionCleanupState = "active" | "closed" | "failed";
 
 export interface ScriptSessionLease {
-	ownerSessionId?: string;
+	ownerSessionId?: string | undefined;
 	cleanup: ScriptSessionCleanupState;
 	closeCommandArgs: string[];
 	launchAttempted: true;
@@ -202,10 +203,8 @@ class BrowserCodeOutput {
 				"The selected image changed since capture. Capture it again before emitting it.",
 			);
 		}
-		const presentation = await attachInlineImage(
-			{ content: [], summary: "Selected browser image" },
-			image.observation.path,
-		);
+		const presentation: ToolPresentation = { content: [], summary: "Selected browser image" };
+		Object.assign(presentation, await attachInlineImage(presentation, image.observation.path));
 		if (!presentation.content.some((item) => item.type === "image")) {
 			const reason = presentation.content
 				.filter((item) => item.type === "text")
@@ -248,8 +247,8 @@ class BrowserCodeOutput {
 
 	private observation(
 		run: AgentBrowserScriptRunResult,
-		context: { readonly sessionName: string; readonly namespace?: string },
-		output: { readonly data: unknown; readonly error?: string },
+		context: { readonly sessionName: string; readonly namespace?: string | undefined },
+		output: { readonly data: unknown; readonly error?: string | undefined },
 	): Record<string, unknown> {
 		const failureCategory = this.failureCategory(run, output.error);
 		const success = run.ok && failureCategory === undefined;

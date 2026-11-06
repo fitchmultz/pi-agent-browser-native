@@ -19,6 +19,7 @@ import type {
 	ResolveObservedPageTargetInput,
 	ProcessCannotVerifyPageInput,
 } from "./process-output-navigation-contracts.js";
+import type { PageOutputPhase } from "./process-output-page-phase-contracts.js";
 import { isStringArray } from "../../results/presentation/content.js";
 import {
 	isNavigationObservableCommandName,
@@ -53,30 +54,36 @@ import {
 } from "./session-state.js";
 import { collectClickDispatchDiagnostic } from "./click-dispatch.js";
 import { collectNavigationSummary } from "./diagnostics.js";
-export async function verifyClickDispatch(draft: VerifyClickDispatchInput): Promise<void> {
+export async function verifyClickDispatch(
+	draft: VerifyClickDispatchInput,
+): Promise<
+	| Pick<PageOutputPhase, "clickDispatchDiagnostic" | "succeeded" | "presentationEnvelope">
+	| undefined
+> {
 	if (!draft.succeeded || !draft.input.prepared.clickDispatchProbe) {
-		return;
+		return undefined;
 	}
-	draft.clickDispatchDiagnostic = await collectClickDispatchDiagnostic({
+	const clickDispatchDiagnostic = await collectClickDispatchDiagnostic({
 		cwd: draft.input.cwd,
 		namespace: draft.input.prepared.executionPlan.namespace,
 		probe: draft.input.prepared.clickDispatchProbe,
 		sessionName: draft.input.prepared.executionPlan.sessionName,
 		signal: draft.input.signal,
 	});
-	if (draft.clickDispatchDiagnostic) {
-		draft.succeeded = false;
-		draft.presentationEnvelope = {
-			...draft.presentationEnvelope,
-			error: draft.clickDispatchDiagnostic.summary,
-			success: false,
-		};
-	}
+	return {
+		clickDispatchDiagnostic,
+		succeeded: clickDispatchDiagnostic ? false : draft.succeeded,
+		presentationEnvelope: clickDispatchDiagnostic
+			? { ...draft.presentationEnvelope, error: clickDispatchDiagnostic.summary, success: false }
+			: draft.presentationEnvelope,
+	};
 }
 
-function resolveResultingPageState(draft: ResolveResultingPageStateInput): void {
+export function resolveResultingPageState(
+	draft: ResolveResultingPageStateInput,
+): Pick<PageOutputPhase, "tabTransition" | "resultingPageState"> {
 	const { prepared, state } = draft.input;
-	draft.tabTransition =
+	const tabTransition =
 		draft.confirmedEffects.some((effect) => effect.command === "tab") ||
 		draft.dispatchedCommands.some((step) => {
 			const tokens = extractUpstreamCommandTokens(step);
@@ -88,7 +95,7 @@ function resolveResultingPageState(draft: ResolveResultingPageStateInput): void 
 		!draft.nativeCommandMayHaveExecuted ||
 		detectConfirmationRequired(draft.presentationEnvelope?.data) !== undefined ||
 		state.sessionPageState.get(draft.sessionStateKey).tabReopenPending === true;
-	draft.resultingPageState = preservePriorTarget
+	const resultingPageState = preservePriorTarget
 		? {
 				currentPageUrl: prepared.priorSessionTabTarget?.url,
 				pageTargetMayHaveChanged: false,
@@ -101,6 +108,7 @@ function resolveResultingPageState(draft: ResolveResultingPageStateInput): void 
 				currentPageUrl: prepared.priorSessionTabTarget?.url,
 				pageUrlUnknown: prepared.priorSessionTabTargetUnknown === true,
 			});
+	return { tabTransition, resultingPageState };
 }
 
 function hasNativeNavigationEvidence(draft: HasNativeNavigationEvidenceInput): boolean {
@@ -164,10 +172,13 @@ function hasFailedPageTransition(draft: HasFailedPageTransitionInput): boolean {
 	);
 }
 
-function canReverifyFailedNavigation(draft: CanReverifyFailedNavigationInput): boolean {
+function canReverifyFailedNavigation(
+	draft: CanReverifyFailedNavigationInput,
+	navigationSummary: PageOutputPhase["navigationSummary"],
+): boolean {
 	if (
 		draft.succeeded ||
-		draft.navigationSummary !== undefined ||
+		navigationSummary !== undefined ||
 		draft.readConfirmation?.state === "pending"
 	) {
 		return false;
@@ -178,31 +189,42 @@ function canReverifyFailedNavigation(draft: CanReverifyFailedNavigationInput): b
 	return !draft.nestedBatchClosed && !draft.directClose && hasFailedPageTransition(draft);
 }
 
-function mergeObservedNavigation(draft: MergeObservedNavigationInput): void {
-	if (draft.textOutput || !draft.navigationSummary || !draft.presentationEnvelope) {
-		return;
+function mergeObservedNavigation(
+	draft: MergeObservedNavigationInput,
+	navigationSummary: PageOutputPhase["navigationSummary"],
+): PageOutputPhase["presentationEnvelope"] {
+	if (draft.textOutput || !navigationSummary || !draft.presentationEnvelope) {
+		return draft.presentationEnvelope;
 	}
 	if (
 		draft.input.prepared.executionPlan.commandInfo.command === "eval" ||
 		Array.isArray(draft.presentationEnvelope.data)
 	) {
-		return;
+		return draft.presentationEnvelope;
 	}
-	draft.presentationEnvelope = {
+	return {
 		...draft.presentationEnvelope,
-		data: mergeNavigationSummaryIntoData(draft.presentationEnvelope.data, draft.navigationSummary),
+		data: mergeNavigationSummaryIntoData(draft.presentationEnvelope.data, navigationSummary),
 	};
 }
 
-export async function observeNavigationTarget(draft: ObserveNavigationTargetInput): Promise<void> {
-	resolveResultingPageState(draft);
+export async function observeNavigationTarget(
+	draft: ObserveNavigationTargetInput,
+): Promise<
+	Pick<
+		PageOutputPhase,
+		"navigationSummary" | "failedTransitionReverification" | "presentationEnvelope"
+	>
+> {
 	const { prepared, cwd, signal } = draft.input;
 	const navigationRequested = navigationObservationRequested(draft);
 	const coldTargetObservation =
 		prepared.callerColdLaunch === true &&
 		!isOpenNavigationCommand(prepared.executionPlan.commandInfo.command);
+	let navigationSummary = draft.navigationSummary;
+	let failedTransitionReverification = draft.failedTransitionReverification;
 	if (canObserveSuccessfulNavigation(draft) && (navigationRequested || coldTargetObservation)) {
-		draft.navigationSummary = await collectNavigationSummary({
+		navigationSummary = await collectNavigationSummary({
 			cwd,
 			namespace: prepared.executionPlan.namespace,
 			priorTarget: prepared.priorSessionTabTarget,
@@ -212,26 +234,33 @@ export async function observeNavigationTarget(draft: ObserveNavigationTargetInpu
 		});
 	}
 	// A failed transition may have changed the page. Its live URL cannot make prior refs valid.
-	if (canReverifyFailedNavigation(draft)) {
-		draft.navigationSummary = await collectNavigationSummary({
+	if (canReverifyFailedNavigation(draft, navigationSummary)) {
+		navigationSummary = await collectNavigationSummary({
 			cwd,
 			namespace: prepared.executionPlan.namespace,
 			priorTarget: prepared.priorSessionTabTarget,
 			sessionName: prepared.executionPlan.sessionName,
 			signal,
 		});
-		draft.failedTransitionReverification = draft.navigationSummary !== undefined;
+		failedTransitionReverification = navigationSummary !== undefined;
 	}
-	if (navigationRequested || draft.failedTransitionReverification) {
-		mergeObservedNavigation(draft);
-	}
+	return {
+		navigationSummary,
+		failedTransitionReverification,
+		presentationEnvelope:
+			navigationRequested || failedTransitionReverification
+				? mergeObservedNavigation(draft, navigationSummary)
+				: draft.presentationEnvelope,
+	};
 }
 
-export async function correctRestoredOpenTab(draft: CorrectRestoredOpenTabInput): Promise<void> {
+export async function correctRestoredOpenTab(
+	draft: CorrectRestoredOpenTabInput,
+): Promise<PageOutputPhase["openResultTabCorrection"]> {
 	const { prepared, cwd, signal } = draft.input;
 	const sessionName = prepared.executionPlan.sessionName;
 	if (!draft.succeeded || sessionName === undefined || sessionName.length === 0) {
-		return;
+		return draft.openResultTabCorrection;
 	}
 	if (
 		!prepared.executionPlan.startupScopedFlags.some((flag) =>
@@ -240,7 +269,7 @@ export async function correctRestoredOpenTab(draft: CorrectRestoredOpenTabInput)
 		!isOpenNavigationCommand(prepared.executionPlan.commandInfo.command) ||
 		commandExplicitlyTargetsAboutBlank(prepared.commandTokens)
 	) {
-		return;
+		return draft.openResultTabCorrection;
 	}
 	const correction = await collectOpenResultTabCorrection({
 		cwd,
@@ -251,7 +280,7 @@ export async function correctRestoredOpenTab(draft: CorrectRestoredOpenTabInput)
 		targetUrl: extractStringResultField(draft.presentationEnvelope?.data, "url"),
 	});
 	if (correction) {
-		draft.openResultTabCorrection = await applyOpenResultTabCorrection({
+		return await applyOpenResultTabCorrection({
 			correction,
 			cwd,
 			namespace: prepared.executionPlan.namespace,
@@ -259,6 +288,7 @@ export async function correctRestoredOpenTab(draft: CorrectRestoredOpenTabInput)
 			signal,
 		});
 	}
+	return draft.openResultTabCorrection;
 }
 
 function verifiesCurrentUrl(draft: VerifiesCurrentUrlInput): boolean {
@@ -286,8 +316,10 @@ function hasFailedWebMcpSettlement(draft: HasFailedWebMcpSettlementInput): boole
 	);
 }
 
-export function observeWebMcpTarget(draft: ObserveWebMcpTargetInput): void {
-	draft.trustsReportedPageTarget =
+export function observeWebMcpTarget(
+	draft: ObserveWebMcpTargetInput,
+): Pick<PageOutputPhase, "trustsReportedPageTarget" | "unsettledWebMcpMutation"> {
+	const trustsReportedPageTarget =
 		!draft.resultingPageState.pageUrlUnknown || verifiesCurrentUrl(draft);
 	const { commandInfo } = draft.input.prepared.executionPlan;
 	const pending =
@@ -298,7 +330,10 @@ export function observeWebMcpTarget(draft: ObserveWebMcpTargetInput): void {
 		) ||
 		(commandInfo.command === "batch" &&
 			batchHasPendingWebMcpMutation(draft.presentationEnvelope?.data));
-	draft.unsettledWebMcpMutation = pending || hasFailedWebMcpSettlement(draft);
+	return {
+		trustsReportedPageTarget,
+		unsettledWebMcpMutation: pending || hasFailedWebMcpSettlement(draft),
+	};
 }
 
 function observedPageTarget(
@@ -344,30 +379,30 @@ function reportedPageTarget(
 async function resolveObservedTargetIdentity(
 	draft: ResolveObservedTargetIdentityInput,
 	data: unknown,
-): Promise<void> {
+	target: SessionTabTarget | undefined,
+): Promise<SessionTabTarget | undefined> {
 	if (
-		!draft.observedSessionTabTarget ||
+		!target ||
 		draft.readConfirmation?.state === "pending" ||
 		draft.browserIndependentRead ||
 		draft.nestedBatchClosed ||
 		draft.directClose
 	) {
-		return;
+		return target;
 	}
 	const reported = reportedPageTarget(draft, data);
 	if (reported?.targetId !== undefined && reported.targetId.length > 0) {
-		draft.observedSessionTabTarget = {
-			...draft.observedSessionTabTarget,
+		return {
+			...target,
 			targetId: reported.targetId,
 		};
-		return;
 	}
-	draft.observedSessionTabTarget = await collectSessionTabTarget({
+	return await collectSessionTabTarget({
 		cwd: draft.input.cwd,
 		namespace: draft.input.prepared.executionPlan.namespace,
 		sessionName: draft.input.prepared.executionPlan.sessionName,
 		signal: draft.input.signal,
-		target: draft.observedSessionTabTarget,
+		target,
 	});
 }
 
@@ -393,18 +428,22 @@ function fallbackPageTarget(
 
 export async function resolveObservedPageTarget(
 	draft: ResolveObservedPageTargetInput,
-): Promise<void> {
+): Promise<Pick<PageOutputPhase, "observedSessionTabTarget" | "currentSessionTabTarget">> {
 	const data: unknown = draft.textOutput ? undefined : draft.presentationEnvelope?.data;
-	draft.observedSessionTabTarget = observedPageTarget(draft, data);
-	await resolveObservedTargetIdentity(draft, data);
-	draft.currentSessionTabTarget = draft.observedSessionTabTarget;
+	const observedSessionTabTarget = await resolveObservedTargetIdentity(
+		draft,
+		data,
+		observedPageTarget(draft, data),
+	);
+	let currentSessionTabTarget = observedSessionTabTarget;
 	if (
-		!draft.currentSessionTabTarget &&
+		!currentSessionTabTarget &&
 		draft.nestedBatchClose === undefined &&
 		!draft.unobservedMutation
 	) {
-		draft.currentSessionTabTarget = fallbackPageTarget(draft, data);
+		currentSessionTabTarget = fallbackPageTarget(draft, data);
 	}
+	return { observedSessionTabTarget, currentSessionTabTarget };
 }
 
 function isWebMcpSettlementCommand(

@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 const SENTINEL_CUSTOM_TYPE = "piab-lifecycle-sentinel";
 
-/** @typedef {{readonly [key: string]: unknown, readonly details?: Readonly<Record<string, unknown>>}} LifecycleToolResult */
+/** @typedef {{readonly [key: string]: unknown, readonly details?: Readonly<Record<string, unknown>> | undefined}} LifecycleToolResult */
 /** @typedef {{readonly entries: readonly unknown[], readonly result: LifecycleToolResult, readonly results: readonly LifecycleToolResult[], readonly sessionFile: string}} LifecycleResultReport */
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
@@ -21,6 +21,7 @@ export function record(value) {
 
 /** @param {string} text @returns {unknown[]} */
 export function parseJsonl(text) {
+	/** @type {unknown[]} */
 	const entries = [];
 	for (const [index, line] of text.split("\n").entries()) {
 		if (line.trim().length === 0) {
@@ -44,6 +45,7 @@ export function agentBrowserResults(entries) {
 		if (
 			row?.type !== "message" ||
 			message?.role !== "toolResult" ||
+			typeof message.toolName !== "string" ||
 			!["agent_browser", "agent_browser_code", "agent_browser_qa"].includes(message.toolName)
 		) {
 			return [];
@@ -81,12 +83,15 @@ export function collectFullOutputPaths(results) {
 			paths.push(details.fullOutputPath);
 		}
 		if (Array.isArray(details?.fullOutputPaths)) {
-			paths.push(...details.fullOutputPaths.filter((path) => typeof path === "string"));
+			/** @type {readonly unknown[]} */
+			const outputPaths = details.fullOutputPaths;
+			paths.push(...outputPaths.filter((path) => typeof path === "string"));
 		}
 	}
 	return [...new Set(paths)];
 }
 
+/** @param {unknown} url */
 function normalizeComparableUrl(url) {
 	if (typeof url !== "string" || url.trim().length === 0) {
 		return;
@@ -100,9 +105,13 @@ function normalizeComparableUrl(url) {
 	}
 }
 
+/** @param {Readonly<Record<string, unknown>> | undefined} details @param {string} command */
 function pageResultUrl(details, command) {
 	const data = record(details?.data);
-	return { open: data?.url, snapshot: data?.origin }[command];
+	if (command === "open") {
+		return data?.url;
+	}
+	return command === "snapshot" ? data?.origin : undefined;
 }
 
 /** @param {unknown} result @param {string} command @param {string} expectedUrl @returns {boolean} */
@@ -113,16 +122,20 @@ export function matchesSuccessfulPageResult(result, command, expectedUrl) {
 	return (
 		row?.isError === false &&
 		details?.resultCategory === "success" &&
-		details?.command === command &&
+		details.command === command &&
 		typeof observedUrl === "string" &&
 		normalizeComparableUrl(observedUrl) === normalizeComparableUrl(expectedUrl)
 	);
 }
 
+/** @param {number} ms @returns {Promise<void>} */
 export function sleep(ms) {
-	return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+	return new Promise((resolveSleep) => {
+		setTimeout(resolveSleep, ms);
+	});
 }
 
+/** @param {string} sessionDir */
 export async function newestSessionFile(sessionDir) {
 	const { stdout } = await execFile("find", [sessionDir, "-type", "f", "-name", "*.jsonl"]);
 	const files = stdout
@@ -134,7 +147,6 @@ export async function newestSessionFile(sessionDir) {
 	let newestMtime = -1;
 	for (const file of files) {
 		// Inspect one transcript at a time, preserving last-in-sorted-order ties across native stat variants.
-		// oxlint-disable-next-line no-await-in-loop
 		const { stdout: timestamp } = await execFile("stat", ["-f", "%m", file]).catch(async () =>
 			execFile("stat", ["-c", "%Y", file]),
 		);
@@ -154,9 +166,8 @@ export async function waitFor({ describe, predicate, timeoutMs, intervalMs = 100
 	while (Date.now() - start <= timeoutMs) {
 		try {
 			// Each poll must finish before deciding success, retrying, or observing a newer transcript.
-			// oxlint-disable-next-line no-await-in-loop
 			const result = await predicate();
-			if (result) {
+			if (result !== undefined && Boolean(result)) {
 				return result;
 			}
 		} catch (error) {
@@ -164,14 +175,13 @@ export async function waitFor({ describe, predicate, timeoutMs, intervalMs = 100
 		}
 		if (onPoll) {
 			// Finish this poll's observation before the next poll can capture another state.
-			// oxlint-disable-next-line no-await-in-loop
 			await onPoll();
 		}
 		// Poll backoff follows the completed attempt, not concurrent timers.
-		// oxlint-disable-next-line no-await-in-loop
 		await sleep(intervalMs);
 	}
-	const suffix = lastError
+	const hasLastError = Boolean(lastError);
+	const suffix = hasLastError
 		? ` Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
 		: "";
 	throw new Error(`Timed out waiting for ${describe} after ${timeoutMs}ms.${suffix}`);
@@ -182,13 +192,15 @@ export async function readEntries(sessionFile) {
 	return parseJsonl(await readFile(sessionFile, "utf8"));
 }
 
+/** @param {unknown} result @returns {string} */
 export function resultText(result) {
 	const content = record(result)?.content;
 	return Array.isArray(content)
 		? content
 				.map(record)
-				.filter((item) => item?.type === "text" && typeof item.text === "string")
-				.map((item) => item.text)
+				.flatMap((item) =>
+					item?.type === "text" && typeof item.text === "string" ? [item.text] : [],
+				)
 				.join("\n")
 		: "";
 }
@@ -207,10 +219,14 @@ export async function waitForAgentBrowserResult({
 		describe,
 		timeoutMs,
 		predicate: async () => {
-			if (!activeSessionFile && sessionDir) {
+			if (
+				(activeSessionFile === undefined || activeSessionFile === "") &&
+				sessionDir !== undefined &&
+				sessionDir !== ""
+			) {
 				activeSessionFile = await newestSessionFile(sessionDir);
 			}
-			if (!activeSessionFile) {
+			if (activeSessionFile === undefined || activeSessionFile === "") {
 				return;
 			}
 			const entries = await readEntries(activeSessionFile);
@@ -226,10 +242,18 @@ export async function waitForAgentBrowserResult({
 	return report;
 }
 
-function unexpectedResultMessage(describe, result) {
-	return `Unexpected agent_browser result for ${describe}: call ${result.toolCallId ?? "unknown"}; command ${result.details?.command ?? "missing"}; isError ${result.isError}; category ${result.details?.resultCategory ?? "missing"}/${result.details?.failureCategory ?? result.details?.successCategory ?? "missing"}.`;
+/** @param {unknown} value @param {string} absent */
+function diagnosticLabel(value, absent) {
+	const text = String(value);
+	return value === null || value === undefined ? absent : text;
 }
 
+/** @param {string} describe @param {LifecycleToolResult} result */
+function unexpectedResultMessage(describe, result) {
+	return `Unexpected agent_browser result for ${describe}: call ${diagnosticLabel(result.toolCallId, "unknown")}; command ${diagnosticLabel(result.details?.command, "missing")}; isError ${String(result.isError)}; category ${diagnosticLabel(result.details?.resultCategory, "missing")}/${diagnosticLabel(result.details?.failureCategory ?? result.details?.successCategory, "missing")}.`;
+}
+
+/** @param {{sessionFile: string, timeoutMs: number, token: string}} options */
 export async function waitForSentinel({ sessionFile, timeoutMs, token }) {
 	return waitFor({
 		describe: `sentinel token ${token}`,
@@ -241,6 +265,7 @@ export async function waitForSentinel({ sessionFile, timeoutMs, token }) {
 	});
 }
 
+/** @param {{describe: string, sessionFile: string, sinceEntryCount: number, timeoutMs: number}} options */
 export async function waitForAssistantFinal({ describe, sessionFile, sinceEntryCount, timeoutMs }) {
 	return waitFor({
 		describe: `${describe} final assistant response`,
@@ -259,7 +284,7 @@ export async function waitForAssistantFinal({ describe, sessionFile, sinceEntryC
 					)
 				);
 			});
-			return finalMessage ? entries : undefined;
+			return finalMessage !== undefined ? entries : undefined;
 		},
 	});
 }

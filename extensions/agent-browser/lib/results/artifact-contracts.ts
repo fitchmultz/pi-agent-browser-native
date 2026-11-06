@@ -27,52 +27,52 @@ export type ArtifactReceiptKey = string & { readonly __artifactReceiptKey: uniqu
 export interface ArtifactRequestContext {
 	readonly absolutePath: string;
 	readonly path: string;
-	readonly status?: FileArtifactStatus;
-	readonly tempPath?: string;
+	readonly status?: FileArtifactStatus | undefined;
+	readonly tempPath?: string | undefined;
 }
 
 export interface FileArtifactMetadata {
 	readonly absolutePath: string;
 	readonly artifactType?: FileArtifactKind;
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly cwd?: string;
-	readonly exists?: boolean;
-	readonly extension?: string;
+	readonly exists?: boolean | undefined;
+	readonly extension?: string | undefined;
 	readonly kind: FileArtifactKind;
-	readonly mediaType?: string;
-	readonly namespace?: string;
+	readonly mediaType?: string | undefined;
+	readonly namespace?: string | undefined;
 	readonly path: string;
-	readonly recording?: RecordingReceipt;
-	readonly recordingStartedAtMs?: number;
-	readonly recordingState?: "openRecording";
-	readonly requestedPath?: string;
-	readonly session?: string;
-	readonly sizeBytes?: number;
-	readonly status?: FileArtifactStatus;
-	readonly subcommand?: string;
-	readonly tempPath?: string;
-	readonly updatedAtMs?: number;
-	readonly willExistOnStop?: boolean;
+	readonly recording?: RecordingReceipt | undefined;
+	readonly recordingStartedAtMs?: number | undefined;
+	readonly recordingState?: "openRecording" | undefined;
+	readonly requestedPath?: string | undefined;
+	readonly session?: string | undefined;
+	readonly sizeBytes?: number | undefined;
+	readonly status?: FileArtifactStatus | undefined;
+	readonly subcommand?: string | undefined;
+	readonly tempPath?: string | undefined;
+	readonly updatedAtMs?: number | undefined;
+	readonly willExistOnStop?: boolean | undefined;
 }
 
 export interface ArtifactVerificationEntry {
-	readonly absolutePath?: string;
-	readonly exists?: boolean;
+	readonly absolutePath?: string | undefined;
+	readonly exists?: boolean | undefined;
 	readonly kind: FileArtifactKind | "spill";
-	readonly limitation?: string;
-	readonly mediaType?: string;
+	readonly limitation?: string | undefined;
+	readonly mediaType?: string | undefined;
 	readonly path: string;
-	readonly requestedPath?: string;
-	readonly recording?: RecordingReceipt;
-	readonly recordingStartedAtMs?: number;
+	readonly requestedPath?: string | undefined;
+	readonly recording?: RecordingReceipt | undefined;
+	readonly recordingStartedAtMs?: number | undefined;
 	readonly recordingState?: "openRecording";
-	readonly retentionState?: ArtifactRetentionState;
-	readonly sizeBytes?: number;
+	readonly retentionState?: ArtifactRetentionState | undefined;
+	readonly sizeBytes?: number | undefined;
 	readonly state: ArtifactVerificationState;
-	readonly status?: FileArtifactStatus;
-	readonly storageScope?: ArtifactStorageScope;
-	readonly updatedAtMs?: number;
-	readonly willExistOnStop?: boolean;
+	readonly status?: FileArtifactStatus | undefined;
+	readonly storageScope?: ArtifactStorageScope | undefined;
+	readonly updatedAtMs?: number | undefined;
+	readonly willExistOnStop?: boolean | undefined;
 }
 
 export interface ArtifactVerificationSummary {
@@ -94,27 +94,27 @@ export interface SavedFilePresentationDetails {
 
 export interface SessionArtifactManifestEntry {
 	readonly absolutePath?: string;
-	readonly recording?: RecordingReceipt;
-	readonly recordingStartedAtMs?: number;
-	readonly recordingState?: "openRecording";
-	readonly status?: FileArtifactStatus;
-	readonly command?: string;
+	readonly recording?: RecordingReceipt | undefined;
+	readonly recordingStartedAtMs?: number | undefined;
+	readonly recordingState?: "openRecording" | undefined;
+	readonly status?: FileArtifactStatus | undefined;
+	readonly command?: string | undefined;
 	readonly createdAtMs: number;
-	readonly cwd?: string;
-	readonly evictedAtMs?: number;
-	readonly exists?: boolean;
-	readonly extension?: string;
+	readonly cwd?: string | undefined;
+	readonly evictedAtMs?: number | undefined;
+	readonly exists?: boolean | undefined;
+	readonly extension?: string | undefined;
 	readonly kind: FileArtifactKind | "spill";
-	readonly mediaType?: string;
-	readonly namespace?: string;
+	readonly mediaType?: string | undefined;
+	readonly namespace?: string | undefined;
 	readonly path: string;
 	readonly receiptKey?: ArtifactReceiptKey;
-	readonly requestedPath?: string;
+	readonly requestedPath?: string | undefined;
 	readonly retentionState: ArtifactRetentionState;
-	readonly session?: string;
-	readonly sizeBytes?: number;
+	readonly session?: string | undefined;
+	readonly sizeBytes?: number | undefined;
 	readonly storageScope: ArtifactStorageScope;
-	readonly subcommand?: string;
+	readonly subcommand?: string | undefined;
 }
 
 export interface SessionArtifactManifest {

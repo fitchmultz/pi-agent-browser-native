@@ -53,20 +53,19 @@ type CollectPublicationWarningsInput = Readonly<
 		| "presentationEnvelope"
 		| "succeeded"
 	>
-> &
-	Pick<PublicationOutputPhase, "artifactCleanup" | "redactedContent" | "resultArtifactManifest"> & {
-		readonly presentation: ToolPresentationObservation;
-		readonly input: Readonly<
-			Pick<ProcessBrowserOutputInput, "cwd" | "modelVisible" | "processResult">
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"commandTokens" | "exactSensitiveValues" | "executionPlan" | "userRequestedJson"
-				>
-			>;
-		};
+> & {
+	readonly presentation: ToolPresentationObservation;
+	readonly input: Readonly<
+		Pick<ProcessBrowserOutputInput, "cwd" | "modelVisible" | "processResult">
+	> & {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				"commandTokens" | "exactSensitiveValues" | "executionPlan" | "userRequestedJson"
+			>
+		>;
 	};
+};
 type RecoverFinalOutputInput = Readonly<
 	Pick<
 		PublicationOutputPhase,
@@ -182,18 +181,20 @@ function sessionWarning(draft: SessionWarningInput): string | undefined {
 
 export async function collectPublicationWarnings(
 	draft: CollectPublicationWarningsInput,
-): Promise<void> {
-	draft.resultArtifactManifest = draft.presentation.artifactManifest ?? draft.artifactManifest;
-	draft.artifactCleanup = await getArtifactCleanupGuidance({
+): Promise<
+	Pick<PublicationOutputPhase, "artifactCleanup" | "redactedContent" | "resultArtifactManifest">
+> {
+	const resultArtifactManifest = draft.presentation.artifactManifest ?? draft.artifactManifest;
+	const artifactCleanup = await getArtifactCleanupGuidance({
 		command: draft.input.prepared.executionPlan.commandInfo.command,
 		cwd: draft.input.cwd,
-		manifest: draft.resultArtifactManifest,
+		manifest: resultArtifactManifest,
 		succeeded: draft.succeeded,
 	});
 	const warnings = [sessionWarning(draft), recordingPageWarning(draft)]
 		.filter((part) => part !== undefined && part.length > 0)
 		.join("\n\n");
-	draft.redactedContent =
+	const redactedContent =
 		draft.input.modelVisible === false
 			? []
 			: buildRedactedPresentationContent({
@@ -205,6 +206,7 @@ export async function collectPublicationWarnings(
 					userRequestedJson: draft.input.prepared.userRequestedJson,
 					warningText: warnings.length > 0 ? warnings : undefined,
 				});
+	return { artifactCleanup, redactedContent, resultArtifactManifest };
 }
 
 export async function recoverFinalOutput(
@@ -234,8 +236,6 @@ export async function recoverFinalOutput(
 		signal: draft.input.signal,
 		succeeded: draft.succeeded,
 	});
-	draft.currentRefSnapshot = recovery.currentRefSnapshot;
-	draft.currentRefSnapshotInvalidation = recovery.currentRefSnapshotInvalidation;
 	return recovery;
 }
 

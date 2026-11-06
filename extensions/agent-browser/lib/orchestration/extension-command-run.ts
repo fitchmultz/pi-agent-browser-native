@@ -29,8 +29,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { SessionPageState } from "../session-page-state.js";
 import type { PreparationDaemonObservation } from "./browser-run/managed-session-daemon-inspection.js";
 
+import { createBrowserRunState } from "./browser-run/run-state.js";
+
 function captureBrowserRunState(runtime: BrowserRuntime): BrowserRunState {
-	return {
+	return createBrowserRunState({
 		activeRecordingReservations: runtime.recordings.active,
 		artifactManifest: runtime.artifacts.manifest,
 		attachedSessionKeys: runtime.sessions.attached,
@@ -52,7 +54,7 @@ function captureBrowserRunState(runtime: BrowserRuntime): BrowserRunState {
 		ownedManagedSessions: runtime.managed.owned,
 		sessionPageState: runtime.sessions.pages.fork(),
 		traceOwners: runtime.sessions.traces,
-	};
+	});
 }
 function selectCommandPlan(
 	state: Readonly<
@@ -262,7 +264,7 @@ async function dispatchBrowserCommand(
 		"browserRunState" | "sessionPageStateUpdate" | "executionSignal"
 	>,
 	dispatch: BrowserCommandDispatch &
-		Readonly<{ initialDaemonObservation?: PreparationDaemonObservation }>,
+		Readonly<{ initialDaemonObservation?: PreparationDaemonObservation | undefined }>,
 ): Promise<AgentBrowserToolResult> {
 	try {
 		return await runAgentBrowserTool({

@@ -83,8 +83,8 @@ export function getPresentationImages(
 }
 
 export function getPresentationPaths(options: {
-	readonly primaryPath?: string;
-	readonly secondaryPaths?: readonly string[];
+	readonly primaryPath?: string | undefined;
+	readonly secondaryPaths?: readonly string[] | undefined;
 }): readonly string[] {
 	return (
 		options.secondaryPaths ??

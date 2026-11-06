@@ -50,7 +50,7 @@ export function isAgentBrowserBatchResultArray(
 
 async function collectPresentedSteps(options: BuildBatchPresentationOptions): Promise<{
 	readonly steps: readonly BatchPresentedStep[];
-	readonly manifest?: SessionArtifactManifest;
+	readonly manifest?: SessionArtifactManifest | undefined;
 }> {
 	const steps: BatchPresentedStep[] = [];
 	const protectedPaths: string[] = [];
@@ -58,7 +58,6 @@ async function collectPresentedSteps(options: BuildBatchPresentationOptions): Pr
 	let routes = options.networkRoutes;
 	for (const [index, item] of options.data.entries()) {
 		// Each row updates artifact protection/manifest and route state required by the following row.
-		// oxlint-disable-next-line no-await-in-loop
 		const step = await buildBatchStepPresentation({
 			modelVisible: options.modelVisible,
 			artifactManifest: manifest,
@@ -160,10 +159,10 @@ export async function buildBatchPresentation(
 }
 
 function collectBatchOutputPaths(steps: readonly BatchPresentedStepObservation[]): {
-	readonly fullOutputPath?: string;
-	readonly fullOutputPaths?: readonly string[];
-	readonly imagePath?: string;
-	readonly imagePaths?: readonly string[];
+	readonly fullOutputPath?: string | undefined;
+	readonly fullOutputPaths?: readonly string[] | undefined;
+	readonly imagePath?: string | undefined;
+	readonly imagePaths?: readonly string[] | undefined;
 } {
 	const fullOutputPaths = steps.flatMap((step) =>
 		getPresentationPaths({

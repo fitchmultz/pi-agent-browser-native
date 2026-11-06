@@ -25,6 +25,17 @@ export { createLeaseCleanupResult, createLeaseWarmupFailureResult } from "./leas
 export { nodeVersionAtLeast } from "./suite-checks.mjs";
 export { platformFor } from "./suite-evidence.mjs";
 
+/** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
+/** @import { ProcessResult } from "./crabbox-runner.mjs" */
+/** @import { ReleaseCandidate } from "./commands.mjs" */
+/** @import { SuiteCheck } from "./suite-evidence.mjs" */
+/** @typedef {Readonly<Awaited<ReturnType<typeof warmupLease>>> & {readonly dependenciesReady?: boolean; readonly sync?: boolean; readonly candidate?: ReleaseCandidate | undefined}} LeaseSession */
+/** @typedef {{readonly config: PlatformSmokeConfig; readonly targetName: string; readonly suiteName: string; readonly leaseSession?: LeaseSession | undefined; readonly runId?: string}} SuiteOptions */
+/** @typedef {{readonly command: string; readonly timeout: number; readonly metadata: Readonly<Record<string, unknown>>; readonly evidenceFiles: readonly string[]; readonly extract: (suiteDir: string, result: ProcessResult, secretValues: readonly string[]) => unknown; readonly checks: (result: ProcessResult, report: unknown) => SuiteCheck[]}} SuiteDefinition */
+
+/** @param {SuiteOptions} options
+ * @returns {SuiteDefinition}
+ */
 function suiteDefinition({ config, targetName, suiteName, leaseSession }) {
 	if (suiteName === "platform-build") {
 		return {
@@ -76,10 +87,14 @@ function suiteDefinition({ config, targetName, suiteName, leaseSession }) {
 	throw new Error(`unknown suite: ${suiteName}`);
 }
 
+/** @param {string} suiteDir
+ * @param {LeaseSession} lease
+ * @param {Readonly<Record<string, unknown>>} summary
+ */
 function warmupFailure(suiteDir, lease, summary) {
 	writeExitCode(suiteDir, lease.code, lease.signal);
-	writeFileSync(resolve(suiteDir, "crabbox.stdout.txt"), lease.stdout ?? "");
-	writeFileSync(resolve(suiteDir, "crabbox.stderr.txt"), lease.stderr ?? "");
+	writeFileSync(resolve(suiteDir, "crabbox.stdout.txt"), lease.stdout);
+	writeFileSync(resolve(suiteDir, "crabbox.stderr.txt"), lease.stderr);
 	const { assertions } = finalizeSuite(
 		suiteDir,
 		[{ id: "crabbox-warmup", fn: () => false, error: "Crabbox warmup failed" }],
@@ -89,6 +104,7 @@ function warmupFailure(suiteDir, lease, summary) {
 	return { ok: false, suiteDir, assertions };
 }
 
+/** @param {SuiteOptions} options */
 export async function runTargetSuite({
 	config,
 	targetName,
@@ -151,6 +167,11 @@ export async function runTargetSuite({
 	return { ok: assertions.ok, suiteDir, assertions };
 }
 
+/** @param {PlatformSmokeConfig} config
+ * @param {string} targetName
+ * @param {readonly string[]} suiteNames
+ * @param {ReleaseCandidate} [candidate]
+ */
 export async function runTargetSuites(config, targetName, suiteNames, candidate) {
 	const slug = `${config.packageName}-${targetName}`;
 	const runId = makeRunId();
@@ -168,7 +189,6 @@ export async function runTargetSuites(config, targetName, suiteNames, candidate)
 		for (const suiteName of suiteNames) {
 			console.log(`  Suite: ${suiteName}`);
 			// Suites share one native lease; build results determine dependency reuse and later sync policy.
-			// oxlint-disable-next-line no-await-in-loop
 			const result = await runTargetSuite({
 				config,
 				targetName,
@@ -190,17 +210,15 @@ export async function runTargetSuites(config, targetName, suiteNames, candidate)
 		stopResult = await stopLease(targetName, lease.leaseId, config);
 		staleCleanupResult = await cleanupStaleTargetState(targetName, config);
 	}
-	if (stopResult) {
-		results.push(
-			createLeaseCleanupResult({
-				config,
-				targetName,
-				leaseId: lease.leaseId,
-				stopResult,
-				staleCleanupResult,
-				runId,
-			}),
-		);
-	}
+	results.push(
+		createLeaseCleanupResult({
+			config,
+			targetName,
+			leaseId: lease.leaseId,
+			stopResult,
+			staleCleanupResult,
+			runId,
+		}),
+	);
 	return { ok: results.every((result) => result.ok), results };
 }

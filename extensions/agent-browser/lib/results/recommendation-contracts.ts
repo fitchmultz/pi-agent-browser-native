@@ -7,21 +7,21 @@ import type {
 import type { AgentBrowserRecoveryContext } from "./action-contracts.js";
 
 export interface AgentBrowserNextActionOptions {
-	readonly artifacts?: readonly FileArtifactMetadata[];
-	readonly args?: readonly string[];
-	readonly command?: string;
-	readonly confirmationId?: string;
+	readonly artifacts?: readonly FileArtifactMetadata[] | undefined;
+	readonly args?: readonly string[] | undefined;
+	readonly command?: string | undefined;
+	readonly confirmationId?: string | undefined;
 	readonly electron?: {
 		readonly launchId?: string;
-		readonly sessionName?: string;
+		readonly sessionName?: string | undefined;
 		readonly status?: "active" | "cleaned" | "dead" | "failed" | "partial" | "succeeded";
 	};
-	readonly failureCategory?: AgentBrowserFailureCategory;
+	readonly failureCategory?: AgentBrowserFailureCategory | undefined;
 	readonly overlayBlockedClick?: boolean;
 	readonly resultCategory: AgentBrowserResultCategory;
 	readonly recovery?: AgentBrowserRecoveryContext;
-	readonly savedFilePath?: string;
-	readonly sessionName?: string;
-	readonly subcommand?: string;
-	readonly successCategory?: AgentBrowserSuccessCategory;
+	readonly savedFilePath?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly subcommand?: string | undefined;
+	readonly successCategory?: AgentBrowserSuccessCategory | undefined;
 }

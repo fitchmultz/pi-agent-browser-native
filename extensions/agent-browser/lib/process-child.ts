@@ -12,21 +12,21 @@ export interface ProcessRunResult {
 	/** True once the agent-browser command, not merely the Windows shell, has started. */
 	readonly agentBrowserStarted: boolean;
 	readonly exitCode: number;
-	readonly exitSignal?: NodeJS.Signals;
-	readonly spawnError?: Error;
+	readonly exitSignal?: NodeJS.Signals | undefined;
+	readonly spawnError?: Error | undefined;
 	readonly stderr: string;
 	readonly stdout: string;
-	readonly stdoutSpillPath?: string;
+	readonly stdoutSpillPath?: string | undefined;
 	readonly timedOut: boolean;
-	readonly timeoutMs?: number;
+	readonly timeoutMs?: number | undefined;
 }
 export interface BrowserChildOptions {
 	readonly args: readonly string[];
 	readonly cwd: string;
 	readonly env: NodeJS.ProcessEnv;
-	readonly stockLauncher?: string;
-	readonly signal?: AbortSignal;
-	readonly stdin?: string;
+	readonly stockLauncher?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
+	readonly stdin?: string | undefined;
 	readonly timeoutMs: number;
 	readonly deadlineExpired: () => boolean;
 	readonly policyError: () => string | undefined;
@@ -54,12 +54,12 @@ async function terminateSpawnedChild(
 }
 
 export function resolveSpawnedChildExitCode(input: {
-	readonly closeCode?: number | null;
+	readonly closeCode?: number | null | undefined;
 	readonly exitCode?: number | null;
 	readonly exitSignal?: NodeJS.Signals | null;
 	readonly useExitFallback: boolean;
 	readonly timedOut: boolean;
-	readonly spawnError?: Error;
+	readonly spawnError?: Error | undefined;
 }): number {
 	// Close -> wrapper timeout -> post-exit fallback -> spawn failure.
 	if (input.closeCode !== null && input.closeCode !== undefined) {
@@ -92,7 +92,10 @@ class ChildCompletion {
 	constructor(
 		child: ChildProcessWithoutNullStreams,
 		private readonly complete: (exitCode: number, exitSignal?: NodeJS.Signals) => void,
-		private readonly context: () => { readonly timedOut: boolean; readonly spawnError?: Error },
+		private readonly context: () => {
+			readonly timedOut: boolean;
+			readonly spawnError?: Error | undefined;
+		},
 	) {
 		child.once("exit", (code, signal) => {
 			this.exited = true;

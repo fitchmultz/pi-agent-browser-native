@@ -34,12 +34,10 @@ export async function waitForInvocation(
 	const deadline = Date.now() + CONCURRENCY_TEST_TIMEOUT_MS;
 	while (Date.now() <= deadline) {
 		// Observe real dispatch before proceeding with the dependent race.
-		// oxlint-disable-next-line no-await-in-loop
 		if ((await readInvocationLog(logPath)).some(match)) {
 			return;
 		}
 		// Yield between receipt polls; the deadline also covers preflight failures.
-		// oxlint-disable-next-line no-await-in-loop
 		await delay(10);
 	}
 	throw new Error("The gated child did not dispatch before the watchdog deadline");

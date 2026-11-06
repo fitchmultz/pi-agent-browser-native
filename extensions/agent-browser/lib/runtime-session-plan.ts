@@ -14,16 +14,16 @@ import type { ExecutionPlanOptions, SessionRecoveryHint } from "./runtime-contra
 export interface SessionSelection {
 	readonly argsToAppend: readonly string[];
 	readonly prefixArgs: readonly string[];
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly managedSessionName?: string;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 	readonly usedImplicitSession: boolean;
 	readonly recoveryHint?: SessionRecoveryHint;
 	readonly validationError?: string;
 }
 
 export interface SessionCommand {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly needsManagedSession: boolean;
 	readonly startupScopedFlags: readonly string[];
 }
@@ -104,7 +104,7 @@ function explicitSessionSelection(
 
 function namedManagedSelection(
 	args: readonly string[],
-	identity: { readonly sessionName: string; readonly namespace?: string },
+	identity: { readonly sessionName: string; readonly namespace?: string | undefined },
 	implicit: boolean,
 	command: string | undefined,
 ): SessionSelection {

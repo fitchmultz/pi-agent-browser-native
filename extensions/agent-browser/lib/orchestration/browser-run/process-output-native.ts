@@ -19,81 +19,79 @@ import { repairScreenshotData } from "./prepare.js";
 import { recoverRecordingStop } from "./recording-recovery.js";
 import { isStringArray } from "../../results/presentation/content.js";
 
-type ParseNativeOutputInput = Readonly<Pick<NativeOutputPhase, "artifactManifest">> &
-	Pick<
-		NativeOutputPhase,
-		| "parseError"
-		| "parsed"
-		| "persistentArtifactStore"
-		| "plainTextUpgrade"
-		| "presentationEnvelope"
-		| "recordingStopRecovery"
-		| "textOutput"
+type ParseNativeOutputInput = Readonly<Pick<NativeOutputPhase, "artifactManifest">> & {
+	readonly input: Readonly<
+		Pick<
+			ProcessBrowserOutputInput,
+			"artifactRunStartedAtMs" | "ctx" | "cwd" | "modelVisible" | "processResult" | "signal"
+		>
 	> & {
-		readonly input: Readonly<
+		readonly prepared: Readonly<
 			Pick<
-				ProcessBrowserOutputInput,
-				"artifactRunStartedAtMs" | "ctx" | "cwd" | "modelVisible" | "processResult" | "signal"
+				PreparedBrowserRun,
+				"commandTokens" | "executionPlan" | "processArgs" | "runtimeToolArgs" | "runtimeToolStdin"
 			>
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"commandTokens" | "executionPlan" | "processArgs" | "runtimeToolArgs" | "runtimeToolStdin"
-				>
-			>;
-			readonly state: BrowserRunState;
-		};
+		>;
+		readonly state: BrowserRunState;
 	};
-type RepairOutputScreenshotsInput = Pick<
-	NativeOutputPhase,
-	"batchScreenshotArtifactRequests" | "presentationEnvelope" | "screenshotArtifactRequest"
-> & {
+};
+type RepairOutputScreenshotsInput = Readonly<Pick<NativeOutputPhase, "presentationEnvelope">> & {
 	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd">> & {
 		readonly prepared: Readonly<Pick<PreparedBrowserRun, "preparedArgs">>;
 	};
 };
-type ResolveDispatchedCommandsInput = Readonly<Pick<NativeOutputPhase, "presentationEnvelope">> &
-	Pick<NativeOutputPhase, "batchCommandSteps" | "dispatchedCommands"> & {
-		readonly input: {
-			readonly prepared: Readonly<
-				Pick<PreparedBrowserRun, "commandTokens" | "executionPlan" | "runtimeToolStdin">
-			>;
-		};
+type ResolveDispatchedCommandsInput = Readonly<Pick<NativeOutputPhase, "presentationEnvelope">> & {
+	readonly input: {
+		readonly prepared: Readonly<
+			Pick<PreparedBrowserRun, "commandTokens" | "executionPlan" | "runtimeToolStdin">
+		>;
 	};
+};
 
-export async function parseNativeOutput(draft: ParseNativeOutputInput): Promise<void> {
-	draft.persistentArtifactStore = getPersistentSessionArtifactStore(draft.input.ctx);
-	draft.plainTextUpgrade =
+export async function parseNativeOutput(
+	draft: ParseNativeOutputInput,
+): Promise<
+	Pick<
+		NativeOutputPhase,
+		| "persistentArtifactStore"
+		| "plainTextUpgrade"
+		| "textOutput"
+		| "parsed"
+		| "parseError"
+		| "recordingStopRecovery"
+		| "presentationEnvelope"
+	>
+> {
+	const persistentArtifactStore = getPersistentSessionArtifactStore(draft.input.ctx);
+	const plainTextUpgrade =
 		!draft.input.prepared.executionPlan.plainTextInspection &&
 		draft.input.prepared.executionPlan.commandInfo.command === "upgrade" &&
 		!needsManagedSession(parseArgvDescriptor(draft.input.prepared.runtimeToolArgs));
-	draft.textOutput = getBooleanFlagValue(draft.input.prepared.processArgs, "--json") === false;
-	draft.parsed = await parseAgentBrowserEnvelope({
+	const textOutput = getBooleanFlagValue(draft.input.prepared.processArgs, "--json") === false;
+	const raw = await parseAgentBrowserEnvelope({
 		stdout: draft.input.processResult.stdout,
 		stdoutPath: draft.input.processResult.stdoutSpillPath,
-		plainText: draft.plainTextUpgrade,
-		textOutput: draft.textOutput,
+		plainText: plainTextUpgrade,
+		textOutput,
 	});
-	draft.parsed = {
-		...draft.parsed,
+	const parsed = {
+		...raw,
 		envelope: resolveIndexedBatchCommands(
-			draft.parsed.envelope,
+			raw.envelope,
 			draft.input.prepared.commandTokens,
 			draft.input.prepared.runtimeToolStdin,
 		),
 	};
-	observeNativeWebMcp(draft.parsed.envelope?.data);
-	draft.parseError = draft.parsed.parseError;
-	draft.recordingStopRecovery = await recoverRecordingStop({
+	observeNativeWebMcp(parsed.envelope?.data);
+	const recordingStopRecovery = await recoverRecordingStop({
 		modelVisible: draft.input.modelVisible,
 		artifactManifest: draft.artifactManifest,
 		artifactRunStartedAtMs: draft.input.artifactRunStartedAtMs,
 		commandTokens: draft.input.prepared.commandTokens,
 		cwd: draft.input.cwd,
-		envelope: draft.parsed.envelope,
+		envelope: parsed.envelope,
 		namespace: draft.input.prepared.executionPlan.namespace,
-		parseError: draft.parseError,
+		parseError: parsed.parseError,
 		processResult: draft.input.processResult,
 		reservation:
 			draft.input.prepared.executionPlan.sessionName !== undefined &&
@@ -109,34 +107,46 @@ export async function parseNativeOutput(draft: ParseNativeOutputInput): Promise<
 		signal: draft.input.signal,
 		stdin: draft.input.prepared.runtimeToolStdin,
 	});
-	draft.presentationEnvelope = draft.recordingStopRecovery?.envelope ?? draft.parsed.envelope;
+	return {
+		persistentArtifactStore,
+		plainTextUpgrade,
+		textOutput,
+		parsed,
+		parseError: parsed.parseError,
+		recordingStopRecovery,
+		presentationEnvelope: recordingStopRecovery?.envelope ?? parsed.envelope,
+	};
 }
 
-export async function repairOutputScreenshots(draft: RepairOutputScreenshotsInput): Promise<void> {
-	const repairedScreenshot: {
-		envelope?: AgentBrowserEnvelope | undefined;
-		request?: ScreenshotArtifactRequest | undefined;
-	} = await repairScreenshotArtifact({
+export async function repairOutputScreenshots(
+	draft: RepairOutputScreenshotsInput,
+): Promise<
+	Pick<
+		NativeOutputPhase,
+		"presentationEnvelope" | "screenshotArtifactRequest" | "batchScreenshotArtifactRequests"
+	>
+> {
+	const repairedScreenshot = await repairScreenshotArtifact({
 		cwd: draft.input.cwd,
 		envelope: draft.presentationEnvelope,
 		request: draft.input.prepared.preparedArgs.screenshotPathRequest,
 	});
-	draft.presentationEnvelope = repairedScreenshot.envelope;
-	const repairedBatchScreenshots: {
-		envelope?: AgentBrowserEnvelope | undefined;
-		requests?: readonly (ScreenshotArtifactRequest | undefined)[] | undefined;
-	} = await repairBatchScreenshotArtifacts({
+	const repairedBatchScreenshots = await repairBatchScreenshotArtifacts({
 		cwd: draft.input.cwd,
-		envelope: draft.presentationEnvelope,
+		envelope: repairedScreenshot.envelope,
 		requests: draft.input.prepared.preparedArgs.batchScreenshotPathRequests,
 	});
-	draft.presentationEnvelope = repairedBatchScreenshots.envelope;
-	draft.screenshotArtifactRequest = repairedScreenshot.request;
-	draft.batchScreenshotArtifactRequests = repairedBatchScreenshots.requests;
+	return {
+		presentationEnvelope: repairedBatchScreenshots.envelope,
+		screenshotArtifactRequest: repairedScreenshot.request,
+		batchScreenshotArtifactRequests: repairedBatchScreenshots.requests,
+	};
 }
 
-export function resolveDispatchedCommands(draft: ResolveDispatchedCommandsInput): void {
-	draft.batchCommandSteps =
+export function resolveDispatchedCommands(
+	draft: ResolveDispatchedCommandsInput,
+): Pick<NativeOutputPhase, "batchCommandSteps" | "dispatchedCommands"> {
+	const batchCommandSteps =
 		draft.input.prepared.executionPlan.commandInfo.command === "batch"
 			? getUpstreamEffectiveBatchSteps(
 					draft.input.prepared.commandTokens,
@@ -144,30 +154,30 @@ export function resolveDispatchedCommands(draft: ResolveDispatchedCommandsInput)
 				)
 			: [];
 	if (draft.input.prepared.executionPlan.commandInfo.command !== "batch") {
-		draft.dispatchedCommands = [draft.input.prepared.commandTokens];
-		return;
+		return { batchCommandSteps, dispatchedCommands: [draft.input.prepared.commandTokens] };
 	}
 	const data: unknown = draft.presentationEnvelope?.data;
 	if (!Array.isArray(data)) {
-		draft.dispatchedCommands = draft.batchCommandSteps;
-		return;
+		return { batchCommandSteps, dispatchedCommands: batchCommandSteps };
 	}
-	draft.dispatchedCommands = data.flatMap((row: unknown, index) => {
+	const dispatchedCommands = data.flatMap((row: unknown, index) => {
 		if (!isRecord(row)) {
 			return [];
 		}
-		const command = isStringArray(row.command)
-			? row.command
-			: (draft.batchCommandSteps[index] ?? []);
+		const command = isStringArray(row.command) ? row.command : (batchCommandSteps[index] ?? []);
 		return [command];
 	});
+	return { batchCommandSteps, dispatchedCommands };
 }
 
 async function repairScreenshotArtifact(options: {
 	readonly cwd: string;
-	readonly envelope?: Readonly<AgentBrowserEnvelope>;
-	readonly request?: ScreenshotPathRequest;
-}): Promise<{ envelope?: AgentBrowserEnvelope; request?: ScreenshotArtifactRequest }> {
+	readonly envelope?: Readonly<AgentBrowserEnvelope> | undefined;
+	readonly request?: ScreenshotPathRequest | undefined;
+}): Promise<{
+	envelope?: AgentBrowserEnvelope | undefined;
+	request?: ScreenshotArtifactRequest | undefined;
+}> {
 	const { cwd, envelope, request } = options;
 	if (!request || !envelope || !isRecord(envelope.data)) {
 		return { envelope, request };
@@ -178,11 +188,11 @@ async function repairScreenshotArtifact(options: {
 
 async function repairBatchScreenshotArtifacts(options: {
 	readonly cwd: string;
-	readonly envelope?: Readonly<AgentBrowserEnvelope>;
-	readonly requests?: readonly (ScreenshotPathRequest | undefined)[];
+	readonly envelope?: Readonly<AgentBrowserEnvelope> | undefined;
+	readonly requests?: readonly (ScreenshotPathRequest | undefined)[] | undefined;
 }): Promise<{
-	envelope?: AgentBrowserEnvelope;
-	readonly requests?: readonly (ScreenshotArtifactRequest | undefined)[];
+	envelope?: AgentBrowserEnvelope | undefined;
+	readonly requests?: readonly (ScreenshotArtifactRequest | undefined)[] | undefined;
 }> {
 	const { cwd, envelope, requests } = options;
 	if (

@@ -20,7 +20,7 @@ import type {
 
 export async function prepareElectronLaunch(
 	facts: {
-		readonly signal?: AbortSignal;
+		readonly signal?: AbortSignal | undefined;
 		readonly getOwnerSessionId: () => string | undefined;
 		readonly managedSessionActive: boolean;
 		readonly managedSessionName: string;
@@ -93,8 +93,8 @@ async function cleanupPreparationElectron(
 export async function cleanupPreparationResources(
 	state: BrowserRunState,
 	resources: {
-		readonly lock?: ManagedSessionPolicyLock;
-		readonly electronLaunch?: ElectronLaunchSuccess;
+		readonly lock?: ManagedSessionPolicyLock | undefined;
+		readonly electronLaunch?: ElectronLaunchSuccess | undefined;
 		readonly timeoutMs: number;
 	},
 ): Promise<void> {
@@ -144,7 +144,7 @@ export async function prepareArtifactArguments(
 	process: PreparationProcessFacts,
 	request: {
 		readonly args: readonly string[];
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 		readonly redactedArgs: readonly string[];
 	},
 ): Promise<

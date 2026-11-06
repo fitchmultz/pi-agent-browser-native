@@ -40,7 +40,6 @@ export async function findExecutableInPath(
 		}
 		const candidate = join(directory, command);
 		// PATH priority requires returning the first present file, not the fastest stat.
-		// oxlint-disable-next-line no-await-in-loop
 		if (await isFile(candidate)) {
 			return candidate;
 		}
@@ -65,7 +64,6 @@ class ElectronBinarySearch {
 		}
 		for (const candidate of this.candidates) {
 			// Keep DFS candidate order and stop at the first verified fallback executable.
-			// oxlint-disable-next-line no-await-in-loop
 			if (await hasLinuxElectronEvidence(candidate)) {
 				return resolveRealPath(candidate);
 			}
@@ -88,7 +86,6 @@ class ElectronBinarySearch {
 				return undefined;
 			}
 			// The shared entry budget and preferred-match DFS ordering require serialized traversal.
-			// oxlint-disable-next-line no-await-in-loop
 			const found = await this.inspectEntry(directory, entry, depth);
 			if (found !== undefined) {
 				return found;
@@ -125,7 +122,6 @@ export async function resolveSnapExecutable(
 	for (const snapName of new Set(names.filter((name) => name.length > 0))) {
 		const root = join(locations.snapMountDirectory, snapName, "current");
 		// Native package name priority determines which executable wins.
-		// oxlint-disable-next-line no-await-in-loop
 		const candidate = await new ElectronBinarySearch([
 			commandName,
 			commandName.split(".").at(-1) ?? commandName,
@@ -187,7 +183,6 @@ export async function resolveFlatpakExecutable(
 	const commandName = getFlatpakCommandName(tokens);
 	for (const root of getFlatpakRoots(entry, locations)) {
 		// Preserve user/system installation priority; each root has its own bounded scan.
-		// oxlint-disable-next-line no-await-in-loop
 		const candidate = await new ElectronBinarySearch(
 			commandName === undefined ? [] : [commandName],
 		).find(join(root, appId, "current", "active", "files"));

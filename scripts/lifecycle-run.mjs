@@ -36,27 +36,36 @@ import {
 	sendLine,
 } from "./lifecycle-tmux.mjs";
 
+/** @import {LifecycleResultReport, LifecycleToolResult} from "./lifecycle-transcript.mjs" */
+/** @typedef {{repoRoot?: string, model?: string, timeoutMs?: number, keepArtifacts?: boolean, verbose?: boolean}} LifecycleOptions */
+/** @typedef {Required<LifecycleOptions> & {tempRoot: string, artifactsDir: string, agentDir: string, sessionDir: string, packageDir: string, fakeBinDir: string, fakeStateDir: string, sessionId: string, tmuxSession: string}} LifecycleRuntime */
+
 const EXPECTED_URL = "https://react.dev/";
 const CODE_URL = "https://react.dev/learn";
 
+/** @param {boolean} condition @param {string} message @returns {asserts condition} */
 function assert(condition, message) {
 	if (!condition) {
 		throw new Error(message);
 	}
 }
 
+/** @param {string} filePath @param {string} label */
 async function assertFileExists(filePath, label) {
 	assert(await pathExists(filePath), `${label} does not exist: ${filePath}`);
 }
 
+/** @param {Readonly<Record<string, unknown>>} params */
 function buildToolInputPrompt(params, extra = "", tool = "agent_browser") {
 	return `Use exactly one ${tool} tool call with input ${JSON.stringify(params)}${extra} Do not use bash. After the tool result, briefly report the result.`;
 }
 
+/** @param {readonly string[]} args */
 function buildPrompt(args, extra = "") {
 	return buildToolInputPrompt({ args }, extra);
 }
 
+/** @param {Pick<LifecycleRuntime, 'timeoutMs' | 'tmuxSession' | 'verbose'> & {describe: string, prompt: string, sessionFile: string, predicate: (result: LifecycleToolResult) => boolean}} options */
 async function runPromptAndWaitForResult({
 	describe,
 	prompt,
@@ -88,6 +97,7 @@ async function runPromptAndWaitForResult({
 	return report;
 }
 
+/** @param {LifecycleRuntime} runtime @param {string} describe */
 async function waitForPrompt(runtime, describe) {
 	await waitFor({
 		describe,
@@ -99,6 +109,7 @@ async function waitForPrompt(runtime, describe) {
 	});
 }
 
+/** @param {LifecycleRuntime} runtime */
 async function initialLifecycle(runtime) {
 	const {
 		packageDir,
@@ -156,10 +167,11 @@ async function initialLifecycle(runtime) {
 	});
 }
 
+/** @param {LifecycleRuntime} runtime @param {LifecycleResultReport} openReport */
 async function reloadLifecycle(runtime, openReport) {
 	const { sessionFile } = openReport;
 	const { timeoutMs, tmuxSession, packageDir } = runtime;
-	assert(sessionFile, "Pi did not create a session file.");
+	assert(sessionFile !== "", "Pi did not create a session file.");
 	assert(
 		sessionHeaderId(openReport.entries) === runtime.sessionId,
 		`Pi session header id ${JSON.stringify(sessionHeaderId(openReport.entries))} did not match requested lifecycle session id ${JSON.stringify(runtime.sessionId)}.`,
@@ -213,7 +225,7 @@ async function reloadLifecycle(runtime, openReport) {
 		"Post-reload snapshot used a different managed session name.",
 	);
 	assert(
-		reloadSnapshot.result.details?.usedImplicitSession === true,
+		reloadSnapshot.result.details.usedImplicitSession === true,
 		"Post-reload snapshot did not reuse the managed session.",
 	);
 	const largeReport = await runPromptAndWaitForResult({
@@ -228,6 +240,7 @@ async function reloadLifecycle(runtime, openReport) {
 	return { sessionFile, sessionName, fullOutputPath };
 }
 
+/** @param {LifecycleRuntime} runtime @param {Awaited<ReturnType<typeof reloadLifecycle>>} observed */
 async function resumeLifecycle(runtime, observed) {
 	const { artifactsDir, tmuxSession, timeoutMs } = runtime;
 	const { sessionFile, sessionName, fullOutputPath } = observed;
@@ -256,7 +269,7 @@ async function resumeLifecycle(runtime, observed) {
 		"Post-relaunch snapshot used a different managed session name.",
 	);
 	assert(
-		resumeSnapshot.result.details?.usedImplicitSession === true,
+		resumeSnapshot.result.details.usedImplicitSession === true,
 		"Post-relaunch snapshot did not reuse the managed session.",
 	);
 	await assertFileExists(fullOutputPath, "Previously persisted fullOutputPath after relaunch");
@@ -265,9 +278,9 @@ async function resumeLifecycle(runtime, observed) {
 		describe: "qa reclassification failure patch",
 		prompt: `First use agent_browser_tools with {"enable":["qa"]}. Then ${buildToolInputPrompt({ url: "https://fail.example.test/", expectedText: ["Welcome"], expectedSelector: "main" }, "", "agent_browser_qa")}`,
 		predicate: (result) =>
-			result?.details?.failureCategory === "qa-failure" &&
-			result?.details?.resultCategory === "failure" &&
-			result?.isError === true,
+			result.details?.failureCategory === "qa-failure" &&
+			result.details.resultCategory === "failure" &&
+			result.isError === true,
 	});
 	const qaText = resultText(qaFailureReport.result);
 	assert(
@@ -283,19 +296,21 @@ async function resumeLifecycle(runtime, observed) {
 	await capturePane(tmuxSession, join(artifactsDir, "success-pane.txt"));
 }
 
+/** @param {LifecycleRuntime} runtime @param {string | undefined} sessionFile */
 async function captureFailure(runtime, sessionFile) {
 	const { artifactsDir, tmuxSession } = runtime;
 	await mkdir(artifactsDir, { recursive: true }).catch(() => {
 		// Preserve the original failure if evidence storage cannot be created.
 	});
 	await capturePane(tmuxSession, join(artifactsDir, "failure-pane.txt"));
-	if (sessionFile && (await pathExists(sessionFile))) {
+	if (sessionFile !== undefined && sessionFile !== "" && (await pathExists(sessionFile))) {
 		await cp(sessionFile, join(artifactsDir, basename(sessionFile))).catch(() => {
 			// The original failure remains authoritative if its transcript copy fails.
 		});
 	}
 }
 
+/** @param {LifecycleRuntime} runtime @param {boolean} failure */
 async function cleanupLifecycle(runtime, failure) {
 	const { artifactsDir, tmuxSession, tempRoot } = runtime;
 	await capturePane(tmuxSession, join(artifactsDir, "final-pane.txt")).catch(() => {
@@ -311,7 +326,6 @@ async function cleanupLifecycle(runtime, failure) {
 			runtime.agentDir,
 		]) {
 			// Remove one task-owned runtime tree at a time after Pi has stopped, bounding cleanup I/O.
-			// oxlint-disable-next-line no-await-in-loop
 			await rm(path, { force: true, recursive: true });
 		}
 	} else {
@@ -321,6 +335,7 @@ async function cleanupLifecycle(runtime, failure) {
 	}
 }
 
+/** @param {LifecycleOptions} options */
 export async function verifyLifecycle(options = {}) {
 	const tempRoot = await mkdtemp(join(tmpdir(), "piab-lifecycle-"));
 	const sessionId = createLifecycleSessionId(process.pid);
@@ -341,7 +356,7 @@ export async function verifyLifecycle(options = {}) {
 		tmuxSession: sessionId,
 	};
 	let sessionFile;
-	let failure;
+	let failure = false;
 	try {
 		const openReport = await initialLifecycle(runtime);
 		sessionFile = openReport.sessionFile;
@@ -349,7 +364,7 @@ export async function verifyLifecycle(options = {}) {
 		await resumeLifecycle(runtime, observed);
 		return { artifactsDir: runtime.artifactsDir, ...observed, sessionId, tempRoot };
 	} catch (error) {
-		failure = error;
+		failure = Boolean(error);
 		await captureFailure(runtime, sessionFile);
 		throw error;
 	} finally {

@@ -90,7 +90,6 @@ async function inspectDirectory(
 		}
 		try {
 			// Preserve desktop-file priority and bound concurrent package scans to one.
-			// oxlint-disable-next-line no-await-in-loop
 			const app = await inspectLinuxDesktopFile(join(directory, entry.name), locations);
 			if (app) {
 				apps.push(app);
@@ -108,7 +107,6 @@ export async function discoverLinuxApps(
 	let skippedCount = 0;
 	for (const directory of locations.linuxDesktopDirectories) {
 		// Location order determines which duplicate desktop entry is retained.
-		// oxlint-disable-next-line no-await-in-loop
 		const scan = await inspectDirectory(directory, locations);
 		apps.push(...scan.apps);
 		skippedCount += scan.skippedCount;

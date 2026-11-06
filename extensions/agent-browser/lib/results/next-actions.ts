@@ -23,8 +23,9 @@ export function withOptionalSessionArgs(
 	) {
 		return args;
 	}
-	if (args[0] === "--namespace" && args.length >= 2) {
-		return [args[0], args[1], "--session", sessionName, ...args.slice(2)];
+	const namespace = args[1];
+	if (args[0] === "--namespace" && namespace !== undefined) {
+		return [args[0], namespace, "--session", sessionName, ...args.slice(2)];
 	}
 	return ["--session", sessionName, ...args];
 }
@@ -141,7 +142,7 @@ export function isStandaloneSnapshotNextAction(action: AgentBrowserNextAction): 
 }
 
 export function alignPageChangeSummaryNextActionIds<
-	T extends { readonly nextActionIds?: readonly string[] },
+	T extends { readonly nextActionIds?: readonly string[] | undefined },
 >(
 	summary: T | undefined,
 	nextActions: readonly AgentBrowserNextAction[] | undefined,

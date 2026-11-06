@@ -13,7 +13,6 @@ import {
 	inspectManagedSessionDaemon,
 	type ManagedSessionDaemonInspection,
 } from "./managed-session-daemon-policy.js";
-import { applyBrowserRunStatePatch } from "./session-state.js";
 
 type ObservedBatchStepsInput = Readonly<Pick<LifecycleOutputPhase, "presentationEnvelope">>;
 type CommitObservedLifecycleInput = Readonly<
@@ -69,17 +68,12 @@ type NeedsDaemonReceiptInput = Readonly<
 		readonly state: BrowserRunState;
 	};
 };
-type BindDaemonEvidenceInput = Pick<PublicationOutputPhase, "currentRefSnapshot"> & {
+type BindDaemonEvidenceInput = {
 	readonly input: {
 		readonly prepared: Readonly<
 			Pick<PreparedBrowserRun, "executionPlan" | "ownedManagedSessionContext">
 		>;
 		readonly state: BrowserRunState;
-	};
-};
-type HasNewSnapshotInput = Readonly<Pick<PublicationOutputPhase, "authoritativePageState">> & {
-	readonly input: {
-		readonly prepared: Readonly<Pick<PreparedBrowserRun, "priorRefSnapshotState">>;
 	};
 };
 type DaemonReceiptIdentityInput = Readonly<Pick<PublicationOutputPhase, "sessionStateKey">> & {
@@ -95,23 +89,20 @@ type BindOutputDaemonReceiptInput = Readonly<
 		PublicationOutputPhase,
 		"commandClosesSession" | "managedSessionOutcome" | "sessionStateKey" | "succeeded"
 	>
-> &
-	Pick<PublicationOutputPhase, "authoritativePageState" | "currentRefSnapshot"> & {
-		readonly input: Readonly<
-			Pick<ProcessBrowserOutputInput, "cwd" | "processResult" | "signal">
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					| "executionPlan"
-					| "ownedManagedSessionContext"
-					| "priorRefSnapshotState"
-					| "processTimeoutMs"
-				>
-			>;
-			readonly state: BrowserRunState;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "processResult" | "signal">> & {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				| "executionPlan"
+				| "ownedManagedSessionContext"
+				| "priorRefSnapshotState"
+				| "processTimeoutMs"
+			>
+		>;
+		readonly state: BrowserRunState;
 	};
+};
 type ConfirmedSnapshotEvidenceCompleteInput = Readonly<
 	Pick<
 		PublicationOutputPhase,
@@ -137,7 +128,7 @@ type MarkFreshConfirmedSnapshotInput = Readonly<
 		| "unobservedMutation"
 	>
 > &
-	Pick<PublicationOutputPhase, "presentation" | "readConfirmationEvent"> & {
+	Readonly<Pick<PublicationOutputPhase, "readConfirmationEvent">> & {
 		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
 			readonly state: BrowserRunState;
 		};
@@ -155,13 +146,7 @@ type PublishConfirmedSnapshotInput = Readonly<
 		| "unobservedMutation"
 	>
 > &
-	Pick<
-		PublicationOutputPhase,
-		| "currentSessionTabTarget"
-		| "currentSessionTabTargetUnknown"
-		| "presentation"
-		| "readConfirmationEvent"
-	> & {
+	Readonly<Pick<PublicationOutputPhase, "readConfirmationEvent">> & {
 		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
 			readonly state: BrowserRunState;
 		};
@@ -206,8 +191,8 @@ function observedBatchSteps(draft: ObservedBatchStepsInput): ObservedBatchStep[]
 export function commitObservedLifecycle(draft: CommitObservedLifecycleInput): void {
 	const { prepared, state, processResult } = draft.input;
 	// Native ownership must be committed before rendering or result export can fail.
-	applyBrowserRunStatePatch(state, buildOutputStatePatch(draft));
-	state.observedBrowserEffects = {
+	state.applyPatch(buildOutputStatePatch(draft));
+	state.recordBrowserEffects({
 		args: prepared.redactedArgs,
 		command: draft.directClose ? "close" : prepared.executionPlan.commandInfo.command,
 		subcommand: draft.directClose ? undefined : prepared.executionPlan.commandInfo.subcommand,
@@ -235,7 +220,7 @@ export function commitObservedLifecycle(draft: CommitObservedLifecycleInput): vo
 			? { launch: draft.electronLaunchRecord, cleanup: draft.electronFailedConnectCleanup }
 			: undefined,
 		batchSteps: observedBatchSteps(draft),
-	};
+	});
 }
 
 function managedLaunchRetained(draft: ManagedLaunchRetainedInput): boolean {
@@ -268,14 +253,15 @@ function bindDaemonEvidence(
 	daemon: Readonly<ManagedSessionDaemonInspection>,
 	sessionKey: string,
 	newSnapshot: boolean,
-): void {
+): Pick<PublicationOutputPhase, "currentRefSnapshot"> | undefined {
 	const { prepared, state } = draft.input;
+	let snapshotUpdate: Pick<PublicationOutputPhase, "currentRefSnapshot"> | undefined;
 	if (newSnapshot) {
 		state.sessionPageState.bindSnapshotGeneration(
 			sessionKey,
 			daemon.status === "active" ? daemon.generation : undefined,
 		);
-		draft.currentRefSnapshot = state.sessionPageState.get(sessionKey).refSnapshot;
+		snapshotUpdate = { currentRefSnapshot: state.sessionPageState.get(sessionKey).refSnapshot };
 	}
 	if (
 		prepared.ownedManagedSessionContext &&
@@ -290,14 +276,15 @@ function bindDaemonEvidence(
 			daemon.generation,
 		);
 	}
+	return snapshotUpdate;
 }
 
-function hasNewSnapshot(draft: HasNewSnapshotInput): boolean {
-	const snapshot = draft.authoritativePageState?.refSnapshot;
-	return (
-		snapshot !== undefined &&
-		snapshot.snapshotId !== draft.input.prepared.priorRefSnapshotState?.snapshotId
-	);
+function hasNewSnapshot(
+	page: PublicationOutputPhase["authoritativePageState"],
+	prior: PreparedBrowserRun["priorRefSnapshotState"],
+): boolean {
+	const snapshot = page?.refSnapshot;
+	return snapshot !== undefined && snapshot.snapshotId !== prior?.snapshotId;
 }
 
 function daemonReceiptIdentity(
@@ -324,18 +311,23 @@ function daemonAutosaveInterval(draft: DaemonAutosaveIntervalInput): string | un
 	);
 }
 
-export async function bindOutputDaemonReceipt(draft: BindOutputDaemonReceiptInput): Promise<void> {
+export async function bindOutputDaemonReceipt(
+	draft: BindOutputDaemonReceiptInput,
+): Promise<
+	Pick<PublicationOutputPhase, "authoritativePageState"> &
+		Partial<Pick<PublicationOutputPhase, "currentRefSnapshot">>
+> {
 	const sessionKey = draft.sessionStateKey;
 	const { prepared, state, cwd, signal } = draft.input;
-	draft.authoritativePageState =
+	const authoritativePageState =
 		sessionKey !== undefined && sessionKey.length > 0
 			? state.sessionPageState.get(sessionKey)
 			: undefined;
-	const newSnapshot = hasNewSnapshot(draft);
+	const newSnapshot = hasNewSnapshot(authoritativePageState, prepared.priorRefSnapshotState);
 	const receiptNeeded = needsDaemonReceipt(draft);
 	const identity = daemonReceiptIdentity(draft);
 	if (!identity || (!newSnapshot && !receiptNeeded)) {
-		return;
+		return { authoritativePageState };
 	}
 	const { sessionKey: key, sessionName } = identity;
 	const daemon = await inspectManagedSessionDaemon({
@@ -347,7 +339,7 @@ export async function bindOutputDaemonReceipt(draft: BindOutputDaemonReceiptInpu
 		headedManagedAutosaveInterval: daemonAutosaveInterval(draft),
 		timeoutMs: prepared.processTimeoutMs,
 	});
-	bindDaemonEvidence(draft, daemon, key, newSnapshot);
+	return { authoritativePageState, ...bindDaemonEvidence(draft, daemon, key, newSnapshot) };
 }
 
 function confirmedSnapshotEvidenceComplete(draft: ConfirmedSnapshotEvidenceCompleteInput): boolean {
@@ -373,7 +365,9 @@ function lastRowConfirmedSnapshot(draft: LastRowConfirmedSnapshotInput): boolean
 	);
 }
 
-function markFreshConfirmedSnapshot(draft: MarkFreshConfirmedSnapshotInput): void {
+function markFreshConfirmedSnapshot(
+	draft: MarkFreshConfirmedSnapshotInput,
+): PublicationOutputPhase["readConfirmationEvent"] {
 	const confirmation = draft.readConfirmationEvent;
 	if (
 		confirmation?.state !== "cleared" ||
@@ -385,23 +379,29 @@ function markFreshConfirmedSnapshot(draft: MarkFreshConfirmedSnapshotInput): voi
 	if (!confirmedSnapshotEvidenceComplete(draft) || !lastRowConfirmedSnapshot(draft)) {
 		return;
 	}
-	draft.readConfirmationEvent = { ...confirmation, refSnapshotFresh: true };
-	draft.presentation.readConfirmation = draft.readConfirmationEvent;
+	const readConfirmationEvent: PublicationOutputPhase["readConfirmationEvent"] = {
+		...confirmation,
+		refSnapshotFresh: true,
+	};
 	draft.input.state.sessionPageState.applyReadConfirmation(
-		draft.readConfirmationEvent,
+		readConfirmationEvent,
 		draft.input.sessionPageStateUpdate,
 	);
-	draft.input.state.observedBrowserEffects = {
-		...draft.input.state.observedBrowserEffects,
-		readConfirmation: draft.readConfirmationEvent,
-	};
+	draft.input.state.recordReadConfirmation(readConfirmationEvent);
+	return readConfirmationEvent;
 }
 
-export function publishConfirmedSnapshot(draft: PublishConfirmedSnapshotInput): void {
-	markFreshConfirmedSnapshot(draft);
-	if (draft.sessionStateKey !== undefined && draft.sessionStateKey.length > 0) {
-		draft.currentSessionTabTarget = draft.authoritativePageState?.tabTarget;
-	}
-	draft.currentSessionTabTargetUnknown =
-		draft.authoritativePageState?.tabTargetUnknown === true ? true : undefined;
+export function publishConfirmedSnapshot(
+	draft: PublishConfirmedSnapshotInput,
+): Pick<PublicationOutputPhase, "currentSessionTabTargetUnknown"> &
+	Partial<Pick<PublicationOutputPhase, "currentSessionTabTarget" | "readConfirmationEvent">> {
+	const readConfirmationEvent = markFreshConfirmedSnapshot(draft);
+	return {
+		...(readConfirmationEvent ? { readConfirmationEvent } : {}),
+		...(draft.sessionStateKey !== undefined && draft.sessionStateKey.length > 0
+			? { currentSessionTabTarget: draft.authoritativePageState?.tabTarget }
+			: {}),
+		currentSessionTabTargetUnknown:
+			draft.authoritativePageState?.tabTargetUnknown === true ? true : undefined,
+	};
 }

@@ -137,7 +137,6 @@ export async function convertBrowserSession(
 		);
 		for (const entry of metadata) {
 			// Native ancestry and output byte ordering require each entry to finish before the next.
-			// oxlint-disable-next-line no-await-in-loop
 			await writer.write(entry, initial.size);
 		}
 		await stage.sync();

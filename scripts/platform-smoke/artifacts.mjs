@@ -3,20 +3,37 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 
+/** @import { ProcessResult } from "./crabbox-runner.mjs" */
+/** @typedef {Pick<ProcessResult, "code" | "signal"> & {readonly stdout?: ProcessResult["stdout"] | undefined; readonly stderr?: ProcessResult["stderr"] | undefined}} ProcessReceipt */
+
+/** @param {string} artifactRoot
+ * @param {string} runId
+ * @param {string} targetName
+ * @param {string} suiteName */
 export function createSuiteDir(artifactRoot, runId, targetName, suiteName) {
 	const dir = resolve(process.cwd(), artifactRoot, runId, targetName, suiteName);
 	mkdirSync(dir, { recursive: true });
 	return dir;
 }
 
+/** @param {string} dir
+ * @param {string} command */
 export function writeCommand(dir, command) {
 	writeFileSync(resolve(dir, "command.txt"), `${command}\n`);
 }
 
+/** @param {string} dir
+ * @param {ProcessReceipt["code"]} code
+ * @param {ProcessReceipt["signal"]} signal */
 export function writeExitCode(dir, code, signal) {
-	writeFileSync(resolve(dir, "exit-code.txt"), `code=${code}\nsignal=${signal ?? "none"}\n`);
+	writeFileSync(
+		resolve(dir, "exit-code.txt"),
+		`code=${String(code)}\nsignal=${signal ?? "none"}\n`,
+	);
 }
 
+/** @param {string} dir
+ * @param {Readonly<Record<string, unknown>>} data */
 export function writeSummary(dir, data) {
 	writeFileSync(
 		resolve(dir, "summary.json"),
@@ -24,8 +41,12 @@ export function writeSummary(dir, data) {
 	);
 }
 
+/** @param {string} dir
+ * @param {readonly string[]} expectedFiles */
 export function writeManifest(dir, expectedFiles) {
+	/** @type {string[]} */
 	const present = [];
+	/** @param {string} current */
 	function walk(current) {
 		for (const entry of readdirSync(current, { withFileTypes: true })) {
 			const path = resolve(current, entry.name);
@@ -39,7 +60,9 @@ export function writeManifest(dir, expectedFiles) {
 	if (existsSync(dir)) {
 		walk(dir);
 	}
-	const allPresent = [...new Set([...present, "artifact-manifest.json"])].sort();
+	const allPresent = [...new Set([...present, "artifact-manifest.json"])].sort((left, right) =>
+		left < right ? -1 : Number(left > right),
+	);
 	const manifest = {
 		expected: expectedFiles,
 		present: allPresent,
@@ -50,40 +73,50 @@ export function writeManifest(dir, expectedFiles) {
 	return manifest;
 }
 
+/** @param {readonly string[]} envNames
+ * @param {Readonly<NodeJS.ProcessEnv>} env */
 export function collectSecretValues(envNames, env = process.env) {
 	return [
 		...new Set(
-			envNames
-				.map((name) => env[name])
-				.filter((value) => typeof value === "string" && value.length >= 8),
+			envNames.flatMap((name) => {
+				const value = env[name];
+				return typeof value === "string" && value.length >= 8 ? [value] : [];
+			}),
 		),
 	];
 }
 
+/** @param {string | null | undefined} text
+ * @param {Iterable<string>} secretValues */
 export function redactSecrets(text, secretValues = []) {
-	let redacted = String(text ?? "");
+	let redacted = text ?? "";
 	for (const secret of secretValues) {
 		redacted = redacted.split(secret).join("[REDACTED_SECRET]");
 	}
 	return redacted;
 }
 
+/** @param {string | null | undefined} text
+ * @param {Iterable<string>} secretValues */
 export function scanForSecrets(text, secretValues = []) {
-	const content = String(text ?? "");
+	const content = text ?? "";
+	/** @type {string[]} */
 	const violations = [];
 	for (const secret of secretValues) {
-		if (secret && content.includes(secret)) {
+		if (secret.length > 0 && content.includes(secret)) {
 			violations.push("raw forwarded secret value");
 		}
 	}
-	for (const [pattern, label] of [
+	/** @type {readonly (readonly [RegExp, string])[]} */
+	const patterns = [
 		[/bearer\s+[A-Za-z0-9\-._~+/]{20,}=*/gi, "bearer token"],
 		[/Authorization:\s*Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*/gi, "authorization header"],
 		[
 			/(?:api[_-]?key|access[_-]?token|refresh[_-]?token|cookie)\s*[:=]\s*["']?[A-Za-z0-9_./+\-=]{20,}/gi,
 			"token-like field",
 		],
-	]) {
+	];
+	for (const [pattern, label] of patterns) {
 		if (pattern.test(content)) {
 			violations.push(label);
 		}
@@ -91,8 +124,12 @@ export function scanForSecrets(text, secretValues = []) {
 	return [...new Set(violations)];
 }
 
+/** @param {string} dir
+ * @param {Iterable<string>} secretValues */
 export function scanArtifactTextFiles(dir, secretValues = []) {
+	/** @type {{file: string, violation: string}[]} */
 	const findings = [];
+	/** @param {string} current */
 	function walk(current) {
 		for (const entry of readdirSync(current, { withFileTypes: true })) {
 			const path = resolve(current, entry.name);

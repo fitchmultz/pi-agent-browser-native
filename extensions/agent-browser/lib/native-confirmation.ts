@@ -8,7 +8,7 @@ function isNonemptyString(value: unknown): value is string {
 
 function confirmationIdentity(
 	value: Readonly<Record<string, unknown>>,
-): { id: string; sessionName: string; namespace?: string } | undefined {
+): { id: string; sessionName: string; namespace?: string | undefined } | undefined {
 	if (
 		!isNonemptyString(value.id) ||
 		!isNonemptyString(value.sessionName) ||

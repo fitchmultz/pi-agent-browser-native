@@ -39,14 +39,14 @@ import {
 } from "./diagnostics.js";
 
 export interface PageDiagnostics {
-	readonly comboboxFocusDiagnostic?: ComboboxFocusDiagnostic;
+	readonly comboboxFocusDiagnostic?: ComboboxFocusDiagnostic | undefined;
 	readonly electronBroadGetTextScopeDiagnostics: readonly ElectronBroadGetTextScopeDiagnostic[];
-	readonly electronRefFreshnessDiagnostic?: ElectronRefFreshnessDiagnostic;
-	readonly fillVerificationDiagnostic?: FillVerificationDiagnostic;
-	readonly networkRouteDiagnostics?: readonly NetworkRouteDiagnostic[];
-	readonly overlayBlockerDiagnostic?: OverlayBlockerDiagnostic;
-	readonly recordingDependencyWarning?: RecordingDependencyWarning;
-	readonly scrollNoopDiagnostic?: ScrollNoopDiagnostic;
+	readonly electronRefFreshnessDiagnostic?: ElectronRefFreshnessDiagnostic | undefined;
+	readonly fillVerificationDiagnostic?: FillVerificationDiagnostic | undefined;
+	readonly networkRouteDiagnostics?: readonly NetworkRouteDiagnostic[] | undefined;
+	readonly overlayBlockerDiagnostic?: OverlayBlockerDiagnostic | undefined;
+	readonly recordingDependencyWarning?: RecordingDependencyWarning | undefined;
+	readonly scrollNoopDiagnostic?: ScrollNoopDiagnostic | undefined;
 	readonly selectorTextVisibilityDiagnostics: readonly SelectorTextVisibilityDiagnostic[];
 }
 
@@ -310,7 +310,7 @@ async function observeScrollMovement(
 }
 
 export interface NetworkRouteStateInput {
-	readonly routes?: readonly NetworkRouteRecord[];
+	readonly routes?: readonly NetworkRouteRecord[] | undefined;
 	readonly routesBySession: ReadonlyMap<string, readonly NetworkRouteRecord[]>;
 	readonly sessionName: string | undefined;
 }

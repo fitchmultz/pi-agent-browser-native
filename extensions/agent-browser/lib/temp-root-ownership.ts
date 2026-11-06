@@ -14,8 +14,8 @@ export interface TempRootOwnershipRecord {
 	readonly kind: string;
 	readonly leaseUpdatedAtMs?: number;
 	readonly ownerPid?: number;
-	readonly ownerProcessStartIdentity?: string;
-	readonly ownerUid?: number;
+	readonly ownerProcessStartIdentity?: string | undefined;
+	readonly ownerUid?: number | undefined;
 	readonly protectedChildNames?: readonly string[];
 	readonly version: number;
 }
@@ -119,7 +119,6 @@ export function getProtectedTempChildName(tempRoot: string, childPath: string): 
 	}
 	const childName = basename(normalizedChildPath);
 	// A string can still be an unsafe child name; validation checks separators and reserved names.
-	// oxlint-disable-next-line typescript/no-unnecessary-condition
 	return isProtectedTempChildName(childName) ? childName : undefined;
 }
 
@@ -150,7 +149,9 @@ async function writeTempRootOwnershipMarkerRecord(
 		flag: options.flag,
 		mode: 0o600,
 	});
-	await chmod(markerPath, 0o600).catch(() => undefined);
+	await chmod(markerPath, 0o600).catch((): undefined => {
+		// Creation already requested 0600; the follow-up chmod is best effort.
+	});
 	return markerPath;
 }
 
@@ -195,7 +196,6 @@ export async function getExistingProtectedChildren(
 		}
 		if (
 			// Scan in bounded sequence instead of opening an unbounded number of filesystem requests.
-			// oxlint-disable-next-line no-await-in-loop
 			await stat(normalizedPath).then(
 				(stats) => stats.isDirectory(),
 				() => false,
@@ -221,7 +221,9 @@ export async function removeTempRootChildrenExcept(
 			if (protectedChildren.has(resolve(entryPath))) {
 				return;
 			}
-			await rm(entryPath, { force: true, recursive: true }).catch(() => undefined);
+			await rm(entryPath, { force: true, recursive: true }).catch((): undefined => {
+				// Keep cleaning other owned children if one child cannot be removed.
+			});
 		}),
 	);
 }

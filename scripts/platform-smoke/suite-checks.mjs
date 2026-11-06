@@ -1,6 +1,14 @@
 /** Platform and browser evidence predicates; no success is inferred from process exit alone. */
 import { marker, platformFor, section } from "./suite-evidence.mjs";
 
+/** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
+/** @import { ProcessResult } from "./crabbox-runner.mjs" */
+/** @import { ReleaseCandidate } from "./commands.mjs" */
+/** @import { SuiteCheck } from "./suite-evidence.mjs" */
+
+/** @param {string} actual
+ * @param {string} minimum
+ */
 export function nodeVersionAtLeast(actual, minimum) {
 	return (
 		/^v?\d+\.\d+\.\d+$/.test(actual) &&
@@ -8,9 +16,14 @@ export function nodeVersionAtLeast(actual, minimum) {
 	);
 }
 
+/** @param {ProcessResult} result
+ * @param {readonly string[]} secretViolations
+ * @param {ProcessResult | undefined} stopResult
+ * @returns {[SuiteCheck, SuiteCheck, ...SuiteCheck[]]}
+ */
 export function commonChecks(result, secretViolations, stopResult) {
 	return [
-		{ id: "command-exit-zero", fn: () => result.code === 0, error: `exit ${result.code}` },
+		{ id: "command-exit-zero", fn: () => result.code === 0, error: `exit ${String(result.code)}` },
 		{
 			id: "no-secret-artifacts",
 			fn: () => secretViolations.length === 0,
@@ -21,13 +34,18 @@ export function commonChecks(result, secretViolations, stopResult) {
 					{
 						id: "lease-cleanup",
 						fn: () => stopResult.code === 0,
-						error: `stop exit ${stopResult.code}`,
+						error: `stop exit ${String(stopResult.code)}`,
 					},
 				]
 			: []),
 	];
 }
 
+/** @param {Pick<PlatformSmokeConfig, "packageName" | "nodeValidationVersion">} config
+ * @param {ProcessResult} result
+ * @param {ReleaseCandidate} [candidate]
+ * @returns {SuiteCheck[]}
+ */
 export function platformBuildChecks(config, result, candidate) {
 	const stdout = result.stdout;
 	const listOutput = section(stdout, "PI_LIST_STDOUT");
@@ -38,7 +56,7 @@ export function platformBuildChecks(config, result, candidate) {
 		{
 			id: "node-version",
 			fn: () => nodeVersionAtLeast(nodeVersion, config.nodeValidationVersion),
-			error: `Node ${nodeVersion || "unknown"} < ${config.nodeValidationVersion}`,
+			error: `Node ${nodeVersion.length > 0 ? nodeVersion : "unknown"} < ${config.nodeValidationVersion}`,
 		},
 		{ id: "npm-ci", fn: () => /PLATFORM_NPM_CI_EXIT=0/.test(stdout) },
 		{ id: "npm-run-verify", fn: () => /PLATFORM_VERIFY_EXIT=0/.test(stdout) },
@@ -73,9 +91,23 @@ export function platformBuildChecks(config, result, candidate) {
 	];
 }
 
+/** @param {string} targetName
+ * @param {ProcessResult} result
+ * @param {unknown} dogfoodReport
+ * @returns {SuiteCheck[]}
+ */
 export function browserDogfoodChecks(targetName, result, dogfoodReport) {
 	const platform = platformFor(targetName);
-	const reportIds = new Set((dogfoodReport.reports ?? []).map((report) => report.id));
+	const reports =
+		typeof dogfoodReport === "object" && dogfoodReport !== null && "reports" in dogfoodReport
+			? dogfoodReport.reports
+			: undefined;
+	const reportRows = Array.isArray(reports) ? reports : [];
+	const reportIds = new Set(
+		reportRows.map((/** @type {unknown} */ report) =>
+			typeof report === "object" && report !== null && "id" in report ? report.id : undefined,
+		),
+	);
 	return [
 		{
 			id: "browser-dogfood-marker",
@@ -100,7 +132,8 @@ export function browserDogfoodChecks(targetName, result, dogfoodReport) {
 		{ id: "dogfood-exit-zero", fn: () => /PLATFORM_DOGFOOD_EXIT=0/.test(result.stdout) },
 		{
 			id: "dogfood-report",
-			fn: () => Array.isArray(dogfoodReport.reports) && dogfoodReport.reports.length >= 5,
+			fn: () =>
+				Array.isArray(reports) && reports.length >= 5 && reports.every((report) => report !== null),
 		},
 		{ id: "dogfood-qa", fn: () => reportIds.has("qa-url") },
 		{ id: "dogfood-session-close", fn: () => reportIds.has("close-session") },

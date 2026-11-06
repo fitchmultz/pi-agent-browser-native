@@ -99,32 +99,32 @@ export type AgentBrowserNetworkSourceLookupStatus =
 export type CompiledAgentBrowserElectron =
 	| {
 			readonly action: "list";
-			readonly maxResults?: number;
-			readonly query?: string;
+			readonly maxResults?: number | undefined;
+			readonly query?: string | undefined;
 	  }
 	| {
 			readonly action: "launch";
-			readonly allow?: readonly string[];
-			readonly appArgs?: readonly string[];
-			readonly deny?: readonly string[];
-			readonly appName?: string;
-			readonly appPath?: string;
-			readonly bundleId?: string;
-			readonly executablePath?: string;
+			readonly allow?: readonly string[] | undefined;
+			readonly appArgs?: readonly string[] | undefined;
+			readonly deny?: readonly string[] | undefined;
+			readonly appName?: string | undefined;
+			readonly appPath?: string | undefined;
+			readonly bundleId?: string | undefined;
+			readonly executablePath?: string | undefined;
 			readonly handoff: "connect" | "snapshot" | "tabs";
 			readonly targetType: "any" | "page" | "webview";
-			readonly timeoutMs?: number;
+			readonly timeoutMs?: number | undefined;
 	  }
 	| {
 			readonly action: "cleanup" | "status";
-			readonly all?: boolean;
-			readonly launchId?: string;
-			readonly timeoutMs?: number;
+			readonly all?: boolean | undefined;
+			readonly launchId?: string | undefined;
+			readonly timeoutMs?: number | undefined;
 	  }
 	| {
 			readonly action: "probe";
-			readonly launchId?: string;
-			readonly timeoutMs?: number;
+			readonly launchId?: string | undefined;
+			readonly timeoutMs?: number | undefined;
 	  };
 
 export interface CompiledAgentBrowserSemanticAction {
@@ -156,10 +156,10 @@ export interface CompiledAgentBrowserQaPreset extends CompiledAgentBrowserJob {
 		readonly diagnosticsResetAtStart: boolean;
 		readonly loadState: AgentBrowserQaLoadState;
 		readonly expectedText: readonly string[];
-		readonly expectedSelector?: string;
-		readonly screenshotPath?: string;
+		readonly expectedSelector?: string | undefined;
+		readonly screenshotPath?: string | undefined;
 		readonly attached: boolean;
-		readonly url?: string;
+		readonly url?: string | undefined;
 	};
 }
 
@@ -173,44 +173,44 @@ export interface CompiledAgentBrowserSourceLookup {
 	readonly stdin: string;
 	readonly steps: readonly CompiledAgentBrowserSourceLookupStep[];
 	readonly query: {
-		readonly componentName?: string;
+		readonly componentName?: string | undefined;
 		readonly includeDomHints: boolean;
 		readonly maxWorkspaceFiles: number;
-		readonly reactFiberId?: string;
-		readonly selector?: string;
+		readonly reactFiberId?: string | undefined;
+		readonly selector?: string | undefined;
 	};
 }
 
 export interface AgentBrowserSourceLookupCandidate {
-	readonly column?: number;
+	readonly column?: number | undefined;
 	readonly componentName?: string;
 	readonly confidence: "high" | "medium" | "low";
 	readonly evidence: readonly string[];
-	readonly file?: string;
-	readonly line?: number;
+	readonly file?: string | undefined;
+	readonly line?: number | undefined;
 	readonly source: "react-inspect" | "dom-attribute" | "workspace-search";
 }
 
 export interface AgentBrowserSourceLookupElectronContext {
 	readonly appName?: string;
-	readonly appPath?: string;
+	readonly appPath?: string | undefined;
 	readonly executablePath?: string;
 	readonly launchId?: string;
-	readonly sessionName?: string;
-	readonly url?: string;
+	readonly sessionName?: string | undefined;
+	readonly url?: string | undefined;
 }
 
 export interface AgentBrowserSourceLookupAnalysis {
 	readonly candidates: readonly AgentBrowserSourceLookupCandidate[];
-	readonly electronContext?: AgentBrowserSourceLookupElectronContext;
+	readonly electronContext?: AgentBrowserSourceLookupElectronContext | undefined;
 	readonly limitations: readonly string[];
 	readonly status: AgentBrowserSourceLookupStatus;
 	readonly summary: string;
-	readonly workspaceRoot?: string;
+	readonly workspaceRoot?: string | undefined;
 }
 
 export interface AgentBrowserSourceLookupAnalysisContext {
-	readonly electronContext?: AgentBrowserSourceLookupElectronContext;
+	readonly electronContext?: AgentBrowserSourceLookupElectronContext | undefined;
 	readonly workspaceRoot: string;
 }
 
@@ -219,29 +219,29 @@ export interface CompiledAgentBrowserNetworkSourceLookup {
 	readonly stdin: string;
 	readonly steps: ReadonlyArray<{ readonly action: "network"; readonly args: readonly string[] }>;
 	readonly query: {
-		readonly filter?: string;
+		readonly filter?: string | undefined;
 		readonly maxWorkspaceFiles: number;
-		readonly namespace?: string;
-		readonly requestId?: string;
-		readonly session?: string;
-		readonly url?: string;
+		readonly namespace?: string | undefined;
+		readonly requestId?: string | undefined;
+		readonly session?: string | undefined;
+		readonly url?: string | undefined;
 	};
 }
 
 export interface AgentBrowserNetworkSourceLookupRequest {
-	readonly error?: string;
-	readonly method?: string;
-	readonly requestId?: string;
-	readonly status?: number;
-	readonly url?: string;
+	readonly error?: string | undefined;
+	readonly method?: string | undefined;
+	readonly requestId?: string | undefined;
+	readonly status?: number | undefined;
+	readonly url?: string | undefined;
 }
 
 export interface AgentBrowserNetworkSourceLookupCandidate {
 	readonly confidence: "high" | "medium" | "low";
 	readonly evidence: readonly string[];
-	readonly file?: string;
-	readonly line?: number;
-	readonly requestUrl?: string;
+	readonly file?: string | undefined;
+	readonly line?: number | undefined;
+	readonly requestUrl?: string | undefined;
 	readonly source: "initiator" | "workspace-search";
 }
 

@@ -13,6 +13,7 @@ import {
 	observeCloseLifecycle,
 	redactNativeEnvelope,
 	classifyNativeExecution,
+	observeNativePolicyExecution,
 	observeInterruptedMutation,
 	applyCloseAndTraceLifecycle,
 } from "./process-output-lifecycle.js";
@@ -70,15 +71,16 @@ export async function observeNativeEffects(
 	>,
 ): Promise<NativeOutputEvidence> {
 	const draft = createNativeOutputPhase(input, ownership);
-	await parseNativeOutput(draft);
-	await repairOutputScreenshots(draft);
-	resolveDispatchedCommands(draft);
-	foldReadConfirmations(draft);
-	observeCloseLifecycle(draft);
-	redactNativeEnvelope(draft);
-	classifyNativeExecution(draft);
-	observeInterruptedMutation(draft);
-	applyCloseAndTraceLifecycle(draft);
+	Object.assign(draft, await parseNativeOutput(draft));
+	Object.assign(draft, await repairOutputScreenshots(draft));
+	Object.assign(draft, resolveDispatchedCommands(draft));
+	Object.assign(draft, foldReadConfirmations(draft));
+	Object.assign(draft, observeCloseLifecycle(draft));
+	Object.assign(draft, redactNativeEnvelope(draft));
+	Object.assign(draft, observeNativePolicyExecution(draft));
+	Object.assign(draft, classifyNativeExecution(draft));
+	Object.assign(draft, observeInterruptedMutation(draft));
+	draft.networkRoutesBySession = applyCloseAndTraceLifecycle(draft);
 	return {
 		artifactManifest: draft.artifactManifest,
 		batchCommandSteps: draft.batchCommandSteps,

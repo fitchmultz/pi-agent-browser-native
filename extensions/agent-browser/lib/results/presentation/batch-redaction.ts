@@ -16,8 +16,7 @@ export function hasModelFacingArgRedaction(args: readonly string[] | undefined):
 
 function getPasswordValues(tokens: readonly string[]): string[] {
 	const values: string[] = [];
-	for (let index = 0; index < tokens.length; index += 1) {
-		const token = tokens[index];
+	for (const [index, token] of tokens.entries()) {
 		const next = tokens.at(index + 1);
 		if (token === "--password" && next !== undefined && next.length > 0) {
 			values.push(next);

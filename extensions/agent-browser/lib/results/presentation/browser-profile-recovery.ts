@@ -57,12 +57,12 @@ function buildBrowserProfileConfigActions(commandInfo: CommandInfo): AgentBrowse
 }
 
 export interface BrowserProfileConfigRecovery {
-	readonly actions?: readonly AgentBrowserNextAction[];
+	readonly actions?: readonly AgentBrowserNextAction[] | undefined;
 	readonly hint: string;
 }
 
 export function buildBrowserProfileConfigRecovery(options: {
-	readonly args?: readonly string[];
+	readonly args?: readonly string[] | undefined;
 	readonly commandInfo: CommandInfo;
 	readonly errorText: string;
 }): BrowserProfileConfigRecovery | undefined {

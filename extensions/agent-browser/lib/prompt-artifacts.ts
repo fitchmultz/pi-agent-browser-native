@@ -14,12 +14,11 @@ interface PathMatch {
 	readonly path: string;
 	readonly start: number;
 }
-interface Candidate {
+interface Candidate extends Pick<PathMatch, "path" | "end"> {
 	readonly continuedFromPriorLine: boolean;
 	readonly group: number;
 	readonly kind: ArtifactKind;
 	readonly matchIndex: number;
-	readonly path: string;
 }
 interface RequiredCandidate extends Candidate {
 	readonly required: boolean;
@@ -140,8 +139,8 @@ class ArtifactCandidateLine {
 			.replace(OPTIONAL_RECORDING_PATTERN, "")
 			.replace(EXPLICIT_OPTIONAL_PATTERN, "");
 		this.isPathList = input.matches.length > 0 && LIST_CONNECTOR_PATTERN.test(syntax);
-		for (let index = 0; index < input.matches.length; index += 1) {
-			this.collectCandidate(index);
+		for (const [index, match] of input.matches.entries()) {
+			this.collectCandidate(index, match);
 		}
 		this.applyTrailingOptionality();
 	}
@@ -213,8 +212,8 @@ class ArtifactCandidateLine {
 		);
 	}
 
-	private collectCandidate(index: number): void {
-		const { end, path, start } = this.input.matches[index];
+	private collectCandidate(index: number, match: PathMatch): void {
+		const { end, path, start } = match;
 		const localContext = stripListPrefix(this.input.line.slice(this.previousPathEnd, start));
 		const context = this.candidateContext(index, localContext);
 		const kind = artifactKind(path);
@@ -237,6 +236,7 @@ class ArtifactCandidateLine {
 			return;
 		}
 		this.candidates.push({
+			end,
 			continuedFromPriorLine: priorLine && !direct,
 			group,
 			kind,
@@ -249,11 +249,12 @@ class ArtifactCandidateLine {
 
 	private applyTrailingOptionality(): void {
 		for (const candidate of this.candidates) {
-			const match = this.input.matches[candidate.matchIndex];
 			const nextStart =
 				this.input.matches[candidate.matchIndex + 1]?.start ?? this.input.line.length;
 			if (
-				OPTIONAL_RECORDING_PATTERN.test(trailingClause(this.input.line.slice(match.end, nextStart)))
+				OPTIONAL_RECORDING_PATTERN.test(
+					trailingClause(this.input.line.slice(candidate.end, nextStart)),
+				)
 			) {
 				this.groupOptional.set(candidate.group, true);
 			}
@@ -273,17 +274,18 @@ class ArtifactCandidateLine {
 	}
 }
 
+type CollectedArtifact = Omit<PromptRequestedArtifact, "required"> & { required: boolean };
+
 /** Owns deduplication and list/fence state for one prompt; no parser state survives the call. */
 class PromptArtifactCollector {
-	private readonly artifacts: PromptRequestedArtifact[] = [];
-	private readonly seen = new Map<string, number>();
+	private readonly artifacts = new Map<string, CollectedArtifact>();
 	private inCodeFence = false;
-	private listArtifactIndexes: number[] = [];
+	private listArtifacts: CollectedArtifact[] = [];
 	private continuation: ListContinuation | undefined;
 	private pendingRecordingAvailability = false;
 
 	private resetList(): void {
-		this.listArtifactIndexes = [];
+		this.listArtifacts = [];
 		this.continuation = undefined;
 	}
 
@@ -292,10 +294,9 @@ class PromptArtifactCollector {
 			this.pendingRecordingAvailability = true;
 			return;
 		}
-		for (const index of this.listArtifactIndexes) {
-			const artifact = this.artifacts[index];
+		for (const artifact of this.listArtifacts) {
 			if (artifact.kind === "recording") {
-				this.artifacts[index] = { ...artifact, required: false };
+				artifact.required = false;
 			}
 		}
 		this.continuation = { ...this.continuation, required: false };
@@ -314,45 +315,43 @@ class PromptArtifactCollector {
 		);
 	}
 
-	private storeCandidates(analysis: CandidateAnalysis): number[] {
-		const indexes: number[] = [];
+	private storeCandidates(analysis: CandidateAnalysis): CollectedArtifact[] {
+		const stored: CollectedArtifact[] = [];
 		for (const candidate of analysis.candidates) {
 			const required = candidate.required;
 			const key = `${candidate.kind}:${candidate.path}`;
-			let index = this.seen.get(key);
-			if (index === undefined) {
-				index = this.artifacts.length;
-				this.seen.set(key, index);
-				this.artifacts.push({ kind: candidate.kind, path: candidate.path, required });
+			let artifact = this.artifacts.get(key);
+			if (artifact === undefined) {
+				artifact = { kind: candidate.kind, path: candidate.path, required };
+				this.artifacts.set(key, artifact);
 			} else if (required) {
-				this.artifacts[index] = { ...this.artifacts[index], required: true };
+				artifact.required = true;
 			}
-			indexes.push(index);
+			stored.push(artifact);
 		}
-		return indexes;
+		return stored;
 	}
 
 	private updateContinuation(
 		analysis: CandidateAnalysis,
-		indexes: readonly number[],
+		artifacts: readonly CollectedArtifact[],
 		matchCount: number,
 	): void {
 		const lastCandidate = analysis.candidates.at(-1);
-		const lastIndex = indexes.at(-1);
+		const lastArtifact = artifacts.at(-1);
 		if (
 			!analysis.isPathList ||
 			lastCandidate?.matchIndex !== matchCount - 1 ||
-			lastIndex === undefined
+			lastArtifact === undefined
 		) {
 			this.resetList();
 			return;
 		}
-		const lastArtifact = this.artifacts[lastIndex];
 		this.continuation = { kind: lastArtifact.kind, required: lastArtifact.required };
-		if (analysis.candidates[0]?.continuedFromPriorLine) {
-			this.listArtifactIndexes.push(...indexes);
+		if (analysis.candidates[0]?.continuedFromPriorLine === true) {
+			this.listArtifacts.push(...artifacts);
 		} else {
-			this.listArtifactIndexes = [...indexes];
+			this.listArtifacts = [...artifacts];
 		}
 	}
 
@@ -379,8 +378,8 @@ class PromptArtifactCollector {
 			continuation: this.continuation,
 			recordingOptional,
 		}).result();
-		const indexes = this.storeCandidates(analysis);
-		this.updateContinuation(analysis, indexes, matches.length);
+		const artifacts = this.storeCandidates(analysis);
+		this.updateContinuation(analysis, artifacts, matches.length);
 	}
 
 	collect(prompt: string): PromptRequestedArtifact[] {
@@ -388,7 +387,7 @@ class PromptArtifactCollector {
 		for (let index = 0; index < lines.length; index += 1) {
 			this.collectLine(lines[index] ?? "", lines[index - 1] ?? "");
 		}
-		return this.artifacts;
+		return [...this.artifacts.values()];
 	}
 }
 

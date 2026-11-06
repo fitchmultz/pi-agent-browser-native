@@ -8,18 +8,10 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-	copyFileSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -36,10 +28,10 @@ const TSX_CLI = fileURLToPath(import.meta.resolve("tsx/cli"));
 
 const DEFAULT_STEPS = [
 	"./scripts/build.mjs",
-	"./scripts/prepare-quality-checker.mjs",
 	"./scripts/code-quality.mjs lint",
 	"--check .",
 	"--noEmit",
+	"--noEmit -p tsconfig.declarations.json",
 	`${TSX_CLI} --test test/**/!(*.serial).test.ts`,
 	`${TSX_CLI} --test --test-concurrency=1 test/**/*.serial.test.ts`,
 	"./scripts/check-playbook-drift.ts --check",
@@ -51,153 +43,166 @@ function labels(steps: unknown): string[] {
 	return readArray(steps).map((step) => readArray(readRecord(step).args).map(readString).join(" "));
 }
 
-test("facade labels retain native CLI paths, including Windows spaces and parenthesized extglobs", () => {
-	const cli = "C:\\Program Files\\tsx (fixture)\\cli.mjs";
-	const glob = "test/**/!(*.serial).test.ts";
-	assert.deepEqual(labels([{ args: [cli, "--test", glob] }]), [`${cli} --test ${glob}`]);
-});
+nodeTest(
+	"facade labels retain native CLI paths, including Windows spaces and parenthesized extglobs",
+	() => {
+		const cli = "C:\\Program Files\\tsx (fixture)\\cli.mjs";
+		const glob = "test/**/!(*.serial).test.ts";
+		assert.deepEqual(labels([{ args: [cli, "--test", glob] }]), [`${cli} --test ${glob}`]);
+	},
+);
 
-test("package lock excludes WorkOS URLs", () => {
+nodeTest("package lock excludes WorkOS URLs", () => {
 	assert.doesNotMatch(
 		readFileSync("package-lock.json", "utf8"),
 		/(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s"]*(?:workos|socket-firewall)/i,
 	);
 });
 
-test("typecheck gate covers shared JavaScript config policy implementation", () => {
-	const tsconfig = readRecord(JSON.parse(readFileSync("tsconfig.json", "utf8")));
-	const compilerOptions = readRecord(tsconfig.compilerOptions);
-	assert.equal(compilerOptions.allowJs, true);
-	assert.equal(compilerOptions.noUnusedLocals, true);
-	assert.ok(readArray(tsconfig.include).includes("extensions/agent-browser/lib/config-policy.js"));
-	assert.equal(existsSync("extensions/agent-browser/lib/config-policy.d.ts"), false);
-});
+nodeTest(
+	"verify facade default gate keeps docs, typecheck, unit/fake, and command-reference drift checks",
+	() => {
+		const steps: unknown = verifySteps({ mode: "default", passthrough: [], showHelp: false });
+		const stepLabels = labels(steps);
+		assert.equal(
+			readRecord(readArray(steps)[2]).command,
+			join(
+				process.cwd(),
+				"node_modules",
+				".bin",
+				process.platform === "win32" ? "oxfmt.cmd" : "oxfmt",
+			),
+		);
 
-test("verify facade default gate keeps docs, typecheck, unit/fake, and command-reference drift checks", () => {
-	const steps: unknown = verifySteps({ mode: "default", passthrough: [], showHelp: false });
-	const stepLabels = labels(steps);
-	assert.equal(
-		readRecord(readArray(steps)[3]).command,
-		join(
-			process.cwd(),
-			"node_modules",
-			".bin",
-			process.platform === "win32" ? "oxfmt.cmd" : "oxfmt",
-		),
-	);
+		assert.deepEqual(
+			labels(verifySteps({ mode: "quality", passthrough: [], showHelp: false })),
+			stepLabels,
+		);
+		assert.deepEqual(stepLabels, DEFAULT_STEPS);
+	},
+);
 
-	assert.deepEqual(
-		labels(verifySteps({ mode: "quality", passthrough: [], showHelp: false })),
-		stepLabels,
-	);
-	assert.deepEqual(stepLabels, DEFAULT_STEPS);
-});
+nodeTest(
+	"verify facade pre-pr mode composes default verification with package-content checks",
+	() => {
+		const steps: unknown = verifySteps({ mode: "pre-pr", passthrough: [], showHelp: false });
+		assert.deepEqual(labels(steps), [...DEFAULT_STEPS, "./scripts/verify-package.mjs"]);
+	},
+);
 
-test("verify facade pre-pr mode composes default verification with package-content checks", () => {
-	const steps: unknown = verifySteps({ mode: "pre-pr", passthrough: [], showHelp: false });
-	assert.deepEqual(labels(steps), [...DEFAULT_STEPS, "./scripts/verify-package.mjs"]);
-});
+nodeTest(
+	"verify facade opt-in modes keep startup-profile, real-upstream, dogfood, package-pi, platform-target, and platform smoke gates explicit",
+	() => {
+		const startupProfile: unknown = verifySteps({
+			mode: "startup-profile",
+			passthrough: ["--samples", "3", "--json"],
+			showHelp: false,
+		});
+		assert.deepEqual(labels(startupProfile), ["./scripts/profile-startup.mjs --samples 3 --json"]);
 
-test("verify facade opt-in modes keep startup-profile, real-upstream, dogfood, package-pi, platform-target, and platform smoke gates explicit", () => {
-	const startupProfile: unknown = verifySteps({
-		mode: "startup-profile",
-		passthrough: ["--samples", "3", "--json"],
-		showHelp: false,
-	});
-	assert.deepEqual(labels(startupProfile), ["./scripts/profile-startup.mjs --samples 3 --json"]);
+		const realUpstream: unknown = verifySteps({
+			mode: "real-upstream",
+			passthrough: [],
+			showHelp: false,
+		});
+		assert.deepEqual(labels(realUpstream), [
+			"--test --test-force-exit --test-name-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
+			"--test --test-force-exit --test-skip-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
+			"--test --test-force-exit test/agent-browser.batch-fidelity.test.ts",
+			"--test --test-force-exit test/agent-browser.overlay-real-upstream.test.ts",
+		]);
+		assert.equal(
+			readArray(realUpstream).every(
+				(step) => readRecord(readRecord(step).env).PI_AGENT_BROWSER_REAL_UPSTREAM === "1",
+			),
+			true,
+		);
 
-	const realUpstream: unknown = verifySteps({
-		mode: "real-upstream",
-		passthrough: [],
-		showHelp: false,
-	});
-	assert.deepEqual(labels(realUpstream), [
-		"--test --test-force-exit --test-name-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
-		"--test --test-force-exit --test-skip-pattern plugin list stays sessionless test/agent-browser.real-upstream-contract.test.ts",
-		"--test --test-force-exit test/agent-browser.batch-fidelity.test.ts",
-		"--test --test-force-exit test/agent-browser.overlay-real-upstream.test.ts",
-	]);
-	assert.equal(
-		readArray(realUpstream).every(
-			(step) => readRecord(readRecord(step).env).PI_AGENT_BROWSER_REAL_UPSTREAM === "1",
-		),
-		true,
-	);
+		const dogfood: unknown = verifySteps({
+			mode: "dogfood",
+			passthrough: ["--keep-artifacts"],
+			showHelp: false,
+		});
+		assert.deepEqual(labels(dogfood), [
+			"./scripts/build.mjs",
+			"./scripts/verify-agent-browser-dogfood.ts --keep-artifacts",
+		]);
 
-	const dogfood: unknown = verifySteps({
-		mode: "dogfood",
-		passthrough: ["--keep-artifacts"],
-		showHelp: false,
-	});
-	assert.deepEqual(labels(dogfood), [
-		"./scripts/build.mjs",
-		"./scripts/verify-agent-browser-dogfood.ts --keep-artifacts",
-	]);
+		const packagePi: unknown = verifySteps({
+			mode: "package-pi",
+			passthrough: [],
+			showHelp: false,
+		});
+		assert.deepEqual(labels(packagePi), ["./scripts/verify-package.mjs --smoke-pi"]);
 
-	const packagePi: unknown = verifySteps({ mode: "package-pi", passthrough: [], showHelp: false });
-	assert.deepEqual(labels(packagePi), ["./scripts/verify-package.mjs --smoke-pi"]);
+		const platformTarget: unknown = verifySteps({
+			mode: "platform-target",
+			passthrough: [],
+			showHelp: false,
+		});
+		assert.deepEqual(labels(platformTarget), [
+			"./scripts/build.mjs",
+			"./scripts/code-quality.mjs lint",
+			"--check .",
+			"--noEmit",
+			"--noEmit -p tsconfig.declarations.json",
+			"--test --test-concurrency=1 test/code-quality*.test.ts test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts test/agent-browser.windows-argv.test.ts",
+			"./scripts/check-playbook-drift.ts --check",
+			"./scripts/check-command-reference-baseline.mjs --check",
+		]);
 
-	const platformTarget: unknown = verifySteps({
-		mode: "platform-target",
-		passthrough: [],
-		showHelp: false,
-	});
-	assert.deepEqual(labels(platformTarget), [
-		"./scripts/build.mjs",
-		"./scripts/prepare-quality-checker.mjs",
-		"./scripts/code-quality.mjs lint",
-		"--check .",
-		"--noEmit",
-		"--test --test-concurrency=1 test/code-quality*.test.ts test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts test/agent-browser.windows-argv.test.ts",
-		"./scripts/check-playbook-drift.ts --check",
-		"./scripts/check-command-reference-baseline.mjs --check",
-	]);
+		const platformSmoke: unknown = verifySteps({
+			mode: "platform-smoke",
+			passthrough: ["run", "--target", "macos", "--suite", "platform-build"],
+			showHelp: false,
+		});
+		assert.deepEqual(labels(platformSmoke), [
+			"./scripts/platform-smoke.mjs run --target macos --suite platform-build",
+		]);
+	},
+);
 
-	const platformSmoke: unknown = verifySteps({
-		mode: "platform-smoke",
-		passthrough: ["run", "--target", "macos", "--suite", "platform-build"],
-		showHelp: false,
-	});
-	assert.deepEqual(labels(platformSmoke), [
-		"./scripts/platform-smoke.mjs run --target macos --suite platform-build",
-	]);
-});
+nodeTest(
+	"verify facade release gate composes default verification, lifecycle, packaged Pi smoke, and platform smoke with lifecycle-only options",
+	() => {
+		const releaseLabels = (passthrough: readonly string[]) =>
+			labels(verifySteps({ mode: "release", passthrough, showHelp: false }));
+		const releaseSteps = (lifecycle: string) => [
+			...DEFAULT_STEPS,
+			lifecycle,
+			"./scripts/verify-package.mjs --smoke-pi",
+			"./scripts/platform-smoke.mjs doctor",
+			"./scripts/platform-smoke.mjs run",
+		];
+		assert.deepEqual(releaseLabels([]), releaseSteps("./scripts/verify-lifecycle.mjs"));
+		// Lifecycle options reach only the lifecycle step; every other release gate is unchanged.
+		assert.deepEqual(
+			releaseLabels([
+				"--model",
+				"provider/model",
+				"--keep-artifacts",
+				"--verbose",
+				"--timeout-ms",
+				"600000",
+			]),
+			releaseSteps(
+				"./scripts/verify-lifecycle.mjs --model provider/model --keep-artifacts --verbose --timeout-ms 600000",
+			),
+		);
+	},
+);
 
-test("verify facade release gate composes default verification, lifecycle, packaged Pi smoke, and platform smoke with lifecycle-only options", () => {
-	const releaseLabels = (passthrough: readonly string[]) =>
-		labels(verifySteps({ mode: "release", passthrough, showHelp: false }));
-	const releaseSteps = (lifecycle: string) => [
-		...DEFAULT_STEPS,
-		lifecycle,
-		"./scripts/verify-package.mjs --smoke-pi",
-		"./scripts/platform-smoke.mjs doctor",
-		"./scripts/platform-smoke.mjs run",
-	];
-	assert.deepEqual(releaseLabels([]), releaseSteps("./scripts/verify-lifecycle.mjs"));
-	// Lifecycle options reach only the lifecycle step; every other release gate is unchanged.
-	assert.deepEqual(
-		releaseLabels([
-			"--model",
-			"provider/model",
-			"--keep-artifacts",
-			"--verbose",
-			"--timeout-ms",
-			"600000",
-		]),
-		releaseSteps(
-			"./scripts/verify-lifecycle.mjs --model provider/model --keep-artifacts --verbose --timeout-ms 600000",
-		),
-	);
-});
+nodeTest(
+	"verify facade docs mode checks both generated playbook and command-reference blocks",
+	() => {
+		assert.deepEqual(labels(docsSteps({ mode: "check", target: "all" })), [
+			"./scripts/check-playbook-drift.ts --check",
+			"./scripts/check-command-reference-baseline.mjs --check",
+		]);
+	},
+);
 
-test("verify facade docs mode checks both generated playbook and command-reference blocks", () => {
-	assert.deepEqual(labels(docsSteps({ mode: "check", target: "all" })), [
-		"./scripts/check-playbook-drift.ts --check",
-		"./scripts/check-command-reference-baseline.mjs --check",
-	]);
-});
-
-test("verify facade rejects unsupported options before running a partial gate", () => {
+nodeTest("verify facade rejects unsupported options before running a partial gate", () => {
 	assert.throws(
 		() => verifySteps({ mode: "real-upstream", passthrough: ["--list-files"], showHelp: false }),
 		/Option --list-files is not supported for verify mode real-upstream/,
@@ -239,30 +244,33 @@ test("verify facade rejects unsupported options before running a partial gate", 
 	});
 });
 
-test("verify facade lifecycle mode passes --model and other allowed flags through to verify-lifecycle.mjs", () => {
-	const steps: unknown = verifySteps({
-		mode: "lifecycle",
-		passthrough: [
-			"--model",
-			"openai-codex/gpt-5.5:minimal",
-			"--keep-artifacts",
-			"--verbose",
-			"--timeout-ms",
-			"600000",
-		],
-		showHelp: false,
-	});
-	assert.deepEqual(labels(steps), [
-		"./scripts/verify-lifecycle.mjs --model openai-codex/gpt-5.5:minimal --keep-artifacts --verbose --timeout-ms 600000",
-	]);
-	assert.equal(readRecord(readRecord(readArray(steps)[0]).env).PATH, hostToolPath());
-	assert.equal(
-		hostToolPath(["/repo/node_modules/.bin", "/global/bin", "/usr/bin"].join(delimiter)),
-		["/global/bin", "/usr/bin"].join(delimiter),
-	);
-});
+nodeTest(
+	"verify facade lifecycle mode passes --model and other allowed flags through to verify-lifecycle.mjs",
+	() => {
+		const steps: unknown = verifySteps({
+			mode: "lifecycle",
+			passthrough: [
+				"--model",
+				"openai-codex/gpt-5.5:minimal",
+				"--keep-artifacts",
+				"--verbose",
+				"--timeout-ms",
+				"600000",
+			],
+			showHelp: false,
+		});
+		assert.deepEqual(labels(steps), [
+			"./scripts/verify-lifecycle.mjs --model openai-codex/gpt-5.5:minimal --keep-artifacts --verbose --timeout-ms 600000",
+		]);
+		assert.equal(readRecord(readRecord(readArray(steps)[0]).env).PATH, hostToolPath());
+		assert.equal(
+			hostToolPath(["/repo/node_modules/.bin", "/global/bin", "/usr/bin"].join(delimiter)),
+			["/global/bin", "/usr/bin"].join(delimiter),
+		);
+	},
+);
 
-test("verify facade lifecycle mode rejects --model without a value", () => {
+nodeTest("verify facade lifecycle mode rejects --model without a value", () => {
 	assert.throws(
 		() => verifySteps({ mode: "lifecycle", passthrough: ["--model"], showHelp: false }),
 		/--model requires a value/,
@@ -284,23 +292,22 @@ const TAP_CONTRACT_STEPS = [
 ];
 const POLICY_DEBUG = { NODE_DEBUG: "pi-agent-browser-policy" };
 
-test("npm test keeps build, checker preparation, complete parallel TAP and complete serial TAP stages", () => {
+nodeTest("npm test keeps build, complete parallel TAP and complete serial TAP stages", () => {
 	const pkg = readRecord(JSON.parse(readFileSync("package.json", "utf8")));
 	assert.equal(readRecord(pkg.scripts).test, "node ./scripts/project.mjs test");
 	assert.deepEqual(labels(testSteps()), [
 		"./scripts/build.mjs",
-		"./scripts/prepare-quality-checker.mjs",
 		...TAP_CONTRACT_STEPS.map((label) => `${TSX_CLI} ${label}`),
 	]);
 	assert.equal(
 		testSteps()
-			.slice(2)
+			.slice(1)
 			.every((step) => step.command === process.execPath),
 		true,
 	);
 	assert.deepEqual(
 		readArray(testSteps())
-			.slice(2)
+			.slice(1)
 			.map(readRecord)
 			.map((step) => readArray(step.args)),
 		[
@@ -316,44 +323,48 @@ test("npm test keeps build, checker preparation, complete parallel TAP and compl
 	);
 });
 
-test("Windows test children receive only the exact policy debug override in every composed verification gate", () => {
-	const windows = readArray(testSteps("win32")).map(readRecord);
-	assert.deepEqual(
-		windows.map((step) => step.env),
-		[undefined, undefined, POLICY_DEBUG, POLICY_DEBUG],
-	);
-	for (const platform of ["linux", "darwin", "android"] as const) {
-		// Every non-Windows planner branch must leave debug enablement absent.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
+nodeTest(
+	"Windows test children receive only the exact policy debug override in every composed verification gate",
+	() => {
+		const windows = readArray(testSteps("win32")).map(readRecord);
+		assert.deepEqual(
+			windows.map((step) => step.env),
+			[undefined, POLICY_DEBUG, POLICY_DEBUG],
+		);
 		assert.equal(
-			testSteps(platform).every((step) => step.env === undefined),
+			(["linux", "darwin", "android"] as const).every((platform) =>
+				testSteps(platform).every((step) => step.env === undefined),
+			),
 			true,
 		);
-	}
-	for (const mode of ["default", "quality", "pre-pr", "release"]) {
-		const contracts = readArray(verifySteps({ mode, passthrough: [], showHelp: false }, "win32"))
-			.map(readRecord)
-			.filter((step) => readArray(step.args).includes("--test"));
-		// Each complete composed gate must retain both full contract stages and the narrow environment.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(labels(contracts), DEFAULT_STEPS.slice(5, 7));
-		// Every composed contract child must use the exact channel, never NODE_OPTIONS or wildcard debug.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(
-			contracts.map((step) => step.env),
-			[POLICY_DEBUG, POLICY_DEBUG],
+		const modes = ["default", "quality", "pre-pr", "release"];
+		const contracts = modes.map((mode) =>
+			verifySteps({ mode, passthrough: [], showHelp: false }, "win32").filter((step) =>
+				step.args.includes("--test"),
+			),
 		);
-	}
-});
+		assert.deepEqual(
+			contracts.map(labels),
+			modes.map(() => DEFAULT_STEPS.slice(5, 7)),
+		);
+		assert.deepEqual(
+			contracts.map((steps) => steps.map((step) => step.env)),
+			modes.map(() => [POLICY_DEBUG, POLICY_DEBUG]),
+		);
+	},
+);
 
-test("the complete test facade rejects filtered paths and options before launching a partial gate", async () => {
-	await assert.rejects(
-		main(["test", "--test-name-pattern", "partial"]),
-		/complete test gate does not accept/,
-	);
-});
+nodeTest(
+	"the complete test facade rejects filtered paths and options before launching a partial gate",
+	async () => {
+		await assert.rejects(
+			main(["test", "--test-name-pattern", "partial"]),
+			/complete test gate does not accept/,
+		);
+	},
+);
 
-test("verify release rejects invalid lifecycle values before running any step", async () => {
+nodeTest("verify release rejects invalid lifecycle values before running any step", async () => {
 	await assert.rejects(
 		main(["verify", "release", "--timeout-ms", "abc"]),
 		/--timeout-ms must be a positive integer; received "abc"/,
@@ -364,8 +375,8 @@ function facadeFixture(t: TestContext): string {
 	const directory = mkdtempSync(join(tmpdir(), "piab project (facade)-"));
 	t.after(() => rmSync(directory, { recursive: true, force: true }));
 	mkdirSync(join(directory, "scripts"));
-	// The real facade plus its static lifecycle-defaults import; the focused step scripts are stubs.
-	for (const script of ["project.mjs", "lifecycle-defaults.mjs"]) {
+	// The real facade and its imports; the focused step scripts are stubs.
+	for (const script of ["project.mjs", "project-help.mjs", "lifecycle-defaults.mjs"]) {
 		copyFileSync(
 			new URL(`../scripts/${script}`, import.meta.url),
 			join(directory, "scripts", script),
@@ -381,19 +392,14 @@ function facadeFixture(t: TestContext): string {
 	);
 	mkdirSync(join(directory, "test", "nested"), { recursive: true });
 	const receipt = `const record = (stage, args = []) => appendFileSync("calls.jsonl", JSON.stringify({ stage, args, debug: process.env.NODE_DEBUG ?? null, nodeOptions: process.env.NODE_OPTIONS ?? null }) + "\\n");`;
-	for (const [file, stage] of [
-		["build.mjs", "build"],
-		["prepare-quality-checker.mjs", "prepare"],
-	]) {
-		writeFileSync(
-			join(directory, "scripts", file),
-			`import { appendFileSync } from "node:fs";
+	writeFileSync(
+		join(directory, "scripts", "build.mjs"),
+		`import { appendFileSync } from "node:fs";
 ${receipt}
-record(${JSON.stringify(stage)}, process.argv.slice(2));
-if (process.env.FIXTURE_FAIL_STAGE === ${JSON.stringify(stage)}) process.exitCode = 23;
+record("build", process.argv.slice(2));
+if (process.env.FIXTURE_FAIL_STAGE === "build") process.exitCode = 23;
 `,
-		);
-	}
+	);
 	const runner = join(directory, "node_modules", "tsx", "cli with (spaces).mjs");
 	writeFileSync(
 		runner,
@@ -407,11 +413,11 @@ if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;
 `,
 	);
-	for (const [file, id] of [
-		["parallel-flat.test.ts", "parallel-flat"],
-		["nested/parallel-nested.test.ts", "parallel-nested"],
-		["serial-flat.serial.test.ts", "serial-flat"],
-		["nested/serial-nested.serial.test.ts", "serial-nested"],
+	for (const { file, id } of [
+		{ file: "parallel-flat.test.ts", id: "parallel-flat" },
+		{ file: "nested/parallel-nested.test.ts", id: "parallel-nested" },
+		{ file: "serial-flat.serial.test.ts", id: "serial-flat" },
+		{ file: "nested/serial-nested.serial.test.ts", id: "serial-nested" },
 	]) {
 		writeFileSync(
 			join(directory, "test", file),
@@ -473,8 +479,8 @@ function assertCompleteFixtureCalls(
 	debug: string | null,
 ): void {
 	assert.deepEqual(
-		calls.slice(0, 3).map((call) => call.stage),
-		["build", "prepare", "parallel"],
+		calls.slice(0, 2).map((call) => call.stage),
+		["build", "parallel"],
 	);
 	assert.deepEqual(
 		calls
@@ -485,7 +491,7 @@ function assertCompleteFixtureCalls(
 	const serial = calls.findIndex((call) => call.stage === "serial");
 	assert.deepEqual(
 		calls
-			.slice(3, serial)
+			.slice(2, serial)
 			.map((call) => readString(call.stage))
 			.sort((left, right) => left.localeCompare(right)),
 		["parallel-flat", "parallel-nested"],
@@ -498,11 +504,11 @@ function assertCompleteFixtureCalls(
 		["serial-flat", "serial-nested"],
 	);
 	assert.deepEqual(
-		calls.slice(0, 2).map((call) => call.debug),
-		[null, null],
+		calls.slice(0, 1).map((call) => call.debug),
+		[null],
 	);
 	assert.equal(
-		calls.slice(2).every((call) => call.debug === debug),
+		calls.slice(1).every((call) => call.debug === debug),
 		true,
 	);
 	assert.equal(
@@ -511,24 +517,27 @@ function assertCompleteFixtureCalls(
 	);
 }
 
-test("real facade subprocess restores exact Windows policy debug after isolation and runs all TAP contracts", (t) => {
-	const { result, calls } = runFixture(facadeFixture(t), true);
-	assert.equal(result.status, 0, result.stdout + result.stderr);
-	assert.deepEqual(calls[0], {
-		stage: "isolated-parent",
-		args: [],
-		debug: null,
-		nodeOptions: null,
-	});
-	assert.match(result.stdout, /# Subtest: fixture-parallel-flat/, result.stdout + result.stderr);
-	assertCompleteFixtureCalls(calls.slice(1), "pi-agent-browser-policy");
-	assert.match(result.stdout, /# PI-AGENT-BROWSER-POLICY [0-9]+: parallel-flat/);
-	assert.match(result.stdout, /# PI-AGENT-BROWSER-POLICY [0-9]+: serial-nested/);
-	assert.doesNotMatch(result.stdout + result.stderr, /UNEXPECTED_BROAD_DEBUG/);
-	assert.equal((result.stdout.match(/TAP version 13/g) ?? []).length, 2);
-});
+nodeTest(
+	"real facade subprocess restores exact Windows policy debug after isolation and runs all TAP contracts",
+	(t) => {
+		const { result, calls } = runFixture(facadeFixture(t), true);
+		assert.equal(result.status, 0, result.stdout + result.stderr);
+		assert.deepEqual(calls[0], {
+			stage: "isolated-parent",
+			args: [],
+			debug: null,
+			nodeOptions: null,
+		});
+		assert.match(result.stdout, /# Subtest: fixture-parallel-flat/, result.stdout + result.stderr);
+		assertCompleteFixtureCalls(calls.slice(1), "pi-agent-browser-policy");
+		assert.match(result.stdout, /# PI-AGENT-BROWSER-POLICY [0-9]+: parallel-flat/);
+		assert.match(result.stdout, /# PI-AGENT-BROWSER-POLICY [0-9]+: serial-nested/);
+		assert.doesNotMatch(result.stdout + result.stderr, /UNEXPECTED_BROAD_DEBUG/);
+		assert.equal((result.stdout.match(/TAP version 13/g) ?? []).length, 2);
+	},
+);
 
-test("npm test's actual facade command runs the same complete ordered contract gate", (t) => {
+nodeTest("npm test's actual facade command runs the same complete ordered contract gate", (t) => {
 	const { result, calls } = runFixture(facadeFixture(t), false);
 	assert.equal(result.status, 0, result.stdout + result.stderr);
 	assertCompleteFixtureCalls(
@@ -537,29 +546,24 @@ test("npm test's actual facade command runs the same complete ordered contract g
 	);
 });
 
-test("a real failed parallel TAP child propagates failure and blocks every serial child", (t) => {
-	const { result, calls } = runFixture(facadeFixture(t), true, "parallel");
-	assert.equal(result.status, 1);
-	assert.match(result.stdout, /not ok .*fixture-parallel/);
-	assert.match(result.stderr, /exited with code 1/);
+nodeTest(
+	"a real failed parallel TAP child propagates failure while serial contracts still run",
+	(t) => {
+		const { result, calls } = runFixture(facadeFixture(t), true, "parallel");
+		assert.equal(result.status, 1);
+		assert.match(result.stdout, /not ok .*fixture-parallel/);
+		assert.match(result.stderr, /exited with code 1/);
+		assertCompleteFixtureCalls(calls.slice(1), "pi-agent-browser-policy");
+	},
+);
+
+nodeTest("a real failed build preserves its exit status and blocks dependent tests", (t) => {
+	const { result, calls } = runFixture(facadeFixture(t), false, "build");
+	assert.equal(result.status, 23);
+	assert.match(result.stderr, /exited with code 23/);
+	assert.match(result.stderr, /Blocked by failed build/);
 	assert.deepEqual(
-		calls.slice(0, 4).map((call) => call.stage),
-		["isolated-parent", "build", "prepare", "parallel"],
-	);
-	assert.equal(
-		calls.some((call) => readString(call.stage).startsWith("serial")),
-		false,
+		calls.map((call) => call.stage),
+		["build"],
 	);
 });
-
-for (const stage of ["build", "prepare"]) {
-	test(`a real failed ${stage} prerequisite preserves its exit status and blocks the remaining complete test gate`, (t) => {
-		const { result, calls } = runFixture(facadeFixture(t), false, stage);
-		assert.equal(result.status, 23);
-		assert.match(result.stderr, /exited with code 23/);
-		assert.deepEqual(
-			calls.map((call) => call.stage),
-			stage === "build" ? ["build"] : ["build", "prepare"],
-		);
-	});
-}

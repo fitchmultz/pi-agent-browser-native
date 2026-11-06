@@ -85,12 +85,7 @@ const SNAPSHOT_CHROME_SECTION_PATTERNS = [
 
 export interface SnapshotLine extends SnapshotLineRefInfo {
 	readonly depth: number;
-	readonly headingLevel?: number;
-	readonly index: number;
-	readonly name: string;
-	readonly raw: string;
-	readonly ref?: string;
-	readonly role: string;
+	readonly headingLevel?: number | undefined;
 }
 
 export interface SnapshotSegment {
@@ -250,8 +245,11 @@ export function buildSnapshotSegments(snapshotLines: readonly SnapshotLine[]): S
 
 	return roots.map((root, index) => {
 		let endIndexExclusive = snapshotLines.length;
-		for (let nextIndex = index + 1; nextIndex < roots.length; nextIndex += 1) {
+		for (let nextIndex = index + 1; ; nextIndex += 1) {
 			const candidate = roots[nextIndex];
+			if (candidate === undefined) {
+				break;
+			}
 			if (candidate.depth <= root.depth) {
 				endIndexExclusive = candidate.index;
 				break;
@@ -357,7 +355,7 @@ export function getMeaningfulSegmentLines(segment: SnapshotSegment): SnapshotLin
 }
 
 function formatPreviewLine(line: SnapshotLine, baseDepth: number): string {
-	const leadingWhitespace = (line.raw.match(/^\s*/) ?? [""])[0].length;
+	const leadingWhitespace = line.raw.match(/^\s*/)?.[0].length ?? 0;
 	const stripChars = Math.min(leadingWhitespace, Math.max(0, baseDepth) * 2);
 	return truncateText(line.raw.slice(stripChars), SNAPSHOT_LINE_MAX_CHARS);
 }
@@ -420,29 +418,30 @@ function hasSnapshotSignal(line: SnapshotLine): boolean {
 export function buildFallbackSnapshotOutline(
 	snapshotLines: readonly SnapshotLine[],
 ): SnapshotPreview {
-	const selected = new Set<number>();
-	for (let index = 0; index < snapshotLines.length && selected.size < 4; index += 1) {
-		if (!isNoiseSnapshotLine(snapshotLines[index])) {
-			selected.add(index);
+	const selected = new Map<number, SnapshotLine>();
+	for (const [index, line] of snapshotLines.entries()) {
+		if (selected.size >= 4) {
+			break;
+		}
+		if (!isNoiseSnapshotLine(line)) {
+			selected.set(index, line);
 		}
 	}
-	for (
-		let index = 0;
-		index < snapshotLines.length && selected.size < SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES;
-		index += 1
-	) {
-		const line = snapshotLines[index];
+	for (const [index, line] of snapshotLines.entries()) {
+		if (selected.size >= SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES) {
+			break;
+		}
 		if (isNoiseSnapshotLine(line)) {
 			continue;
 		}
 		if (hasSnapshotSignal(line)) {
-			selected.add(index);
+			selected.set(index, line);
 		}
 	}
 	const chosenLines = [...selected]
-		.sort((left, right) => left - right)
+		.sort(([left], [right]) => left - right)
 		.slice(0, SNAPSHOT_FALLBACK_PREVIEW_MAX_LINES)
-		.map((index) => snapshotLines[index]);
+		.map(([, line]) => line);
 	return {
 		omittedCount: Math.max(0, snapshotLines.length - chosenLines.length),
 		refIds: chosenLines.flatMap((line) =>

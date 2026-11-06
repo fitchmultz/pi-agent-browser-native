@@ -25,9 +25,9 @@ const STALE_CLAIM_MIN_AGE_MS = 30 * 60 * 1_000;
 const POLICY_GC_BATCH_SIZE = 8;
 let lastPolicyGcName: string | undefined;
 export interface ClaimBudget {
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 	/** A performance.now() timestamp: wall-clock steps can neither expire nor extend waits. */
-	readonly deadline?: number;
+	readonly deadline?: number | undefined;
 }
 function secureEntry(entry: Stats, directory: boolean): boolean {
 	if (entry.isSymbolicLink() || (directory ? !entry.isDirectory() : !entry.isFile())) {
@@ -139,7 +139,6 @@ export async function readClaims(basePath: string): Promise<PolicyLockClaim[] | 
 			  }
 			| undefined;
 		// Claim absence must be resolved before accepting the next contender.
-		// oxlint-disable-next-line no-await-in-loop
 		const claim = await inspectClaim(
 			path,
 			policyDebugEnabled
@@ -150,7 +149,6 @@ export async function readClaims(basePath: string): Promise<PolicyLockClaim[] | 
 		);
 		if (!claim) {
 			// A disappearing immutable claim is not a corrupt contender.
-			// oxlint-disable-next-line no-await-in-loop
 			if (await claimDisappeared(path)) {
 				continue;
 			}
@@ -212,14 +210,12 @@ async function moveOwnedClaim(
 ): Promise<"moved" | "absent" | undefined> {
 	while (true) {
 		// Each retry must revalidate ownership before another move attempt.
-		// oxlint-disable-next-line no-await-in-loop
 		if ((await readClaim(path))?.owner.token !== token) {
 			debugPolicyFailure("remove.verify", "owner-missing-or-token-mismatch");
 			return undefined;
 		}
 		try {
 			// Windows readers may temporarily hold the directory; moves stay serialized.
-			// oxlint-disable-next-line no-await-in-loop
 			await rename(path, movedPath);
 			return "moved";
 		} catch (error) {
@@ -232,7 +228,6 @@ async function moveOwnedClaim(
 				return undefined;
 			}
 			// Retry only after a bounded pause, then revalidate the same immutable owner.
-			// oxlint-disable-next-line no-await-in-loop
 			await waitForRetry();
 			if (performance.now() >= deadline) {
 				debugPolicyFailure("remove.rename", "retry-deadline", error);
@@ -295,10 +290,9 @@ function gcBatch(names: readonly string[]): string[] {
 					0,
 					candidates.findIndex((name) => name > previous),
 				);
-	const batch = Array.from(
-		{ length: Math.min(POLICY_GC_BATCH_SIZE, candidates.length) },
-		(_, offset) => candidates[(start + offset) % candidates.length],
-	);
+	const size = Math.min(POLICY_GC_BATCH_SIZE, candidates.length);
+	const batch = candidates.slice(start, start + size);
+	batch.push(...candidates.slice(0, size - batch.length));
 	lastPolicyGcName = batch.at(-1);
 	return batch;
 }
@@ -306,7 +300,9 @@ async function cleanDeadClaim(directory: string, name: string, budget: ClaimBudg
 	const path = join(directory, name);
 	const published = name.includes(".lock-v4.claim-");
 	if (published) {
-		const entry = await lstat(path).catch(() => undefined);
+		const entry = await lstat(path).catch((): undefined => {
+			// An uninspectable claim cannot be selected for stale cleanup.
+		});
 		// Persisted mtimes are wall-clock; removal below still requires a proven-dead owner.
 		if (!entry || entry.mtimeMs >= Date.now() - STALE_CLAIM_MIN_AGE_MS) {
 			return;
@@ -335,7 +331,6 @@ export async function cleanDeadPolicyArtifacts(
 			return;
 		}
 		// Bounded GC respects the acquisition budget between native liveness probes.
-		// oxlint-disable-next-line no-await-in-loop
 		await cleanDeadClaim(directory, name, budget);
 	}
 }

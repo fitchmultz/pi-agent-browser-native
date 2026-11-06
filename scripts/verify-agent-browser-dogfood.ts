@@ -30,15 +30,15 @@ interface DogfoodOptions {
 }
 
 interface DogfoodStepReport {
-	readonly artifactPath?: string;
-	readonly artifactSizeBytes?: number;
+	readonly artifactPath: string | undefined;
+	readonly artifactSizeBytes: number | undefined;
 	readonly failureCategory?: unknown;
 	readonly id: string;
 	readonly isError: boolean;
 	readonly resultCategory?: unknown;
 	readonly successCategory?: unknown;
 	readonly textPreview: string;
-	readonly verifiedArtifact?: boolean;
+	readonly verifiedArtifact: boolean | undefined;
 }
 
 class UsageError extends Error {
@@ -65,8 +65,8 @@ Options:
 export function parseDogfoodArgs(argv: readonly string[]): DogfoodOptions & { help: boolean } {
 	const options: { help: boolean; artifactDir?: string; keepArtifacts?: boolean; json?: boolean } =
 		{ help: false };
-	for (let index = 0; index < argv.length; index += 1) {
-		const arg = argv[index];
+	const words = argv.values();
+	for (const arg of words) {
 		if (arg === "-h" || arg === "--help") {
 			options.help = true;
 			continue;
@@ -80,12 +80,11 @@ export function parseDogfoodArgs(argv: readonly string[]): DogfoodOptions & { he
 			continue;
 		}
 		if (arg === "--artifact-dir") {
-			const value = argv.at(index + 1);
+			const value = words.next().value;
 			if (value === undefined || value.length === 0 || value.startsWith("-")) {
 				throw new UsageError("--artifact-dir requires a path.");
 			}
 			options.artifactDir = value;
-			index += 1;
 			continue;
 		}
 		throw new UsageError(`Unknown dogfood argument: ${arg}`);
@@ -315,10 +314,8 @@ async function runCoreFlows(
 	const reports = [];
 	for (const step of steps) {
 		// Each action consumes the browser state established by the prior observed step.
-		// oxlint-disable-next-line no-await-in-loop
 		const result = await executeRegisteredTool(step.tool, harness.ctx, step.params);
 		// Verify each receipt and artifact before moving to the next browser operation.
-		// oxlint-disable-next-line no-await-in-loop
 		reports.push(await assertSuccessfulStep({ ...step, result }));
 	}
 	return reports;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import { readFile, writeFile } from "node:fs/promises";
-import test from "node:test";
+import nodeTest from "node:test";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import {
 	createExtensionHarness,
@@ -41,7 +42,7 @@ for (const action of [
 		expected: ["select", "@e8", "vanilla"],
 	},
 ]) {
-	test(
+	nodeTest(
 		`semantic ${action.action}/${action.locator} uses a confirmed capture once across resume`,
 		{ concurrency: false },
 		async () => {
@@ -78,7 +79,7 @@ for (const action of [
 				assert.ok(initialActionTool);
 				const pending = await executeRegisteredTool(initialActionTool, harness.ctx, request);
 				assert.equal(pending.details?.failureCategory, "confirmation-required");
-				assert.match(pending.content[0].text ?? "", /requested command was not dispatched/);
+				assert.match(getMessageText(pending.content), /requested command was not dispatched/);
 				const approval = readArray(pending.details.nextActions)
 					.map(readRecord)
 					.find((row) => row.id === "approve-confirmation");
@@ -101,7 +102,7 @@ for (const action of [
 				const resumedActionTool = harness.getTool("agent_browser_action");
 				assert.ok(resumedActionTool);
 				const result = await executeRegisteredTool(resumedActionTool, harness.ctx, request);
-				assert.equal(result.isError, false, result.content[0].text);
+				assert.equal(result.isError, false, getMessageText(result.content));
 				assert.deepEqual(readRecord(JSON.parse(await readFile(state, "utf8"))).actions, [expected]);
 				assert.equal(
 					(await readInvocationLog(log)).some(
@@ -128,10 +129,10 @@ for (const owned of [false, true]) {
 	for (const route of ["path", "hash"]) {
 		for (const semantic of [false, true]) {
 			for (const drift of [false, true]) {
-				test(
+				nodeTest(
 					`warm confirmed capture checks the live page without resume (owned=${owned}, route=${route}, semantic=${semantic}, drift=${drift})`,
 					{ concurrency: false },
-					async () => {
+					async (t) => {
 						const url =
 							route === "hash"
 								? "https://current.test/#/contract"
@@ -159,19 +160,19 @@ for (const owned of [false, true]) {
 								],
 								...(owned ? { sessionMode: "fresh" as const } : {}),
 							});
-							assert.equal(opened.isError, false, opened.content[0].text);
+							assert.equal(opened.isError, false, getMessageText(opened.content));
 							if (owned) {
-								// This enumerated fixture branch (owned) has variant-specific assertions; common assertions cover every case.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(
-									readRecord(opened.details?.managedSessionOutcome).status,
-									"created",
-									"fresh launch establishes real wrapper ownership through the ordinary daemon/policy path",
-								);
+								await t.test("fresh launch establishes wrapper ownership", () => {
+									assert.equal(
+										readRecord(opened.details?.managedSessionOutcome).status,
+										"created",
+										"fresh launch establishes real wrapper ownership through the ordinary daemon/policy path",
+									);
+								});
 							} else {
-								// This enumerated fixture branch (owned) has variant-specific assertions; common assertions cover every case.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(opened.details?.usedImplicitSession, false);
+								await t.test("explicit session remains caller-owned", () => {
+									assert.equal(opened.details?.usedImplicitSession, false);
+								});
 							}
 							const session = readString(opened.details?.sessionName);
 							const prefix = ["--session", session];
@@ -210,18 +211,16 @@ for (const owned of [false, true]) {
 										}
 									: { args: [...prefix, "select", "@e8", "chocolate"] },
 							);
-							assert.equal(result.isError, drift, result.content[0].text);
+							assert.equal(result.isError, drift, getMessageText(result.content));
 							if (drift) {
-								// This enumerated fixture branch (drift) has variant-specific assertions; common assertions cover every case.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(result.details?.failureCategory, "stale-ref");
-								// This enumerated fixture branch (drift) has variant-specific assertions; common assertions cover every case.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(
-									readString(result.content[0].text).includes(
-										`current session target is ${movedUrl}`,
-									),
-								);
+								await t.test("reports stale refs at the moved target", () => {
+									assert.equal(result.details?.failureCategory, "stale-ref");
+									assert.ok(
+										getMessageText(result.content).includes(
+											`current session target is ${movedUrl}`,
+										),
+									);
+								});
 							}
 							const calls = (await readInvocationLog(log)).map((call) =>
 								extractUpstreamCommandTokens(call.args),
@@ -249,10 +248,10 @@ for (const owned of [false, true]) {
 }
 
 for (const mode of ["absent", "ambiguous", "drift", "intervening"] as const) {
-	test(
+	nodeTest(
 		`confirmed semantic select retains its guards (${mode})`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			await withConfirmations(async ({ root, state, log, harness: initialHarness }) => {
 				let harness = initialHarness;
 				const refs =
@@ -315,24 +314,28 @@ for (const mode of ["absent", "ambiguous", "drift", "intervening"] as const) {
 				});
 				assert.equal(result.isError, true);
 				if (mode === "absent" || mode === "ambiguous") {
-					// This enumerated fixture branch (mode === "absent" || mode === "ambiguous") has variant-specific assertions; common assertions cover every case.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(readString(result.details?.validationError), /exactly one current visible/);
+					await t.test("requires a unique visible target", () => {
+						assert.match(
+							readString(result.details?.validationError),
+							/exactly one current visible/,
+						);
+					});
 				}
 				if (mode === "drift") {
-					// This enumerated fixture branch (mode === "drift") has variant-specific assertions; common assertions cover every case.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.details?.failureCategory, "tab-drift");
+					await t.test("reports tab drift", () => {
+						assert.equal(result.details?.failureCategory, "tab-drift");
+					});
 				}
 				if (mode === "intervening") {
-					// This enumerated fixture branch (mode === "intervening") has variant-specific assertions; common assertions cover every case.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.details?.failureCategory, "confirmation-required");
+					await t.test("requires another confirmation after intervening work", () => {
+						assert.equal(result.details?.failureCategory, "confirmation-required");
+					});
 				}
 				assert.equal(
-					(await readInvocationLog(log)).some((call) =>
-						["select", "find"].includes(extractUpstreamCommandTokens(call.args)[0]),
-					),
+					(await readInvocationLog(log)).some((call) => {
+						const command = extractUpstreamCommandTokens(call.args)[0];
+						return command === "select" || command === "find";
+					}),
 					false,
 				);
 			});

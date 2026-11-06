@@ -23,9 +23,9 @@ interface RestoreContextOptions
 	extends OwnedContextResolutionOptions, ManagedSessionRestorePolicyOptions {
 	readonly cwd: string;
 	readonly reuseOnly?: boolean;
-	readonly compatibilityUserAgent?: string;
-	readonly headedManagedAutosaveDisabled?: boolean;
-	readonly headedManagedAutosaveInterval?: string;
+	readonly compatibilityUserAgent?: string | undefined;
+	readonly headedManagedAutosaveDisabled?: boolean | undefined;
+	readonly headedManagedAutosaveInterval?: string | undefined;
 }
 function reuseIsSuppressed(options: RestoreContextOptions, env: NodeJS.ProcessEnv): boolean {
 	return (

@@ -108,7 +108,10 @@ class BranchResourceReplay {
 	readonly events = {
 		electronLaunchActiveRanks: new Map<string, number>(),
 		electronLaunchCleanupRanks: new Map<string, number>(),
-		managedSessionActiveIdentities: new Map<string, { namespace?: string; sessionName: string }>(),
+		managedSessionActiveIdentities: new Map<
+			string,
+			{ namespace?: string | undefined; sessionName: string }
+		>(),
 		managedSessionActiveRanks: new Map<string, number>(),
 		managedSessionCloseRanks: new Map<string, number>(),
 		managedSessionLaunchState: new Map<string, ManagedSessionLaunchState>(),

@@ -103,9 +103,9 @@ function addPendingPageState(
 
 export function projectBrowserObservationResult(options: {
 	readonly result: AgentBrowserToolResult;
-	readonly catalog?: Readonly<Record<string, unknown>>;
+	readonly catalog?: Readonly<Record<string, unknown>> | undefined;
 	readonly args: readonly string[];
-	readonly modelVisible?: boolean;
+	readonly modelVisible?: boolean | undefined;
 	readonly state: BrowserObservationState;
 }): AgentBrowserToolResult {
 	let result = options.result;

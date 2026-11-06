@@ -29,13 +29,15 @@ import type { PreparationDaemonObservation } from "./browser-run/managed-session
 
 export interface NativeSessionCallContext {
 	readonly cwd: string;
-	readonly signal?: AbortSignal;
-	readonly root?: {
-		/** The calling Pi session; a delegated child resolves to its main session's root. */
-		readonly sessionId: string;
-		readonly profile?: string;
-		readonly executablePath?: string;
-	};
+	readonly signal?: AbortSignal | undefined;
+	readonly root?:
+		| {
+				/** The calling Pi session; a delegated child resolves to its main session's root. */
+				readonly sessionId: string;
+				readonly profile?: string | undefined;
+				readonly executablePath?: string | undefined;
+		  }
+		| undefined;
 }
 
 type BrowserRunner = (
@@ -173,7 +175,7 @@ class NativeSessionCall {
 
 	private chromeLaunch(): {
 		readonly chromeEngine: boolean;
-		readonly chromeStartupArgs?: string;
+		readonly chromeStartupArgs?: string | undefined;
 		readonly configuredChromeLaunch: boolean;
 	} {
 		const args = this.input.toolArgs;

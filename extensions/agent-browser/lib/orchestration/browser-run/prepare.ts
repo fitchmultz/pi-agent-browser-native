@@ -56,16 +56,16 @@ interface PreparationRequest {
 	readonly freshSessionOrdinal: number;
 	readonly sessionMode: "auto" | "fresh";
 	readonly runtimeToolArgs: readonly string[];
-	readonly stdin?: string;
-	readonly electronLaunch?: ElectronLaunchSuccess;
+	readonly stdin?: string | undefined;
+	readonly electronLaunch?: ElectronLaunchSuccess | undefined;
 }
 
 interface PreparationControls extends PreparationPageFacts {
-	readonly modelVisible?: boolean;
-	readonly onUpdate?: (result: AgentToolResult<unknown>) => void;
+	readonly modelVisible?: boolean | undefined;
+	readonly onUpdate?: ((result: AgentToolResult<unknown>) => void) | undefined;
 	readonly promptPolicy: PromptPolicy;
-	readonly artifactStore?: PersistentSessionArtifactStore;
-	readonly initialDaemonObservation?: PreparationDaemonObservation;
+	readonly artifactStore?: PersistentSessionArtifactStore | undefined;
+	readonly initialDaemonObservation?: PreparationDaemonObservation | undefined;
 }
 
 function rawPageFailure(input: BrowserRunInputFields): PrepareBrowserRunResult | undefined {
@@ -145,7 +145,7 @@ async function preparePagePhases(
 	planning: PreparationDaemonResult,
 	request: PreparationRequest & {
 		readonly preparedArgs: PreparationCommandContext["preparedArgs"];
-		readonly chromeStartupArgs?: string;
+		readonly chromeStartupArgs?: string | undefined;
 		readonly update: BrowserRunOptions["sessionPageStateUpdate"];
 		readonly sessionFacts: PreparationSessionFacts;
 	},
@@ -219,8 +219,8 @@ async function prepareRequest(
 	>,
 	input: BrowserRunInputFields,
 	settings: {
-		readonly signal?: AbortSignal;
-		readonly sessionMode?: "auto" | "fresh";
+		readonly signal?: AbortSignal | undefined;
+		readonly sessionMode?: "auto" | "fresh" | undefined;
 		readonly getOwnerSessionId: () => string | undefined;
 	},
 ): Promise<

@@ -9,10 +9,10 @@ import type { PreparationProcessFacts } from "./prepare-contracts.js";
 
 export interface PreparationNativeFacts extends PreparationProcessFacts {
 	readonly managedSessionActive: boolean;
-	readonly preserveAttachedBrowserSession?: boolean;
-	readonly callerColdLaunch?: () => Promise<boolean>;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
+	readonly callerColdLaunch?: (() => Promise<boolean>) | undefined;
 	readonly isRestoreDisabled: () => boolean;
-	readonly onUpdate?: (result: AgentToolResult<unknown>) => void;
+	readonly onUpdate?: ((result: AgentToolResult<unknown>) => void) | undefined;
 }
 import { prepareClickDispatchProbe } from "./click-dispatch.js";
 import { collectScrollPositionSnapshot } from "./diagnostics.js";
@@ -29,7 +29,7 @@ import type {
 export interface PreparationCommandContext extends PreparationGuardContext {
 	readonly preparedArgs: PreparedAgentBrowserArgs;
 	readonly runtimeToolArgs: readonly string[];
-	readonly electronLaunch?: ElectronLaunchSuccess;
+	readonly electronLaunch?: ElectronLaunchSuccess | undefined;
 }
 
 function shouldProbeScrollNoop(

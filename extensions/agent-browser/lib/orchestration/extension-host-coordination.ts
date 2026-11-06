@@ -15,6 +15,8 @@ import type { AgentBrowserToolResult } from "./browser-run/types.js";
 import { runElectronHostInput } from "./extension-host-run.js";
 import type { BrowserHostCall } from "./extension-invocation.js";
 
+import type { AgentBrowserSessionIdentity } from "../session-identity.js";
+
 type HostResult = AgentBrowserToolResult | undefined;
 class ElectronHostCoordinator {
 	constructor(
@@ -59,7 +61,7 @@ class ElectronHostCoordinator {
 			? this.runtime.artifacts.queue.run(() => this.cleanup(signal))
 			: runElectronHostInput(this.runtime, this.call, signal);
 	}
-	selectedSessions(): Array<{ sessionName: string; namespace?: string }> {
+	selectedSessions(): AgentBrowserSessionIdentity[] {
 		const compiled = this.call.compiledElectron;
 		const records = this.runtime.electron.forHostInput({
 			compiledElectron: compiled,

@@ -9,10 +9,10 @@ import { formatBatchStepsText } from "./batch-rendering.js";
 import { buildPageChangeSummary } from "./navigation.js";
 
 export interface BatchStatus {
-	readonly failure?: BatchFailurePresentationObservation;
+	readonly failure?: BatchFailurePresentationObservation | undefined;
 	readonly summary: string;
-	readonly header?: string;
-	readonly mutationEvidenceText?: string;
+	readonly header?: string | undefined;
+	readonly mutationEvidenceText?: string | undefined;
 }
 
 function getBatchFailure(

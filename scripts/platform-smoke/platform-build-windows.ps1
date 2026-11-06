@@ -27,6 +27,9 @@ $NodeVersionExit = 1
 try { if ([version]$NodeVersion.TrimStart("v") -ge [version]$NodeValidationVersion) { $NodeVersionExit = 0 } } catch {}
 Write-Output "PLATFORM_NODE_VERSION_EXIT=$NodeVersionExit"
 
+& git init --quiet
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 & npm ci 2>&1
 $NpmCiExit = $LASTEXITCODE
 Write-Output "PLATFORM_NPM_CI_EXIT=$NpmCiExit"

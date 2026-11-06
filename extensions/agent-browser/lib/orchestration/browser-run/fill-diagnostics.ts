@@ -113,10 +113,10 @@ export async function collectFillVerificationDiagnostic(options: {
 	readonly commandTokens: readonly string[];
 	readonly cwd: string;
 	readonly forceValueVerification?: boolean;
-	readonly namespace?: string;
-	readonly refSnapshot?: SessionRefSnapshot;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<FillVerificationDiagnostic | undefined> {
 	const fill = getTopLevelFillInvocation(options.commandTokens);
 	if (!fill || options.sessionName === undefined || options.sessionName === "") {

@@ -88,7 +88,7 @@ const RICH_INPUT_RECOVERY_HINT =
 
 export function getVisibleRefFallbackTarget(options: {
 	readonly commandTokens: readonly string[];
-	readonly compiledSemanticAction?: SelectorRecoveryCompiledAction;
+	readonly compiledSemanticAction?: SelectorRecoveryCompiledAction | undefined;
 }): VisibleRefFallbackTarget | undefined {
 	return (
 		getFindVisibleRefFallbackTarget(options.commandTokens) ??
@@ -263,7 +263,7 @@ function resolveCandidateArgs(
 export function resolveVisibleRefActionFromSnapshot(options: {
 	readonly allowFill?: boolean;
 	readonly compiledAction: SelectorRecoveryCompiledAction;
-	readonly refSnapshot?: SessionRefSnapshot;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
 	readonly snapshotData?: unknown;
 }): VisibleRefActionResolution | undefined {
 	const target = getFindVisibleRefFallbackTarget(options.compiledAction.args);
@@ -298,7 +298,7 @@ export function resolveVisibleRefActionFromSnapshot(options: {
 
 export function buildVisibleRefFallbackNextActions(options: {
 	readonly diagnostic: VisibleRefFallbackDiagnostic;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): AgentBrowserNextAction[] {
 	const ambiguous = options.diagnostic.candidates.length > 1;
 	return options.diagnostic.candidates.flatMap((candidate, index) =>
@@ -387,7 +387,7 @@ export function buildRichInputRecoveryDiagnostic(
 
 export function buildRichInputRecoveryNextActions(options: {
 	readonly diagnostic: RichInputRecoveryDiagnostic;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): AgentBrowserNextAction[] {
 	const candidateCount = options.diagnostic.candidates.length;
 	const ambiguous = candidateCount > 1;

@@ -1,5 +1,9 @@
 import { isAbsolute, resolve } from "node:path";
-import { projectUpstreamGlobalFlags, scanUpstreamGlobalFlagOccurrences } from "../argv-grammar.js";
+import {
+	projectUpstreamGlobalFlags,
+	scanUpstreamGlobalFlagOccurrences,
+	type IndexedArgvToken,
+} from "../argv-grammar.js";
 import {
 	getDiffFilePathIndices,
 	getExplicitArtifactDestinationIndex,
@@ -12,7 +16,7 @@ import {
 
 interface BoundOperationPaths {
 	readonly args: readonly string[];
-	readonly stdin?: string;
+	readonly stdin?: string | undefined;
 }
 
 const FILE_GLOBAL_FLAGS = [
@@ -31,18 +35,17 @@ const FILE_GLOBAL_FLAGS = [
 class OperationPathBinding {
 	private changedArgs: string[] | undefined;
 	readonly tokens: readonly string[];
-	private readonly indices: readonly number[];
+	private readonly projection: readonly IndexedArgvToken[];
 
 	constructor(
 		private readonly args: readonly string[],
 		private readonly cwd: string,
 		batchStep: boolean,
 	) {
-		const projection = batchStep
-			? { tokens: args, indices: args.map((_, index) => index) }
+		this.projection = batchStep
+			? args.map((token, index) => ({ token, index }))
 			: projectUpstreamGlobalFlags(args);
-		this.tokens = projection.tokens;
-		this.indices = projection.indices;
+		this.tokens = this.projection.map(({ token }) => token);
 	}
 
 	get result(): readonly string[] {
@@ -66,15 +69,20 @@ class OperationPathBinding {
 	}
 
 	bindGlobals(): void {
+		const command = this.projection[0];
 		for (const flag of FILE_GLOBAL_FLAGS) {
-			for (const occurrence of scanUpstreamGlobalFlagOccurrences([...this.args], flag)) {
-				if (flag === "--state" && this.tokens[0] === "wait" && occurrence.index > this.indices[0]) {
+			for (const occurrence of scanUpstreamGlobalFlagOccurrences(this.args, flag)) {
+				if (flag === "--state" && command?.token === "wait" && occurrence.index > command.index) {
 					continue;
 				}
 				this.setPath(occurrence.index + 1);
 			}
 		}
-		for (const occurrence of scanUpstreamGlobalFlagOccurrences([...this.args], "--profile")) {
+		this.bindProfilePath();
+	}
+
+	private bindProfilePath(): void {
+		for (const occurrence of scanUpstreamGlobalFlagOccurrences(this.args, "--profile")) {
 			const value = occurrence.value;
 			// Chrome profile names are identities, not workspace file paths.
 			if (value !== undefined && /[\\/]/.test(value) && !value.startsWith("~")) {
@@ -84,39 +92,42 @@ class OperationPathBinding {
 	}
 
 	bindRawBatchRows(): void {
-		for (let index = 1; index < this.tokens.length; index++) {
-			if (isNativeBatchOption(this.tokens[index])) {
+		for (const { index, token } of this.projection.slice(1)) {
+			if (isNativeBatchOption(token)) {
 				continue;
 			}
-			const row = parseBatchCommandArgument(this.tokens[index]).step;
+			const row = parseBatchCommandArgument(token).step;
 			if (row === undefined) {
 				continue;
 			}
 			const bound = resolveOperationPaths(row, undefined, this.cwd, true).args;
 			if (bound !== row) {
-				this.replace(
-					this.indices[index],
-					bound.map((token) => `'${token.replaceAll("'", "'\\''")}'`).join(" "),
-				);
+				this.replace(index, bound.map((word) => `'${word.replaceAll("'", "'\\''")}'`).join(" "));
 			}
 		}
 	}
 
+	private setOperandPath(index: number | undefined): void {
+		if (index !== undefined) {
+			this.setPath(this.projection[index]?.index);
+		}
+	}
+
 	bindFileOperands(): void {
-		this.setPath(this.indices[getExplicitArtifactDestinationIndex([...this.tokens]) ?? -1]);
+		this.setOperandPath(getExplicitArtifactDestinationIndex(this.tokens));
 		if (this.tokens[0] === "upload") {
-			for (let index = 2; index < this.tokens.length; index++) {
-				this.setPath(this.indices[index]);
+			for (const { index } of this.projection.slice(2)) {
+				this.setPath(index);
 			}
 		}
 		if (this.tokens[0] === "state" && this.tokens[1] === "load") {
-			this.setPath(this.indices[2]);
+			this.setOperandPath(2);
 		}
-		this.setPath(this.indices[getDiffFilePathIndices([...this.tokens]).baseline ?? -1]);
+		this.setOperandPath(getDiffFilePathIndices(this.tokens).baseline);
 		if (this.tokens[0] === "cookies" && this.tokens[1] === "set") {
 			const index = this.tokens.indexOf("--curl");
 			if (index >= 0) {
-				this.setPath(this.indices[index + 1]);
+				this.setOperandPath(index + 1);
 			}
 		}
 		this.bindWebMcpParams();
@@ -142,17 +153,15 @@ class OperationPathBinding {
 		if (this.tokens[0] !== "webmcp" || this.tokens[1] !== "invoke") {
 			return;
 		}
-		for (let index = 3; index < this.tokens.length; index++) {
-			if (!["--params", "--frame", "--timeout"].includes(this.tokens[index])) {
+		const operands = this.projection.slice(3).values();
+		for (const { token } of operands) {
+			if (!["--params", "--frame", "--timeout"].includes(token)) {
 				continue;
 			}
-			if (
-				this.tokens[index] === "--params" &&
-				this.tokens.at(index + 1)?.startsWith("@") === true
-			) {
-				this.setPath(this.indices[index + 1], "@");
+			const value = operands.next().value;
+			if (token === "--params" && value?.token.startsWith("@") === true) {
+				this.setPath(value.index, "@");
 			}
-			index++;
 		}
 	}
 }

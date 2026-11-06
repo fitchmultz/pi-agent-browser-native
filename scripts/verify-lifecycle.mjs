@@ -27,6 +27,7 @@ export {
 } from "./lifecycle-tmux.mjs";
 
 class UsageError extends Error {
+	/** @param {string} message */
 	constructor(message) {
 		super(message);
 		this.name = "UsageError";
@@ -59,15 +60,17 @@ Exit codes:
 `);
 }
 
+/** @param {string | undefined} value */
 function parseModel(value) {
-	if (!value || value.startsWith("-")) {
+	if (value === undefined || value === "" || value.startsWith("-")) {
 		throw new UsageError("--model requires a provider/model id value.");
 	}
 	return value;
 }
 
+/** @param {string | undefined} value */
 function parseTimeout(value) {
-	if (!value) {
+	if (value === undefined || value === "") {
 		throw new UsageError("--timeout-ms requires a positive integer value.");
 	}
 	const timeoutMs = Number(value);
@@ -79,6 +82,7 @@ function parseTimeout(value) {
 	return timeoutMs;
 }
 
+/** @param {readonly string[]} argv */
 export function parseCliArgs(argv = process.argv.slice(2)) {
 	const options = {
 		keepArtifacts: false,
@@ -87,8 +91,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 		timeoutMs: DEFAULT_TIMEOUT_MS,
 		verbose: false,
 	};
-	for (let index = 0; index < argv.length; index += 1) {
-		const arg = argv[index];
+	const args = argv.values();
+	for (const arg of args) {
 		if (["-h", "--help"].includes(arg)) {
 			return { ...options, showHelp: true };
 		}
@@ -97,13 +101,12 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 			continue;
 		}
 		if (arg === "--model" || arg === "--timeout-ms") {
-			const value = argv[index + 1];
+			const value = args.next().value;
 			if (arg === "--model") {
 				options.model = parseModel(value);
 			} else {
 				options.timeoutMs = parseTimeout(value);
 			}
-			index += 1;
 			continue;
 		}
 		throw new UsageError(`Unknown option: ${arg}`);
@@ -137,8 +140,10 @@ export async function main(argv = process.argv.slice(2)) {
 	}
 }
 
+/** @param {string} metaUrl @param {readonly string[]} argv */
 export function isDirectRun(metaUrl, argv = process.argv) {
-	return Boolean(argv[1]) && metaUrl === pathToFileURL(argv[1]).href;
+	const entry = argv[1];
+	return entry !== undefined && entry !== "" && metaUrl === pathToFileURL(entry).href;
 }
 
 if (isDirectRun(import.meta.url)) {
@@ -146,7 +151,7 @@ if (isDirectRun(import.meta.url)) {
 		.then((exitCode) => {
 			process.exitCode = exitCode;
 		})
-		.catch((error) => {
+		.catch((/** @type {unknown} */ error) => {
 			console.error(error instanceof Error ? error.message : error);
 			process.exitCode = 1;
 		});

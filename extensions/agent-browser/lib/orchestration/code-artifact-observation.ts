@@ -3,7 +3,7 @@ import type { ArtifactVerificationState } from "../results/contracts.js";
 
 export interface CodeArtifactReceipt {
 	readonly [key: string]: unknown;
-	readonly absolutePath?: string;
+	readonly absolutePath?: string | undefined;
 	readonly path: string;
 	readonly state: ArtifactVerificationState;
 }

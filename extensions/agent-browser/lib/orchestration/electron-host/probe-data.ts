@@ -1,11 +1,10 @@
 import { boundElectronProbeString } from "../../electron/cdp.js";
 import { isRecord } from "../../parsing.js";
-import { extractRefSnapshotFromData, type SessionRefSnapshot } from "../../session-page-state.js";
+import { extractRefSnapshotFromData } from "../../session-page-state.js";
 import type {
 	ElectronProbeFocusedElement,
 	ElectronProbeTab,
 	ElectronProbeResult,
-	ElectronProbeSnapshotSummary,
 } from "./contracts.js";
 
 export const ELECTRON_FOCUSED_ELEMENT_EVAL = `(() => {
@@ -93,7 +92,7 @@ function rawProbeTabs(data: unknown): readonly unknown[] {
 	return Array.isArray(data) ? data : [];
 }
 export function extractElectronProbeTabs(data: unknown): {
-	readonly activeTab?: ElectronProbeTab;
+	readonly activeTab?: ElectronProbeTab | undefined;
 	readonly tabs?: ElectronProbeResult["tabs"];
 } {
 	const allTabs = rawProbeTabs(data)
@@ -121,8 +120,8 @@ export function extractElectronProbeTabs(data: unknown): {
 }
 function truncateElectronProbeSnapshotText(snapshotText: string | undefined): {
 	readonly lineCount: number;
-	readonly omittedLineCount?: number;
-	readonly text?: string;
+	readonly omittedLineCount?: number | undefined;
+	readonly text?: string | undefined;
 } {
 	if (snapshotText === undefined || snapshotText.length === 0) {
 		return { lineCount: 0 };
@@ -151,10 +150,9 @@ function truncateElectronProbeSnapshotText(snapshotText: string | undefined): {
 		text: shownLines.length > 0 ? shownLines.join("\n") : undefined,
 	};
 }
-export function summarizeElectronProbeSnapshot(data: unknown): {
-	readonly refSnapshot?: SessionRefSnapshot;
-	readonly snapshot?: ElectronProbeSnapshotSummary;
-} {
+export function summarizeElectronProbeSnapshot(
+	data: unknown,
+): Pick<ElectronProbeResult, "refSnapshot" | "snapshot"> {
 	const refSnapshot = extractRefSnapshotFromData(data);
 	const rawSnapshotText = isRecord(data) ? getTrimmedString(data.snapshot) : undefined;
 	const truncated = truncateElectronProbeSnapshotText(rawSnapshotText);

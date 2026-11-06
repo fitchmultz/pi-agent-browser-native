@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { readArray, readDefined, readRecord, readString } from "./helpers/assertions.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -14,10 +14,10 @@ import {
 } from "./helpers/agent-browser-harness.js";
 import { stripWrapperPrefix, needsRootSessionPageCheck } from "./helpers/passthrough-fixture.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension passes through provider workflows",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-provider-matrix-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -71,28 +71,22 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true, args } })
 					);
 
 					for (const args of providerCommands) {
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-							args: [...args],
-							sessionMode: "fresh",
+						await t.test(args.join(" "), async () => {
+							const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+								args: [...args],
+								sessionMode: "fresh",
+							});
+							assert.ok(result.details);
+							assert.equal(
+								result.isError,
+								false,
+								`${args.join(" ")}: ${result.content[0]?.type === "text" ? readString(result.content[0].text) : ""}`,
+							);
+							assert.doesNotMatch(
+								JSON.stringify(result.details),
+								/agentcore-key|browserbase-key|browserless-key|browser-use-key|kernel-key/,
+							);
 						});
-						// Every command in the fixed nonempty provider table checks success and credential redaction.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(result.details);
-						// Every command in the fixed nonempty provider table checks success and credential redaction.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							result.isError,
-							false,
-							`${args.join(" ")}: ${result.content[0]?.type === "text" ? readString(result.content[0].text) : ""}`,
-						);
-						// Every command in the fixed nonempty provider table checks success and credential redaction.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(
-							JSON.stringify(result.details),
-							/agentcore-key|browserbase-key|browserless-key|browser-use-key|kernel-key/,
-						);
 					}
 
 					const invocations = await readInvocationLog(logPath);
@@ -138,10 +132,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { ok: true, args } })
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension passes through non-core network debug diff stream dashboard and chat families",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-non-core-matrix-"));
 		const logPath = join(tempDir, "invocations.log");
 		const harPath = join(tempDir, "network.har");
@@ -276,39 +270,31 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					let networkRequestsResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 					let streamStatusResult: Awaited<ReturnType<typeof executeRegisteredTool>> | undefined;
 					for (const args of commands) {
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-							args: [...args],
+						await t.test(args.join(" "), async () => {
+							const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+								args: [...args],
+							});
+							assert.ok(result.details);
+							assert.equal(
+								result.isError,
+								false,
+								`${args.join(" ")}: ${result.content[0]?.type === "text" ? readString(result.content[0].text) : ""}`,
+							);
+							assert.doesNotMatch(
+								result.content[0]?.text ?? "",
+								/route-secret|clipboard-secret|chat-secret/,
+							);
+							assert.doesNotMatch(
+								JSON.stringify(result.details),
+								/route-secret|clipboard-secret|chat-secret/,
+							);
+							if (args[0] === "network" && args[1] === "requests") {
+								networkRequestsResult = result;
+							}
+							if (args[0] === "stream" && args[1] === "status") {
+								streamStatusResult = result;
+							}
 						});
-						// Every command in the fixed nonempty non-core sequence checks success and secret redaction.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(result.details);
-						// Every command in the fixed nonempty non-core sequence checks success and secret redaction.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							result.isError,
-							false,
-							`${args.join(" ")}: ${result.content[0]?.type === "text" ? readString(result.content[0].text) : ""}`,
-						);
-						// Every command in the fixed nonempty non-core sequence checks success and secret redaction.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(
-							result.content[0]?.text ?? "",
-							/route-secret|clipboard-secret|chat-secret/,
-						);
-						// Every command in the fixed nonempty non-core sequence checks success and secret redaction.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(
-							JSON.stringify(result.details),
-							/route-secret|clipboard-secret|chat-secret/,
-						);
-						if (args[0] === "network" && args[1] === "requests") {
-							networkRequestsResult = result;
-						}
-						if (args[0] === "stream" && args[1] === "status") {
-							streamStatusResult = result;
-						}
 					}
 					assert.ok(streamStatusResult);
 					const streamJson = readRecord(
@@ -342,15 +328,21 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						],
 					);
 					assert.deepEqual(
-						readArray(readRecord(networkNextActions[0].params).args).map(readString).slice(-3),
+						readArray(readRecord(readDefined(networkNextActions[0]).params).args)
+							.map(readString)
+							.slice(-3),
 						["network", "request", "n1"],
 					);
 					assert.deepEqual(
-						readArray(readRecord(networkNextActions[1].params).args).map(readString).slice(-4),
+						readArray(readRecord(readDefined(networkNextActions[1]).params).args)
+							.map(readString)
+							.slice(-4),
 						["network", "requests", "--filter", "/app.js"],
 					);
 					assert.deepEqual(
-						readArray(readRecord(networkNextActions[2].params).args).map(readString).slice(-3),
+						readArray(readRecord(readDefined(networkNextActions[2]).params).args)
+							.map(readString)
+							.slice(-3),
 						["network", "requests", "--clear"],
 					);
 
@@ -412,7 +404,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension treats stream enable already-enabled as idempotent no-op",
 	{ concurrency: false },
 	async () => {
@@ -468,7 +460,7 @@ process.stdout.write(JSON.stringify({ success: false, error: fs.readFileSync(${J
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports unfulfilled routed network mocks",
 	{ concurrency: false },
 	async () => {
@@ -528,7 +520,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports routed network mocks inside and after batch until close retires them",
 	{ concurrency: false },
 	async () => {
@@ -584,7 +576,7 @@ process.stdin.on("end", () => {
 					assert.equal(batchResult.isError, false);
 					const batchSteps = readArray(batchResult.details.batchSteps).map(readRecord);
 					assert.deepEqual(
-						readArray(batchSteps[1].networkRouteDiagnostics)
+						readArray(readDefined(batchSteps[1]).networkRouteDiagnostics)
 							.map(readRecord)
 							.map((item) => item.reason),
 						["pending-routed-request"],
@@ -620,14 +612,16 @@ process.stdin.on("end", () => {
 						[true, true, true, true, true],
 					);
 					// The same request rows are diagnosed only while the earlier route is active.
-					assert.deepEqual(closeBatchSteps[4].data, closeBatchSteps[1].data);
+					const beforeClose = readDefined(closeBatchSteps[1]);
+					const afterClose = readDefined(closeBatchSteps[4]);
+					assert.deepEqual(afterClose.data, beforeClose.data);
 					assert.deepEqual(
-						readArray(closeBatchSteps[1].networkRouteDiagnostics)
+						readArray(beforeClose.networkRouteDiagnostics)
 							.map(readRecord)
 							.map((item) => item.reason),
 						["pending-routed-request"],
 					);
-					assert.equal(closeBatchSteps[4].networkRouteDiagnostics, undefined);
+					assert.equal(afterClose.networkRouteDiagnostics, undefined);
 
 					const requestsAfterCloseResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["network", "requests"],

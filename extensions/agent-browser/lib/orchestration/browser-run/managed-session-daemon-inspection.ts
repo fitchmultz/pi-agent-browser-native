@@ -12,7 +12,7 @@ const RUNNING_HEADED_AUTOSAVE_POLICY_CHANGE_ERROR =
 	'AGENT_BROWSER_AUTOSAVE_INTERVAL_MS cannot change a running wrapper-owned headed session\'s launch-time periodic autosave interval. Close that session first, then retry with sessionMode: "fresh" so the new daemon starts with the requested interval.';
 
 export function getRunningHeadedAutosavePolicyChangeError(
-	recordedInterval: string | undefined,
+	recordedInterval?: string,
 	closeCommand = false,
 ): string | undefined {
 	const explicitInterval = resolveExplicitAutosaveInterval(
@@ -33,7 +33,11 @@ export function getHeadedManagedAutosaveEnv(
 }
 
 export type ManagedSessionDaemonInspection =
-	| { readonly restoreKey: string | null; readonly status: "active"; readonly generation?: string }
+	| {
+			readonly restoreKey: string | null;
+			readonly status: "active";
+			readonly generation?: string | undefined;
+	  }
 	| { readonly status: "inactive" | "missing-binary" | "unknown" };
 
 export interface PreparationDaemonObservation {
@@ -45,12 +49,12 @@ export interface PreparationDaemonObservation {
 export interface ManagedSessionDaemonInspectionOptions {
 	readonly cwd: string;
 	readonly includeGeneration?: boolean;
-	readonly headedManagedAutosaveInterval?: string;
-	readonly namespace?: string;
-	readonly preserveAttachedBrowserSession?: boolean;
+	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly namespace?: string | undefined;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
 	readonly sessionName: string;
-	readonly signal?: AbortSignal;
-	readonly timeoutMs?: number;
+	readonly signal?: AbortSignal | undefined;
+	readonly timeoutMs?: number | undefined;
 }
 
 interface DaemonGeneration {

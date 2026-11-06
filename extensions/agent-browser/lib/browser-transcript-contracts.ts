@@ -49,21 +49,27 @@ export interface BrowserSnapshotReference {
 export interface BrowserSnapshot {
 	readonly id: string;
 	readonly refs: Readonly<Record<string, BrowserSnapshotReference>>;
-	readonly target?: SessionTabTarget;
-	readonly generation?: string;
+	readonly target?: SessionTabTarget | undefined;
+	readonly generation?: string | undefined;
 }
 export type BrowserRefDisposition =
 	| { readonly kind: "reuse"; readonly snapshotId: string }
 	| { readonly kind: "replace"; readonly snapshotId: string }
-	| { readonly kind: "invalidate"; readonly invalidation?: SessionRefSnapshotInvalidation }
-	| { readonly kind: "unknown"; readonly invalidation?: SessionRefSnapshotInvalidation };
+	| {
+			readonly kind: "invalidate";
+			readonly invalidation?: SessionRefSnapshotInvalidation | undefined;
+	  }
+	| {
+			readonly kind: "unknown";
+			readonly invalidation?: SessionRefSnapshotInvalidation | undefined;
+	  };
 export interface BrowserPageChange {
 	readonly key: string;
 	readonly confirmActions?: string | null;
 	readonly refs: BrowserRefDisposition;
-	readonly target?: SessionTabTarget;
-	readonly unknown?: true;
-	readonly reopenPending?: boolean;
+	readonly target?: SessionTabTarget | undefined;
+	readonly unknown?: true | undefined;
+	readonly reopenPending?: boolean | undefined;
 	readonly pinningReason?: SessionPageStateView["pinningReason"];
 	readonly clear?: true;
 }
@@ -82,7 +88,7 @@ export interface BrowserEvent {
 	readonly isError: boolean;
 	readonly state: Readonly<Record<string, unknown>>;
 	readonly pages?: readonly BrowserPageChange[];
-	readonly artifacts?: BrowserArtifactChanges;
+	readonly artifacts?: BrowserArtifactChanges | undefined;
 }
 export interface BrowserRecord {
 	readonly event: BrowserEvent;

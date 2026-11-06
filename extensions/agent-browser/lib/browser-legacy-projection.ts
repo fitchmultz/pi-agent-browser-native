@@ -34,6 +34,178 @@ import { BrowserConversionBranches } from "./browser-conversion-branches.js";
 export type { LegacyProjection } from "./browser-legacy-types.js";
 export const emptyProjection = (): LegacyProjectionState => ({ pages: new Map(), nextIndex: 0 });
 
+class LegacyBrowserConversion {
+	private readonly current: LegacyProjectionState;
+
+	constructor(private readonly parent: LegacyProjection) {
+		this.current = {
+			pages: new Map(parent.pages),
+			manifest: parent.manifest,
+			nextIndex: parent.nextIndex,
+		};
+	}
+
+	convert(
+		entry: Readonly<Record<string, unknown>>,
+		ownerSessionId: string | undefined,
+	): { record?: BrowserRecord; projection: LegacyProjection } {
+		const canonical = parseBrowserRecord(entry);
+		if (canonical) {
+			this.applyCanonical(canonical);
+			return { projection: this.current };
+		}
+		const script = scriptRecord(
+			entry,
+			typeof entry.id === "string" ? entry.id : randomUUID(),
+			ownerSessionId,
+		);
+		if (script) {
+			return { record: script, projection: this.current };
+		}
+		const message = legacyMessage(entry);
+		if (!message || !isRecord(message.details)) {
+			return { projection: this.parent };
+		}
+		return {
+			record: this.convertMessage(this.context(entry, message, message.details), ownerSessionId),
+			projection: this.current,
+		};
+	}
+
+	private applyCanonical(canonical: BrowserRecord): void {
+		this.current.manifest = applyArtifactChanges(this.parent.manifest, canonical.event.artifacts);
+		for (const page of canonical.event.pages ?? []) {
+			if (page.clear === true) {
+				this.current.pages.delete(page.key);
+				continue;
+			}
+			this.current.pages.set(
+				page.key,
+				canonicalPage(this.current.pages.get(page.key) ?? {}, canonical, page),
+			);
+		}
+	}
+	private operationIdentity(options: {
+		readonly entry: Readonly<Record<string, unknown>>;
+		readonly details: Readonly<Record<string, unknown>>;
+		readonly key?: string | undefined;
+		readonly toolCallId: string;
+		readonly nativeId: string;
+	}): Pick<LegacyContext, "prior" | "begin" | "phase" | "commandIndex" | "operationId"> {
+		const prior = legacyPrior(options.key, this.current);
+		const begin = isLegacyBegin(options.entry, options.details);
+		const pending = prior.pending?.toolCallId === options.toolCallId ? prior.pending : undefined;
+		let phase: LegacyContext["phase"] = "state";
+		if (begin) {
+			phase = "begin";
+		} else if (pending) {
+			phase = "finish";
+		}
+		let commandIndex = pending?.index ?? 0;
+		if (begin) {
+			commandIndex = this.current.nextIndex;
+			this.current.nextIndex++;
+		}
+		return {
+			prior,
+			begin,
+			phase,
+			commandIndex,
+			operationId: pending?.operationId ?? `legacy-${options.nativeId}`,
+		};
+	}
+	private context(
+		entry: Readonly<Record<string, unknown>>,
+		message: Readonly<Record<string, unknown>>,
+		details: Readonly<Record<string, unknown>>,
+	): LegacyContext {
+		const nativeId = typeof entry.id === "string" ? entry.id : randomUUID();
+		const toolCallId =
+			typeof message.toolCallId === "string" ? message.toolCallId : `legacy-${nativeId}`;
+		const replayDetails = normalizeLegacyDetails(details, message.isError === true);
+		const identity = legacyIdentity(replayDetails);
+		const operation = this.operationIdentity({
+			entry,
+			details: replayDetails,
+			key: identity.key,
+			toolCallId,
+			nativeId,
+		});
+		return {
+			...identity,
+			...operation,
+			nativeId,
+			details: replayDetails,
+			isError: message.isError === true,
+			toolCallId,
+		};
+	}
+	private closePages(
+		ctx: LegacyContext,
+	): ReturnType<typeof closingLifecycle> & { readonly pages: BrowserPageChange[] } {
+		const closing = closingLifecycle(ctx);
+		const pages: BrowserPageChange[] = [];
+		if (closing.closeAll) {
+			for (const key of this.current.pages.keys()) {
+				if (isAgentBrowserSessionIdentityKeyInNamespace(key, ctx.namespace)) {
+					this.current.pages.delete(key);
+					pages.push({ key, clear: true, refs: { kind: "invalidate" } });
+				}
+			}
+		} else if (ctx.key !== undefined && closing.lifecycleReset) {
+			this.current.pages.delete(ctx.key);
+			pages.push({ key: ctx.key, clear: true, refs: { kind: "invalidate" } });
+		}
+		return { ...closing, pages };
+	}
+	private updateManifest(
+		details: Readonly<Record<string, unknown>>,
+	): ReturnType<typeof artifactChanges> {
+		if (
+			isSessionArtifactManifest(details.artifactManifest) &&
+			(!this.parent.manifest ||
+				details.artifactManifest.updatedAtMs >= this.parent.manifest.updatedAtMs)
+		) {
+			this.current.manifest = details.artifactManifest;
+		}
+		const changes = artifactChanges(this.parent.manifest, this.current.manifest);
+		if (!changes) {
+			this.current.manifest = this.parent.manifest;
+		}
+		return changes;
+	}
+	private convertMessage(ctx: LegacyContext, ownerSessionId: string | undefined): BrowserRecord {
+		const closing = this.closePages(ctx);
+		const pages = closing.pages;
+		let definition: BrowserSnapshot | undefined;
+		const suppressPage =
+			(closing.closeAll || closing.lifecycleReset) &&
+			(isCloseCommand(ctx.command) || closing.endsClosed);
+		if (ctx.key !== undefined && hasPageEffects(ctx) && !suppressPage) {
+			const conversion = new LegacyPageConversion(ctx, this.current.pages.get(ctx.key) ?? {});
+			pages.push(conversion.change(ctx.key));
+			this.current.pages.set(ctx.key, conversion.page);
+			definition = conversion.definition;
+		}
+		const artifacts = this.updateManifest(ctx.details);
+		// Synthesized records publish receipts; `this.current.manifest` keeps the retained comparison rows.
+		return persistedBrowserRecord({
+			event: {
+				version: 1,
+				phase: ctx.phase,
+				operationId: ctx.operationId,
+				toolCallId: ctx.toolCallId,
+				commandIndex: ctx.commandIndex,
+				isError: ctx.isError,
+				state: stampElectronState(browserStateEffects(ctx.details), ownerSessionId),
+				pages,
+				artifacts,
+			},
+			...(definition ? { snapshot: definition } : {}),
+		});
+	}
+}
+
 function legacyMessage(
 	entry: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> | undefined {
@@ -56,20 +228,6 @@ function isLegacyToolMessage(message: Readonly<Record<string, unknown>> | undefi
 		isRecord(message.details) &&
 		message.details.browserEventVersion !== 1
 	);
-}
-function applyCanonical(
-	current: LegacyProjectionState,
-	parent: LegacyProjection,
-	canonical: BrowserRecord,
-): void {
-	current.manifest = applyArtifactChanges(parent.manifest, canonical.event.artifacts);
-	for (const page of canonical.event.pages ?? []) {
-		if (page.clear === true) {
-			current.pages.delete(page.key);
-			continue;
-		}
-		current.pages.set(page.key, canonicalPage(current.pages.get(page.key) ?? {}, canonical, page));
-	}
 }
 function scriptRecord(
 	entry: Readonly<Record<string, unknown>>,
@@ -130,38 +288,6 @@ function legacyIdentity(
 function legacyPrior(key: string | undefined, current: LegacyProjection): LegacyContext["prior"] {
 	return key === undefined ? {} : (current.pages.get(key) ?? {});
 }
-function operationIdentity(
-	options: {
-		readonly entry: Readonly<Record<string, unknown>>;
-		readonly details: Readonly<Record<string, unknown>>;
-		readonly key?: string;
-		readonly toolCallId: string;
-		readonly nativeId: string;
-	},
-	current: LegacyProjectionState,
-): Pick<LegacyContext, "prior" | "begin" | "phase" | "commandIndex" | "operationId"> {
-	const prior = legacyPrior(options.key, current);
-	const begin = isLegacyBegin(options.entry, options.details);
-	const pending = prior.pending?.toolCallId === options.toolCallId ? prior.pending : undefined;
-	let phase: LegacyContext["phase"] = "state";
-	if (begin) {
-		phase = "begin";
-	} else if (pending) {
-		phase = "finish";
-	}
-	let commandIndex = pending?.index ?? 0;
-	if (begin) {
-		commandIndex = current.nextIndex;
-		current.nextIndex++;
-	}
-	return {
-		prior,
-		begin,
-		phase,
-		commandIndex,
-		operationId: pending?.operationId ?? `legacy-${options.nativeId}`,
-	};
-}
 function normalizeLegacyBatchStep(
 	step: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, unknown>> {
@@ -189,30 +315,6 @@ function normalizeLegacyDetails(
 		...(batchSteps !== undefined ? { batchSteps } : {}),
 	};
 }
-function context(
-	entry: Readonly<Record<string, unknown>>,
-	message: Readonly<Record<string, unknown>>,
-	details: Readonly<Record<string, unknown>>,
-	current: LegacyProjectionState,
-): LegacyContext {
-	const nativeId = typeof entry.id === "string" ? entry.id : randomUUID();
-	const toolCallId =
-		typeof message.toolCallId === "string" ? message.toolCallId : `legacy-${nativeId}`;
-	const replayDetails = normalizeLegacyDetails(details, message.isError === true);
-	const identity = legacyIdentity(replayDetails);
-	const operation = operationIdentity(
-		{ entry, details: replayDetails, key: identity.key, toolCallId, nativeId },
-		current,
-	);
-	return {
-		...identity,
-		...operation,
-		nativeId,
-		details: replayDetails,
-		isError: message.isError === true,
-		toolCallId,
-	};
-}
 function closingLifecycle(ctx: LegacyContext): {
 	readonly closeAll: boolean;
 	readonly lifecycleReset: boolean;
@@ -228,25 +330,6 @@ function closingLifecycle(ctx: LegacyContext): {
 		lifecycleReset: (!ctx.isError && isCloseCommand(ctx.command)) || close !== undefined,
 		endsClosed: close?.endsClosed === true,
 	};
-}
-function closePages(
-	current: LegacyProjectionState,
-	ctx: LegacyContext,
-): ReturnType<typeof closingLifecycle> & { readonly pages: BrowserPageChange[] } {
-	const closing = closingLifecycle(ctx);
-	const pages: BrowserPageChange[] = [];
-	if (closing.closeAll) {
-		for (const key of current.pages.keys()) {
-			if (isAgentBrowserSessionIdentityKeyInNamespace(key, ctx.namespace)) {
-				current.pages.delete(key);
-				pages.push({ key, clear: true, refs: { kind: "invalidate" } });
-			}
-		}
-	} else if (ctx.key !== undefined && closing.lifecycleReset) {
-		current.pages.delete(ctx.key);
-		pages.push({ key: ctx.key, clear: true, refs: { kind: "invalidate" } });
-	}
-	return { ...closing, pages };
 }
 function hasPageEffects(ctx: LegacyContext): boolean {
 	return (
@@ -295,59 +378,6 @@ function stampElectronState(
 		},
 	};
 }
-function updateManifest(
-	current: LegacyProjectionState,
-	parent: LegacyProjection,
-	details: Readonly<Record<string, unknown>>,
-): ReturnType<typeof artifactChanges> {
-	if (
-		isSessionArtifactManifest(details.artifactManifest) &&
-		(!parent.manifest || details.artifactManifest.updatedAtMs >= parent.manifest.updatedAtMs)
-	) {
-		current.manifest = details.artifactManifest;
-	}
-	const changes = artifactChanges(parent.manifest, current.manifest);
-	if (!changes) {
-		current.manifest = parent.manifest;
-	}
-	return changes;
-}
-function convertMessage(
-	ctx: LegacyContext,
-	parent: LegacyProjection,
-	current: LegacyProjectionState,
-	ownerSessionId: string | undefined,
-): BrowserRecord {
-	const closing = closePages(current, ctx);
-	const pages = closing.pages;
-	let definition: BrowserSnapshot | undefined;
-	const suppressPage =
-		(closing.closeAll || closing.lifecycleReset) &&
-		(isCloseCommand(ctx.command) || closing.endsClosed);
-	if (ctx.key !== undefined && hasPageEffects(ctx) && !suppressPage) {
-		const conversion = new LegacyPageConversion(ctx, current.pages.get(ctx.key) ?? {});
-		pages.push(conversion.change(ctx.key));
-		current.pages.set(ctx.key, conversion.page);
-		definition = conversion.definition;
-	}
-	const artifacts = updateManifest(current, parent, ctx.details);
-	// Synthesized records publish receipts; `current.manifest` keeps the retained comparison rows.
-	return persistedBrowserRecord({
-		event: {
-			version: 1,
-			phase: ctx.phase,
-			operationId: ctx.operationId,
-			toolCallId: ctx.toolCallId,
-			commandIndex: ctx.commandIndex,
-			isError: ctx.isError,
-			state: stampElectronState(browserStateEffects(ctx.details), ownerSessionId),
-			pages,
-			artifacts,
-		},
-		...(definition ? { snapshot: definition } : {}),
-	});
-}
-
 /**
  * Ownerless legacy cleanup records fall back to the native session UUID. A legacy fork without an
  * explicit cleanup owner cannot acquire its parent's leases.
@@ -364,37 +394,7 @@ export function convertLegacyBrowserEntry(
 	parent: LegacyProjection = emptyProjection(),
 	ownerSessionId?: string,
 ): { record?: BrowserRecord; projection: LegacyProjection } {
-	const current: LegacyProjectionState = {
-		pages: new Map(parent.pages),
-		manifest: parent.manifest,
-		nextIndex: parent.nextIndex,
-	};
-	const canonical = parseBrowserRecord(entry);
-	if (canonical) {
-		applyCanonical(current, parent, canonical);
-		return { projection: current };
-	}
-	const script = scriptRecord(
-		entry,
-		typeof entry.id === "string" ? entry.id : randomUUID(),
-		ownerSessionId,
-	);
-	if (script) {
-		return { record: script, projection: current };
-	}
-	const message = legacyMessage(entry);
-	if (!message || !isRecord(message.details)) {
-		return { projection: parent };
-	}
-	return {
-		record: convertMessage(
-			context(entry, message, message.details, current),
-			parent,
-			current,
-			ownerSessionId,
-		),
-		projection: current,
-	};
+	return new LegacyBrowserConversion(parent).convert(entry, ownerSessionId);
 }
 function archiveParent(
 	value: Readonly<Record<string, unknown>>,

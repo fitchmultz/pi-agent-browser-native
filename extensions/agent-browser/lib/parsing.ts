@@ -15,7 +15,7 @@ export function parseRefId(selector: string): string | undefined {
 	return (prefixed ? /^e\d*$/ : /^e\d+$/).test(candidate) ? candidate : undefined;
 }
 
-export function parsePositiveInteger(rawValue: string | undefined): number | undefined {
+export function parsePositiveInteger(rawValue?: string): number | undefined {
 	if (typeof rawValue !== "string") {
 		return undefined;
 	}

@@ -4,11 +4,10 @@ import { execFile as execFileCallback } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { promisify } from "node:util";
 
 // Native execFile returns ChildProcess and supplies custom promisify; the ambient callback expects void.
-// oxlint-disable-next-line typescript/strict-void-return
 const execFile = promisify(execFileCallback);
 const buildModules = [
 	"typescript",
@@ -27,7 +26,7 @@ for (const [description, missingPath] of [
 		"node_modules/@earendil-works/pi-coding-agent/index.js",
 	],
 ] as const) {
-	test(`prepare ${description}`, async (t) => {
+	nodeTest(`prepare ${description}`, async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-prepare-"));
 		t.after(() => rm(tempDir, { force: true, recursive: true }));
 		await mkdir(join(tempDir, "scripts"));
@@ -45,10 +44,8 @@ for (const [description, missingPath] of [
 		for (const name of buildModules) {
 			const moduleDir = join(tempDir, "node_modules", name);
 			// Fixture transitions and their assertions run in order against this test's shared state.
-			// oxlint-disable-next-line no-await-in-loop
 			await mkdir(moduleDir, { recursive: true });
 			// Fixture transitions and their assertions run in order against this test's shared state.
-			// oxlint-disable-next-line no-await-in-loop
 			await writeFile(
 				join(moduleDir, "package.json"),
 				JSON.stringify({
@@ -59,7 +56,6 @@ for (const [description, missingPath] of [
 				}),
 			);
 			// Fixture transitions and their assertions run in order against this test's shared state.
-			// oxlint-disable-next-line no-await-in-loop
 			await writeFile(join(moduleDir, "index.js"), "export {};\n");
 		}
 		if (missingPath !== undefined) {

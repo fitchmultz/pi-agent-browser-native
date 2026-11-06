@@ -12,21 +12,21 @@ import type {
 } from "../contracts.js";
 
 export interface BuildNestedToolPresentationOptions {
-	readonly modelVisible?: boolean;
-	readonly artifactManifest?: SessionArtifactManifest;
-	readonly artifactMaxUpdatedAtMs?: number;
-	readonly artifactMinUpdatedAtMs?: number;
-	readonly artifactRequest?: ArtifactRequestContext;
-	readonly args?: readonly string[];
+	readonly modelVisible?: boolean | undefined;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
+	readonly artifactMaxUpdatedAtMs?: number | undefined;
+	readonly artifactMinUpdatedAtMs?: number | undefined;
+	readonly artifactRequest?: ArtifactRequestContext | undefined;
+	readonly args?: readonly string[] | undefined;
 	readonly commandInfo: CommandInfo;
 	readonly cwd: string;
-	readonly envelope?: AgentBrowserEnvelope;
-	readonly errorText?: string;
-	readonly piCleanupOwnership?: "caller-owned" | "wrapper-managed";
-	readonly networkRouteDiagnostics?: readonly NetworkRouteDiagnostic[];
-	readonly namespace?: string;
-	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore>;
-	readonly sessionName?: string;
+	readonly envelope?: AgentBrowserEnvelope | undefined;
+	readonly errorText?: string | undefined;
+	readonly piCleanupOwnership?: "caller-owned" | "wrapper-managed" | undefined;
+	readonly networkRouteDiagnostics?: readonly NetworkRouteDiagnostic[] | undefined;
+	readonly namespace?: string | undefined;
+	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
+	readonly sessionName?: string | undefined;
 }
 
 export type BuildNestedToolPresentation = (
@@ -35,40 +35,40 @@ export type BuildNestedToolPresentation = (
 
 export interface BatchPresentedStep {
 	readonly details: BatchStepPresentationDetails;
-	readonly nativeIndex?: number;
+	readonly nativeIndex?: number | undefined;
 	readonly presentation: ToolPresentation;
 }
 
 export interface BuildBatchStepOptions {
-	readonly modelVisible?: boolean;
-	readonly artifactManifest?: SessionArtifactManifest;
-	readonly artifactMaxUpdatedAtMs?: number;
-	readonly artifactMinUpdatedAtMs?: number;
-	readonly artifactRequest?: ArtifactRequestContext;
+	readonly modelVisible?: boolean | undefined;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
+	readonly artifactMaxUpdatedAtMs?: number | undefined;
+	readonly artifactMinUpdatedAtMs?: number | undefined;
+	readonly artifactRequest?: ArtifactRequestContext | undefined;
 	readonly buildNestedToolPresentation: BuildNestedToolPresentation;
 	readonly cwd: string;
 	readonly index: number;
 	readonly item: AgentBrowserBatchResult;
-	readonly piCleanupOwnership?: "caller-owned" | "wrapper-managed";
-	readonly namespace?: string;
-	readonly networkRoutes?: readonly NetworkRouteRecord[];
-	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore>;
-	readonly sessionName?: string;
+	readonly piCleanupOwnership?: "caller-owned" | "wrapper-managed" | undefined;
+	readonly namespace?: string | undefined;
+	readonly networkRoutes?: readonly NetworkRouteRecord[] | undefined;
+	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
+	readonly sessionName?: string | undefined;
 }
 
 export interface BuildBatchPresentationOptions {
-	readonly modelVisible?: boolean;
-	readonly artifactManifest?: SessionArtifactManifest;
-	readonly artifactMaxUpdatedAtMs?: number;
-	readonly artifactMinUpdatedAtMs?: number;
-	readonly artifactRequests?: readonly (ArtifactRequestContext | undefined)[];
+	readonly modelVisible?: boolean | undefined;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
+	readonly artifactMaxUpdatedAtMs?: number | undefined;
+	readonly artifactMinUpdatedAtMs?: number | undefined;
+	readonly artifactRequests?: readonly (ArtifactRequestContext | undefined)[] | undefined;
 	readonly buildNestedToolPresentation: BuildNestedToolPresentation;
 	readonly cwd: string;
 	readonly data: readonly AgentBrowserBatchResult[];
-	readonly piCleanupOwnership?: "caller-owned" | "wrapper-managed";
-	readonly namespace?: string;
-	readonly networkRoutes?: readonly NetworkRouteRecord[];
-	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore>;
-	readonly sessionName?: string;
+	readonly piCleanupOwnership?: "caller-owned" | "wrapper-managed" | undefined;
+	readonly namespace?: string | undefined;
+	readonly networkRoutes?: readonly NetworkRouteRecord[] | undefined;
+	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
+	readonly sessionName?: string | undefined;
 	readonly summary: string;
 }

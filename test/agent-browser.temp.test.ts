@@ -23,7 +23,7 @@ import type { PathLike, RmOptions } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import test from "node:test";
+import nodeTest from "node:test";
 import { readRecord, readArray, readString, readNumber } from "./helpers/assertions.js";
 
 import {
@@ -48,88 +48,106 @@ import {
 	withPatchedEnv,
 } from "./helpers/agent-browser-harness.js";
 
-test("artifact file scans preserve order, exclusions and stat failures with bounded filesystem work", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "piab-artifact-scan-"));
-	try {
-		const names = ["a", "b", "c", "d", "e", "ignored", "failed"];
-		await Promise.all(
-			names.map((name, index) => writeFile(join(root, name), "x".repeat(index + 1))),
-		);
-		await mkdir(join(root, "directory"));
-		const expectedOrder = (await readdir(root)).filter(
-			(name) => !["directory", "ignored", "failed"].includes(name),
-		);
-		const nativeStat = fs.stat;
-		let active = 0;
-		let peak = 0;
-		t.mock.method(fs, "stat", async (path: PathLike) => {
-			active++;
-			peak = Math.max(peak, active);
-			try {
-				await delay(String(path).endsWith("a") ? 10 : 1);
-				if (String(path).endsWith("failed")) {
-					throw Object.assign(new Error("disappearing file"), { code: "ENOENT" });
-				}
-				return await nativeStat(path);
-			} finally {
-				active--;
-			}
-		});
-		syncBuiltinESMExports();
+nodeTest(
+	"artifact file scans preserve order, exclusions and stat failures with bounded filesystem work",
+	async (t) => {
+		const root = await mkdtemp(join(tmpdir(), "piab-artifact-scan-"));
 		try {
-			const files = await listArtifactFiles(root, new Set(["ignored"]));
-			assert.deepEqual(
-				files.map((file) => file.path),
-				expectedOrder.map((name) => join(root, name)),
+			const names = ["a", "b", "c", "d", "e", "ignored", "failed"];
+			await Promise.all(
+				names.map((name, index) => writeFile(join(root, name), "x".repeat(index + 1))),
 			);
-			assert.deepEqual(
-				files.map((file) => file.size),
-				expectedOrder.map((name) => names.indexOf(name) + 1),
+			await mkdir(join(root, "directory"));
+			const expectedOrder = (await readdir(root)).filter(
+				(name) => !["directory", "ignored", "failed"].includes(name),
 			);
-			assert.ok(peak <= 4, "directory size must not create an unbounded stat fan-out");
-			assert.equal(active, 0);
-		} finally {
-			t.mock.restoreAll();
+			const nativeStat = fs.stat;
+			let active = 0;
+			let peak = 0;
+			t.mock.method(fs, "stat", async (path: PathLike) => {
+				active++;
+				peak = Math.max(peak, active);
+				try {
+					await delay(String(path).endsWith("a") ? 10 : 1);
+					if (String(path).endsWith("failed")) {
+						throw Object.assign(new Error("disappearing file"), { code: "ENOENT" });
+					}
+					return await nativeStat(path);
+				} finally {
+					active--;
+				}
+			});
 			syncBuiltinESMExports();
+			try {
+				const files = await listArtifactFiles(root, new Set(["ignored"]));
+				assert.deepEqual(
+					files.map((file) => file.path),
+					expectedOrder.map((name) => join(root, name)),
+				);
+				assert.deepEqual(
+					files.map((file) => file.size),
+					expectedOrder.map((name) => names.indexOf(name) + 1),
+				);
+				assert.ok(peak <= 4, "directory size must not create an unbounded stat fan-out");
+				assert.equal(active, 0);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
 		}
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
+	},
+);
 
-test("persistent session artifact budget accepts zero without changing bounded defaults", () => {
-	const defaultBytes = 32 * 1_024 * 1_024;
-	assert.equal(getPersistentSessionArtifactMaxBytes({}), defaultBytes);
-	assert.equal(
-		getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: "0" }),
-		0,
-	);
-	assert.equal(
-		getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: " 0 " }),
-		0,
-	);
-	assert.equal(
-		getPersistentSessionArtifactMaxBytes({
-			PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: " 01024 ",
-		}),
-		1_024,
-	);
-	for (const value of ["", "invalid", "-1", "1.5", "00", "-0", "0.0", "0e0", "9007199254740992"]) {
-		// Fixed pruning variants validate each observed child/allocation; the final remaining-root assertion is unconditional.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
+nodeTest(
+	"persistent session artifact budget accepts zero without changing bounded defaults",
+	async (t) => {
+		const defaultBytes = 32 * 1_024 * 1_024;
+		assert.equal(getPersistentSessionArtifactMaxBytes({}), defaultBytes);
 		assert.equal(
-			getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: value }),
-			defaultBytes,
-			value,
+			getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: "0" }),
+			0,
 		);
-	}
-	assert.equal(
-		getSecureTempRootMaxBytes({ PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES: "0" }),
-		defaultBytes,
-	);
-});
+		assert.equal(
+			getPersistentSessionArtifactMaxBytes({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: " 0 " }),
+			0,
+		);
+		assert.equal(
+			getPersistentSessionArtifactMaxBytes({
+				PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: " 01024 ",
+			}),
+			1_024,
+		);
+		for (const value of [
+			"",
+			"invalid",
+			"-1",
+			"1.5",
+			"00",
+			"-0",
+			"0.0",
+			"0e0",
+			"9007199254740992",
+		]) {
+			await t.test(`invalid budget ${JSON.stringify(value)}`, () => {
+				assert.equal(
+					getPersistentSessionArtifactMaxBytes({
+						PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: value,
+					}),
+					defaultBytes,
+					value,
+				);
+			});
+		}
+		assert.equal(
+			getSecureTempRootMaxBytes({ PI_AGENT_BROWSER_TEMP_ROOT_MAX_BYTES: "0" }),
+			defaultBytes,
+		);
+	},
+);
 
-test(
+nodeTest(
 	"writePersistentSessionArtifactFile preserves earlier files with a zero budget",
 	{ concurrency: false },
 	async () => {
@@ -161,60 +179,63 @@ test(
 	},
 );
 
-test("failed artifact eviction does not claim space or publish a deletion receipt", async (t) => {
-	const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-eviction-"));
-	try {
-		await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: "10" }, async () => {
-			const store = { sessionDir, sessionId: TEST_SESSION_ID };
-			const earlier = await writePersistentSessionArtifactFile({
-				content: "12345678",
-				prefix: "earlier",
-				suffix: ".txt",
-				store,
-			});
-			const nativeRm = fs.rm;
-			t.mock.method(fs, "rm", (path: PathLike, options?: Readonly<RmOptions>) => {
-				if (String(path) === earlier.path) {
-					return Promise.reject(Object.assign(new Error("held artifact"), { code: "EPERM" }));
-				}
-				return nativeRm(path, options);
-			});
-			syncBuiltinESMExports();
-			try {
-				await assert.rejects(
-					writePersistentSessionArtifactFile({
-						content: "abcde",
-						prefix: "latest",
-						suffix: ".txt",
-						store,
-					}),
-					/persisted spill budget exceeded \(13 bytes > 10 byte limit\)/,
-				);
-				assert.equal(await readFile(earlier.path, "utf8"), "12345678");
-				assert.deepEqual(await readdir(dirname(earlier.path)), [
-					earlier.path.split(/[\\/]/).at(-1),
-				]);
-			} finally {
-				t.mock.restoreAll();
+nodeTest(
+	"failed artifact eviction does not claim space or publish a deletion receipt",
+	async (t) => {
+		const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-eviction-"));
+		try {
+			await withPatchedEnv({ PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES: "10" }, async () => {
+				const store = { sessionDir, sessionId: TEST_SESSION_ID };
+				const earlier = await writePersistentSessionArtifactFile({
+					content: "12345678",
+					prefix: "earlier",
+					suffix: ".txt",
+					store,
+				});
+				const nativeRm = fs.rm;
+				t.mock.method(fs, "rm", (path: PathLike, options?: Readonly<RmOptions>) => {
+					if (String(path) === earlier.path) {
+						return Promise.reject(Object.assign(new Error("held artifact"), { code: "EPERM" }));
+					}
+					return nativeRm(path, options);
+				});
 				syncBuiltinESMExports();
-			}
-			const latest = await writePersistentSessionArtifactFile({
-				content: "abcde",
-				prefix: "latest",
-				suffix: ".txt",
-				store,
+				try {
+					await assert.rejects(
+						writePersistentSessionArtifactFile({
+							content: "abcde",
+							prefix: "latest",
+							suffix: ".txt",
+							store,
+						}),
+						/persisted spill budget exceeded \(13 bytes > 10 byte limit\)/,
+					);
+					assert.equal(await readFile(earlier.path, "utf8"), "12345678");
+					assert.deepEqual(await readdir(dirname(earlier.path)), [
+						earlier.path.split(/[\\/]/).at(-1),
+					]);
+				} finally {
+					t.mock.restoreAll();
+					syncBuiltinESMExports();
+				}
+				const latest = await writePersistentSessionArtifactFile({
+					content: "abcde",
+					prefix: "latest",
+					suffix: ".txt",
+					store,
+				});
+				assert.deepEqual(
+					latest.evictedArtifacts.map(({ path, sizeBytes }) => ({ path, sizeBytes })),
+					[{ path: earlier.path, sizeBytes: 8 }],
+				);
+				await assert.rejects(stat(earlier.path), { code: "ENOENT" });
+				assert.equal(await readFile(latest.path, "utf8"), "abcde");
 			});
-			assert.deepEqual(
-				latest.evictedArtifacts.map(({ path, sizeBytes }) => ({ path, sizeBytes })),
-				[{ path: earlier.path, sizeBytes: 8 }],
-			);
-			await assert.rejects(stat(earlier.path), { code: "ENOENT" });
-			assert.equal(await readFile(latest.path, "utf8"), "abcde");
-		});
-	} finally {
-		await rm(sessionDir, { recursive: true, force: true });
-	}
-});
+		} finally {
+			await rm(sessionDir, { recursive: true, force: true });
+		}
+	},
+);
 
 const originalTempEnv = {
 	TMPDIR: process.env.TMPDIR,
@@ -222,13 +243,13 @@ const originalTempEnv = {
 	TMP: process.env.TMP,
 };
 let suiteTempDir: string;
-test.before(async () => {
+nodeTest.before(async () => {
 	suiteTempDir = await mkdtemp(join(tmpdir(), "piab-temp-tests-"));
 	process.env.TMPDIR = suiteTempDir;
 	process.env.TEMP = suiteTempDir;
 	process.env.TMP = suiteTempDir;
 });
-test.after(async () => {
+nodeTest.after(async () => {
 	await cleanupSecureTempArtifacts();
 	for (const [key, value] of Object.entries(originalTempEnv)) {
 		if (value === undefined) {
@@ -240,7 +261,7 @@ test.after(async () => {
 	await rm(suiteTempDir, { recursive: true, force: true });
 });
 
-test(
+nodeTest(
 	"secure temp cleanup can recreate and track a later temp root",
 	{ concurrency: false },
 	async () => {
@@ -267,87 +288,94 @@ test(
 	},
 );
 
-test("temp allocation removes a failed ownership root and retries after marker failure", async (t) => {
-	await cleanupSecureTempArtifacts();
-	const nativeMkdtemp = fs.mkdtemp;
-	let failedRoot = "";
-	t.mock.method(fs, "mkdtemp", async (prefix: string) => {
-		const root = await nativeMkdtemp(prefix);
-		if (failedRoot === "") {
-			failedRoot = root;
-			// A real exclusive-marker write will fail on this task-owned planted directory.
-			await mkdir(join(root, ".pi-agent-browser-owner.json"));
-		}
-		return root;
-	});
-	syncBuiltinESMExports();
-	try {
-		await assert.rejects(openSecureTempFile("failed", ".txt"), { code: "EEXIST" });
-		assert.notEqual(failedRoot, "", "failure must occur after allocating the root");
-		await assert.rejects(stat(failedRoot), { code: "ENOENT" });
+nodeTest(
+	"temp allocation removes a failed ownership root and retries after marker failure",
+	async (t) => {
 		await cleanupSecureTempArtifacts();
-		const recovered = await openSecureTempFile("recovered", ".txt");
-		await recovered.fileHandle.close();
-		assert.notEqual(dirname(recovered.path), failedRoot);
-		assert.equal(
-			readRecord(
-				JSON.parse(
-					await readFile(join(dirname(recovered.path), ".pi-agent-browser-owner.json"), "utf8"),
-				),
-			).version,
-			2,
-		);
-		await cleanupSecureTempArtifacts();
-		await assert.rejects(stat(dirname(recovered.path)), { code: "ENOENT" });
-	} finally {
-		t.mock.restoreAll();
+		const nativeMkdtemp = fs.mkdtemp;
+		let failedRoot = "";
+		t.mock.method(fs, "mkdtemp", async (prefix: string) => {
+			const root = await nativeMkdtemp(prefix);
+			if (failedRoot === "") {
+				failedRoot = root;
+				// A real exclusive-marker write will fail on this task-owned planted directory.
+				await mkdir(join(root, ".pi-agent-browser-owner.json"));
+			}
+			return root;
+		});
 		syncBuiltinESMExports();
+		try {
+			await assert.rejects(openSecureTempFile("failed", ".txt"), { code: "EEXIST" });
+			assert.notEqual(failedRoot, "", "failure must occur after allocating the root");
+			await assert.rejects(stat(failedRoot), { code: "ENOENT" });
+			await cleanupSecureTempArtifacts();
+			const recovered = await openSecureTempFile("recovered", ".txt");
+			await recovered.fileHandle.close();
+			assert.notEqual(dirname(recovered.path), failedRoot);
+			assert.equal(
+				readRecord(
+					JSON.parse(
+						await readFile(join(dirname(recovered.path), ".pi-agent-browser-owner.json"), "utf8"),
+					),
+				).version,
+				2,
+			);
+			await cleanupSecureTempArtifacts();
+			await assert.rejects(stat(dirname(recovered.path)), { code: "ENOENT" });
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			await cleanupSecureTempArtifacts();
+		}
+	},
+);
+
+nodeTest(
+	"stale temp pruning only removes explicitly owned roots",
+	{ concurrency: false },
+	async () => {
 		await cleanupSecureTempArtifacts();
-	}
-});
-
-test("stale temp pruning only removes explicitly owned roots", { concurrency: false }, async () => {
-	await cleanupSecureTempArtifacts();
-	const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
-	const unownedRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-unowned-"));
-	const ownedRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-owned-"));
-	await chmod(unownedRoot, 0o700);
-	await chmod(ownedRoot, 0o700);
-	await writeFile(join(unownedRoot, "leftover.txt"), "keep", "utf8");
-	await utimes(unownedRoot, staleTime, staleTime);
-	// Write the stale ownership marker immediately before triggering pruning. Any
-	// secure temp root creation in a concurrent test file can legitimately prune
-	// stale owned roots as soon as the marker exists, so avoid yielding again
-	// before this test performs the pruning assertion itself.
-	await writeSecureTempRootOwnershipMarker(ownedRoot, {
-		createdAtMs: staleTime.getTime(),
-		ownerPid: 99_999_999,
-	});
-
-	try {
-		const tempFile = await openSecureTempFile("prune-check", ".txt");
-		await tempFile.fileHandle.close();
-
-		await assert.rejects(stat(ownedRoot), { code: "ENOENT" });
-		await stat(unownedRoot);
-		await rm(unownedRoot, { force: true, recursive: true });
-		await cleanupSecureTempArtifacts();
-	} finally {
-		await rm(unownedRoot, { force: true, recursive: true }).catch(() => {
-			/* Best-effort teardown: these task-owned paths may already be absent. */
+		const staleTime = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
+		const unownedRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-unowned-"));
+		const ownedRoot = await mkdtemp(join(tmpdir(), "pi-agent-browser-owned-"));
+		await chmod(unownedRoot, 0o700);
+		await chmod(ownedRoot, 0o700);
+		await writeFile(join(unownedRoot, "leftover.txt"), "keep", "utf8");
+		await utimes(unownedRoot, staleTime, staleTime);
+		// Write the stale ownership marker immediately before triggering pruning. Any
+		// secure temp root creation in a concurrent test file can legitimately prune
+		// stale owned roots as soon as the marker exists, so avoid yielding again
+		// before this test performs the pruning assertion itself.
+		await writeSecureTempRootOwnershipMarker(ownedRoot, {
+			createdAtMs: staleTime.getTime(),
+			ownerPid: 99_999_999,
 		});
-		await rm(ownedRoot, { force: true, recursive: true }).catch(() => {
-			/* Best-effort teardown: these task-owned paths may already be absent. */
-		});
-		await cleanupSecureTempArtifacts();
-	}
-});
+
+		try {
+			const tempFile = await openSecureTempFile("prune-check", ".txt");
+			await tempFile.fileHandle.close();
+
+			await assert.rejects(stat(ownedRoot), { code: "ENOENT" });
+			await stat(unownedRoot);
+			await rm(unownedRoot, { force: true, recursive: true });
+			await cleanupSecureTempArtifacts();
+		} finally {
+			await rm(unownedRoot, { force: true, recursive: true }).catch(() => {
+				/* Best-effort teardown: these task-owned paths may already be absent. */
+			});
+			await rm(ownedRoot, { force: true, recursive: true }).catch(() => {
+				/* Best-effort teardown: these task-owned paths may already be absent. */
+			});
+			await cleanupSecureTempArtifacts();
+		}
+	},
+);
 
 for (const shortLived of [false, true]) {
-	test(
+	nodeTest(
 		`stale temp pruning bounds each allocation and advances past retained roots${shortLived ? " across short-lived processes" : ""}`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			await cleanupSecureTempArtifacts();
 			const tempDir = await mkdtemp(join(tmpdir(), "bounded-temp-gc-"));
 			try {
@@ -356,10 +384,8 @@ for (const shortLived of [false, true]) {
 					for (let index = 0; index < 20; index += 1) {
 						const path = join(tempDir, `pi-agent-browser-${String(index).padStart(2, "0")}`);
 						// Finish each root before advancing; setup failures must not leave writes racing teardown.
-						// oxlint-disable-next-line no-await-in-loop
 						await mkdir(path, { mode: 0o700 });
 						// Finish this root's ownership marker before any later root construction or teardown.
-						// oxlint-disable-next-line no-await-in-loop
 						await writeSecureTempRootOwnershipMarker(path, {
 							createdAtMs: index < 8 ? Date.now() : old,
 							ownerPid: 2_147_483_647,
@@ -367,14 +393,19 @@ for (const shortLived of [false, true]) {
 						});
 					}
 					let remaining = 20;
-					for (let attempt = 0; attempt < 8 && remaining > 8; attempt += 1) {
-						if (shortLived) {
-							const child = spawn(
-								process.execPath,
-								[
-									"--input-type=module",
-									"-e",
-									`
+					for (let attempt = 0; attempt < 8; attempt += 1) {
+						if (remaining <= 8) {
+							break;
+						}
+						await t.test(`allocation ${attempt + 1}`, async (allocation) => {
+							if (shortLived) {
+								await allocation.test("child inspects bounded roots and exits", async () => {
+									const child = spawn(
+										process.execPath,
+										[
+											"--input-type=module",
+											"-e",
+											`
 						import crypto from "node:crypto";
 						import fs from "node:fs/promises";
 						import { syncBuiltinESMExports } from "node:module";
@@ -393,51 +424,39 @@ for (const shortLived of [false, true]) {
 						await cleanupSecureTempArtifacts();
 						console.log(JSON.stringify({ done: true, reads }));
 					`,
-								],
-								{ cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
-							);
-							const exited = once(child, "exit");
-							try {
+										],
+										{ cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
+									);
+									const exited = once(child, "exit");
+									try {
+										// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
+										const receipt = readRecord(await readChildStdoutJsonLine(child));
+										assert.equal(receipt.done, true);
+										assert.ok(
+											readNumber(receipt.reads) <= 8,
+											"retained roots count against the inspection limit",
+										);
+										// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
+										const exit = readArray(await exited);
+										assert.equal(exit[0], 0);
+									} finally {
+										// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
+										await stopChildProcess(child);
+									}
+								});
+							} else {
 								// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
-								// oxlint-disable-next-line no-await-in-loop
-								const receipt = readRecord(await readChildStdoutJsonLine(child));
-								// Fixed pruning variants validate each observed child/allocation; the final remaining-root assertion is unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(receipt.done, true);
-								// Fixed pruning variants validate each observed child/allocation; the final remaining-root assertion is unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(
-									readNumber(receipt.reads) <= 8,
-									"retained roots count against the inspection limit",
-								);
+								const file = await openSecureTempFile("bounded-gc", ".txt");
 								// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
-								// oxlint-disable-next-line no-await-in-loop
-								const exit = readArray(await exited);
-								// Fixed pruning variants validate each observed child/allocation; the final remaining-root assertion is unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(exit[0], 0);
-							} finally {
-								// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
-								// oxlint-disable-next-line no-await-in-loop
-								await stopChildProcess(child);
+								await file.fileHandle.close();
 							}
-						} else {
 							// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
-							// oxlint-disable-next-line no-await-in-loop
-							const file = await openSecureTempFile("bounded-gc", ".txt");
-							// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
-							// oxlint-disable-next-line no-await-in-loop
-							await file.fileHandle.close();
-						}
-						// Each allocation/child cleanup must finish before measuring the next shared-root pruning cycle.
-						// oxlint-disable-next-line no-await-in-loop
-						const after = (await readdir(tempDir)).filter((name) =>
-							/^pi-agent-browser-\d{2}$/.test(name),
-						).length;
-						// Fixed pruning variants validate each observed child/allocation; the final remaining-root assertion is unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(remaining - after <= 8, "one allocation must not sweep all stale roots");
-						remaining = after;
+							const after = (await readdir(tempDir)).filter((name) =>
+								/^pi-agent-browser-\d{2}$/.test(name),
+							).length;
+							assert.ok(remaining - after <= 8, "one allocation must not sweep all stale roots");
+							remaining = after;
+						});
 					}
 					assert.equal(remaining, 8, "GC must advance past the eight young roots");
 					await cleanupSecureTempArtifacts();
@@ -450,7 +469,7 @@ for (const shortLived of [false, true]) {
 	);
 }
 
-test(
+nodeTest(
 	"stale temp pruning preserves unqualified live ownership but removes a proven reused PID",
 	{ concurrency: false },
 	async () => {
@@ -510,7 +529,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"stale temp pruning does not remove a live root when owner identity is unavailable",
 	{ concurrency: false },
 	async () => {
@@ -582,7 +601,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"stale temp pruning preserves profile children protected by prior process metadata",
 	{ concurrency: false },
 	async () => {
@@ -667,7 +686,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"writeSecureTempFile enforces the aggregate temp-root disk budget",
 	{ concurrency: false },
 	async () => {

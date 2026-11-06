@@ -7,10 +7,11 @@
  */
 
 import assert from "node:assert/strict";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { cleanupSecureTempArtifacts } from "../extensions/agent-browser/lib/temp.js";
 import { getSessionTempRoot } from "../extensions/agent-browser/lib/temp-root.js";
@@ -23,14 +24,16 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
-import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import { readRecord, readArray, readDefined, readString } from "./helpers/assertions.js";
 
-test("agentBrowserExtension leaves download execution upstream-owned on local and remote pages", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-native-download-"));
-	const logPath = join(tempDir, "invocations.log");
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`
+nodeTest(
+	"agentBrowserExtension leaves download execution upstream-owned on local and remote pages",
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-native-download-"));
+		const logPath = join(tempDir, "invocations.log");
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
@@ -42,44 +45,42 @@ if (args.includes("download")) {
   console.log(JSON.stringify({ success: true, data: { url: process.env.PI_AGENT_BROWSER_TEST_PAGE_URL } }));
 }
 `,
-	);
-	try {
-		for (const url of ["http://127.0.0.1:12345/", "https://fixture.test/"]) {
-			// The next fixture operation depends on completion of this shared lifecycle transition.
-			// oxlint-disable-next-line no-await-in-loop
-			await withPatchedEnv(
-				{ PATH: `${tempDir}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_TEST_PAGE_URL: url },
-				async () => {
-					const harness = createExtensionHarness({ cwd: tempDir });
-					const path = join(tempDir, "downloads", new URL(url).hostname + ".csv");
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["download", "#export", path],
-					});
-					// The nonempty url fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, false, result.content[0].text);
-					// The nonempty url fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(await readFile(path, "utf8"), "native-download");
-					// The nonempty url fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readRecord(result.details?.artifactVerification).verified, true);
-				},
-			);
-		}
-		const invocations = await readInvocationLog(logPath);
-		assert.equal(invocations.filter((call) => call.args.includes("download")).length, 2);
-		assert.equal(
-			invocations.some((call) => call.args.includes("eval")),
-			false,
-			"download must not be replaced with an in-page fetch",
 		);
-	} finally {
-		await rm(tempDir, { recursive: true, force: true });
-	}
-});
+		try {
+			for (const url of ["http://127.0.0.1:12345/", "https://fixture.test/"]) {
+				await t.test(url, async () => {
+					await withPatchedEnv(
+						{ PATH: `${tempDir}:${process.env.PATH ?? ""}`, PI_AGENT_BROWSER_TEST_PAGE_URL: url },
+						async () => {
+							const harness = createExtensionHarness({ cwd: tempDir });
+							const path = join(tempDir, "downloads", new URL(url).hostname + ".csv");
+							const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+								args: ["download", "#export", path],
+							});
 
-test(
+							assert.equal(result.isError, false, getMessageText(result.content));
+
+							assert.equal(await readFile(path, "utf8"), "native-download");
+
+							assert.equal(readRecord(result.details?.artifactVerification).verified, true);
+						},
+					);
+				});
+			}
+			const invocations = await readInvocationLog(logPath);
+			assert.equal(invocations.filter((call) => call.args.includes("download")).length, 2);
+			assert.equal(
+				invocations.some((call) => call.args.includes("eval")),
+				false,
+				"download must not be replaced with an in-page fetch",
+			);
+		} finally {
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	},
+);
+
+nodeTest(
 	"agentBrowserExtension returns retry next actions for failed direct download verification",
 	{ concurrency: false },
 	async () => {
@@ -112,7 +113,7 @@ process.exit(1);`,
 					assert.equal(result.details?.resultCategory, "failure");
 					assert.equal(result.details.failureCategory, "download-not-verified");
 					const nextActions = readArray(result.details.nextActions).map(readRecord);
-					assert.deepEqual(readRecord(nextActions[0].params).args, [
+					assert.deepEqual(readRecord(readDefined(nextActions[0]).params).args, [
 						"--session",
 						result.details.sessionName,
 						"wait",
@@ -127,7 +128,7 @@ process.exit(1);`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps direct and per-step stale-ref guidance after same-tab verification",
 	{ concurrency: false },
 	async () => {
@@ -183,7 +184,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 				});
 
 				assert.equal(result.isError, true);
-				assert.equal(result.content[0].type, "text");
+				assert.equal(readDefined(result.content[0]).type, "text");
 				const text = readString(readRecord(result.content[0]).text);
 				assert.match(readString(text), /Could not locate element/);
 				assert.match(readString(text), /(?:@ref may be stale|ref may be stale)/);
@@ -196,12 +197,14 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 					stdin: JSON.stringify([["click", "@e4"]]),
 				});
 				assert.equal(batch.isError, true);
-				assert.equal(batch.content[0].type, "text");
-				assert.match(batch.content[0].text, /Could not locate element/);
-				assert.match(batch.content[0].text, /refresh-interactive-refs/);
-				assert.match(batch.content[0].text, /snapshot/);
+				const batchContent = readDefined(batch.content[0]);
+				assert.equal(batchContent.type, "text");
+				const batchText = readString(batchContent.text);
+				assert.match(batchText, /Could not locate element/);
+				assert.match(batchText, /refresh-interactive-refs/);
+				assert.match(batchText, /snapshot/);
 				assert.equal(
-					readArray(batch.details?.batchSteps).map(readRecord)[0].failureCategory,
+					readDefined(readArray(batch.details?.batchSteps).map(readRecord)[0]).failureCategory,
 					"stale-ref",
 				);
 			});
@@ -211,7 +214,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { tabs: [
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports direct fallback failures with the effective invocation",
 	{ concurrency: false },
 	async () => {
@@ -233,7 +236,7 @@ process.exit(1);`,
 				});
 
 				assert.equal(result.isError, true);
-				assert.equal(result.content[0].type, "text");
+				assert.equal(readDefined(result.content[0]).type, "text");
 				const text = readString(readRecord(result.content[0]).text);
 				assert.match(
 					readString(text),
@@ -298,7 +301,7 @@ process.exit(1);`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension discards oversized malformed output instead of persisting browser secrets",
 	{ concurrency: false },
 	async () => {

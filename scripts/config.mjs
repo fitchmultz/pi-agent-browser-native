@@ -9,16 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname } from "node:path";
 import process from "node:process";
 
-async function loadConfigPolicyModule() {
-	const sourcePolicyUrl = new URL(
-		"../extensions/agent-browser/lib/config-policy.js",
-		import.meta.url,
-	);
-	if (existsSync(sourcePolicyUrl)) {
-		return import(sourcePolicyUrl.href);
-	}
-	return import("../dist/packaged/lib/config-policy.js");
-}
+import { loadConfigPolicyModule } from "./config-policy-loader.mjs";
 
 const {
 	AGENT_BROWSER_CONFIG_ENV,
@@ -34,6 +25,7 @@ const {
 	getWebSearchProviderEnvVar,
 	getWebSearchProviderLabel,
 	isWebSearchProvider,
+	isConfigObject,
 	loadAgentBrowserConfigStateSync,
 	normalizeBrowserDefaultProfileName,
 	parseAgentBrowserConfigJson,
@@ -41,9 +33,14 @@ const {
 	summarizeConfigFiles,
 } = await loadConfigPolicyModule();
 
+/** @typedef {Readonly<Record<string, unknown>>} ConfigDocument */
+/** @typedef {{ readonly switches: ReadonlySet<string>; readonly values: ReadonlyMap<string, string> }} ConfigFlags */
+/** @typedef {import("../extensions/agent-browser/lib/config-providers.js").WebSearchProvider} WebSearchProvider */
+
 const DEFAULT_CONFIG = { version: 1 };
 
 class UsageError extends Error {
+	/** @param {string} message */
 	constructor(message) {
 		super(message);
 		this.name = "UsageError";
@@ -80,36 +77,46 @@ Notes:
 `;
 }
 
+/** @param {ArrayIterator<string>} tokens
+ * @param {string} option */
+function readOptionValue(tokens, option) {
+	const value = tokens.next().value;
+	if (value === undefined || value.length === 0 || value.startsWith("--")) {
+		throw new UsageError(`${option} requires a value.`);
+	}
+	return value;
+}
+
+/** @param {readonly string[]} argv */
 function parseArgs(argv) {
 	const positional = [];
-	const flags = new Map();
-	for (let index = 0; index < argv.length; index += 1) {
-		const arg = argv[index];
+	const switches = new Set();
+	/** @type {Map<string, string>} */
+	const values = new Map();
+	const tokens = argv.values();
+	for (const arg of tokens) {
 		if (!arg.startsWith("--")) {
 			positional.push(arg);
 			continue;
 		}
 		if (["--global", "--project", "--stdin", "--help"].includes(arg)) {
-			flags.set(arg, true);
+			switches.add(arg);
 			continue;
 		}
 		if (arg === "--policy" || arg === "--provider") {
-			const value = argv[index + 1];
-			if (!value || value.startsWith("--")) {
-				throw new UsageError(`${arg} requires a value.`);
-			}
-			flags.set(arg, value);
-			index += 1;
+			values.set(arg, readOptionValue(tokens, arg));
 			continue;
 		}
 		throw new UsageError(`Unknown option: ${arg}`);
 	}
-	if (flags.get("--global") && flags.get("--project")) {
+	if (switches.has("--global") && switches.has("--project")) {
 		throw new UsageError("Use only one of --global or --project.");
 	}
-	return { flags, positional };
+	return { flags: { switches, values }, positional };
 }
 
+/** @param {string} path
+ * @returns {ConfigDocument} */
 function readConfig(path) {
 	if (!existsSync(path)) {
 		return { ...DEFAULT_CONFIG };
@@ -118,12 +125,14 @@ function readConfig(path) {
 	if (!parsed.ok) {
 		throw new Error(`${path}: ${parsed.error}`);
 	}
-	if (!parsed.value || typeof parsed.value !== "object" || Array.isArray(parsed.value)) {
+	if (!isConfigObject(parsed.value)) {
 		throw new Error(`${path} must contain a JSON object.`);
 	}
 	return { ...DEFAULT_CONFIG, ...parsed.value };
 }
 
+/** @param {string} path
+ * @param {ConfigDocument} config */
 function writeConfig(path, config) {
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
@@ -135,14 +144,17 @@ function writeConfig(path, config) {
 	}
 }
 
+/** @param {ConfigFlags} flags */
 function selectWritePath(flags) {
 	const paths = getAgentBrowserConfigPaths();
-	if (flags.get("--project")) {
+	if (flags.switches.has("--project")) {
 		return { path: paths.project, scope: "project" };
 	}
 	return { path: paths.global, scope: "global" };
 }
 
+/** @param {unknown} provider
+ * @param {{readonly allowAll?: boolean}} [options] */
 function validateWebSearchProviderArg(provider, { allowAll = false } = {}) {
 	if (isWebSearchProvider(provider) || (allowAll && provider === "all")) {
 		return provider;
@@ -152,6 +164,7 @@ function validateWebSearchProviderArg(provider, { allowAll = false } = {}) {
 	);
 }
 
+/** @param {string} envName */
 function inferWebSearchProviderFromEnvName(envName) {
 	for (const provider of WEB_SEARCH_PROVIDERS) {
 		if (envName === getWebSearchProviderEnvVar(provider)) {
@@ -161,34 +174,63 @@ function inferWebSearchProviderFromEnvName(envName) {
 	return;
 }
 
+/** @overload
+ * @param {ConfigFlags} flags
+ * @param {{readonly allowAll: true; readonly envName?: string}} options
+ * @returns {WebSearchProvider | "all"} */
+/** @overload
+ * @param {ConfigFlags} flags
+ * @param {{readonly allowAll?: false; readonly envName?: string}} [options]
+ * @returns {WebSearchProvider} */
+/** @param {ConfigFlags} flags
+ * @param {{readonly allowAll?: boolean; readonly envName?: string}} [options] */
 function getWebSearchProvider(flags, options = {}) {
-	const configured = flags.get("--provider");
-	if (configured) {
+	const configured = flags.values.get("--provider");
+	if (configured !== undefined && configured !== "") {
 		return validateWebSearchProviderArg(configured, options);
 	}
-	const inferred = options.envName ? inferWebSearchProviderFromEnvName(options.envName) : undefined;
-	if (inferred) {
+	const inferred =
+		options.envName !== undefined && options.envName.length > 0
+			? inferWebSearchProviderFromEnvName(options.envName)
+			: undefined;
+	if (inferred !== undefined) {
 		return inferred;
 	}
 	throw new UsageError(
-		options.allowAll
+		options.allowAll === true
 			? "--provider is required and must be exa, brave, or all."
 			: "--provider is required and must be exa or brave.",
 	);
 }
 
+/** Config edits retain arbitrary JSON fields; loading owns config validation.
+ * @param {unknown} value
+ * @returns {Record<string, unknown>} */
+function copyConfigSection(value) {
+	return Object.fromEntries(Object.entries(value ?? {}));
+}
+
+/** @param {ConfigDocument} config
+ * @param {WebSearchProvider} provider
+ * @param {string} value */
 function setWebSearchCredential(config, provider, value) {
 	return {
 		...config,
-		webSearch: { ...config.webSearch, [getWebSearchProviderConfigKey(provider)]: value },
+		webSearch: {
+			...copyConfigSection(config.webSearch),
+			[getWebSearchProviderConfigKey(provider)]: value,
+		},
 	};
 }
 
+/** @param {ConfigDocument} config
+ * @param {WebSearchProvider} provider */
 function clearWebSearchCredential(config, provider) {
-	if (!config.webSearch) {
+	const hasWebSearch = Boolean(config.webSearch);
+	if (!hasWebSearch) {
 		return config;
 	}
-	const webSearch = { ...config.webSearch };
+	const webSearch = copyConfigSection(config.webSearch);
 	delete webSearch[getWebSearchProviderConfigKey(provider)];
 	return { ...config, webSearch };
 }
@@ -232,6 +274,8 @@ function printStatus() {
 	printDiagnostics("Validation errors", state.errors);
 }
 
+/** @param {string} label
+ * @param {readonly string[]} diagnostics */
 function printDiagnostics(label, diagnostics) {
 	if (diagnostics.length > 0) {
 		console.log("");
@@ -242,6 +286,7 @@ function printDiagnostics(label, diagnostics) {
 	}
 }
 
+/** @param {boolean} useStdin */
 async function readSecretFromStdin(useStdin) {
 	if (!useStdin) {
 		throw new UsageError(
@@ -250,20 +295,24 @@ async function readSecretFromStdin(useStdin) {
 	}
 	let input = "";
 	for await (const chunk of process.stdin) {
-		input += chunk;
+		input += String(chunk);
 	}
 	const value = input.trim();
-	if (!value) {
+	if (value.length === 0) {
 		throw new UsageError("No key was provided on stdin.");
 	}
 	return value;
 }
 
+/** @param {string} path
+ * @param {(config: ConfigDocument) => ConfigDocument} mutate */
 function mutateConfig(path, mutate) {
 	const config = readConfig(path);
 	writeConfig(path, mutate(config));
 }
 
+/** @param {readonly string[]} args
+ * @param {ConfigFlags} flags */
 async function handleWebSearch(args, flags) {
 	const action = args[0];
 	if (action === "prefer" || action === "enable" || action === "disable") {
@@ -281,10 +330,13 @@ async function handleWebSearch(args, flags) {
 	await handleWebSearchCredential(action, args, flags);
 }
 
+/** @param {string | undefined} action
+ * @param {readonly string[]} args
+ * @param {ConfigFlags} flags */
 async function handleWebSearchCredential(action, args, flags) {
 	if (action === "set-key") {
 		const provider = getWebSearchProvider(flags);
-		const key = await readSecretFromStdin(Boolean(flags.get("--stdin")));
+		const key = await readSecretFromStdin(flags.switches.has("--stdin"));
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => setWebSearchCredential(config, provider, key));
 		console.log(`Saved ${getWebSearchProviderLabel(provider)} key to ${scope} config: ${path}`);
@@ -292,7 +344,11 @@ async function handleWebSearchCredential(action, args, flags) {
 	}
 	if (action === "set-env") {
 		const envName = args[1];
-		if (!envName || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) {
+		if (
+			envName === undefined ||
+			envName.length === 0 ||
+			!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)
+		) {
 			throw new UsageError("set-env requires a valid environment variable name.");
 		}
 		const provider = getWebSearchProvider(flags, { envName });
@@ -305,7 +361,7 @@ async function handleWebSearchCredential(action, args, flags) {
 	if (action === "set-command") {
 		const provider = getWebSearchProvider(flags);
 		const command = args.slice(1).join(" ").trim();
-		if (!command) {
+		if (command.length === 0) {
 			throw new UsageError("set-command requires a command string.");
 		}
 		const { path, scope } = selectWritePath(flags);
@@ -316,6 +372,7 @@ async function handleWebSearchCredential(action, args, flags) {
 	throw new UsageError(`Unsupported web-search action: ${action ?? ""}`);
 }
 
+/** @param {ConfigFlags} flags */
 function clearWebSearch(flags) {
 	const provider = getWebSearchProvider(flags, { allowAll: true });
 	const { path, scope } = selectWritePath(flags);
@@ -328,15 +385,18 @@ function clearWebSearch(flags) {
 	);
 }
 
+/** @param {string} action
+ * @param {readonly string[]} args
+ * @param {ConfigFlags} flags */
 function handleWebSearchPreference(action, args, flags) {
 	if (action === "prefer") {
 		const provider = args[1];
-		if (!provider || (!isWebSearchProvider(provider) && provider !== "auto")) {
+		if (!isWebSearchProvider(provider) && provider !== "auto") {
 			throw new UsageError("prefer requires exa, brave, or auto.");
 		}
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => {
-			const webSearch = { ...config.webSearch };
+			const webSearch = copyConfigSection(config.webSearch);
 			if (provider === "auto") {
 				delete webSearch.preferredProvider;
 			} else {
@@ -353,25 +413,30 @@ function handleWebSearchPreference(action, args, flags) {
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => ({
 			...config,
-			webSearch: { ...config.webSearch, enabled: action === "enable" },
+			webSearch: { ...copyConfigSection(config.webSearch), enabled: action === "enable" },
 		}));
 		console.log(
 			`${action === "enable" ? "Enabled" : "Disabled"} agent_browser_web_search in ${scope} config: ${path}`,
 		);
 		return;
 	}
-	throw new UsageError(`Unsupported web-search action: ${action ?? ""}`);
+	throw new UsageError(`Unsupported web-search action: ${action}`);
 }
 
+/** @param {ConfigDocument} config
+ * @param {"defaultProfile" | "executablePath"} key */
 function clearBrowserSetting(config, key) {
-	if (!config.browser) {
+	const hasBrowser = Boolean(config.browser);
+	if (!hasBrowser) {
 		return config;
 	}
-	const browser = { ...config.browser };
+	const browser = copyConfigSection(config.browser);
 	delete browser[key];
 	return { ...config, browser };
 }
 
+/** @param {readonly string[]} args
+ * @param {ConfigFlags} flags */
 function handleBrowserProfile(args, flags) {
 	const action = args[1];
 	if (action === "status") {
@@ -385,14 +450,14 @@ function handleBrowserProfile(args, flags) {
 				"browser profile set requires a profile name or profile directory path.",
 			);
 		}
-		const policy = resolveBrowserDefaultProfilePolicy(flags.get("--policy"));
+		const policy = resolveBrowserDefaultProfilePolicy(flags.values.get("--policy"));
 		if (policy === undefined) {
 			throw new UsageError("Invalid --policy value.");
 		}
 		const { path, scope } = selectWritePath(flags);
 		mutateConfig(path, (config) => ({
 			...config,
-			browser: { ...config.browser, defaultProfile: { name, policy } },
+			browser: { ...copyConfigSection(config.browser), defaultProfile: { name, policy } },
 		}));
 		console.log(`Saved browser default profile in ${scope} config: ${path}`);
 		return;
@@ -406,6 +471,8 @@ function handleBrowserProfile(args, flags) {
 	throw new UsageError(`Unsupported browser profile action: ${action ?? ""}`);
 }
 
+/** @param {readonly string[]} args
+ * @param {ConfigFlags} flags */
 function handleBrowserExecutable(args, flags) {
 	const action = args[1];
 	if (action === "status") {
@@ -414,11 +481,14 @@ function handleBrowserExecutable(args, flags) {
 	}
 	if (action === "set") {
 		const executablePath = args.slice(2).join(" ").trim();
-		if (!executablePath) {
+		if (executablePath.length === 0) {
 			throw new UsageError("browser executable set requires a browser executable path.");
 		}
 		const { path, scope } = selectWritePath(flags);
-		mutateConfig(path, (config) => ({ ...config, browser: { ...config.browser, executablePath } }));
+		mutateConfig(path, (config) => ({
+			...config,
+			browser: { ...copyConfigSection(config.browser), executablePath },
+		}));
 		console.log(`Saved browser executable path in ${scope} config: ${path}`);
 		return;
 	}
@@ -431,24 +501,30 @@ function handleBrowserExecutable(args, flags) {
 	throw new UsageError(`Unsupported browser executable action: ${action ?? ""}`);
 }
 
+/** @param {readonly string[]} args
+ * @param {ConfigFlags} flags */
 function handleBrowser(args, flags) {
 	const target = args[0];
 	if (target === "profile") {
-		return handleBrowserProfile(args, flags);
+		handleBrowserProfile(args, flags);
+		return;
 	}
 	if (target === "executable") {
-		return handleBrowserExecutable(args, flags);
+		handleBrowserExecutable(args, flags);
+		return;
 	}
 	throw new UsageError(`Unsupported browser action: ${target ?? ""}`);
 }
 
+/** @param {readonly string[]} argv
+ * @returns {Promise<number>} */
 export async function main(argv = process.argv.slice(2)) {
 	const { flags, positional } = parseArgs(argv);
-	if (flags.get("--help") || positional.length === 0) {
+	const command = positional.at(0);
+	if (flags.switches.has("--help") || command === undefined) {
 		console.log(usage());
 		return 0;
 	}
-	const command = positional[0];
 	if (command === "paths") {
 		printPaths();
 		return 0;
@@ -469,13 +545,15 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (import.meta.main) {
-	main().catch((error) => {
-		if (error instanceof UsageError) {
-			console.error(error.message);
-			console.error(usage());
-			process.exit(2);
-		}
-		console.error(error instanceof Error ? error.message : String(error));
-		process.exit(1);
-	});
+	main().catch(
+		/** @param {unknown} error */ (error) => {
+			if (error instanceof UsageError) {
+				console.error(error.message);
+				console.error(usage());
+				process.exit(2);
+			}
+			console.error(error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		},
+	);
 }

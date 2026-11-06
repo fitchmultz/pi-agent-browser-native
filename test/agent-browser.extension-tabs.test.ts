@@ -11,7 +11,7 @@ import { readArray, readRecord, readString } from "./helpers/assertions.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import { cleanupSecureTempArtifacts } from "../extensions/agent-browser/lib/temp.js";
@@ -25,7 +25,7 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension persists compact snapshot spill files for persisted sessions across shutdown cleanup",
 	{ concurrency: false },
 	async () => {
@@ -79,12 +79,10 @@ test(
 					);
 					const manifest = readRecord(result.details?.artifactManifest);
 					assert.equal(manifest.liveCount, 1);
-					assert.equal(readArray(manifest.entries).map(readRecord)[0].path, spillPath);
-					assert.equal(readArray(manifest.entries).map(readRecord)[0].retentionState, "live");
-					assert.equal(
-						readArray(manifest.entries).map(readRecord)[0].storageScope,
-						"persistent-session",
-					);
+					const entry = readRecord(readArray(manifest.entries)[0]);
+					assert.equal(entry.path, spillPath);
+					assert.equal(entry.retentionState, "live");
+					assert.equal(entry.storageScope, "persistent-session");
 					assert.match(readString(result.details?.artifactRetentionSummary), /1 live, 0 evicted/);
 					await runExtensionEvent(harness.handlers, "session_shutdown");
 					assert.match(await readFile(spillPath, "utf8"), /Extension persisted snapshot row 120/);
@@ -98,7 +96,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension restores artifact manifest from branch history and reports later evictions",
 	{ concurrency: false },
 	async () => {
@@ -229,7 +227,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension preserves rich batch rendering and inline screenshot attachments",
 	{ concurrency: false },
 	async () => {
@@ -273,7 +271,7 @@ process.stdout.write(JSON.stringify([
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension enriches click results with a post-navigation title and url summary",
 	{ concurrency: false },
 	async () => {
@@ -333,7 +331,7 @@ if (args.includes("click")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension observes native identity when same-session results omit it",
 	{ concurrency: false },
 	async () => {
@@ -416,10 +414,10 @@ if (args.includes("tab") && args.includes("list")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension follows a same-address popup after a resumed native batch",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-batch-popup-"));
 		const statePath = join(tempDir, "active-tab");
 		const logPath = join(tempDir, "invocations.log");
@@ -461,90 +459,65 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				assert.ok(opened.details);
 				const seed = structuredClone(harness.ctx.sessionManager.getBranch());
 				for (const mode of ["stdin", "raw", "snapshot", "open-click", "closed"]) {
-					// Reset native focus before replaying an independent copy of the real open's journal.
-					// oxlint-disable-next-line no-await-in-loop
-					await writeFile(statePath, "t1");
-					const resumed = createExtensionHarness({
-						cwd: tempDir,
-						branch: structuredClone(seed),
-					});
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					await runExtensionEvent(
-						resumed.handlers,
-						"session_start",
-						{ reason: "resume" },
-						resumed.ctx,
-					);
-					const steps = [
-						...(mode === "open-click" ? [["open", "https://popup.example/same"]] : []),
-						["click", "#popup"],
-						...(mode === "closed" ? [["close"]] : []),
-					];
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const popup = await executeRegisteredTool(resumed.tool, resumed.ctx, {
-						args: [
-							"--session",
-							"popup",
-							"batch",
-							"--bail",
-							...(mode === "raw" ? ["click #popup"] : []),
-						],
-						stdin: JSON.stringify(steps),
-					});
-					// All five literal popup modes run their lifecycle checks before the next mode.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(popup.isError, false, JSON.stringify(popup));
-					if (mode === "closed") {
-						// The fixed closed mode checks retired target and no probe, then skips live-page actions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(popup.details?.sessionTabTarget, undefined);
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const invocations = await readInvocationLog(logPath);
-						// The fixed closed mode checks retired target and no probe, then skips live-page actions.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							invocations.at(-1)?.args.includes("batch"),
-							true,
-							"a terminal close must not launch a page probe",
-						);
-						continue;
-					}
-					// All five literal popup modes run their lifecycle checks before the next mode.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readRecord(popup.details?.sessionTabTarget).targetId, "t2", mode);
-					if (mode === "snapshot") {
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const snapshot = await executeRegisteredTool(resumed.tool, resumed.ctx, {
-							args: ["--session", "popup", "snapshot", "-i"],
+					await t.test(mode, async (variant) => {
+						// Reset native focus before replaying an independent copy of the real open's journal.
+						await writeFile(statePath, "t1");
+						const resumed = createExtensionHarness({
+							cwd: tempDir,
+							branch: structuredClone(seed),
 						});
-						// The fixed snapshot mode additionally checks refs; all live modes still check the saved tab.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
-						// The fixed snapshot mode additionally checks refs; all live modes still check the saved tab.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(JSON.stringify(snapshot.details?.data), /Save t2/);
-						// The fixed snapshot mode additionally checks refs; all live modes still check the saved tab.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(snapshot.details?.sessionTabCorrection, undefined);
-					}
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const save = await executeRegisteredTool(resumed.tool, resumed.ctx, {
-						args: ["--session", "popup", "click", "#save"],
+						await runExtensionEvent(
+							resumed.handlers,
+							"session_start",
+							{ reason: "resume" },
+							resumed.ctx,
+						);
+						const steps = [
+							...(mode === "open-click" ? [["open", "https://popup.example/same"]] : []),
+							["click", "#popup"],
+							...(mode === "closed" ? [["close"]] : []),
+						];
+						const popup = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+							args: [
+								"--session",
+								"popup",
+								"batch",
+								"--bail",
+								...(mode === "raw" ? ["click #popup"] : []),
+							],
+							stdin: JSON.stringify(steps),
+						});
+						assert.equal(popup.isError, false, JSON.stringify(popup));
+						if (mode === "closed") {
+							await variant.test("retires target without probing", async () => {
+								assert.equal(popup.details?.sessionTabTarget, undefined);
+								const invocations = await readInvocationLog(logPath);
+								assert.equal(
+									invocations.at(-1)?.args.includes("batch"),
+									true,
+									"a terminal close must not launch a page probe",
+								);
+							});
+							return;
+						}
+						assert.equal(readRecord(popup.details?.sessionTabTarget).targetId, "t2", mode);
+						if (mode === "snapshot") {
+							await variant.test("captures refs on the popup", async () => {
+								const snapshot = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+									args: ["--session", "popup", "snapshot", "-i"],
+								});
+								assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
+								assert.match(JSON.stringify(snapshot.details?.data), /Save t2/);
+								assert.equal(snapshot.details?.sessionTabCorrection, undefined);
+							});
+						}
+						const save = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+							args: ["--session", "popup", "click", "#save"],
+						});
+						assert.equal(save.isError, false, JSON.stringify(save));
+						assert.equal(readRecord(save.details?.data).savedTab, "t2");
+						assert.equal(save.details?.sessionTabCorrection, undefined);
 					});
-					// All five literal popup modes run their lifecycle checks before the next mode.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(save.isError, false, JSON.stringify(save));
-					// All five literal popup modes run their lifecycle checks before the next mode.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readRecord(save.details?.data).savedTab, "t2");
-					// All five literal popup modes run their lifecycle checks before the next mode.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(save.details?.sessionTabCorrection, undefined);
 				}
 			});
 		} finally {
@@ -553,10 +526,10 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension retains deliberate blank tabs for subsequent navigation",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "piab-blank-tab-"));
 		const statePath = join(tempDir, "state.json");
 		await writeFakeAgentBrowserBinary(
@@ -585,75 +558,51 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					["tab", "t2"],
 					["batch", "--bail"],
 				]) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					await rm(statePath, { force: true });
-					const harness = createExtensionHarness({ cwd: tempDir });
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					await runExtensionEvent(
-						harness.handlers,
-						"session_start",
-						{ reason: "new" },
-						harness.ctx,
-					);
-					const call = (args: readonly string[], stdin?: string) =>
-						executeRegisteredTool(harness.tool, harness.ctx, {
-							args: ["--session", "blank-tab", ...args],
-							stdin,
-						});
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const initialOpenResult = await call(["open", "https://example.test/original"]);
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(initialOpenResult.isError, false);
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const selected = await call(
-						selection,
-						selection[0] === "batch"
-							? JSON.stringify([
-									["tab", "t2"],
-									["get", "url"],
-								])
-							: undefined,
-					);
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(selected.isError, false);
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(selected.details?.aboutBlankSessionMismatch, undefined, selection.join(" "));
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readRecord(selected.details?.sessionTabTarget).url, "about:blank");
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						readRecord(JSON.parse(await readFile(statePath, "utf8"))).active,
-						"t2",
-						selection.join(" "),
-					);
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const opened = await call(["open", "https://example.test/second"]);
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(opened.isError, false);
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readRecord(opened.details?.data).navigatedTab, "t2");
-					// Each of the three literal tab-selection modes checks blank focus and subsequent navigation.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						readRecord(readRecord(JSON.parse(await readFile(statePath, "utf8"))).urls).t1,
-						"https://example.test/original",
-					);
+					await t.test(selection.join(" "), async () => {
+						await rm(statePath, { force: true });
+						const harness = createExtensionHarness({ cwd: tempDir });
+						await runExtensionEvent(
+							harness.handlers,
+							"session_start",
+							{ reason: "new" },
+							harness.ctx,
+						);
+						const call = (args: readonly string[], stdin?: string) =>
+							executeRegisteredTool(harness.tool, harness.ctx, {
+								args: ["--session", "blank-tab", ...args],
+								stdin,
+							});
+						const initialOpenResult = await call(["open", "https://example.test/original"]);
+						assert.equal(initialOpenResult.isError, false);
+						const selected = await call(
+							selection,
+							selection[0] === "batch"
+								? JSON.stringify([
+										["tab", "t2"],
+										["get", "url"],
+									])
+								: undefined,
+						);
+						assert.equal(selected.isError, false);
+						assert.equal(
+							selected.details?.aboutBlankSessionMismatch,
+							undefined,
+							selection.join(" "),
+						);
+						assert.equal(readRecord(selected.details?.sessionTabTarget).url, "about:blank");
+						assert.equal(
+							readRecord(JSON.parse(await readFile(statePath, "utf8"))).active,
+							"t2",
+							selection.join(" "),
+						);
+						const opened = await call(["open", "https://example.test/second"]);
+						assert.equal(opened.isError, false);
+						assert.equal(readRecord(opened.details?.data).navigatedTab, "t2");
+						assert.equal(
+							readRecord(readRecord(JSON.parse(await readFile(statePath, "utf8"))).urls).t1,
+							"https://example.test/original",
+						);
+					});
 				}
 			});
 		} finally {
@@ -662,7 +611,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension refreshes the active tab target after closing a tab",
 	{ concurrency: false },
 	async () => {
@@ -741,7 +690,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension live-verifies successful tab selection before later page work",
 	{ concurrency: false },
 	async () => {
@@ -842,7 +791,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: page }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension does not treat arbitrary batch eval title/url results as session navigation",
 	{ concurrency: false },
 	async () => {

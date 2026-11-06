@@ -13,7 +13,7 @@ import { getArrayField, getStringField } from "./common.js";
 
 type Data = Readonly<Record<string, unknown>>;
 interface Candidate {
-	readonly filter?: string;
+	readonly filter?: string | undefined;
 	readonly item: Data;
 	readonly kind: "actionable" | "api" | "benign" | "request";
 	readonly requestId: string;

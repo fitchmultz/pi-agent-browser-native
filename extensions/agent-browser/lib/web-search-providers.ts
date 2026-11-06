@@ -23,7 +23,7 @@ export const EXA_SEARCH_SYSTEM_PROMPT =
 export class WebSearchLocalError extends Error {}
 
 export type NormalizedProviderResponse = {
-	readonly extraDetails?: { readonly requestId?: string; readonly searchType?: string };
+	readonly extraDetails?: { readonly requestId?: string | undefined; readonly searchType?: string };
 	readonly results: readonly NormalizedSearchResult[];
 	readonly returnedQuery: string;
 };

@@ -22,43 +22,26 @@ type ConfirmationRowsInput = Readonly<
 		readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
 	};
 };
-type MatchingGuardedConfirmationInput = Readonly<Pick<NativeOutputPhase, "readConfirmation">>;
-type RecordConfirmedEffectInput = Readonly<Pick<NativeOutputPhase, "readConfirmation">> &
-	Pick<NativeOutputPhase, "confirmedEffects">;
-type ApplyConfirmedFailureInput = Pick<NativeOutputPhase, "presentationEnvelope">;
-type FoldReadConfirmationsInput = Readonly<Pick<NativeOutputPhase, "batchCommandSteps">> &
+type FoldReadConfirmationsInput = Readonly<
 	Pick<
 		NativeOutputPhase,
-		| "confirmedEffects"
-		| "confirmedCommand"
-		| "confirmedData"
-		| "directClose"
-		| "presentationEnvelope"
-		| "readConfirmation"
-		| "readConfirmationEvent"
-	> & {
-		readonly input: {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
-			readonly state: BrowserRunState;
-		};
+		"batchCommandSteps" | "confirmedEffects" | "presentationEnvelope" | "readConfirmationEvent"
+	>
+> & {
+	readonly input: {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
+		readonly state: BrowserRunState;
 	};
-type ObserveHelperConfirmationInput = Pick<
-	PageOutputPhase,
-	"confirmationFromHelper" | "readConfirmation" | "readConfirmationEvent" | "succeeded"
+};
+type ObserveHelperConfirmationInput = Readonly<
+	Pick<
+		PageOutputPhase,
+		"confirmationFromHelper" | "readConfirmation" | "readConfirmationEvent" | "succeeded"
+	>
 > & { readonly input: { readonly state: BrowserRunState } };
-type ObserveFinalHelperConfirmationInput = Pick<
-	LifecycleOutputPhase,
-	"confirmationFromHelper" | "readConfirmationEvent" | "succeeded"
+type ObserveFinalHelperConfirmationInput = Readonly<
+	Pick<LifecycleOutputPhase, "confirmationFromHelper" | "readConfirmationEvent" | "succeeded">
 > & { readonly input: { readonly state: BrowserRunState } };
-type ObserveDirectConfirmationEffectInput = Readonly<
-	Pick<NativeOutputPhase, "confirmedEffects" | "presentationEnvelope" | "readConfirmationEvent">
-> &
-	Pick<NativeOutputPhase, "confirmedCommand" | "confirmedData" | "directClose"> & {
-		readonly input: {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
-			readonly state: BrowserRunState;
-		};
-	};
 
 interface ConfirmationRow {
 	readonly tokens: readonly string[];
@@ -100,10 +83,9 @@ function matchesConfirmationDecision(row: ConfirmationRow, id: string): boolean 
 }
 
 function matchingGuardedConfirmation(
-	draft: MatchingGuardedConfirmationInput,
+	current: ReadConfirmation | undefined,
 	row: ConfirmationRow,
-): ReadConfirmation | undefined {
-	const current = draft.readConfirmation;
+): { readonly command: string; readonly data: Readonly<Record<string, unknown>> } | undefined {
 	if (
 		current?.state !== "pending" ||
 		current.source !== "native-guarded-action" ||
@@ -117,44 +99,40 @@ function matchingGuardedConfirmation(
 	if (!isRecord(row.data) || row.data.confirmed !== true || row.data.action !== current.action) {
 		return;
 	}
-	return current;
+	return { command: current.command, data: row.data };
 }
 
-function recordConfirmedEffect(draft: RecordConfirmedEffectInput, row: ConfirmationRow): void {
-	const current = matchingGuardedConfirmation(draft, row);
-	if (!current || typeof current.command !== "string" || !isRecord(row.data)) {
+function readConfirmedEffect(
+	confirmation: ReadConfirmation | undefined,
+	row: ConfirmationRow,
+): NativeOutputPhase["confirmedEffects"][number] | undefined {
+	const current = matchingGuardedConfirmation(confirmation, row);
+	if (!current || !isRecord(current.data.result) || detectConfirmationRequired(current.data)) {
 		return;
 	}
-	if (!isRecord(row.data.result) || detectConfirmationRequired(row.data)) {
-		return;
-	}
-	draft.confirmedEffects = [
-		...draft.confirmedEffects,
-		{
-			command: current.command,
-			data: row.data.result.data,
-			index: row.index,
-			succeeded: row.succeeded && row.data.result.success === true,
-		},
-	];
+	return {
+		command: current.command,
+		data: current.data.result.data,
+		index: row.index,
+		succeeded: row.succeeded && current.data.result.success === true,
+	};
 }
 
-function applyConfirmedFailure(draft: ApplyConfirmedFailureInput, row: ConfirmationRow): void {
+function applyConfirmedFailure(
+	envelope: AgentBrowserEnvelope | undefined,
+	row: ConfirmationRow,
+): AgentBrowserEnvelope | undefined {
 	if (row.tokens.length !== 2 || row.tokens[0] !== "confirm" || !isRecord(row.data)) {
-		return;
+		return envelope;
 	}
 	if (
 		row.data.confirmed !== true ||
 		!isRecord(row.data.result) ||
 		row.data.result.success !== false
 	) {
-		return;
+		return envelope;
 	}
-	draft.presentationEnvelope = failedConfirmationEnvelope(
-		draft.presentationEnvelope,
-		row.response,
-		row.data.result.error,
-	);
+	return failedConfirmationEnvelope(envelope, row.response, row.data.result.error);
 }
 
 function failedConfirmationEnvelope(
@@ -179,70 +157,118 @@ function failedConfirmationEnvelope(
 	return { ...envelope, success: false, data: rows };
 }
 
-export function foldReadConfirmations(draft: FoldReadConfirmationsInput): void {
+export function foldReadConfirmations(
+	draft: FoldReadConfirmationsInput,
+): Pick<
+	NativeOutputPhase,
+	| "readConfirmation"
+	| "readConfirmationEvent"
+	| "confirmedEffects"
+	| "presentationEnvelope"
+	| "confirmedData"
+	| "confirmedCommand"
+	| "directClose"
+> {
 	const { prepared, state } = draft.input;
 	const sessionName = prepared.executionPlan.sessionName ?? "default";
-	draft.readConfirmation = state.sessionPageState.getReadConfirmation(
+	let readConfirmation = state.sessionPageState.getReadConfirmation(
 		getAgentBrowserSessionIdentityKey(sessionName, prepared.executionPlan.namespace),
 	);
+	let readConfirmationEvent = draft.readConfirmationEvent;
+	const newEffects: NativeOutputPhase["confirmedEffects"][number][] = [];
+	let presentationEnvelope = draft.presentationEnvelope;
 	for (const row of confirmationRows(draft)) {
-		recordConfirmedEffect(draft, row);
+		const effect = readConfirmedEffect(readConfirmation, row);
+		if (effect) {
+			newEffects.push(effect);
+		}
 		const transition = nextReadConfirmation({
 			commandTokens: row.tokens,
-			current: draft.readConfirmation,
+			current: readConfirmation,
 			data: row.data,
 			namespace: prepared.executionPlan.namespace,
 			sessionName,
 			succeeded: row.succeeded,
 		});
 		if (transition) {
-			draft.readConfirmationEvent = transition;
-			draft.readConfirmation = transition;
+			readConfirmationEvent = transition;
+			readConfirmation = transition;
 		}
-		applyConfirmedFailure(draft, row);
+		presentationEnvelope = applyConfirmedFailure(presentationEnvelope, row);
 	}
-	observeDirectConfirmationEffect(draft);
+	const confirmedEffects =
+		newEffects.length === 0 ? draft.confirmedEffects : [...draft.confirmedEffects, ...newEffects];
+	const direct = directConfirmationEffect(prepared, confirmedEffects, presentationEnvelope);
+	if (readConfirmationEvent?.state === "pending") {
+		state.recordReadConfirmation(readConfirmationEvent);
+	}
+	return {
+		readConfirmation,
+		readConfirmationEvent,
+		confirmedEffects,
+		presentationEnvelope,
+		...direct,
+	};
 }
 
-export function observeHelperConfirmation(draft: ObserveHelperConfirmationInput): void {
+export function observeHelperConfirmation(
+	draft: ObserveHelperConfirmationInput,
+): Pick<
+	PageOutputPhase,
+	"confirmationFromHelper" | "readConfirmation" | "readConfirmationEvent" | "succeeded"
+> {
 	const helperConfirmation = parseReadConfirmation(
 		draft.input.state.observedBrowserEffects?.readConfirmation,
 	);
 	// Main pending installs this object; helpers can replace it while their awaits are pending.
-	draft.confirmationFromHelper =
+	const confirmationFromHelper =
 		draft.input.state.observedBrowserEffects?.readConfirmation !== draft.readConfirmationEvent;
-	if (draft.confirmationFromHelper && helperConfirmation?.state === "pending") {
-		draft.readConfirmationEvent = helperConfirmation;
-		draft.readConfirmation = helperConfirmation;
-		draft.succeeded = false;
+	if (confirmationFromHelper && helperConfirmation?.state === "pending") {
+		return {
+			confirmationFromHelper,
+			readConfirmationEvent: helperConfirmation,
+			readConfirmation: helperConfirmation,
+			succeeded: false,
+		};
 	}
+	return {
+		confirmationFromHelper,
+		readConfirmationEvent: draft.readConfirmationEvent,
+		readConfirmation: draft.readConfirmation,
+		succeeded: draft.succeeded,
+	};
 }
 
-export function observeFinalHelperConfirmation(draft: ObserveFinalHelperConfirmationInput): void {
+export function observeFinalHelperConfirmation(
+	draft: ObserveFinalHelperConfirmationInput,
+):
+	| Pick<LifecycleOutputPhase, "confirmationFromHelper" | "readConfirmationEvent" | "succeeded">
+	| undefined {
 	const finalHelperConfirmation = parseReadConfirmation(
 		draft.input.state.observedBrowserEffects?.readConfirmation,
 	);
-	if (finalHelperConfirmation?.state === "pending") {
-		draft.confirmationFromHelper ||=
-			draft.input.state.observedBrowserEffects?.readConfirmation !== draft.readConfirmationEvent;
-		draft.readConfirmationEvent = finalHelperConfirmation;
-		draft.succeeded = false;
+	if (finalHelperConfirmation?.state !== "pending") {
+		return undefined;
 	}
+	return {
+		confirmationFromHelper:
+			draft.confirmationFromHelper ||
+			draft.input.state.observedBrowserEffects?.readConfirmation !== draft.readConfirmationEvent,
+		readConfirmationEvent: finalHelperConfirmation,
+		succeeded: false,
+	};
 }
 
-function observeDirectConfirmationEffect(draft: ObserveDirectConfirmationEffectInput): void {
-	const { prepared, state } = draft.input;
-	draft.confirmedData =
-		prepared.commandTokens[0] === "confirm" ? draft.confirmedEffects[0]?.data : undefined;
-	draft.confirmedCommand =
-		prepared.commandTokens[0] === "confirm" ? draft.confirmedEffects[0]?.command : undefined;
-	draft.directClose =
-		isCloseCommand(prepared.executionPlan.commandInfo.command) ||
-		isSuccessfulNativeConfirmedClose(prepared.commandTokens, draft.presentationEnvelope?.data);
-	if (draft.readConfirmationEvent?.state === "pending") {
-		state.observedBrowserEffects = {
-			...state.observedBrowserEffects,
-			readConfirmation: draft.readConfirmationEvent,
-		};
-	}
+function directConfirmationEffect(
+	prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>,
+	effects: NativeOutputPhase["confirmedEffects"],
+	envelope: AgentBrowserEnvelope | undefined,
+): Pick<NativeOutputPhase, "confirmedData" | "confirmedCommand" | "directClose"> {
+	return {
+		confirmedData: prepared.commandTokens[0] === "confirm" ? effects[0]?.data : undefined,
+		confirmedCommand: prepared.commandTokens[0] === "confirm" ? effects[0]?.command : undefined,
+		directClose:
+			isCloseCommand(prepared.executionPlan.commandInfo.command) ||
+			isSuccessfulNativeConfirmedClose(prepared.commandTokens, envelope?.data),
+	};
 }

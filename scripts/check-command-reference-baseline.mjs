@@ -38,6 +38,8 @@ Exit codes:
   1  drift found, invalid arguments, missing markers, or file update failed`);
 }
 
+/** @param {readonly string[]} argv
+ * @returns {"check" | "write" | "help"} */
 function parseMode(argv) {
 	if (argv.length === 0) {
 		return "check";
@@ -54,10 +56,13 @@ function parseMode(argv) {
 	throw new Error(`Invalid arguments: ${argv.join(" ")}`);
 }
 
+/** @param {readonly string[]} lines */
 function bullets(lines) {
 	return lines.map((line) => `- ${line}`).join("\n");
 }
 
+/** @param {string} id
+ * @returns {string} */
 export function renderCommandReferenceBaselineBlock(id) {
 	switch (id) {
 		case "upstream-baseline":
@@ -137,6 +142,8 @@ export function renderCommandReferenceBaselineBlock(id) {
 	}
 }
 
+/** @param {string} id
+ * @returns {string} */
 export function markedCommandReferenceBaselineBlock(id) {
 	return [
 		`<!-- ${CAPABILITY_BASELINE_BLOCK_MARKER_PREFIX}:start ${id} -->`,
@@ -147,6 +154,9 @@ export function markedCommandReferenceBaselineBlock(id) {
 	].join("\n");
 }
 
+/** @param {string} content
+ * @param {string} id
+ * @param {string} path */
 function replaceBlock(content, id, path) {
 	const start = `<!-- ${CAPABILITY_BASELINE_BLOCK_MARKER_PREFIX}:start ${id} -->`;
 	const end = `<!-- ${CAPABILITY_BASELINE_BLOCK_MARKER_PREFIX}:end ${id} -->`;
@@ -166,6 +176,7 @@ function replaceBlock(content, id, path) {
 	};
 }
 
+/** @param {"check" | "write"} mode */
 async function processTarget(mode) {
 	let content = await readFile(COMMAND_REFERENCE_DOC_PATH, "utf8");
 	const staleBlocks = [];
@@ -182,6 +193,8 @@ async function processTarget(mode) {
 	return staleBlocks;
 }
 
+/** @param {readonly string[]} argv
+ * @returns {Promise<number>} */
 export async function main(argv = process.argv.slice(2)) {
 	const mode = parseMode(argv);
 	if (mode === "help") {
@@ -212,8 +225,10 @@ if (import.meta.main) {
 		.then((exitCode) => {
 			process.exitCode = exitCode;
 		})
-		.catch((error) => {
-			console.error(error instanceof Error ? error.message : String(error));
-			process.exitCode = 1;
-		});
+		.catch(
+			/** @param {unknown} error */ (error) => {
+				console.error(error instanceof Error ? error.message : String(error));
+				process.exitCode = 1;
+			},
+		);
 }

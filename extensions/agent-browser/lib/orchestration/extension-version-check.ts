@@ -21,8 +21,8 @@ function unavailableProbe(probe: Readonly<AgentBrowserProcessResult>): boolean {
 }
 
 function probeVersion(probe: Readonly<AgentBrowserProcessResult>): {
-	readonly error?: string;
-	readonly observedVersion?: string;
+	readonly error?: string | undefined;
+	readonly observedVersion?: string | undefined;
 } {
 	if (probe.spawnError || probe.exitCode !== 0) {
 		const stderr = probe.stderr.trim();

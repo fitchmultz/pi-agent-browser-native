@@ -7,11 +7,11 @@
  */
 
 import assert from "node:assert/strict";
-import { readRecord, readString, readArray } from "./helpers/assertions.js";
+import { readDefined, readRecord, readString, readArray } from "./helpers/assertions.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { Check } from "typebox/value";
@@ -31,7 +31,7 @@ import {
 	type AgentBrowserToolParams,
 } from "./helpers/agent-browser-harness.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects invalid lookup shapes, mixed input modes, and caller stdin before dispatch",
 	{ concurrency: false },
 	async (t) => {
@@ -144,19 +144,18 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 				];
 				for (const { label, params, message, excludedMessage } of cases) {
 					// Cases share the dispatch log; validate one no-dispatch outcome before advancing.
-					// oxlint-disable-next-line no-await-in-loop
-					await t.test(label, async () => {
+					await t.test(label, async (caseContext) => {
 						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
 						assert.equal(result.isError, true, label);
 						assert.match(readString(readRecord(result.content.at(0)).text), message, label);
 						if (excludedMessage) {
-							// Each fixed failure checks its required message; this variant also forbids misleading copy.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.doesNotMatch(
-								readString(readRecord(result.content.at(0)).text),
-								excludedMessage,
-								label,
-							);
+							await caseContext.test("excludes misleading guidance", () => {
+								assert.doesNotMatch(
+									readString(readRecord(result.content.at(0)).text),
+									excludedMessage,
+									label,
+								);
+							});
 						}
 						assert.equal(readRecord(result.details).resultCategory, "failure", label);
 						assert.equal(readRecord(result.details).failureCategory, "validation-error", label);
@@ -228,7 +227,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	},
 );
 
-test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA failures", () => {
+nodeTest("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA failures", () => {
 	const compiled = compileAgentBrowserQaPreset({
 		url: "https://example.test/",
 		expectedText: "Definitely Not On This Page",
@@ -244,99 +243,105 @@ test("analyzeQaPresetTimeout reports unverified expected-text timeouts as QA fai
 	assert.match(analysis.summary, /QA preset failed/);
 });
 
-test("QA visible-text predicates follow computed visibility without requiring ancestor boxes", async (t) => {
-	class Element {
-		readonly tagName: string;
-		readonly parentElement: Readonly<Element> | null;
-		readonly value: string;
-		readonly style: {
-			readonly display: string;
-			readonly visibility: string;
-			readonly opacity: string;
-		};
-		constructor(
-			value: string,
-			parentElement: Readonly<Element> | null = null,
-			style: Partial<Element["style"]> = {},
-			tagName = "INPUT",
-		) {
-			this.tagName = tagName;
-			this.parentElement = parentElement;
-			this.value = value;
-			this.style = { display: "block", visibility: "visible", opacity: "1", ...style };
+nodeTest(
+	"QA visible-text predicates follow computed visibility without requiring ancestor boxes",
+	async (t) => {
+		class Element {
+			readonly tagName: string;
+			readonly parentElement: Readonly<Element> | null;
+			readonly value: string;
+			readonly style: {
+				readonly display: string;
+				readonly visibility: string;
+				readonly opacity: string;
+			};
+			constructor(
+				value: string,
+				parentElement: Readonly<Element> | null = null,
+				style: Partial<Element["style"]> = {},
+				tagName = "INPUT",
+			) {
+				this.tagName = tagName;
+				this.parentElement = parentElement;
+				this.value = value;
+				this.style = { display: "block", visibility: "visible", opacity: "1", ...style };
+			}
+			getClientRects() {
+				return this.style.display === "contents" || this.style.display === "none" ? [] : [{}];
+			}
 		}
-		getClientRects() {
-			return this.style.display === "contents" || this.style.display === "none" ? [] : [{}];
-		}
-	}
-	const root = new Element("", null, {}, "BODY");
-	const transparentParent = new Element("", root, { opacity: "0" }, "DIV");
-	const contentsParent = new Element("", root, { display: "contents" }, "DIV");
-	const invisibleParent = new Element("", root, { visibility: "hidden" }, "DIV");
-	const undisplayedParent = new Element("", root, { display: "none" }, "DIV");
-	const visibleInput = new Element("Visible control", root);
-	const hiddenInput = new Element("Hidden control", transparentParent);
-	const contentsInput = new Element("Contents control", contentsParent);
-	const overriddenInput = new Element("Overridden control", invisibleParent, {
-		visibility: "visible",
-	});
-	const undisplayedInput = new Element("Undisplayed control", undisplayedParent);
-	const nodes = [
-		{ parentElement: root, nodeValue: "Visible   heading" },
-		{ parentElement: transparentParent, nodeValue: "Hidden heading" },
-		{ parentElement: contentsParent, nodeValue: "Contents text" },
-		{ parentElement: invisibleParent, nodeValue: "Invisible text" },
-		{ parentElement: undisplayedParent, nodeValue: "Undisplayed text" },
-		{ parentElement: new Element("", root, {}, "SCRIPT"), nodeValue: "Script text" },
-		{ parentElement: new Element("", root, {}, "STYLE"), nodeValue: "Style text" },
-		{ parentElement: new Element("", root, {}, "SVG"), nodeValue: "Svg text" },
-	];
-	const elements = [visibleInput, hiddenInput, contentsInput, overriddenInput, undisplayedInput];
-	const context = {
-		HTMLElement: Element,
-		NodeFilter: { SHOW_TEXT: 4, SHOW_ELEMENT: 1 },
-		window: { getComputedStyle: (element: Readonly<Element>) => element.style },
-		document: {
-			body: root,
-			createTreeWalker: (_root: unknown, whatToShow: number) => {
-				const iterator = (whatToShow === 4 ? nodes : elements)[Symbol.iterator]();
-				return { nextNode: () => iterator.next().value ?? null };
+		const root = new Element("", null, {}, "BODY");
+		const transparentParent = new Element("", root, { opacity: "0" }, "DIV");
+		const contentsParent = new Element("", root, { display: "contents" }, "DIV");
+		const invisibleParent = new Element("", root, { visibility: "hidden" }, "DIV");
+		const undisplayedParent = new Element("", root, { display: "none" }, "DIV");
+		const visibleInput = new Element("Visible control", root);
+		const hiddenInput = new Element("Hidden control", transparentParent);
+		const contentsInput = new Element("Contents control", contentsParent);
+		const overriddenInput = new Element("Overridden control", invisibleParent, {
+			visibility: "visible",
+		});
+		const undisplayedInput = new Element("Undisplayed control", undisplayedParent);
+		const nodes = [
+			{ parentElement: root, nodeValue: "Visible   heading" },
+			{ parentElement: transparentParent, nodeValue: "Hidden heading" },
+			{ parentElement: contentsParent, nodeValue: "Contents text" },
+			{ parentElement: invisibleParent, nodeValue: "Invisible text" },
+			{ parentElement: undisplayedParent, nodeValue: "Undisplayed text" },
+			{ parentElement: new Element("", root, {}, "SCRIPT"), nodeValue: "Script text" },
+			{ parentElement: new Element("", root, {}, "STYLE"), nodeValue: "Style text" },
+			{ parentElement: new Element("", root, {}, "SVG"), nodeValue: "Svg text" },
+		];
+		const elements = [visibleInput, hiddenInput, contentsInput, overriddenInput, undisplayedInput];
+		const context = {
+			HTMLElement: Element,
+			NodeFilter: { SHOW_TEXT: 4, SHOW_ELEMENT: 1 },
+			window: { getComputedStyle: (element: Readonly<Element>) => element.style },
+			document: {
+				body: root,
+				createTreeWalker: (_root: unknown, whatToShow: number) => {
+					const iterator = (whatToShow === 4 ? nodes : elements)[Symbol.iterator]();
+					return { nextNode: () => iterator.next().value ?? null };
+				},
 			},
-		},
-	};
-	const cases = [
-		{ text: "Visible heading", visible: true },
-		{ text: "Visible control", visible: true },
-		{ text: "Hidden heading", visible: false },
-		{ text: "Hidden control", visible: false },
-		{ text: "Contents control", visible: true },
-		{ text: "Overridden control", visible: true },
-		{ text: "Contents text", visible: true },
-		{ text: "Invisible text", visible: false },
-		{ text: "Undisplayed control", visible: false },
-		{ text: "Undisplayed text", visible: false },
-		{ text: "Script text", visible: false },
-		{ text: "Style text", visible: false },
-		{ text: "Svg text", visible: false },
-	];
-	const compiled = compileAgentBrowserQaPreset({
-		attached: true,
-		expectedText: cases.map(({ text }) => text),
-	}).compiled;
-	assert.ok(compiled);
-	const predicates = compiled.steps.filter((step) => step.action === "assertText");
-	assert.equal(predicates.length, cases.length);
-	await Promise.all(
-		cases.map(({ text, visible }, index) =>
-			t.test(text, () => {
-				const observed: unknown = runInNewContext(predicates[index].args[2], context);
-				assert.equal(observed, visible);
-			}),
-		),
-	);
-});
+		};
+		const cases = [
+			{ text: "Visible heading", visible: true },
+			{ text: "Visible control", visible: true },
+			{ text: "Hidden heading", visible: false },
+			{ text: "Hidden control", visible: false },
+			{ text: "Contents control", visible: true },
+			{ text: "Overridden control", visible: true },
+			{ text: "Contents text", visible: true },
+			{ text: "Invisible text", visible: false },
+			{ text: "Undisplayed control", visible: false },
+			{ text: "Undisplayed text", visible: false },
+			{ text: "Script text", visible: false },
+			{ text: "Style text", visible: false },
+			{ text: "Svg text", visible: false },
+		];
+		const compiled = compileAgentBrowserQaPreset({
+			attached: true,
+			expectedText: cases.map(({ text }) => text),
+		}).compiled;
+		assert.ok(compiled);
+		const predicates = compiled.steps.filter((step) => step.action === "assertText");
+		assert.equal(predicates.length, cases.length);
+		await Promise.all(
+			cases.map(({ text, visible }, index) =>
+				t.test(text, () => {
+					const observed: unknown = runInNewContext(
+						readDefined(readDefined(predicates[index]).args[2]),
+						context,
+					);
+					assert.equal(observed, visible);
+				}),
+			),
+		);
+	},
+);
 
-test("analyzeQaPresetResults reports missing expected text as QA failure", () => {
+nodeTest("analyzeQaPresetResults reports missing expected text as QA failure", () => {
 	const compiled = compileAgentBrowserQaPreset({
 		url: "https://example.test/",
 		expectedText: "Definitely Not On This Page",
@@ -365,7 +370,7 @@ test("analyzeQaPresetResults reports missing expected text as QA failure", () =>
 	assert.deepEqual(analysis.notRunChecks, []);
 });
 
-test("analyzeQaPresetResults reports checks after a fail-fast open failure as not run", () => {
+nodeTest("analyzeQaPresetResults reports checks after a fail-fast open failure as not run", () => {
 	const compiled = compileAgentBrowserQaPreset({
 		url: "https://example.test/",
 		expectedText: ["First expected text", "Second expected text", "Third expected text"],
@@ -396,66 +401,72 @@ test("analyzeQaPresetResults reports checks after a fail-fast open failure as no
 	assert.equal(analysis.summary, "QA preset failed: open failed.");
 });
 
-test("analyzeQaPresetResults distinguishes an executed text assertion from later checks not run", () => {
-	const compiled = compileAgentBrowserQaPreset({
-		url: "https://example.test/",
-		expectedText: "Missing text",
-		expectedSelector: "main",
-		screenshotPath: "qa.png",
-	}).compiled;
-	assert.ok(compiled);
-	const assertionStep = compiled.steps.find((step) => step.action === "assertText");
-	assert.ok(assertionStep);
-	const analysis = analyzeQaPresetResults(
-		[
-			{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } },
-			{ command: ["console", "--clear"], success: true, result: { messages: [] } },
-			{ command: ["errors", "--clear"], success: true, result: { errors: [] } },
-			{ command: ["errors"], success: true, result: { errors: [] } },
-			{
-				command: ["open", "https://example.test/"],
-				success: true,
-				result: { url: "https://example.test/" },
-			},
-			{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
-			{ command: ["wait", "150"], success: true, result: { ok: true } },
-			{ command: assertionStep.args, success: false, error: "Timed out waiting for text" },
-		],
-		compiled,
-	);
-	assert.ok(analysis);
-	assert.deepEqual(analysis.failedChecks, [
-		"wait failed",
-		'expected text not found: "Missing text"',
-	]);
-	assert.deepEqual(analysis.notRunChecks, [
-		'expected selector: "main"',
-		"network diagnostics",
-		"console diagnostics",
-		"page error diagnostics",
-		'screenshot: "qa.png"',
-	]);
-});
+nodeTest(
+	"analyzeQaPresetResults distinguishes an executed text assertion from later checks not run",
+	() => {
+		const compiled = compileAgentBrowserQaPreset({
+			url: "https://example.test/",
+			expectedText: "Missing text",
+			expectedSelector: "main",
+			screenshotPath: "qa.png",
+		}).compiled;
+		assert.ok(compiled);
+		const assertionStep = compiled.steps.find((step) => step.action === "assertText");
+		assert.ok(assertionStep);
+		const analysis = analyzeQaPresetResults(
+			[
+				{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } },
+				{ command: ["console", "--clear"], success: true, result: { messages: [] } },
+				{ command: ["errors", "--clear"], success: true, result: { errors: [] } },
+				{ command: ["errors"], success: true, result: { errors: [] } },
+				{
+					command: ["open", "https://example.test/"],
+					success: true,
+					result: { url: "https://example.test/" },
+				},
+				{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+				{ command: ["wait", "150"], success: true, result: { ok: true } },
+				{ command: assertionStep.args, success: false, error: "Timed out waiting for text" },
+			],
+			compiled,
+		);
+		assert.ok(analysis);
+		assert.deepEqual(analysis.failedChecks, [
+			"wait failed",
+			'expected text not found: "Missing text"',
+		]);
+		assert.deepEqual(analysis.notRunChecks, [
+			'expected selector: "main"',
+			"network diagnostics",
+			"console diagnostics",
+			"page error diagnostics",
+			'screenshot: "qa.png"',
+		]);
+	},
+);
 
-test("analyzeQaPresetResults does not infer unreached checks from incomplete successful receipts", () => {
-	const compiled = compileAgentBrowserQaPreset({
-		url: "https://example.test/",
-		expectedText: "Welcome",
-	}).compiled;
-	assert.ok(compiled);
-	const analysis = analyzeQaPresetResults(
-		[{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } }],
-		compiled,
-	);
-	assert.ok(analysis);
-	assert.equal(analysis.passed, false);
-	assert.deepEqual(analysis.notRunChecks, []);
-	assert.deepEqual(analysis.failedChecks, [
-		"QA execution could not be verified (incomplete batch results)",
-	]);
-});
+nodeTest(
+	"analyzeQaPresetResults does not infer unreached checks from incomplete successful receipts",
+	() => {
+		const compiled = compileAgentBrowserQaPreset({
+			url: "https://example.test/",
+			expectedText: "Welcome",
+		}).compiled;
+		assert.ok(compiled);
+		const analysis = analyzeQaPresetResults(
+			[{ command: ["network", "requests", "--clear"], success: true, result: { requests: [] } }],
+			compiled,
+		);
+		assert.ok(analysis);
+		assert.equal(analysis.passed, false);
+		assert.deepEqual(analysis.notRunChecks, []);
+		assert.deepEqual(analysis.failedChecks, [
+			"QA execution could not be verified (incomplete batch results)",
+		]);
+	},
+);
 
-test("analyzeQaPresetResults ignores reset-phase diagnostic rows for URL QA", () => {
+nodeTest("analyzeQaPresetResults ignores reset-phase diagnostic rows for URL QA", () => {
 	const compiled = compileAgentBrowserQaPreset({
 		url: "https://example.test/",
 		expectedText: "Example Domain",
@@ -508,49 +519,58 @@ test("analyzeQaPresetResults ignores reset-phase diagnostic rows for URL QA", ()
 	assert.deepEqual(analysis.failedChecks, []);
 });
 
-test("analyzeQaPresetResults treats failed reset-phase diagnostic rows as step failures only", () => {
-	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/" }).compiled;
-	assert.ok(compiled);
-	const analysis = analyzeQaPresetResults(
-		[
-			{
-				command: ["network", "requests", "--clear"],
-				error: "clear failed",
-				success: false,
-				result: { requests: [{ method: "GET", status: 500, url: "https://old.example.test/api" }] },
-			},
-			{
-				command: ["console", "--clear"],
-				error: "clear failed",
-				success: false,
-				result: { messages: [{ text: "old console boom", type: "error" }] },
-			},
-			{
-				command: ["errors", "--clear"],
-				error: "clear failed",
-				success: false,
-				result: { errors: [{ text: "old ReferenceError" }] },
-			},
-			{ command: ["errors"], success: true, result: { errors: [{ text: "old ReferenceError" }] } },
-			{
-				command: ["open", "https://example.test/"],
-				success: true,
-				result: { title: "Example", url: "https://example.test/" },
-			},
-			{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
-			{ command: ["wait", "150"], success: true, result: { ok: true } },
-			{ command: ["network", "requests"], success: true, result: { requests: [] } },
-			{ command: ["console"], success: true, result: { messages: [] } },
-			{ command: ["errors"], success: true, result: { errors: [] } },
-		],
-		compiled,
-	);
-	assert.ok(analysis);
-	assert.equal(analysis.passed, false);
-	assert.deepEqual(analysis.failedChecks, ["network failed", "console failed", "errors failed"]);
-});
+nodeTest(
+	"analyzeQaPresetResults treats failed reset-phase diagnostic rows as step failures only",
+	() => {
+		const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/" }).compiled;
+		assert.ok(compiled);
+		const analysis = analyzeQaPresetResults(
+			[
+				{
+					command: ["network", "requests", "--clear"],
+					error: "clear failed",
+					success: false,
+					result: {
+						requests: [{ method: "GET", status: 500, url: "https://old.example.test/api" }],
+					},
+				},
+				{
+					command: ["console", "--clear"],
+					error: "clear failed",
+					success: false,
+					result: { messages: [{ text: "old console boom", type: "error" }] },
+				},
+				{
+					command: ["errors", "--clear"],
+					error: "clear failed",
+					success: false,
+					result: { errors: [{ text: "old ReferenceError" }] },
+				},
+				{
+					command: ["errors"],
+					success: true,
+					result: { errors: [{ text: "old ReferenceError" }] },
+				},
+				{
+					command: ["open", "https://example.test/"],
+					success: true,
+					result: { title: "Example", url: "https://example.test/" },
+				},
+				{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+				{ command: ["wait", "150"], success: true, result: { ok: true } },
+				{ command: ["network", "requests"], success: true, result: { requests: [] } },
+				{ command: ["console"], success: true, result: { messages: [] } },
+				{ command: ["errors"], success: true, result: { errors: [] } },
+			],
+			compiled,
+		);
+		assert.ok(analysis);
+		assert.equal(analysis.passed, false);
+		assert.deepEqual(analysis.failedChecks, ["network failed", "console failed", "errors failed"]);
+	},
+);
 
-test("analyzeQaPresetResults still reports post-open page errors", () => {
+nodeTest("analyzeQaPresetResults still reports post-open page errors", () => {
 	const compiled = compileAgentBrowserQaPreset({ url: "https://example.test/" }).compiled;
 	assert.ok(compiled);
 	const analysis = analyzeQaPresetResults(
@@ -581,42 +601,45 @@ test("analyzeQaPresetResults still reports post-open page errors", () => {
 	assert.deepEqual(analysis.failedChecks, ["1 page error(s)"]);
 });
 
-test("analyzeQaPresetResults fails unverified matched page-error evidence when clear is a no-op", () => {
-	const compiled = compileAgentBrowserQaPreset({
-		url: "https://clean.example.test/",
-		checkConsole: false,
-		checkNetwork: false,
-	}).compiled;
-	assert.ok(compiled);
-	const staleError = {
-		message: "old ReferenceError",
-		stack: "at https://old.example.test/app.js:1:1",
-	};
-	const analysis = analyzeQaPresetResults(
-		[
-			{ command: ["errors", "--clear"], success: true, result: { errors: [staleError] } },
-			{ command: ["errors"], success: true, result: { errors: [staleError] } },
-			{
-				command: ["open", "https://clean.example.test/"],
-				success: true,
-				result: { url: "https://clean.example.test/" },
-			},
-			{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
-			{ command: ["wait", "150"], success: true, result: { ok: true } },
-			{ command: ["errors"], success: true, result: { errors: [staleError] } },
-		],
-		compiled,
-	);
-	assert.ok(analysis);
-	assert.equal(analysis.passed, false);
-	assert.deepEqual(analysis.failedChecks, [
-		"page-error check could not be verified (1 row(s) matched the post-clear baseline; old residue and identical new errors are indistinguishable)",
-	]);
-	assert.deepEqual(analysis.warnings, []);
-	assert.doesNotMatch(analysis.summary, /passed|unchanged|1 page error\(s\)/);
-});
+nodeTest(
+	"analyzeQaPresetResults fails unverified matched page-error evidence when clear is a no-op",
+	() => {
+		const compiled = compileAgentBrowserQaPreset({
+			url: "https://clean.example.test/",
+			checkConsole: false,
+			checkNetwork: false,
+		}).compiled;
+		assert.ok(compiled);
+		const staleError = {
+			message: "old ReferenceError",
+			stack: "at https://old.example.test/app.js:1:1",
+		};
+		const analysis = analyzeQaPresetResults(
+			[
+				{ command: ["errors", "--clear"], success: true, result: { errors: [staleError] } },
+				{ command: ["errors"], success: true, result: { errors: [staleError] } },
+				{
+					command: ["open", "https://clean.example.test/"],
+					success: true,
+					result: { url: "https://clean.example.test/" },
+				},
+				{ command: ["wait", "--load", "domcontentloaded"], success: true, result: { ok: true } },
+				{ command: ["wait", "150"], success: true, result: { ok: true } },
+				{ command: ["errors"], success: true, result: { errors: [staleError] } },
+			],
+			compiled,
+		);
+		assert.ok(analysis);
+		assert.equal(analysis.passed, false);
+		assert.deepEqual(analysis.failedChecks, [
+			"page-error check could not be verified (1 row(s) matched the post-clear baseline; old residue and identical new errors are indistinguishable)",
+		]);
+		assert.deepEqual(analysis.warnings, []);
+		assert.doesNotMatch(analysis.summary, /passed|unchanged|1 page error\(s\)/);
+	},
+);
 
-test("analyzeQaPresetResults separates novel page errors from ambiguous matching rows", () => {
+nodeTest("analyzeQaPresetResults separates novel page errors from ambiguous matching rows", () => {
 	const compiled = compileAgentBrowserQaPreset({
 		url: "https://target.example.test/",
 		checkConsole: false,
@@ -649,7 +672,7 @@ test("analyzeQaPresetResults separates novel page errors from ambiguous matching
 	assert.deepEqual(analysis.warnings, []);
 });
 
-test("analyzeQaPresetResults reports a new matching error after a successful clear", () => {
+nodeTest("analyzeQaPresetResults reports a new matching error after a successful clear", () => {
 	const compiled = compileAgentBrowserQaPreset({
 		url: "https://target.example.test/",
 		checkConsole: false,
@@ -680,7 +703,7 @@ test("analyzeQaPresetResults reports a new matching error after a successful cle
 	assert.deepEqual(analysis.failedChecks, ["1 page error(s)"]);
 });
 
-test(
+nodeTest(
 	"agentBrowserExtension compiles semantic actions to upstream find commands",
 	{ concurrency: false },
 	async () => {
@@ -766,7 +789,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { args, title: "Click
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension warns when contenteditable fill does not replace existing text",
 	{ concurrency: false },
 	async () => {
@@ -866,7 +889,7 @@ if (command === "open") {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension resolves semantic role clicks through current visible snapshot refs when available",
 	{ concurrency: false },
 	async () => {
@@ -960,7 +983,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension resolves semantic locator select through current visible combobox refs",
 	{ concurrency: false },
 	async () => {
@@ -1075,7 +1098,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension resolves semantic role fills through fresh refs instead of the stored snapshot",
 	{ concurrency: false },
 	async () => {
@@ -1179,7 +1202,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"native batch preserves form fills, delayed keyboard input, condition waits, and artifacts",
 	{ concurrency: false },
 	async () => {
@@ -1245,7 +1268,7 @@ process.stdin.setEncoding('utf8'); process.stdin.on('data',chunk=>stdin+=chunk);
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports failed fresh batches as post-launch failures",
 	{ concurrency: false },
 	async () => {
@@ -1329,7 +1352,7 @@ process.stdin.on("end", () => {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension compiles lightweight QA presets and fails diagnostics",
 	{ concurrency: false },
 	async () => {
@@ -1797,10 +1820,11 @@ process.stdin.on("end", () => {
 						["wait", "--load", "domcontentloaded"],
 						["wait", "150"],
 					]);
-					assert.equal(compiledQaSteps[7][0], "wait");
-					assert.equal(compiledQaSteps[7][1], "--fn");
-					assert.match(readString(compiledQaSteps[7][2]), /Welcome/);
-					assert.deepEqual(compiledQaSteps[7].slice(3), ["--timeout", "5000"]);
+					const textWait = readDefined(compiledQaSteps[7]);
+					assert.equal(textWait[0], "wait");
+					assert.equal(textWait[1], "--fn");
+					assert.match(readString(textWait[2]), /Welcome/);
+					assert.deepEqual(textWait.slice(3), ["--timeout", "5000"]);
 					assert.deepEqual(compiledQaSteps.slice(8), [
 						["wait", "main"],
 						["network", "requests"],
@@ -1899,10 +1923,11 @@ process.stdin.on("end", () => {
 					assert.deepEqual(attachedCompiledQaSteps.slice(0, 1), [
 						["wait", "--load", "domcontentloaded"],
 					]);
-					assert.equal(attachedCompiledQaSteps[1][0], "wait");
-					assert.equal(attachedCompiledQaSteps[1][1], "--fn");
-					assert.match(readString(attachedCompiledQaSteps[1][2]), /Welcome/);
-					assert.deepEqual(attachedCompiledQaSteps[1].slice(3), ["--timeout", "5000"]);
+					const attachedTextWait = readDefined(attachedCompiledQaSteps[1]);
+					assert.equal(attachedTextWait[0], "wait");
+					assert.equal(attachedTextWait[1], "--fn");
+					assert.match(readString(attachedTextWait[2]), /Welcome/);
+					assert.deepEqual(attachedTextWait.slice(3), ["--timeout", "5000"]);
 					assert.deepEqual(attachedCompiledQaSteps.slice(2), [["wait", "main"]]);
 					const attachedInvocation = [...(await readInvocationLog(logPath))]
 						.reverse()
@@ -2004,10 +2029,10 @@ process.stdin.on("end", () => {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension admits qa.attached across page URL schemes without title preflight",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-qa-attached-precondition-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -2089,41 +2114,31 @@ process.stdin.on("end", () => {
 					);
 					await executeRegisteredTool(harness.tool, harness.ctx, { args: ["connect", "9222"] });
 					for (const url of ["https://example.test/", "file:///tmp/app.html", "app://shell/home"]) {
-						// Verify attached targets in order using the same native session.
-						// oxlint-disable-next-line no-await-in-loop
-						await withPatchedEnv({ FAKE_ATTACHED_URL: url }, async () => {
-							const before = (await readInvocationLog(logPath)).length;
-							const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
-								args: ["get", "url"],
+						await t.test(url, async () => {
+							await withPatchedEnv({ FAKE_ATTACHED_URL: url }, async () => {
+								const before = (await readInvocationLog(logPath)).length;
+								const verifiedUrl = await executeRegisteredTool(harness.tool, harness.ctx, {
+									args: ["get", "url"],
+								});
+								assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
+								const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+									qa: { attached: true, expectedText: "Welcome" },
+								});
+								assert.equal(attachedResult.isError, false, JSON.stringify(attachedResult));
+								assert.match(attachedResult.content.at(0)?.text ?? "", /QA preset passed\./);
+								const calls = (await readInvocationLog(logPath)).slice(before);
+								const batchIndex = calls.findIndex(
+									(entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail",
+								);
+								assert.ok(batchIndex >= 0);
+								const preflight = calls.slice(0, batchIndex);
+								assert.equal(
+									preflight.some(
+										(entry) => entry.args.includes("get") && entry.args.includes("title"),
+									),
+									false,
+								);
 							});
-							// Every fixed URL scheme must permit explicit URL verification.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(verifiedUrl.isError, false, JSON.stringify(verifiedUrl));
-							const attachedResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-								qa: { attached: true, expectedText: "Welcome" },
-							});
-							// Every fixed URL scheme must remain usable for attached QA.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(attachedResult.isError, false, JSON.stringify(attachedResult));
-							// Each carried scenario must retain the QA pass, not merely a successful preflight.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(attachedResult.content.at(0)?.text ?? "", /QA preset passed\./);
-							const calls = (await readInvocationLog(logPath)).slice(before);
-							const batchIndex = calls.findIndex(
-								(entry) => entry.args.at(-2) === "batch" && entry.args.at(-1) === "--bail",
-							);
-							// Every URL variant must reach a native QA batch after its preflight.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(batchIndex >= 0);
-							const preflight = calls.slice(0, batchIndex);
-							// The failing title fixture must not be consulted before admitting any URL scheme.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(
-								preflight.some(
-									(entry) => entry.args.includes("get") && entry.args.includes("title"),
-								),
-								false,
-							);
 						});
 					}
 					const invocations = await readInvocationLog(logPath);

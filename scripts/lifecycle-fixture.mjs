@@ -13,6 +13,7 @@ const SENTINEL_COMMAND_PREFIX = "piab-lifecycle-sentinel";
 const SENTINEL_MARKER_START = "// PIAB_LIFECYCLE_SENTINEL_START";
 const SENTINEL_MARKER_END = "// PIAB_LIFECYCLE_SENTINEL_END";
 
+/** @param {string} path */
 export async function pathExists(path) {
 	try {
 		await access(path);
@@ -22,6 +23,7 @@ export async function pathExists(path) {
 	}
 }
 
+/** @param {{packageDir: string, sessionDir: string}} options */
 export function buildSettingsPayload({ packageDir, sessionDir }) {
 	return {
 		quietStartup: false,
@@ -35,6 +37,7 @@ export function buildSettingsPayload({ packageDir, sessionDir }) {
 	};
 }
 
+/** @param {{agentDir: string, packageDir: string, sessionDir: string}} options */
 export async function writeSettings({ agentDir, packageDir, sessionDir }) {
 	await mkdir(agentDir, { recursive: true });
 	const settings = buildSettingsPayload({ packageDir, sessionDir });
@@ -46,6 +49,7 @@ export async function writeSettings({ agentDir, packageDir, sessionDir }) {
 	return settings;
 }
 
+/** @param {{packageDir: string, repoRoot: string}} options */
 export async function copyPackageSource({ packageDir, repoRoot }) {
 	const tarball = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
 	if (tarball !== undefined) {
@@ -91,10 +95,12 @@ export async function copyPackageSource({ packageDir, repoRoot }) {
 	}
 }
 
+/** @param {string} token */
 export function lifecycleSentinelCommand(token) {
 	return `${SENTINEL_COMMAND_PREFIX}-${token}`;
 }
 
+/** @param {string} source @param {string} token */
 export function injectLifecycleSentinelSource(source, token) {
 	const withoutOldSentinel = source.replace(
 		new RegExp(
@@ -120,12 +126,14 @@ export function injectLifecycleSentinelSource(source, token) {
 	return withoutOldSentinel.replace(marker, (matched) => `${matched}${snippet}`);
 }
 
+/** @param {{packageDir: string, token: string}} options */
 export async function writeLifecycleSentinel({ packageDir, token }) {
 	const indexPath = resolve(packageDir, "dist/extensions/agent-browser/index.js");
 	const source = await readFile(indexPath, "utf8");
 	await writeFile(indexPath, injectLifecycleSentinelSource(source, token), "utf8");
 }
 
+/** @param {string} binDir @param {string} script */
 export async function createFakeAgentBrowserBinary(binDir, script) {
 	await mkdir(binDir, { recursive: true });
 	const scriptPath = join(binDir, "agent-browser");

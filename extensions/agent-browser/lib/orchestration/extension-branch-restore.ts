@@ -1,6 +1,7 @@
 import { format } from "node:util";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SessionPageState } from "../session-page-state.js";
+import type { AgentBrowserSessionIdentity } from "../session-identity.js";
 import { getBrowserRecord, type BrowserRecord } from "../browser-transcript.js";
 import { readBrowserEntries } from "../browser-journal.js";
 import {
@@ -51,7 +52,7 @@ function isActiveOnBranch(events: BranchManagedResourceEvents, key: string): boo
 function* restorableBranchManagedIdentities(
 	events: BranchManagedResourceEvents,
 	baseName: string,
-): Generator<readonly [string, Readonly<{ sessionName: string; namespace?: string }>]> {
+): Generator<readonly [string, AgentBrowserSessionIdentity]> {
 	for (const [key, identity] of events.managedSessionActiveIdentities) {
 		if (
 			isActiveOnBranch(events, key) &&
@@ -98,8 +99,8 @@ async function readBranchForRestore(
 }
 function headedLaunchTracking(launch: Readonly<ManagedSessionLaunchState> | undefined): Readonly<{
 	headedManagedAutosaveDisabled: boolean;
-	headedManagedAutosaveInterval?: string;
-	socketDir?: string;
+	headedManagedAutosaveInterval?: string | undefined;
+	socketDir?: string | undefined;
 }> {
 	return {
 		headedManagedAutosaveDisabled: launch?.headedManagedAutosaveDisabled ?? false,
@@ -258,10 +259,7 @@ class BrowserBranchRestoration {
 	sessionActiveOnBranch(key: string): boolean {
 		return isActiveOnBranch(this.branchResourceEvents, key);
 	}
-	restoreBranchManagedOwner(
-		key: string,
-		identity: Readonly<{ sessionName: string; namespace?: string }>,
-	): void {
+	restoreBranchManagedOwner(key: string, identity: AgentBrowserSessionIdentity): void {
 		const launch = this.branchResourceEvents.managedSessionLaunchState.get(key);
 		trackOwnedManagedSession(
 			this.runtime.managed.owned,

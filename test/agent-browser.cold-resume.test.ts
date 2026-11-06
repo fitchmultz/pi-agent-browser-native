@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	createExtensionHarness,
@@ -98,7 +98,6 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					[...prefix, "snapshot", "-i"],
 				]) {
 					// The snapshot must observe the preceding open and its persisted session identity.
-					// oxlint-disable-next-line no-await-in-loop
 					const result = await executeRegisteredTool(first.tool, first.ctx, {
 						args:
 							args.includes("open") && options.confirmActions !== undefined
@@ -155,7 +154,7 @@ async function withResumedPage(
 	await withResumedPages((row) => row(run), options);
 }
 
-test(
+nodeTest(
 	"cold resume reopens before page reads and discards old refs",
 	{ concurrency: false },
 	async () => {
@@ -221,14 +220,13 @@ test(
 				},
 			]) {
 				// Each row resets branch/native state and completes shutdown before the next.
-				// oxlint-disable-next-line no-await-in-loop
 				await check(params);
 			}
 		});
 	},
 );
 
-test(
+nodeTest(
 	"cold resume preserves explicit navigation and sessionless intent",
 	{ concurrency: false },
 	async (t) => {
@@ -255,8 +253,7 @@ test(
 				{ args: ["--version"] },
 			]) {
 				// Each subtest owns a process-global environment and must complete cleanup before the next.
-				// oxlint-disable-next-line no-await-in-loop
-				await t.test(JSON.stringify(params), async () =>
+				await t.test(JSON.stringify(params), async (variant) =>
 					withRow(async ({ harness, logPath, statePath, url }) => {
 						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
 						assert.equal(result.isError, false, result.content[0]?.text);
@@ -268,13 +265,13 @@ test(
 							"the old URL must not be opened ahead of explicit intent",
 						);
 						if (["read", "session", "--version"].includes(params.args?.[0] ?? "")) {
-							// The explicitly sessionless fixture variants must stay closed; all variants assert success above.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(
-								readRecord(JSON.parse(await readFile(statePath, "utf8"))).active,
-								false,
-								"a sessionless or explicit HTTP read must not launch a browser",
-							);
+							await variant.test("does not launch a browser", async () => {
+								assert.equal(
+									readRecord(JSON.parse(await readFile(statePath, "utf8"))).active,
+									false,
+									"a sessionless or explicit HTTP read must not launch a browser",
+								);
+							});
 						}
 					}),
 				);
@@ -283,7 +280,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"cold resume verifies the reopened page before a read and retains ref invalidation on failure",
 	{ concurrency: false },
 	async () => {
@@ -328,7 +325,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"cold retained-policy reopen exposes its native decision and exact confirm without replaying open",
 	{ concurrency: false },
 	async () => {
@@ -401,7 +398,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"explicit close keeps the recorded URL retired on resume",
 	{ concurrency: false },
 	async () => {

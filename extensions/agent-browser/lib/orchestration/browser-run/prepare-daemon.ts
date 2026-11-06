@@ -23,9 +23,9 @@ import type {
 } from "./managed-session-daemon-inspection.js";
 
 export interface PreparationDaemonPolicy {
-	readonly lock?: ManagedSessionPolicyLock;
+	readonly lock?: ManagedSessionPolicyLock | undefined;
 	readonly inactive: boolean;
-	readonly generationInspection?: ManagedSessionDaemonInspection;
+	readonly generationInspection?: ManagedSessionDaemonInspection | undefined;
 	readonly cleanupOnlyReason?: Awaited<
 		ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>
 	>["cleanupOnlyReason"];
@@ -40,7 +40,7 @@ export interface PreparationDaemonResult {
 }
 
 interface PreparationDaemonFacts extends PreparationProcessFacts {
-	readonly initialDaemonObservation?: PreparationDaemonObservation;
+	readonly initialDaemonObservation?: PreparationDaemonObservation | undefined;
 }
 
 async function notCallerOwned(): Promise<boolean> {
@@ -179,9 +179,9 @@ export async function prepareDaemonPolicy(
 }
 
 interface ChromeStartupFacts {
-	readonly chromeStartupArgs?: string;
-	readonly configuredChromeLaunch?: boolean;
-	readonly preserveAttachedBrowserSession?: boolean;
+	readonly chromeStartupArgs?: string | undefined;
+	readonly configuredChromeLaunch?: boolean | undefined;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
 }
 
 function chromeStartupEligible(
@@ -190,7 +190,7 @@ function chromeStartupEligible(
 	request: {
 		readonly browserIndependent: boolean;
 		readonly preparedArgs: PreparedAgentBrowserArgs;
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 	},
 ): boolean {
 	return (
@@ -206,7 +206,7 @@ function chromeStartupEligible(
 export async function prepareChromeStartupArgs(
 	facts: ChromeStartupFacts,
 	planning: PreparationDaemonResult,
-	request: { readonly preparedArgs: PreparedAgentBrowserArgs; readonly stdin?: string },
+	request: { readonly preparedArgs: PreparedAgentBrowserArgs; readonly stdin?: string | undefined },
 ): Promise<string | undefined> {
 	if (
 		!chromeStartupEligible(facts, planning.plan, {

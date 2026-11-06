@@ -14,7 +14,7 @@ import { createServer, type Server } from "node:http";
 import { mkdtemp, readFile, rm, stat, watch, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { readProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
@@ -129,7 +129,7 @@ function electronCleanupDetails(
 }
 
 for (const shutdownReason of ["quit", "reload"] as const) {
-	test(
+	nodeTest(
 		`agentBrowserExtension keeps Electron cleanup ownership after session_tree switches away from the launch branch (${shutdownReason})`,
 		{ concurrency: false },
 		async () => {
@@ -233,7 +233,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension does not double-clean a branch-restored Electron cleanup during shutdown",
 	{ concurrency: false },
 	async () => {
@@ -335,7 +335,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension clears namespaced attachment context after Electron cleanup replay",
 	{ concurrency: false },
 	async () => {
@@ -414,7 +414,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: "https://sa
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps same-process re-owned Electron resources despite stale branch cleanup evidence",
 	{ concurrency: false },
 	async () => {
@@ -537,7 +537,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension preserves branch ownership of untouched Electron launch after targeted cleanup",
 	{ concurrency: false },
 	async () => {
@@ -670,7 +670,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension preserves branch ownership of Electron launch after failing explicit-session command",
 	{ concurrency: false },
 	async () => {
@@ -781,7 +781,7 @@ if (args.includes("close")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension exposes off-branch owned Electron records to status, probe, and cleanup by launchId",
 	{ concurrency: false },
 	async () => {
@@ -878,7 +878,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension restores headed autosave policy for an off-current Electron session",
 	{ concurrency: false },
 	async () => {
@@ -1032,7 +1032,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps Electron cleanup post-close reservation across same-process session_tree restore",
 	{ concurrency: false },
 	async () => {
@@ -1217,7 +1217,7 @@ for (const { label, shutdown } of [
 		shutdown: { reason: "quit", disposition: "provisional" },
 	},
 ]) {
-	test(
+	nodeTest(
 		`agentBrowserExtension preserves active branch Electron launch across ${label}`,
 		{ concurrency: false },
 		async () => {
@@ -1307,7 +1307,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension reuses only verified tracked Electron connections after reload",
 	{ concurrency: false },
 	async (t) => {
@@ -1419,58 +1419,54 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					assert.equal((await stat(userDataDir)).isDirectory(), true);
 
 					for (const mismatch of ["browser-instance", "connection", "namespace"]) {
-						liveBrowserEndpoint =
-							mismatch === "browser-instance" ? browserEndpoint + "-replaced" : browserEndpoint;
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						await writeFile(
-							connectionPath,
-							JSON.stringify({
-								active: true,
-								cdpUrl: mismatch === "connection" ? pageEndpoint + "-other" : pageEndpoint,
-							}),
-						);
-						const harness = createExtensionHarness({
-							branch: branch(mismatch === "namespace" ? { ...record, namespace: "other" } : record),
-							cwd: tempDir,
-						});
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						await runExtensionEvent(
-							harness.handlers,
-							"session_start",
-							{ reason: "reload" },
-							harness.ctx,
-						);
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const before = (await readInvocationLog(logPath)).length;
-						for (let attempt = 0; attempt < 2; attempt += 1) {
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-								args: ["get", "title"],
-							});
-							// Both fixed attempts for every literal connection mismatch must fail before dispatch.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.isError, true, `${mismatch}: ${JSON.stringify(result)}`);
-							// Both fixed attempts for every literal connection mismatch must fail before dispatch.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(
-								result.details?.managedSessionCleanupOnlyReason,
-								"restore-disabled-daemon-without-provenance",
+						await t.test(`reject ${mismatch}`, async (variant) => {
+							liveBrowserEndpoint =
+								mismatch === "browser-instance" ? browserEndpoint + "-replaced" : browserEndpoint;
+
+							await writeFile(
+								connectionPath,
+								JSON.stringify({
+									active: true,
+									cdpUrl: mismatch === "connection" ? pageEndpoint + "-other" : pageEndpoint,
+								}),
 							);
-						}
-						// Each of the three literal identity mismatches checks that title was never dispatched.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							(await readInvocationLog(logPath))
-								.slice(before)
-								.some((entry) => entry.args.includes("title")),
-							false,
-						);
+							const harness = createExtensionHarness({
+								branch: branch(
+									mismatch === "namespace" ? { ...record, namespace: "other" } : record,
+								),
+								cwd: tempDir,
+							});
+
+							await runExtensionEvent(
+								harness.handlers,
+								"session_start",
+								{ reason: "reload" },
+								harness.ctx,
+							);
+
+							const before = (await readInvocationLog(logPath)).length;
+							for (let attempt = 0; attempt < 2; attempt += 1) {
+								await variant.test(`attempt ${attempt + 1}`, async () => {
+									const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+										args: ["get", "title"],
+									});
+
+									assert.equal(result.isError, true, `${mismatch}: ${JSON.stringify(result)}`);
+
+									assert.equal(
+										result.details?.managedSessionCleanupOnlyReason,
+										"restore-disabled-daemon-without-provenance",
+									);
+								});
+							}
+
+							assert.equal(
+								(await readInvocationLog(logPath))
+									.slice(before)
+									.some((entry) => entry.args.includes("title")),
+								false,
+							);
+						});
 					}
 
 					liveBrowserEndpoint = browserEndpoint;
@@ -1482,145 +1478,129 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						{ electron: { action: "status", launchId: record.launchId } },
 						{ electron: { action: "probe", launchId: record.launchId } },
 					]) {
-						const harness = createExtensionHarness({ branch: branch(), cwd: tempDir });
-						lastHarness = harness;
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						await runExtensionEvent(
-							harness.handlers,
-							"session_start",
-							{ reason: "reload" },
-							harness.ctx,
-						);
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const before = (await readInvocationLog(logPath)).length;
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
-						// All four literal restored-call variants check native verification and retained host ownership.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(result.isError, false, JSON.stringify(result));
-						// All four literal restored-call variants check native verification and retained host ownership.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(JSON.stringify(result.content), /Verified Electron/);
-						// All four literal restored-call variants check native verification and retained host ownership.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(JSON.stringify(result.content), /Managed session warning/);
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const verification = (await readInvocationLog(logPath))
-							.slice(before)
-							.filter((entry) => entry.args.includes("cdp-url"));
-						// All four literal restored-call variants check native verification and retained host ownership.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.deepEqual(
-							verification.map((entry) => entry.args),
-							[
+						await t.test(JSON.stringify(params), async () => {
+							const harness = createExtensionHarness({ branch: branch(), cwd: tempDir });
+							lastHarness = harness;
+
+							await runExtensionEvent(
+								harness.handlers,
+								"session_start",
+								{ reason: "reload" },
+								harness.ctx,
+							);
+
+							const before = (await readInvocationLog(logPath)).length;
+
+							const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+
+							assert.equal(result.isError, false, JSON.stringify(result));
+
+							assert.match(JSON.stringify(result.content), /Verified Electron/);
+
+							assert.doesNotMatch(JSON.stringify(result.content), /Managed session warning/);
+
+							const verification = (await readInvocationLog(logPath))
+								.slice(before)
+								.filter((entry) => entry.args.includes("cdp-url"));
+
+							assert.deepEqual(
+								verification.map((entry) => entry.args),
 								[
-									"--json",
-									"--namespace",
-									"reload-team",
-									"--session",
-									sessionName,
-									"get",
-									"cdp-url",
+									[
+										"--json",
+										"--namespace",
+										"reload-team",
+										"--session",
+										sessionName,
+										"get",
+										"cdp-url",
+									],
 								],
-							],
-						);
-						// All four literal restored-call variants check native verification and retained host ownership.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(pidIsAlive(child.pid), true);
+							);
+
+							assert.equal(pidIsAlive(record.pid), true);
+						});
 					}
 					for (const mode of ["timeout", "abort"]) {
-						const marker = `cdp-${mode}-ready`;
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						await writeFile(
-							connectionPath,
-							JSON.stringify({
-								active: true,
-								cdpUrl: pageEndpoint,
-								readyPath: join(tempDir, marker),
-							}),
-						);
-						const harness = createExtensionHarness({ branch: branch(), cwd: tempDir });
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						await runExtensionEvent(
-							harness.handlers,
-							"session_start",
-							{ reason: "reload" },
-							harness.ctx,
-						);
-						const controller = new AbortController();
-						const ready = (async () => {
-							for await (const event of watch(tempDir, {
-								signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
-							})) {
-								if (event.filename === marker) {
-									return;
-								}
-							}
-						})();
-						const realSetTimeout = setTimeout;
-						let guard: NodeJS.Timeout | undefined;
-						t.mock.timers.enable({ apis: ["setTimeout"] });
-						const pending = executeRegisteredTool(
-							harness.tool,
-							harness.ctx,
-							{ electron: { action: "probe", launchId: record.launchId, timeoutMs: 500 } },
-							controller.signal,
-						);
-						try {
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await Promise.race([
-								ready,
-								pending.then((result) =>
-									// Both literal timeout/abort modes check interruption and child cleanup; early settlement fails.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.fail(
-										`Verification settled before its controlled read: ${JSON.stringify(result)}`,
-									),
-								),
-							]);
-							if (mode === "timeout") {
-								t.mock.timers.tick(500);
-							} else {
-								controller.abort();
-							}
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							const result = await Promise.race([
-								pending,
-								new Promise<never>((_resolve, reject) => {
-									guard = realSetTimeout(
-										() =>
-											reject(new Error(`Electron verification must honor the caller's ${mode}`)),
-										1000,
-									);
+						await t.test(mode, async (variant) => {
+							const marker = `cdp-${mode}-ready`;
+
+							await writeFile(
+								connectionPath,
+								JSON.stringify({
+									active: true,
+									cdpUrl: pageEndpoint,
+									readyPath: join(tempDir, marker),
 								}),
-							]);
-							// Both literal timeout/abort modes check interruption and child cleanup; early settlement fails.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.isError, true, JSON.stringify(result));
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							const pid = Number(await readFile(join(tempDir, marker), "utf8"));
-							// Both literal timeout/abort modes check interruption and child cleanup; early settlement fails.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
-						} finally {
-							t.mock.timers.reset();
-							controller.abort();
-							if (guard) {
-								clearTimeout(guard);
+							);
+							const harness = createExtensionHarness({ branch: branch(), cwd: tempDir });
+
+							await runExtensionEvent(
+								harness.handlers,
+								"session_start",
+								{ reason: "reload" },
+								harness.ctx,
+							);
+							const controller = new AbortController();
+							const ready = (async () => {
+								for await (const event of watch(tempDir, {
+									signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
+								})) {
+									if (event.filename === marker) {
+										return;
+									}
+								}
+							})();
+							const realSetTimeout = setTimeout;
+							let guard: NodeJS.Timeout | undefined;
+							variant.mock.timers.enable({ apis: ["setTimeout"] });
+							const pending = executeRegisteredTool(
+								harness.tool,
+								harness.ctx,
+								{ electron: { action: "probe", launchId: record.launchId, timeoutMs: 500 } },
+								controller.signal,
+							);
+							try {
+								await Promise.race([
+									ready,
+									pending.then((result) =>
+										assert.fail(
+											`Verification settled before its controlled read: ${JSON.stringify(result)}`,
+										),
+									),
+								]);
+								if (mode === "timeout") {
+									variant.mock.timers.tick(500);
+								} else {
+									controller.abort();
+								}
+
+								const result = await Promise.race([
+									pending,
+									new Promise<never>((_resolve, reject) => {
+										guard = realSetTimeout(
+											() =>
+												reject(new Error(`Electron verification must honor the caller's ${mode}`)),
+											1000,
+										);
+									}),
+								]);
+
+								assert.equal(result.isError, true, JSON.stringify(result));
+
+								const pid = Number(await readFile(join(tempDir, marker), "utf8"));
+
+								assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+							} finally {
+								variant.mock.timers.reset();
+								controller.abort();
+								if (guard) {
+									clearTimeout(guard);
+								}
+
+								await Promise.allSettled([pending, ready]);
 							}
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await Promise.allSettled([pending, ready]);
-						}
+						});
 					}
 					await runExtensionEvent(
 						lastHarness.handlers,
@@ -1650,7 +1630,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 );
 
 for (const shutdownReason of ["reload", "quit"] as const) {
-	test(
+	nodeTest(
 		`agentBrowserExtension preserves off-branch Electron profile when ${shutdownReason} cleanup is partial`,
 		{ concurrency: false },
 		async () => {
@@ -1769,7 +1749,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension does not promote unrelated off-branch Electron launches after targeted cleanup",
 	{ concurrency: false },
 	async () => {
@@ -1894,7 +1874,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension serializes explicit Electron cleanup behind in-flight managed commands",
 	{ concurrency: false },
 	async () => {
@@ -1966,7 +1946,6 @@ if (args.includes("snapshot")) {
 					const deadline = Date.now() + 5_000;
 					while (Date.now() < deadline) {
 						// Observe the real dispatch before permitting cleanup to race it.
-						// oxlint-disable-next-line no-await-in-loop
 						const started = (await readInvocationLog(logPath)).some(
 							(entry) => entry.event === "snapshot-start",
 						);
@@ -1974,7 +1953,6 @@ if (args.includes("snapshot")) {
 							break;
 						}
 						// Bound missing-dispatch retries; a broken fixture must fail instead of hanging.
-						// oxlint-disable-next-line no-await-in-loop
 						await delay(10);
 					}
 					assert.ok(
@@ -2008,7 +1986,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension untracks managed sessions after partial Electron cleanup closes the session",
 	{ concurrency: false },
 	async () => {

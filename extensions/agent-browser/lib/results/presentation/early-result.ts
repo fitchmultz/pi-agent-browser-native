@@ -54,17 +54,19 @@ async function buildNativeTextPresentation(
 		data: text,
 		summary: failure?.summary ?? getNativeTextSummary(text),
 	};
-	return sanitizeModelFacingPresentation(
-		options.modelVisible === false
-			? presentation
-			: await compactLargePresentationOutput({
-					artifactManifest: options.artifactManifest,
-					commandInfo: options.commandInfo,
-					data: presentation.data,
-					persistentArtifactStore: options.persistentArtifactStore,
-					presentation,
-				}),
-	);
+	if (options.modelVisible !== false) {
+		Object.assign(
+			presentation,
+			await compactLargePresentationOutput({
+				artifactManifest: options.artifactManifest,
+				commandInfo: options.commandInfo,
+				data: presentation.data,
+				persistentArtifactStore: options.persistentArtifactStore,
+				presentation,
+			}),
+		);
+	}
+	return sanitizeModelFacingPresentation(presentation);
 }
 
 export async function buildEarlyPresentation(

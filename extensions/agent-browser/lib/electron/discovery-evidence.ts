@@ -62,7 +62,6 @@ export async function hasLinuxElectronEvidence(executablePath: string): Promise<
 	}
 	for (const base of [directory, dirname(directory)]) {
 		// Ordered evidence checks avoid unnecessary filesystem work after the first match.
-		// oxlint-disable-next-line no-await-in-loop
 		if (await hasElectronAppPayload(join(base, "resources"))) {
 			return true;
 		}

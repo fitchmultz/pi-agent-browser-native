@@ -31,7 +31,7 @@ const SCRIPT_SESSION_NAME_PATTERN =
 
 /** A Bun-compiled Pi executable is not a Node runtime and rejects Node permission flags. */
 export function resolveScriptChildNodePath(options: {
-	readonly runtime: { readonly bun?: string };
+	readonly runtime: { readonly bun?: string | undefined };
 	readonly execPath: string;
 	readonly whichNode: () => string | null;
 }): string {

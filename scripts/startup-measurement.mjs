@@ -5,27 +5,62 @@ import { findPackageJSON } from "node:module";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 
 const execFile = promisify(execFileCallback);
 
 export const DIRECT_IMPORT_BUDGET_MS = 250;
 
+/** @satisfies {Record<keyof ReturnType<typeof process.resourceUsage>, import("typebox").TNumber>} */
+const resourceProperties = {
+	fsRead: Type.Number(),
+	fsWrite: Type.Number(),
+	involuntaryContextSwitches: Type.Number(),
+	ipcReceived: Type.Number(),
+	ipcSent: Type.Number(),
+	majorPageFault: Type.Number(),
+	maxRSS: Type.Number(),
+	minorPageFault: Type.Number(),
+	sharedMemorySize: Type.Number(),
+	signalsCount: Type.Number(),
+	swappedOut: Type.Number(),
+	systemCPUTime: Type.Number(),
+	unsharedDataSize: Type.Number(),
+	unsharedStackSize: Type.Number(),
+	userCPUTime: Type.Number(),
+	voluntaryContextSwitches: Type.Number(),
+};
+const measurementSchema = Type.Object({
+	events: Type.Number(),
+	importMs: Type.Number(),
+	tools: Type.Array(Type.String()),
+	totalMs: Type.Number(),
+	diagnostics: Type.Object({
+		pid: Type.Number(),
+		cpuMs: Type.Number(),
+		mainThreadCpuMs: Type.Number(),
+		resources: Type.Object(resourceProperties),
+		hardware: Type.Object({
+			availableParallelism: Type.Number(),
+			logicalCpus: Type.Number(),
+			memoryBytes: Type.Number(),
+		}),
+		loadAfter: Type.Array(Type.Number()),
+		node: Type.Object({
+			executable: Type.String(),
+			version: Type.String(),
+			platform: Type.String(),
+			arch: Type.String(),
+		}),
+	}),
+});
 /**
- * One fresh Node import plus synchronous extension-factory registration.
- * CPU intervals enclose the wall clock; resource counters cover the child lifetime.
- * Hardware/load and artifact identity are collected after the timed registration.
- * @typedef {{
- *   events: number, importMs: number, tools: string[], totalMs: number,
- *   diagnostics: {
- *     pid: number, cpuMs: number, mainThreadCpuMs: number,
- *     resources: ReturnType<typeof process.resourceUsage>,
- *     hardware: { availableParallelism: number, logicalCpus: number, memoryBytes: number },
- *     loadAfter: number[], node: { executable: string, version: string, platform: string, arch: string }
- *   },
- *   identity: Awaited<ReturnType<typeof readStartupIdentity>> | { error: string }
- * }} StartupMeasurement
+ * Fresh Node import and synchronous factory registration. Identity is collected after timing.
+ * @typedef {import("typebox").Static<typeof measurementSchema> & { identity: Awaited<ReturnType<typeof readStartupIdentity>> | { error: string } }} StartupMeasurement
  */
 
+/** @param {string | URL} file */
 async function fileIdentity(file) {
 	return {
 		path: String(file),
@@ -35,6 +70,9 @@ async function fileIdentity(file) {
 	};
 }
 
+/** @param {string} entrypoint
+ * @param {string} cwd
+ */
 async function readStartupIdentity(entrypoint, cwd) {
 	const entrypointPath = resolve(cwd, entrypoint);
 	const identity = {
@@ -51,14 +89,20 @@ async function readStartupIdentity(entrypoint, cwd) {
 		// An absent optional SDK must not discard the measured source fingerprints.
 		return identity;
 	}
-	if (!manifestPath) {
+	if (manifestPath === undefined || manifestPath.length === 0) {
 		return identity;
 	}
+	/** @type {unknown} */
 	const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 	if (
-		manifest.name !== "@earendil-works/pi-coding-agent" ||
-		typeof manifest.version !== "string" ||
-		typeof manifest.bin?.pi !== "string"
+		!Check(
+			Type.Object({
+				name: Type.Literal("@earendil-works/pi-coding-agent"),
+				version: Type.String(),
+				bin: Type.Object({ pi: Type.String() }),
+			}),
+			manifest,
+		)
 	) {
 		throw new Error("Invalid selected Pi manifest");
 	}
@@ -123,12 +167,19 @@ console.log(JSON.stringify({
 		maxBuffer: 1024 * 1024,
 		timeout: 10_000,
 	});
+	/** @type {unknown} */
 	const measurement = JSON.parse(result.stdout.trim());
+	if (!Check(measurementSchema, measurement)) {
+		throw new Error("Invalid startup measurement output.");
+	}
+	let identity;
 	try {
-		measurement.identity = await readStartupIdentity(entrypoint, cwd);
+		identity = await readStartupIdentity(entrypoint, cwd);
 	} catch (error) {
 		// Identity is diagnostic, not an additional import/factory acceptance gate.
-		measurement.identity = { error: error?.code ?? "unavailable" };
+		const code = error instanceof Error && "code" in error ? error.code : undefined;
+		const diagnosticCode = String(code);
+		identity = { error: code === null || code === undefined ? "unavailable" : diagnosticCode };
 	}
-	return measurement;
+	return { ...measurement, identity };
 }

@@ -41,12 +41,12 @@ import type { OwnedManagedSessionReference, PreparedAgentBrowserArgs } from "./t
 export interface PreparationSessionPlan {
 	readonly hasPriorRefs: boolean;
 	readonly browserIndependent: boolean;
-	readonly readConfirmation?: ReadConfirmation;
-	readonly recordedOwnedSession?: OwnedManagedSessionReference;
-	readonly ownedManagedSession?: OwnedManagedSessionContext;
+	readonly readConfirmation?: ReadConfirmation | undefined;
+	readonly recordedOwnedSession?: OwnedManagedSessionReference | undefined;
+	readonly ownedManagedSession?: OwnedManagedSessionContext | undefined;
 	readonly offCurrentLaunchScopedFlags: readonly string[];
 	readonly offCurrentCompatibilityUpgrade: boolean;
-	readonly compatibilityUserAgent?: string;
+	readonly compatibilityUserAgent?: string | undefined;
 	readonly compatibilityUserAgentApplied: boolean;
 	readonly headedLaunch: boolean;
 	readonly providerLaunch: boolean;
@@ -89,7 +89,7 @@ function validatePlannedPage(
 	page: ReturnType<SessionPageState["get"]>,
 	plan: AgentBrowserExecutionPlan,
 	request: {
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 		readonly hasReadConfirmation: boolean;
 	},
 ): AgentBrowserExecutionPlan {
@@ -113,7 +113,7 @@ function restoreOffCurrentCompatibility(
 	request: {
 		readonly offCurrent: boolean;
 		readonly browserIndependent: boolean;
-		readonly recorded?: OwnedManagedSessionReference;
+		readonly recorded?: OwnedManagedSessionReference | undefined;
 		readonly args: readonly string[];
 	},
 ): AgentBrowserExecutionPlan {
@@ -142,10 +142,10 @@ function restoreOffCurrentCompatibility(
 function retainedAutosaveSettings(
 	facts: PreparationSessionFacts,
 	request: {
-		readonly recorded?: OwnedManagedSessionReference;
+		readonly recorded?: OwnedManagedSessionReference | undefined;
 		readonly targetsCurrent: boolean;
 	},
-): { readonly retainedDisabled: boolean; readonly retainedInterval?: string } {
+): { readonly retainedDisabled: boolean; readonly retainedInterval?: string | undefined } {
 	const retainedDisabled =
 		request.recorded?.headedManagedAutosaveDisabled === true ||
 		(request.targetsCurrent && facts.managedSessionHeadedAutosaveDisabled === true);
@@ -163,9 +163,9 @@ function autosaveSettings(
 	readonly executionPlan: AgentBrowserExecutionPlan;
 	readonly headedLaunch: boolean;
 	readonly disabled: boolean;
-	readonly interval?: string;
+	readonly interval?: string | undefined;
 	readonly retainedDisabled: boolean;
-	readonly retainedInterval?: string;
+	readonly retainedInterval?: string | undefined;
 } {
 	const env = getAgentBrowserProcessEnvironment();
 	const explicitInterval = resolveExplicitAutosaveInterval(env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
@@ -196,12 +196,12 @@ function ownedRestoreContext(
 	request: {
 		readonly cwd: string;
 		readonly browserIndependent: boolean;
-		readonly recorded?: OwnedManagedSessionReference;
+		readonly recorded?: OwnedManagedSessionReference | undefined;
 		readonly targetsCurrent: boolean;
 		readonly autosave: Omit<ReturnType<typeof autosaveSettings>, "executionPlan">;
-		readonly compatibilityUserAgent?: string;
+		readonly compatibilityUserAgent?: string | undefined;
 		readonly compatibilityUserAgentApplied: boolean;
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 	},
 ): OwnedManagedSessionContext | undefined {
 	if (request.browserIndependent && !request.recorded && !request.targetsCurrent) {
@@ -238,7 +238,7 @@ function validateManagedIdle(
 	plan: AgentBrowserExecutionPlan,
 	request: {
 		readonly browserIndependent: boolean;
-		readonly recorded?: OwnedManagedSessionReference;
+		readonly recorded?: OwnedManagedSessionReference | undefined;
 		readonly targetsCurrent: boolean;
 		readonly args: readonly string[];
 		readonly idleTimeoutMs: string;
@@ -263,12 +263,12 @@ function prepareNativePlan(
 	request: {
 		readonly freshSessionName: string;
 		readonly sessionMode: "auto" | "fresh";
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 	},
 ): {
 	readonly plan: AgentBrowserExecutionPlan;
 	readonly browserIndependent: boolean;
-	readonly readConfirmation?: ReadConfirmation;
+	readonly readConfirmation?: ReadConfirmation | undefined;
 } {
 	const env = getAgentBrowserProcessEnvironment();
 	const routed = pageState.findReadConfirmation(
@@ -305,7 +305,7 @@ function sessionOwnership(
 	facts: PreparationSessionFacts,
 	plan: AgentBrowserExecutionPlan,
 ): {
-	readonly recorded?: OwnedManagedSessionReference;
+	readonly recorded?: OwnedManagedSessionReference | undefined;
 	readonly targetsCurrent: boolean;
 	readonly offCurrent: boolean;
 } {
@@ -343,7 +343,7 @@ export function prepareSessionPlan(
 		readonly idleTimeoutMs: string;
 		readonly freshSessionName: string;
 		readonly sessionMode: "auto" | "fresh";
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 	},
 ): { readonly plan: AgentBrowserExecutionPlan; readonly session: PreparationSessionPlan } {
 	const native = prepareNativePlan(owners.pageState, facts, preparedArgs, request);

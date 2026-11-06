@@ -33,12 +33,12 @@ export type ExaWebSearchResponse = {
 export type NormalizedSearchResult = {
 	readonly title: string;
 	readonly url: string;
-	readonly description?: string;
-	readonly highlights?: readonly string[];
-	readonly source?: string;
-	readonly age?: string;
+	readonly description?: string | undefined;
+	readonly highlights?: readonly string[] | undefined;
+	readonly source?: string | undefined;
+	readonly age?: string | undefined;
 	readonly pageDate?: string;
-	readonly language?: string;
+	readonly language?: string | undefined;
 };
 
 const HTML_ENTITY_REPLACEMENTS: Readonly<Partial<Record<string, string>>> = {
@@ -120,13 +120,13 @@ function decodeHtmlEntity(entity: string): string {
 	if (named !== undefined) {
 		return named;
 	}
-	const decimalMatch = /^#(\d+)$/.exec(entity);
-	const hexMatch = /^#x([0-9a-f]+)$/i.exec(entity);
+	const decimalMatch = /^#(\d+)$/.exec(entity)?.[1];
+	const hexMatch = /^#x([0-9a-f]+)$/i.exec(entity)?.[1];
 	let codePoint: number | undefined;
-	if (decimalMatch) {
-		codePoint = Number.parseInt(decimalMatch[1], 10);
-	} else if (hexMatch) {
-		codePoint = Number.parseInt(hexMatch[1], 16);
+	if (decimalMatch !== undefined) {
+		codePoint = Number.parseInt(decimalMatch, 10);
+	} else if (hexMatch !== undefined) {
+		codePoint = Number.parseInt(hexMatch, 16);
 	}
 	if (codePoint === undefined || !Number.isFinite(codePoint)) {
 		return `&${entity};`;

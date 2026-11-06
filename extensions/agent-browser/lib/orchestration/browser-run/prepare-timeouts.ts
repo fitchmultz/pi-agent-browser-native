@@ -71,11 +71,11 @@ export async function prepareProcessTimeout(
 	process: PreparationProcessFacts,
 	request: {
 		readonly commandTokens: readonly string[];
-		readonly namespace?: string;
-		readonly sessionName?: string;
-		readonly stdin?: string;
-		readonly pageUrl?: string;
-		readonly refSnapshot?: SessionRefSnapshot;
+		readonly namespace?: string | undefined;
+		readonly sessionName?: string | undefined;
+		readonly stdin?: string | undefined;
+		readonly pageUrl?: string | undefined;
+		readonly refSnapshot?: SessionRefSnapshot | undefined;
 	},
 ): Promise<number | undefined> {
 	let pageUrl = request.pageUrl;

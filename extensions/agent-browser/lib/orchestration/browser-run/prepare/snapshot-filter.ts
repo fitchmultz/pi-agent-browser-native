@@ -31,29 +31,29 @@ import {
 } from "./snapshot-filter-data.js";
 
 export interface SnapshotFilterResult {
-	readonly artifactManifest?: SessionArtifactManifest;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly result: AgentBrowserToolResult;
 }
 
 interface SnapshotReadOptions {
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }
 
 interface SnapshotFilterOptions extends SnapshotReadOptions {
-	readonly modelVisible?: boolean;
-	readonly artifactManifest?: SessionArtifactManifest;
+	readonly modelVisible?: boolean | undefined;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly commandTokens: readonly string[];
-	readonly compatibilityWorkaround?: CompatibilityWorkaround;
+	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly effectiveArgs: readonly string[];
 	readonly managedSessionRestoreDisabled: () => boolean;
-	readonly persistentArtifactStore?: PersistentSessionArtifactStore;
+	readonly persistentArtifactStore?: PersistentSessionArtifactStore | undefined;
 	readonly redactedArgs: readonly string[];
-	readonly previousRefSnapshot?: SessionRefSnapshot;
+	readonly previousRefSnapshot?: SessionRefSnapshot | undefined;
 	readonly sessionMode: "auto" | "fresh";
-	readonly sessionStateKey?: string;
+	readonly sessionStateKey?: string | undefined;
 	readonly sessionPageState: BrowserRunOptions["state"]["sessionPageState"];
 	readonly sessionPageStateUpdate: BrowserRunOptions["sessionPageStateUpdate"];
 	readonly usedImplicitSession: boolean;
@@ -61,10 +61,10 @@ interface SnapshotFilterOptions extends SnapshotReadOptions {
 
 interface SnapshotFilterEvidence {
 	readonly filtered: FilteredSnapshot;
-	readonly fullSnapshot?: SessionRefSnapshot;
-	readonly diff?: SnapshotDiffSummary;
-	readonly renderedTextSearch?: RenderedTextSearchResult;
-	readonly viewport?: ScrollPositionSnapshot;
+	readonly fullSnapshot?: SessionRefSnapshot | undefined;
+	readonly diff?: SnapshotDiffSummary | undefined;
+	readonly renderedTextSearch?: RenderedTextSearchResult | undefined;
+	readonly viewport?: ScrollPositionSnapshot | undefined;
 }
 
 async function collectRenderedText(

@@ -39,11 +39,11 @@ function isBroadGetTextSelector(selector: string | undefined): selector is strin
 }
 
 interface ElectronTextContextOptions {
-	readonly currentTarget?: SessionTabTarget;
+	readonly currentTarget?: SessionTabTarget | undefined;
 	readonly electronLaunchRecords: ReadonlyMap<string, ElectronLaunchRecord>;
-	readonly namespace?: string;
-	readonly priorTarget?: SessionTabTarget;
-	readonly sessionName?: string;
+	readonly namespace?: string | undefined;
+	readonly priorTarget?: SessionTabTarget | undefined;
+	readonly sessionName?: string | undefined;
 }
 
 export function getSourceLookupElectronContext(
@@ -144,7 +144,7 @@ export function formatElectronBroadGetTextScopeText(
 
 export function buildElectronBroadGetTextScopeNextActions(options: {
 	readonly diagnostics: readonly ElectronBroadGetTextScopeDiagnostic[];
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): AgentBrowserNextAction[] {
 	return options.diagnostics.map((diagnostic, index): AgentBrowserNextAction => ({
 		id:

@@ -12,12 +12,19 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { npmCommand, npmExecOptions, packToTemporaryPackageDir } from "./package-pack.mjs";
+import { isConfigObject } from "../extensions/agent-browser/lib/config-policy.js";
+
+/** @typedef {import("@earendil-works/pi-coding-agent").AgentSession} AgentSession */
+/** @typedef {Pick<import("@earendil-works/pi-agent-core").AgentTool<import("typebox").TSchema, unknown>, "name" | "execute">} SmokeTool */
 
 const execFile = promisify(execFileCallback);
 const PACKAGED_AGENT_BROWSER_SMOKE_ARGS = ["--version"];
 const PACKAGED_AGENT_BROWSER_SMOKE_TOOL_CALL_ID = "verify-package-agent-browser-smoke";
 const FAKE_AGENT_BROWSER_VERSION = "agent-browser 0.0.0-packaged-smoke";
 
+/** @param {string} childPath
+ * @param {string} parentPath
+ */
 function isInsidePath(childPath, parentPath) {
 	const normalizedChild = resolve(childPath);
 	const normalizedParent = resolve(parentPath);
@@ -26,6 +33,7 @@ function isInsidePath(childPath, parentPath) {
 	);
 }
 
+/** @param {{ readonly packageDir: string; readonly tools: readonly { readonly name: string; readonly sourceInfo?: Pick<import("@earendil-works/pi-coding-agent").ToolInfo["sourceInfo"], "path"> }[] }} options */
 export function evaluatePiSmokeResult({ packageDir, tools }) {
 	const agentBrowserTools = tools.filter((tool) => tool.name === "agent_browser");
 	const failures = [];
@@ -35,7 +43,7 @@ export function evaluatePiSmokeResult({ packageDir, tools }) {
 		);
 	}
 	for (const tool of agentBrowserTools) {
-		const sourcePath = tool.sourceInfo?.path ?? tool.source?.path ?? tool.path;
+		const sourcePath = tool.sourceInfo?.path;
 		if (typeof sourcePath !== "string" || sourcePath.length === 0) {
 			failures.push(
 				"agent_browser tool did not expose source path metadata for package-path verification.",
@@ -51,34 +59,39 @@ export function evaluatePiSmokeResult({ packageDir, tools }) {
 	return failures;
 }
 
+/** @param {unknown} result */
 function objectDetails(result) {
-	return result &&
-		typeof result === "object" &&
-		result.details &&
-		typeof result.details === "object"
-		? result.details
-		: {};
+	return isConfigObject(result) && isConfigObject(result.details) ? result.details : {};
 }
 
+/** @param {unknown} result */
 function summarizeToolResult(result) {
-	if (!result || typeof result !== "object") {
+	if (!isConfigObject(result)) {
 		return String(result);
 	}
-	const textContent = Array.isArray(result.content)
-		? result.content
-				.filter((item) => item?.type === "text" && typeof item.text === "string")
-				.map((item) => item.text)
-				.join("\n")
-		: "";
+	/** @type {unknown[]} */
+	const content = Array.isArray(result.content) ? result.content : [];
+	const textContent = content
+		.flatMap((item) =>
+			isConfigObject(item) && item.type === "text" && typeof item.text === "string"
+				? [item.text]
+				: [],
+		)
+		.join("\n");
 	const details = objectDetails(result);
+	const fields = [
+		{ name: "summary", value: details.summary },
+		{ name: "exitCode", value: details.exitCode },
+		{ name: "spawnError", value: details.spawnError },
+		{ name: "stderr", value: details.stderr },
+	];
 	const summary = [
 		textContent.trim(),
-		details.summary ? `summary: ${details.summary}` : undefined,
-		details.exitCode !== undefined ? `exitCode: ${details.exitCode}` : undefined,
-		details.spawnError ? `spawnError: ${details.spawnError}` : undefined,
-		details.stderr ? `stderr: ${details.stderr}` : undefined,
+		...fields
+			.filter(({ name, value }) => (name === "exitCode" ? value !== undefined : Boolean(value)))
+			.map(({ name, value }) => `${name}: ${String(value)}`),
 	]
-		.filter((part) => typeof part === "string" && part.length > 0)
+		.filter((part) => part.length > 0)
 		.join("\n");
 	return summary.length > 1_200 ? `${summary.slice(0, 1_197)}...` : summary;
 }
@@ -111,13 +124,17 @@ process.exit(64);
 	};
 }
 
+/** @template T
+ * @param {() => Promise<T>} work
+ */
 async function withFakeAgentBrowserOnPath(work) {
 	const fakeBinary = await createFakeAgentBrowserBinary();
 	const previousPath = process.env.PATH;
 	try {
-		process.env.PATH = previousPath
-			? `${fakeBinary.binDir}${delimiter}${previousPath}`
-			: fakeBinary.binDir;
+		process.env.PATH =
+			previousPath !== undefined && previousPath.length > 0
+				? `${fakeBinary.binDir}${delimiter}${previousPath}`
+				: fakeBinary.binDir;
 		return await work();
 	} finally {
 		if (previousPath === undefined) {
@@ -129,11 +146,12 @@ async function withFakeAgentBrowserOnPath(work) {
 	}
 }
 
+/** @param {unknown} result */
 function invocationFailures(result) {
 	const text = summarizeToolResult(result);
 	const details = objectDetails(result);
 	const failures = [];
-	if (result?.isError === true) {
+	if (isConfigObject(result) && result.isError === true) {
 		failures.push(
 			`Packaged agent_browser invocation failed for args ${JSON.stringify(PACKAGED_AGENT_BROWSER_SMOKE_ARGS)}:\n${text}`,
 		);
@@ -156,41 +174,16 @@ function invocationFailures(result) {
 	return failures;
 }
 
-function smokeContext(session, packageDir) {
-	if (typeof session.createReplacedSessionContext === "function") {
-		return session.createReplacedSessionContext();
-	}
-	return {
-		cwd: packageDir,
-		sessionManager: {
-			getBranch: () => [],
-			getSessionDir: () => {
-				/* This isolated session has no transcript directory. */
-			},
-			getSessionFile: () => {
-				/* This isolated session has no transcript file. */
-			},
-			getSessionId: () => {
-				/* Sessionless inspection has no persistent Pi identity. */
-			},
-		},
-	};
-}
-
-export async function executePackagedAgentBrowserSmoke({ packageDir, session }) {
-	const toolDefinition =
-		typeof session.getToolDefinition === "function"
-			? session.getToolDefinition("agent_browser")
-			: undefined;
-	if (!toolDefinition || typeof toolDefinition.execute !== "function") {
+/** @param {readonly SmokeTool[]} tools */
+export async function executePackagedAgentBrowserSmoke(tools) {
+	const toolDefinition = tools.find((tool) => tool.name === "agent_browser");
+	if (toolDefinition === undefined) {
 		return {
-			failures: [
-				"Packaged agent_browser tool definition was not executable via Pi session.getToolDefinition().",
-			],
+			failures: ["Packaged agent_browser tool was not executable via Pi's active tool registry."],
 			invocation: undefined,
 		};
 	}
-	const ctx = smokeContext(session, packageDir);
+	/** @type {unknown[]} */
 	const updates = [];
 	let result;
 	try {
@@ -199,7 +192,6 @@ export async function executePackagedAgentBrowserSmoke({ packageDir, session }) 
 			{ args: PACKAGED_AGENT_BROWSER_SMOKE_ARGS },
 			undefined,
 			(update) => updates.push(update),
-			ctx,
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -216,6 +208,10 @@ export async function executePackagedAgentBrowserSmoke({ packageDir, session }) 
 	};
 }
 
+/** @param {string} packageDir
+ * @param {string} tempAgentDir
+ * @param {string} hostCli
+ */
 async function verifyPackagedCli(packageDir, tempAgentDir, hostCli) {
 	const marker = join(tempAgentDir, "cli.json");
 	const observer = join(tempAgentDir, "observer.ts");
@@ -255,12 +251,16 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
 			},
 		},
 	);
+	assert.ok(cliProcess.child.stdin);
 	cliProcess.child.stdin.end();
 	const child = await cliProcess;
 	assert.doesNotMatch(child.stderr, /Failed to load extension|Extension error/);
-	assert.ok(JSON.parse(await readFile(marker, "utf8")).includes("agent_browser"));
+	/** @type {unknown} */
+	const activeTools = JSON.parse(await readFile(marker, "utf8"));
+	assert.ok(Array.isArray(activeTools) && activeTools.includes("agent_browser"));
 }
 
+/** @param {string} tarballPath */
 export async function installRuntimeConsumer(tarballPath) {
 	const consumerDir = join(dirname(tarballPath), "consumer");
 	await mkdir(consumerDir);
@@ -299,20 +299,20 @@ export async function installRuntimeConsumer(tarballPath) {
 	return packageDir;
 }
 
-async function verifyPackagedCodeSmoke(session, packageDir) {
-	const tool = session.getToolDefinition("agent_browser_code");
-	assert.equal(typeof tool?.execute, "function", "Packaged agent_browser_code is not executable");
-	const result = await tool.execute(
-		"verify-package-agent-browser-code",
-		{ code: "emit({ answer: 42 });" },
-		undefined,
-		undefined,
-		smokeContext(session, packageDir),
-	);
+/** @param {readonly SmokeTool[]} tools */
+async function verifyPackagedCodeSmoke(tools) {
+	const tool = tools.find((entry) => entry.name === "agent_browser_code");
+	assert.ok(tool, "Packaged agent_browser_code is not executable");
+	const result = await tool.execute("verify-package-agent-browser-code", {
+		code: "emit({ answer: 42 });",
+	});
 	assert.equal(result.isError, false, summarizeToolResult(result));
-	assert.deepEqual(result.details?.data, { answer: 42 });
+	assert.deepEqual(objectDetails(result).data, { answer: 42 });
 }
 
+/** @param {string} packageDir
+ * @param {string} tempAgentDir
+ */
 async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
 	const options = {
 		cwd: tempAgentDir,
@@ -342,7 +342,10 @@ async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
 		options,
 	);
 	assert.equal(await readFile(source, "utf8"), bytes);
-	assert.equal(JSON.parse(await readFile(destination, "utf8")).id, "packaged-conversion");
+	/** @type {unknown} */
+	const converted = JSON.parse(await readFile(destination, "utf8"));
+	assert.ok(isConfigObject(converted));
+	assert.equal(converted.id, "packaged-conversion");
 	const worker = execFile(
 		process.execPath,
 		[
@@ -354,17 +357,27 @@ async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
 		],
 		{ cwd: tempAgentDir, env: {}, timeout: 10_000 },
 	);
+	assert.ok(worker.child.stdin);
 	worker.child.stdin.end(`${JSON.stringify({ type: "start", code: "return 42;" })}\n`);
 	const { stdout } = await worker;
 	assert.ok(
 		stdout
 			.trim()
 			.split("\n")
-			.map((line) => JSON.parse(line))
-			.some((row) => row.type === "complete" && row.hasValue === true && row.value === 42),
+			.some((line) => {
+				/** @type {unknown} */
+				const row = JSON.parse(line);
+				return (
+					isConfigObject(row) &&
+					row.type === "complete" &&
+					row.hasValue === true &&
+					row.value === 42
+				);
+			}),
 	);
 }
 
+/** @param {{ readonly cwd?: string; readonly tarballPath?: string | undefined }} [options] */
 export async function verifyPackagedPiLoad(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
 	const { hostCli } = await import("./compat-host.mjs");
@@ -372,6 +385,7 @@ export async function verifyPackagedPiLoad(options = {}) {
 		cwd,
 		options.tarballPath,
 	);
+	/** @type {AgentSession | undefined} */
 	let session;
 	let tempAgentDir;
 	try {
@@ -414,11 +428,11 @@ export async function verifyPackagedPiLoad(options = {}) {
 		let invocation;
 		if (failures.length === 0) {
 			const executionReport = await withFakeAgentBrowserOnPath(() =>
-				executePackagedAgentBrowserSmoke({ packageDir, session }),
+				executePackagedAgentBrowserSmoke(result.session.agent.state.tools),
 			);
 			failures.push(...executionReport.failures);
 			invocation = executionReport.invocation;
-			await verifyPackagedCodeSmoke(session, packageDir);
+			await verifyPackagedCodeSmoke(session.agent.state.tools);
 			await verifyPackagedCli(packageDir, tempAgentDir, hostCli);
 		}
 		return {
@@ -440,7 +454,7 @@ export async function verifyPackagedPiLoad(options = {}) {
 			session?.dispose();
 		}
 		await cleanup();
-		if (tempAgentDir) {
+		if (tempAgentDir !== undefined) {
 			await rm(tempAgentDir, { force: true, recursive: true });
 		}
 	}

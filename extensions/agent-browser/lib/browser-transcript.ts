@@ -16,6 +16,7 @@ import {
 } from "./results/artifact-manifest.js";
 import type { SessionArtifactManifest, SessionArtifactManifestEntry } from "./results/contracts.js";
 import { extractAgentBrowserLifecycle } from "./results/presentation/common.js";
+import { isSessionArtifactManifestEntry } from "./results/artifact-manifest-validation.js";
 
 import {
 	BROWSER_TRANSITION_ENTRY,
@@ -244,20 +245,14 @@ function indexedArtifacts(
 
 /** Projects a private row into its published receipt: redacted fields plus its opaque identity. */
 export function artifactReceipt(row: SessionArtifactManifestEntry): SessionArtifactManifestEntry {
-	const manifest = {
-		version: 1,
-		entries: [
-			redactSensitiveValue({ ...row, receiptKey: getSessionArtifactManifestEntryKey(row) }),
-		],
-		maxEntries: 1,
-		updatedAtMs: row.createdAtMs,
-		liveCount: 0,
-		evictedCount: 0,
-	};
-	if (!isSessionArtifactManifest(manifest)) {
+	const receipt = redactSensitiveValue({
+		...row,
+		receiptKey: getSessionArtifactManifestEntryKey(row),
+	});
+	if (!isSessionArtifactManifestEntry(receipt)) {
 		throw new Error("Redacted browser artifact has no valid manifest receipt.");
 	}
-	return manifest.entries[0];
+	return receipt;
 }
 
 /** Deltas carry private live rows; `appendBrowserTransition` publishes their receipts instead. */

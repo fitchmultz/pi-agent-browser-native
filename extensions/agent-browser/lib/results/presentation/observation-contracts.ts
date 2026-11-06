@@ -20,6 +20,6 @@ export type BatchFailurePresentationObservation = ReadonlyEvidence<BatchFailureP
 
 export interface BatchPresentedStepObservation {
 	readonly details: BatchStepPresentationObservation;
-	readonly nativeIndex?: number;
+	readonly nativeIndex?: number | undefined;
 	readonly presentation: ToolPresentationObservation;
 }

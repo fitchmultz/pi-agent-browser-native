@@ -39,7 +39,6 @@ export function suppressConfirmationPageHelpers(value?: ReadConfirmation): boole
 export function findReadConfirmation(
 	args: readonly string[],
 	// lib.es2015.iterable.d.ts exposes a mutable iterator cursor; only deeply readonly confirmation values are consumed.
-	// oxlint-disable-next-line typescript/prefer-readonly-parameter-types
 	confirmations: Iterable<ReadConfirmation>,
 	namespace?: string,
 	stdin?: string,
@@ -47,7 +46,7 @@ export function findReadConfirmation(
 	const command = extractUpstreamCommandTokens(args);
 	const tokens =
 		command[0] === "batch" ? (getUpstreamEffectiveBatchSteps(command, stdin)[0] ?? []) : command;
-	if (tokens.length !== 2 || !["confirm", "deny"].includes(tokens[0])) {
+	if (tokens.length !== 2 || !["confirm", "deny"].includes(tokens[0] ?? "")) {
 		return undefined;
 	}
 	const sessionName = extractExplicitSessionName(args);
@@ -102,9 +101,9 @@ function pendingConfirmation(
 	pending: NativePendingConfirmation,
 	tokens: readonly string[],
 	identity: {
-		readonly namespace?: string;
+		readonly namespace?: string | undefined;
 		readonly sessionName: string;
-		readonly confirmed?: ReadConfirmation;
+		readonly confirmed?: ReadConfirmation | undefined;
 	},
 ): ReadConfirmation | undefined {
 	if (isExplicitReadProvenance(pending, tokens, identity.confirmed)) {
@@ -139,7 +138,7 @@ function settlesPendingConfirmation(
 	return (
 		current?.state === "pending" &&
 		tokens.length === 2 &&
-		["confirm", "deny"].includes(tokens[0]) &&
+		["confirm", "deny"].includes(tokens[0] ?? "") &&
 		tokens[1] === current.id
 	);
 }
@@ -172,9 +171,9 @@ function clearedConfirmation(
 
 export function nextReadConfirmation(options: {
 	readonly commandTokens: readonly string[];
-	readonly current?: ReadConfirmation;
+	readonly current?: ReadConfirmation | undefined;
 	readonly data: unknown;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly sessionName: string;
 	readonly succeeded: boolean;
 }): ReadConfirmation | undefined {

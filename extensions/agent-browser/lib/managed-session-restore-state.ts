@@ -1,15 +1,14 @@
 import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
 import { isRecord } from "./parsing.js";
 
-export interface ManagedSessionRestoreIdentity {
-	readonly namespace?: string;
-	readonly sessionName: string;
-}
+import type { AgentBrowserSessionIdentity } from "./session-identity.js";
+
+export type ManagedSessionRestoreIdentity = AgentBrowserSessionIdentity;
 /** Per-extension sticky restore decisions and current-process daemon provenance. */
 export class ManagedSessionRestoreState {
 	readonly #daemonRestoreKeys = new Map<
 		string,
-		{ restoreKey: string | null; generation?: string; restored?: true }
+		{ restoreKey: string | null; generation?: string | undefined; restored?: true }
 	>();
 	readonly #disabled = new Set<string>();
 	clear(sessionName?: string, namespace?: string): void {

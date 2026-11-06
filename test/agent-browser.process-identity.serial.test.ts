@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import childProcess, { spawn, type execFile } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 
 import {
 	buildProcessStartIdentityCommand,
@@ -153,7 +153,7 @@ function fullTicksIdentity(identity: string | undefined): boolean {
 	return typeof identity === "string" && /^win32-powershell-ticks-v1:[1-9]\d*$/.test(identity);
 }
 
-test(
+nodeTest(
 	"physical Windows process-start providers preserve identical fresh ticks for one held foreign child",
 	{ skip: !windowsOnly },
 	async (t) => {
@@ -216,7 +216,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"physical Windows process-start provider does not retain a dead foreign generation",
 	{ skip: !windowsOnly },
 	async (t) => {
@@ -243,7 +243,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"physical Windows process-start provider leaves a confirmed missing PID unknown without partial output",
 	{ skip: !windowsOnly },
 	async (t) => {
@@ -262,7 +262,7 @@ test(
 );
 
 for (const failure of ["lookup", "property"] as const) {
-	test(
+	nodeTest(
 		`physical Windows process-start provider fails closed on an injected ${failure} exception`,
 		{ skip: !windowsOnly },
 		async (t) => {
@@ -292,7 +292,7 @@ for (const failure of ["lookup", "property"] as const) {
 	);
 }
 
-test(
+nodeTest(
 	"physical Windows process-start provider ignores complete output when disposal fails",
 	{ skip: !windowsOnly },
 	async (t) => {
@@ -316,7 +316,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"physical Windows process-start provider retains the native default timeout for a blocked lookup",
 	{ skip: !windowsOnly },
 	async (t) => {
@@ -341,7 +341,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"physical Windows process-start provider cancels a dispatched native lookup without killing its foreign target",
 	{ skip: !windowsOnly },
 	async (t) => {

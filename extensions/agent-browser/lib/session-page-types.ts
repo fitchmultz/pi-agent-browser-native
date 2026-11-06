@@ -1,16 +1,16 @@
 export interface SessionTabTarget {
-	readonly targetId?: string;
-	readonly title?: string;
+	readonly targetId?: string | undefined;
+	readonly title?: string | undefined;
 	readonly url: string;
 }
 export interface OrderedSessionTabTarget {
 	readonly order: number;
-	readonly reopenPending?: boolean;
+	readonly reopenPending?: boolean | undefined;
 	readonly target: SessionTabTarget;
 }
 export interface SessionRefSnapshot {
 	readonly snapshotId?: string;
-	readonly generation?: string;
+	readonly generation?: string | undefined;
 	readonly refIds: readonly string[];
 	readonly refs?: Readonly<
 		Record<
@@ -23,7 +23,7 @@ export interface SessionRefSnapshot {
 			}
 		>
 	>;
-	readonly target?: SessionTabTarget;
+	readonly target?: SessionTabTarget | undefined;
 }
 export interface OrderedSessionRefSnapshot extends SessionRefSnapshot {
 	readonly order: number;
@@ -41,17 +41,17 @@ export interface BatchRefSnapshotState {
 	readonly snapshot?: SessionRefSnapshot;
 }
 export type SessionTabPinningReason = "drift" | "restore";
-export type SessionPageStateUpdateToken = number & {
-	readonly __sessionPageStateUpdateToken: unique symbol;
-};
+export interface SessionPageStateUpdateToken {
+	readonly sessionPageStateUpdateOrder: number;
+}
 export interface SessionPageStateView {
-	readonly confirmActions?: string;
-	readonly pinningReason?: SessionTabPinningReason;
-	readonly tabReopenPending?: boolean;
+	readonly confirmActions?: string | undefined;
+	readonly pinningReason?: SessionTabPinningReason | undefined;
+	readonly tabReopenPending?: boolean | undefined;
 	readonly tabTargetUnknown?: true;
-	readonly refSnapshot?: SessionRefSnapshot;
-	readonly refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
-	readonly tabTarget?: SessionTabTarget;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
+	readonly refSnapshotInvalidation?: SessionRefSnapshotInvalidation | undefined;
+	readonly tabTarget?: SessionTabTarget | undefined;
 }
 export interface SessionPageStateUpdateResult extends SessionPageStateView {
 	readonly applied: boolean;

@@ -20,17 +20,20 @@ function isPositionalOperand(token: string): boolean {
 
 function getPositionalOperands(commandTokens: readonly string[]): string[] {
 	const values: string[] = [];
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const entries = commandTokens.entries();
+	entries.next();
+	for (const [index, token] of entries) {
 		if (token.length === 0 || (token.includes("=") && token.startsWith("-"))) {
 			continue;
 		}
 		if (POSITIONAL_VALUE_FLAGS.has(token)) {
-			index += 1;
+			entries.next();
 			continue;
 		}
 		if (GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(token)) {
-			index += ["true", "false"].includes(commandTokens[index + 1] ?? "") ? 1 : 0;
+			if (["true", "false"].includes(commandTokens[index + 1] ?? "")) {
+				entries.next();
+			}
 			continue;
 		}
 		if (isPositionalOperand(token)) {
@@ -81,7 +84,7 @@ function getResultingExplicitNavigationTarget(
 }
 
 export interface PageTargetState {
-	readonly currentPageUrl?: string;
+	readonly currentPageUrl?: string | undefined;
 	readonly pageUrlUnknown: boolean;
 }
 

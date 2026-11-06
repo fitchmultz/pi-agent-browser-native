@@ -11,13 +11,13 @@ export interface AgentBrowserExecuteParams {
 	readonly args?: readonly string[];
 	readonly electron?: unknown;
 	readonly networkSourceLookup?: unknown;
-	readonly outputPath?: string;
+	readonly outputPath?: string | undefined;
 	readonly qa?: unknown;
 	readonly semanticAction?: unknown;
-	readonly sessionMode?: "auto" | "fresh";
+	readonly sessionMode?: "auto" | "fresh" | undefined;
 	readonly sourceLookup?: unknown;
-	readonly stdin?: string;
-	readonly timeoutMs?: number;
+	readonly stdin?: string | undefined;
+	readonly timeoutMs?: number | undefined;
 }
 
 export type ResolvedAgentBrowserInputKind =
@@ -29,33 +29,36 @@ export type ResolvedAgentBrowserInputKind =
 	| "sourceLookup";
 
 export interface ResolvedAgentBrowserInputModeFields {
-	readonly compiledElectron?: CompiledAgentBrowserElectron;
+	readonly compiledElectron?: CompiledAgentBrowserElectron | undefined;
 	readonly compiledGeneratedBatch?:
 		| CompiledAgentBrowserJob
 		| CompiledAgentBrowserNetworkSourceLookup
-		| CompiledAgentBrowserSourceLookup;
-	readonly compiledJob?: CompiledAgentBrowserJob;
-	readonly compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
-	readonly compiledQaPreset?: CompiledAgentBrowserQaPreset;
-	readonly compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
-	readonly compiledSourceLookup?: CompiledAgentBrowserSourceLookup;
-	readonly redactedCompiledElectron?: CompiledAgentBrowserElectron;
-	readonly redactedCompiledJob?: CompiledAgentBrowserJob;
-	readonly redactedCompiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
-	readonly redactedCompiledQaPreset?: CompiledAgentBrowserQaPreset;
-	readonly redactedCompiledSemanticAction?: CompiledAgentBrowserSemanticAction;
-	readonly redactedCompiledSourceLookup?: CompiledAgentBrowserSourceLookup;
+		| CompiledAgentBrowserSourceLookup
+		| undefined;
+	readonly compiledJob?: CompiledAgentBrowserJob | undefined;
+	readonly compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup | undefined;
+	readonly compiledQaPreset?: CompiledAgentBrowserQaPreset | undefined;
+	readonly compiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
+	readonly compiledSourceLookup?: CompiledAgentBrowserSourceLookup | undefined;
+	readonly redactedCompiledElectron?: CompiledAgentBrowserElectron | undefined;
+	readonly redactedCompiledJob?: CompiledAgentBrowserJob | undefined;
+	readonly redactedCompiledNetworkSourceLookup?:
+		| CompiledAgentBrowserNetworkSourceLookup
+		| undefined;
+	readonly redactedCompiledQaPreset?: CompiledAgentBrowserQaPreset | undefined;
+	readonly redactedCompiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
+	readonly redactedCompiledSourceLookup?: CompiledAgentBrowserSourceLookup | undefined;
 }
 
 export interface ResolvedAgentBrowserInputBase {
 	readonly redactedArgs: readonly string[];
 	readonly toolArgs: readonly string[];
-	readonly toolStdin?: string;
+	readonly toolStdin?: string | undefined;
 }
 
 interface ResolvedAgentBrowserValidInputBase extends ResolvedAgentBrowserInputBase {
-	readonly nativeConfirmActions?: string;
-	readonly chromeStartupArgs?: string;
+	readonly nativeConfirmActions?: string | undefined;
+	readonly chromeStartupArgs?: string | undefined;
 	readonly configuredChromeLaunch?: boolean;
 	readonly status: "valid";
 	readonly validationError?: undefined;
@@ -63,7 +66,7 @@ interface ResolvedAgentBrowserValidInputBase extends ResolvedAgentBrowserInputBa
 
 export interface ResolvedAgentBrowserInvalidInput
 	extends ResolvedAgentBrowserInputBase, ResolvedAgentBrowserInputModeFields {
-	readonly attemptedKind?: ResolvedAgentBrowserInputKind;
+	readonly attemptedKind?: ResolvedAgentBrowserInputKind | undefined;
 	readonly kind: "invalid";
 	readonly status: "invalid";
 	readonly validationError: string;

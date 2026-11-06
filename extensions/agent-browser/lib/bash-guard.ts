@@ -31,7 +31,13 @@ function stripOuterQuotes(token: string): string {
 
 function skipAssignments(tokens: readonly string[], start: number): number {
 	let index = start;
-	while (index < tokens.length && isShellAssignmentToken(tokens[index])) {
+	for (const [position, token] of tokens.entries()) {
+		if (position < start) {
+			continue;
+		}
+		if (!isShellAssignmentToken(token)) {
+			break;
+		}
 		index += 1;
 	}
 	return index;
@@ -39,14 +45,14 @@ function skipAssignments(tokens: readonly string[], start: number): number {
 
 function skipRunnerOptions(tokens: readonly string[], start: number): number {
 	let index = start;
-	while (index < tokens.length && tokens[index].startsWith("-")) {
+	while (tokens[index]?.startsWith("-") === true) {
 		index += 1;
 	}
 	return index;
 }
 
 function separatorWidth(command: string, index: number): number {
-	const char = command[index];
+	const char = command.charAt(index);
 	if (char !== "\n" && char !== "|" && char !== ";" && char !== "&") {
 		return 0;
 	}
@@ -127,13 +133,13 @@ class ShellLaunchScanner {
 	}
 
 	private consumeQuoted(command: string, index: number): number | undefined {
-		const char = command[index];
+		const char = command.charAt(index);
 		if (this.quoteState === undefined) {
 			return undefined;
 		}
 		this.currentToken += char;
 		if (this.quoteState === "double" && char === "\\" && index + 1 < command.length) {
-			this.currentToken += command[index + 1];
+			this.currentToken += command.charAt(index + 1);
 			return index + 1;
 		}
 		if (
@@ -146,14 +152,14 @@ class ShellLaunchScanner {
 	}
 
 	private consumeTokenCharacter(command: string, index: number): number | undefined {
-		const char = command[index];
+		const char = command.charAt(index);
 		if (char === "'" || char === '"') {
 			this.currentToken += char;
 			this.quoteState = char === "'" ? "single" : "double";
 			return index;
 		}
 		if (char === "\\" && index + 1 < command.length) {
-			this.currentToken += char + command[index + 1];
+			this.currentToken += char + command.charAt(index + 1);
 			return index + 1;
 		}
 		if (char !== "\n" && /\s/.test(char)) {
@@ -171,7 +177,7 @@ class ShellLaunchScanner {
 
 	scan(command: string): boolean {
 		for (let index = 0; index < command.length; index += 1) {
-			if (this.consumeHeredoc(command[index])) {
+			if (this.consumeHeredoc(command.charAt(index))) {
 				continue;
 			}
 			const consumed =
@@ -188,7 +194,7 @@ class ShellLaunchScanner {
 				index += width - 1;
 				continue;
 			}
-			this.currentToken += command[index];
+			this.currentToken += command.charAt(index);
 		}
 		return this.flushSegment();
 	}

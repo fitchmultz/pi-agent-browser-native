@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import { chosenUrl, hashRouteUrl, withPage, withPages } from "./helpers/cold-boundaries-fixture.js";
 
-test("cold current-page commands reopen before dispatch", { concurrency: false }, async () => {
+nodeTest("cold current-page commands reopen before dispatch", { concurrency: false }, async () => {
 	await withPages(async (withRow) => {
 		const check = (args: readonly string[]) =>
 			withRow(async (page) => {
@@ -23,13 +23,12 @@ test("cold current-page commands reopen before dispatch", { concurrency: false }
 			});
 		for (const args of [["reload"], ["back"], ["forward"], ["pushstate", "/route"]]) {
 			// Each row resets branch/native state and completes shutdown before the next.
-			// oxlint-disable-next-line no-await-in-loop
 			await check(args);
 		}
 	});
 });
 
-test(
+nodeTest(
 	"cold batch finds the page dependency after non-page prefixes",
 	{ concurrency: false },
 	async () => {
@@ -60,14 +59,13 @@ test(
 				["console", "--clear"],
 			]) {
 				// Each row resets branch/native state and completes shutdown before the next.
-				// oxlint-disable-next-line no-await-in-loop
 				await check(prefix);
 			}
 		});
 	},
 );
 
-test(
+nodeTest(
 	"cold hash-router URL is reopened intact for direct and batch snapshots",
 	{ concurrency: false },
 	async () => {
@@ -100,7 +98,6 @@ test(
 					},
 				]) {
 					// Each row resets branch/native state and completes shutdown before the next.
-					// oxlint-disable-next-line no-await-in-loop
 					await check(params);
 				}
 			},
@@ -109,7 +106,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"cold current-URL network filtering reopens before its helper and persists ref invalidation",
 	{ concurrency: false },
 	async () => {
@@ -132,7 +129,7 @@ test(
 );
 
 for (const reachedNavigation of [false, true]) {
-	test(
+	nodeTest(
 		`cold pending reopen follows executed batch rows (navigation reached=${reachedNavigation})`,
 		{ concurrency: false },
 		async () => {

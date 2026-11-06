@@ -14,8 +14,8 @@
 	"jsdoc": false,
 	"ignorePatterns": [
 		"package-lock.json",
-		"dist/**",
 		"node_modules/**",
+		"dist/**",
 		".artifacts/**",
 		".crabbox/**",
 		".cueloop/**"

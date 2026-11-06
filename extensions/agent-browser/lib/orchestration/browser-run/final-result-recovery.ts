@@ -5,6 +5,7 @@ import {
 	buildNoActivePageRefSnapshotInvalidation,
 	isNoActivePageSnapshotFailure,
 	type SessionPageState,
+	type SessionPageStateUpdateResult,
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.js";
@@ -33,16 +34,18 @@ type RecoveryInput = Pick<
 	| "succeeded"
 > &
 	Readonly<{
-		batchRefSnapshotState?: Readonly<{
-			snapshot?: SessionRefSnapshot;
-			invalidation?: SessionRefSnapshotInvalidation;
-		}>;
+		batchRefSnapshotState?:
+			| Readonly<{
+					snapshot?: SessionRefSnapshot;
+					invalidation?: SessionRefSnapshotInvalidation;
+			  }>
+			| undefined;
 		cwd: string;
 		runtimeToolArgs: readonly string[];
 		// Recovery commits through this branch-token-guarded state owner, never borrowed analysis.
 		sessionPageState: SessionPageState;
 		sessionPageStateUpdate: ReturnType<SessionPageState["beginUpdate"]>;
-		signal?: AbortSignal;
+		signal?: AbortSignal | undefined;
 	}>;
 
 function recoveryFailureCategory(
@@ -100,12 +103,7 @@ function applyFallbackSnapshot(
 	>,
 	snapshot: SessionRefSnapshot | undefined,
 	sessionKey: string | undefined,
-):
-	| Readonly<{
-			refSnapshot?: SessionRefSnapshot;
-			refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
-	  }>
-	| undefined {
+): SessionPageStateUpdateResult | undefined {
 	if (!snapshot || sessionKey === undefined || sessionKey.length === 0) {
 		return undefined;
 	}
@@ -119,12 +117,7 @@ function applyFallbackSnapshot(
 
 function invalidateNoActivePage(
 	options: Pick<RecoveryInput, "sessionPageState" | "sessionPageStateUpdate" | "executionPlan">,
-):
-	| Readonly<{
-			refSnapshot?: SessionRefSnapshot;
-			refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
-	  }>
-	| undefined {
+): SessionPageStateUpdateResult | undefined {
 	const sessionKey = getSessionContextKey(
 		options.executionPlan.sessionName,
 		options.executionPlan.namespace,

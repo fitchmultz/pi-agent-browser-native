@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	createExtensionHarness,
@@ -20,97 +20,104 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
-import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import { readDefined, readRecord, readArray, readString } from "./helpers/assertions.js";
 import {
 	analyzeNetworkSourceLookupResults,
 	compileAgentBrowserNetworkSourceLookup,
 } from "../extensions/agent-browser/lib/input-modes/lookups.js";
 
-test("network source lookup recognizes failed rows, counts request identities once and correlates only matching failures", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-evidence-"));
-	try {
-		const compiled = compileAgentBrowserNetworkSourceLookup({
-			filter: "/api/fail",
-			url: "/ignored",
-		}).compiled;
-		assert.ok(compiled);
-		const matching = {
-			id: "req-1",
-			status: 500,
-			url: "https://app.test/api/fail",
-			initiator: "src/api.ts:1:2",
-		};
-		const unrelated = {
-			id: "req-other",
-			status: 500,
-			url: "https://app.test/other",
-			initiator: "src/other.ts:1:2",
-		};
-		const lookup = await analyzeNetworkSourceLookupResults(
-			[
-				{ success: true, result: matching },
-				{ success: true, result: { requests: [matching, unrelated] } },
-			],
-			compiled,
-			tempDir,
-		);
-		assert.deepEqual(
-			lookup.candidates.map((candidate) => candidate.file),
-			["src/api.ts"],
-		);
-		assert.equal(lookup.failedRequests.length, 1);
-		assert.match(lookup.summary, /found 1 failed request\(s\)/);
-		const separate = await analyzeNetworkSourceLookupResults(
-			[
-				{
-					success: true,
-					result: {
-						requests: [
-							matching,
-							{ requestId: "req-2", status: 500, url: matching.url },
-							{ status: 500, url: matching.url },
-							{ status: 500, url: matching.url },
-						],
+nodeTest(
+	"network source lookup recognizes failed rows, counts request identities once and correlates only matching failures",
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-network-evidence-"));
+		try {
+			const compiled = compileAgentBrowserNetworkSourceLookup({
+				filter: "/api/fail",
+				url: "/ignored",
+			}).compiled;
+			assert.ok(compiled);
+			const matching = {
+				id: "req-1",
+				status: 500,
+				url: "https://app.test/api/fail",
+				initiator: "src/api.ts:1:2",
+			};
+			const unrelated = {
+				id: "req-other",
+				status: 500,
+				url: "https://app.test/other",
+				initiator: "src/other.ts:1:2",
+			};
+			const lookup = await analyzeNetworkSourceLookupResults(
+				[
+					{ success: true, result: matching },
+					{ success: true, result: { requests: [matching, unrelated] } },
+				],
+				compiled,
+				tempDir,
+			);
+			assert.deepEqual(
+				lookup.candidates.map((candidate) => candidate.file),
+				["src/api.ts"],
+			);
+			assert.equal(lookup.failedRequests.length, 1);
+			assert.match(lookup.summary, /found 1 failed request\(s\)/);
+			const separate = await analyzeNetworkSourceLookupResults(
+				[
+					{
+						success: true,
+						result: {
+							requests: [
+								matching,
+								{ requestId: "req-2", status: 500, url: matching.url },
+								{ status: 500, url: matching.url },
+								{ status: 500, url: matching.url },
+							],
+						},
 					},
-				},
-			],
-			compiled,
-			tempDir,
-		);
-		assert.equal(
-			separate.failedRequests.length,
-			4,
-			"same URL is not a request identity; anonymous rows stay distinct",
-		);
-		const signals = await analyzeNetworkSourceLookupResults(
-			[
-				{
-					success: true,
-					result: {
-						requests: [
-							{ requestId: "client-error", status: 400, url: matching.url },
-							{ failed: true, requestId: "failed-flag", url: matching.url },
-							{ error: "net::ERR_CONNECTION_REFUSED", requestId: "error-text", url: matching.url },
-							{ requestId: "succeeded", status: 200, url: matching.url },
-							{ requestId: "pending", resourceType: "Fetch", url: matching.url },
-						],
+				],
+				compiled,
+				tempDir,
+			);
+			assert.equal(
+				separate.failedRequests.length,
+				4,
+				"same URL is not a request identity; anonymous rows stay distinct",
+			);
+			const signals = await analyzeNetworkSourceLookupResults(
+				[
+					{
+						success: true,
+						result: {
+							requests: [
+								{ requestId: "client-error", status: 400, url: matching.url },
+								{ failed: true, requestId: "failed-flag", url: matching.url },
+								{
+									error: "net::ERR_CONNECTION_REFUSED",
+									requestId: "error-text",
+									url: matching.url,
+								},
+								{ requestId: "succeeded", status: 200, url: matching.url },
+								{ requestId: "pending", resourceType: "Fetch", url: matching.url },
+							],
+						},
 					},
-				},
-			],
-			compiled,
-			tempDir,
-		);
-		assert.deepEqual(
-			signals.failedRequests.map((request) => request.requestId),
-			["client-error", "failed-flag", "error-text"],
-			"HTTP status >= 400, failed: true and a string error mark failures; succeeded and pending rows do not",
-		);
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
+				],
+				compiled,
+				tempDir,
+			);
+			assert.deepEqual(
+				signals.failedRequests.map((request) => request.requestId),
+				["client-error", "failed-flag", "error-text"],
+				"HTTP status >= 400, failed: true and a string error mark failures; succeeded and pending rows do not",
+			);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
 
-test(
+nodeTest(
 	"agentBrowserExtension compiles experimental source lookups and reports candidate evidence",
 	{ concurrency: false },
 	async () => {
@@ -218,8 +225,9 @@ process.stdin.on("end", () => {
 							),
 					);
 					const invocations = await readInvocationLog(logPath);
-					assert.deepEqual(invocations[0].args.slice(-1), ["batch"]);
-					assert.deepEqual(JSON.parse(invocations[0].stdin ?? "[]"), [
+					const invocation = readDefined(invocations[0]);
+					assert.deepEqual(invocation.args.slice(-1), ["batch"]);
+					assert.deepEqual(JSON.parse(invocation.stdin ?? "[]"), [
 						["is", "visible", "#save"],
 						["get", "html", "#save"],
 						["react", "inspect", "2"],
@@ -233,7 +241,7 @@ process.stdin.on("end", () => {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension allows sourceLookup after local-file URL verification",
 	{ concurrency: false },
 	async () => {
@@ -306,7 +314,7 @@ process.stdin.on("end", () => {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension compiles experimental network source lookups and reports failed-request candidates",
 	{ concurrency: false },
 	async () => {
@@ -367,28 +375,22 @@ process.stdin.on("end", () => {
 
 				assert.equal(result.isError, false);
 				const compiled = readRecord(result.details?.compiledNetworkSourceLookup);
-				assert.deepEqual(readArray(compiled.steps).map(readRecord)[0].args, [
-					"network",
-					"request",
-					"req-1",
-				]);
-				assert.deepEqual(
-					readArray(readArray(compiled.steps).map(readRecord)[1].args).map(readString).slice(0, 3),
-					["network", "requests", "--filter"],
-				);
-				assert.match(
-					readString(readArray(readArray(compiled.steps).map(readRecord)[1].args)[3] ?? ""),
-					/api\/fail/,
-				);
-				assert.match(
-					readString(readArray(readArray(compiled.steps).map(readRecord)[1].args)[3] ?? ""),
-					/REDACTED/,
-				);
+				const compiledSteps = readArray(compiled.steps).map(readRecord);
+				const requestStep = readDefined(compiledSteps[0]);
+				const listArgs = readArray(readDefined(compiledSteps[1]).args).map(readString);
+				assert.deepEqual(requestStep.args, ["network", "request", "req-1"]);
+				assert.deepEqual(listArgs.slice(0, 3), ["network", "requests", "--filter"]);
+				assert.match(readString(listArgs[3] ?? ""), /api\/fail/);
+				assert.match(readString(listArgs[3] ?? ""), /REDACTED/);
 				const compiledStdinSteps = readArray(JSON.parse(readString(compiled.stdin ?? "[]"))).map(
 					(row) => readArray(row).map(readString),
 				);
 				assert.deepEqual(compiledStdinSteps[0], ["network", "request", "req-1"]);
-				assert.deepEqual(compiledStdinSteps[1].slice(0, 3), ["network", "requests", "--filter"]);
+				assert.deepEqual(readDefined(compiledStdinSteps[1]).slice(0, 3), [
+					"network",
+					"requests",
+					"--filter",
+				]);
 				assert.doesNotMatch(readString(compiled.stdin ?? ""), /secret|user:pass|ok=1/);
 				assert.doesNotMatch(
 					JSON.stringify(result.details?.compiledNetworkSourceLookup),
@@ -396,8 +398,9 @@ process.stdin.on("end", () => {
 				);
 				const lookup = readRecord(result.details?.networkSourceLookup);
 				assert.equal(lookup.status, "failed-requests-found");
-				assert.equal(readArray(lookup.failedRequests).length, 1);
-				assert.equal(readArray(lookup.failedRequests).map(readRecord)[0].status, 500);
+				const failedRequests = readArray(lookup.failedRequests).map(readRecord);
+				assert.equal(failedRequests.length, 1);
+				assert.equal(readDefined(failedRequests[0]).status, 500);
 				assert.doesNotMatch(JSON.stringify(lookup), /secret|user:pass|ok=1/);
 				assert.doesNotMatch(JSON.stringify(result), /secret|user:pass|ok=1/);
 				assert.ok(

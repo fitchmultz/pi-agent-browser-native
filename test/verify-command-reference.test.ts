@@ -12,8 +12,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { copyFile, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import test from "node:test";
+import { join, resolve } from "node:path";
+import nodeTest from "node:test";
 
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
@@ -21,62 +21,66 @@ import {
 	verifyCommandReference,
 } from "../scripts/verify-command-reference.mjs";
 
-test("maintainer CLIs reject invalid options through encoded and symlink entrypoints", async (t) => {
-	const directory = await mkdtemp(join(tmpdir(), "piab-cli-"));
-	try {
-		await Promise.all(
-			[
-				"agent-browser-capability-baseline.mjs",
-				"agent-browser-target.mjs",
-				"capability-core-commands.mjs",
-				"capability-options.mjs",
-				"capability-samples.mjs",
-				"capability-section.mjs",
-				"startup-measurement.mjs",
-			].map((name) => copyFile(join("scripts", name), join(directory, name))),
-		);
-		await Promise.all(
-			(
+nodeTest(
+	"maintainer CLIs reject invalid options through encoded and symlink entrypoints",
+	async (t) => {
+		const directory = await mkdtemp(join(tmpdir(), "piab-cli-"));
+		try {
+			await symlink(resolve("node_modules"), join(directory, "node_modules"), "junction");
+			await Promise.all(
 				[
-					["verify-command-reference.mjs", 2, /Unknown option/],
-					["check-command-reference-baseline.mjs", 1, /Invalid arguments/],
-					["profile-startup.mjs", 2, /Unknown option/],
-				] as const
-			).map(async ([name, exitCode, diagnostic]) => {
-				const script = join(directory, name);
-				const encodedScript = join(directory, `encoded % ${name}`);
-				const alias = join(directory, `alias-${name}`);
-				await copyFile(join("scripts", name), script);
-				await Promise.all([copyFile(script, encodedScript), symlink(script, alias)]);
-				await Promise.all(
-					(
-						[
-							["encoded path", encodedScript],
-							["symlink", alias],
-						] as const
-					).map(([kind, entrypoint]) =>
-						t.test(`${name}: ${kind}`, () => {
-							const result = spawnSync(process.execPath, [entrypoint, "--invalid-option"], {
-								encoding: "utf8",
-								timeout: 10_000,
-							});
-							assert.ifError(result.error);
-							assert.equal(
-								result.status,
-								exitCode,
-								`stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`,
-							);
-							assert.equal(result.stdout, "");
-							assert.match(result.stderr, diagnostic);
-						}),
-					),
-				);
-			}),
-		);
-	} finally {
-		await rm(directory, { force: true, recursive: true });
-	}
-});
+					"agent-browser-capability-baseline.mjs",
+					"agent-browser-target.mjs",
+					"capability-core-commands.mjs",
+					"capability-options.mjs",
+					"capability-samples.mjs",
+					"capability-section.mjs",
+					"startup-measurement.mjs",
+				].map((name) => copyFile(join("scripts", name), join(directory, name))),
+			);
+			await Promise.all(
+				(
+					[
+						["verify-command-reference.mjs", 2, /Unknown option/],
+						["check-command-reference-baseline.mjs", 1, /Invalid arguments/],
+						["profile-startup.mjs", 2, /Unknown option/],
+					] as const
+				).map(async ([name, exitCode, diagnostic]) => {
+					const script = join(directory, name);
+					const encodedScript = join(directory, `encoded % ${name}`);
+					const alias = join(directory, `alias-${name}`);
+					await copyFile(join("scripts", name), script);
+					await Promise.all([copyFile(script, encodedScript), symlink(script, alias)]);
+					await Promise.all(
+						(
+							[
+								["encoded path", encodedScript],
+								["symlink", alias],
+							] as const
+						).map(([kind, entrypoint]) =>
+							t.test(`${name}: ${kind}`, () => {
+								const result = spawnSync(process.execPath, [entrypoint, "--invalid-option"], {
+									encoding: "utf8",
+									timeout: 10_000,
+								});
+								assert.ifError(result.error);
+								assert.equal(
+									result.status,
+									exitCode,
+									`stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`,
+								);
+								assert.equal(result.stdout, "");
+								assert.match(result.stderr, diagnostic);
+							}),
+						),
+					);
+				}),
+			);
+		} finally {
+			await rm(directory, { force: true, recursive: true });
+		}
+	},
+);
 
 const baseline = readRecord(CAPABILITY_BASELINE);
 const upstreamExpectations = readArray(baseline.upstreamExpectations).map(readRecord);
@@ -116,7 +120,7 @@ function fakeRunWithVersion(version: string): (args: readonly string[]) => Promi
 	};
 }
 
-test("command reference clarifies get selector requirements", () => {
+nodeTest("command reference clarifies get selector requirements", () => {
 	const doc = readString(
 		stripGeneratedCapabilityBaselineBlocks(readFileSync("docs/COMMAND_REFERENCE.md", "utf8")),
 	);
@@ -127,7 +131,7 @@ test("command reference clarifies get selector requirements", () => {
 	assert.doesNotMatch(readString(doc), /`get <what> \[selector\]` \| `text`, `html`, `value`/);
 });
 
-test("verifyCommandReference passes for matching fake upstream and doc content", async () => {
+nodeTest("verifyCommandReference passes for matching fake upstream and doc content", async () => {
 	const failures = await verifyCommandReference({
 		cwd: "/repo",
 		run: fakeRunWithVersion(targetVersion),
@@ -137,7 +141,7 @@ test("verifyCommandReference passes for matching fake upstream and doc content",
 	assert.deepEqual(failures, []);
 });
 
-test("verifyCommandReference reports version drift", async () => {
+nodeTest("verifyCommandReference reports version drift", async () => {
 	const failures = await verifyCommandReference({
 		cwd: "/repo",
 		run: fakeRunWithVersion("0.25.0"),
@@ -149,7 +153,7 @@ test("verifyCommandReference reports version drift", async () => {
 	);
 });
 
-test("verifyCommandReference reports missing upstream token", async () => {
+nodeTest("verifyCommandReference reports missing upstream token", async () => {
 	const run = async (args: readonly string[]) => {
 		const key = args.join(" ");
 		if (key === "--version") {
@@ -178,7 +182,7 @@ test("verifyCommandReference reports missing upstream token", async () => {
 	);
 });
 
-test("verifyCommandReference reports missing doc token", async () => {
+nodeTest("verifyCommandReference reports missing doc token", async () => {
 	const docMissingToken = [
 		completeDoc().replace("skills list", ""),
 		"<!-- agent-browser-capability-baseline:start capability-token-baseline -->",

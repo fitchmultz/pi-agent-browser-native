@@ -14,7 +14,6 @@ import { redactToolDetails } from "./final-result-redaction.js";
 import type {
 	PublicationInput,
 	PublicationToolResult as AgentBrowserToolResult,
-	PublicationContent,
 } from "./final-result-contracts.js";
 
 export {
@@ -40,7 +39,7 @@ export { prepareFinalResultRecoveryState } from "./final-result-recovery.js";
 export { formatAgentBrowserNextActionsText } from "./final-result-content.js";
 
 export function buildWrapperRecoveryHint(
-	options: Readonly<{ sessionTabCorrection?: OpenResultTabCorrection }>,
+	options: Readonly<{ sessionTabCorrection?: OpenResultTabCorrection | undefined }>,
 ): string | undefined {
 	return options.sessionTabCorrection
 		? "Wrapper recovery hint: this call used session tab correction. Inspect details.effectiveArgs and details.sessionTabCorrection; if the selected tab looks wrong, run tab list for the same session before retrying."
@@ -48,7 +47,7 @@ export function buildWrapperRecoveryHint(
 }
 
 function redactNetworkLookupResult(
-	result: Readonly<{ content: PublicationContent; details?: unknown; isError?: boolean }>,
+	result: Readonly<AgentBrowserToolResult & { isError: boolean }>,
 ): AgentBrowserToolResult {
 	const details = redactNetworkSourceLookupSurface(result.details);
 	if (!isRecord(details)) {
@@ -84,13 +83,13 @@ export function buildFinalAgentBrowserToolResult(
 		options.modelVisible === false
 			? { content: [] }
 			: buildFinalResultContent(options, details, nextActions, { lifecycle, browserWindow });
-	const result: AgentBrowserToolResult = {
+	const result = {
 		content: rendered.content,
 		details:
 			"warnings" in rendered && rendered.warnings !== undefined
 				? { ...details, warnings: rendered.warnings }
 				: details,
 		isError: !options.succeeded,
-	};
+	} satisfies AgentBrowserToolResult;
 	return options.compiledNetworkSourceLookup ? redactNetworkLookupResult(result) : result;
 }

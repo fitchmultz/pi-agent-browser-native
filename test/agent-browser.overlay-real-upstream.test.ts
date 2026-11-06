@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 
 import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
@@ -18,7 +18,7 @@ import {
 const enabled = process.env.PI_AGENT_BROWSER_REAL_UPSTREAM === "1";
 
 for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
-	test(
+	nodeTest(
 		`native covered-click recovery through registered tools (${mode})`,
 		{
 			skip: enabled
@@ -133,83 +133,73 @@ for (const mode of ["explicit", "empty-namespace", "managed"] as const) {
 										]
 									: []),
 							]) {
-								// Inspect each covered-click failure before the next call mutates the same native page/session.
-								// oxlint-disable-next-line no-await-in-loop
-								const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(result.isError, true, JSON.stringify(result));
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(
-									readRecord(result.details).failureCategory,
-									"upstream-error",
-									JSON.stringify(result),
-								);
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(result.details).sessionName, sessionName);
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(result.details).namespace, namespace);
-								const actions = readArray(readRecord(result.details).nextActions);
-								// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.deepEqual(
-									actions.map((action) => {
-										const { id, params: actionParams } = readRecord(action);
-										return { id, params: actionParams };
-									}),
-									[
-										{
-											id: "inspect-overlay-state",
-											params: recoveryParams,
-										},
-									],
-									JSON.stringify(result),
-								);
-								const text = readString(readRecord(result.content[0]).text);
-								if ("args" in params && params.args?.includes("--json") === true) {
-									// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.equal(readRecord(JSON.parse(text)).success, false);
-								} else {
-									// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.match(text, /inspect-overlay-state/);
-								}
-								const rows = readArray(readRecord(result.details).batchSteps ?? []).map(readRecord);
-								const expectedCommands =
-									"stdin" in params
-										? readArray(JSON.parse(readString(params.stdin))).map((row) =>
-												readArray(row).map(readString),
-											)
-										: [];
-								// Every declared batch must retain all native failures in input order; direct calls have no rows.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.deepEqual(
-									rows.map((row) => ({ command: row.command, success: row.success })),
-									expectedCommands.map((command) => ({ command, success: false })),
-								);
-								for (const row of rows) {
-									// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.equal(readRecord(row).failureCategory, "upstream-error");
-									// The fixed click variants assert native failure and identity; only batch variants have per-row receipts.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.deepEqual(readRecord(row).nextActions, actions);
-								}
-								t.diagnostic(
-									JSON.stringify({
-										mode,
-										params,
-										failureCategory: readRecord(result.details).failureCategory,
-										isError: result.isError,
-										actions,
-										failedRows:
-											readRecord(result.details).batchSteps === undefined ? undefined : rows.length,
-									}),
-								);
+								await t.test(JSON.stringify(params), async (variant) => {
+									const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+									assert.equal(result.isError, true, JSON.stringify(result));
+									assert.equal(
+										readRecord(result.details).failureCategory,
+										"upstream-error",
+										JSON.stringify(result),
+									);
+									assert.equal(readRecord(result.details).sessionName, sessionName);
+									assert.equal(readRecord(result.details).namespace, namespace);
+									const actions = readArray(readRecord(result.details).nextActions);
+									assert.deepEqual(
+										actions.map((action) => {
+											const { id, params: actionParams } = readRecord(action);
+											return { id, params: actionParams };
+										}),
+										[
+											{
+												id: "inspect-overlay-state",
+												params: recoveryParams,
+											},
+										],
+										JSON.stringify(result),
+									);
+									const text = readString(readRecord(result.content[0]).text);
+									if ("args" in params && params.args.includes("--json")) {
+										await variant.test("JSON failure", () => {
+											assert.equal(readRecord(JSON.parse(text)).success, false);
+										});
+									} else {
+										await variant.test("visible recovery", () => {
+											assert.match(text, /inspect-overlay-state/);
+										});
+									}
+									const rows = readArray(readRecord(result.details).batchSteps ?? []).map(
+										readRecord,
+									);
+									const expectedCommands =
+										"stdin" in params
+											? readArray(JSON.parse(readString(params.stdin))).map((row) =>
+													readArray(row).map(readString),
+												)
+											: [];
+									assert.deepEqual(
+										rows.map((row) => ({ command: row.command, success: row.success })),
+										expectedCommands.map((command) => ({ command, success: false })),
+									);
+									for (const [index, row] of rows.entries()) {
+										await variant.test(`batch row ${index}`, () => {
+											assert.equal(readRecord(row).failureCategory, "upstream-error");
+											assert.deepEqual(readRecord(row).nextActions, actions);
+										});
+									}
+									t.diagnostic(
+										JSON.stringify({
+											mode,
+											params,
+											failureCategory: readRecord(result.details).failureCategory,
+											isError: result.isError,
+											actions,
+											failedRows:
+												readRecord(result.details).batchSteps === undefined
+													? undefined
+													: rows.length,
+										}),
+									);
+								});
 							}
 							const inspection = await executeRegisteredTool(
 								harness.tool,

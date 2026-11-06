@@ -29,45 +29,47 @@ const RECOMMENDED_VERSION = TARGET_AGENT_BROWSER_VERSION;
 export const MINIMUM_PI_VERSION = "1.5.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 
-/** @typedef {{readonly status: "pass" | "warn" | "fail", readonly title: string, readonly lines: readonly string[], readonly warnings?: readonly string[]}} DoctorCheck */
+/** @typedef {import("./doctor-sources.mjs").DoctorCheck} DoctorCheck */
 /** @typedef {{readonly checks: readonly DoctorCheck[], readonly failures: readonly DoctorCheck[], readonly warnings: readonly string[]}} DoctorReport */
-/** @typedef {{readonly cwd?: string, readonly agentDir?: string, readonly settingsPaths?: readonly string[], readonly skipSourceCheck?: boolean, readonly readText?: (path: string) => Promise<string | undefined>, readonly pathExists?: (path: string) => Promise<boolean>, readonly runAgentBrowser?: (args: readonly string[]) => Promise<string>, readonly runPi?: (args: readonly string[]) => Promise<string>}} DoctorOptions */
+/** @typedef {{readonly cwd?: string | undefined, readonly agentDir?: string | undefined, readonly settingsPaths?: readonly string[], readonly skipSourceCheck?: boolean, readonly readText?: (path: string) => Promise<string | undefined>, readonly pathExists?: (path: string) => Promise<boolean>, readonly runAgentBrowser?: (args: readonly string[]) => Promise<string>, readonly runPi?: (args: readonly string[]) => Promise<string>}} DoctorOptions */
 
+/** @param {string} output */
 function normalizeAgentBrowserVersion(output) {
-	return String(output ?? "")
-		.trim()
-		.replace(/^agent-browser\s+/, "");
+	return output.trim().replace(/^agent-browser\s+/, "");
 }
 
+/** @param {string} output */
 function normalizePiVersion(output) {
-	return String(output ?? "")
-		.trim()
-		.replace(/^pi\s+/, "");
+	return output.trim().replace(/^pi\s+/, "");
 }
 
+/** @param {unknown} version
+ * @returns {readonly [number, number, number] | undefined}
+ */
 function parseVersionParts(version) {
-	const match = String(version ?? "").match(/^(\d+)\.(\d+)\.(\d+)(?:\b|[-+])/);
+	const match = String(version).match(/^(\d+)\.(\d+)\.(\d+)(?:\b|[-+])/);
 	if (!match) {
 		return;
 	}
-	return match.slice(1).map((part) => Number.parseInt(part, 10));
+	return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
+/** @param {unknown} actual
+ * @param {unknown} minimum
+ */
 export function versionAtLeast(actual, minimum) {
 	const actualParts = parseVersionParts(actual);
 	const minimumParts = parseVersionParts(minimum);
 	if (!actualParts || !minimumParts) {
 		return;
 	}
-	for (let index = 0; index < minimumParts.length; index += 1) {
-		if (actualParts[index] > minimumParts[index]) {
-			return true;
-		}
-		if (actualParts[index] < minimumParts[index]) {
-			return false;
-		}
-	}
-	return true;
+	const [major, minor, patch] = actualParts;
+	const [minimumMajor, minimumMinor, minimumPatch] = minimumParts;
+	return (
+		major > minimumMajor ||
+		(major === minimumMajor &&
+			(minor > minimumMinor || (minor === minimumMinor && patch >= minimumPatch)))
+	);
 }
 
 function printHelp() {
@@ -103,6 +105,7 @@ Exit codes:
 }
 
 export function parseCliArgs(argv = process.argv.slice(2)) {
+	/** @type {{agentDir: string | undefined; cwd: string | undefined; settingsPaths: string[]; showHelp: boolean; skipSourceCheck: boolean}} */
 	const parsed = {
 		agentDir: undefined,
 		cwd: undefined,
@@ -111,8 +114,8 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 		skipSourceCheck: false,
 	};
 
-	for (let index = 0; index < argv.length; index += 1) {
-		const arg = argv[index];
+	const args = argv.values();
+	for (const arg of args) {
 		if (["-h", "--help"].includes(arg)) {
 			parsed.showHelp = true;
 			continue;
@@ -122,11 +125,10 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 			continue;
 		}
 		if (["--cwd", "--agent-dir", "--settings"].includes(arg)) {
-			const value = argv[index + 1];
+			const value = args.next().value;
 			if (value === undefined || value.startsWith("--")) {
 				throw new Error(`${arg} requires a value. Run with --help for usage.`);
 			}
-			index += 1;
 			if (arg === "--settings") {
 				parsed.settingsPaths.push(value);
 			} else {
@@ -140,6 +142,7 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 	return parsed;
 }
 
+/** @param {readonly string[]} args */
 async function defaultRunAgentBrowser(args) {
 	const { stdout, stderr } = await execFile("agent-browser", args, {
 		maxBuffer: 1024 * 1024,
@@ -148,6 +151,7 @@ async function defaultRunAgentBrowser(args) {
 	return `${stdout}${stderr}`;
 }
 
+/** @param {readonly string[]} args */
 async function defaultRunPi(args) {
 	const { stdout, stderr } = await execFile("pi", args, {
 		maxBuffer: 1024 * 1024,
@@ -164,6 +168,7 @@ export function buildNpmShimExecOptions(platform = process.platform) {
 	return platform === "win32" ? { shell: true } : {};
 }
 
+/** @param {string} path */
 async function defaultPathExists(path) {
 	try {
 		await access(path);
@@ -173,6 +178,18 @@ async function defaultPathExists(path) {
 	}
 }
 
+/** @param {unknown} error */
+function spawnErrorLines(error) {
+	const code =
+		error !== null && typeof error === "object" && "code" in error ? error.code : undefined;
+	const label = String(code);
+	const showCode = Boolean(code) && code !== "ENOENT";
+	return showCode ? [`Spawn error: ${label}`] : [];
+}
+
+/** @param {Pick<ReturnType<typeof doctorIo>, "runPi">} options
+ * @returns {Promise<DoctorCheck>}
+ */
 async function checkPiVersion({ runPi }) {
 	try {
 		const rawOutput = await runPi(["--version"]);
@@ -181,7 +198,7 @@ async function checkPiVersion({ runPi }) {
 		if (supported === false) {
 			return {
 				status: "fail",
-				title: `Pi ${MINIMUM_PI_VERSION} or newer is required; found ${version || "<empty>"}.`,
+				title: `Pi ${MINIMUM_PI_VERSION} or newer is required; found ${version.length > 0 ? version : "<empty>"}.`,
 				lines: [
 					`This release enforces the Pi ${MINIMUM_PI_VERSION} runtime floor through the read-only doctor and release/package validation because it depends on native tool activation/history, prompt sections, and structured tool behavior from that baseline.`,
 					"Update Pi before using this package or running lifecycle/package validation.",
@@ -191,7 +208,7 @@ async function checkPiVersion({ runPi }) {
 		if (supported === undefined) {
 			return {
 				status: "warn",
-				title: `Could not parse pi --version output: ${version || "<empty>"}.`,
+				title: `Could not parse pi --version output: ${version.length > 0 ? version : "<empty>"}.`,
 				lines: [
 					`Pi ${MINIMUM_PI_VERSION} or newer is required for this release; run this doctor from the same shell that launches Pi so the setup gate can verify the host runtime.`,
 				],
@@ -203,19 +220,21 @@ async function checkPiVersion({ runPi }) {
 			lines: [],
 		};
 	} catch (error) {
-		const code = error && typeof error === "object" ? error.code : undefined;
 		return {
 			status: "warn",
 			title: "Could not inspect pi --version.",
 			lines: [
 				`Pi ${MINIMUM_PI_VERSION} or newer is required for this release; run this doctor from the same shell that launches Pi so the setup gate can verify the host runtime.`,
 				"Make sure the same shell that launches pi can run `pi --version` when debugging lifecycle or package-install behavior.",
-				code && code !== "ENOENT" ? `Spawn error: ${String(code)}` : undefined,
-			].filter(Boolean),
+				...spawnErrorLines(error),
+			],
 		};
 	}
 }
 
+/** @param {Pick<ReturnType<typeof doctorIo>, "runAgentBrowser">} options
+ * @returns {Promise<DoctorCheck>}
+ */
 async function checkAgentBrowserVersion({ runAgentBrowser }) {
 	try {
 		const rawOutput = await runAgentBrowser(["--version"]);
@@ -223,7 +242,7 @@ async function checkAgentBrowserVersion({ runAgentBrowser }) {
 		if (!isSupportedAgentBrowserVersion(version)) {
 			return {
 				status: "fail",
-				title: `agent-browser version drift: minimum supported ${MINIMUM_AGENT_BROWSER_VERSION}; found ${version || "<empty>"}.`,
+				title: `agent-browser version drift: minimum supported ${MINIMUM_AGENT_BROWSER_VERSION}; found ${version.length > 0 ? version : "<empty>"}.`,
 				lines: [
 					`This wrapper supports stable agent-browser versions at or above ${MINIMUM_AGENT_BROWSER_VERSION}; ${RECOMMENDED_VERSION} is the current recommendation from ${TARGET_AGENT_BROWSER_SOURCE}.`,
 					`Update upstream agent-browser to ${RECOMMENDED_VERSION}, or if you intentionally re-baselined upstream, update ${TARGET_AGENT_BROWSER_SOURCE} plus ${CAPABILITY_BASELINE_SOURCE}, run \`npm run docs -- command-reference write\`, refresh docs/COMMAND_REFERENCE.md, and rerun \`npm run verify -- command-reference\` plus \`npm run verify -- real-upstream\` with test/fixtures/agent-browser-real-output-shapes.json aligned to the new target version.`,
@@ -239,7 +258,6 @@ async function checkAgentBrowserVersion({ runAgentBrowser }) {
 			lines: [],
 		};
 	} catch (error) {
-		const code = error && typeof error === "object" ? error.code : undefined;
 		return {
 			status: "fail",
 			title: "agent-browser is required but was not found on PATH.",
@@ -249,12 +267,15 @@ async function checkAgentBrowserVersion({ runAgentBrowser }) {
 				"Upstream docs:",
 				"- https://agent-browser.dev/",
 				"- https://github.com/vercel-labs/agent-browser",
-				code && code !== "ENOENT" ? `Spawn error: ${String(code)}` : undefined,
-			].filter(Boolean),
+				...spawnErrorLines(error),
+			],
 		};
 	}
 }
 
+/** @param {DoctorOptions} options
+ * @returns {Required<Pick<DoctorOptions, "readText" | "pathExists" | "runAgentBrowser" | "runPi">>}
+ */
 function doctorIo(options) {
 	return {
 		readText: options.readText ?? ((path) => readFile(path, "utf8")),
@@ -280,7 +301,7 @@ export async function evaluateDoctor(options = {}) {
 	const piVersionCheck = await checkPiVersion({ runPi });
 	checks.push(piVersionCheck);
 
-	if (!options.skipSourceCheck) {
+	if (options.skipSourceCheck !== true) {
 		const sourceCheck = await checkPiSources({
 			cwd,
 			agentDir,
@@ -290,7 +311,7 @@ export async function evaluateDoctor(options = {}) {
 		});
 		checks.push(sourceCheck);
 
-		warnings.push(...(sourceCheck.warnings ?? []));
+		warnings.push(...sourceCheck.warnings);
 	}
 
 	return { checks, failures: checks.filter((check) => check.status === "fail"), warnings };
@@ -302,15 +323,15 @@ export function formatDoctorReport(report) {
 	for (const check of report.checks) {
 		const prefix = { pass: "✓", warn: "!", fail: "✗" }[check.status];
 		lines.push(`${prefix} ${check.title}`);
-		for (const line of check.lines ?? []) {
+		for (const line of check.lines) {
 			lines.push(`  ${line}`);
 		}
 		lines.push("");
 	}
-	for (const warning of report.warnings ?? []) {
+	for (const warning of report.warnings) {
 		lines.push(`! ${warning}`);
 	}
-	if ((report.warnings ?? []).length > 0) {
+	if (report.warnings.length > 0) {
 		lines.push("");
 	}
 	lines.push(report.failures.length > 0 ? "Doctor found setup failures." : "Doctor passed.");
@@ -339,9 +360,9 @@ export async function main(argv = process.argv.slice(2)) {
 	return 0;
 }
 
-/** @param {string} metaUrl @param {string | undefined} [argv1] @param {(path: string) => string} [resolveRealPath] @returns {boolean} */
+/** @param {string} metaUrl @param {string  } [argv1] @param {(path: string) => string} [resolveRealPath] @returns {boolean} */
 export function isDirectRun(metaUrl, argv1 = process.argv[1], resolveRealPath = realpathSync) {
-	if (!argv1) {
+	if (argv1 === undefined || argv1.length === 0) {
 		return false;
 	}
 	try {
@@ -356,7 +377,7 @@ if (isDirectRun(import.meta.url)) {
 		.then((exitCode) => {
 			process.exitCode = exitCode;
 		})
-		.catch((error) => {
+		.catch((/** @type {unknown} */ error) => {
 			console.error(error instanceof Error ? error.message : error);
 			process.exitCode = 1;
 		});

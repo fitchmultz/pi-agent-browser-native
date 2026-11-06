@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import nodeTest from "node:test";
+import { readRecord, readArray, readDefined, readString } from "./helpers/assertions.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import {
 	rememberedUrl,
@@ -16,7 +16,7 @@ for (const boundary of [
 	["tab", "new", chosenUrl],
 	["state", "load", "fixture.json"],
 ]) {
-	test(
+	nodeTest(
 		`cold batch respects non-page prefixes before ${boundary.join(" ")}`,
 		{ concurrency: false },
 		async () => {
@@ -37,10 +37,10 @@ for (const boundary of [
 }
 
 for (const bail of [false, true]) {
-	test(
+	nodeTest(
 		`cold preparation preserves native batch error continuation (bail=${bail})`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			await withPage(async (page) => {
 				const args = ["batch", ...(bail ? ["--bail"] : [])];
 				const stdin = JSON.stringify([["tab", "list"], ["not-a-command"], ["snapshot", "-i"]]);
@@ -53,22 +53,23 @@ for (const bail of [false, true]) {
 				);
 				const batches = (await page.calls()).filter((row) => row.args.includes("batch"));
 				assert.equal(batches.length, 1);
-				assert.deepEqual(extractUpstreamCommandTokens(batches[0].args), args);
-				assert.equal(batches[0].stdin, stdin);
+				assert.deepEqual(extractUpstreamCommandTokens(readDefined(batches[0]).args), args);
+				assert.equal(readDefined(batches[0]).stdin, stdin);
 				if (!bail) {
-					// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						readRecord(readRecord(readArray(readRecord(result.details).data).at(-1)).result).origin,
-						page.url,
-					);
+					await t.test("continued snapshot observes the destination", () => {
+						assert.equal(
+							readRecord(readRecord(readArray(readRecord(result.details).data).at(-1)).result)
+								.origin,
+							page.url,
+						);
+					});
 				}
 			});
 		},
 	);
 }
 
-test(
+nodeTest(
 	"live hash-only changes retain fragment-insensitive ref freshness checks",
 	{ concurrency: false },
 	async () => {
@@ -100,32 +101,34 @@ const explicitDestinations = [
 	["record", "start", "chosen.webm", chosenUrl],
 ];
 
-test("live explicit-destination classification", { concurrency: false }, async (t) => {
+nodeTest("live explicit-destination classification", { concurrency: false }, async (t) => {
 	await withPages(
 		async (withRow) => {
 			for (const command of explicitDestinations) {
 				for (const batch of [false, true]) {
 					// Each row owns a fresh replay harness and native state, and completes cleanup before the next.
-					// oxlint-disable-next-line no-await-in-loop
 					await t.test(
 						`live missing tab permits explicit destination ${command.join(" ")} (batch=${batch})`,
-						async () => {
+						async (caseContext) => {
 							await withRow(async (page) => {
 								await page.patch({ url: "http://127.0.0.1:43210/other" });
 								const args = batch ? ["batch"] : command;
 								const stdin = batch ? JSON.stringify([command]) : undefined;
-								const result = await page.call({ args, stdin });
+								const result = await page.call({ args, ...(stdin === undefined ? {} : { stdin }) });
 								assert.equal(result.isError, false, readString(readRecord(result.content[0]).text));
 								const calls = await page.calls();
 								const userCalls = calls.filter(
 									(row) => extractUpstreamCommandTokens(row.args)[0] === args[0],
 								);
 								assert.equal(userCalls.length, 1, "the requested command must actually dispatch");
-								assert.deepEqual(extractUpstreamCommandTokens(userCalls[0].args), args);
+								assert.deepEqual(
+									extractUpstreamCommandTokens(readDefined(userCalls[0]).args),
+									args,
+								);
 								if (batch) {
-									// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-									// oxlint-disable-next-line node-test/no-conditional-assertion
-									assert.equal(userCalls[0].stdin, stdin);
+									await caseContext.test("batch input stays unchanged", () => {
+										assert.equal(readDefined(userCalls[0]).stdin, stdin);
+									});
 								}
 								assert.equal(
 									calls.some((row) => extractUpstreamCommandTokens(row.args)[0] === "open"),
@@ -141,7 +144,7 @@ test("live explicit-destination classification", { concurrency: false }, async (
 	);
 });
 
-test(
+nodeTest(
 	"live raw explicit URL read ignores unused stdin without old-tab recovery",
 	{ concurrency: false },
 	async () => {
@@ -163,7 +166,7 @@ test(
 				);
 				assert.equal(
 					(await page.calls()).some((row) =>
-						["open", "tab", "snapshot"].includes(extractUpstreamCommandTokens(row.args)[0]),
+						["open", "tab", "snapshot"].includes(extractUpstreamCommandTokens(row.args)[0] ?? ""),
 					),
 					false,
 				);
@@ -173,7 +176,7 @@ test(
 	},
 );
 
-test("live page-dependent classification", { concurrency: false }, async (t) => {
+nodeTest("live page-dependent classification", { concurrency: false }, async (t) => {
 	await withPages(
 		async (withRow) => {
 			for (const command of [
@@ -190,26 +193,24 @@ test("live page-dependent classification", { concurrency: false }, async (t) => 
 				["fill", "#name", "text"],
 			]) {
 				// Each row owns a fresh replay harness and native state, and completes cleanup before the next.
-				// oxlint-disable-next-line no-await-in-loop
 				await t.test(
 					`live page-dependent ${command.join(" ")} still protects a missing tab`,
-					async () => {
+					async (caseContext) => {
 						await withRow(async (page) => {
 							await page.patch({ url: "http://127.0.0.1:43210/other" });
 							for (const params of [
 								{ args: command },
 								{ args: ["batch"], stdin: JSON.stringify([["read", chosenUrl], command]) },
 							]) {
-								// These dependent calls reuse the same page, restore state, and shutdown ownership.
-								// oxlint-disable-next-line no-await-in-loop
-								const result = await page.call(params);
-								// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(readRecord(result.details).failureCategory, "tab-drift");
+								await caseContext.test(params.args.join(" "), async () => {
+									const result = await page.call(params);
+									assert.equal(readRecord(result.details).failureCategory, "tab-drift");
+								});
 							}
 							assert.equal(
 								(await page.calls()).some(
-									(row) => !["session", "tab"].includes(extractUpstreamCommandTokens(row.args)[0]),
+									(row) =>
+										!["session", "tab"].includes(extractUpstreamCommandTokens(row.args)[0] ?? ""),
 								),
 								false,
 								"neither page actions nor unsolicited navigation may run",

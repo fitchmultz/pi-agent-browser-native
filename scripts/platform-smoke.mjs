@@ -7,23 +7,20 @@
 
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { basename, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const repoRoot = resolve(__dirname, "..");
-const require = createRequire(import.meta.url);
+/** @import { PlatformSmokeConfig } from "../platform-smoke.config.mjs" */
+/** @import { ReleaseCandidate } from "./platform-smoke/commands.mjs" */
+/** @typedef {{command: "doctor" | "run" | "help" | null; target: string | null; suite: string | null}} ParsedArgs */
+/** @typedef {Awaited<ReturnType<typeof import("./platform-smoke/targets.mjs").runTargetSuites>>} TargetRun */
 
-let config;
+/** @type {PlatformSmokeConfig | null} */
+let loadedConfig;
 try {
-	config = require(resolve(repoRoot, "platform-smoke.config.mjs"));
-	if (config.default) {
-		config = config.default;
-	}
+	loadedConfig = (await import("../platform-smoke.config.mjs")).default;
 } catch {
-	config = null;
+	loadedConfig = null;
 }
 
 function printHelp() {
@@ -66,7 +63,7 @@ Environment:
   PLATFORM_SMOKE_MAC_USER             macOS SSH user; default $USER
   PLATFORM_SMOKE_MAC_WORK_ROOT        macOS Crabbox work root
   PLATFORM_SMOKE_MAC_PORT             macOS SSH port; default 22
-  PLATFORM_SMOKE_UBUNTU_IMAGE         Ubuntu local-container image; default ${config?.ubuntuContainerImage ?? "pi-agent-browser-native-platform:node24-agent-browser<target>"}
+  PLATFORM_SMOKE_UBUNTU_IMAGE         Ubuntu local-container image; default ${loadedConfig?.ubuntuContainerImage ?? "pi-agent-browser-native-platform:node24-agent-browser<target>"}
   PLATFORM_SMOKE_WINDOWS_VM           Parallels Windows template VM
   PLATFORM_SMOKE_WINDOWS_SNAPSHOT     Parallels snapshot name
   PLATFORM_SMOKE_WINDOWS_USER         Windows SSH user
@@ -75,35 +72,44 @@ Environment:
 `);
 }
 
+/** @param {readonly string[]} [argv] */
 export function parseArgs(argv = process.argv.slice(2)) {
+	/** @type {ParsedArgs} */
 	const parsed = { command: null, target: null, suite: null };
-	for (let index = 0; index < argv.length; index += 1) {
-		const arg = argv[index];
-		if (["--help", "-h"].includes(arg)) {
-			parsed.command = "help";
-			return parsed;
-		}
-		if (["doctor", "run"].includes(arg)) {
-			if (parsed.command) {
-				throw new Error(`multiple commands provided: ${parsed.command}, ${arg}`);
+	const words = argv.values();
+	for (const arg of words) {
+		switch (arg) {
+			case "--help":
+			case "-h":
+				parsed.command = "help";
+				return parsed;
+			case "doctor":
+			case "run":
+				if (parsed.command !== null) {
+					throw new Error(`multiple commands provided: ${parsed.command}, ${arg}`);
+				}
+				parsed.command = arg;
+				break;
+			case "--target":
+			case "--suite": {
+				const value = words.next().value;
+				if (value === undefined || value.length === 0 || value.startsWith("-")) {
+					throw new Error(`${arg} requires a value`);
+				}
+				parsed[arg === "--target" ? "target" : "suite"] = value;
+				break;
 			}
-			parsed.command = arg;
-			continue;
+			default:
+				throw new Error(`unknown argument: ${arg}`);
 		}
-		if (arg === "--target" || arg === "--suite") {
-			const value = argv[index + 1];
-			if (!value || value.startsWith("-")) {
-				throw new Error(`${arg} requires a value`);
-			}
-			parsed[arg.slice(2)] = value;
-			index += 1;
-			continue;
-		}
-		throw new Error(`unknown argument: ${arg}`);
 	}
 	return parsed;
 }
 
+/** @param {string} kind
+ * @param {readonly string[]} names
+ * @param {readonly string[]} allowed
+ */
 function validateNames(kind, names, allowed) {
 	const invalid = names.filter((name) => !allowed.includes(name));
 	if (invalid.length > 0) {
@@ -111,13 +117,17 @@ function validateNames(kind, names, allowed) {
 	}
 }
 
-function selectedTargets(args) {
-	const targets = args.target
-		? args.target
-				.split(",")
-				.map((name) => name.trim())
-				.filter(Boolean)
-		: config.requiredTargets;
+/** @param {PlatformSmokeConfig} config
+ * @param {Readonly<ParsedArgs>} args
+ */
+function selectedTargets(config, args) {
+	const targets =
+		args.target !== null && args.target.length > 0
+			? args.target
+					.split(",")
+					.map((name) => name.trim())
+					.filter(Boolean)
+			: config.requiredTargets;
 	validateNames("target", targets, [...config.requiredTargets, ...(config.optionalTargets ?? [])]);
 	if (targets.length === 0) {
 		throw new Error("Select at least one target");
@@ -125,24 +135,64 @@ function selectedTargets(args) {
 	return targets;
 }
 
-async function runTargets(args) {
+/** @param {readonly PromiseSettledResult<{readonly targetName: string; readonly result: TargetRun}>[]} settled
+ * @param {string} artifactRoot
+ */
+function summarizeTargets(settled, artifactRoot) {
+	const results = [];
+	/** @type {unknown[]} */
+	const errors = [];
+	for (const outcome of settled) {
+		if (outcome.status === "rejected") {
+			errors.push(outcome.reason);
+		} else {
+			results.push(outcome.value);
+		}
+	}
+	if (errors.length > 0) {
+		const messages = errors.map((reason) =>
+			reason instanceof Error ? reason.message : String(reason),
+		);
+		throw new AggregateError(errors, `Platform smoke could not complete: ${messages.join("; ")}`);
+	}
+	const failed = results.filter(({ result }) => !result.ok);
+	if (failed.length > 0) {
+		console.error(
+			`\nPlatform smoke failed for ${failed.map(({ targetName }) => targetName).join(", ")}. See ${artifactRoot}.`,
+		);
+		return 1;
+	}
+	console.log(
+		`\nPlatform smoke passed for ${results.map(({ targetName }) => targetName).join(", ")}.`,
+	);
+	return 0;
+}
+
+/** @param {PlatformSmokeConfig} config
+ * @param {Readonly<ParsedArgs>} args
+ */
+async function runTargets(config, args) {
 	const { runTargetSuites } = await import("./platform-smoke/targets.mjs");
-	const targets = selectedTargets(args);
-	const suites = args.suite ? [args.suite] : config.requiredSuites;
+	const targets = selectedTargets(config, args);
+	const suites =
+		args.suite !== null && args.suite.length > 0 ? [args.suite] : config.requiredSuites;
 	validateNames("suite", suites, config.requiredSuites);
-	let stagedCandidate;
+	let candidateDirectory;
 	try {
+		/** @type {ReleaseCandidate | undefined} */
+		let stagedCandidate;
 		const candidatePath = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
 		if (candidatePath !== undefined && suites.includes("platform-build")) {
 			if (candidatePath.trim().length === 0) {
 				throw new Error("PI_AGENT_BROWSER_RELEASE_TARBALL must name a candidate tarball");
 			}
 			const bytes = await readFile(resolve(candidatePath));
-			const directory = await mkdtemp(resolve(process.cwd(), ".npm-release-candidate-"));
-			stagedCandidate = { directory };
-			await writeFile(join(directory, "candidate"), bytes, { flag: "wx", mode: 0o600 });
-			stagedCandidate.path = `${basename(directory)}/candidate`;
-			stagedCandidate.sha256 = createHash("sha256").update(bytes).digest("hex");
+			candidateDirectory = await mkdtemp(resolve(process.cwd(), ".npm-release-candidate-"));
+			await writeFile(join(candidateDirectory, "candidate"), bytes, { flag: "wx", mode: 0o600 });
+			stagedCandidate = {
+				path: `${basename(candidateDirectory)}/candidate`,
+				sha256: createHash("sha256").update(bytes).digest("hex"),
+			};
 		}
 		const settled = await Promise.allSettled(
 			targets.map(async (targetName) => {
@@ -153,38 +203,19 @@ async function runTargets(args) {
 				};
 			}),
 		);
-		const errors = settled.filter((result) => result.status === "rejected");
-		if (errors.length > 0) {
-			const messages = errors.map((result) =>
-				result.reason instanceof Error ? result.reason.message : String(result.reason),
-			);
-			throw new AggregateError(
-				errors.map((result) => result.reason),
-				`Platform smoke could not complete: ${messages.join("; ")}`,
-			);
-		}
-		const results = settled.map((result) => result.value);
-		const failed = results.filter(({ result }) => !result.ok);
-		if (failed.length > 0) {
-			console.error(
-				`\nPlatform smoke failed for ${failed.map(({ targetName }) => targetName).join(", ")}. See ${config.artifactRoot}.`,
-			);
-			return 1;
-		}
-		console.log(
-			`\nPlatform smoke passed for ${results.map(({ targetName }) => targetName).join(", ")}.`,
-		);
-		return 0;
+		return summarizeTargets(settled, config.artifactRoot);
 	} finally {
-		if (stagedCandidate) {
-			await rm(stagedCandidate.directory, { recursive: true, force: true });
+		if (candidateDirectory !== undefined) {
+			await rm(candidateDirectory, { recursive: true, force: true });
 		}
 	}
 }
 
+/** @param {readonly string[]} [argv] */
 export async function main(argv = process.argv.slice(2)) {
+	const config = loadedConfig;
 	const args = parseArgs(argv);
-	if (!args.command || args.command === "help") {
+	if (args.command === null || args.command === "help") {
 		printHelp();
 		return args.command === "help" ? 0 : 2;
 	}
@@ -194,23 +225,23 @@ export async function main(argv = process.argv.slice(2)) {
 
 	if (args.command === "doctor") {
 		const { runDoctor } = await import("./platform-smoke/doctor.mjs");
-		await runDoctor({ ...config, requiredTargets: selectedTargets(args) });
+		await runDoctor({ ...config, requiredTargets: selectedTargets(config, args) });
 		return process.exitCode ?? 0;
 	}
 
-	if (args.command === "run") {
-		return runTargets(args);
-	}
-
-	throw new Error(`unknown command: ${args.command}`);
+	return runTargets(config, args);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+	process.argv[1] !== undefined &&
+	process.argv[1].length > 0 &&
+	import.meta.url === pathToFileURL(process.argv[1]).href
+) {
 	main()
 		.then((exitCode) => {
 			process.exitCode = exitCode;
 		})
-		.catch((error) => {
+		.catch((/** @type {unknown} */ error) => {
 			console.error(error instanceof Error ? error.message : String(error));
 			process.exitCode = 1;
 		});

@@ -66,9 +66,9 @@ type WebSearchToolDetails = {
 	readonly offset: number;
 	readonly fetchedAt: string;
 	readonly results: readonly NormalizedSearchResult[];
-	readonly duplicatesRemoved?: number;
+	readonly duplicatesRemoved?: number | undefined;
 	readonly searchType?: string;
-	readonly requestId?: string;
+	readonly requestId?: string | undefined;
 };
 type WebSearchContext = { readonly cwd: string; readonly isProjectTrusted: () => boolean };
 type WebSearchOptions = {
@@ -82,6 +82,7 @@ type WebSearchTool = {
 	readonly description: string;
 	readonly promptSnippet: string;
 	readonly parameters: TSchema;
+	// oxlint-disable-next-line max-params -- QX-002: Standalone search preserves Pi's five-position execute contract.
 	readonly execute: (
 		toolCallId: string,
 		params: AgentBrowserWebSearchParamsInput,
@@ -269,6 +270,7 @@ export function createAgentBrowserWebSearchTool(
 		description: `Search the live web with Exa or Brave for current or external information. For Exa research tasks, use searchType deep-lite or deeper. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
 		promptSnippet: "Search the live web with Exa or Brave for current or external information.",
 		parameters: AgentBrowserWebSearchParams,
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			try {
 				const state = ctx ? (options.loadConfigState?.(ctx) ?? configState) : configState;

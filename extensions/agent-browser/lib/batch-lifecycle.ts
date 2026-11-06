@@ -7,14 +7,14 @@ import { detectConfirmationRequired } from "./results/confirmation.js";
 export interface SuccessfulBatchCloseLifecycle {
 	readonly endsClosed: boolean;
 	readonly recordingClosedAfterBatch: boolean;
-	readonly statePath?: string;
+	readonly statePath?: string | undefined;
 }
 
 interface BatchLifecycleStep {
-	readonly tokens?: readonly string[];
+	readonly tokens?: readonly string[] | undefined;
 	readonly result: unknown;
 	readonly succeeded: boolean;
-	readonly browserLaunched?: boolean;
+	readonly browserLaunched?: boolean | undefined;
 }
 
 function rowCommand(

@@ -90,12 +90,12 @@ function formatArtifactLabel(artifact: FileArtifactMetadata): string {
 export function formatArtifactSummary(
 	artifacts: readonly FileArtifactMetadata[],
 ): string | undefined {
-	if (artifacts.length === 0) {
+	const firstArtifact = artifacts[0];
+	if (firstArtifact === undefined) {
 		return undefined;
 	}
 	if (artifacts.length === 1) {
-		const artifact = artifacts[0];
-		return `${formatArtifactLabel(artifact)}: ${artifact.path}`;
+		return `${formatArtifactLabel(firstArtifact)}: ${firstArtifact.path}`;
 	}
 	const restartArtifact = artifacts.find(
 		(artifact) => isPendingRecordingArtifact(artifact) && artifact.subcommand === "restart",

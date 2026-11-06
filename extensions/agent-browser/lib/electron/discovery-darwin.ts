@@ -95,7 +95,6 @@ async function inspectDirectory(directory: string): Promise<ElectronDiscoverySca
 		}
 		try {
 			// Inspect in filesystem order and count failures without overlapping app reads.
-			// oxlint-disable-next-line no-await-in-loop
 			const app = await inspectDarwinApp(join(directory, entry.name));
 			if (app) {
 				apps.push(app);
@@ -113,7 +112,6 @@ export async function discoverDarwinApps(
 	let skippedCount = 0;
 	for (const directory of directories) {
 		// Location priority is observable when duplicate bundles are discovered.
-		// oxlint-disable-next-line no-await-in-loop
 		const scan = await inspectDirectory(directory);
 		apps.push(...scan.apps);
 		skippedCount += scan.skippedCount;

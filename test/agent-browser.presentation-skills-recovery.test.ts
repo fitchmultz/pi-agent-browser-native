@@ -9,12 +9,12 @@
 import assert from "node:assert/strict";
 import { readRecord, readString } from "./helpers/assertions.js";
 import { readFile, rm } from "node:fs/promises";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 
-test("buildToolPresentation renders agent-browser skills as native-tool guidance", async () => {
+nodeTest("buildToolPresentation renders agent-browser skills as native-tool guidance", async () => {
 	const listPresentation = await buildToolPresentation({
 		commandInfo: { command: "skills", subcommand: "list" },
 		cwd: process.cwd(),
@@ -74,85 +74,91 @@ test("buildToolPresentation renders agent-browser skills as native-tool guidance
 	);
 });
 
-test("buildToolPresentation compacts large full skill payloads while preserving native guidance", async () => {
-	const largeSkill = [
-		"# Full Skill",
-		"",
-		"```bash",
-		"agent-browser snapshot -i",
-		"```",
-		...Array.from(
-			{ length: 260 },
-			(_, index) => `Skill reference row ${index + 1}: ${"x".repeat(80)}`,
-		),
-	].join("\n");
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "skills", subcommand: "get" },
-		cwd: process.cwd(),
-		envelope: { success: true, data: { content: largeSkill } },
-	});
+nodeTest(
+	"buildToolPresentation compacts large full skill payloads while preserving native guidance",
+	async () => {
+		const largeSkill = [
+			"# Full Skill",
+			"",
+			"```bash",
+			"agent-browser snapshot -i",
+			"```",
+			...Array.from(
+				{ length: 260 },
+				(_, index) => `Skill reference row ${index + 1}: ${"x".repeat(80)}`,
+			),
+		].join("\n");
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "skills", subcommand: "get" },
+			cwd: process.cwd(),
+			envelope: { success: true, data: { content: largeSkill } },
+		});
 
-	assert.equal(presentation.summary, "agent-browser skill loaded (compact)");
-	assert.equal(typeof presentation.fullOutputPath, "string");
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Full output path:/);
-	assert.match(text, /Pi native-tool note/);
-	assert.match(text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
-	const fullOutput = await readFile(String(presentation.fullOutputPath), "utf8");
-	assert.match(fullOutput, /Skill reference row 260/);
-	await rm(String(presentation.fullOutputPath), { force: true });
-});
+		assert.equal(presentation.summary, "agent-browser skill loaded (compact)");
+		assert.equal(typeof presentation.fullOutputPath, "string");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Full output path:/);
+		assert.match(text, /Pi native-tool note/);
+		assert.match(text, /agent_browser \{ "args": \["snapshot","-i"\] \}/);
+		const fullOutput = await readFile(String(presentation.fullOutputPath), "utf8");
+		assert.match(fullOutput, /Skill reference row 260/);
+		await rm(String(presentation.fullOutputPath), { force: true });
+	},
+);
 
-test("buildToolPresentation adapts quoted and heredoc skill examples to native tool calls", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "skills", subcommand: "get" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				content: [
-					"# Skill",
-					"",
-					"```bash",
-					'agent-browser open "https://example.com/a b?q=hello world" --profile "Default Profile"',
-					'agent-browser storage local get ""',
-					"agent-browser storage session get ''",
-					'agent-browser --namespace "" snapshot -i',
-					'agent-browser get text "   "',
-					'agent-browser get text ""#literal',
-					"agent-browser eval --stdin <<JS",
-					"document.title",
-					"JS",
-					"agent-browser eval --stdin <<-EOF",
-					"\tdocument.body.innerText",
-					"\tEOF",
-					"```",
-				].join("\n"),
+nodeTest(
+	"buildToolPresentation adapts quoted and heredoc skill examples to native tool calls",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "skills", subcommand: "get" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					content: [
+						"# Skill",
+						"",
+						"```bash",
+						'agent-browser open "https://example.com/a b?q=hello world" --profile "Default Profile"',
+						'agent-browser storage local get ""',
+						"agent-browser storage session get ''",
+						'agent-browser --namespace "" snapshot -i',
+						'agent-browser get text "   "',
+						'agent-browser get text ""#literal',
+						"agent-browser eval --stdin <<JS",
+						"document.title",
+						"JS",
+						"agent-browser eval --stdin <<-EOF",
+						"\tdocument.body.innerText",
+						"\tEOF",
+						"```",
+					].join("\n"),
+				},
 			},
-		},
-	});
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(
-		text,
-		/agent_browser \{ "args": \["open","https:\/\/example\.com\/a b\?q=hello world","--profile","Default Profile"\] \}/,
-	);
-	assert.ok(text.includes('agent_browser { "args": ["storage","local","get",""] }'));
-	assert.ok(text.includes('agent_browser { "args": ["storage","session","get",""] }'));
-	assert.ok(text.includes('agent_browser { "args": ["--namespace","","snapshot","-i"] }'));
-	assert.ok(text.includes('agent_browser { "args": ["get","text","   "] }'));
-	assert.ok(text.includes('agent_browser { "args": ["get","text","#literal"] }'));
-	assert.match(
-		text,
-		/agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.title" \}/,
-	);
-	assert.match(
-		text,
-		/agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.body\.innerText" \}/,
-	);
-	assert.doesNotMatch(text, /<<JS|<<-EOF|\nJS\n|\n\tEOF\n/);
-});
+		});
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(
+			text,
+			/agent_browser \{ "args": \["open","https:\/\/example\.com\/a b\?q=hello world","--profile","Default Profile"\] \}/,
+		);
+		assert.ok(text.includes('agent_browser { "args": ["storage","local","get",""] }'));
+		assert.ok(text.includes('agent_browser { "args": ["storage","session","get",""] }'));
+		assert.ok(text.includes('agent_browser { "args": ["--namespace","","snapshot","-i"] }'));
+		assert.ok(text.includes('agent_browser { "args": ["get","text","   "] }'));
+		assert.ok(text.includes('agent_browser { "args": ["get","text","#literal"] }'));
+		assert.match(
+			text,
+			/agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.title" \}/,
+		);
+		assert.match(
+			text,
+			/agent_browser \{ "args": \["eval","--stdin"\], "stdin": "document\.body\.innerText" \}/,
+		);
+		assert.doesNotMatch(text, /<<JS|<<-EOF|\nJS\n|\n\tEOF\n/);
+	},
+);
 
-test("buildToolPresentation drops shell comments from adapted skill command args", async () => {
+nodeTest("buildToolPresentation drops shell comments from adapted skill command args", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "skills", subcommand: "get" },
 		cwd: process.cwd(),
@@ -177,174 +183,197 @@ test("buildToolPresentation drops shell comments from adapted skill command args
 	assert.doesNotMatch(text, /"1\."|"2\."/);
 });
 
-test("buildToolPresentation preserves benign Basic docs prose while redacting Basic credentials", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "skills", subcommand: "get" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: [
+nodeTest(
+	"buildToolPresentation preserves benign Basic docs prose while redacting Basic credentials",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "skills", subcommand: "get" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: [
+					{
+						content:
+							"# Basic Auth Flow\n\nHTTP Basic Authentication\n\nAuthorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+					},
+				],
+			},
+		});
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Basic Auth Flow/);
+		assert.match(text, /HTTP Basic Authentication/);
+		assert.doesNotMatch(text, /QWxhZGRpbjpvcGVuIHNlc2FtZQ==/);
+		assert.match(text, /Basic \[REDACTED\]/);
+
+		const consolePresentation = await buildToolPresentation({
+			commandInfo: { command: "console" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: { messages: [{ text: "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" }] },
+			},
+		});
+		assert.doesNotMatch(
+			readString(readRecord(consolePresentation.content[0]).text),
+			/QWxhZGRpbjpvcGVuIHNlc2FtZQ==/,
+		);
+	},
+);
+
+nodeTest(
+	"artifact manifest keeps explicit files with the same relative path but different absolute paths",
+	() => {
+		const manifest = mergeSessionArtifactManifest({
+			entries: [
 				{
-					content:
-						"# Basic Auth Flow\n\nHTTP Basic Authentication\n\nAuthorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==",
+					absolutePath: "/tmp/worktree-a/download.txt",
+					createdAtMs: 1_000,
+					kind: "download",
+					path: "download.txt",
+					retentionState: "live",
+					storageScope: "explicit-path",
+				},
+				{
+					absolutePath: "/tmp/worktree-b/download.txt",
+					createdAtMs: 1_001,
+					kind: "download",
+					path: "download.txt",
+					retentionState: "live",
+					storageScope: "explicit-path",
 				},
 			],
-		},
-	});
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Basic Auth Flow/);
-	assert.match(text, /HTTP Basic Authentication/);
-	assert.doesNotMatch(text, /QWxhZGRpbjpvcGVuIHNlc2FtZQ==/);
-	assert.match(text, /Basic \[REDACTED\]/);
+			nowMs: 2_000,
+		});
 
-	const consolePresentation = await buildToolPresentation({
-		commandInfo: { command: "console" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: { messages: [{ text: "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" }] },
-		},
-	});
-	assert.doesNotMatch(
-		readString(readRecord(consolePresentation.content[0]).text),
-		/QWxhZGRpbjpvcGVuIHNlc2FtZQ==/,
-	);
-});
+		assert.deepEqual(manifest?.entries.map((entry) => entry.absolutePath).sort(), [
+			"/tmp/worktree-a/download.txt",
+			"/tmp/worktree-b/download.txt",
+		]);
+		assert.equal(manifest.liveCount, 2);
+	},
+);
 
-test("artifact manifest keeps explicit files with the same relative path but different absolute paths", () => {
-	const manifest = mergeSessionArtifactManifest({
-		entries: [
-			{
-				absolutePath: "/tmp/worktree-a/download.txt",
-				createdAtMs: 1_000,
-				kind: "download",
-				path: "download.txt",
-				retentionState: "live",
-				storageScope: "explicit-path",
-			},
-			{
-				absolutePath: "/tmp/worktree-b/download.txt",
-				createdAtMs: 1_001,
-				kind: "download",
-				path: "download.txt",
-				retentionState: "live",
-				storageScope: "explicit-path",
-			},
-		],
-		nowMs: 2_000,
-	});
+nodeTest(
+	"buildToolPresentation appends stale-ref recovery guidance to direct command failures",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "click", subcommand: "@zzz" },
+			cwd: process.cwd(),
+			errorText: "Unknown ref: zzz",
+		});
 
-	assert.deepEqual(manifest?.entries.map((entry) => entry.absolutePath).sort(), [
-		"/tmp/worktree-a/download.txt",
-		"/tmp/worktree-b/download.txt",
-	]);
-	assert.equal(manifest.liveCount, 2);
-});
+		assert.equal(presentation.content[0]?.type, "text");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /^Unknown ref: zzz/);
+		assert.match(text, /snapshot -i/);
+		assert.match(text, /find role\|text\|label/);
+		assert.match(text, /scrollintoview/);
+		assert.equal(presentation.summary, text);
+	},
+);
 
-test("buildToolPresentation appends stale-ref recovery guidance to direct command failures", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "click", subcommand: "@zzz" },
-		cwd: process.cwd(),
-		errorText: "Unknown ref: zzz",
-	});
+nodeTest(
+	"buildToolPresentation appends selector-dialect guidance to unsupported selector failures",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "click", subcommand: "button:has-text('Close')" },
+			cwd: process.cwd(),
+			errorText: "Failed to parse selector: button:has-text('Close')",
+		});
 
-	assert.equal(presentation.content[0]?.type, "text");
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /^Unknown ref: zzz/);
-	assert.match(text, /snapshot -i/);
-	assert.match(text, /find role\|text\|label/);
-	assert.match(text, /scrollintoview/);
-	assert.equal(presentation.summary, text);
-});
+		assert.equal(presentation.content[0]?.type, "text");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /^Failed to parse selector: button:has-text\('Close'\)/);
+		assert.equal(presentation.failureCategory, "selector-unsupported");
+		assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
+		assert.match(text, /unsupported selector dialect/i);
+		assert.match(text, /snapshot -i/);
+		assert.match(text, /find role\|text\|label/);
+		assert.match(text, /scrollintoview/);
+		assert.equal(presentation.summary, text);
+	},
+);
 
-test("buildToolPresentation appends selector-dialect guidance to unsupported selector failures", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "click", subcommand: "button:has-text('Close')" },
-		cwd: process.cwd(),
-		errorText: "Failed to parse selector: button:has-text('Close')",
-	});
+nodeTest(
+	"buildToolPresentation appends selector-dialect guidance to Playwright-style selector match failures",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "click", subcommand: "text=Close" },
+			cwd: process.cwd(),
+			errorText: "No elements found for selector: text=Close",
+		});
 
-	assert.equal(presentation.content[0]?.type, "text");
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /^Failed to parse selector: button:has-text\('Close'\)/);
-	assert.equal(presentation.failureCategory, "selector-unsupported");
-	assert.deepEqual(presentation.nextActions?.[0]?.params?.args, ["snapshot", "-i"]);
-	assert.match(text, /unsupported selector dialect/i);
-	assert.match(text, /snapshot -i/);
-	assert.match(text, /find role\|text\|label/);
-	assert.match(text, /scrollintoview/);
-	assert.equal(presentation.summary, text);
-});
+		assert.equal(presentation.content[0]?.type, "text");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /^No elements found for selector: text=Close/);
+		assert.match(text, /unsupported selector dialect/i);
+		assert.match(text, /snapshot -i/);
+		assert.match(text, /find role\|text\|label/);
+		assert.match(text, /scrollintoview/);
+	},
+);
 
-test("buildToolPresentation appends selector-dialect guidance to Playwright-style selector match failures", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "click", subcommand: "text=Close" },
-		cwd: process.cwd(),
-		errorText: "No elements found for selector: text=Close",
-	});
+nodeTest(
+	"buildToolPresentation suggests grouped getter commands for common unknown getter shortcuts",
+	async () => {
+		const titleFailure = await buildToolPresentation({
+			args: ["--session", "work", "title"],
+			commandInfo: { command: "title" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: title",
+			sessionName: "work",
+		});
 
-	assert.equal(presentation.content[0]?.type, "text");
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /^No elements found for selector: text=Close/);
-	assert.match(text, /unsupported selector dialect/i);
-	assert.match(text, /snapshot -i/);
-	assert.match(text, /find role\|text\|label/);
-	assert.match(text, /scrollintoview/);
-});
+		assert.equal(titleFailure.content[0]?.type, "text");
+		const titleText = readString(readRecord(titleFailure.content[0]).text);
+		assert.match(titleText, /getter shortcut/i);
+		assert.match(titleText, /`get title`/);
+		assert.deepEqual(titleFailure.nextActions?.[0], {
+			id: "use-get-title",
+			params: { args: ["--session", "work", "get", "title"] },
+			reason: "Use `get title` to read the current page title.",
+			safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
+			tool: "agent_browser",
+		});
 
-test("buildToolPresentation suggests grouped getter commands for common unknown getter shortcuts", async () => {
-	const titleFailure = await buildToolPresentation({
-		args: ["--session", "work", "title"],
-		commandInfo: { command: "title" },
-		cwd: process.cwd(),
-		errorText: "Unknown command: title",
-		sessionName: "work",
-	});
+		const urlFailure = await buildToolPresentation({
+			args: ["--session", "work", "url"],
+			commandInfo: { command: "url" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: url",
+			sessionName: "work",
+		});
+		assert.deepEqual(urlFailure.nextActions?.[0]?.params?.args, [
+			"--session",
+			"work",
+			"get",
+			"url",
+		]);
 
-	assert.equal(titleFailure.content[0]?.type, "text");
-	const titleText = readString(readRecord(titleFailure.content[0]).text);
-	assert.match(titleText, /getter shortcut/i);
-	assert.match(titleText, /`get title`/);
-	assert.deepEqual(titleFailure.nextActions?.[0], {
-		id: "use-get-title",
-		params: { args: ["--session", "work", "get", "title"] },
-		reason: "Use `get title` to read the current page title.",
-		safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
-		tool: "agent_browser",
-	});
+		const textFailure = await buildToolPresentation({
+			args: ["text"],
+			commandInfo: { command: "text" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: text",
+		});
+		assert.match(readString(readRecord(textFailure.content[0]).text), /`get text <selector>`/);
+		assert.equal(textFailure.nextActions, undefined);
 
-	const urlFailure = await buildToolPresentation({
-		args: ["--session", "work", "url"],
-		commandInfo: { command: "url" },
-		cwd: process.cwd(),
-		errorText: "Unknown command: url",
-		sessionName: "work",
-	});
-	assert.deepEqual(urlFailure.nextActions?.[0]?.params?.args, ["--session", "work", "get", "url"]);
+		const htmlFailure = await buildToolPresentation({
+			args: ["html"],
+			commandInfo: { command: "html" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: html",
+		});
+		const htmlText = readString(readRecord(htmlFailure.content[0]).text);
+		assert.match(htmlText, /`get html <selector>`/);
+		assert.match(htmlText, /`get html body`/);
+		assert.doesNotMatch(htmlText, /`get html` for the page/);
+		assert.equal(htmlFailure.nextActions, undefined);
+	},
+);
 
-	const textFailure = await buildToolPresentation({
-		args: ["text"],
-		commandInfo: { command: "text" },
-		cwd: process.cwd(),
-		errorText: "Unknown command: text",
-	});
-	assert.match(readString(readRecord(textFailure.content[0]).text), /`get text <selector>`/);
-	assert.equal(textFailure.nextActions, undefined);
-
-	const htmlFailure = await buildToolPresentation({
-		args: ["html"],
-		commandInfo: { command: "html" },
-		cwd: process.cwd(),
-		errorText: "Unknown command: html",
-	});
-	const htmlText = readString(readRecord(htmlFailure.content[0]).text);
-	assert.match(htmlText, /`get html <selector>`/);
-	assert.match(htmlText, /`get html body`/);
-	assert.doesNotMatch(htmlText, /`get html` for the page/);
-	assert.equal(htmlFailure.nextActions, undefined);
-});
-
-test("buildToolPresentation explains unsupported keyboard press commands", async () => {
+nodeTest("buildToolPresentation explains unsupported keyboard press commands", async () => {
 	const presentation = await buildToolPresentation({
 		args: ["keyboard", "press", "Enter"],
 		commandInfo: { command: "keyboard", subcommand: "press" },
@@ -361,38 +390,40 @@ test("buildToolPresentation explains unsupported keyboard press commands", async
 	assert.match(text, /keyboard type "\\n"/);
 });
 
-test("buildToolPresentation explains browser profile config failures with diagnostics next actions", async (t) => {
-	for (const errorText of [
-		"No Chrome user data directory found. Cannot resolve profile name.",
-		'Chrome profile "pi-agent-browser-nonexistent-dogfood-profile" not found. Available profiles:\n  Default (user)\nIf you meant a directory path, use a full path (e.g., /path/to/profile).',
-	]) {
-		// Finish this profile diagnostic's artifacts before the next case.
-		// oxlint-disable-next-line no-await-in-loop
-		await t.test(errorText.split("\n")[0], async () => {
-			const presentation = await buildToolPresentation({
-				args: ["--profile", "Default", "open", "https://example.com"],
-				commandInfo: { command: "open", subcommand: "https://example.com" },
-				cwd: process.cwd(),
-				errorText,
+nodeTest(
+	"buildToolPresentation explains browser profile config failures with diagnostics next actions",
+	async (t) => {
+		for (const errorText of [
+			"No Chrome user data directory found. Cannot resolve profile name.",
+			'Chrome profile "pi-agent-browser-nonexistent-dogfood-profile" not found. Available profiles:\n  Default (user)\nIf you meant a directory path, use a full path (e.g., /path/to/profile).',
+		]) {
+			// Finish this profile diagnostic's artifacts before the next case.
+			await t.test(errorText.split("\n")[0], async () => {
+				const presentation = await buildToolPresentation({
+					args: ["--profile", "Default", "open", "https://example.com"],
+					commandInfo: { command: "open", subcommand: "https://example.com" },
+					cwd: process.cwd(),
+					errorText,
+				});
+
+				assert.equal(presentation.content[0]?.type, "text");
+				const text = readString(readRecord(presentation.content[0]).text);
+				assert.match(text, /profile\/config hint/i);
+				assert.match(text, /Do not keep retrying the same open\/profile call/);
+				assert.match(text, /top-level `sessionMode: "fresh"` field/);
+				assert.deepEqual(
+					presentation.nextActions?.map((action) => ({ id: action.id, args: action.params?.args })),
+					[
+						{ id: "inspect-browser-profiles", args: ["profiles"] },
+						{ id: "run-agent-browser-doctor", args: ["doctor"] },
+					],
+				);
 			});
+		}
+	},
+);
 
-			assert.equal(presentation.content[0]?.type, "text");
-			const text = readString(readRecord(presentation.content[0]).text);
-			assert.match(text, /profile\/config hint/i);
-			assert.match(text, /Do not keep retrying the same open\/profile call/);
-			assert.match(text, /top-level `sessionMode: "fresh"` field/);
-			assert.deepEqual(
-				presentation.nextActions?.map((action) => ({ id: action.id, args: action.params?.args })),
-				[
-					{ id: "inspect-browser-profiles", args: ["profiles"] },
-					{ id: "run-agent-browser-doctor", args: ["doctor"] },
-				],
-			);
-		});
-	}
-});
-
-test("buildToolPresentation suppresses browser profile recovery self loops", async () => {
+nodeTest("buildToolPresentation suppresses browser profile recovery self loops", async () => {
 	const profilesFailure = await buildToolPresentation({
 		args: ["profiles"],
 		commandInfo: { command: "profiles" },
@@ -418,36 +449,42 @@ test("buildToolPresentation suppresses browser profile recovery self loops", asy
 	);
 });
 
-test("buildToolPresentation ignores profile-config text outside launch setup context", async () => {
-	const presentation = await buildToolPresentation({
-		args: ["get", "text", "#profile-card"],
-		commandInfo: { command: "get", subcommand: "text" },
-		cwd: process.cwd(),
-		errorText: "Available profiles: Default",
-	});
-	assert.doesNotMatch(
-		readString(readRecord(presentation.content[0]).text),
-		/profile\/config hint/i,
-	);
-	assert.equal(presentation.nextActions, undefined);
-});
+nodeTest(
+	"buildToolPresentation ignores profile-config text outside launch setup context",
+	async () => {
+		const presentation = await buildToolPresentation({
+			args: ["get", "text", "#profile-card"],
+			commandInfo: { command: "get", subcommand: "text" },
+			cwd: process.cwd(),
+			errorText: "Available profiles: Default",
+		});
+		assert.doesNotMatch(
+			readString(readRecord(presentation.content[0]).text),
+			/profile\/config hint/i,
+		);
+		assert.equal(presentation.nextActions, undefined);
+	},
+);
 
-test("buildToolPresentation explains localhost navigation failures as browser-host reachability", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "open", subcommand: "http://127.0.0.1:8766/page.html" },
-		cwd: process.cwd(),
-		errorText: "Navigation failed: net::ERR_EMPTY_RESPONSE",
-	});
+nodeTest(
+	"buildToolPresentation explains localhost navigation failures as browser-host reachability",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "open", subcommand: "http://127.0.0.1:8766/page.html" },
+			cwd: process.cwd(),
+			errorText: "Navigation failed: net::ERR_EMPTY_RESPONSE",
+		});
 
-	assert.equal(presentation.content[0]?.type, "text");
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /^Navigation failed: net::ERR_EMPTY_RESPONSE/);
-	assert.match(text, /browser process could not read a loopback URL/);
-	assert.match(text, /curl works from the shell but browser navigation fails/);
-	assert.match(text, /Use file:\/\/ only for static fallback fixtures/);
-});
+		assert.equal(presentation.content[0]?.type, "text");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /^Navigation failed: net::ERR_EMPTY_RESPONSE/);
+		assert.match(text, /browser process could not read a loopback URL/);
+		assert.match(text, /curl works from the shell but browser navigation fails/);
+		assert.match(text, /Use file:\/\/ only for static fallback fixtures/);
+	},
+);
 
-test("buildToolPresentation returns exact next actions for tab drift", async () => {
+nodeTest("buildToolPresentation returns exact next actions for tab drift", async () => {
 	const tabDrift = await buildToolPresentation({
 		commandInfo: { command: "snapshot" },
 		cwd: process.cwd(),
@@ -460,50 +497,59 @@ test("buildToolPresentation returns exact next actions for tab drift", async () 
 	);
 });
 
-test("buildToolPresentation does not append selector guidance to unrelated errors", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "open", subcommand: "https://example.com" },
-		cwd: process.cwd(),
-		errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT",
-	});
+nodeTest(
+	"buildToolPresentation does not append selector guidance to unrelated errors",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "open", subcommand: "https://example.com" },
+			cwd: process.cwd(),
+			errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT",
+		});
 
-	assert.equal(presentation.content[0]?.type, "text");
-	assert.equal(
-		readString(readRecord(presentation.content[0]).text),
-		"Navigation failed: net::ERR_BLOCKED_BY_CLIENT",
-	);
-	assert.equal(presentation.summary, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
-});
+		assert.equal(presentation.content[0]?.type, "text");
+		assert.equal(
+			readString(readRecord(presentation.content[0]).text),
+			"Navigation failed: net::ERR_BLOCKED_BY_CLIENT",
+		);
+		assert.equal(presentation.summary, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
+	},
+);
 
-test("buildToolPresentation does not append selector guidance to non-dialect selector-token errors", async () => {
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "click", subcommand: "button" },
-		cwd: process.cwd(),
-		errorText: "Element not visible: getByRole('button', { name: 'Submit' })",
-	});
+nodeTest(
+	"buildToolPresentation does not append selector guidance to non-dialect selector-token errors",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "click", subcommand: "button" },
+			cwd: process.cwd(),
+			errorText: "Element not visible: getByRole('button', { name: 'Submit' })",
+		});
 
-	assert.equal(presentation.content[0]?.type, "text");
-	assert.equal(
-		readString(readRecord(presentation.content[0]).text),
-		"Element not visible: getByRole('button', { name: 'Submit' })",
-	);
-	assert.equal(
-		presentation.summary,
-		"Element not visible: getByRole('button', { name: 'Submit' })",
-	);
-});
+		assert.equal(presentation.content[0]?.type, "text");
+		assert.equal(
+			readString(readRecord(presentation.content[0]).text),
+			"Element not visible: getByRole('button', { name: 'Submit' })",
+		);
+		assert.equal(
+			presentation.summary,
+			"Element not visible: getByRole('button', { name: 'Submit' })",
+		);
+	},
+);
 
-test("buildToolPresentation keeps selector-dialect guidance off native locator-detail misses", async () => {
-	// Native `find role dialog click --name X` receipt on a page without that dialog.
-	const errorText =
-		"No element found: getByRole('dialog', { name: 'X' }). Verify the selector, role, or name is correct and the element exists in the DOM.";
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "find", subcommand: "role" },
-		cwd: process.cwd(),
-		errorText,
-	});
+nodeTest(
+	"buildToolPresentation keeps selector-dialect guidance off native locator-detail misses",
+	async () => {
+		// Native `find role dialog click --name X` receipt on a page without that dialog.
+		const errorText =
+			"No element found: getByRole('dialog', { name: 'X' }). Verify the selector, role, or name is correct and the element exists in the DOM.";
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "find", subcommand: "role" },
+			cwd: process.cwd(),
+			errorText,
+		});
 
-	assert.equal(presentation.failureCategory, "selector-not-found");
-	assert.deepEqual(presentation.content, [{ type: "text", text: errorText }]);
-	assert.equal(presentation.summary, errorText);
-});
+		assert.equal(presentation.failureCategory, "selector-not-found");
+		assert.deepEqual(presentation.content, [{ type: "text", text: errorText }]);
+		assert.equal(presentation.summary, errorText);
+	},
+);

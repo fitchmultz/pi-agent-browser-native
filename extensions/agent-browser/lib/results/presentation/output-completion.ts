@@ -2,6 +2,7 @@ import { getScreenshotCapture } from "../../orchestration/browser-run/screenshot
 import { isRecord } from "../../parsing.js";
 import type { FileArtifactMetadata } from "../artifact-contracts.js";
 import type { ToolPresentation } from "../contracts.js";
+import type { ToolPresentationObservation } from "./observation-contracts.js";
 import {
 	applyArtifactManifest,
 	attachInlineImage,
@@ -97,59 +98,63 @@ function getImagePath(
 }
 
 async function attachPresentationImage(
-	draft: ToolPresentation,
+	draft: ToolPresentationObservation,
 	options: OutputOptions,
 	source: PresentationSource,
 	artifacts: readonly FileArtifactMetadata[],
-): Promise<ToolPresentation> {
+): Promise<Partial<ToolPresentation>> {
 	const imagePath = getAttachableImage(options, source, artifacts);
-	const withImage =
-		imagePath === undefined
-			? draft
-			: await attachInlineImage(draft, imagePath, options.modelVisible);
-	if (options.commandInfo.command === "screenshot" && withImage.imageObservations) {
+	const update: Partial<ToolPresentation> =
+		imagePath === undefined ? {} : await attachInlineImage(draft, imagePath, options.modelVisible);
+	const observations = update.imageObservations ?? draft.imageObservations;
+	if (options.commandInfo.command === "screenshot" && observations) {
 		const capture = getScreenshotCapture(source.commandInfo.commandTokens ?? []).kind;
-		withImage.imageObservations = withImage.imageObservations.map((image) =>
-			Object.assign({}, image, { capture }),
-		);
+		update.imageObservations = observations.map((image) => Object.assign({}, image, { capture }));
 	}
-	return withImage;
+	return update;
 }
 
 export async function completePresentationOutput(
-	draft: ToolPresentation,
+	draft: ToolPresentationObservation,
 	options: OutputOptions,
 	source: PresentationSource,
 	artifacts: readonly FileArtifactMetadata[],
-): Promise<ToolPresentation> {
+): Promise<Partial<ToolPresentation>> {
+	const update: Partial<ToolPresentation> = {};
 	if (artifacts.length > 0 && !draft.artifacts) {
-		draft.artifacts = artifacts;
+		update.artifacts = artifacts;
 	}
-	draft.artifactVerification ??= buildArtifactVerificationSummary(artifacts);
-	const withImage = await attachPresentationImage(draft, options, source, artifacts);
-	const compacted =
-		options.modelVisible === false
-			? withImage
-			: await compactLargePresentationOutput({
-					artifactManifest: options.artifactManifest,
-					commandInfo: options.commandInfo,
-					data: source.presentationData,
-					persistentArtifactStore: options.persistentArtifactStore,
-					presentation: withImage,
-				});
-	const withManifest = applyArtifactManifest(
+	update.artifactVerification =
+		draft.artifactVerification ?? buildArtifactVerificationSummary(artifacts);
+	Object.assign(update, await attachPresentationImage(draft, options, source, artifacts));
+	if (options.modelVisible !== false) {
+		Object.assign(
+			update,
+			await compactLargePresentationOutput({
+				artifactManifest: options.artifactManifest,
+				commandInfo: options.commandInfo,
+				data: source.presentationData,
+				persistentArtifactStore: options.persistentArtifactStore,
+				presentation: { ...draft, ...update },
+			}),
+		);
+	}
+	const compacted = { ...draft, ...update };
+	const manifest = applyArtifactManifest(
 		compacted,
 		compacted.artifactManifest ?? options.artifactManifest,
 		buildManifestEntriesForFileArtifacts(artifacts.filter(isManifestFileArtifact)),
 	);
+	Object.assign(update, manifest);
+	const withManifest = { ...compacted, ...manifest };
 	const currentSpillPaths = new Set(
 		getPresentationPaths({
 			primaryPath: withManifest.fullOutputPath,
 			secondaryPaths: withManifest.fullOutputPaths,
 		}),
 	);
-	withManifest.artifactVerification =
+	update.artifactVerification =
 		buildArtifactVerificationSummary(artifacts, withManifest.artifactManifest, currentSpillPaths) ??
 		withManifest.artifactVerification;
-	return withManifest;
+	return update;
 }

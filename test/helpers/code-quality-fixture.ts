@@ -4,12 +4,8 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync, cpSync } fr
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestContext } from "node:test";
-import { prepareQualityChecker } from "../../scripts/prepare-quality-checker.mjs";
 
 export const root = path.resolve(import.meta.dirname, "../..");
-
-// Lint spawns below have a 30 s budget; a cold checker build must finish before any of them.
-await prepareQualityChecker();
 
 export function fixture(t: TestContext): string {
 	const directory = mkdtempSync(path.join(tmpdir(), "piab-quality-"));
@@ -17,31 +13,42 @@ export function fixture(t: TestContext): string {
 		rmSync(directory, { recursive: true, force: true });
 	});
 	symlinkSync(path.join(root, "node_modules"), path.join(directory, "node_modules"), "junction");
-	cpSync(path.join(root, ".oxlintrc.json"), path.join(directory, ".oxlintrc.json"));
+	for (const file of [
+		".oxlintrc.json",
+		".oxfmtrc.json",
+		".gitignore",
+		"package.json",
+		"tsconfig.json",
+	]) {
+		cpSync(path.join(root, file), path.join(directory, file));
+	}
+	mkdirSync(path.join(directory, "docs"));
+	cpSync(
+		path.join(root, "docs/Strict-Oxlint-Oxfmt-Engineering-Guide.md"),
+		path.join(directory, "docs/Strict-Oxlint-Oxfmt-Engineering-Guide.md"),
+	);
 	mkdirSync(path.join(directory, "scripts"));
 	for (const file of [
 		"code-quality.mjs",
 		"code-quality-policy.mjs",
-		"code-quality-boundaries.mjs",
+		"quality-exceptions.mjs",
+		"oxlint.mjs",
 	]) {
 		cpSync(path.join(root, "scripts", file), path.join(directory, "scripts", file));
 	}
+	writeFileSync(path.join(directory, "tsconfig.build.json"), '{"extends":"./tsconfig.json"}\n');
 	writeFileSync(
-		path.join(directory, "tsconfig.json"),
+		path.join(directory, "tsconfig.declarations.json"),
 		JSON.stringify({
-			compilerOptions: {
-				target: "ESNext",
-				module: "NodeNext",
-				strict: true,
-				noImplicitReturns: true,
-				allowJs: true,
-				skipLibCheck: true,
-				noEmit: true,
-				types: ["node"],
-			},
-			include: ["*.ts", "*.js", "test/**/*.ts"],
+			extends: "./tsconfig.json",
+			compilerOptions: { skipLibCheck: false },
+			include: ["**/*.d.ts"],
 		}),
 	);
+	writeFileSync(path.join(directory, "contract.d.ts"), "export declare const marker: string;\n");
+	const initialized = spawnSync("git", ["init", "--quiet"], { cwd: directory, encoding: "utf8" });
+	assert.equal(initialized.error, undefined);
+	assert.equal(initialized.status, 0, initialized.stderr);
 	return directory;
 }
 
@@ -87,6 +94,16 @@ export function lint(
 		locations.push(location);
 	}
 	assert.deepEqual([...codes].sort(), [...expectedCodes].sort(), result.stdout);
+	locations.sort((a, b) => {
+		const fileOrder = a.filename.localeCompare(b.filename);
+		if (fileOrder !== 0) {
+			return fileOrder;
+		}
+		if (a.line !== b.line) {
+			return a.line - b.line;
+		}
+		return a.code.localeCompare(b.code);
+	});
 	return { ...result, diagnosticCount: output.diagnostics.length, diagnosticLocations: locations };
 }
 

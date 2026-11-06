@@ -20,7 +20,7 @@ export type PublicationInput = Omit<
 export type PublicationContent = ReadonlyArray<
 	Readonly<AgentToolResult<unknown>["content"][number]>
 >;
-export type PublicationToolResult = AgentToolResult<unknown> & { readonly isError?: boolean };
+export type PublicationToolResult = AgentToolResult<unknown>;
 export type PublicationLifecycle = Readonly<{
 	effectiveLaunch: Readonly<AgentBrowserLifecycle["effectiveLaunch"]>;
 }>;

@@ -35,6 +35,7 @@ export function registerBrowserTools(runtime: BrowserRuntime): void {
 		renderResult,
 	} satisfies Pick<ToolDefinition<typeof AGENT_BROWSER_PARAMS>, "renderCall" | "renderResult">;
 	registerAgentBrowserToolSurface(runtime.pi, {
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		async execute(id, params, signal, onUpdate, ctx) {
 			const branch = runtime.branch.capture(ctx);
 			let result: AgentBrowserToolResult;
@@ -55,6 +56,7 @@ export function registerBrowserTools(runtime: BrowserRuntime): void {
 			}
 			return finalizeObservation(runtime.artifacts, result, params, { ctx, branch });
 		},
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		async executeCode(id, params, signal, _onUpdate, ctx) {
 			const branch = runtime.branch.capture(ctx);
 			const completion: PromiseWithResolvers<void> = Promise.withResolvers();

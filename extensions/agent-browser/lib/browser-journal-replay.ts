@@ -254,7 +254,6 @@ class PublishedJournalReplay {
 	async project(entries: readonly JournalEntry[]): Promise<void> {
 		for (const entry of entries) {
 			// Preserve journal order and bound selected envelope memory during replay.
-			// oxlint-disable-next-line no-await-in-loop
 			await this.projectEntry(entry);
 		}
 	}
@@ -313,7 +312,6 @@ class PublishedJournalReplay {
 		);
 		for (const id of winners) {
 			// Each winning snapshot is materialized once, without retaining unrelated historical ref maps.
-			// oxlint-disable-next-line no-await-in-loop
 			await this.resolveDefinition(id);
 		}
 		let manifest;

@@ -68,10 +68,16 @@ const advancedNames = new Set<string>(
 	Object.values(AGENT_BROWSER_TOOL_INVENTORY).map(({ name }) => name),
 );
 
-const nativeOutput = {
-	namespace: AGENT_BROWSER_NAMESPACE,
-	outputSchema: AGENT_BROWSER_OUTPUT_SCHEMA,
-};
+function nativeToolOptions(
+	options: AgentBrowserToolSurfaceOptions,
+): Pick<ToolDefinition<TUnsafe>, "namespace" | "outputSchema" | "executionMode" | "renderResult"> {
+	return {
+		namespace: AGENT_BROWSER_NAMESPACE,
+		outputSchema: AGENT_BROWSER_OUTPUT_SCHEMA,
+		...(options.executionMode === undefined ? {} : { executionMode: options.executionMode }),
+		...(options.renderResult === undefined ? {} : { renderResult: options.renderResult }),
+	};
+}
 
 function registerCoreTools(
 	pi: ExtensionAPI,
@@ -80,39 +86,36 @@ function registerCoreTools(
 ): void {
 	pi.registerTool({
 		name: "agent_browser",
-		...nativeOutput,
+		...nativeToolOptions(options),
 		label: "Agent Browser",
 		description:
 			"Browse and interact through native agent-browser commands. One command in args; fixed sequences use batch --bail and JSON-array stdin. Use agent_browser_code for loops/branches and agent_browser_tools for advanced capabilities.",
 		promptSnippet: "Browse pages, inspect current refs, interact, and run native command batches.",
 		parameters: AGENT_BROWSER_PARAMS,
-		renderCall: options.renderCall,
-		renderResult: options.renderResult,
+		...(options.renderCall === undefined ? {} : { renderCall: options.renderCall }),
 		execute,
-		executionMode: options.executionMode,
 	});
 	pi.registerTool({
 		name: "agent_browser_code",
-		...nativeOutput,
+		...nativeToolOptions(options),
 		label: "Agent Browser Code",
 		description:
 			"Run fresh JavaScript against a persistent browser. await browser({args,stdin?,timeoutMs?}) returns success/data/error/nextActions and imageObservations; emit(selected JSON) and emitImage(image handle) explicitly choose output. No host APIs or imports. Use native batch for fixed sequences.",
 		promptSnippet:
 			"Branch, loop, and aggregate browser observations with explicit JSON/image output.",
 		parameters: AGENT_BROWSER_CODE_PARAMS,
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		execute: async (id, params, signal, onUpdate, ctx) =>
 			finalizeAgentBrowserNativeResult(
 				await options.executeCode(id, params, signal, onUpdate, ctx),
 				params,
 			),
-		executionMode: options.executionMode,
 		renderCall(args, theme, context) {
 			const text =
 				context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
 			text.setText(formatAgentBrowserRenderCall(args, theme, context.expanded));
 			return text;
 		},
-		renderResult: options.renderResult,
 	});
 }
 
@@ -123,12 +126,11 @@ function registerActionTool(
 ): void {
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.action,
-		...nativeOutput,
+		...nativeToolOptions(options),
 		defaultActive: false,
 		label: "Browser Action",
 		parameters: AGENT_BROWSER_ACTION_PARAMS,
-		renderResult: options.renderResult,
-		executionMode: options.executionMode,
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		execute(id, { outputPath, timeoutMs, ...semanticAction }, signal, onUpdate, ctx) {
 			return execute(id, { semanticAction, outputPath, timeoutMs }, signal, onUpdate, ctx);
 		},
@@ -142,12 +144,11 @@ function registerQaTool(
 ): void {
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.qa,
-		...nativeOutput,
+		...nativeToolOptions(options),
 		defaultActive: false,
 		label: "Browser QA",
 		parameters: AGENT_BROWSER_QA_PARAMS,
-		renderResult: options.renderResult,
-		executionMode: options.executionMode,
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		execute(id, { outputPath, timeoutMs, sessionMode, ...qa }, signal, onUpdate, ctx) {
 			return execute(id, { qa, outputPath, timeoutMs, sessionMode }, signal, onUpdate, ctx);
 		},
@@ -161,12 +162,11 @@ function registerElectronTool(
 ): void {
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.electron,
-		...nativeOutput,
+		...nativeToolOptions(options),
 		defaultActive: false,
 		label: "Browser Electron",
 		parameters: AGENT_BROWSER_ELECTRON_PARAMS,
-		renderResult: options.renderResult,
-		executionMode: options.executionMode,
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		execute(id, { outputPath, ...electron }, signal, onUpdate, ctx) {
 			return execute(id, { electron, outputPath }, signal, onUpdate, ctx);
 		},
@@ -180,12 +180,11 @@ function registerSourceTools(
 ): void {
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.source,
-		...nativeOutput,
+		...nativeToolOptions(options),
 		defaultActive: false,
 		label: "Browser Source",
 		parameters: AGENT_BROWSER_SOURCE_PARAMS,
-		renderResult: options.renderResult,
-		executionMode: options.executionMode,
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		execute(id, { outputPath, timeoutMs, sessionMode, ...sourceLookup }, signal, onUpdate, ctx) {
 			return execute(
 				id,
@@ -198,12 +197,11 @@ function registerSourceTools(
 	});
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.network,
-		...nativeOutput,
+		...nativeToolOptions(options),
 		defaultActive: false,
 		label: "Browser Network Source",
 		parameters: AGENT_BROWSER_NETWORK_SOURCE_PARAMS,
-		renderResult: options.renderResult,
-		executionMode: options.executionMode,
+		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		execute(
 			id,
 			{ outputPath, timeoutMs, sessionMode, ...networkSourceLookup },
@@ -340,6 +338,7 @@ export function registerAgentBrowserToolSurface(
 	pi: ExtensionAPI,
 	options: AgentBrowserToolSurfaceOptions,
 ): void {
+	// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 	const execute: AgentBrowserExecutor = async (id, params, signal, onUpdate, ctx) =>
 		finalizeAgentBrowserNativeResult(
 			await options.execute(id, params, signal, onUpdate, ctx),

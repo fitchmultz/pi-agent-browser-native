@@ -61,7 +61,7 @@ function getBareNoSandboxValidationError(
 	}
 	const explanation = leading
 		? "`--no-sandbox` is not an agent-browser command."
-		: `\`--no-sandbox\` is ignored as an option by \`${command}\`.`;
+		: `\`--no-sandbox\` is ignored as an option by \`${String(command)}\`.`;
 	return `${explanation} It is a Chromium launch argument. Put it in top-level \`--args\` and start a fresh session: { args: ["--args", "--no-sandbox", "open", "https://example.com"], sessionMode: "fresh" }. For batch, put --args before batch, not inside a step.`;
 }
 
@@ -137,8 +137,8 @@ export function getInvalidValueFlagDetails(
 	args: readonly string[],
 	allowRestoreAssignment = true,
 ): InvalidValueFlagDetails | undefined {
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
+	const entries = args.entries();
+	for (const [index, token] of entries) {
 		if (!token.startsWith("-")) {
 			continue;
 		}
@@ -156,7 +156,7 @@ export function getInvalidValueFlagDetails(
 				? { flag, index, reason, receivedToken }
 				: { flag, index, reason };
 		}
-		index += 1;
+		entries.next();
 	}
 	return;
 }
