@@ -1038,7 +1038,10 @@ and passive receipt readers against the unchanged published runtime bundle.
 These are existing probe assumptions, not demonstrated adoption regressions.
 Their assertions remain intact. The Linux unmapped-root socket-namespace case
 and native Windows cases are not qualified by the macOS or Ubuntu results.
-Hosted acceptance and repository-required PR reviews remain outstanding.
+The agent-browser 0.41.2 baseline refresh in PR #380 passes its native quality,
+package, live help, and real-upstream checks. The PR #379 native CI run also
+passes all 13 lifecycle tests against 0.41.2; its documentation drift failure
+requires that prerequisite. Final hosted acceptance is tracked on PR #379.
 
 ### Quality-exception record
 
@@ -1067,10 +1070,18 @@ launch, snapshot, click, read, screenshot, status, and cleanup verification.
 Its process and port are dead and its owned profile is absent after cleanup.
 
 A separate critical self-review found and repaired same-line directive spillover.
-That review is not independent review. Callable delegation is unavailable in the
-current session; repository-required PR reviews remain outstanding. Revisit each
-decision when its native API, compiler, rule, or implementation contract changes.
-No unsafe-type exception is authorized by these records.
+Independent pi-durable and Cursor PR reviews of adoption commit `1901841` finish
+with no new findings. The pi-durable review includes differential checks of pure
+functions; it does not claim an assertion-by-assertion audit of every rewritten
+test or independent platform execution.
+
+A separate Cursor CLI review reports a possible recording-warning ordering gap.
+The actual call chain rebuts it: `runBrowserCommand` completes the recording
+warning before `registerBrowserTools` calls `finalizeObservation`; the public
+native finalizer receives the already-warned projection. No runtime change is
+needed for that finding. Revisit each exception when its native API, compiler,
+rule, or implementation contract changes. No unsafe-type exception is authorized
+by these records.
 
 ## References
 
