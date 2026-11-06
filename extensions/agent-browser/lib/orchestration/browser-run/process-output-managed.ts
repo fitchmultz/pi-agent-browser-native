@@ -7,13 +7,15 @@ import type {
 	FailedFreshSessionMayHaveStartedInput,
 	InspectFailedFreshDaemonInput,
 	InspectFailedFreshLaunchInput,
-	ExecutionTargetsManagedSessionInput,
 	ApplyManagedLaunchPolicyInput,
 	RetireManagedRestorePoolInput,
 	UpdateManagedLaunchDirectoryInput,
 	ApplyManagedTransitionInput,
 	RetireReplacedSessionInput,
 } from "./process-output-managed-contracts.js";
+import type { ManagedSessionState } from "../../runtime-contracts.js";
+import type { PreparedBrowserRun } from "./types.js";
+import type { LifecycleOutputPhase } from "./process-output-lifecycle-phase-contracts.js";
 import {
 	createFreshSessionName,
 	resolveManagedSessionState,
@@ -34,11 +36,11 @@ import { isManagedSessionRestoreKey } from "../../managed-session-storage.js";
 import { buildManagedSessionOutcome, getSessionContextKey } from "./session-state.js";
 function closeAllClosesManagedSession(draft: CloseAllClosesManagedSessionInput): boolean {
 	const priorKey =
-		getSessionContextKey(draft.priorManagedSessionName, draft.priorManagedSessionNamespace) ??
-		draft.priorManagedSessionName;
+		getSessionContextKey(draft.managedSessionName, draft.managedSessionNamespace) ??
+		draft.managedSessionName;
 	const targetsPrior =
 		draft.closeAllApplied &&
-		draft.priorManagedSessionActive &&
+		draft.managedSessionActive &&
 		isAgentBrowserSessionIdentityKeyInNamespace(
 			priorKey,
 			draft.input.prepared.executionPlan.namespace,
@@ -51,32 +53,48 @@ function closeAllClosesManagedSession(draft: CloseAllClosesManagedSessionInput):
 function managedCloseTarget(
 	draft: ManagedCloseTargetInput,
 	closesPrior: boolean,
+	closeCommandSucceeded: boolean,
 ): string | undefined {
 	if (closesPrior) {
-		return draft.priorManagedSessionName;
+		return draft.managedSessionName;
 	}
 	const { executionPlan } = draft.input.prepared;
 	if (
-		draft.closeCommandSucceeded &&
-		executionPlan.sessionName === draft.priorManagedSessionName &&
-		executionPlan.namespace === draft.priorManagedSessionNamespace
+		closeCommandSucceeded &&
+		executionPlan.sessionName === draft.managedSessionName &&
+		executionPlan.namespace === draft.managedSessionNamespace
 	) {
 		return executionPlan.sessionName;
 	}
 	return executionPlan.managedSessionName;
 }
 
-export function resolveManagedCloseTarget(draft: ResolveManagedCloseTargetInput): void {
-	draft.priorManagedSessionActive = draft.managedSessionActive;
-	draft.priorManagedSessionCwd = draft.managedSessionCwd;
-	draft.priorManagedSessionHeadedAutosaveInterval = draft.managedSessionHeadedAutosaveInterval;
-	draft.priorManagedSessionName = draft.managedSessionName;
-	draft.priorManagedSessionNamespace = draft.managedSessionNamespace;
+export function resolveManagedCloseTarget(
+	draft: ResolveManagedCloseTargetInput,
+): Pick<
+	LifecycleOutputPhase,
+	| "priorManagedSessionActive"
+	| "priorManagedSessionCwd"
+	| "priorManagedSessionHeadedAutosaveInterval"
+	| "priorManagedSessionName"
+	| "priorManagedSessionNamespace"
+	| "commandClosesSession"
+	| "closeCommandSucceeded"
+	| "managedCloseSessionName"
+> {
 	const closesPrior = closeAllClosesManagedSession(draft);
-	draft.commandClosesSession = draft.directClose || draft.nestedBatchClosed || closesPrior;
-	draft.closeCommandSucceeded =
+	const closeCommandSucceeded =
 		(draft.directClose && draft.succeeded) || draft.nestedBatchClosed || closesPrior;
-	draft.managedCloseSessionName = managedCloseTarget(draft, closesPrior);
+	return {
+		priorManagedSessionActive: draft.managedSessionActive,
+		priorManagedSessionCwd: draft.managedSessionCwd,
+		priorManagedSessionHeadedAutosaveInterval: draft.managedSessionHeadedAutosaveInterval,
+		priorManagedSessionName: draft.managedSessionName,
+		priorManagedSessionNamespace: draft.managedSessionNamespace,
+		commandClosesSession: draft.directClose || draft.nestedBatchClosed || closesPrior,
+		closeCommandSucceeded,
+		managedCloseSessionName: managedCloseTarget(draft, closesPrior, closeCommandSucceeded),
+	};
 }
 
 function failedBatchEstablishedBrowser(draft: FailedBatchEstablishedBrowserInput): boolean {
@@ -147,58 +165,84 @@ async function inspectFailedFreshDaemon(
 
 export async function inspectFailedFreshLaunch(
 	draft: InspectFailedFreshLaunchInput,
-): Promise<void> {
+): Promise<boolean> {
 	const batchStarted = failedBatchEstablishedBrowser(draft);
 	const timeoutPage = timedOutBatchEstablishedPage(draft);
 	const daemon = await inspectFailedFreshDaemon(draft);
 	// Only an explicitly inactive daemon proves a started fresh command did not establish ownership.
 	const failedFreshStarted = daemon !== undefined && daemon.status !== "inactive";
-	draft.managedTransitionSucceeded =
+	return (
 		draft.succeeded ||
 		draft.nestedBatchClosed ||
 		draft.nestedBatchRemainsActive ||
 		batchStarted ||
 		timeoutPage ||
-		failedFreshStarted;
+		failedFreshStarted
+	);
 }
 
-function executionTargetsManagedSession(draft: ExecutionTargetsManagedSessionInput): boolean {
-	const { executionPlan } = draft.input.prepared;
+function executionTargetsManagedSession(
+	executionPlan: PreparedBrowserRun["executionPlan"],
+	next: ManagedSessionState,
+): boolean {
 	return (
 		executionPlan.sessionName !== undefined &&
 		executionPlan.sessionName.length > 0 &&
 		getAgentBrowserSessionIdentityKey(executionPlan.sessionName, executionPlan.namespace) ===
-			getAgentBrowserSessionIdentityKey(draft.managedSessionName, draft.managedSessionNamespace)
+			getAgentBrowserSessionIdentityKey(next.sessionName, next.namespace)
 	);
 }
 
-function applyManagedLaunchPolicy(draft: ApplyManagedLaunchPolicyInput): void {
-	if (!draft.managedSessionActive) {
-		draft.managedSessionCompatibilityWorkaround = undefined;
-		draft.managedSessionHeadedAutosaveDisabled = false;
-		draft.managedSessionHeadedAutosaveInterval = undefined;
-		return;
+function resolveManagedLaunchPolicy(
+	draft: ApplyManagedLaunchPolicyInput,
+	next: ManagedSessionState,
+): Pick<
+	LifecycleOutputPhase,
+	| "managedSessionCompatibilityWorkaround"
+	| "managedSessionHeadedAutosaveDisabled"
+	| "managedSessionHeadedAutosaveInterval"
+> {
+	if (!next.active) {
+		return {
+			managedSessionCompatibilityWorkaround: undefined,
+			managedSessionHeadedAutosaveDisabled: false,
+			managedSessionHeadedAutosaveInterval: undefined,
+		};
 	}
 	const { prepared } = draft.input;
 	const owned = prepared.ownedManagedSessionContext;
 	if (
 		!draft.managedTransitionSucceeded ||
-		!executionTargetsManagedSession(draft) ||
+		!executionTargetsManagedSession(prepared.executionPlan, next) ||
 		!owned ||
 		owned.reuseOnly === true
 	) {
-		return;
+		return {
+			managedSessionCompatibilityWorkaround: draft.managedSessionCompatibilityWorkaround,
+			managedSessionHeadedAutosaveDisabled: draft.managedSessionHeadedAutosaveDisabled,
+			managedSessionHeadedAutosaveInterval: draft.managedSessionHeadedAutosaveInterval,
+		};
 	}
-	draft.managedSessionCompatibilityWorkaround = prepared.compatibilityWorkaround;
-	draft.managedSessionHeadedAutosaveDisabled = owned.headedManagedAutosaveDisabled === true;
-	draft.managedSessionHeadedAutosaveInterval = owned.headedManagedAutosaveInterval;
+	return {
+		managedSessionCompatibilityWorkaround: prepared.compatibilityWorkaround,
+		managedSessionHeadedAutosaveDisabled: owned.headedManagedAutosaveDisabled === true,
+		managedSessionHeadedAutosaveInterval: owned.headedManagedAutosaveInterval,
+	};
 }
 
-function retireManagedRestorePool(draft: RetireManagedRestorePoolInput): void {
+function retireManagedRestorePool(
+	draft: RetireManagedRestorePoolInput,
+	activeAfter: boolean,
+):
+	| Pick<
+			LifecycleOutputPhase,
+			"freshSessionOrdinal" | "managedSessionName" | "managedSessionNamespace"
+	  >
+	| undefined {
 	if (
 		!draft.closeCommandSucceeded ||
 		draft.managedCloseSessionName !== draft.priorManagedSessionName ||
-		draft.managedSessionActive
+		activeAfter
 	) {
 		return;
 	}
@@ -224,35 +268,55 @@ function retireManagedRestorePool(draft: RetireManagedRestorePoolInput): void {
 		restoreKey: ownedKey,
 		statePath: draft.rawCloseStatePath,
 	});
-	draft.freshSessionOrdinal += 1;
-	draft.managedSessionName = createFreshSessionName(
-		draft.input.state.managedSessionBaseName,
-		draft.input.state.ephemeralSessionSeed,
-		draft.freshSessionOrdinal,
-	);
-	draft.managedSessionNamespace = undefined;
+	const freshSessionOrdinal = draft.freshSessionOrdinal + 1;
+	return {
+		freshSessionOrdinal,
+		managedSessionName: createFreshSessionName(
+			draft.input.state.managedSessionBaseName,
+			draft.input.state.ephemeralSessionSeed,
+			freshSessionOrdinal,
+		),
+		managedSessionNamespace: undefined,
+	};
 }
 
-function updateManagedLaunchDirectory(draft: UpdateManagedLaunchDirectoryInput): void {
+function resolveManagedLaunchDirectory(
+	draft: UpdateManagedLaunchDirectoryInput,
+	next: ManagedSessionState,
+): Pick<LifecycleOutputPhase, "managedSessionCwd" | "managedSessionNamespace"> | undefined {
 	const sessionName = draft.input.prepared.executionPlan.managedSessionName;
 	if (
 		sessionName === undefined ||
 		sessionName.length === 0 ||
 		!draft.managedTransitionSucceeded ||
-		!draft.managedSessionActive
+		!next.active
 	) {
-		return;
+		return undefined;
 	}
-	if (
+	const newLaunch =
 		!draft.priorManagedSessionActive ||
-		(draft.replacedManagedSessionName !== undefined && draft.replacedManagedSessionName.length > 0)
-	) {
-		draft.managedSessionCwd = draft.input.cwd;
-	}
-	draft.managedSessionNamespace = draft.input.prepared.executionPlan.namespace;
+		(next.replacedSessionName !== undefined && next.replacedSessionName.length > 0);
+	return {
+		managedSessionCwd: newLaunch ? draft.input.cwd : draft.managedSessionCwd,
+		managedSessionNamespace: draft.input.prepared.executionPlan.namespace,
+	};
 }
 
-export function applyManagedTransition(draft: ApplyManagedTransitionInput): void {
+export function resolveManagedTransition(
+	draft: ApplyManagedTransitionInput,
+): Pick<
+	LifecycleOutputPhase,
+	| "freshSessionOrdinal"
+	| "managedSessionActive"
+	| "managedSessionCompatibilityWorkaround"
+	| "managedSessionCwd"
+	| "managedSessionHeadedAutosaveDisabled"
+	| "managedSessionHeadedAutosaveInterval"
+	| "managedSessionName"
+	| "managedSessionNamespace"
+	| "managedSessionOutcome"
+	| "replacedManagedSessionName"
+> {
 	const { prepared, state } = draft.input;
 	const command = draft.commandClosesSession ? "close" : prepared.executionPlan.commandInfo.command;
 	const next = resolveManagedSessionState({
@@ -275,29 +339,41 @@ export function applyManagedTransition(draft: ApplyManagedTransitionInput): void
 			prepared.executionPlan.namespace,
 		);
 	}
-	draft.replacedManagedSessionName = next.replacedSessionName;
-	draft.managedSessionActive = next.active;
-	draft.managedSessionName = next.sessionName;
-	draft.managedSessionNamespace = next.namespace;
-	applyManagedLaunchPolicy(draft);
-	retireManagedRestorePool(draft);
-	draft.managedSessionOutcome = buildManagedSessionOutcome({
-		activeAfter: draft.managedSessionActive,
+	const policy = resolveManagedLaunchPolicy(draft, next);
+	const identity = retireManagedRestorePool(draft, next.active) ?? {
+		freshSessionOrdinal: draft.freshSessionOrdinal,
+		managedSessionName: next.sessionName,
+		managedSessionNamespace: next.namespace,
+	};
+	const managedSessionOutcome = buildManagedSessionOutcome({
+		activeAfter: next.active,
 		activeBefore: draft.priorManagedSessionActive,
 		attemptedSessionName: draft.managedCloseSessionName,
 		command,
-		currentSessionName: draft.managedSessionName,
-		currentSessionNamespace: draft.managedSessionNamespace,
+		currentSessionName: identity.managedSessionName,
+		currentSessionNamespace: identity.managedSessionNamespace,
 		previousSessionName: draft.priorManagedSessionName,
-		replacedSessionName: draft.replacedManagedSessionName,
+		replacedSessionName: next.replacedSessionName,
 		replacedSessionNamespace: draft.priorManagedSessionNamespace,
 		sessionMode: prepared.sessionMode,
 		succeeded: draft.managedTransitionSucceeded,
 	});
-	updateManagedLaunchDirectory(draft);
+	return {
+		...identity,
+		...policy,
+		managedSessionActive: next.active,
+		managedSessionCwd: draft.managedSessionCwd,
+		managedSessionOutcome,
+		replacedManagedSessionName: next.replacedSessionName,
+		...resolveManagedLaunchDirectory(draft, next),
+	};
 }
 
-export async function retireReplacedSession(draft: RetireReplacedSessionInput): Promise<void> {
+export async function retireReplacedSession(
+	draft: RetireReplacedSessionInput,
+): Promise<
+	Pick<LifecycleOutputPhase, "managedSessionOutcome" | "networkRoutesBySession"> | undefined
+> {
 	const sessionName = draft.replacedManagedSessionName;
 	if (sessionName === undefined || sessionName.length === 0) {
 		return;
@@ -319,24 +395,24 @@ export async function retireReplacedSession(draft: RetireReplacedSessionInput): 
 		timeoutMs: draft.input.implicitSessionCloseTimeoutMs,
 	});
 	const closed = (closeError ?? "").length === 0;
-	if (draft.managedSessionOutcome) {
-		draft.managedSessionOutcome = {
-			...draft.managedSessionOutcome,
-			replacedSessionClosed: closed,
-			summary: closed
-				? draft.managedSessionOutcome.summary
-				: `${draft.managedSessionOutcome.summary} Previous session ${sessionName} remains wrapper-owned because automatic close failed; retry an explicit close.`,
-		};
-	}
+	const managedSessionOutcome = draft.managedSessionOutcome
+		? {
+				...draft.managedSessionOutcome,
+				replacedSessionClosed: closed,
+				summary: closed
+					? draft.managedSessionOutcome.summary
+					: `${draft.managedSessionOutcome.summary} Previous session ${sessionName} remains wrapper-owned because automatic close failed; retry an explicit close.`,
+			}
+		: undefined;
 	if (!closed) {
-		return;
+		return { managedSessionOutcome, networkRoutesBySession: draft.networkRoutesBySession };
 	}
 	const routes = new Map(draft.networkRoutesBySession);
 	routes.delete(sessionKey);
-	draft.networkRoutesBySession = routes;
 	state.sessionPageState.clearSession(sessionKey);
 	state.attachedSessionKeys.delete(sessionKey);
 	state.closedManagedSessionNames.add(sessionKey);
+	return { managedSessionOutcome, networkRoutesBySession: routes };
 }
 
 function batchStartedManagedBrowser(data: unknown): boolean {

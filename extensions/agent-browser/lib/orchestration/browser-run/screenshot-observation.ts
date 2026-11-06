@@ -88,10 +88,10 @@ function parseScreenshotSample(value: unknown): ScreenshotSample | undefined {
 export async function collectScreenshotSample(options: {
 	readonly command: readonly string[];
 	readonly cwd: string;
-	readonly env?: Readonly<NodeJS.ProcessEnv>;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly env?: Readonly<NodeJS.ProcessEnv> | undefined;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<ScreenshotSample | undefined> {
 	if (options.command[0] !== "screenshot" || options.signal?.aborted === true) {
 		return undefined;
@@ -172,8 +172,8 @@ interface ScreenshotGeometryOptions {
 	readonly rendering?: ImageObservation["rendering"];
 	readonly capture: ImageObservation["capture"];
 	readonly pixels: ImageObservation["pixels"];
-	readonly before?: ScreenshotSample;
-	readonly after?: ScreenshotSample;
+	readonly before?: ScreenshotSample | undefined;
+	readonly after?: ScreenshotSample | undefined;
 }
 
 function sampleFrameFailure(before: ScreenshotSample): string | undefined {
@@ -254,7 +254,10 @@ function observationCapture(value: unknown): ImageObservation["capture"] {
 
 export function annotateScreenshotImageObservations(
 	observations: readonly unknown[],
-	samples: { readonly before?: ScreenshotSample; readonly after?: ScreenshotSample },
+	samples: {
+		readonly before?: ScreenshotSample | undefined;
+		readonly after?: ScreenshotSample | undefined;
+	},
 ): unknown[] {
 	const images: unknown[] = [];
 	for (const image of observations) {

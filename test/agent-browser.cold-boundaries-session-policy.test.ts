@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import { chosenUrl, withPage, withPages } from "./helpers/cold-boundaries-fixture.js";
 
 for (const state of ["cold", "known", "unknown", "reopen"]) {
-	test(
+	nodeTest(
 		`session info timeout preserves ${state} state without browser recovery`,
 		{ concurrency: false },
 		async (t) => {
@@ -22,19 +22,19 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 					});
 					assert.equal(before.isError, false, readString(readRecord(before.content[0]).text));
 					if (state === "known") {
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.notEqual(readRecord(readRecord(before.details).refSnapshot), undefined);
+						await t.test("known initial state", () => {
+							assert.notEqual(readRecord(readRecord(before.details).refSnapshot), undefined);
+						});
 					}
 					if (state === "unknown") {
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(before.details).sessionTabTargetUnknown, true);
+						await t.test("unknown initial state", () => {
+							assert.equal(readRecord(before.details).sessionTabTargetUnknown, true);
+						});
 					}
 					if (state === "reopen") {
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(before.details).sessionTabReopenPending, true);
+						await t.test("reopen initial state", () => {
+							assert.equal(readRecord(before.details).sessionTabReopenPending, true);
+						});
 					}
 					const prefix = [
 						"--namespace",
@@ -54,13 +54,11 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 					try {
 						const deadline = Date.now() + 15_000;
 						// Observe actual subprocess startup before advancing its timeout.
-						// oxlint-disable-next-line no-await-in-loop
 						while ((await page.calls()).length === offset) {
 							if (Date.now() > deadline) {
 								throw new Error("session info child did not dispatch");
 							}
 							// Native I/O must progress while only the wrapper watchdog is controlled.
-							// oxlint-disable-next-line no-await-in-loop
 							await new Promise<void>((resolve) => {
 								realSetTimeout(resolve, 5);
 							});
@@ -89,21 +87,17 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 						{ ...(await page.state()), timeoutInfo: undefined },
 						{ ...nativeBefore, timeoutInfo: undefined },
 					);
-					for (const key of [
+					const preservedKeys = [
 						"sessionTabTarget",
 						"sessionTabTargetUnknown",
 						"refSnapshotInvalidation",
 						"sessionTabReopenPending",
-					]) {
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.deepEqual(
-							readRecord(timedOut.details)[key],
-							readRecord(before.details)[key],
-							key,
-						);
-					}
-					for (const key of [
+					];
+					assert.deepEqual(
+						preservedKeys.map((key) => [key, readRecord(timedOut.details)[key]]),
+						preservedKeys.map((key) => [key, readRecord(before.details)[key]]),
+					);
+					const absentKeys = [
 						"timeoutPartialProgress",
 						"artifacts",
 						"artifactVerification",
@@ -111,11 +105,11 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 						"lifecycle",
 						"data",
 						"managedSessionOutcome",
-					]) {
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(timedOut.details)[key], undefined, key);
-					}
+					];
+					assert.deepEqual(
+						absentKeys.map((key) => [key, readRecord(timedOut.details)[key]]),
+						absentKeys.map((key) => [key, undefined]),
+					);
 					const actions = readArray(readRecord(timedOut.details).nextActions);
 					assert.deepEqual(
 						actions.map((action) => ({
@@ -144,28 +138,26 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 						{ ...nativeBefore, timeoutInfo: undefined },
 					);
 					if (state === "unknown") {
-						const blocked = await page.call({ args: [...prefix, "snapshot", "-i"] });
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(blocked.isError, true);
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							readString(readRecord(blocked.content[0]).text),
-							/active page became unverified/,
-						);
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal((await page.calls()).length, offset + 2);
+						await t.test("unknown page state", async () => {
+							const blocked = await page.call({ args: [...prefix, "snapshot", "-i"] });
+							assert.equal(blocked.isError, true);
+							assert.match(
+								readString(readRecord(blocked.content[0]).text),
+								/active page became unverified/,
+							);
+							assert.equal((await page.calls()).length, offset + 2);
+						});
 					}
 					if (state === "reopen") {
-						const snapshot = await page.call({ args: [...prefix, "snapshot", "-i"] });
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(snapshot.isError, false, readString(readRecord(snapshot.content[0]).text));
-						// Fixed cold/known/unknown/reopen and batch fixtures require different state assertions; common dispatch checks remain unconditional.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(readRecord(snapshot.details).data).origin, page.url);
+						await t.test("reopen page state", async () => {
+							const snapshot = await page.call({ args: [...prefix, "snapshot", "-i"] });
+							assert.equal(
+								snapshot.isError,
+								false,
+								readString(readRecord(snapshot.content[0]).text),
+							);
+							assert.equal(readRecord(readRecord(snapshot.details).data).origin, page.url);
+						});
 					}
 				},
 				{ live: state === "known" || state === "unknown" },
@@ -174,7 +166,7 @@ for (const state of ["cold", "known", "unknown", "reopen"]) {
 	);
 }
 
-test(
+nodeTest(
 	"cold reopen persists through non-page commands and transcript replay",
 	{ concurrency: false },
 	async () => {
@@ -230,14 +222,13 @@ test(
 				["console", "--clear"],
 			]) {
 				// Each row resets branch/native state and completes shutdown before the next.
-				// oxlint-disable-next-line no-await-in-loop
 				await check(prefix);
 			}
 		});
 	},
 );
 
-test(
+nodeTest(
 	"cold caller-owned read preserves flags and observes its replacement without mutation evidence",
 	{ concurrency: false },
 	async () => {
@@ -290,14 +281,13 @@ test(
 );
 
 for (const options of [{ explicit: true }, { attached: true }, { restoreDisabled: true }]) {
-	test(
+	nodeTest(
 		`cold boundary does not navigate outside automatic restore: ${JSON.stringify(options)}`,
 		{ concurrency: false },
 		async (t) => {
 			await withPages(async (withRow) => {
 				for (const inspectFirst of [false, true]) {
 					// Each ownership variant needs independent native state and replay before inspecting.
-					// oxlint-disable-next-line no-await-in-loop
 					await t.test(`inspect first=${inspectFirst}`, () =>
 						withRow(async (page) => {
 							const inspected = inspectFirst

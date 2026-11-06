@@ -4,10 +4,12 @@ import type { BuildNestedToolPresentationOptions } from "./batch-contracts.js";
 
 export interface BuildToolPresentationOptions extends BuildNestedToolPresentationOptions {
 	readonly textOutput?: boolean;
-	readonly stdin?: string;
-	readonly batchArtifactRequests?: readonly BuildNestedToolPresentationOptions["artifactRequest"][];
-	readonly compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
-	readonly networkRoutes?: readonly NetworkRouteRecord[];
+	readonly stdin?: string | undefined;
+	readonly batchArtifactRequests?:
+		| readonly BuildNestedToolPresentationOptions["artifactRequest"][]
+		| undefined;
+	readonly compiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
+	readonly networkRoutes?: readonly NetworkRouteRecord[] | undefined;
 	readonly recordingPending?: boolean;
-	readonly previousRecordingContactSheetPath?: string;
+	readonly previousRecordingContactSheetPath?: string | undefined;
 }

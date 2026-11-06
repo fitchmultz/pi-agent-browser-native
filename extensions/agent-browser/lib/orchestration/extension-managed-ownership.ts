@@ -12,11 +12,11 @@ import type { ManagedSessionRestoreState } from "../managed-session-restore.js";
 
 interface ManagedSessionTrackingOptions {
 	readonly branchOwned?: boolean;
-	readonly compatibilityWorkaround?: CompatibilityWorkaround;
+	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly headedManagedAutosaveDisabled?: boolean;
-	readonly headedManagedAutosaveInterval?: string;
-	readonly namespace?: string;
-	readonly socketDir?: string;
+	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly namespace?: string | undefined;
+	readonly socketDir?: string | undefined;
 }
 
 function inheritedLaunchSettings(
@@ -174,7 +174,6 @@ export async function closeOwnedManagedSessionsExcept(
 			continue;
 		}
 		// Session close and its durable cleanup callback must finish before the next owner is retired.
-		// oxlint-disable-next-line no-await-in-loop
 		const error = await closeManagedSession({
 			confirmActions: pages.getConfirmActions(key) ?? process.env.AGENT_BROWSER_CONFIRM_ACTIONS,
 			cwd: owner.cwd,
@@ -197,8 +196,8 @@ export function shouldSerializeBrowserCommand(
 	sessions: ReadonlyMap<string, OwnedManagedSession>,
 	electronRecords: ReadonlyMap<string, ElectronLaunchRecord>,
 	options: {
-		readonly namespace?: string;
-		readonly explicitSessionName?: string;
+		readonly namespace?: string | undefined;
+		readonly explicitSessionName?: string | undefined;
 		readonly managedSessionName: string;
 	},
 ): boolean {

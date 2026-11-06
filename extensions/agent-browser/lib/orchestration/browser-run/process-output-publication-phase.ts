@@ -83,16 +83,32 @@ export async function publishOutputEffects(
 	readonly recovery: FinalRecoveryState;
 }> {
 	const draft = createPublicationOutputPhase(input, native, page, lifecycle);
-	await renderNativePresentation(draft);
-	reclassifyPresentation(draft);
-	await analyzeOutputChecks(draft);
-	renderAttachedQaBanner(draft);
-	collectEvalGuidance(draft);
-	const [, recovery] = await Promise.all([
+	draft.presentation = await renderNativePresentation(draft);
+	const { presentationUpdate: classification, ...reclassified } = reclassifyPresentation(draft);
+	Object.assign(draft, reclassified);
+	Object.assign(draft.presentation, classification);
+	const { presentationUpdate, ...analysis } = await analyzeOutputChecks(draft);
+	Object.assign(draft, analysis);
+	Object.assign(draft.presentation, presentationUpdate);
+	const banner = renderAttachedQaBanner(draft);
+	draft.managedSessionOutcome = banner.managedSessionOutcome;
+	if (banner.content) {
+		draft.presentation.content = banner.content;
+	}
+	Object.assign(draft, collectEvalGuidance(draft));
+	const [warnings, recovery] = await Promise.all([
 		collectPublicationWarnings(draft),
 		recoverFinalOutput(draft),
 	]);
-	await bindOutputDaemonReceipt(draft);
-	publishConfirmedSnapshot(draft);
+	Object.assign(draft, warnings, {
+		currentRefSnapshot: recovery.currentRefSnapshot,
+		currentRefSnapshotInvalidation: recovery.currentRefSnapshotInvalidation,
+	});
+	Object.assign(draft, await bindOutputDaemonReceipt(draft));
+	const snapshot = publishConfirmedSnapshot(draft);
+	Object.assign(draft, snapshot);
+	if (snapshot.readConfirmationEvent) {
+		draft.presentation.readConfirmation = snapshot.readConfirmationEvent;
+	}
 	return { publication: draft, recovery };
 }

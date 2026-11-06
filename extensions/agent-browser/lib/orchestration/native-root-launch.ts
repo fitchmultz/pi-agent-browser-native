@@ -18,16 +18,16 @@ import type {
 export interface RootBrowserLaunchPolicy {
 	readonly cwd: string;
 	readonly rootName: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly input: ResolvedAgentBrowserValidInput;
 	readonly env: Readonly<NodeJS.ProcessEnv>;
 	readonly identity: NativeDefaults;
 	readonly restoreEligible: boolean;
 	readonly chromeEngine: boolean;
-	readonly chromeStartupArgs?: string;
+	readonly chromeStartupArgs?: string | undefined;
 	readonly configuredChromeLaunch: boolean;
-	readonly defaultProfile?: string;
-	readonly defaultExecutable?: string;
+	readonly defaultProfile?: string | undefined;
+	readonly defaultExecutable?: string | undefined;
 }
 
 function cliValue(args: readonly string[], flag: string): string | undefined {

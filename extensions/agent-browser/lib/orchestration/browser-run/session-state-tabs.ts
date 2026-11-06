@@ -24,7 +24,7 @@ function hasExplicitNavigationOperand(tokens: readonly string[]): boolean {
 	const command = tokens[0];
 	return (
 		(command === "a11y" && findFirstPositionalArgument(tokens) !== undefined) ||
-		(["vitals", "web-vitals"].includes(command) &&
+		((command === "vitals" || command === "web-vitals") &&
 			tokens.slice(1).some((token) => !token.startsWith("--"))) ||
 		getRecordCommandOperands(tokens).url !== undefined
 	);
@@ -53,7 +53,7 @@ function isNonTargetProbe(tokens: readonly string[], reopenPending: boolean): bo
 	if (command === "record" && subcommand === "stop") {
 		return true;
 	}
-	if (["console", "errors"].includes(command)) {
+	if (command === "console" || command === "errors") {
 		return true;
 	}
 	return (
@@ -87,12 +87,12 @@ function classifyTabPinningStep(
 }
 
 interface TabPinningFacts {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly commandTokens: readonly string[];
 	readonly pinningRequired?: boolean;
 	readonly reopenPending?: boolean;
-	readonly sessionName?: string;
-	readonly stdin?: string;
+	readonly sessionName?: string | undefined;
+	readonly stdin?: string | undefined;
 }
 
 function hasTabPinningContext(
@@ -130,9 +130,9 @@ export function shouldPinSessionTabForCommand(options: TabPinningFacts): boolean
 }
 
 export function shouldCorrectSessionTabAfterCommand(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly pinningRequired?: boolean;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): boolean {
 	return (
 		options.pinningRequired === true &&
@@ -145,17 +145,17 @@ export function shouldCorrectSessionTabAfterCommand(options: {
 interface SessionTab {
 	readonly active?: boolean;
 	readonly index?: number;
-	readonly label?: string;
-	readonly tabId?: string;
-	readonly targetId?: string;
-	readonly title?: string;
-	readonly url?: string;
+	readonly label?: string | undefined;
+	readonly tabId?: string | undefined;
+	readonly targetId?: string | undefined;
+	readonly title?: string | undefined;
+	readonly url?: string | undefined;
 }
 interface TabSession {
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }
 interface TargetTabSession extends TabSession {
 	readonly target: Readonly<SessionTabTarget>;
@@ -242,7 +242,10 @@ function mapTabData(data: unknown): SessionTab[] | undefined {
 }
 
 export async function collectOpenResultTabCorrection(
-	options: TabSession & { readonly targetTitle?: string; readonly targetUrl?: string },
+	options: TabSession & {
+		readonly targetTitle?: string | undefined;
+		readonly targetUrl?: string | undefined;
+	},
 ): Promise<OpenResultTabCorrection | undefined> {
 	const { cwd, namespace, sessionName, signal, targetTitle, targetUrl } = options;
 	const tabs = mapTabData(

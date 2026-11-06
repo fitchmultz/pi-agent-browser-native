@@ -77,7 +77,7 @@ export function buildJsonVisibleContent(
 		details?: Readonly<Record<string, unknown>>;
 		presentation: AgentBrowserToolPresentation;
 		succeeded: boolean;
-		warnings?: readonly unknown[];
+		warnings?: readonly unknown[] | undefined;
 	}>,
 ): AgentBrowserToolResult["content"] {
 	const { error, presentation, succeeded, warnings } = options;
@@ -98,10 +98,10 @@ type RedactedContentInput = Readonly<{
 	exactSensitiveValues: readonly string[];
 	plainTextInspection: boolean;
 	presentation: AgentBrowserToolPresentation;
-	presentationEnvelope?: AgentBrowserEnvelope;
+	presentationEnvelope?: AgentBrowserEnvelope | undefined;
 	succeeded: boolean;
 	userRequestedJson: boolean;
-	warningText?: string;
+	warningText?: string | undefined;
 }>;
 
 function warningLines(text: string | undefined): readonly string[] | undefined {

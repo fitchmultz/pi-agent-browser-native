@@ -11,13 +11,18 @@ const { values } = parseArgs({
 		help: { type: "boolean", short: "h" },
 	},
 });
-if (values.help) {
+if (values.help === true) {
 	console.log(
 		"Usage: pi-agent-browser-convert --source <retained.jsonl> --output <private-archive/copy.jsonl> --confirm-stopped [--receipt <new.json>]\nStop/quiesce the exact writer first. This offline command never starts Pi, a provider or a browser, never edits the source, and publishes only a separate private copy. Keep the destination outside automatic session discovery until explicitly selected. The receipt and each converted record identify the retained source checksum/byte range.",
 	);
 } else {
 	try {
-		if (!values.source || !values.output) {
+		if (
+			values.source === undefined ||
+			values.source.length === 0 ||
+			values.output === undefined ||
+			values.output.length === 0
+		) {
 			throw new Error(
 				"--source and --output are required; use --help for the stopped-writer workflow.",
 			);
@@ -30,7 +35,7 @@ if (values.help) {
 			confirmedStopped: values["confirm-stopped"] === true,
 		});
 		console.log(JSON.stringify(receipt, null, 2));
-		if (values.receipt) {
+		if (values.receipt !== undefined && values.receipt.length > 0) {
 			await writeFile(values.receipt, `${JSON.stringify(receipt, null, 2)}\n`, {
 				flag: "wx",
 				mode: 0o600,

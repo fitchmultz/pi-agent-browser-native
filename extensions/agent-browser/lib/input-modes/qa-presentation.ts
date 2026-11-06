@@ -5,8 +5,8 @@ import { getBatchResultItems, getCommandNameFromBatchItem } from "./shared.js";
 import type { AgentBrowserQaPresetAnalysis, CompiledAgentBrowserQaPreset } from "./types.js";
 
 interface QaPage {
-	readonly title?: string;
-	readonly url?: string;
+	readonly title?: string | undefined;
+	readonly url?: string | undefined;
 }
 
 function hasPageContext(page: QaPage | undefined): boolean {
@@ -69,7 +69,7 @@ function isolationLines(checks: CompiledAgentBrowserQaPreset["checks"]): string[
 }
 
 export function extractQaPageContext(options: {
-	readonly attachedTarget?: QaPage;
+	readonly attachedTarget?: QaPage | undefined;
 	readonly batchData?: unknown;
 	readonly compiled?: CompiledAgentBrowserQaPreset;
 }): QaPage {
@@ -101,7 +101,7 @@ function extractBatchPageContext(data: unknown): QaPage | undefined {
 }
 
 export function buildQaCompactPassText(options: {
-	readonly artifactVerification?: ArtifactVerificationSummary;
+	readonly artifactVerification?: ArtifactVerificationSummary | undefined;
 	readonly batchStepCount: number;
 	readonly checks: CompiledAgentBrowserQaPreset["checks"];
 	readonly page?: QaPage;
@@ -126,8 +126,8 @@ export function buildQaCompactPassText(options: {
 }
 
 export function buildQaCompactFailureText(options: {
-	readonly causalError?: string;
-	readonly executedStepCount?: number;
+	readonly causalError?: string | undefined;
+	readonly executedStepCount?: number | undefined;
 	readonly page?: QaPage;
 	readonly plannedStepCount: number;
 	readonly qaPreset: AgentBrowserQaPresetAnalysis;

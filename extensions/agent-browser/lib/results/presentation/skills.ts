@@ -59,7 +59,7 @@ class SkillShellWords {
 	private appendEscape(): void {
 		if (this.index + 1 < this.input.length) {
 			this.index += 1;
-			this.current += this.input[this.index];
+			this.current += this.input.charAt(this.index);
 		} else {
 			this.current += "\\";
 		}
@@ -96,7 +96,7 @@ class SkillShellWords {
 
 	parse(): string[] | undefined {
 		for (; this.index < this.input.length; this.index += 1) {
-			const char = this.input[this.index];
+			const char = this.input.charAt(this.index);
 			if (this.quote !== undefined) {
 				this.consumeQuoted(char);
 			} else if (!this.consumeUnquoted(char)) {
@@ -124,14 +124,40 @@ function readSkillHeredoc(
 	stripsLeadingTabs: boolean,
 ): { readonly stdin: string; readonly endIndex: number } | undefined {
 	const stdinLines: string[] = [];
-	for (let cursor = startIndex; cursor < lines.length; cursor += 1) {
-		const candidate = stripsLeadingTabs ? lines[cursor].replace(/^\t+/, "") : lines[cursor];
+	for (let cursor = startIndex; ; cursor += 1) {
+		const line = lines[cursor];
+		if (line === undefined) {
+			return undefined;
+		}
+		const candidate = stripsLeadingTabs ? line.replace(/^\t+/, "") : line;
 		if (candidate === delimiter) {
 			return { stdin: stdinLines.join("\n"), endIndex: cursor };
 		}
 		stdinLines.push(candidate);
 	}
-	return undefined;
+}
+
+interface SkillInvocation {
+	readonly indent: string;
+	readonly args: readonly string[];
+	readonly heredoc?: { readonly delimiter: string; readonly stripsLeadingTabs: boolean };
+}
+
+function parseSkillInvocation(line: string): SkillInvocation | undefined {
+	const [, indent, rawArgsText] = /^(\s*)agent-browser\s+(.+?)\s*$/.exec(line) ?? [];
+	if (indent === undefined || rawArgsText === undefined) {
+		return undefined;
+	}
+	const [, body, operator, delimiter] =
+		/^(.*?)\s+(<<-?)['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*$/.exec(rawArgsText) ?? [];
+	const args = new SkillShellWords(body ?? rawArgsText).parse();
+	if (args === undefined || args.length === 0) {
+		return undefined;
+	}
+	if (operator === undefined || delimiter === undefined) {
+		return { indent, args };
+	}
+	return { indent, args, heredoc: { delimiter, stripsLeadingTabs: operator === "<<-" } };
 }
 
 function formatNativeSkillContent(content: string): string {
@@ -140,28 +166,23 @@ function formatNativeSkillContent(content: string): string {
 		.replace(/^```bash\s*$/gim, "```text")
 		.split("\n");
 	const output: string[] = [];
-	for (let index = 0; index < lines.length; index += 1) {
+	for (let index = 0; ; index += 1) {
 		const line = lines[index];
-		const commandMatch = /^(\s*)agent-browser\s+(.+?)\s*$/.exec(line);
-		if (!commandMatch) {
+		if (line === undefined) {
+			break;
+		}
+		const invocation = parseSkillInvocation(line);
+		if (invocation === undefined) {
 			output.push(line);
 			continue;
 		}
-		const indent = commandMatch[1];
-		const rawArgsText = commandMatch[2];
-		const heredocMatch = /^(.*?)\s+(<<-?)['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*$/.exec(rawArgsText);
-		const argsText = heredocMatch?.[1] ?? rawArgsText;
-		const args = new SkillShellWords(argsText).parse();
-		if (!args || args.length === 0) {
-			output.push(line);
-			continue;
-		}
-		if (!heredocMatch) {
+		const { indent, args, heredoc: input } = invocation;
+		if (input === undefined) {
 			output.push(`${indent}${formatNativeAgentBrowserCall(args)}`);
 			continue;
 		}
-		const heredoc = readSkillHeredoc(lines, index + 1, heredocMatch[3], heredocMatch[2] === "<<-");
-		if (!heredoc) {
+		const heredoc = readSkillHeredoc(lines, index + 1, input.delimiter, input.stripsLeadingTabs);
+		if (heredoc === undefined) {
 			output.push(line);
 			continue;
 		}

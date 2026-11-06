@@ -8,47 +8,54 @@ import type { AgentBrowserToolResult } from "../types.js";
 
 interface ScrollPreparationOptions {
 	readonly commandTokens: readonly string[];
-	readonly compatibilityWorkaround?: CompatibilityWorkaround;
+	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly cwd: string;
 	readonly effectiveArgs: readonly string[];
 	readonly managedSessionRestoreDisabled: () => boolean;
 	readonly redactedArgs: readonly string[];
 	readonly sessionMode: "auto" | "fresh";
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 	readonly usedImplicitSession: boolean;
 }
 
-const SCROLL_CONTAINER_DIRECTIONS = new Set(["down", "left", "right", "up"]);
+type ScrollDirection = "down" | "left" | "right" | "up";
+
+interface ContainerScrollRequest {
+	readonly amount?: string | undefined;
+	readonly direction: ScrollDirection;
+	readonly selector: string;
+}
 
 function getContainerScrollRequest(
 	commandTokens: readonly string[],
-): { amount?: string; direction: string; selector: string } | undefined {
-	if (commandTokens[0] !== "scroll" || commandTokens.length < 3 || commandTokens.length > 4) {
+): ContainerScrollRequest | undefined {
+	const [command, selector, directionToken, amount] = commandTokens;
+	if (
+		command !== "scroll" ||
+		selector === undefined ||
+		directionToken === undefined ||
+		commandTokens.length > 4
+	) {
 		return undefined;
 	}
-	const selector = commandTokens[1];
-	const direction = commandTokens[2]?.toLowerCase();
+	const direction = directionToken.toLowerCase();
 	if (
 		selector === "" ||
 		selector.startsWith("-") ||
 		selector.startsWith("@") ||
-		SCROLL_CONTAINER_DIRECTIONS.has(selector.toLowerCase())
+		isScrollDirection(selector.toLowerCase())
 	) {
 		return undefined;
 	}
-	if (!SCROLL_CONTAINER_DIRECTIONS.has(direction)) {
+	if (!isScrollDirection(direction)) {
 		return undefined;
 	}
-	return { amount: commandTokens[3], direction, selector };
+	return { amount, direction, selector };
 }
 
-function buildContainerScrollScript(request: {
-	readonly amount?: string;
-	readonly direction: string;
-	readonly selector: string;
-}): string {
+function buildContainerScrollScript(request: ContainerScrollRequest): string {
 	return `(() => {
   const selector = ${JSON.stringify(request.selector)};
   const direction = ${JSON.stringify(request.direction)};
@@ -79,7 +86,7 @@ function buildContainerScrollScript(request: {
 
 function buildScrollResult(options: {
 	readonly command: "scroll";
-	readonly compatibilityWorkaround?: CompatibilityWorkaround;
+	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly effectiveArgs: readonly string[];
 	readonly managedSessionRestoreDisabled: () => boolean;
 	readonly message: string;
@@ -88,8 +95,8 @@ function buildScrollResult(options: {
 	readonly scrollField: "scrollContainer" | "scrollPage";
 	readonly scrollValue: unknown;
 	readonly sessionMode: "auto" | "fresh";
-	readonly namespace?: string;
-	readonly sessionName?: string;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
 	readonly succeeded: boolean;
 	readonly usedImplicitSession: boolean;
 }): AgentBrowserToolResult {
@@ -179,9 +186,9 @@ export async function tryContainerScroll(
 
 type PageScrollRequest =
 	| { readonly target: "end" | "top" }
-	| { readonly amount?: string; readonly direction: "down" | "left" | "right" | "up" };
+	| { readonly amount?: string | undefined; readonly direction: ScrollDirection };
 
-function isPageScrollDirection(direction: string): direction is "down" | "left" | "right" | "up" {
+function isScrollDirection(direction: string | undefined): direction is ScrollDirection {
 	return (
 		direction === "down" || direction === "left" || direction === "right" || direction === "up"
 	);
@@ -209,7 +216,7 @@ function getPageScrollToRequest(commandTokens: readonly string[]): PageScrollReq
 		return commandTokens.length === 3 ? getPageScrollTarget(commandTokens.at(2)) : undefined;
 	}
 	const direction = commandTokens[1]?.toLowerCase();
-	if (!isPageScrollDirection(direction) || commandTokens.length > 3) {
+	if (!isScrollDirection(direction) || commandTokens.length > 3) {
 		return undefined;
 	}
 	const amount = commandTokens.at(2);

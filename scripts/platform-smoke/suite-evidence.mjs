@@ -13,6 +13,12 @@ import {
 } from "./artifacts.mjs";
 import { crabboxBin, describeTarget } from "./crabbox-runner.mjs";
 
+/** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
+/** @import { ProcessReceipt } from "./artifacts.mjs" */
+/** @import { ProcessResult } from "./crabbox-runner.mjs" */
+/** @typedef {Pick<PlatformSmokeConfig, "artifactRoot" | "packageName"> & Partial<PlatformSmokeConfig>} EvidenceConfig */
+/** @typedef {{readonly id: string; readonly fn: () => boolean; readonly error?: string}} SuiteCheck */
+
 export const COMMON_EVIDENCE_FILES = [
 	"summary.json",
 	"artifact-manifest.json",
@@ -30,6 +36,7 @@ export const STOP_EVIDENCE_FILES = [
 	"crabbox.stop.exit-code.txt",
 ];
 
+/** @param {string} targetName */
 export function platformFor(targetName) {
 	return targetName === "windows-native" ? "powershell" : "posix";
 }
@@ -38,15 +45,21 @@ export function makeRunId() {
 	return `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** @param {Partial<PlatformSmokeConfig>} [config] */
 export function authEnvAllowList(config = {}) {
 	const raw = process.env.PLATFORM_SMOKE_AUTH_ENV;
-	const names = raw ? raw.split(",") : (config.defaultAuthEnv ?? []);
-	return names.map((name) => String(name).trim()).filter(Boolean);
+	const names =
+		raw !== undefined && raw.length > 0 ? raw.split(",") : (config.defaultAuthEnv ?? []);
+	return names.map((name) => name.trim()).filter(Boolean);
 }
 
 function packageVersion() {
 	try {
-		return JSON.parse(readFileSync("package.json", "utf8")).version ?? null;
+		/** @type {unknown} */
+		const parsed = JSON.parse(readFileSync("package.json", "utf8"));
+		return typeof parsed === "object" && parsed !== null && "version" in parsed
+			? (parsed.version ?? null)
+			: null;
 	} catch {
 		return null;
 	}
@@ -68,6 +81,10 @@ function crabboxVersion() {
 	}
 }
 
+/** @param {string} suiteDir
+ * @param {{readonly config: EvidenceConfig; readonly targetName: string; readonly runId: string; readonly slug: string}} run
+ * @param {Readonly<Record<string, unknown>>} suite
+ */
 export function writeTargetEvidence(suiteDir, { config, targetName, runId, slug }, suite) {
 	const target = describeTarget(targetName, config);
 	const evidence = {
@@ -83,33 +100,47 @@ export function writeTargetEvidence(suiteDir, { config, targetName, runId, slug 
 			provider: target.provider,
 			target: target.crabboxTarget,
 			workRoot: target.workRoot,
-			image: target.image,
-			windowsMode: target.windowsMode,
-			sourceVm: target.sourceVm,
-			snapshot: target.snapshot,
+			image: target.provider === "local-container" ? target.image : undefined,
+			windowsMode: target.provider === "parallels" ? target.windowsMode : undefined,
+			sourceVm: target.provider === "parallels" ? target.sourceVm : undefined,
+			snapshot: target.provider === "parallels" ? target.snapshot : undefined,
 		},
 	};
 	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(evidence, null, 2));
 	writeFileSync(resolve(suiteDir, "suite.json"), JSON.stringify(suite, null, 2));
 }
 
+/** @param {Partial<PlatformSmokeConfig>} config */
 export function secretValuesFor(config) {
 	return collectSecretValues(authEnvAllowList(config));
 }
 
+/** @param {string} path
+ * @param {string | null | undefined} text
+ * @param {readonly string[]} secretValues
+ */
 export function writeRedacted(path, text, secretValues) {
 	writeFileSync(path, redactSecrets(text ?? "", secretValues));
 }
 
+/** @param {string} suiteDir
+ * @param {string} prefix
+ * @param {ProcessReceipt} result
+ * @param {readonly string[]} secretValues
+ */
 export function writeProcessReceipt(suiteDir, prefix, result, secretValues) {
 	writeRedacted(resolve(suiteDir, `${prefix}.stdout.txt`), result.stdout ?? "", secretValues);
 	writeRedacted(resolve(suiteDir, `${prefix}.stderr.txt`), result.stderr ?? "", secretValues);
 	writeFileSync(
 		resolve(suiteDir, `${prefix}.exit-code.txt`),
-		`code=${result.code}\nsignal=${result.signal ?? "none"}\n`,
+		`code=${String(result.code)}\nsignal=${result.signal ?? "none"}\n`,
 	);
 }
 
+/** @param {string} suiteDir
+ * @param {ProcessReceipt} result
+ * @param {readonly string[]} secretValues
+ */
 export function secretViolationsFor(suiteDir, result, secretValues) {
 	return [
 		...scanForSecrets(`${result.stdout ?? ""}\n${result.stderr ?? ""}`, secretValues),
@@ -119,6 +150,9 @@ export function secretViolationsFor(suiteDir, result, secretValues) {
 	];
 }
 
+/** @param {string} text
+ * @param {string} name
+ */
 export function section(text, name) {
 	const start = `--- ${name} START ---`;
 	const end = `--- ${name} END ---`;
@@ -133,13 +167,19 @@ export function section(text, name) {
 		.replace(/\r?\n$/, "");
 }
 
+/** @param {string} text
+ * @param {string} name
+ */
 export function marker(text, name) {
 	return text.match(new RegExp(`^${name}=(.*)$`, "m"))?.[1]?.trim() ?? "";
 }
 
+/** @param {string} text
+ * @returns {unknown}
+ */
 function parseJsonObject(text) {
-	const trimmed = String(text ?? "").trim();
-	if (!trimmed) {
+	const trimmed = text.trim();
+	if (trimmed.length === 0) {
 		return {};
 	}
 	try {
@@ -158,6 +198,10 @@ function parseJsonObject(text) {
 	}
 }
 
+/** @param {string} suiteDir
+ * @param {string} stdout
+ * @param {readonly string[]} [secretValues]
+ */
 export function writePlatformExtracts(suiteDir, stdout, secretValues = []) {
 	writeFileSync(
 		resolve(suiteDir, "node-version.txt"),
@@ -168,24 +212,25 @@ export function writePlatformExtracts(suiteDir, stdout, secretValues = []) {
 		`${marker(stdout, "PLATFORM_PACKED_TARBALL")}\n`,
 		secretValues,
 	);
-	for (const [file, label] of [
-		["packed-node-install", "PACKED_NODE_INSTALL"],
-		["pi-install", "PI_INSTALL"],
-		["pi-list", "PI_LIST"],
-	]) {
-		for (const [stream, suffix] of [
-			["stdout", "STDOUT"],
-			["stderr", "STDERR"],
-		]) {
+	for (const [file, label] of Object.entries({
+		"packed-node-install": "PACKED_NODE_INSTALL",
+		"pi-install": "PI_INSTALL",
+		"pi-list": "PI_LIST",
+	})) {
+		for (const stream of ["stdout", "stderr"]) {
 			writeRedacted(
 				resolve(suiteDir, `${file}.${stream}.txt`),
-				section(stdout, `${label}_${suffix}`),
+				section(stdout, `${label}_${stream.toUpperCase()}`),
 				secretValues,
 			);
 		}
 	}
 }
 
+/** @param {string} suiteDir
+ * @param {string} stdout
+ * @param {readonly string[]} [secretValues]
+ */
 export function writeDogfoodExtracts(suiteDir, stdout, secretValues = []) {
 	writeFileSync(
 		resolve(suiteDir, "node-version.txt"),
@@ -212,14 +257,17 @@ export function writeDogfoodExtracts(suiteDir, stdout, secretValues = []) {
 	return report;
 }
 
+/** @param {string} suiteDir
+ * @param {readonly SuiteCheck[]} checks
+ */
 function writeAssertions(suiteDir, checks) {
 	const evaluated = checks.map((check) => {
 		let ok = false;
 		let error = check.error;
 		try {
-			ok = check.fn() === true;
+			ok = check.fn();
 		} catch (err) {
-			error = err.message;
+			error = err instanceof Error ? err.message : String(err);
 		}
 		return { id: check.id, ok, ...(ok ? {} : { error: error ?? `${check.id} failed` }) };
 	});
@@ -247,6 +295,11 @@ function writeAssertions(suiteDir, checks) {
 	return assertions;
 }
 
+/** @param {string} suiteDir
+ * @param {readonly SuiteCheck[]} checks
+ * @param {Readonly<Record<string, unknown>>} summary
+ * @param {readonly string[]} expectedFiles
+ */
 export function finalizeSuite(suiteDir, checks, summary, expectedFiles) {
 	const assertions = writeAssertions(suiteDir, checks);
 	writeSummary(suiteDir, { ...summary, ok: assertions.ok });
@@ -270,6 +323,11 @@ export function finalizeSuite(suiteDir, checks, summary, expectedFiles) {
 	};
 }
 
+/** @param {string} suiteDir
+ * @param {ProcessResult} result
+ * @param {number} elapsedMs
+ * @param {readonly string[]} secretValues
+ */
 export function writeRunReceipt(suiteDir, result, elapsedMs, secretValues) {
 	writeRedacted(resolve(suiteDir, "crabbox.stdout.txt"), result.stdout, secretValues);
 	writeRedacted(resolve(suiteDir, "crabbox.stderr.txt"), result.stderr, secretValues);

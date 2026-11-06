@@ -17,8 +17,8 @@ import {
 const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
 
 interface NavigationSummary {
-	readonly title?: string;
-	readonly url?: string;
+	readonly title?: string | undefined;
+	readonly url?: string | undefined;
 	readonly urlChanged?: boolean;
 }
 
@@ -183,18 +183,18 @@ export function formatNavigationSummary(summary: NavigationSummary): string | un
 }
 
 interface PageChangeOptions {
-	readonly artifacts?: readonly FileArtifactMetadata[];
+	readonly artifacts?: readonly FileArtifactMetadata[] | undefined;
 	readonly commandInfo: CommandInfo;
 	readonly data: unknown;
-	readonly nextActions?: readonly { readonly id: string }[];
-	readonly savedFilePath?: string;
+	readonly nextActions?: readonly { readonly id: string }[] | undefined;
+	readonly savedFilePath?: string | undefined;
 	readonly summary: string;
 }
 
 interface PageChangeEvidence {
 	readonly artifactCount: number;
-	readonly navigation?: NavigationSummary;
-	readonly savedFilePath?: string;
+	readonly navigation?: NavigationSummary | undefined;
+	readonly savedFilePath?: string | undefined;
 }
 
 function getPageNavigation(command: CommandInfo, data: unknown): NavigationSummary | undefined {

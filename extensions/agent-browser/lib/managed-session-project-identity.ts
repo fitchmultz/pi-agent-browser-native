@@ -179,7 +179,7 @@ export function resolveManagedSessionRestoreCheckoutRoot(
 function matchingCacheIdentity(
 	cached: ProjectGenerationCacheEntry | undefined,
 	checkout: Readonly<{ gitDirectory: string; worktreeDirectory: string }>,
-	filesystem: Readonly<{ git: string; worktree: string; marker?: string }>,
+	filesystem: Readonly<{ git: string; worktree: string; marker?: string | undefined }>,
 ): string | undefined {
 	if (cached === undefined) {
 		return undefined;

@@ -34,16 +34,16 @@ import type {
 import type { ToolPresentationObservation } from "./observation-contracts.js";
 
 interface StepIdentity {
-	readonly command?: readonly string[];
-	readonly redactedCommand?: readonly string[];
+	readonly command?: readonly string[] | undefined;
+	readonly redactedCommand?: readonly string[] | undefined;
 	readonly commandText: string;
 	readonly index: number;
-	readonly lifecycle?: AgentBrowserLifecycle;
+	readonly lifecycle?: AgentBrowserLifecycle | undefined;
 }
 
 interface StepScope {
-	readonly namespace?: string;
-	readonly sessionName?: string;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
 }
 
 function createStepIdentity(item: AgentBrowserBatchResult, index: number): StepIdentity {
@@ -86,7 +86,7 @@ function buildWaitTextAssertionFailureAction(
 
 interface StepFailure {
 	readonly category: AgentBrowserFailureCategory;
-	readonly confirmationId?: string;
+	readonly confirmationId?: string | undefined;
 	readonly data: unknown;
 	readonly overlayBlocked: boolean;
 	readonly text: string;

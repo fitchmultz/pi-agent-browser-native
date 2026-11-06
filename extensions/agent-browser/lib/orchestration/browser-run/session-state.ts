@@ -1,12 +1,7 @@
 import { isCloseCommand } from "../../command-taxonomy.js";
 import { getSessionPageStateKey } from "../../session-page-state.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
-import type {
-	BrowserRunContext,
-	BrowserRunState,
-	BrowserRunStatePatch,
-	TraceOwner,
-} from "./types.js";
+import type { BrowserRunContext, TraceOwner } from "./types.js";
 
 export {
 	buildManagedSessionOutcome,
@@ -59,73 +54,6 @@ export {
 	buildElectronRefFreshnessDiagnostic,
 	formatElectronRefFreshnessText,
 } from "./session-state-electron.js";
-
-// These are the browser-run reducer's writable fields, not a replacement state owner.
-// Presence checks preserve deliberate clearing of optional launch context.
-type ManagedLaunchPatch = Pick<
-	BrowserRunStatePatch,
-	| "managedSessionCompatibilityWorkaround"
-	| "managedSessionHeadedAutosaveDisabled"
-	| "managedSessionHeadedAutosaveInterval"
->;
-type ManagedIdentityPatch = Pick<
-	BrowserRunStatePatch,
-	| "managedSessionCwd"
-	| "managedSessionName"
-	| "managedSessionNamespace"
-	| "managedSessionActive"
-	| "freshSessionOrdinal"
->;
-
-function managedLaunchUpdate(patch: ManagedLaunchPatch): ManagedLaunchPatch {
-	return {
-		...("managedSessionCompatibilityWorkaround" in patch
-			? { managedSessionCompatibilityWorkaround: patch.managedSessionCompatibilityWorkaround }
-			: {}),
-		...(patch.managedSessionHeadedAutosaveDisabled !== undefined
-			? { managedSessionHeadedAutosaveDisabled: patch.managedSessionHeadedAutosaveDisabled }
-			: {}),
-		...("managedSessionHeadedAutosaveInterval" in patch
-			? { managedSessionHeadedAutosaveInterval: patch.managedSessionHeadedAutosaveInterval }
-			: {}),
-	};
-}
-
-function managedIdentityUpdate(patch: ManagedIdentityPatch): ManagedIdentityPatch {
-	return {
-		...(patch.managedSessionCwd !== undefined
-			? { managedSessionCwd: patch.managedSessionCwd }
-			: {}),
-		...(patch.managedSessionName !== undefined
-			? { managedSessionName: patch.managedSessionName }
-			: {}),
-		...("managedSessionNamespace" in patch
-			? { managedSessionNamespace: patch.managedSessionNamespace }
-			: {}),
-		...(patch.managedSessionActive !== undefined
-			? { managedSessionActive: patch.managedSessionActive }
-			: {}),
-		...(patch.freshSessionOrdinal !== undefined
-			? { freshSessionOrdinal: patch.freshSessionOrdinal }
-			: {}),
-	};
-}
-
-export function applyBrowserRunStatePatch(
-	state: BrowserRunState,
-	patch: BrowserRunStatePatch | undefined,
-): void {
-	if (!patch) {
-		return;
-	}
-	if ("artifactManifest" in patch) {
-		state.artifactManifest = patch.artifactManifest;
-	}
-	if (patch.networkRoutesBySession) {
-		state.networkRoutesBySession = patch.networkRoutesBySession;
-	}
-	Object.assign(state, managedLaunchUpdate(patch), managedIdentityUpdate(patch));
-}
 
 export const getSessionContextKey = getSessionPageStateKey;
 

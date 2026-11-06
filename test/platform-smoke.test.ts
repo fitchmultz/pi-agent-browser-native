@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import { readRecord, readArray, readString, readDefined } from "./helpers/assertions.js";
 import childProcess, { ChildProcess, spawnSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
@@ -7,7 +7,7 @@ import { main as platformMain } from "../scripts/platform-smoke.mjs";
 import { readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 import config from "../platform-smoke.config.mjs";
 import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baseline.mjs";
 import {
@@ -28,7 +28,7 @@ import {
 	writeManifest,
 } from "../scripts/platform-smoke/artifacts.mjs";
 
-test("platform doctor detects forbidden files in the actual npm package", (t) => {
+nodeTest("platform doctor detects forbidden files in the actual npm package", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "platform-doctor-pack-"));
 	const cwd = process.cwd();
 	t.after(() => {
@@ -95,7 +95,7 @@ function optionValue(args: readonly string[], option: string): string | undefine
 	return index < 0 ? undefined : args[index + 1];
 }
 
-test("platform smoke CLI has working help without dogfood host bootstrap", () => {
+nodeTest("platform smoke CLI has working help without dogfood host bootstrap", () => {
 	const powershell = readFileSync("scripts/platform-smoke/browser-dogfood-windows.ps1", "utf8");
 	assert.doesNotMatch(powershell, /npm\s+install\s+-g/);
 	assert.doesNotMatch(powershell, /agent-browser\s+install/);
@@ -112,42 +112,46 @@ test("platform smoke CLI has working help without dogfood host bootstrap", () =>
 	assert.match(help.stdout, /agent-browser/);
 });
 
-test("platform smoke config requires macOS/Ubuntu and keeps explicit best-effort Windows", () => {
-	const packageJson = readRecord(JSON.parse(readFileSync("package.json", "utf8")));
-	const scripts = readRecord(packageJson.scripts);
-	assert.match(readString(scripts["check:platform-smoke"]), /test\/platform-smoke\.test\.ts/);
-	assert.equal(scripts["smoke:platform:doctor"], "node scripts/platform-smoke.mjs doctor");
-	assert.match(readString(scripts["smoke:platform:ubuntu-image"]), /build-ubuntu-image\.mjs/);
-	assert.match(readString(scripts["smoke:platform:all"]), /smoke:platform:doctor/);
-	assert.equal(
-		scripts["smoke:platform:all"],
-		"npm run smoke:platform:doctor && node scripts/platform-smoke.mjs run",
-	);
-	assert.match(readString(scripts["smoke:platform:windows-native"]), /windows-native/);
-	const linuxImage = readFileSync("scripts/platform-smoke/linux-image/Dockerfile", "utf8");
-	for (const dependency of ["libvulkan1", "mesa-vulkan-drivers", "xvfb"]) {
-		// Every required Ubuntu graphics dependency must remain in the image.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(linuxImage, new RegExp(`\\b${dependency}\\b`));
-	}
-	assert.equal(config.packageName, "pi-agent-browser-native");
-	assert.equal(
-		config.nodeValidationVersion,
-		readString(readRecord(packageJson.engines).node).replace(/^>=/, ""),
-	);
-	assert.ok(config.ubuntuContainerImage.includes(`agent-browser${config.agentBrowserVersion}`));
-	assert.match(config.agentBrowserVersion, /^\d+\.\d+\.\d+$/);
-	assert.deepEqual(config.requiredSuites, ["platform-build", "browser-dogfood-smoke"]);
-	assert.deepEqual(config.requiredTargets, ["macos", "ubuntu"]);
-	assert.deepEqual(config.optionalTargets, ["windows-native"]);
-});
+nodeTest(
+	"platform smoke config requires macOS/Ubuntu and keeps explicit best-effort Windows",
+	() => {
+		const packageJson = readRecord(JSON.parse(readFileSync("package.json", "utf8")));
+		const scripts = readRecord(packageJson.scripts);
+		assert.match(readString(scripts["check:platform-smoke"]), /test\/platform-smoke\.test\.ts/);
+		assert.equal(scripts["smoke:platform:doctor"], "node scripts/platform-smoke.mjs doctor");
+		assert.match(readString(scripts["smoke:platform:ubuntu-image"]), /build-ubuntu-image\.mjs/);
+		assert.match(readString(scripts["smoke:platform:all"]), /smoke:platform:doctor/);
+		assert.equal(
+			scripts["smoke:platform:all"],
+			"npm run smoke:platform:doctor && node scripts/platform-smoke.mjs run",
+		);
+		assert.match(readString(scripts["smoke:platform:windows-native"]), /windows-native/);
+		const linuxImage = readFileSync("scripts/platform-smoke/linux-image/Dockerfile", "utf8");
+		const missingGraphicsDependencies = ["libvulkan1", "mesa-vulkan-drivers", "xvfb"].filter(
+			(dependency) => !new RegExp(`\\b${dependency}\\b`).test(linuxImage),
+		);
+		assert.deepEqual(missingGraphicsDependencies, []);
+		assert.equal(config.packageName, "pi-agent-browser-native");
+		assert.equal(
+			config.nodeValidationVersion,
+			readString(readRecord(packageJson.engines).node).replace(/^>=/, ""),
+		);
+		assert.ok(config.ubuntuContainerImage.includes(`agent-browser${config.agentBrowserVersion}`));
+		assert.match(config.agentBrowserVersion, /^\d+\.\d+\.\d+$/);
+		assert.deepEqual(config.requiredSuites, ["platform-build", "browser-dogfood-smoke"]);
+		assert.deepEqual(config.requiredTargets, ["macos", "ubuntu"]);
+		assert.deepEqual(config.optionalTargets, ["windows-native"]);
+	},
+);
 
-test("Ubuntu image build tags the documented default image with its audited agent-browser version", (t) => {
-	clearPlatformSmokeOverrides(t);
-	const root = mkdtempSync(join(tmpdir(), "platform-ubuntu-image-"));
-	t.after(() => rmSync(root, { recursive: true, force: true }));
-	const record = join(root, "docker.json");
-	const fakeDocker = String.raw`
+nodeTest(
+	"Ubuntu image build tags the documented default image with its audited agent-browser version",
+	(t) => {
+		clearPlatformSmokeOverrides(t);
+		const root = mkdtempSync(join(tmpdir(), "platform-ubuntu-image-"));
+		t.after(() => rmSync(root, { recursive: true, force: true }));
+		const record = join(root, "docker.json");
+		const fakeDocker = String.raw`
 import childProcess from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
@@ -157,94 +161,100 @@ childProcess.spawnSync = (command, args) => {
 };
 syncBuiltinESMExports();
 `;
-	const build = spawnSync(
-		process.execPath,
-		[
-			"--import",
-			`data:text/javascript;base64,${Buffer.from(fakeDocker).toString("base64")}`,
-			"scripts/platform-smoke/build-ubuntu-image.mjs",
-		],
-		{ encoding: "utf8", env: { ...process.env, FAKE_DOCKER_RECORD: record }, timeout: 10_000 },
-	);
-	assert.ifError(build.error);
-	assert.equal(build.status, 0, build.stderr);
-	const docker = readRecord(JSON.parse(readFileSync(record, "utf8")));
-	const args = readArray(docker.args).map(readString);
-	assert.equal(docker.command, "docker");
-	assert.equal(args[0], "build");
-	assert.equal(optionValue(args, "-t"), DOCUMENTED_UBUNTU_IMAGE);
-	const versionArg = args.indexOf(`AGENT_BROWSER_VERSION=${CAPABILITY_BASELINE.targetVersion}`);
-	assert.equal(args[versionArg - 1], "--build-arg");
-});
+		const build = spawnSync(
+			process.execPath,
+			[
+				"--import",
+				`data:text/javascript;base64,${Buffer.from(fakeDocker).toString("base64")}`,
+				"scripts/platform-smoke/build-ubuntu-image.mjs",
+			],
+			{ encoding: "utf8", env: { ...process.env, FAKE_DOCKER_RECORD: record }, timeout: 10_000 },
+		);
+		assert.ifError(build.error);
+		assert.equal(build.status, 0, build.stderr);
+		const docker = readRecord(JSON.parse(readFileSync(record, "utf8")));
+		const args = readArray(docker.args).map(readString);
+		assert.equal(docker.command, "docker");
+		assert.equal(args[0], "build");
+		assert.equal(optionValue(args, "-t"), DOCUMENTED_UBUNTU_IMAGE);
+		const versionArg = args.indexOf(`AGENT_BROWSER_VERSION=${CAPABILITY_BASELINE.targetVersion}`);
+		assert.equal(args[versionArg - 1], "--build-arg");
+	},
+);
 
-test("platform command rendering uses POSIX and PowerShell without source-extension shortcuts", () => {
-	const posix = buildPlatformBuildCommand("ubuntu", "pi-agent-browser-native", "24.21.0");
-	const macos = buildPlatformBuildCommand("macos", "pi-agent-browser-native", "24.21.0");
-	const powershell = buildPlatformBuildCommand(
-		"windows-native",
-		"pi-agent-browser-native",
-		"24.21.0",
-	);
-	const powershellScript = readFileSync(
-		"scripts/platform-smoke/platform-build-windows.ps1",
-		"utf8",
-	);
-	const dogfoodPosix = buildBrowserDogfoodCommand("ubuntu");
-	const dogfoodWarmPosix = buildBrowserDogfoodCommand(
-		"ubuntu",
-		CAPABILITY_BASELINE.targetVersion,
-		true,
-	);
-	const dogfoodWindows = buildBrowserDogfoodCommand("windows-native");
-	const dogfoodWarmWindows = buildBrowserDogfoodCommand(
-		"windows-native",
-		CAPABILITY_BASELINE.targetVersion,
-		true,
-	);
-	assert.equal(platformFor("macos"), "posix");
-	assert.equal(platformFor("ubuntu"), "posix");
-	assert.equal(platformFor("windows-native"), "powershell");
-	assert.equal(nodeVersionAtLeast("v24.20.9", "24.21.0"), false);
-	assert.equal(nodeVersionAtLeast("v24.3.0", "24.21.0"), false);
-	assert.equal(nodeVersionAtLeast("v24.21.0", "24.21.0"), true);
-	assert.equal(nodeVersionAtLeast("v24.100.0", "24.21.0"), true);
-	assert.equal(nodeVersionAtLeast("v25.0.0", "24.21.0"), true);
-	assert.equal(nodeVersionAtLeast("", "24.21.0"), false);
-	assert.ok(posix.includes("'24.21.0'"));
-	assert.ok(powershell.includes("-NodeValidationVersion '24.21.0'"));
-	assert.match(posix, /npm run verify -- platform-target/);
-	assert.match(posix, /install -l --approve \.\/node_modules\/pi-agent-browser-native/);
-	assert.match(posix, /list --approve/);
-	assert.doesNotMatch(posix, /\bpi\s+(?:-e|--extension)\s+\./);
-	assert.doesNotMatch(posix, /cp -R src prompts/);
-	assert.match(macos, /npm run verify -- platform-target/);
-	assert.match(powershell, /platform-build-windows\.ps1/);
-	assert.match(powershell, /pi-agent-browser-native/);
-	assert.match(powershellScript, /install -l --approve/);
-	assert.match(powershellScript, /list --approve/);
-	assert.doesNotMatch(powershell, /\bpi\s+(?:-e|--extension)\s+\./);
-	assert.match(dogfoodPosix, /verify-agent-browser-dogfood\.ts/);
-	assert.ok(
-		dogfoodPosix.includes(
-			`EXPECTED_AGENT_BROWSER_VERSION='agent-browser ${CAPABILITY_BASELINE.targetVersion}'`,
-		),
-	);
-	assert.match(dogfoodPosix, /PLATFORM_AGENT_BROWSER_READY_EXIT/);
-	assert.match(dogfoodPosix, /--artifact-dir/);
-	assert.match(dogfoodPosix, /npm ci 2>&1/);
-	assert.doesNotMatch(dogfoodPosix, /PLATFORM_NPM_CI_SKIPPED=1/);
-	assert.match(dogfoodWarmPosix, /PLATFORM_NPM_CI_SKIPPED=1/);
-	assert.match(dogfoodWarmWindows, /-SkipNpmCi/);
-	assert.doesNotMatch(dogfoodWindows, /-SkipNpmCi/);
-	assert.match(dogfoodWindows, /browser-dogfood-windows\.ps1/);
-	assert.ok(dogfoodWindows.includes(`-AgentBrowserVersion '${CAPABILITY_BASELINE.targetVersion}'`));
-	assert.ok(
-		dogfoodWarmWindows.includes(`-AgentBrowserVersion '${CAPABILITY_BASELINE.targetVersion}'`),
-	);
-	assert.doesNotMatch(dogfoodWindows, /npm install -g|agent-browser install/);
-});
+nodeTest(
+	"platform command rendering uses POSIX and PowerShell without source-extension shortcuts",
+	() => {
+		const posix = buildPlatformBuildCommand("ubuntu", "pi-agent-browser-native", "24.21.0");
+		const macos = buildPlatformBuildCommand("macos", "pi-agent-browser-native", "24.21.0");
+		const powershell = buildPlatformBuildCommand(
+			"windows-native",
+			"pi-agent-browser-native",
+			"24.21.0",
+		);
+		const powershellScript = readFileSync(
+			"scripts/platform-smoke/platform-build-windows.ps1",
+			"utf8",
+		);
+		const dogfoodPosix = buildBrowserDogfoodCommand("ubuntu");
+		const dogfoodWarmPosix = buildBrowserDogfoodCommand(
+			"ubuntu",
+			CAPABILITY_BASELINE.targetVersion,
+			true,
+		);
+		const dogfoodWindows = buildBrowserDogfoodCommand("windows-native");
+		const dogfoodWarmWindows = buildBrowserDogfoodCommand(
+			"windows-native",
+			CAPABILITY_BASELINE.targetVersion,
+			true,
+		);
+		assert.equal(platformFor("macos"), "posix");
+		assert.equal(platformFor("ubuntu"), "posix");
+		assert.equal(platformFor("windows-native"), "powershell");
+		assert.equal(nodeVersionAtLeast("v24.20.9", "24.21.0"), false);
+		assert.equal(nodeVersionAtLeast("v24.3.0", "24.21.0"), false);
+		assert.equal(nodeVersionAtLeast("v24.21.0", "24.21.0"), true);
+		assert.equal(nodeVersionAtLeast("v24.100.0", "24.21.0"), true);
+		assert.equal(nodeVersionAtLeast("v25.0.0", "24.21.0"), true);
+		assert.equal(nodeVersionAtLeast("", "24.21.0"), false);
+		assert.ok(posix.includes("'24.21.0'"));
+		assert.ok(powershell.includes("-NodeValidationVersion '24.21.0'"));
+		assert.match(posix, /npm run verify -- platform-target/);
+		assert.match(posix, /install -l --approve \.\/node_modules\/pi-agent-browser-native/);
+		assert.match(posix, /list --approve/);
+		assert.doesNotMatch(posix, /\bpi\s+(?:-e|--extension)\s+\./);
+		assert.doesNotMatch(posix, /cp -R src prompts/);
+		assert.match(macos, /npm run verify -- platform-target/);
+		assert.match(powershell, /platform-build-windows\.ps1/);
+		assert.match(powershell, /pi-agent-browser-native/);
+		assert.match(powershellScript, /install -l --approve/);
+		assert.match(powershellScript, /list --approve/);
+		assert.doesNotMatch(powershell, /\bpi\s+(?:-e|--extension)\s+\./);
+		assert.match(dogfoodPosix, /verify-agent-browser-dogfood\.ts/);
+		assert.ok(
+			dogfoodPosix.includes(
+				`EXPECTED_AGENT_BROWSER_VERSION='agent-browser ${CAPABILITY_BASELINE.targetVersion}'`,
+			),
+		);
+		assert.match(dogfoodPosix, /PLATFORM_AGENT_BROWSER_READY_EXIT/);
+		assert.match(dogfoodPosix, /--artifact-dir/);
+		assert.match(dogfoodPosix, /npm ci 2>&1/);
+		assert.doesNotMatch(dogfoodPosix, /PLATFORM_NPM_CI_SKIPPED=1/);
+		assert.match(dogfoodWarmPosix, /PLATFORM_NPM_CI_SKIPPED=1/);
+		assert.match(dogfoodWarmWindows, /-SkipNpmCi/);
+		assert.doesNotMatch(dogfoodWindows, /-SkipNpmCi/);
+		assert.match(dogfoodWindows, /browser-dogfood-windows\.ps1/);
+		assert.ok(
+			dogfoodWindows.includes(`-AgentBrowserVersion '${CAPABILITY_BASELINE.targetVersion}'`),
+		);
+		assert.ok(
+			dogfoodWarmWindows.includes(`-AgentBrowserVersion '${CAPABILITY_BASELINE.targetVersion}'`),
+		);
+		assert.doesNotMatch(dogfoodWindows, /npm install -g|agent-browser install/);
+	},
+);
 
-test("artifact manifests and lease cleanup failures are enforced", (t) => {
+nodeTest("artifact manifests and lease cleanup failures are enforced", (t) => {
 	clearPlatformSmokeOverrides(t);
 	const root = mkdtempSync(join(tmpdir(), "pi-agent-browser-platform-smoke-test-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -332,59 +342,68 @@ test("artifact manifests and lease cleanup failures are enforced", (t) => {
 // Authoring gate: default/explicit target and provisioning contracts belong to this CLI owner.
 // Old config inventories cannot detect doctor probing optional providers or real failure propagation.
 // Public Node subprocess mocks exercise that boundary without a production seam or native qualification.
-test("platform CLI defaults to required targets and preserves an explicitly selected Windows provider failure", async (t) => {
-	clearPlatformSmokeOverrides(t);
-	const root = mkdtempSync(join(tmpdir(), "platform-selection-"));
-	const cwd = process.cwd();
-	const calls: string[][] = [];
-	t.after(() => {
-		process.chdir(cwd);
-		t.mock.restoreAll();
-		syncBuiltinESMExports();
-		rmSync(root, { recursive: true, force: true });
-	});
-	t.mock.method(childProcess, "spawn", (_command: unknown, args: unknown) => {
-		calls.push(readArray(args).map(readString));
-		const child = new ChildProcess();
-		const stdout = new PassThrough();
-		const stderr = new PassThrough();
-		child.stdout = stdout;
-		child.stderr = stderr;
-		queueMicrotask(() => {
-			stdout.end();
-			stderr.end("controlled provider unavailable");
-			child.emit("close", 23, null);
+nodeTest(
+	"platform CLI defaults to required targets and preserves an explicitly selected Windows provider failure",
+	async (t) => {
+		clearPlatformSmokeOverrides(t);
+		const root = mkdtempSync(join(tmpdir(), "platform-selection-"));
+		const cwd = process.cwd();
+		const calls: string[][] = [];
+		t.after(() => {
+			process.chdir(cwd);
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			rmSync(root, { recursive: true, force: true });
 		});
-		return child;
-	});
-	syncBuiltinESMExports();
-	process.chdir(root);
-	assert.equal(await platformMain(["run", "--suite", "platform-build"]), 1);
-	assert.equal(calls.length, 2);
-	assert.equal(calls[0]?.includes("ssh"), true);
-	assert.equal(calls[1]?.includes("local-container"), true);
-	assert.equal(optionValue(calls[1], "--local-container-image"), DOCUMENTED_UBUNTU_IMAGE);
-	assert.equal(calls.flat().includes("parallels"), false);
-	calls.length = 0;
-	assert.equal(
-		await withUbuntuImageOverride(() =>
-			platformMain(["run", "--target", "ubuntu", "--suite", "platform-build"]),
-		),
-		1,
-	);
-	assert.equal(calls.length, 1);
-	assert.equal(optionValue(calls[0], "--local-container-image"), OVERRIDE_UBUNTU_IMAGE);
-	calls.length = 0;
-	assert.equal(
-		await platformMain(["run", "--target", "windows-native", "--suite", "platform-build"]),
-		1,
-	);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0]?.includes("parallels"), true);
-	assert.equal(calls[0]?.includes("windows"), true);
-	await assert.rejects(platformMain(["run", "--target", "not-a-target"]), /unknown target/);
-	await assert.rejects(platformMain(["doctor", "--target", ","]), /Select at least one target/);
-});
+		t.mock.method(childProcess, "spawn", (_command: unknown, args: unknown) => {
+			calls.push(readArray(args).map(readString));
+			const child = new ChildProcess();
+			const stdout = new PassThrough();
+			const stderr = new PassThrough();
+			child.stdout = stdout;
+			child.stderr = stderr;
+			queueMicrotask(() => {
+				stdout.end();
+				stderr.end("controlled provider unavailable");
+				child.emit("close", 23, null);
+			});
+			return child;
+		});
+		syncBuiltinESMExports();
+		process.chdir(root);
+		assert.equal(await platformMain(["run", "--suite", "platform-build"]), 1);
+		assert.equal(calls.length, 2);
+		assert.equal(calls[0]?.includes("ssh"), true);
+		assert.equal(calls[1]?.includes("local-container"), true);
+		assert.equal(
+			optionValue(readDefined(calls[1]), "--local-container-image"),
+			DOCUMENTED_UBUNTU_IMAGE,
+		);
+		assert.equal(calls.flat().includes("parallels"), false);
+		calls.length = 0;
+		assert.equal(
+			await withUbuntuImageOverride(() =>
+				platformMain(["run", "--target", "ubuntu", "--suite", "platform-build"]),
+			),
+			1,
+		);
+		assert.equal(calls.length, 1);
+		assert.equal(
+			optionValue(readDefined(calls[0]), "--local-container-image"),
+			OVERRIDE_UBUNTU_IMAGE,
+		);
+		calls.length = 0;
+		assert.equal(
+			await platformMain(["run", "--target", "windows-native", "--suite", "platform-build"]),
+			1,
+		);
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0].includes("parallels"), true);
+		assert.equal(calls[0].includes("windows"), true);
+		await assert.rejects(platformMain(["run", "--target", "not-a-target"]), /unknown target/);
+		await assert.rejects(platformMain(["doctor", "--target", ","]), /Select at least one target/);
+	},
+);
 
 // Like a real spawned child, this Crabbox double reports close only after its output streams end.
 function crabboxChild(receipt: {
@@ -413,188 +432,194 @@ function crabboxChild(receipt: {
 
 // The lease a Crabbox warmup receipt reports owns the follow-up run and stop. Receipts use the real
 // `leased <id> slug=...` and `lease=<id>` line forms; distinct IDs make their precedence observable.
-test("platform CLI runs and stops the lease Crabbox warmup reports, else the target's own lease", async (t) => {
-	clearPlatformSmokeOverrides(t);
-	const root = mkdtempSync(join(tmpdir(), "platform-lease-id-"));
-	const cwd = process.cwd();
-	const calls: string[][] = [];
-	let warmup: { readonly stdout: string; readonly stderr: string } = { stdout: "", stderr: "" };
-	t.after(() => {
-		process.chdir(cwd);
-		t.mock.restoreAll();
+nodeTest(
+	"platform CLI runs and stops the lease Crabbox warmup reports, else the target's own lease",
+	async (t) => {
+		clearPlatformSmokeOverrides(t);
+		const root = mkdtempSync(join(tmpdir(), "platform-lease-id-"));
+		const cwd = process.cwd();
+		const calls: string[][] = [];
+		let warmup: { readonly stdout: string; readonly stderr: string } = { stdout: "", stderr: "" };
+		t.after(() => {
+			process.chdir(cwd);
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			rmSync(root, { recursive: true, force: true });
+		});
+		t.mock.method(childProcess, "spawn", (_command: unknown, args: unknown) => {
+			const words = readArray(args).map(readString);
+			calls.push(words);
+			return crabboxChild(words[0] === "warmup" ? { ...warmup, code: 0 } : { code: 0 });
+		});
 		syncBuiltinESMExports();
-		rmSync(root, { recursive: true, force: true });
-	});
-	t.mock.method(childProcess, "spawn", (_command: unknown, args: unknown) => {
-		const words = readArray(args).map(readString);
-		calls.push(words);
-		return crabboxChild(words[0] === "warmup" ? { ...warmup, code: 0 } : { code: 0 });
-	});
-	syncBuiltinESMExports();
-	process.chdir(root);
-	// One CLI run per receipt; returns the lease IDs its Crabbox run and stop follow-ups used.
-	const followUpLeaseIds = async (target: string, stdout: string, stderr: string) => {
-		warmup = { stdout, stderr };
-		calls.length = 0;
-		await platformMain(["run", "--target", target, "--suite", "platform-build"]);
-		return calls
-			.filter(([command]) => command === "run" || command === "stop")
-			.map((words) => [words[0], words[words.indexOf("--id") + 1]]);
-	};
-	const leased = "cbx_0123456789ab";
-	const provisioned = "cbx_ba9876543210";
-	assert.deepEqual(
-		await followUpLeaseIds(
-			"ubuntu",
-			`leased ${leased} slug=pi-agent-browser-native-ubuntu provider=local-container\n`,
-			`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
-		),
-		[
-			["run", leased],
-			["stop", leased],
-		],
-		"stdout leased receipt",
-	);
-	assert.deepEqual(
-		await followUpLeaseIds(
-			"ubuntu",
-			"",
-			`provisioning provider=local-container lease=${provisioned} slug=- keep=true\nleased ${leased} slug=-\n`,
-		),
-		[
-			["run", leased],
-			["stop", leased],
-		],
-		"stderr leased receipt after an earlier lease= receipt",
-	);
-	assert.deepEqual(
-		await followUpLeaseIds(
-			"ubuntu",
-			"",
-			`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
-		),
-		[
-			["run", provisioned],
-			["stop", provisioned],
-		],
-		"stderr lease= receipt",
-	);
-	assert.deepEqual(
-		await followUpLeaseIds("ubuntu", "", `released local-container/${provisioned} slug=-\n`),
-		[
-			["run", "pi-agent-browser-native-ubuntu"],
-			["stop", "pi-agent-browser-native-ubuntu"],
-		],
-		"release line is not an acquired lease",
-	);
-	assert.deepEqual(
-		await followUpLeaseIds("macos", "", ""),
-		[
-			["run", "static_localhost"],
-			["stop", "static_localhost"],
-		],
-		"no receipt",
-	);
-});
-
-test("default platform doctor needs no Windows credentials/provider and keeps selected provisioning failures strict", async (t) => {
-	clearPlatformSmokeOverrides(t);
-	const root = mkdtempSync(join(tmpdir(), "platform-doctor-selection-"));
-	const cwd = process.cwd();
-	const exitCode = process.exitCode;
-	const calls: string[] = [];
-	let missingMac = false;
-	let missingDocker = false;
-	t.after(() => {
-		process.chdir(cwd);
-		process.exitCode = exitCode;
-		t.mock.restoreAll();
-		syncBuiltinESMExports();
-		rmSync(root, { recursive: true, force: true });
-	});
-	t.mock.method(childProcess, "execFileSync", (command: unknown, args: unknown) => {
-		const name = readString(command);
-		const words = readArray(args).map(readString);
-		calls.push([name, ...words].join(" "));
-		if (name === "which") {
-			return Buffer.from(words[0] === "prlctl" ? "" : readString(words[0]));
-		}
-		if (name === "crabbox" && words[0] === "--version") {
-			return Buffer.from("0.26.0");
-		}
-		if (name === "crabbox" && words[0] === "providers") {
-			return Buffer.from('[{"name":"ssh"},{"name":"local-container"}]');
-		}
-		if (name === "crabbox" && words[0] === "doctor") {
-			return Buffer.from('{"ok":true}');
-		}
-		if (name === "npm" || name === "npm.cmd") {
-			return Buffer.from('[{"files":[]}]');
-		}
-		throw new Error("unexpected doctor command");
-	});
-	t.mock.method(childProcess, "execSync", (command: unknown) => {
-		const text = readString(command);
-		calls.push(text);
-		if (text.startsWith("ssh ") && missingMac) {
-			throw new Error("controlled SSH unavailable");
-		}
-		if (text.startsWith("ssh ")) {
-			return Buffer.from(`v24.21.0 agent-browser ${CAPABILITY_BASELINE.targetVersion}`);
-		}
-		if (text.startsWith("docker info")) {
-			if (missingDocker) {
-				throw new Error("controlled Docker unavailable");
-			}
-			return Buffer.from("28.0.0");
-		}
-		const versions = new Map<string, string>(
-			Object.entries({
-				"node --version": "v24.21.0",
-				"npm --version": "12.2.0",
-				"git --version": "2.50.0",
-				"tar --version": "1.0",
-				"agent-browser --version": `agent-browser ${CAPABILITY_BASELINE.targetVersion}`,
-			}),
+		process.chdir(root);
+		// One CLI run per receipt; returns the lease IDs its Crabbox run and stop follow-ups used.
+		const followUpLeaseIds = async (target: string, stdout: string, stderr: string) => {
+			warmup = { stdout, stderr };
+			calls.length = 0;
+			await platformMain(["run", "--target", target, "--suite", "platform-build"]);
+			return calls
+				.filter(([command]) => command === "run" || command === "stop")
+				.map((words) => [words[0], words[words.indexOf("--id") + 1]]);
+		};
+		const leased = "cbx_0123456789ab";
+		const provisioned = "cbx_ba9876543210";
+		assert.deepEqual(
+			await followUpLeaseIds(
+				"ubuntu",
+				`leased ${leased} slug=pi-agent-browser-native-ubuntu provider=local-container\n`,
+				`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
+			),
+			[
+				["run", leased],
+				["stop", leased],
+			],
+			"stdout leased receipt",
 		);
-		return Buffer.from(versions.get(text) ?? "");
-	});
-	syncBuiltinESMExports();
-	process.chdir(root);
-	process.exitCode = 0;
-	assert.equal(await platformMain(["doctor"]), 0);
-	assert.equal(
-		calls.some((call) => call.includes("parallels") || call.includes("prlctl")),
-		false,
-	);
-	assert.equal(
-		calls.some((call) => call.startsWith("ssh ")),
-		true,
-	);
-	assert.equal(
-		calls.some((call) => call.startsWith("docker info")),
-		true,
-	);
-	const ubuntuProviderCheck = (image: string): string =>
-		`crabbox doctor --provider local-container --local-container-image ${image} --json`;
-	assert.equal(calls.includes(ubuntuProviderCheck(DOCUMENTED_UBUNTU_IMAGE)), true);
-	calls.length = 0;
-	assert.equal(
-		await withUbuntuImageOverride(() => platformMain(["doctor", "--target", "ubuntu"])),
-		0,
-	);
-	assert.equal(calls.includes(ubuntuProviderCheck(OVERRIDE_UBUNTU_IMAGE)), true);
-	calls.length = 0;
-	assert.equal(await platformMain(["doctor", "--target", "windows-native"]), 1);
-	assert.equal(calls.includes("which prlctl"), true);
-	assert.equal(
-		calls.some((call) => call.startsWith("ssh ") || call.startsWith("docker info")),
-		false,
-	);
-	process.exitCode = 0;
-	missingMac = true;
-	assert.equal(await platformMain(["doctor", "--target", "macos"]), 1);
-	process.exitCode = 0;
-	missingDocker = true;
-	assert.equal(await platformMain(["doctor", "--target", "ubuntu"]), 1);
-});
+		assert.deepEqual(
+			await followUpLeaseIds(
+				"ubuntu",
+				"",
+				`provisioning provider=local-container lease=${provisioned} slug=- keep=true\nleased ${leased} slug=-\n`,
+			),
+			[
+				["run", leased],
+				["stop", leased],
+			],
+			"stderr leased receipt after an earlier lease= receipt",
+		);
+		assert.deepEqual(
+			await followUpLeaseIds(
+				"ubuntu",
+				"",
+				`provisioned lease=${provisioned} container=c0ffee state=ready\n`,
+			),
+			[
+				["run", provisioned],
+				["stop", provisioned],
+			],
+			"stderr lease= receipt",
+		);
+		assert.deepEqual(
+			await followUpLeaseIds("ubuntu", "", `released local-container/${provisioned} slug=-\n`),
+			[
+				["run", "pi-agent-browser-native-ubuntu"],
+				["stop", "pi-agent-browser-native-ubuntu"],
+			],
+			"release line is not an acquired lease",
+		);
+		assert.deepEqual(
+			await followUpLeaseIds("macos", "", ""),
+			[
+				["run", "static_localhost"],
+				["stop", "static_localhost"],
+			],
+			"no receipt",
+		);
+	},
+);
+
+nodeTest(
+	"default platform doctor needs no Windows credentials/provider and keeps selected provisioning failures strict",
+	async (t) => {
+		clearPlatformSmokeOverrides(t);
+		const root = mkdtempSync(join(tmpdir(), "platform-doctor-selection-"));
+		const cwd = process.cwd();
+		const exitCode = process.exitCode;
+		const calls: string[] = [];
+		let missingMac = false;
+		let missingDocker = false;
+		t.after(() => {
+			process.chdir(cwd);
+			process.exitCode = exitCode;
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			rmSync(root, { recursive: true, force: true });
+		});
+		t.mock.method(childProcess, "execFileSync", (command: unknown, args: unknown) => {
+			const name = readString(command);
+			const words = readArray(args).map(readString);
+			calls.push([name, ...words].join(" "));
+			if (name === "which") {
+				return Buffer.from(words[0] === "prlctl" ? "" : readString(words[0]));
+			}
+			if (name === "crabbox" && words[0] === "--version") {
+				return Buffer.from("0.26.0");
+			}
+			if (name === "crabbox" && words[0] === "providers") {
+				return Buffer.from('[{"name":"ssh"},{"name":"local-container"}]');
+			}
+			if (name === "crabbox" && words[0] === "doctor") {
+				return Buffer.from('{"ok":true}');
+			}
+			if (name === "npm" || name === "npm.cmd") {
+				return Buffer.from('[{"files":[]}]');
+			}
+			throw new Error("unexpected doctor command");
+		});
+		t.mock.method(childProcess, "execSync", (command: unknown) => {
+			const text = readString(command);
+			calls.push(text);
+			if (text.startsWith("ssh ") && missingMac) {
+				throw new Error("controlled SSH unavailable");
+			}
+			if (text.startsWith("ssh ")) {
+				return Buffer.from(`v24.21.0 agent-browser ${CAPABILITY_BASELINE.targetVersion}`);
+			}
+			if (text.startsWith("docker info")) {
+				if (missingDocker) {
+					throw new Error("controlled Docker unavailable");
+				}
+				return Buffer.from("28.0.0");
+			}
+			const versions = new Map<string, string>(
+				Object.entries({
+					"node --version": "v24.21.0",
+					"npm --version": "12.2.0",
+					"git --version": "2.50.0",
+					"tar --version": "1.0",
+					"agent-browser --version": `agent-browser ${CAPABILITY_BASELINE.targetVersion}`,
+				}),
+			);
+			return Buffer.from(versions.get(text) ?? "");
+		});
+		syncBuiltinESMExports();
+		process.chdir(root);
+		process.exitCode = 0;
+		assert.equal(await platformMain(["doctor"]), 0);
+		assert.equal(
+			calls.some((call) => call.includes("parallels") || call.includes("prlctl")),
+			false,
+		);
+		assert.equal(
+			calls.some((call) => call.startsWith("ssh ")),
+			true,
+		);
+		assert.equal(
+			calls.some((call) => call.startsWith("docker info")),
+			true,
+		);
+		const ubuntuProviderCheck = (image: string): string =>
+			`crabbox doctor --provider local-container --local-container-image ${image} --json`;
+		assert.equal(calls.includes(ubuntuProviderCheck(DOCUMENTED_UBUNTU_IMAGE)), true);
+		calls.length = 0;
+		assert.equal(
+			await withUbuntuImageOverride(() => platformMain(["doctor", "--target", "ubuntu"])),
+			0,
+		);
+		assert.equal(calls.includes(ubuntuProviderCheck(OVERRIDE_UBUNTU_IMAGE)), true);
+		calls.length = 0;
+		assert.equal(await platformMain(["doctor", "--target", "windows-native"]), 1);
+		assert.equal(calls.includes("which prlctl"), true);
+		assert.equal(
+			calls.some((call) => call.startsWith("ssh ") || call.startsWith("docker info")),
+			false,
+		);
+		process.exitCode = 0;
+		missingMac = true;
+		assert.equal(await platformMain(["doctor", "--target", "macos"]), 1);
+		process.exitCode = 0;
+		missingDocker = true;
+		assert.equal(await platformMain(["doctor", "--target", "ubuntu"]), 1);
+	},
+);

@@ -235,7 +235,6 @@ export async function waitForTestPidExit(
 			return true;
 		}
 		// Poll only after the previous liveness check and delay have completed.
-		// oxlint-disable-next-line no-await-in-loop
 		await sleepMs(50);
 	}
 	return !isTestPidAlive(pid);

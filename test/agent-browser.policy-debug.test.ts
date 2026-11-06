@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 const runtime = new URL("../dist/extensions/agent-browser/lib/", import.meta.url);
 const setup = `
@@ -79,7 +79,7 @@ assert.equal(await acquireExecutionClaim({ identity: { socketContext: 'PRIVATE_C
 process.stdout.write('refused');
 `;
 
-test("policy debug is silent by default and preserves refusals when enabled", async () => {
+nodeTest("policy debug is silent by default and preserves refusals when enabled", async () => {
 	const quiet = await runDiagnostic(false, refusedScenarios);
 	const enabled = await runDiagnostic(true, refusedScenarios);
 	assert.equal(quiet.stdout, "refused");
@@ -126,7 +126,7 @@ syncBuiltinESMExports();
 process.stdout.write('choosing-and-disappearance-safe');
 `;
 
-test("policy debug stays quiet for choosing tickets and confirmed disappearance", async () => {
+nodeTest("policy debug stays quiet for choosing tickets and confirmed disappearance", async () => {
 	const quiet = await runDiagnostic(false, quietRaces);
 	const enabled = await runDiagnostic(true, quietRaces);
 	assert.equal(quiet.stdout, "choosing-and-disappearance-safe");
@@ -135,10 +135,12 @@ test("policy debug stays quiet for choosing tickets and confirmed disappearance"
 	assert.equal(enabled.stderr, "");
 });
 
-test("policy debug preserves the native owner ENOENT when its published directory still exists", async () => {
-	const enabled = await runDiagnostic(
-		true,
-		`
+nodeTest(
+	"policy debug preserves the native owner ENOENT when its published directory still exists",
+	async () => {
+		const enabled = await runDiagnostic(
+			true,
+			`
 const base = join(root, 'table');
 const path = await plant(base);
 const nativeRead = fs.readFile;
@@ -152,20 +154,23 @@ mock.reset();
 syncBuiltinESMExports();
 process.stdout.write('refused');
 `,
-	);
-	assert.equal(enabled.stdout, "refused");
-	assert.match(
-		enabled.stderr,
-		/stage=claim\.owner-read reason=native-error code=ENOENT syscall=open/,
-	);
-	assert.match(enabled.stderr, /stage=claims\.inspect reason=absence-not-confirmed/);
-	assert.doesNotMatch(enabled.stderr, /PRIVATE_|private-policy-debug|[\\/]/);
-});
+		);
+		assert.equal(enabled.stdout, "refused");
+		assert.match(
+			enabled.stderr,
+			/stage=claim\.owner-read reason=native-error code=ENOENT syscall=open/,
+		);
+		assert.match(enabled.stderr, /stage=claims\.inspect reason=absence-not-confirmed/);
+		assert.doesNotMatch(enabled.stderr, /PRIVATE_|private-policy-debug|[\\/]/);
+	},
+);
 
-test("policy debug retains both refusal and unresolved-absence errors from existing observations", async () => {
-	const enabled = await runDiagnostic(
-		true,
-		`
+nodeTest(
+	"policy debug retains both refusal and unresolved-absence errors from existing observations",
+	async () => {
+		const enabled = await runDiagnostic(
+			true,
+			`
 const base = join(root, 'table');
 const path = await plant(base);
 const nativeRead = fs.readFile;
@@ -188,18 +193,19 @@ mock.reset();
 syncBuiltinESMExports();
 process.stdout.write('refused');
 `,
-	);
-	assert.equal(enabled.stdout, "refused");
-	assert.match(
-		enabled.stderr,
-		/stage=claims\.absence-stat reason=absence-not-confirmed code=EACCES syscall=lstat/,
-	);
-	assert.match(
-		enabled.stderr,
-		/stage=claim\.owner-read reason=native-error code=ENOENT syscall=open/,
-	);
-	assert.doesNotMatch(enabled.stderr, /PRIVATE_|private-policy-debug|[\\/]/);
-});
+		);
+		assert.equal(enabled.stdout, "refused");
+		assert.match(
+			enabled.stderr,
+			/stage=claims\.absence-stat reason=absence-not-confirmed code=EACCES syscall=lstat/,
+		);
+		assert.match(
+			enabled.stderr,
+			/stage=claim\.owner-read reason=native-error code=ENOENT syscall=open/,
+		);
+		assert.doesNotMatch(enabled.stderr, /PRIVATE_|private-policy-debug|[\\/]/);
+	},
+);
 
 const concurrentAttempts = `
 // These claims live in the shared coordination directory, where other processes' GC verifies
@@ -242,31 +248,35 @@ try {
 }
 `;
 
-test("policy debug correlates concurrent acquisition failures and later release without changing outcomes", async () => {
-	const quiet = await runDiagnostic(false, concurrentAttempts);
-	const enabled = await runDiagnostic(true, concurrentAttempts);
-	const [quietOutcome] = quiet.stdout.split("\n");
-	const [enabledOutcome, startIdentity] = enabled.stdout.split("\n");
-	assert.equal(quietOutcome, "success-and-fail-closed");
-	assert.equal(quiet.stderr, "");
-	assert.equal(enabledOutcome, quietOutcome);
-	assert.match(
-		enabled.stderr,
-		/attempt=2 phase=acquire stage=claim\.owner-read reason=invalid-owner/,
-	);
-	assert.match(
-		enabled.stderr,
-		/attempt=2 phase=acquire stage=ticket\.scan reason=claims-unavailable/,
-	);
-	assert.match(
-		enabled.stderr,
-		/attempt=1 phase=release stage=claim\.owner-read reason=invalid-owner/,
-	);
-	assert.match(
-		enabled.stderr,
-		/attempt=1 phase=release stage=release\.complete reason=claim-not-removed/,
-	);
-	assert.doesNotMatch(enabled.stderr, /PRIVATE_|private-policy-debug|[\\/]/);
-	assert.match(startIdentity, /\S/);
-	assert.equal(enabled.stderr.includes(startIdentity), false);
-});
+nodeTest(
+	"policy debug correlates concurrent acquisition failures and later release without changing outcomes",
+	async () => {
+		const quiet = await runDiagnostic(false, concurrentAttempts);
+		const enabled = await runDiagnostic(true, concurrentAttempts);
+		const [quietOutcome] = quiet.stdout.split("\n");
+		const [enabledOutcome, startIdentity] = enabled.stdout.split("\n");
+		assert.equal(quietOutcome, "success-and-fail-closed");
+		assert.equal(quiet.stderr, "");
+		assert.equal(enabledOutcome, quietOutcome);
+		assert.match(
+			enabled.stderr,
+			/attempt=2 phase=acquire stage=claim\.owner-read reason=invalid-owner/,
+		);
+		assert.match(
+			enabled.stderr,
+			/attempt=2 phase=acquire stage=ticket\.scan reason=claims-unavailable/,
+		);
+		assert.match(
+			enabled.stderr,
+			/attempt=1 phase=release stage=claim\.owner-read reason=invalid-owner/,
+		);
+		assert.match(
+			enabled.stderr,
+			/attempt=1 phase=release stage=release\.complete reason=claim-not-removed/,
+		);
+		assert.doesNotMatch(enabled.stderr, /PRIVATE_|private-policy-debug|[\\/]/);
+		assert.ok(startIdentity !== undefined);
+		assert.match(startIdentity, /\S/);
+		assert.equal(enabled.stderr.includes(startIdentity), false);
+	},
+);

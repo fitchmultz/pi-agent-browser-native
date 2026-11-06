@@ -90,38 +90,36 @@ function sensitiveOperandIndices(args: readonly string[], start: number): number
 				? [start + 3]
 				: [];
 		case "storage":
-			return ["local", "session"].includes(subcommand) && args[start + 2] === "set"
+			return (subcommand === "local" || subcommand === "session") && args[start + 2] === "set"
 				? [start + 4]
 				: [];
 		case "clipboard":
 			return subcommand === "write"
 				? args.slice(start + 2).map((_, index) => start + 2 + index)
 				: [];
+		case undefined:
 		default:
 			return [];
 	}
 }
 
 function redactBatchRows(args: readonly string[]): ReadonlyMap<number, string> {
-	const batch = projectUpstreamGlobalFlags(args);
+	const [command, ...operands] = projectUpstreamGlobalFlags(args);
 	const replacements = new Map<number, string>();
-	if (batch.tokens[0] !== "batch") {
+	if (command?.token !== "batch") {
 		return replacements;
 	}
-	for (let index = 1; index < batch.tokens.length; index++) {
-		if (isNativeBatchOption(batch.tokens[index])) {
+	for (const { index, token } of operands) {
+		if (isNativeBatchOption(token)) {
 			continue;
 		}
-		const step = parseBatchCommandArgument(batch.tokens[index]).step;
+		const step = parseBatchCommandArgument(token).step;
 		if (!step) {
 			continue;
 		}
 		const safe = redactInvocationArgs(step);
-		if (safe.some((token, offset) => token !== step[offset])) {
-			replacements.set(
-				batch.indices[index],
-				safe.map((token) => `'${token.replaceAll("'", "'\\''")}'`).join(" "),
-			);
+		if (safe.some((word, offset) => word !== step[offset])) {
+			replacements.set(index, safe.map((word) => `'${word.replaceAll("'", "'\\''")}'`).join(" "));
 		}
 	}
 	return replacements;

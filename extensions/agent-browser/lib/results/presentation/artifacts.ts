@@ -24,6 +24,7 @@ import {
 	isNonFileArtifactPathCandidate,
 } from "./artifact-files.js";
 import { appendPresentationNotice } from "./artifact-images.js";
+import type { ToolPresentationObservation } from "./observation-contracts.js";
 
 export type { ArtifactRequestContext } from "../artifact-contracts.js";
 export { attachInlineImage, extractImagePath, getScreenshotSummary } from "./artifact-images.js";
@@ -53,26 +54,28 @@ export function manifestHasNewNoticeWorthyEntries(
 }
 
 export function applyArtifactManifest(
-	presentation: ToolPresentation,
+	presentation: ToolPresentationObservation,
 	baseManifest: SessionArtifactManifest | undefined,
 	entries: readonly SessionArtifactManifestEntry[],
-): ToolPresentation {
+): Partial<Pick<ToolPresentation, "artifactManifest" | "artifactRetentionSummary" | "content">> {
 	if (entries.length === 0) {
-		return presentation;
+		return {};
 	}
 	const artifactManifest = mergeSessionArtifactManifest({
 		base: baseManifest,
 		entries: [...entries],
 	});
 	if (!artifactManifest) {
-		return presentation;
+		return {};
 	}
-	presentation.artifactManifest = artifactManifest;
-	presentation.artifactRetentionSummary = formatSessionArtifactRetentionSummary(artifactManifest);
-	if (entries.some(noticeWorthy)) {
-		appendPresentationNotice(presentation, presentation.artifactRetentionSummary);
-	}
-	return presentation;
+	const artifactRetentionSummary = formatSessionArtifactRetentionSummary(artifactManifest);
+	return {
+		artifactManifest,
+		artifactRetentionSummary,
+		...(entries.some(noticeWorthy)
+			? { content: appendPresentationNotice(presentation.content, artifactRetentionSummary) }
+			: {}),
+	};
 }
 
 function getRecordingPending(

@@ -160,11 +160,13 @@ export function buildBrowserDefaultProfileGuideline(
 export function buildToolPromptGuidelines(options: {
 	/** Compact fallback has no detailed playbook, so only it carries the orientation bullets. */
 	readonly compact: boolean;
-	readonly browserDefaultProfile?: {
-		readonly name: string;
-		readonly policy: BrowserDefaultProfilePolicy;
-	};
-	readonly browserExecutablePath?: string;
+	readonly browserDefaultProfile?:
+		| {
+				readonly name: string;
+				readonly policy: BrowserDefaultProfilePolicy;
+		  }
+		| undefined;
+	readonly browserExecutablePath?: string | undefined;
 	readonly docs?: {
 		readonly readmePath: string;
 		readonly commandReferencePath: string;

@@ -5,8 +5,8 @@ import { runAgentBrowserProcess } from "../process.js";
 import { parseAgentBrowserEnvelope } from "../results/envelope.js";
 
 export interface NativeDefaults {
-	readonly session?: string;
-	readonly namespace?: string;
+	readonly session?: string | undefined;
+	readonly namespace?: string | undefined;
 	readonly profile?: unknown;
 	readonly executablePath?: unknown;
 	readonly [key: string]: unknown;
@@ -92,7 +92,7 @@ export const LOCAL_LAUNCH_DEFAULT_FLAGS: readonly string[] = [
 
 interface NativeIdentityRead {
 	readonly cwd: string;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 	readonly rootFallback: boolean;
 	readonly browserCommand: boolean;
 }
@@ -196,7 +196,6 @@ export async function loadNativeIdentity(
 	const identity: NativeDefaults = {};
 	for (const path of paths) {
 		// Project defaults override global defaults; native validation must finish in that layer order.
-		// oxlint-disable-next-line no-await-in-loop
 		Object.assign(identity, await readNativeIdentity(path, options));
 	}
 	return identity;

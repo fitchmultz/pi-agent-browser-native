@@ -36,10 +36,14 @@ async function unverifiedRecordingArtifact(
 	}
 }
 
+interface RecordingEntry {
+	artifact: FileArtifactMetadata;
+	removed: boolean;
+}
+
 class TerminalBatchRecordings {
-	private readonly artifacts: FileArtifactMetadata[] = [];
-	private readonly pendingBySession = new Map<string, number[]>();
-	private readonly removed = new Set<number>();
+	private readonly entries: RecordingEntry[] = [];
+	private readonly pendingBySession = new Map<string, RecordingEntry[]>();
 	private readonly session: string;
 
 	constructor(sessionName: string | undefined, namespace: string | undefined) {
@@ -52,20 +56,21 @@ class TerminalBatchRecordings {
 	private removeMatchingPending(
 		artifact: FileArtifactMetadata,
 		session: string,
-	): readonly number[] {
+	): readonly RecordingEntry[] {
 		const pending = this.pendingBySession.get(session) ?? [];
-		const matching = pending.map((index) => this.artifacts[index].kind).lastIndexOf(artifact.kind);
+		const matching = pending.findLastIndex((entry) => entry.artifact.kind === artifact.kind);
 		if (matching !== -1) {
 			const removed = pending.splice(matching, 1).at(0);
 			if (removed !== undefined) {
-				this.removed.add(removed);
+				removed.removed = true;
 			}
 		}
 		return pending;
 	}
 
-	private append(artifact: FileArtifactMetadata): readonly number[] | undefined {
-		const index = this.artifacts.push(artifact) - 1;
+	private append(artifact: FileArtifactMetadata): readonly RecordingEntry[] | undefined {
+		const entry = { artifact, removed: false };
+		this.entries.push(entry);
 		if (artifact.command !== "record") {
 			return undefined;
 		}
@@ -75,7 +80,7 @@ class TerminalBatchRecordings {
 				: "";
 		if (isPendingRecordingArtifact(artifact)) {
 			const pending = this.pendingBySession.get(session) ?? [];
-			pending.push(index);
+			pending.push(entry);
 			this.pendingBySession.set(session, pending);
 			return undefined;
 		}
@@ -85,14 +90,13 @@ class TerminalBatchRecordings {
 		}
 		// A terminal video also ends its sheet; a native sheet below replaces this unverified row.
 		const sheets = pending.filter(
-			(position) =>
-				this.artifacts[position].kind === "image" &&
-				isPendingRecordingArtifact(this.artifacts[position]),
+			(candidate) =>
+				candidate.artifact.kind === "image" && isPendingRecordingArtifact(candidate.artifact),
 		);
 		return sheets.length > 0 ? sheets : undefined;
 	}
 
-	private getClosePending(step: BatchPresentedStepObservation): readonly number[] {
+	private getClosePending(step: BatchPresentedStepObservation): readonly RecordingEntry[] {
 		const command = step.details.command;
 		if (
 			!step.details.success ||
@@ -101,21 +105,16 @@ class TerminalBatchRecordings {
 		) {
 			return [];
 		}
-		return (this.pendingBySession.get(this.session) ?? []).filter((index) => {
-			const current = this.artifacts.at(index);
-			return (
-				current !== undefined && isPendingRecordingArtifact(current) && !this.removed.has(index)
-			);
-		});
+		return (this.pendingBySession.get(this.session) ?? []).filter(
+			(entry) => isPendingRecordingArtifact(entry.artifact) && !entry.removed,
+		);
 	}
 
-	private async abandon(indices: readonly number[], subcommand: string): Promise<void> {
-		for (const index of indices) {
-			const current = this.artifacts.at(index);
-			if (current && isPendingRecordingArtifact(current) && !this.removed.has(index)) {
+	private async abandon(entries: readonly RecordingEntry[], subcommand: string): Promise<void> {
+		for (const entry of entries) {
+			if (isPendingRecordingArtifact(entry.artifact) && !entry.removed) {
 				// Each replacement must finish before later lifecycle rows inspect the same artifact state.
-				// oxlint-disable-next-line no-await-in-loop
-				this.artifacts[index] = await unverifiedRecordingArtifact(current, subcommand);
+				entry.artifact = await unverifiedRecordingArtifact(entry.artifact, subcommand);
 			}
 		}
 	}
@@ -126,18 +125,16 @@ class TerminalBatchRecordings {
 				const sheets = this.append(artifact);
 				if (sheets) {
 					// Terminal receipt order determines which pending sheet the next row can replace.
-					// oxlint-disable-next-line no-await-in-loop
 					await this.abandon(sheets, artifact.subcommand ?? "stop");
 				}
 			}
 			const pending = this.getClosePending(step);
 			if (pending.length > 0) {
 				// Close abandonment must finish before any later recording receipt is folded.
-				// oxlint-disable-next-line no-await-in-loop
 				await this.abandon(pending, "close-abandoned");
 			}
 		}
-		return this.artifacts.filter((_, index) => !this.removed.has(index));
+		return this.entries.filter((entry) => !entry.removed).map((entry) => entry.artifact);
 	}
 }
 

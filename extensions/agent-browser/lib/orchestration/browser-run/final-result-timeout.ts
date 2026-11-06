@@ -120,7 +120,7 @@ export function buildTimeoutPartialProgressNextActions(
 }
 
 export function buildDialogTimeoutNextActions(
-	options: Readonly<{ command?: string; sessionName?: string }>,
+	options: Readonly<{ command?: string | undefined; sessionName?: string | undefined }>,
 ): AgentBrowserNextAction[] {
 	if (
 		options.command === undefined ||

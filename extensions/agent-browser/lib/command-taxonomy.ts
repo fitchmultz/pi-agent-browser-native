@@ -51,20 +51,26 @@ export function getRecordCommandOperandIndices(tokens: readonly string[]): numbe
 		return [];
 	}
 	const operands: number[] = [];
-	for (let index = 2; index < tokens.length && operands.length < 2; index += 1) {
-		const width = recordOptionWidth(tokens[index], tokens.at(index + 1));
-		if (width > 0) {
-			index += width - 1;
-		} else {
+	const entries = tokens.entries();
+	entries.next();
+	entries.next();
+	for (const [index, token] of entries) {
+		const width = recordOptionWidth(token, tokens.at(index + 1));
+		if (width === 2) {
+			entries.next();
+		} else if (width === 0) {
 			operands.push(index);
+			if (operands.length === 2) {
+				break;
+			}
 		}
 	}
 	return operands.length > 0 ? operands : [2, 3];
 }
 
 export function getRecordCommandOperands(tokens: readonly string[]): {
-	path?: string;
-	url?: string;
+	path?: string | undefined;
+	url?: string | undefined;
 } {
 	const indices = getRecordCommandOperandIndices(tokens);
 	const path = indices.at(0);

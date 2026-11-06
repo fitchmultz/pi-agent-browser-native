@@ -6,6 +6,7 @@ import {
 	getCommandRefSnapshotInvalidation,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
+	type SessionPageStateView,
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
 } from "../../session-page-state.js";
@@ -90,12 +91,11 @@ type RefreshCompleteRefsInput = Readonly<
 		readonly state: BrowserRunState;
 	};
 };
-type ApplyOutputSnapshotInput = Readonly<Pick<PageOutputPhase, "currentSessionTabTarget">> &
-	Pick<PageOutputPhase, "currentRefSnapshot" | "currentRefSnapshotInvalidation"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
-			readonly state: BrowserRunState;
-		};
+type ApplyOutputSnapshotInput = Readonly<Pick<PageOutputPhase, "currentSessionTabTarget">> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
+		readonly state: BrowserRunState;
 	};
+};
 type ReconcileOutputRefsInput = Readonly<
 	Pick<
 		PageOutputPhase,
@@ -105,6 +105,8 @@ type ReconcileOutputRefsInput = Readonly<
 		| "confirmedData"
 		| "confirmedEffects"
 		| "currentSessionTabTarget"
+		| "batchRefSnapshotState"
+		| "networkRoutesBySession"
 		| "directClose"
 		| "failedTransitionReverification"
 		| "nativeCommandMayHaveExecuted"
@@ -118,30 +120,20 @@ type ReconcileOutputRefsInput = Readonly<
 		| "unobservedMutation"
 		| "unsettledWebMcpMutation"
 	>
-> &
-	Pick<
-		PageOutputPhase,
-		| "batchRefSnapshotState"
-		| "currentRefSnapshot"
-		| "currentRefSnapshotInvalidation"
-		| "networkRoutesBySession"
+> & {
+	readonly input: Readonly<
+		Pick<ProcessBrowserOutputInput, "cwd" | "processResult" | "sessionPageStateUpdate" | "signal">
 	> & {
-		readonly input: Readonly<
-			Pick<ProcessBrowserOutputInput, "cwd" | "processResult" | "sessionPageStateUpdate" | "signal">
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					| "callerColdLaunch"
-					| "commandTokens"
-					| "executionPlan"
-					| "resolvedSemanticActionRefSnapshot"
-				>
-			>;
-			readonly state: BrowserRunState;
-		};
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				"callerColdLaunch" | "commandTokens" | "executionPlan" | "resolvedSemanticActionRefSnapshot"
+			>
+		>;
+		readonly state: BrowserRunState;
 	};
-type RetireOutputSessionInput = Pick<PageOutputPhase, "networkRoutesBySession"> & {
+};
+type RetireOutputSessionInput = Readonly<Pick<PageOutputPhase, "networkRoutesBySession">> & {
 	readonly input: { readonly state: BrowserRunState };
 };
 type ReconcileOutputPinningInput = Readonly<
@@ -195,6 +187,16 @@ function batchSnapshotData(draft: BatchSnapshotDataInput): unknown {
 		}
 	}
 	return rows;
+}
+
+export function observeBatchRefSnapshot(
+	draft: BatchSnapshotDataInput & {
+		readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> };
+	},
+): PageOutputPhase["batchRefSnapshotState"] {
+	return draft.input.prepared.executionPlan.commandInfo.command === "batch"
+		? extractLatestRefSnapshotStateFromBatchResults(batchSnapshotData(draft))
+		: undefined;
 }
 
 function getTransitionInvalidation(
@@ -352,12 +354,9 @@ function applyOutputSnapshot(
 	sessionName: string,
 	snapshot: SessionRefSnapshot | undefined,
 	invalidation: SessionRefSnapshotInvalidation | undefined,
-): void {
+): Pick<PageOutputPhase, "currentRefSnapshot" | "currentRefSnapshotInvalidation"> {
 	const { sessionPageState } = draft.input.state;
-	let view: {
-		readonly refSnapshot?: SessionRefSnapshot;
-		readonly refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
-	} = sessionPageState.get(sessionName);
+	let view: SessionPageStateView = sessionPageState.get(sessionName);
 	if (snapshot) {
 		view = sessionPageState.applyRefSnapshot({
 			sessionName,
@@ -372,37 +371,42 @@ function applyOutputSnapshot(
 			update: draft.input.sessionPageStateUpdate,
 		});
 	}
-	draft.currentRefSnapshot = view.refSnapshot;
-	draft.currentRefSnapshotInvalidation = view.refSnapshotInvalidation;
+	return {
+		currentRefSnapshot: view.refSnapshot,
+		currentRefSnapshotInvalidation: view.refSnapshotInvalidation,
+	};
 }
 
-export async function reconcileOutputRefs(draft: ReconcileOutputRefsInput): Promise<void> {
-	if (draft.input.prepared.executionPlan.commandInfo.command === "batch") {
-		draft.batchRefSnapshotState = extractLatestRefSnapshotStateFromBatchResults(
-			batchSnapshotData(draft),
-		);
-	}
+export async function reconcileOutputRefs(
+	draft: ReconcileOutputRefsInput,
+): Promise<
+	| Pick<PageOutputPhase, "networkRoutesBySession">
+	| Pick<PageOutputPhase, "currentRefSnapshot" | "currentRefSnapshotInvalidation">
+	| undefined
+> {
 	const sessionName = draft.sessionStateKey;
 	if (sessionName === undefined || sessionName.length === 0 || draft.browserIndependentRead) {
 		return;
 	}
 	if ((draft.directClose && draft.succeeded) || draft.nestedBatchClosed) {
-		retireOutputSession(draft, sessionName);
-		return;
+		return { networkRoutesBySession: retireOutputSession(draft, sessionName) };
 	}
 	const invalidation = getTransitionInvalidation(draft);
 	applyOutputTabTarget(draft, sessionName);
 	const snapshot = await refreshCompleteRefs(draft, sessionName, outputSnapshot(draft));
-	applyOutputSnapshot(draft, sessionName, snapshot, invalidation);
+	return applyOutputSnapshot(draft, sessionName, snapshot, invalidation);
 }
 
-export function retireOutputSession(draft: RetireOutputSessionInput, sessionName: string): void {
+function retireOutputSession(
+	draft: RetireOutputSessionInput,
+	sessionName: string,
+): PageOutputPhase["networkRoutesBySession"] {
 	draft.input.state.attachedSessionKeys.delete(sessionName);
 	const routes = new Map(draft.networkRoutesBySession);
 	routes.delete(sessionName);
-	draft.networkRoutesBySession = routes;
 	draft.input.state.sessionPageState.clearSession(sessionName);
 	draft.input.state.closedManagedSessionNames.add(sessionName);
+	return routes;
 }
 
 export function reconcileOutputPinning(draft: ReconcileOutputPinningInput): void {

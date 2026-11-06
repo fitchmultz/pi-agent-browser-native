@@ -162,11 +162,11 @@ export function formatMissingArtifactFailureText(
 	artifacts: readonly FileArtifactMetadata[] | undefined,
 ): string | undefined {
 	const failedArtifacts = (artifacts ?? []).filter(isMissingFileArtifact);
-	if (failedArtifacts.length === 0) {
+	const artifact = failedArtifacts[0];
+	if (artifact === undefined) {
 		return undefined;
 	}
 	if (failedArtifacts.length === 1) {
-		const artifact = failedArtifacts[0];
 		return artifact.status === "stale"
 			? `Artifact verification failed: requested ${artifact.kind} path ${artifact.absolutePath} has a modification time outside the current command window.`
 			: `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;
@@ -175,12 +175,12 @@ export function formatMissingArtifactFailureText(
 }
 
 export function classifyPresentationSuccessCategory(options: {
-	readonly artifactVerification?: Readonly<
-		Pick<ArtifactVerificationSummary, "missingCount" | "unverifiedCount">
-	>;
-	readonly artifacts?: readonly FileArtifactMetadata[];
+	readonly artifactVerification?:
+		| Readonly<Pick<ArtifactVerificationSummary, "missingCount" | "unverifiedCount">>
+		| undefined;
+	readonly artifacts?: readonly FileArtifactMetadata[] | undefined;
 	readonly inspection?: boolean;
-	readonly savedFile?: SavedFilePresentationDetails;
+	readonly savedFile?: SavedFilePresentationDetails | undefined;
 }): AgentBrowserSuccessCategory {
 	if (
 		(options.artifactVerification?.missingCount ?? 0) > 0 ||

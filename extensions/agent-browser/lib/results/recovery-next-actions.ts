@@ -4,12 +4,12 @@ import type { AgentBrowserRecoveryContext } from "./action-contracts.js";
 
 export interface TabRecoveryCorrection {
 	readonly selectedTab?: string;
-	readonly targetTitle?: string;
+	readonly targetTitle?: string | undefined;
 	readonly targetUrl?: string;
 }
 
 export interface TabRecoveryTarget {
-	readonly title?: string;
+	readonly title?: string | undefined;
 	readonly url?: string;
 }
 
@@ -62,9 +62,9 @@ interface SessionTabRecoveryOptions {
 	readonly kind: "about-blank" | "tab-drift";
 	readonly recoveryApplied?: boolean;
 	readonly resultCategory?: "failure" | "success";
-	readonly sessionName?: string;
-	readonly tabCorrection?: TabRecoveryCorrection;
-	readonly target?: TabRecoveryTarget;
+	readonly sessionName?: string | undefined;
+	readonly tabCorrection?: TabRecoveryCorrection | undefined;
+	readonly target?: TabRecoveryTarget | undefined;
 }
 
 function getSessionTabRecoveryContext(

@@ -21,13 +21,13 @@ const ELECTRON_CLEANUP_POLL_INTERVAL_MS = 100;
 export interface ElectronLaunchStatus {
 	readonly cleanupState: ElectronLaunchRecord["cleanupState"];
 	readonly launchId: string;
-	readonly pid?: number;
-	readonly pidAlive?: boolean;
+	readonly pid?: number | undefined;
+	readonly pidAlive?: boolean | undefined;
 	readonly port: number;
 	readonly portAlive: boolean;
 	readonly targets: readonly ElectronCdpTarget[];
 	readonly userDataDirState: "present" | "absent" | "unknown";
-	readonly version?: ElectronCdpVersion;
+	readonly version?: ElectronCdpVersion | undefined;
 }
 
 export interface ElectronCleanupStep {
@@ -126,7 +126,6 @@ async function waitForProcessExit(
 			return true;
 		}
 		// Polling observes exit between sleeps; parallel waits cannot preserve the deadline.
-		// oxlint-disable-next-line no-await-in-loop
 		await sleep(ELECTRON_CLEANUP_POLL_INTERVAL_MS);
 	}
 	return hasProcessExited(child, pid);
@@ -340,7 +339,7 @@ function summarizeCleanup(
 }
 
 export async function cleanupElectronLaunchResources(options: {
-	readonly child?: ChildProcess;
+	readonly child?: ChildProcess | undefined;
 	readonly record: ElectronLaunchRecord;
 	readonly timeoutMs?: number;
 }): Promise<ElectronCleanupResult> {

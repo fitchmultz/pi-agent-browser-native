@@ -1,9 +1,9 @@
-import { readArray, readRecord } from "./helpers/assertions.js";
+import { readArray, readRecord, readDefined } from "./helpers/assertions.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { BROWSER_TRANSITION_ENTRY } from "../extensions/agent-browser/lib/browser-transcript.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
@@ -18,7 +18,7 @@ import {
 
 // The incident repeated a 34,683-ref capture and a 100-row recent artifact view after ordinary reads.
 // This exercises the real code/direct persistence boundary, not a serializer fed synthetic deltas.
-test(
+nodeTest(
 	"ordinary code reads retain a large capture without recopying refs or artifact history",
 	{ concurrency: false, timeout: 120_000 },
 	async () => {
@@ -86,14 +86,11 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 						"explicit structured snapshot exports retain every native ref",
 					);
 					assert.deepEqual(readRecord(nativeData.refs).e34683, { role: "button", name: "Go" });
-					const code =
-						// Missing code-tool registration fails immediately; journal-growth assertions cannot be skipped.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						harness.getTool("agent_browser_code") ?? assert.fail("code tool must be registered");
+					const code = harness.getTool("agent_browser_code");
+					assert.ok(code, "code tool must be registered");
 					let result;
 					for (let cell = 0; cell < 2; cell++) {
 						// The second cell must follow the first in the same journal to measure repeated-read growth.
-						// oxlint-disable-next-line no-await-in-loop
 						result = await executeRegisteredTool(code, harness.ctx, {
 							session: "growth",
 							code: 'let last; for(let i=0;i<2;i++) last=await browser({args:["get","title"]}); emit(last.data);',
@@ -144,7 +141,7 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 					);
 					const replay = SessionPageState.fromBranch(harness.ctx.sessionManager.getBranch());
 					assert.equal(replay.get("growth").refSnapshot?.refIds.length, 34683);
-					assert.equal(replay.get("growth").refSnapshot?.refs?.e34683.role, "button");
+					assert.equal(readDefined(replay.get("growth").refSnapshot?.refs?.e34683).role, "button");
 					assert.equal(
 						replay.get("growth").tabTarget?.url,
 						"https://fixture.test/page#private-fragment",

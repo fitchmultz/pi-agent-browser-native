@@ -6,11 +6,17 @@
 
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readRecord, readString, readArray, readBoolean } from "./helpers/assertions.js";
+import {
+	readRecord,
+	readString,
+	readArray,
+	readBoolean,
+	readDefined,
+} from "./helpers/assertions.js";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Type } from "typebox";
 
@@ -53,7 +59,7 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test("failure finalization adds the Pi failure notice to prose despite --json args", () => {
+nodeTest("failure finalization adds the Pi failure notice to prose despite --json args", () => {
 	const proseJsonArgsFinalized = finalizeAgentBrowserFailure(
 		{
 			content: [
@@ -86,7 +92,7 @@ const NATIVE_DISCOVERY_ENABLED =
 	("instructionGroupsExtension" in Pi && typeof nativeInstructionGroups === "function");
 
 type PipelineToolResult = {
-	readonly content: readonly { readonly type: string; readonly text?: string }[];
+	readonly content: readonly { readonly type: string; readonly text: string | undefined }[];
 	readonly details: unknown;
 	readonly isError: boolean;
 	readonly toolName: string;
@@ -232,7 +238,6 @@ async function listFilesRecursive(directory: string): Promise<string[]> {
 		const path = join(directory, entry.name);
 		if (entry.isDirectory()) {
 			// Complete each directory traversal before selecting the persisted transcript.
-			// oxlint-disable-next-line no-await-in-loop
 			files.push(...(await listFilesRecursive(path)));
 		} else {
 			files.push(path);
@@ -252,7 +257,7 @@ async function readPersistedAgentBrowserResult(
 		1,
 		`expected one persisted session file, got ${sessionFiles.join(", ")}`,
 	);
-	const sessionFile = sessionFiles[0];
+	const sessionFile = readDefined(sessionFiles[0]);
 	const lines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
 	const results = lines
 		.map((line) => {
@@ -385,12 +390,14 @@ async function runPipelinePrompt(options: {
 					sessionManager: SessionManager.create(tempDir, sessionDir, {
 						id: randomUUID(),
 					}),
-					tools: options.discoveryStream
-						? undefined
-						: [
-								...(options.priorCalls ?? []).map((call) => call.name),
-								options.toolName ?? "agent_browser",
-							],
+					...(options.discoveryStream
+						? {}
+						: {
+								tools: [
+									...(options.priorCalls ?? []).map((call) => call.name),
+									options.toolName ?? "agent_browser",
+								],
+							}),
 				});
 				try {
 					await session.bindExtensions({
@@ -436,7 +443,7 @@ async function runPipelinePrompt(options: {
 }
 
 for (const webSearch of ["absent", "startup", "late"] as const) {
-	test(
+	nodeTest(
 		`Pi pipeline reveals complete browser instructions after discovery on a generic prompt before execution (web search: ${webSearch})`,
 		{ skip: !NATIVE_DISCOVERY_ENABLED },
 		async () => {
@@ -447,6 +454,7 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 			let hookCalls = 0;
 			let executionCalls = 0;
 			let requests = 0;
+			const requestObservations: { names: string[]; prompt: string; executionCalls: number }[] = [];
 			const pipeline = await withPatchedEnv(
 				{
 					EXA_API_KEY: undefined,
@@ -480,13 +488,8 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 							requests++;
 							const names = getCurrentTools(context.messages).map((tool) => tool.name);
 							const prompt = getCurrentSystemPrompt(context.messages);
+							requestObservations.push({ names, prompt, executionCalls });
 							if (requests === 1) {
-								// Final request-count checks require this first discovery-only phase.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.deepEqual(names, ["discover_tools"]);
-								// This required first phase must not eagerly include browser instructions.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(!prompt.includes(PROJECT_RULE_PROMPT));
 								return createToolCallingStream(
 									{ enable: ["browser"] },
 									[],
@@ -511,15 +514,15 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 								instructions.includes(PROJECT_RULE_PROMPT),
 								"complete instructions must reach the model before execution",
 							);
-							for (const guideline of [
+							const guidelines = [
 								...QUICK_START_GUIDELINES,
 								...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
 								...Object.values(ADVANCED_TOOL_PROMPT_GUIDELINES).flat(),
-							]) {
-								// Every guideline in the complete fixed inventory must reach the model.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(instructions.includes(guideline), guideline);
-							}
+							];
+							assert.deepEqual(
+								guidelines.filter((guideline) => !instructions.includes(guideline)),
+								[],
+							);
 							assert.ok(names.includes("agent_browser"));
 							assert.ok(names.includes("agent_browser_code"));
 							assert.ok(names.includes("agent_browser_tools"));
@@ -529,11 +532,7 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 								"discovery must not enable advanced tools",
 							);
 							assert.equal(hookCalls, 1, "activation must not rerun before_agent_start");
-							if (requests === 2) {
-								// Final request counts require this post-discovery/pre-execution phase.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(executionCalls, 0, "instructions precede first execution");
-							}
+
 							return createToolCallingStream({ args: ["--help"] })(model, context, options);
 						},
 						async runPrompt(session) {
@@ -543,6 +542,14 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 					}),
 			);
 			assert.equal(requests, 3);
+			const firstRequest = readDefined(requestObservations[0]);
+			assert.deepEqual(firstRequest.names, ["discover_tools"]);
+			assert.equal(firstRequest.prompt.includes(PROJECT_RULE_PROMPT), false);
+			assert.equal(
+				readDefined(requestObservations[1]).executionCalls,
+				0,
+				"instructions precede first execution",
+			);
 			assert.equal(executionCalls, 1);
 			assert.equal(pipeline.persistedResult.isError, false);
 			assert.deepEqual(
@@ -553,7 +560,7 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 	);
 }
 
-test(
+nodeTest(
 	"Pi pipeline refuses same-batch browser execution before discovery instructions are read",
 	{ skip: !NATIVE_DISCOVERY_ENABLED },
 	async () => {
@@ -615,29 +622,31 @@ test(
 	},
 );
 
-test("Pi pipeline captures the owner cwd before an awaited browser policy without moving native ctx", async () => {
-	let selected = "";
-	let resolutions = 0;
-	const pipeline = await runPipelinePrompt({
-		toolArguments: { args: ["download", "#export", "report.txt"], outputPath: "receipt.json" },
-		extensionFactory(pi) {
-			pi.on("before_agent_start", async (_event, ctx) => {
-				selected = join(ctx.cwd, "operation");
-				await mkdir(selected);
-			});
-			pi.events.on("pi-change-working-dir:resolve-execution-cwd", (request) => {
-				resolutions++;
-				Object.assign(readRecord(request), { result: { cwd: selected } });
-			});
-			agentBrowserExtension(pi, {
-				async beforeExecute(_id, ctx) {
-					assert.notEqual(ctx.cwd, selected, "Pi's project context is unchanged");
-					await Promise.resolve();
-					selected = ctx.cwd;
-				},
-			});
-		},
-		fakeScript: `const fs = require("node:fs"), path = require("node:path"), args = process.argv.slice(2);
+nodeTest(
+	"Pi pipeline captures the owner cwd before an awaited browser policy without moving native ctx",
+	async () => {
+		let selected = "";
+		let resolutions = 0;
+		const pipeline = await runPipelinePrompt({
+			toolArguments: { args: ["download", "#export", "report.txt"], outputPath: "receipt.json" },
+			extensionFactory(pi) {
+				pi.on("before_agent_start", async (_event, ctx) => {
+					selected = join(ctx.cwd, "operation");
+					await mkdir(selected);
+				});
+				pi.events.on("pi-change-working-dir:resolve-execution-cwd", (request) => {
+					resolutions++;
+					Object.assign(readRecord(request), { result: { cwd: selected } });
+				});
+				agentBrowserExtension(pi, {
+					async beforeExecute(_id, ctx) {
+						assert.notEqual(ctx.cwd, selected, "Pi's project context is unchanged");
+						await Promise.resolve();
+						selected = ctx.cwd;
+					},
+				});
+			},
+			fakeScript: `const fs = require("node:fs"), path = require("node:path"), args = process.argv.slice(2);
 const index = args.indexOf("download");
 let data = { title: "Fixture", url: "https://fixture.example.test/" };
 if (index >= 0) {
@@ -647,30 +656,31 @@ if (index >= 0) {
   data = { path: target };
 }
 process.stdout.write(JSON.stringify({ success: true, data }));`,
-	});
-	assert.equal(resolutions, 1);
-	assert.equal(
-		pipeline.persistedResult.isError,
-		false,
-		JSON.stringify(pipeline.persistedResult.content),
-	);
-	const details = readRecord(pipeline.persistedResult.details);
-	assert.ok(
-		readString(readRecord(details.outputFile).absolutePath).endsWith(
-			join("operation", "receipt.json"),
-		),
-	);
-});
+		});
+		assert.equal(resolutions, 1);
+		assert.equal(
+			pipeline.persistedResult.isError,
+			false,
+			JSON.stringify(pipeline.persistedResult.content),
+		);
+		const details = readRecord(pipeline.persistedResult.details);
+		assert.ok(
+			readString(readRecord(details.outputFile).absolutePath).endsWith(
+				join("operation", "receipt.json"),
+			),
+		);
+	},
+);
 
-test(
+nodeTest(
 	"Pi pipeline awaits beforeExecute after earlier sibling writes and before browser effects",
 	{ timeout: 15_000 },
 	async () => {
 		const capturedIds: string[] = [];
-		const writerEntered = Promise.withResolvers<undefined>();
-		const writerRelease = Promise.withResolvers<undefined>();
+		const writerEntered: PromiseWithResolvers<void> = Promise.withResolvers();
+		const writerRelease: PromiseWithResolvers<void> = Promise.withResolvers();
 		const captureEntered = Promise.withResolvers<string>();
-		const captureRelease = Promise.withResolvers<undefined>();
+		const captureRelease: PromiseWithResolvers<void> = Promise.withResolvers();
 		const pipeline = await runPipelinePrompt({
 			priorCalls: [{ type: "toolCall", id: "writer", name: "write_fixture", arguments: {} }],
 			toolArguments: { args: ["open", "https://fixture.example.test/"] },
@@ -682,7 +692,7 @@ test(
 					parameters: Type.Object({}),
 					async execute(_id, _params, _signal, _update, ctx) {
 						await writeFile(join(ctx.cwd, "writer.txt"), "partial");
-						writerEntered.resolve(undefined);
+						writerEntered.resolve();
 						await writerRelease.promise;
 						await writeFile(join(ctx.cwd, "writer.txt"), "complete");
 						return { content: [{ type: "text", text: "Written." }], details: {} };
@@ -714,7 +724,7 @@ test(
 						[],
 						"browser capture must await the unfinished earlier writer",
 					);
-					writerRelease.resolve(undefined);
+					writerRelease.resolve();
 					const cwd = await Promise.race([
 						captureEntered.promise,
 						pending.then(() => assert.fail("capture must run")),
@@ -728,8 +738,8 @@ test(
 						"no browser effect may precede capture completion",
 					);
 				} finally {
-					writerRelease.resolve(undefined);
-					captureRelease.resolve(undefined);
+					writerRelease.resolve();
+					captureRelease.resolve();
 					await pending;
 				}
 			},
@@ -751,65 +761,64 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Fixture", u
 	},
 );
 
-test("Pi pipeline captures code-created files before the next inner dispatch using the outer call ID", async () => {
-	const capturedIds: string[] = [];
-	const signals: AbortSignal[] = [];
-	const pipeline = await runPipelinePrompt({
-		toolName: "agent_browser_code",
-		toolArguments: {
-			code: `emit(await Promise.all([
+nodeTest(
+	"Pi pipeline captures code-created files before the next inner dispatch using the outer call ID",
+	async () => {
+		const capturedIds: string[] = [];
+		const signals: AbortSignal[] = [];
+		let capturedReport: string | undefined;
+		const pipeline = await runPipelinePrompt({
+			toolName: "agent_browser_code",
+			toolArguments: {
+				code: `emit(await Promise.all([
   browser({ args: ["download", "#export", "report.txt"] }),
   browser({ args: ["open", "https://fixture.example.test/effect"] })
 ]));`,
-		},
-		extensionFactory(pi) {
-			agentBrowserExtension(pi, {
-				async beforeExecute(id, ctx) {
-					capturedIds.push(id);
-					assert.ok(ctx.signal instanceof AbortSignal);
-					signals.push(ctx.signal);
-					if (capturedIds.length === 2) {
-						const report = await readFile(join(ctx.cwd, "report.txt"), "utf8");
-						// Final captured-ID checks require both hooks; the second must see the download.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(report, "downloaded report");
-						await writeFile(join(ctx.cwd, "captured-report.txt"), report);
-					}
-				},
-			});
-		},
-		fakeScript: `const fs = require("node:fs");
+			},
+			extensionFactory(pi) {
+				agentBrowserExtension(pi, {
+					async beforeExecute(id, ctx) {
+						capturedIds.push(id);
+						assert.ok(ctx.signal instanceof AbortSignal);
+						signals.push(ctx.signal);
+						if (capturedIds.length === 2) {
+							capturedReport = await readFile(join(ctx.cwd, "report.txt"), "utf8");
+							await writeFile(join(ctx.cwd, "captured-report.txt"), capturedReport);
+						}
+					},
+				});
+			},
+			fakeScript: `const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args.includes("download")) fs.writeFileSync("report.txt", "downloaded report");
 if (args.includes("open") && fs.readFileSync("captured-report.txt", "utf8") !== "downloaded report") throw Error("Effect preceded file capture");
 process.stdout.write(JSON.stringify({ success: true, data: { path: "report.txt", title: "Fixture", url: "https://fixture.example.test/", closed: true } }));`,
-	});
-	assert.deepEqual(capturedIds, ["call_agent_browser_pipeline", "call_agent_browser_pipeline"]);
-	assert.notEqual(signals[0], signals[1], "each inner dispatch supplies its own abort signal");
-	assert.equal(
-		pipeline.inMemoryResult.isError,
-		false,
-		JSON.stringify(pipeline.inMemoryResult.content),
-	);
-	const details = readRecord(pipeline.persistedResult.details);
-	assert.deepEqual(
-		readArray(details.data).map((result) => readRecord(result).success),
-		[true, true],
-	);
-	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("download")).length, 1);
-	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
-	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 0);
-});
+		});
+		assert.deepEqual(capturedIds, ["call_agent_browser_pipeline", "call_agent_browser_pipeline"]);
+		assert.equal(capturedReport, "downloaded report");
+		assert.notEqual(signals[0], signals[1], "each inner dispatch supplies its own abort signal");
+		assert.equal(
+			pipeline.inMemoryResult.isError,
+			false,
+			JSON.stringify(pipeline.inMemoryResult.content),
+		);
+		const details = readRecord(pipeline.persistedResult.details);
+		assert.deepEqual(
+			readArray(details.data).map((result) => readRecord(result).success),
+			[true, true],
+		);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("download")).length, 1);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 0);
+	},
+);
 
 for (const code of [false, true]) {
-	test(
+	nodeTest(
 		`Pi Stop cancels a pending beforeExecute without dispatching ${code ? "code" : "direct"} browser effects`,
 		{ timeout: 15_000 },
 		async () => {
-			let notifyEntered!: () => void;
-			const entered = new Promise<void>((resolveEntered) => {
-				notifyEntered = resolveEntered;
-			});
+			const entered: PromiseWithResolvers<void> = Promise.withResolvers();
 			let hookSignal: AbortSignal | undefined;
 			const pipeline = await runPipelinePrompt({
 				toolName: code ? "agent_browser_code" : "agent_browser",
@@ -822,7 +831,7 @@ for (const code of [false, true]) {
 							assert.equal(id, "call_agent_browser_pipeline");
 							assert.ok(ctx.signal instanceof AbortSignal);
 							hookSignal = ctx.signal;
-							notifyEntered();
+							entered.resolve();
 							await delay(60_000, undefined, { signal: ctx.signal });
 						},
 					});
@@ -831,7 +840,7 @@ for (const code of [false, true]) {
 					const pending = session.prompt("Use agent_browser once.");
 					try {
 						await Promise.race([
-							entered,
+							entered.promise,
 							pending.then(() => assert.fail("Tool completed without entering beforeExecute")),
 						]);
 					} finally {
@@ -849,7 +858,7 @@ for (const code of [false, true]) {
 	);
 }
 
-test("Pi pipeline records a rejected beforeExecute without spawning upstream", async () => {
+nodeTest("Pi pipeline records a rejected beforeExecute without spawning upstream", async () => {
 	const pipeline = await runPipelinePrompt({
 		toolArguments: { args: ["open", "https://fixture.example.test/effect"] },
 		extensionFactory(pi) {
@@ -869,31 +878,36 @@ test("Pi pipeline records a rejected beforeExecute without spawning upstream", a
 	);
 });
 
-test("Pi pipeline keeps unconfigured browser scheduling and ordinary execution unchanged", async () => {
-	const pipeline = await runPipelinePrompt({
-		toolArguments: { args: ["open", "https://fixture.example.test/"] },
-		async runPrompt(session) {
-			assert.equal(
-				session.agent.state.tools.find((tool) => tool.name === "agent_browser")?.executionMode,
-				undefined,
-			);
-			await session.prompt("Use agent_browser once.");
-		},
-		fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: { url: "https://fixture.example.test/", title: "Fixture" } }));`,
-	});
-	assert.equal(pipeline.persistedResult.isError, false);
-	assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
-});
+nodeTest(
+	"Pi pipeline keeps unconfigured browser scheduling and ordinary execution unchanged",
+	async () => {
+		const pipeline = await runPipelinePrompt({
+			toolArguments: { args: ["open", "https://fixture.example.test/"] },
+			async runPrompt(session) {
+				assert.equal(
+					session.agent.state.tools.find((tool) => tool.name === "agent_browser")?.executionMode,
+					undefined,
+				);
+				await session.prompt("Use agent_browser once.");
+			},
+			fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: { url: "https://fixture.example.test/", title: "Fixture" } }));`,
+		});
+		assert.equal(pipeline.persistedResult.isError, false);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
+	},
+);
 
-test("Pi pipeline patches persisted QA reclassification failures to isError with model-visible prose", async (t) => {
-	const pipeline = await runPipelinePrompt({
-		toolName: "agent_browser_qa",
-		toolArguments: {
-			expectedSelector: "main",
-			expectedText: ["Welcome"],
-			url: "https://fail.example.test/",
-		},
-		fakeScript: `const fs = require("node:fs");
+nodeTest(
+	"Pi pipeline patches persisted QA reclassification failures to isError with model-visible prose",
+	async (t) => {
+		const pipeline = await runPipelinePrompt({
+			toolName: "agent_browser_qa",
+			toolArguments: {
+				expectedSelector: "main",
+				expectedText: ["Welcome"],
+				url: "https://fail.example.test/",
+			},
+			fakeScript: `const fs = require("node:fs");
 if (process.argv.slice(-2).join(" ") === "get url") {
   process.stdout.write(JSON.stringify({ success: true, data: { url: "https://fail.example.test/" } }));
   process.exit(0);
@@ -912,168 +926,164 @@ const results = steps.map((step) => {
   return { command: step, success: true, result: { ok: true } };
 });
 process.stdout.write(JSON.stringify(results));`,
-	});
-
-	for (const [surface, result] of Object.entries({
-		"in-memory": pipeline.inMemoryResult,
-		persisted: pipeline.persistedResult,
-	})) {
-		// Own the independently reported live and persisted result contracts before ending this scenario.
-		// oxlint-disable-next-line no-await-in-loop
-		await t.test(surface, () => {
-			assert.equal(result.isError, true);
-			assert.equal(readRecord(result.details).resultCategory, "failure");
-			assert.equal(readRecord(result.details).failureCategory, "qa-failure");
-			const text = result.content.find((item) => item.type === "text")?.text ?? "";
-			assert.match(
-				text,
-				/Result category: failure; failureCategory: qa-failure; Pi tool isError: true\./,
-			);
 		});
-	}
-	assert.match(pipeline.sessionFile, /\.jsonl$/);
-});
 
-test("Pi pipeline persists covered-click recovery without retrying the blocked action", async (t) => {
-	const error =
-		"Element '#continue' is covered by <div role=dialog> at its click point, so the input would land on that element instead.";
-	for (const originalError of [error, undefined, null, "  "]) {
-		// Each model-free session owns separate fixtures; finish it before changing the global environment.
-		// oxlint-disable-next-line no-await-in-loop
-		await t.test(
-			originalError === undefined ? "undefined error" : JSON.stringify(originalError),
-			async (scenarioContext) => {
-				const json = originalError !== error;
-				const pipeline = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "ambient" }, () =>
-					runPipelinePrompt({
-						toolArguments: {
-							args: [
-								"--namespace",
-								"",
-								"--session",
-								"overlay-recovery",
-								...(json ? ["--json", "find", "nth", "0", "#continue"] : ["click", "#continue"]),
-							],
-						},
-						fakeScript: `const args = process.argv.slice(2);
+		for (const [surface, result] of Object.entries({
+			"in-memory": pipeline.inMemoryResult,
+			persisted: pipeline.persistedResult,
+		})) {
+			// Own the independently reported live and persisted result contracts before ending this scenario.
+			await t.test(surface, () => {
+				assert.equal(result.isError, true);
+				assert.equal(readRecord(result.details).resultCategory, "failure");
+				assert.equal(readRecord(result.details).failureCategory, "qa-failure");
+				const text = result.content.find((item) => item.type === "text")?.text ?? "";
+				assert.match(
+					text,
+					/Result category: failure; failureCategory: qa-failure; Pi tool isError: true\./,
+				);
+			});
+		}
+		assert.match(pipeline.sessionFile, /\.jsonl$/);
+	},
+);
+
+nodeTest(
+	"Pi pipeline persists covered-click recovery without retrying the blocked action",
+	async (t) => {
+		const error =
+			"Element '#continue' is covered by <div role=dialog> at its click point, so the input would land on that element instead.";
+		for (const originalError of [error, undefined, null, "  "]) {
+			// Each model-free session owns separate fixtures; finish it before changing the global environment.
+			await t.test(
+				originalError === undefined ? "undefined error" : JSON.stringify(originalError),
+				async (scenarioContext) => {
+					const json = originalError !== error;
+					const pipeline = await withPatchedEnv({ AGENT_BROWSER_NAMESPACE: "ambient" }, () =>
+						runPipelinePrompt({
+							toolArguments: {
+								args: [
+									"--namespace",
+									"",
+									"--session",
+									"overlay-recovery",
+									...(json ? ["--json", "find", "nth", "0", "#continue"] : ["click", "#continue"]),
+								],
+							},
+							fakeScript: `const args = process.argv.slice(2);
 if (args.includes("click") || args.includes("find")) {
   process.stdout.write(JSON.stringify(${JSON.stringify({ success: false, error: originalError, ...(json ? { data: { error } } : {}) })}));
   process.exitCode = 1;
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { url: "https://overlay.example.test/", title: "Overlay fixture" } }));
 }`,
-					}),
-				);
+						}),
+					);
 
-				for (const [surface, result] of Object.entries({
-					"in-memory": pipeline.inMemoryResult,
-					persisted: pipeline.persistedResult,
-				})) {
-					// Own the independently reported live and persisted result contracts before ending this scenario.
-					// oxlint-disable-next-line no-await-in-loop
-					await scenarioContext.test(surface, () => {
-						assert.equal(result.isError, true);
-						const details = readRecord(result.details);
-						const nextActions = readArray(details.nextActions).map(readRecord);
-						assert.equal(details.failureCategory, "upstream-error");
-						assert.deepEqual(
-							nextActions.map((action) => action.id),
-							["inspect-overlay-state"],
-						);
-						assert.deepEqual(readRecord(nextActions[0].params).args, [
-							"--namespace",
-							"",
-							"--session",
-							"overlay-recovery",
-							"snapshot",
-							"-i",
-						]);
-						const text = result.content.find((item) => item.type === "text")?.text ?? "";
-						if (json) {
-							const visible = readRecord(JSON.parse(text));
-							// The fixed JSON variant must retain its parseable native failure envelope.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(visible.success, false);
-							// The JSON variant must retain the same failure category as its details.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(visible.resultCategory, "failure");
-							// The JSON variant must retain the upstream failure classifier.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(visible.failureCategory, "upstream-error");
-							// The JSON variant must retain the recovered upstream error.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(visible.error, error);
-							// The JSON variant must retain its structured error payload.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.deepEqual(visible.data, { error });
-							// The JSON variant must expose the same executable recovery as its details.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.deepEqual(visible.nextActions, details.nextActions);
-						} else {
-							// The fixed prose variant must instead render the recovery identifier.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(text, /inspect-overlay-state/);
-						}
-						assert.match(readString(nextActions[0].safety), /do not blindly retry/i);
-					});
-				}
-				assert.equal(
-					pipeline.invocations.filter(({ args }) => args.includes("click") || args.includes("find"))
-						.length,
-					1,
-				);
-			},
-		);
-	}
-});
+					for (const [surface, result] of Object.entries({
+						"in-memory": pipeline.inMemoryResult,
+						persisted: pipeline.persistedResult,
+					})) {
+						// Own the independently reported live and persisted result contracts before ending this scenario.
+						await scenarioContext.test(surface, async (surfaceContext) => {
+							assert.equal(result.isError, true);
+							const details = readRecord(result.details);
+							const nextActions = readArray(details.nextActions).map(readRecord);
+							assert.equal(details.failureCategory, "upstream-error");
+							assert.deepEqual(
+								nextActions.map((action) => action.id),
+								["inspect-overlay-state"],
+							);
+							assert.deepEqual(readRecord(readDefined(nextActions[0]).params).args, [
+								"--namespace",
+								"",
+								"--session",
+								"overlay-recovery",
+								"snapshot",
+								"-i",
+							]);
+							const text = result.content.find((item) => item.type === "text")?.text ?? "";
+							if (json) {
+								await surfaceContext.test("JSON failure and recovery", () => {
+									const visible = readRecord(JSON.parse(text));
+									assert.equal(visible.success, false);
+									assert.equal(visible.resultCategory, "failure");
+									assert.equal(visible.failureCategory, "upstream-error");
+									assert.equal(visible.error, error);
+									assert.deepEqual(visible.data, { error });
+									assert.deepEqual(visible.nextActions, details.nextActions);
+								});
+							} else {
+								await surfaceContext.test("prose recovery", () => {
+									assert.match(text, /inspect-overlay-state/);
+								});
+							}
+							assert.match(readString(readDefined(nextActions[0]).safety), /do not blindly retry/i);
+						});
+					}
+					assert.equal(
+						pipeline.invocations.filter(
+							({ args }) => args.includes("click") || args.includes("find"),
+						).length,
+						1,
+					);
+				},
+			);
+		}
+	},
+);
 
-test("Pi pipeline rejects unsupported public schema fields before spawning upstream", async (t) => {
-	const pipeline = await runPipelinePrompt({
-		toolArguments: { args: ["get", "url"], unsupportedRootField: true },
-		fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: "unexpected" }));`,
-	});
-
-	for (const [surface, result] of Object.entries({
-		"in-memory": pipeline.inMemoryResult,
-		persisted: pipeline.persistedResult,
-	})) {
-		// Own the independently reported live and persisted result contracts before ending this scenario.
-		// oxlint-disable-next-line no-await-in-loop
-		await t.test(surface, () => {
-			assert.equal(result.isError, true);
-			const text = result.content.find((item) => item.type === "text")?.text ?? "";
-			assert.match(text, /unsupportedRootField|additional/i);
+nodeTest(
+	"Pi pipeline rejects unsupported public schema fields before spawning upstream",
+	async (t) => {
+		const pipeline = await runPipelinePrompt({
+			toolArguments: { args: ["get", "url"], unsupportedRootField: true },
+			fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: "unexpected" }));`,
 		});
-	}
-	assert.deepEqual(pipeline.invocations, []);
-});
 
-test("Pi pipeline preserves persisted parseable JSON content while patching isError", async (t) => {
-	const pipeline = await runPipelinePrompt({
-		toolArguments: { args: ["--json", "get", "url"] },
-		fakeScript: `process.stdout.write(JSON.stringify({ success: false, error: "json boom", data: { code: "boom" } }));`,
-	});
-
-	for (const [surface, result] of Object.entries({
-		"in-memory": pipeline.inMemoryResult,
-		persisted: pipeline.persistedResult,
-	})) {
-		// Own the independently reported live and persisted result contracts before ending this scenario.
-		// oxlint-disable-next-line no-await-in-loop
-		await t.test(surface, () => {
-			assert.equal(result.isError, true);
-			assert.equal(readRecord(result.details).resultCategory, "failure");
-			const text = result.content.find((item) => item.type === "text")?.text ?? "";
-			assert.doesNotMatch(text, /Pi tool isError/);
-			// summary is dropped when byte-identical to error so bounded observations do not double-count failure text.
-			assert.deepEqual(JSON.parse(text), {
-				error: "json boom",
-				data: { code: "boom" },
-				success: false,
-				resultCategory: "failure",
-				failureCategory: "upstream-error",
-				sessionName: readRecord(result.details).sessionName,
+		for (const [surface, result] of Object.entries({
+			"in-memory": pipeline.inMemoryResult,
+			persisted: pipeline.persistedResult,
+		})) {
+			// Own the independently reported live and persisted result contracts before ending this scenario.
+			await t.test(surface, () => {
+				assert.equal(result.isError, true);
+				const text = result.content.find((item) => item.type === "text")?.text ?? "";
+				assert.match(text, /unsupportedRootField|additional/i);
 			});
+		}
+		assert.deepEqual(pipeline.invocations, []);
+	},
+);
+
+nodeTest(
+	"Pi pipeline preserves persisted parseable JSON content while patching isError",
+	async (t) => {
+		const pipeline = await runPipelinePrompt({
+			toolArguments: { args: ["--json", "get", "url"] },
+			fakeScript: `process.stdout.write(JSON.stringify({ success: false, error: "json boom", data: { code: "boom" } }));`,
 		});
-	}
-});
+
+		for (const [surface, result] of Object.entries({
+			"in-memory": pipeline.inMemoryResult,
+			persisted: pipeline.persistedResult,
+		})) {
+			// Own the independently reported live and persisted result contracts before ending this scenario.
+			await t.test(surface, () => {
+				assert.equal(result.isError, true);
+				assert.equal(readRecord(result.details).resultCategory, "failure");
+				const text = result.content.find((item) => item.type === "text")?.text ?? "";
+				assert.doesNotMatch(text, /Pi tool isError/);
+				// summary is dropped when byte-identical to error so bounded observations do not double-count failure text.
+				assert.deepEqual(JSON.parse(text), {
+					error: "json boom",
+					data: { code: "boom" },
+					success: false,
+					resultCategory: "failure",
+					failureCategory: "upstream-error",
+					sessionName: readRecord(result.details).sessionName,
+				});
+			});
+		}
+	},
+);

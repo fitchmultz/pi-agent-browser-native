@@ -22,7 +22,7 @@ function getNetworkRequestUrlPath(url: string | undefined): string | undefined {
 	try {
 		return new URL(url).pathname;
 	} catch {
-		const withoutQuery = url.split(/[?#]/, 1)[0];
+		const [withoutQuery = ""] = url.split(/[?#]/, 1);
 		return withoutQuery.length > 0 ? withoutQuery : undefined;
 	}
 }

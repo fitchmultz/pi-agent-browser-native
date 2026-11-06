@@ -5,7 +5,7 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { basename, dirname, join } from "node:path";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 
 import { acquireExecutionClaim } from "../extensions/agent-browser/lib/browser-execution-claims.js";
 import { getBrowserExecutionLockPath } from "../extensions/agent-browser/lib/browser-execution-identity.js";
@@ -13,7 +13,13 @@ import {
 	buildProcessStartIdentityCommand,
 	readProcessStartIdentity,
 } from "../extensions/agent-browser/lib/process-identity.js";
-import { readArray, readRecord, readString, hasErrorCode } from "./helpers/assertions.js";
+import {
+	readArray,
+	readDefined,
+	readRecord,
+	readString,
+	hasErrorCode,
+} from "./helpers/assertions.js";
 import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
 import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
 
@@ -132,72 +138,90 @@ function injectedFailure(code = "EPERM"): Error {
 	return Object.assign(new Error(`Fault-injection control: ${code}`), { code, syscall: "rename" });
 }
 
-test("fault-injection control: Windows publication retries only its same owned candidate", async (t) => {
-	const f = await fixture(t);
-	f.intercept((_source, attempt) => {
-		if (attempt <= 2) {
+nodeTest(
+	"fault-injection control: Windows publication retries only its same owned candidate",
+	async (t) => {
+		const f = await fixture(t);
+		f.intercept((_source, attempt) => {
+			if (attempt <= 2) {
+				throw injectedFailure();
+			}
+		});
+		const lock = await acquireExecutionClaim({ identity: f.identity });
+		assert.ok(lock);
+		assert.equal(f.publications.length, 3);
+		assert.deepEqual(
+			f.publications,
+			Array.from({ length: 3 }, () => f.publications[0]),
+		);
+		assert.equal(f.ownerReads(), 2, "each retry must re-read the candidate owner");
+		const owner = readRecord(
+			JSON.parse(
+				await fs.readFile(join(readDefined(f.publications[2]).destination, "owner.json"), "utf8"),
+			),
+		);
+		assert.equal(
+			readDefined(f.publications[0]).source,
+			readDefined(f.publications[0]).destination.replace(".claim-", ".candidate-"),
+		);
+		assert.deepEqual(owner.sessionNames, f.identity.sessionNames);
+		assert.equal(owner.pid, process.pid);
+		await lock.release();
+	},
+);
+
+nodeTest(
+	"fault-injection control: namespace-wide null scope survives a verified retry",
+	async (t) => {
+		const f = await fixture(t, true, null);
+		f.intercept((_source, attempt) => {
+			if (attempt === 1) {
+				throw injectedFailure();
+			}
+		});
+		const lock = await acquireExecutionClaim({ identity: f.identity });
+		assert.ok(lock);
+		assert.equal(f.publications.length, 2);
+		assert.equal(
+			readRecord(
+				JSON.parse(
+					await f.nativeReadFile(
+						join(readDefined(f.publications[1]).destination, "owner.json"),
+						"utf8",
+					),
+				),
+			).sessionNames,
+			null,
+		);
+		await lock.release();
+	},
+);
+
+nodeTest(
+	"fault-injection control: unreadable candidate ownership is retained and never retried",
+	async (t) => {
+		const f = await fixture(t);
+		f.afterOwnerRead(() => {
+			throw injectedFailure("EACCES");
+		});
+		f.intercept(() => {
 			throw injectedFailure();
-		}
-	});
-	const lock = await acquireExecutionClaim({ identity: f.identity });
-	assert.ok(lock);
-	assert.equal(f.publications.length, 3);
-	assert.deepEqual(
-		f.publications,
-		Array.from({ length: 3 }, () => f.publications[0]),
-	);
-	assert.equal(f.ownerReads(), 2, "each retry must re-read the candidate owner");
-	const owner = readRecord(
-		JSON.parse(await fs.readFile(join(f.publications[2].destination, "owner.json"), "utf8")),
-	);
-	assert.equal(
-		f.publications[0].source,
-		f.publications[0].destination.replace(".claim-", ".candidate-"),
-	);
-	assert.deepEqual(owner.sessionNames, f.identity.sessionNames);
-	assert.equal(owner.pid, process.pid);
-	await lock.release();
-});
+		});
+		assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);
+		assert.equal(f.publications.length, 1);
+		assert.equal(f.ownerReads(), 1);
+		const owner = readRecord(
+			JSON.parse(
+				await f.nativeReadFile(join(readDefined(f.publications[0]).source, "owner.json"), "utf8"),
+			),
+		);
+		assert.equal(owner.pid, process.pid);
+		assert.equal(owner.startIdentity, f.startIdentity);
+		assert.deepEqual(owner.sessionNames, f.identity.sessionNames);
+	},
+);
 
-test("fault-injection control: namespace-wide null scope survives a verified retry", async (t) => {
-	const f = await fixture(t, true, null);
-	f.intercept((_source, attempt) => {
-		if (attempt === 1) {
-			throw injectedFailure();
-		}
-	});
-	const lock = await acquireExecutionClaim({ identity: f.identity });
-	assert.ok(lock);
-	assert.equal(f.publications.length, 2);
-	assert.equal(
-		readRecord(
-			JSON.parse(await f.nativeReadFile(join(f.publications[1].destination, "owner.json"), "utf8")),
-		).sessionNames,
-		null,
-	);
-	await lock.release();
-});
-
-test("fault-injection control: unreadable candidate ownership is retained and never retried", async (t) => {
-	const f = await fixture(t);
-	f.afterOwnerRead(() => {
-		throw injectedFailure("EACCES");
-	});
-	f.intercept(() => {
-		throw injectedFailure();
-	});
-	assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);
-	assert.equal(f.publications.length, 1);
-	assert.equal(f.ownerReads(), 1);
-	const owner = readRecord(
-		JSON.parse(await f.nativeReadFile(join(f.publications[0].source, "owner.json"), "utf8")),
-	);
-	assert.equal(owner.pid, process.pid);
-	assert.equal(owner.startIdentity, f.startIdentity);
-	assert.deepEqual(owner.sessionNames, f.identity.sessionNames);
-});
-
-test("fault-injection control: host platform gates EPERM publication retry", async (t) => {
+nodeTest("fault-injection control: host platform gates EPERM publication retry", async (t) => {
 	const f = await fixture(t, false);
 	f.intercept((_source, attempt) => {
 		if (attempt === 1) {
@@ -211,7 +235,7 @@ test("fault-injection control: host platform gates EPERM publication retry", asy
 });
 
 for (const code of ["ENOENT", "EACCES", "EEXIST", "UNKNOWN"]) {
-	test(`fault-injection control: publication does not retry ${code}`, async (t) => {
+	nodeTest(`fault-injection control: publication does not retry ${code}`, async (t) => {
 		const f = await fixture(t);
 		f.intercept(() => {
 			throw injectedFailure(code);
@@ -223,7 +247,7 @@ for (const code of ["ENOENT", "EACCES", "EEXIST", "UNKNOWN"]) {
 }
 
 for (const stage of ["mkdir", "owner-write", "ticket-write", "ticket-rename"]) {
-	test(`fault-injection control: ${stage} EPERM is never retried`, async (t) => {
+	nodeTest(`fault-injection control: ${stage} EPERM is never retried`, async (t) => {
 		const f = await fixture(t);
 		let stageAttempts = 0;
 		let candidatePath: string | undefined;
@@ -300,234 +324,263 @@ for (const field of [
 	"ticket",
 	"missing-owner",
 ]) {
-	test(`fault-injection control: publication refuses a changed ${field} before retry`, async (t) => {
+	nodeTest(
+		`fault-injection control: publication refuses a changed ${field} before retry`,
+		async (t) => {
+			const f = await fixture(t);
+			let retainedCandidate: string | undefined;
+			let retainedOwner: string | undefined;
+			let retainedTicket: string | undefined;
+			f.intercept(async (source) => {
+				retainedCandidate = source;
+				const ownerPath = join(source, "owner.json");
+				const owner = readRecord(JSON.parse(await fs.readFile(ownerPath, "utf8")));
+				if (field === "missing-owner") {
+					await fs.rm(ownerPath);
+				} else if (field === "null-scope") {
+					await fs.writeFile(ownerPath, JSON.stringify({ ...owner, sessionNames: null }));
+				} else if (field === "ticket") {
+					await fs.writeFile(
+						join(source, "ticket.json"),
+						JSON.stringify({ version: 4, token: owner.token, ticket: 1 }),
+						{ mode: 0o600 },
+					);
+				} else {
+					const replacements: Readonly<Record<string, unknown>> = {
+						token: "different-token",
+						pid: process.pid + 1,
+						startIdentity: "different-generation",
+						version: 5,
+						sessionNames: ["other-domain", "two"],
+					};
+					await fs.writeFile(ownerPath, JSON.stringify({ ...owner, [field]: replacements[field] }));
+				}
+				retainedOwner = await f
+					.nativeReadFile(ownerPath, "utf8")
+					.catch((error: unknown): undefined => {
+						if (hasErrorCode(error, "ENOENT")) {
+							return;
+						}
+						throw error;
+					});
+				retainedTicket = await f
+					.nativeReadFile(join(source, "ticket.json"), "utf8")
+					.catch((error: unknown): undefined => {
+						if (hasErrorCode(error, "ENOENT")) {
+							return;
+						}
+						throw error;
+					});
+				throw injectedFailure();
+			});
+			assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);
+			assert.equal(
+				f.publications.length,
+				1,
+				"an unknown/replaced candidate must never be renamed again",
+			);
+			assert.ok(retainedCandidate !== undefined);
+			assert.equal(
+				(await fs.stat(retainedCandidate)).isDirectory(),
+				true,
+				"unknown ownership withdraws candidate cleanup authority",
+			);
+			const actualOwner = await f
+				.nativeReadFile(join(retainedCandidate, "owner.json"), "utf8")
+				.catch((error: unknown): undefined => {
+					if (hasErrorCode(error, "ENOENT")) {
+						return;
+					}
+					throw error;
+				});
+			const actualTicket = await f
+				.nativeReadFile(join(retainedCandidate, "ticket.json"), "utf8")
+				.catch((error: unknown): undefined => {
+					if (hasErrorCode(error, "ENOENT")) {
+						return;
+					}
+					throw error;
+				});
+			assert.equal(actualOwner, retainedOwner);
+			assert.equal(actualTicket, retainedTicket);
+		},
+	);
+}
+
+nodeTest(
+	"fault-injection control: ownership is revalidated again after a second EPERM",
+	async (t) => {
 		const f = await fixture(t);
-		let retainedCandidate: string | undefined;
-		let retainedOwner: string | undefined;
-		let retainedTicket: string | undefined;
-		f.intercept(async (source) => {
-			retainedCandidate = source;
-			const ownerPath = join(source, "owner.json");
-			const owner = readRecord(JSON.parse(await fs.readFile(ownerPath, "utf8")));
-			if (field === "missing-owner") {
-				await fs.rm(ownerPath);
-			} else if (field === "null-scope") {
-				await fs.writeFile(ownerPath, JSON.stringify({ ...owner, sessionNames: null }));
-			} else if (field === "ticket") {
+		f.intercept(async (source, attempt) => {
+			if (attempt === 2) {
+				const path = join(source, "owner.json");
+				const owner = readRecord(JSON.parse(await fs.readFile(path, "utf8")));
 				await fs.writeFile(
-					join(source, "ticket.json"),
-					JSON.stringify({ version: 4, token: owner.token, ticket: 1 }),
-					{ mode: 0o600 },
+					path,
+					JSON.stringify({ ...owner, startIdentity: "replaced-generation" }),
 				);
-			} else {
-				const replacements: Readonly<Record<string, unknown>> = {
-					token: "different-token",
-					pid: process.pid + 1,
-					startIdentity: "different-generation",
-					version: 5,
-					sessionNames: ["other-domain", "two"],
-				};
-				await fs.writeFile(ownerPath, JSON.stringify({ ...owner, [field]: replacements[field] }));
 			}
-			retainedOwner = await f
-				.nativeReadFile(ownerPath, "utf8")
-				.catch((error: unknown): undefined => {
-					if (hasErrorCode(error, "ENOENT")) {
-						return;
-					}
-					throw error;
-				});
-			retainedTicket = await f
-				.nativeReadFile(join(source, "ticket.json"), "utf8")
-				.catch((error: unknown): undefined => {
-					if (hasErrorCode(error, "ENOENT")) {
-						return;
-					}
-					throw error;
-				});
 			throw injectedFailure();
 		});
 		assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);
+		assert.equal(f.publications.length, 2);
 		assert.equal(
-			f.publications.length,
-			1,
-			"an unknown/replaced candidate must never be renamed again",
+			f.ownerReads(),
+			3,
+			"two retry validations plus the fixture's second-attempt mutation read",
 		);
-		assert.ok(retainedCandidate !== undefined);
+		assert.equal((await fs.stat(readDefined(f.publications[1]).source)).isDirectory(), true);
 		assert.equal(
-			(await fs.stat(retainedCandidate)).isDirectory(),
-			true,
-			"unknown ownership withdraws candidate cleanup authority",
+			readRecord(
+				JSON.parse(
+					await f.nativeReadFile(join(readDefined(f.publications[1]).source, "owner.json"), "utf8"),
+				),
+			).startIdentity,
+			"replaced-generation",
 		);
-		const actualOwner = await f
-			.nativeReadFile(join(retainedCandidate, "owner.json"), "utf8")
-			.catch((error: unknown): undefined => {
-				if (hasErrorCode(error, "ENOENT")) {
-					return;
-				}
-				throw error;
-			});
-		const actualTicket = await f
-			.nativeReadFile(join(retainedCandidate, "ticket.json"), "utf8")
-			.catch((error: unknown): undefined => {
-				if (hasErrorCode(error, "ENOENT")) {
-					return;
-				}
-				throw error;
-			});
-		assert.equal(actualOwner, retainedOwner);
-		assert.equal(actualTicket, retainedTicket);
-	});
-}
+	},
+);
 
-test("fault-injection control: ownership is revalidated again after a second EPERM", async (t) => {
-	const f = await fixture(t);
-	f.intercept(async (source, attempt) => {
-		if (attempt === 2) {
-			const path = join(source, "owner.json");
-			const owner = readRecord(JSON.parse(await fs.readFile(path, "utf8")));
-			await fs.writeFile(path, JSON.stringify({ ...owner, startIdentity: "replaced-generation" }));
-		}
-		throw injectedFailure();
-	});
-	assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);
-	assert.equal(f.publications.length, 2);
-	assert.equal(
-		f.ownerReads(),
-		3,
-		"two retry validations plus the fixture's second-attempt mutation read",
-	);
-	assert.equal((await fs.stat(f.publications[1].source)).isDirectory(), true);
-	assert.equal(
-		readRecord(
-			JSON.parse(await f.nativeReadFile(join(f.publications[1].source, "owner.json"), "utf8")),
-		).startIdentity,
-		"replaced-generation",
-	);
-});
-
-test("fault-injection control: timeoutMs zero is an initial publication attempt only", async (t) => {
-	const f = await fixture(t);
-	f.intercept(() => {
-		throw injectedFailure();
-	});
-	assert.equal(
-		await acquireExecutionClaim({
-			identity: f.identity,
-			timeoutMs: 0,
-			deadline: performance.now() + 10_000,
-		}),
-		undefined,
-	);
-	assert.equal(f.publications.length, 1);
-	assert.equal(f.ownerReads(), 0);
-});
-
-for (const boundary of ["first-failure", "wait", "validation"] as const) {
-	test(`fault-injection control: cancellation at ${boundary} prevents publication retry`, async (t) => {
+nodeTest(
+	"fault-injection control: timeoutMs zero is an initial publication attempt only",
+	async (t) => {
 		const f = await fixture(t);
-		const controller = new AbortController();
-		if (boundary === "validation") {
-			f.afterOwnerRead(() => controller.abort());
-		}
 		f.intercept(() => {
-			if (boundary === "first-failure") {
-				controller.abort();
-			} else if (boundary === "wait") {
-				setTimeout(() => controller.abort(), 0);
-			}
 			throw injectedFailure();
 		});
 		assert.equal(
-			await acquireExecutionClaim({ identity: f.identity, signal: controller.signal }),
+			await acquireExecutionClaim({
+				identity: f.identity,
+				timeoutMs: 0,
+				deadline: performance.now() + 10_000,
+			}),
 			undefined,
 		);
 		assert.equal(f.publications.length, 1);
-		assert.equal(f.ownerReads(), boundary === "validation" ? 1 : 0);
-	});
+		assert.equal(f.ownerReads(), 0);
+	},
+);
+
+for (const boundary of ["first-failure", "wait", "validation"] as const) {
+	nodeTest(
+		`fault-injection control: cancellation at ${boundary} prevents publication retry`,
+		async (t) => {
+			const f = await fixture(t);
+			const controller = new AbortController();
+			if (boundary === "validation") {
+				f.afterOwnerRead(() => controller.abort());
+			}
+			f.intercept(() => {
+				if (boundary === "first-failure") {
+					controller.abort();
+				} else if (boundary === "wait") {
+					setTimeout(() => controller.abort(), 0);
+				}
+				throw injectedFailure();
+			});
+			assert.equal(
+				await acquireExecutionClaim({ identity: f.identity, signal: controller.signal }),
+				undefined,
+			);
+			assert.equal(f.publications.length, 1);
+			assert.equal(f.ownerReads(), boundary === "validation" ? 1 : 0);
+		},
+	);
 }
 
 for (const boundary of ["first-failure", "wait", "validation"] as const) {
-	test(`fault-injection control: original deadline at ${boundary} prevents publication retry`, async (t) => {
-		const f = await fixture(t);
-		const clock = mockMonotonicClock(t);
-		if (boundary === "validation") {
-			f.afterOwnerRead(() => clock.tick(1_000));
-		}
-		f.intercept(() => {
-			if (boundary === "first-failure") {
-				clock.tick(1_000);
-			} else if (boundary === "wait") {
-				setTimeout(() => clock.tick(1_000), 0);
+	nodeTest(
+		`fault-injection control: original deadline at ${boundary} prevents publication retry`,
+		async (t) => {
+			const f = await fixture(t);
+			const clock = mockMonotonicClock(t);
+			if (boundary === "validation") {
+				f.afterOwnerRead(() => clock.tick(1_000));
 			}
-			throw injectedFailure();
-		});
-		assert.equal(
-			await acquireExecutionClaim({ identity: f.identity, deadline: clock.now() + 100 }),
-			undefined,
-		);
-		assert.equal(f.publications.length, 1);
-		assert.equal(f.ownerReads(), boundary === "validation" ? 1 : 0);
-	});
+			f.intercept(() => {
+				if (boundary === "first-failure") {
+					clock.tick(1_000);
+				} else if (boundary === "wait") {
+					setTimeout(() => clock.tick(1_000), 0);
+				}
+				throw injectedFailure();
+			});
+			assert.equal(
+				await acquireExecutionClaim({ identity: f.identity, deadline: clock.now() + 100 }),
+				undefined,
+			);
+			assert.equal(f.publications.length, 1);
+			assert.equal(f.ownerReads(), boundary === "validation" ? 1 : 0);
+		},
+	);
 }
 
 for (const result of ["success", "EPERM"]) {
-	test(`publication keeps only its initial attempt after preparation spends the budget (${result})`, async (t) => {
+	nodeTest(
+		`publication keeps only its initial attempt after preparation spends the budget (${result})`,
+		async (t) => {
+			const f = await fixture(t);
+			const clock = mockMonotonicClock(t);
+			const nativeWriteFile = fs.writeFile;
+			t.mock.method(fs, "writeFile", async (...args: ClaimWriteArguments) => {
+				await nativeWriteFile(...args);
+				if (
+					pathText(args[0]).includes(".candidate-") &&
+					basename(pathText(args[0])) === "owner.json"
+				) {
+					clock.tick(1_000);
+				}
+			});
+			syncBuiltinESMExports();
+			f.intercept(() => {
+				if (result === "EPERM") {
+					throw injectedFailure();
+				}
+			});
+			const lock = await acquireExecutionClaim({
+				identity: f.identity,
+				deadline: clock.now() + 100,
+			});
+			assert.equal(Boolean(lock), result === "success");
+			assert.equal(f.publications.length, 1);
+			assert.equal(f.ownerReads(), 0);
+			await lock?.release();
+		},
+	);
+}
+
+nodeTest(
+	"fault-injection control: default deadline includes coordination preparation time",
+	async (t) => {
 		const f = await fixture(t);
 		const clock = mockMonotonicClock(t);
-		const nativeWriteFile = fs.writeFile;
-		t.mock.method(fs, "writeFile", async (...args: ClaimWriteArguments) => {
-			await nativeWriteFile(...args);
-			if (
-				pathText(args[0]).includes(".candidate-") &&
-				basename(pathText(args[0])) === "owner.json"
-			) {
-				clock.tick(1_000);
+		const nativeLstat = fs.lstat;
+		let prepared = false;
+		t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
+			const value = await nativeLstat(...args);
+			if (pathText(args[0]) === dirname(f.base)) {
+				prepared = true;
+				clock.tick(900);
 			}
+			return value;
 		});
 		syncBuiltinESMExports();
 		f.intercept(() => {
-			if (result === "EPERM") {
-				throw injectedFailure();
-			}
+			clock.tick(100);
+			throw injectedFailure();
 		});
-		const lock = await acquireExecutionClaim({ identity: f.identity, deadline: clock.now() + 100 });
-		assert.equal(Boolean(lock), result === "success");
-		assert.equal(f.publications.length, 1);
+		assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);
+		assert.equal(prepared, true);
+		assert.equal(
+			f.publications.length,
+			1,
+			"preparation must not reset the original implicit deadline",
+		);
 		assert.equal(f.ownerReads(), 0);
-		await lock?.release();
-	});
-}
+	},
+);
 
-test("fault-injection control: default deadline includes coordination preparation time", async (t) => {
-	const f = await fixture(t);
-	const clock = mockMonotonicClock(t);
-	const nativeLstat = fs.lstat;
-	let prepared = false;
-	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
-		const value = await nativeLstat(...args);
-		if (pathText(args[0]) === dirname(f.base)) {
-			prepared = true;
-			clock.tick(900);
-		}
-		return value;
-	});
-	syncBuiltinESMExports();
-	f.intercept(() => {
-		clock.tick(100);
-		throw injectedFailure();
-	});
-	assert.equal(await acquireExecutionClaim({ identity: f.identity }), undefined);
-	assert.equal(prepared, true);
-	assert.equal(
-		f.publications.length,
-		1,
-		"preparation must not reset the original implicit deadline",
-	);
-	assert.equal(f.ownerReads(), 0);
-});
-
-test(
+nodeTest(
 	"native Windows publication recovers after a real no-delete-sharing owner handle closes",
 	{ skip: hostPlatform !== "win32" },
 	async (t) => {
@@ -598,7 +651,7 @@ $null = [Console]::ReadLine()
 		assert.equal(f.ownerReads(), 1);
 		assert.deepEqual(f.publications[1], f.publications[0]);
 		assert.ok(preparedOwner);
-		const publishedPath = f.publications[0].destination;
+		const publishedPath = readDefined(f.publications[0]).destination;
 		const ownerPath = join(publishedPath, "owner.json");
 		assert.deepEqual(
 			readRecord(JSON.parse(await f.nativeReadFile(ownerPath, "utf8"))),
@@ -609,7 +662,7 @@ $null = [Console]::ReadLine()
 		assert.deepEqual(preparedOwner.sessionNames, f.identity.sessionNames);
 		assert.equal(publishedPath, `${f.base}.claim-${readString(preparedOwner.token)}`);
 		assert.equal(
-			f.publications[0].source,
+			readDefined(f.publications[0]).source,
 			`${f.base}.candidate-${readString(preparedOwner.token)}`,
 		);
 		assert.equal(

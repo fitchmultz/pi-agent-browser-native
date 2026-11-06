@@ -38,7 +38,7 @@ type MissingBinaryInput = Readonly<{
 	implicitSessionCloseTimeoutMs: number;
 	managedSessionActive: boolean;
 	managedSessionName: string;
-	managedSessionNamespace?: string;
+	managedSessionNamespace?: string | undefined;
 	processResult: FinalResultInput["processResult"];
 	redactedArgs: readonly string[];
 	redactedProcessArgs: readonly string[];

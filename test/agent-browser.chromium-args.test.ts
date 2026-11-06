@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../scripts/agent-browser-target.mjs";
 
@@ -78,7 +79,7 @@ if (tokens[0] === 'batch') {
 	}
 }
 
-test("Chromium diagnostic uses native top-level globals but raw batch tokens", async () => {
+nodeTest("Chromium diagnostic uses native top-level globals but raw batch tokens", async (t) => {
 	assert.match(validateToolArgs(["goto", "--no-sandbox", url]) ?? "", /ignored.*option/);
 	assert.match(validateToolArgs(["navigate", url, "--no-sandbox"]) ?? "", /ignored.*option/);
 	assert.match(
@@ -102,9 +103,9 @@ test("Chromium diagnostic uses native top-level globals but raw batch tokens", a
 		["select", "#pick", "--no-sandbox"],
 		["find", "role", "button", "click", "--name", "--no-sandbox"],
 	]) {
-		// Each fixed literal/header input must pass direct recognition independently.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(validateToolArgs(args), undefined, args.join(" "));
+		await t.test(args.join(" "), () => {
+			assert.equal(validateToolArgs(args), undefined, args.join(" "));
+		});
 	}
 	assert.equal(validateToolArgs(["--no-sandbox", "--help"]), undefined);
 	assert.equal(validateToolArgs(["--no-sandbox", "--version"]), undefined);
@@ -130,33 +131,6 @@ test("Chromium diagnostic uses native top-level globals but raw batch tokens", a
 	);
 
 	await withFixture(async (_root, harness, log) => {
-		async function rejectsBeforeDispatch(
-			step: readonly string[],
-			mode: "direct" | "stdin" | "raw",
-		) {
-			const requests = {
-				direct: { args: [...step] },
-				stdin: { args: ["batch"], stdin: JSON.stringify([step]) },
-				raw: { args: ["batch", step.map((value) => JSON.stringify(value)).join(" ")] },
-			};
-			const result = await executeRegisteredTool(harness.tool, harness.ctx, requests[mode]);
-			const context = `${step.join(" ")}/${mode}`;
-			assert.equal(result.isError, true, context);
-			assert.equal(result.details?.failureCategory, "validation-error", context);
-			assert.match(result.content[0].text ?? "", /Chromium launch argument/, context);
-			assert.match(result.content[0].text ?? "", /top-level.*--args/, context);
-			assert.match(result.content[0].text ?? "", /sessionMode.*fresh/, context);
-			assert.match(
-				result.content[0].text ?? "",
-				step[0] === "--no-sandbox" ? /not an agent-browser command/ : /ignored.*option/,
-				context,
-			);
-			assert.deepEqual(
-				await readInvocationLog(log),
-				[],
-				`${context}: validation must precede even the version subprocess`,
-			);
-		}
 		for (const step of [
 			["--no-sandbox", "open", url],
 			["open", url, "--no-sandbox"],
@@ -164,8 +138,30 @@ test("Chromium diagnostic uses native top-level globals but raw batch tokens", a
 		]) {
 			for (const mode of ["direct", "stdin", "raw"] as const) {
 				// Each rejected request must leave the shared fixture untouched before the next variant.
-				// oxlint-disable-next-line no-await-in-loop
-				await rejectsBeforeDispatch(step, mode);
+				await t.test(`${step.join(" ")}/${mode}`, async () => {
+					const requests = {
+						direct: { args: [...step] },
+						stdin: { args: ["batch"], stdin: JSON.stringify([step]) },
+						raw: { args: ["batch", step.map((value) => JSON.stringify(value)).join(" ")] },
+					};
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, requests[mode]);
+					const context = `${step.join(" ")}/${mode}`;
+					assert.equal(result.isError, true, context);
+					assert.equal(result.details?.failureCategory, "validation-error", context);
+					assert.match(getMessageText(result.content), /Chromium launch argument/, context);
+					assert.match(getMessageText(result.content), /top-level.*--args/, context);
+					assert.match(getMessageText(result.content), /sessionMode.*fresh/, context);
+					assert.match(
+						getMessageText(result.content),
+						step[0] === "--no-sandbox" ? /not an agent-browser command/ : /ignored.*option/,
+						context,
+					);
+					assert.deepEqual(
+						await readInvocationLog(log),
+						[],
+						`${context}: validation must precede even the version subprocess`,
+					);
+				});
 			}
 		}
 	});
@@ -178,10 +174,10 @@ for (const args of [
 	["eval", "--no-sandbox"],
 	["--no-sandbox", "--help"],
 ] as const) {
-	test(
+	nodeTest(
 		`Chromium diagnostic preserves native argv and outcome: ${args.join(" ")}`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			await withFixture(async (root, harness, log) => {
 				await writeFile(join(root, "--no-sandbox"), "upload fixture");
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -191,14 +187,14 @@ for (const args of [
 				assert.notEqual(
 					result.details?.failureCategory,
 					"validation-error",
-					result.content[0].text,
+					getMessageText(result.content),
 				);
 				const evaluation = args[0] === "eval";
-				assert.equal(result.isError, evaluation, result.content[0].text);
+				assert.equal(result.isError, evaluation, getMessageText(result.content));
 				if (evaluation) {
-					// This enumerated fixture branch (evaluation) has variant-specific assertions; common assertions cover every case.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(result.content[0].text ?? "", /Native fixture evaluation error/);
+					await t.test("native evaluation error is preserved", () => {
+						assert.match(getMessageText(result.content), /Native fixture evaluation error/);
+					});
 				}
 				const calls = await readInvocationLog(log);
 				const expected = args.map((token, index) =>
@@ -217,7 +213,7 @@ for (const args of [
 }
 
 for (const mode of ["stdin", "raw"] as const) {
-	test(
+	nodeTest(
 		`Chromium literal data and outer launch args survive an effective ${mode} batch`,
 		{ concurrency: false },
 		async () => {

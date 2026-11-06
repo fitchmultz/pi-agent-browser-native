@@ -86,9 +86,9 @@ const SCROLL_POSITION_EVAL = `(() => {
 
 export async function collectScrollPositionSnapshot(options: {
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<ScrollPositionSnapshot | undefined> {
 	return extractScrollPositionSnapshot(
 		await runSessionCommandData({
@@ -126,7 +126,7 @@ function sameScrollPositionSnapshot(
 
 export function buildUnsupportedScrollIntoViewRecovery(options: {
 	readonly commandTokens: readonly string[];
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }):
 	| { readonly error: string; readonly nextActions: readonly AgentBrowserNextAction[] }
 	| undefined {
@@ -136,11 +136,11 @@ export function buildUnsupportedScrollIntoViewRecovery(options: {
 	) {
 		return undefined;
 	}
-	const match = /^text=(.+)$/s.exec(options.commandTokens.at(1) ?? "");
-	if (!match) {
+	const match = /^text=(.+)$/s.exec(options.commandTokens.at(1) ?? "")?.[1];
+	if (match === undefined) {
 		return undefined;
 	}
-	const text = redactSensitiveText(match[1]);
+	const text = redactSensitiveText(match);
 	return {
 		error:
 			"scrollintoview accepts a CSS selector, xpath=..., or a current @e… ref; text=... is not supported and can falsely report success without moving the page.",
@@ -323,13 +323,13 @@ function isComboboxFocusDiagnosticSemanticAction(
 }
 
 export async function collectComboboxFocusDiagnostic(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly commandTokens: readonly string[];
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly semanticAction?: CompiledAgentBrowserSemanticAction;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly semanticAction?: CompiledAgentBrowserSemanticAction | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<ComboboxFocusDiagnostic | undefined> {
 	if (
 		!isComboboxFocusDiagnosticCommand(options.command, options.commandTokens) &&

@@ -64,8 +64,8 @@ interface ArtifactPreflightOptions {
 	readonly activeRecordingReservations?: readonly Readonly<ActiveRecordingReservation>[];
 	readonly args: readonly string[];
 	readonly cwd: string;
-	readonly outputPath?: string;
-	readonly stdin?: string;
+	readonly outputPath?: string | undefined;
+	readonly stdin?: string | undefined;
 }
 
 class ArtifactPreflight {

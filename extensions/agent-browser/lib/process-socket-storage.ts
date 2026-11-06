@@ -47,9 +47,9 @@ export function getAgentBrowserSocketDir(
 
 export function resolveAgentBrowserSocketDir(
 	options: {
-		readonly env?: NodeJS.ProcessEnv;
-		readonly ownedManagedSession?: boolean;
-		readonly parentEnv?: NodeJS.ProcessEnv;
+		readonly env?: NodeJS.ProcessEnv | undefined;
+		readonly ownedManagedSession?: boolean | undefined;
+		readonly parentEnv?: NodeJS.ProcessEnv | undefined;
 	} = {},
 ): string | undefined {
 	const parentEnv = options.parentEnv ?? getAgentBrowserProcessEnvironment();
@@ -126,7 +126,6 @@ class SocketStorageInspection {
 			}
 			this.visited.add(current);
 			// Each ancestor and symlink destination must be inspected before advancing the walk.
-			// oxlint-disable-next-line no-await-in-loop
 			const metadata = await lstat(current);
 			if (this.isSystemRoot(current, metadata)) {
 				return true;
@@ -136,7 +135,6 @@ class SocketStorageInspection {
 			}
 			if (metadata.isSymbolicLink()) {
 				// Resolving one link requires validating its target before continuing this ancestry.
-				// oxlint-disable-next-line no-await-in-loop
 				if (!(await this.symlink(current))) {
 					return false;
 				}
@@ -173,7 +171,6 @@ class SocketStorageInspection {
 				return false;
 			}
 			// A single shared bound and fail-closed traversal prevent unbounded recursive inspection.
-			// oxlint-disable-next-line no-await-in-loop
 			if (!(await this.entry(join(socketDir, name)))) {
 				return false;
 			}

@@ -169,15 +169,15 @@ function formatFilteredNetworkText(options: {
 
 export async function tryNetworkRequestsPageFilter(options: {
 	readonly commandTokens: readonly string[];
-	readonly compatibilityWorkaround?: CompatibilityWorkaround;
+	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly cwd: string;
 	readonly effectiveArgs: readonly string[];
 	readonly managedSessionRestoreDisabled: () => boolean;
 	readonly redactedArgs: readonly string[];
 	readonly sessionMode: "auto" | "fresh";
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 	readonly usedImplicitSession: boolean;
 }): Promise<AgentBrowserToolResult | undefined> {
 	const request = parseNetworkRequestsPageFilterRequest(options.commandTokens);

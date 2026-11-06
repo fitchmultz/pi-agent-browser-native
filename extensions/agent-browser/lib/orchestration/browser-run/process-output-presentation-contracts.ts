@@ -1,40 +1,6 @@
 import type { ProcessBrowserOutputInput, PreparedBrowserRun, BrowserRunState } from "./types.js";
-import type { LifecycleOutputPhase } from "./process-output-lifecycle-phase-contracts.js";
 import type { PublicationOutputPhase } from "./process-output-publication-phase-contracts.js";
-export type ResolveOutputErrorInput = Readonly<
-	Pick<
-		LifecycleOutputPhase,
-		| "commandClosesSession"
-		| "managedSessionOutcome"
-		| "parseError"
-		| "plainTextInspection"
-		| "plainTextUpgrade"
-		| "recordingStopRecovery"
-		| "sessionTabCorrection"
-		| "succeeded"
-		| "textOutput"
-	>
-> &
-	Pick<
-		LifecycleOutputPhase,
-		| "errorText"
-		| "presentationEnvelope"
-		| "resultHeadedManagedAutosaveDisabled"
-		| "resultHeadedManagedAutosaveInterval"
-	> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					| "commandTokens"
-					| "executionPlan"
-					| "ownedManagedSessionContext"
-					| "redactedProcessArgs"
-					| "runtimeToolStdin"
-				>
-			>;
-		};
-	};
+import type { ToolPresentationObservation } from "../../results/presentation/observation-contracts.js";
 export type RenderNativePresentationInput = Readonly<
 	Pick<
 		PublicationOutputPhase,
@@ -59,122 +25,64 @@ export type RenderNativePresentationInput = Readonly<
 		| "succeeded"
 		| "textOutput"
 	>
-> &
-	Pick<PublicationOutputPhase, "presentation"> & {
-		readonly input: Readonly<
-			Pick<ProcessBrowserOutputInput, "artifactRunStartedAtMs" | "modelVisible" | "processResult">
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					| "commandTokens"
-					| "compiledSemanticAction"
-					| "executionPlan"
-					| "processStdin"
-					| "readConfirmation"
-					| "redactedArgs"
-					| "redactedProcessArgs"
-				>
-			>;
-		} & { readonly state: BrowserRunState };
-	};
+> & {
+	readonly input: Readonly<
+		Pick<ProcessBrowserOutputInput, "artifactRunStartedAtMs" | "modelVisible" | "processResult">
+	> & {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				| "commandTokens"
+				| "compiledSemanticAction"
+				| "executionPlan"
+				| "processStdin"
+				| "readConfirmation"
+				| "redactedArgs"
+				| "redactedProcessArgs"
+			>
+		>;
+	} & { readonly state: BrowserRunState };
+};
 export type ReclassifyPresentationInput = Readonly<
-	Pick<PublicationOutputPhase, "parseFailureOutput" | "diagnostics" | "sessionStateKey">
-> &
 	Pick<
 		PublicationOutputPhase,
+		| "parseFailureOutput"
+		| "diagnostics"
+		| "sessionStateKey"
 		| "artifactManifest"
 		| "networkRoutesBySession"
-		| "presentation"
 		| "presentationEnvelope"
 		| "succeeded"
-	>;
-export type ResolveNativeErrorTextInput = Readonly<
-	Pick<
-		LifecycleOutputPhase,
-		| "parseError"
-		| "plainTextInspection"
-		| "presentationEnvelope"
-		| "recordingStopRecovery"
-		| "sessionTabCorrection"
 	>
-> &
-	Pick<LifecycleOutputPhase, "errorText"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"commandTokens" | "executionPlan" | "redactedProcessArgs" | "runtimeToolStdin"
-				>
-			>;
-		};
-	};
-export type ApplyErrorEnvelopeFallbackInput = Readonly<Pick<LifecycleOutputPhase, "errorText">> &
-	Pick<LifecycleOutputPhase, "presentationEnvelope">;
-export type RedactClipboardErrorInput = Pick<
-	LifecycleOutputPhase,
-	"errorText" | "presentationEnvelope"
-> & {
-	readonly input: {
-		readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
-	};
-};
-export type ApplyTextErrorEnvelopeInput = Readonly<
-	Pick<LifecycleOutputPhase, "errorText" | "plainTextUpgrade" | "textOutput">
-> &
-	Pick<LifecycleOutputPhase, "presentationEnvelope">;
-export type ObserveResultLaunchPolicyInput = Readonly<
-	Pick<LifecycleOutputPhase, "commandClosesSession" | "managedSessionOutcome" | "succeeded">
-> &
-	Pick<
-		LifecycleOutputPhase,
-		"resultHeadedManagedAutosaveDisabled" | "resultHeadedManagedAutosaveInterval"
-	> & {
-		readonly input: {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "ownedManagedSessionContext">>;
-		};
-	};
+> & { readonly presentation: ToolPresentationObservation };
 export type ClassifyMalformedNativeFailureInput = Readonly<
 	Pick<PublicationOutputPhase, "parseError">
-> &
-	Pick<PublicationOutputPhase, "presentation"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">>;
-	};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">>;
+};
 export type RenderPresentationConfirmationInput = Readonly<
 	Pick<
 		PublicationOutputPhase,
 		"confirmationFromHelper" | "presentationEnvelope" | "readConfirmationEvent"
 	>
-> &
-	Pick<PublicationOutputPhase, "presentation"> & {
-		readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "readConfirmation">> };
-	};
+> & {
+	readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "readConfirmation">> };
+};
 export type RenderUpgradeFailureInput = Readonly<
 	Pick<
 		PublicationOutputPhase,
-		| "artifactManifest"
-		| "persistentArtifactStore"
-		| "plainTextUpgrade"
-		| "presentationEnvelope"
-		| "succeeded"
-		| "textOutput"
+		"plainTextUpgrade" | "presentationEnvelope" | "succeeded" | "textOutput"
 	>
-> &
-	Pick<PublicationOutputPhase, "presentation"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "modelVisible">> & {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">>;
-		};
-	};
-export type ReclassifyScrollNoopInput = Readonly<Pick<PublicationOutputPhase, "diagnostics">> &
-	Pick<PublicationOutputPhase, "presentation" | "presentationEnvelope" | "succeeded">;
+>;
+export type ReclassifyScrollNoopInput = Readonly<
+	Pick<PublicationOutputPhase, "diagnostics" | "presentationEnvelope">
+> & { readonly presentation: ToolPresentationObservation };
 export type RenderParseFailureArtifactsInput = Readonly<
-	Pick<PublicationOutputPhase, "parseFailureOutput">
-> &
-	Pick<PublicationOutputPhase, "artifactManifest" | "presentation">;
+	Pick<PublicationOutputPhase, "parseFailureOutput" | "artifactManifest">
+> & { readonly presentation: ToolPresentationObservation };
 export type RenderPendingHelperConfirmationInput = Readonly<
 	Pick<PublicationOutputPhase, "presentationEnvelope" | "readConfirmationEvent">
-> &
-	Pick<PublicationOutputPhase, "presentation">;
+>;
 export type InspectionPresentationInput = Readonly<
 	Pick<PublicationOutputPhase, "inspectionText">
 > & { readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "redactedArgs">> } };
@@ -223,13 +131,10 @@ export type BuildNativePresentationInput = Readonly<
 		>;
 	} & { readonly state: BrowserRunState };
 };
-export type PreparedSessionRetainedInput = Readonly<
-	Pick<LifecycleOutputPhase, "managedSessionOutcome">
->;
 export type RenderParseFailureNoticeInput = Readonly<
-	Pick<PublicationOutputPhase, "parseFailureOutput" | "presentation">
->;
+	Pick<PublicationOutputPhase, "parseFailureOutput">
+> & { readonly presentation: ToolPresentationObservation };
 export type ApplyBatchNetworkRouteStateInput = Readonly<
 	Pick<PublicationOutputPhase, "presentationEnvelope" | "sessionStateKey" | "succeeded">
 > &
-	Pick<PublicationOutputPhase, "networkRoutesBySession">;
+	Readonly<Pick<PublicationOutputPhase, "networkRoutesBySession">>;

@@ -34,7 +34,7 @@ function canResolveBuildDependencies() {
 async function runNpmInstallDevDependencies() {
 	const npmExecPath = process.env.npm_execpath;
 	const options = process.platform === "win32" ? { shell: true } : {};
-	if (npmExecPath) {
+	if (npmExecPath !== undefined && npmExecPath.length > 0) {
 		await execFile(
 			process.execPath,
 			[npmExecPath, "install", "--include=dev", "--ignore-scripts"],
@@ -63,12 +63,14 @@ async function main() {
 	});
 }
 
-main().catch((error) => {
-	if (error?.stdout) {
-		process.stdout.write(error.stdout);
-	}
-	if (error?.stderr) {
-		process.stderr.write(error.stderr);
+main().catch((/** @type {unknown} */ error) => {
+	if (error !== null && typeof error === "object") {
+		if ("stdout" in error && typeof error.stdout === "string" && error.stdout.length > 0) {
+			process.stdout.write(error.stdout);
+		}
+		if ("stderr" in error && typeof error.stderr === "string" && error.stderr.length > 0) {
+			process.stderr.write(error.stderr);
+		}
 	}
 	console.error(error instanceof Error ? error.message : String(error));
 	process.exitCode = 1;

@@ -1,22 +1,22 @@
 import type { ProcessBrowserOutputInput, PreparedBrowserRun, BrowserRunState } from "./types.js";
 import type { LifecycleOutputPhase } from "./process-output-lifecycle-phase-contracts.js";
+
 export type CloseAllClosesManagedSessionInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
 		| "closeAllApplied"
 		| "nestedBatchRemainsActive"
-		| "priorManagedSessionActive"
-		| "priorManagedSessionName"
-		| "priorManagedSessionNamespace"
+		| "managedSessionActive"
+		| "managedSessionName"
+		| "managedSessionNamespace"
 		| "sessionStateKey"
 	>
 > & { readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> } };
+
 export type ManagedCloseTargetInput = Readonly<
-	Pick<
-		LifecycleOutputPhase,
-		"closeCommandSucceeded" | "priorManagedSessionName" | "priorManagedSessionNamespace"
-	>
+	Pick<LifecycleOutputPhase, "managedSessionName" | "managedSessionNamespace">
 > & { readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> } };
+
 export type ResolveManagedCloseTargetInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
@@ -32,20 +32,8 @@ export type ResolveManagedCloseTargetInput = Readonly<
 		| "sessionStateKey"
 		| "succeeded"
 	>
-> &
-	Pick<
-		LifecycleOutputPhase,
-		| "closeCommandSucceeded"
-		| "commandClosesSession"
-		| "managedCloseSessionName"
-		| "priorManagedSessionActive"
-		| "priorManagedSessionCwd"
-		| "priorManagedSessionHeadedAutosaveInterval"
-		| "priorManagedSessionName"
-		| "priorManagedSessionNamespace"
-	> & {
-		readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> };
-	};
+> & { readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> } };
+
 export type FailedBatchEstablishedBrowserInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
@@ -90,76 +78,58 @@ export type InspectFailedFreshLaunchInput = Readonly<
 		| "succeeded"
 		| "timeoutPartialProgress"
 	>
-> &
-	Pick<LifecycleOutputPhase, "managedTransitionSucceeded"> & {
-		readonly input: Readonly<
-			Pick<ProcessBrowserOutputInput, "cwd" | "implicitSessionCloseTimeoutMs" | "processResult">
-		> & {
-			readonly prepared: Readonly<
-				Pick<PreparedBrowserRun, "executionPlan" | "ownedManagedSessionContext" | "sessionMode">
-			>;
-		} & { readonly state: BrowserRunState };
-	};
-export type ExecutionTargetsManagedSessionInput = Readonly<
-	Pick<LifecycleOutputPhase, "managedSessionName" | "managedSessionNamespace">
-> & { readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> } };
+> & {
+	readonly input: Readonly<
+		Pick<ProcessBrowserOutputInput, "cwd" | "implicitSessionCloseTimeoutMs" | "processResult">
+	> & {
+		readonly prepared: Readonly<
+			Pick<PreparedBrowserRun, "executionPlan" | "ownedManagedSessionContext" | "sessionMode">
+		>;
+	} & { readonly state: BrowserRunState };
+};
 export type ApplyManagedLaunchPolicyInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
-		| "managedSessionActive"
-		| "managedSessionName"
-		| "managedSessionNamespace"
 		| "managedTransitionSucceeded"
-	>
-> &
-	Pick<
-		LifecycleOutputPhase,
 		| "managedSessionCompatibilityWorkaround"
 		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
-	> & {
-		readonly input: {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"compatibilityWorkaround" | "executionPlan" | "ownedManagedSessionContext"
-				>
-			>;
-		};
+	>
+> & {
+	readonly input: {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				"compatibilityWorkaround" | "executionPlan" | "ownedManagedSessionContext"
+			>
+		>;
 	};
+};
 export type RetireManagedRestorePoolInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
 		| "closeCommandSucceeded"
 		| "managedCloseSessionName"
-		| "managedSessionActive"
 		| "priorManagedSessionName"
 		| "priorManagedSessionNamespace"
 		| "rawCloseStatePath"
+		| "freshSessionOrdinal"
 	>
-> &
-	Pick<
-		LifecycleOutputPhase,
-		"freshSessionOrdinal" | "managedSessionName" | "managedSessionNamespace"
-	> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd">> & {
-			readonly state: BrowserRunState;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd">> & {
+		readonly state: BrowserRunState;
 	};
+};
 export type UpdateManagedLaunchDirectoryInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
-		| "managedSessionActive"
-		| "managedTransitionSucceeded"
-		| "priorManagedSessionActive"
-		| "replacedManagedSessionName"
+		"managedTransitionSucceeded" | "priorManagedSessionActive" | "managedSessionCwd"
 	>
-> &
-	Pick<LifecycleOutputPhase, "managedSessionCwd" | "managedSessionNamespace"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd">> & {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">>;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd">> & {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">>;
 	};
+};
 export type ApplyManagedTransitionInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
@@ -171,30 +141,22 @@ export type ApplyManagedTransitionInput = Readonly<
 		| "priorManagedSessionName"
 		| "priorManagedSessionNamespace"
 		| "rawCloseStatePath"
-	>
-> &
-	Pick<
-		LifecycleOutputPhase,
 		| "freshSessionOrdinal"
-		| "managedSessionActive"
 		| "managedSessionCompatibilityWorkaround"
 		| "managedSessionCwd"
 		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
-		| "managedSessionName"
-		| "managedSessionNamespace"
-		| "managedSessionOutcome"
-		| "replacedManagedSessionName"
-	> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd">> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"compatibilityWorkaround" | "executionPlan" | "ownedManagedSessionContext" | "sessionMode"
-				>
-			>;
-		} & { readonly state: BrowserRunState };
-	};
+	>
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd">> & {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				"compatibilityWorkaround" | "executionPlan" | "ownedManagedSessionContext" | "sessionMode"
+			>
+		>;
+	} & { readonly state: BrowserRunState };
+};
 export type RetireReplacedSessionInput = Readonly<
 	Pick<
 		LifecycleOutputPhase,
@@ -202,10 +164,11 @@ export type RetireReplacedSessionInput = Readonly<
 		| "priorManagedSessionHeadedAutosaveInterval"
 		| "priorManagedSessionNamespace"
 		| "replacedManagedSessionName"
+		| "managedSessionOutcome"
+		| "networkRoutesBySession"
 	>
-> &
-	Pick<LifecycleOutputPhase, "managedSessionOutcome" | "networkRoutesBySession"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "implicitSessionCloseTimeoutMs">> & {
-			readonly state: BrowserRunState;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "implicitSessionCloseTimeoutMs">> & {
+		readonly state: BrowserRunState;
 	};
+};

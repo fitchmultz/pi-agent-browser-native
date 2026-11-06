@@ -17,9 +17,9 @@ export const JOURNAL_CHUNK_BYTES = 64 * 1024;
 type ProjectionFields = readonly (readonly string[])[];
 interface ProjectionFrame {
 	readonly path: readonly (string | number)[];
-	key?: string;
+	key?: string | undefined;
 	index: number;
-	readonly value?: Record<string, unknown> | unknown[];
+	readonly value?: Record<string, unknown> | unknown[] | undefined;
 }
 function matches(field: string | undefined, key: string | number | undefined): boolean {
 	return field === key || (field === "*" && typeof key === "number");
@@ -214,7 +214,6 @@ class JsonProjection {
 /** Validate discarded values too; the parser never packs their strings or numbers. */
 export async function projectJson(
 	// The native async iterator owns a mutable cursor; this reader consumes bytes without mutating them.
-	// oxlint-disable-next-line typescript/prefer-readonly-parameter-types
 	input: AsyncIterable<Uint8Array>,
 	fields: ProjectionFields,
 	maxBytes = ENVELOPE_MAX_BYTES,
@@ -265,17 +264,17 @@ function stringEnd(bytes: Uint8Array, open: number): number {
 }
 
 /** Per-byte depth change and structural count outside strings: `[` `{` open, `]` `}` close, `,` `:` separate. */
-const DEPTH_STEP = new Int8Array(256);
-const STRUCTURE_STEP = new Uint8Array(256);
+const DEPTH_STEP = new DataView(new ArrayBuffer(256));
+const STRUCTURE_STEP = new DataView(new ArrayBuffer(256));
 for (const byte of [0x5b, 0x7b]) {
-	DEPTH_STEP[byte] = 1;
-	STRUCTURE_STEP[byte] = 1;
+	DEPTH_STEP.setInt8(byte, 1);
+	STRUCTURE_STEP.setUint8(byte, 1);
 }
 for (const byte of [0x5d, 0x7d]) {
-	DEPTH_STEP[byte] = -1;
+	DEPTH_STEP.setInt8(byte, -1);
 }
 for (const byte of [0x2c, 0x3a]) {
-	STRUCTURE_STEP[byte] = 1;
+	STRUCTURE_STEP.setUint8(byte, 1);
 }
 
 /**
@@ -283,10 +282,11 @@ for (const byte of [0x2c, 0x3a]) {
  * depth is its nesting depth; invalid input is rejected later by either path, so it may pass here.
  */
 function fitsNativeParse(bytes: Uint8Array): boolean {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	let depth = 0;
 	let structure = 0;
 	for (let index = 0; index < bytes.length; index++) {
-		const byte = bytes[index];
+		const byte = view.getUint8(index);
 		if (byte === 0x22) {
 			index = stringEnd(bytes, index);
 			if (index === -1) {
@@ -294,8 +294,8 @@ function fitsNativeParse(bytes: Uint8Array): boolean {
 			}
 			continue;
 		}
-		depth += DEPTH_STEP[byte];
-		structure += STRUCTURE_STEP[byte];
+		depth += DEPTH_STEP.getInt8(byte);
+		structure += STRUCTURE_STEP.getUint8(byte);
 		if (depth > MAX_NESTING || structure > NATIVE_STRUCTURE_LIMIT) {
 			return false;
 		}

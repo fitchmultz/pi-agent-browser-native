@@ -30,7 +30,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import test from "node:test";
+import nodeTest from "node:test";
 import { fileURLToPath } from "node:url";
 import which from "which";
 import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mjs";
@@ -49,11 +49,9 @@ const timeoutMs = 60_000;
 async function until(check: () => boolean | Promise<boolean>, label: string, timeout = 10_000) {
 	const deadline = Date.now() + timeout;
 	// Poll the observed race condition once before each bounded delay.
-	// oxlint-disable-next-line no-await-in-loop
 	while (!(await check())) {
 		assert.ok(Date.now() < deadline, label);
 		// Recheck only after the polling interval, not concurrently with the previous probe.
-		// oxlint-disable-next-line no-await-in-loop
 		await delay(10);
 	}
 }
@@ -166,7 +164,7 @@ function worker(root: string, actor: string, env: Readonly<NodeJS.ProcessEnv>) {
 }
 
 for (const mode of ["direct", "code", "cancel-waiter"] as const) {
-	test(
+	nodeTest(
 		{
 			direct: "real registered direct helper/action keeps another process off the verified page",
 			code: "real registered code cell holds its browser through read, local branch, and action",
@@ -285,11 +283,10 @@ for (const mode of ["direct", "code", "cancel-waiter"] as const) {
 					);
 					evidence.remainingClaims = await claims();
 					assert.deepEqual(evidence.remainingClaims, []);
-					for (const exit of readArray(evidence.workerExit).map(readRecord)) {
-						// Every explicitly started worker must exit successfully before cleanup completes.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(exit.code, 0);
-					}
+					assert.deepEqual(
+						readArray(evidence.workerExit).map((exit) => readRecord(exit).code),
+						workers.map(() => 0),
+					);
 				} finally {
 					server.closeAllConnections();
 					await new Promise<void>((complete) => {
@@ -412,18 +409,21 @@ emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Da
 			const held = readRecord(JSON.parse(heldText));
 			evidence.held = held;
 			if (mode !== "code") {
-				// The direct-action fixture must be held on A; the code variant checks its own receipt below.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(
-					readRecord(readRecord(JSON.parse(readString(held.stdout))).data).url,
-					`${base}/A`,
-				);
+				await t.test("direct response held on A", () => {
+					assert.equal(
+						readRecord(readRecord(JSON.parse(readString(held.stdout))).data).url,
+						`${base}/A`,
+					);
+				});
 			} else {
-				// The code fixture must be held on A with no click; direct variants assert their URL above.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.deepEqual(readRecord(readRecord(JSON.parse(readString(held.stdout))).data).result, {
-					page: "A",
-					clicks: 0,
+				await t.test("code response held before click", () => {
+					assert.deepEqual(
+						readRecord(readRecord(JSON.parse(readString(held.stdout))).data).result,
+						{
+							page: "A",
+							clicks: 0,
+						},
+					);
 				});
 			}
 			const navigation = b.call({ args: [...args, "open", `${base}/B`], timeoutMs: 20_000 });
@@ -436,9 +436,9 @@ emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Da
 			if (mode === "cancel-waiter") {
 				navigation.abort();
 				evidence.cancelled = await navigation.result();
-				// The explicit cancel-waiter variant must acknowledge cancellation before gate release.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(readRecord(evidence.cancelled).isError, true);
+				await t.test("waiter acknowledges cancellation", () => {
+					assert.equal(readRecord(evidence.cancelled).isError, true);
+				});
 				await until(
 					async () => (await claims()).length === 1,
 					"Cancelled waiter retained its claim",
@@ -504,16 +504,12 @@ emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Da
 				"All helpers/actions must reuse one native launch configuration",
 			);
 			if (mode === "code") {
-				const data = readRecord(readRecord(readRecord(evidence.action).details).data);
-				// The code variant must retain A across its cell; common ordering is asserted above.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(data.page, "A");
-				// The code variant must dispatch exactly one click before releasing ownership.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(data.clicks, 1);
-				// The code variant must retain the execution lock across the intentionally suspended cell.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.ok(readNumber(data.branchGapMs) >= 1000);
+				await t.test("cell retains A through its local branch", () => {
+					const data = readRecord(readRecord(readRecord(evidence.action).details).data);
+					assert.equal(data.page, "A");
+					assert.equal(data.clicks, 1);
+					assert.ok(readNumber(data.branchGapMs) >= 1000);
+				});
 			}
 			const dom = readRecord(readRecord(readRecord(evidence.dom).details).data);
 			assert.deepEqual(
@@ -521,21 +517,23 @@ emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Da
 				mode === "cancel-waiter" ? { page: "A", clicks: 1 } : { page: "B", clicks: 0 },
 			);
 			if (mode === "cancel-waiter") {
-				// The cancel-waiter variant must never spawn its cancelled peer navigation.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.ok(
-					!nativeRows.some((row) => row.actor === "B" && readArray(row.args).includes(`${base}/B`)),
-					"Cancelled navigation must never spawn",
-				);
+				await t.test("cancelled navigation never spawns", () => {
+					assert.ok(
+						!nativeRows.some(
+							(row) => row.actor === "B" && readArray(row.args).includes(`${base}/B`),
+						),
+						"Cancelled navigation must never spawn",
+					);
+				});
 			} else {
 				successful(evidence.navigation);
-				// Noncancelled variants must navigate only after the independent click receipt.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.ok(
-					rows.findIndex((row) => row.event === "click" && row.page === "A") <
-						rows.findIndex((row) => row.event === "navigate" && row.page === "B"),
-					"Independent receipt must precede peer navigation",
-				);
+				await t.test("click receipt precedes peer navigation", () => {
+					assert.ok(
+						rows.findIndex((row) => row.event === "click" && row.page === "A") <
+							rows.findIndex((row) => row.event === "navigate" && row.page === "B"),
+						"Independent receipt must precede peer navigation",
+					);
+				});
 			}
 		},
 	);

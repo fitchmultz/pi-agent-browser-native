@@ -28,7 +28,7 @@ import type { PromptPolicy } from "../../prompt-policy.js";
 
 export interface PreparationGuardFacts extends PreparationProcessFacts {
 	readonly isRestoreDisabled: () => boolean;
-	readonly preserveAttachedBrowserSession?: boolean;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
 	readonly promptPolicy: PromptPolicy;
 }
 
@@ -36,7 +36,7 @@ export interface PreparationGuardOwners {
 	readonly pageState: SessionPageState;
 	readonly update: ReturnType<SessionPageState["beginUpdate"]>;
 	readonly traceOwners: ReadonlyMap<string, TraceOwner>;
-	readonly artifactManifest?: SessionArtifactManifest;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
 }
 import type {
 	TraceOwner,
@@ -50,11 +50,11 @@ export interface PreparationGuardContext {
 	readonly semantic: PreparationSemanticResult;
 	readonly policy: PreparationDaemonPolicy;
 	readonly session: PreparationSessionPlan;
-	readonly chromeStartupArgs?: string;
+	readonly chromeStartupArgs?: string | undefined;
 	readonly sessionMode: "auto" | "fresh";
 	readonly freshSessionName: string;
 	readonly freshSessionOrdinal: number;
-	readonly stdin?: string;
+	readonly stdin?: string | undefined;
 }
 
 export interface PreparationGuardEvidence {
@@ -133,7 +133,7 @@ function planFailure(
 	evidence: PreparationGuardEvidence,
 	cleanup: {
 		readonly reason?: PreparationDaemonPolicy["cleanupOnlyReason"];
-		readonly namespace?: string;
+		readonly namespace?: string | undefined;
 	},
 ): PrepareBrowserRunResult | undefined {
 	const { selection } = context.semantic;

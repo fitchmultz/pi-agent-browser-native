@@ -91,7 +91,7 @@ export function formatOverlayBlockerText(diagnostic: OverlayBlockerDiagnostic): 
 
 export function buildOverlayBlockerNextActions(options: {
 	readonly diagnostic: OverlayBlockerDiagnostic;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): AgentBrowserNextAction[] {
 	return [
 		buildInspectOverlayStateAction(options.sessionName),
@@ -122,14 +122,14 @@ export function collectSnapshotOverlayBlockerDiagnostic(
 }
 
 interface OverlayDiagnosticOptions {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly cwd: string;
 	readonly data: unknown;
-	readonly namespace?: string;
-	readonly navigationSummary?: NavigationSummary;
-	readonly priorTarget?: SessionTabTarget;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly navigationSummary?: NavigationSummary | undefined;
+	readonly priorTarget?: SessionTabTarget | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }
 
 function isSnapshotRefClick(data: unknown): boolean {

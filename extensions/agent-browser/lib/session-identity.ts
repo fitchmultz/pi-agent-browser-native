@@ -1,3 +1,8 @@
+export interface AgentBrowserSessionIdentity {
+	readonly namespace?: string | undefined;
+	readonly sessionName: string;
+}
+
 const SESSION_COMPONENT_ALPHANUMERIC = /^[\p{Alphabetic}\p{Number}]$/u;
 
 /** Mirror upstream sanitize_session_component for namespace/socket/state identity. */
@@ -56,7 +61,6 @@ export function isAgentBrowserSessionIdentityKeyInNamespace(
 /** Namespace close retires keys in the caller's ownership index, not a copy. */
 export function deleteIdentityKeysInNamespace(
 	// Caller-owned identity indexes deliberately mutate under the namespace execution barrier.
-	// oxlint-disable-next-line typescript/prefer-readonly-parameter-types
 	entries: Set<string> | Map<string, unknown>,
 	namespace?: string,
 ): void {

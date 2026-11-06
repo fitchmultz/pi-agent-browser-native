@@ -71,10 +71,10 @@ export async function ensureCoordinationDirectory(
 }
 /** Resolve only after native routing; omit sessionName for a namespace-wide operation. */
 export async function resolveBrowserExecutionIdentity(options: {
-	readonly env?: NodeJS.ProcessEnv;
-	readonly namespace?: string;
+	readonly env?: NodeJS.ProcessEnv | undefined;
+	readonly namespace?: string | undefined;
 	readonly ownedManagedSession?: boolean;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): Promise<BrowserExecutionIdentity> {
 	const socketDir = resolveAgentBrowserSocketDir(options);
 	const namespace = canonicalizeAgentBrowserNamespace(options.namespace);

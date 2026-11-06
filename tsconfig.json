@@ -20,15 +20,24 @@
 		"skipLibCheck": true,
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
-		"types": ["node"]
+		"types": ["node"],
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitOverride": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noUncheckedSideEffectImports": true,
+		"noCheck": false,
+		"checkJs": true
 	},
 	"include": [
-		".pi/extensions/**/*.ts",
-		"extensions/**/*.ts",
-		"extensions/agent-browser/lib/config-policy.js",
-		"extensions/agent-browser/lib/config-providers.js",
-		"extensions/agent-browser/lib/config-validation.js",
-		"scripts/**/*.ts",
-		"test/**/*.ts"
-	]
+		"**/*.ts",
+		"**/*.tsx",
+		"**/*.mts",
+		"**/*.cts",
+		"**/*.js",
+		"**/*.jsx",
+		"**/*.mjs",
+		"**/*.cjs"
+	],
+	"exclude": ["node_modules", "dist", ".artifacts", ".crabbox", ".cueloop"]
 }

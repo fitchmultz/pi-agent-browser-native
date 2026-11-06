@@ -48,7 +48,8 @@ async function readDevToolsActivePort(
 	const path = `${userDataDir}/DevToolsActivePort`;
 	try {
 		const text = await readFile(path, "utf8");
-		const port = Number(text.split(/\r?\n/)[0].trim());
+		const [firstLine = ""] = text.split(/\r?\n/u);
+		const port = Number(firstLine.trim());
 		const valid = Number.isSafeInteger(port) && port > 0 && port <= 65_535;
 		return {
 			found: true,
@@ -62,7 +63,7 @@ async function readDevToolsActivePort(
 }
 
 interface DevToolsPortResult {
-	readonly devToolsActivePort?: ElectronDevToolsActivePortRead;
+	readonly devToolsActivePort?: ElectronDevToolsActivePortRead | undefined;
 	readonly failure?: ElectronLaunchFailureReason;
 	readonly port?: number;
 	readonly spawnError?: Error;
@@ -75,7 +76,7 @@ export async function pollDevToolsActivePort(options: {
 		readonly signal: NodeJS.Signals | null;
 	};
 	readonly getSpawnError: () => Error | undefined;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 	readonly userDataDir: string;
 }): Promise<DevToolsPortResult> {
 	let devToolsActivePort: ElectronDevToolsActivePortRead | undefined;
@@ -88,7 +89,6 @@ export async function pollDevToolsActivePort(options: {
 			return { devToolsActivePort, failure: "spawn-error", spawnError };
 		}
 		// A newly written port file is observed between sleeps, within one launch deadline.
-		// oxlint-disable-next-line no-await-in-loop
 		devToolsActivePort = await readDevToolsActivePort(options.userDataDir);
 		if (devToolsActivePort.port !== undefined) {
 			return { devToolsActivePort, port: devToolsActivePort.port };
@@ -101,7 +101,6 @@ export async function pollDevToolsActivePort(options: {
 			};
 		}
 		// Keep the next file observation after the polling delay; concurrent polls would race cleanup.
-		// oxlint-disable-next-line no-await-in-loop
 		await waitForElectronPoll(POLL_INTERVAL_MS, options.signal);
 	}
 	return { devToolsActivePort, failure: "timeout" };
@@ -122,7 +121,6 @@ export async function pollCdpMetadata(
 			return { aborted: true };
 		}
 		// CDP readiness must be observed before targets can be read, within the same deadline.
-		// oxlint-disable-next-line no-await-in-loop
 		const versionData = await fetchCdpJson(`http://127.0.0.1:${port}/json/version`, signal);
 		const version = parseCdpVersion(versionData);
 		if (isElectronLaunchAborted(signal)) {
@@ -130,7 +128,6 @@ export async function pollCdpMetadata(
 		}
 		if (version !== undefined) {
 			// Read targets only after version proves readiness; cancellation still wins after this await.
-			// oxlint-disable-next-line no-await-in-loop
 			const targetsData = await fetchCdpJson(`http://127.0.0.1:${port}/json/list`, signal);
 			const targets = parseCdpTargets(targetsData);
 			return isElectronLaunchAborted(signal)
@@ -138,7 +135,6 @@ export async function pollCdpMetadata(
 				: { aborted: false, metadata: { targets, version } };
 		}
 		// Each failed readiness probe waits before the next attempt.
-		// oxlint-disable-next-line no-await-in-loop
 		await waitForElectronPoll(POLL_INTERVAL_MS, signal);
 	}
 	return { aborted: false };

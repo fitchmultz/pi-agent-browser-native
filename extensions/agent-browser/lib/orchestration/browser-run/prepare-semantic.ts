@@ -28,8 +28,8 @@ import type {
 export interface PreparationSemanticResult {
 	readonly selection: PreparationPageSelection;
 	readonly commandTokens: readonly string[];
-	readonly resolution?: SemanticActionVisibleRefResolution;
-	readonly resolvedSnapshot?: SessionRefSnapshot;
+	readonly resolution?: SemanticActionVisibleRefResolution | undefined;
+	readonly resolvedSnapshot?: SessionRefSnapshot | undefined;
 	readonly scrollRecovery?: ReturnType<typeof buildUnsupportedScrollIntoViewRecovery>;
 }
 
@@ -39,7 +39,7 @@ interface SemanticRequest {
 	readonly freshSessionName: string;
 	readonly sessionMode: "auto" | "fresh";
 	readonly preparedArgs: PreparedAgentBrowserArgs;
-	readonly stdin?: string;
+	readonly stdin?: string | undefined;
 }
 
 function semanticLocatorError(request: SemanticRequest, active: boolean): string {
@@ -134,7 +134,7 @@ async function resolveSemantic(
 	request: SemanticRequest,
 ): Promise<{
 	readonly selection: PreparationPageSelection;
-	readonly resolution?: SemanticActionVisibleRefResolution;
+	readonly resolution?: SemanticActionVisibleRefResolution | undefined;
 }> {
 	let selection = request.selection;
 	const active = hasLiveSemanticSession(

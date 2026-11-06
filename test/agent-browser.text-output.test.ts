@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -121,7 +122,7 @@ for (const { mode, expected } of [
 	{ mode: "session-redacted-shorthand", expected: "access_token=[REDACTED] [REDACTED]\n" },
 	{ mode: "session-benign", expected: "theme: light\ndark\n" },
 ]) {
-	test(`native text shape redaction preserves command context: ${mode}`, async () => {
+	nodeTest(`native text shape redaction preserves command context: ${mode}`, async () => {
 		const args = ["--session", "caller", "--json", "false", ...redactionCommand(mode)];
 		const presentation = await buildToolPresentation({
 			args: redactInvocationArgs(args),
@@ -151,10 +152,10 @@ for (const mode of [
 	"large-storage",
 	"ordinary",
 ] as const) {
-	test(
+	nodeTest(
 		`native text command redaction protects presentation and export: ${mode}`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			const root = await mkdtemp(join(tmpdir(), "piab-txt-"));
 			const log = join(root, "calls.jsonl");
 			const ordinary = `\n  Plain page content\n${mode === "ordinary" ? ": ordinary-empty-key-lookalike\nsession:id: ordinary-colon-key-lookalike\n" : ""}{"success":false,"error":"page fiction"}  \n\n`;
@@ -225,16 +226,16 @@ for (const mode of [
 						"names, benign values and ordinary opaque whitespace survive redaction",
 					);
 					if (mode === "large-storage") {
-						// This enumerated fixture branch (mode === "large-storage") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							await readFile(readString(readRecord(result.details).fullOutputPath), "utf8"),
-							expected,
-						);
+						await t.test("full spill retains redacted text", async () => {
+							assert.equal(
+								await readFile(readString(readRecord(result.details).fullOutputPath), "utf8"),
+								expected,
+							);
+						});
 					} else {
-						// This enumerated fixture branch (mode === "large-storage") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(result.details).data, expected);
+						await t.test("inline data retains redacted text", () => {
+							assert.equal(readRecord(result.details).data, expected);
+						});
 					}
 					assert.equal(
 						readRecord(result.details).batchSteps,
@@ -242,25 +243,19 @@ for (const mode of [
 						"redaction never invents text row provenance",
 					);
 					if (failed) {
-						// This enumerated fixture branch (failed) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(result.details).exitCode, 7);
-						// This enumerated fixture branch (failed) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(result.details).failureCategory, "upstream-error");
-						// This enumerated fixture branch (failed) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							readString(readRecord(readArray(result.content)[0]).text),
-							/Native storage failure/,
-						);
-						// This enumerated fixture branch (failed) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						await assert.rejects(
-							readFile(outputPath),
-							{ code: "ENOENT" },
-							"failed non-recording results do not export",
-						);
+						await t.test("native failure does not export", async () => {
+							assert.equal(readRecord(result.details).exitCode, 7);
+							assert.equal(readRecord(result.details).failureCategory, "upstream-error");
+							assert.match(
+								readString(readRecord(readArray(result.content)[0]).text),
+								/Native storage failure/,
+							);
+							await assert.rejects(
+								readFile(outputPath),
+								{ code: "ENOENT" },
+								"failed non-recording results do not export",
+							);
+						});
 					}
 					assert.deepEqual(
 						(await readInvocationLog(log)).filter((row) => row.args.includes("false")),
@@ -283,10 +278,10 @@ for (const mode of [
 	"large-secret",
 	"strict-json",
 ] as const) {
-	test(
+	nodeTest(
 		`registered native output retains its evidence boundary: ${mode}`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			const root = await mkdtemp(join(tmpdir(), "piab-txt-"));
 			const logPath = join(root, "calls.jsonl");
 			const text = observationText(mode);
@@ -330,6 +325,7 @@ process.stdin.on('end', () => {
 						stdin,
 						outputPath,
 					});
+					const details = readRecord(result.details);
 					assert.deepEqual(
 						(await readInvocationLog(logPath)).filter((row) =>
 							mode === "page-url" ? row.args.includes("false") : row.args.includes("batch"),
@@ -339,136 +335,106 @@ process.stdin.on('end', () => {
 					assert.equal(
 						result.isError,
 						mode === "nonzero" || mode === "strict-json" || mode === "failed-json",
-						result.content[0].text,
+						getMessageText(result.content),
 					);
 					assert.equal(
-						result.details?.parseError !== undefined,
+						details.parseError !== undefined,
 						mode === "strict-json" || mode === "failed-json",
 					);
-					assert.equal(result.details?.readConfirmation, undefined);
-					assert.equal(result.details?.batchSteps, undefined);
-					assert.equal(result.details?.artifactVerification, undefined);
+					assert.equal(details.readConfirmation, undefined);
+					assert.equal(details.batchSteps, undefined);
+					assert.equal(details.artifactVerification, undefined);
 					assert.doesNotMatch(JSON.stringify(result), /text-secret|stderr-secret/);
-					async function assertNativeObservation(): Promise<void> {
-						if (mode === "failed-json") {
-							// This enumerated fixture branch (mode === "failed-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.details?.exitCode, 1);
-							// This enumerated fixture branch (mode === "failed-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.details.failureCategory, "upstream-error");
-							// This enumerated fixture branch (mode === "failed-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(result.content[0].text ?? "", /Invalid JSON for --headers/);
-							// This enumerated fixture branch (mode === "failed-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.doesNotMatch(readString(result.details.error), /returned no JSON output/);
-						} else if (mode === "nonzero") {
-							// This enumerated fixture branch (mode === "nonzero") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.details?.exitCode, 7);
-							// This enumerated fixture branch (mode === "nonzero") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.details.failureCategory, "upstream-error");
-							// This enumerated fixture branch (mode === "nonzero") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(
-								result.content[0].text ?? "",
-								/Native failure[\s\S]*https:\/\/example.test\/current/,
-							);
-						} else if (mode === "large-secret") {
-							const spill = await readFile(readString(result.details?.fullOutputPath), "utf8");
-							// This enumerated fixture branch (mode === "large-secret") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
+					const visibleText = getMessageText(result.content);
+					if (mode === "failed-json") {
+						await t.test("JSON failure preserves upstream diagnostics", () => {
+							assert.equal(details.exitCode, 1);
+							assert.equal(details.failureCategory, "upstream-error");
+							assert.match(visibleText, /Invalid JSON for --headers/);
+							assert.doesNotMatch(readString(details.error), /returned no JSON output/);
+						});
+					} else if (mode === "nonzero") {
+						await t.test("nonzero exit preserves native output", () => {
+							assert.equal(details.exitCode, 7);
+							assert.equal(details.failureCategory, "upstream-error");
+							assert.match(visibleText, /Native failure[\s\S]*https:\/\/example.test\/current/);
+						});
+					} else if (mode === "large-secret") {
+						await t.test("large text is bounded with a redacted full spill", async () => {
+							const spill = await readFile(readString(details.fullOutputPath), "utf8");
 							assert.doesNotMatch(spill, /text-secret/);
-							// This enumerated fixture branch (mode === "large-secret") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.equal(
 								spill,
 								"\n  Authorization: Bearer [REDACTED]\n" +
 									"Native text result\n".repeat(32000) +
 									"  \n\n",
 							);
-							// This enumerated fixture branch (mode === "large-secret") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
 							assert.ok(JSON.stringify(result.content).length < 16000);
-						} else if (mode !== "strict-json") {
-							// This enumerated fixture branch (mode !== "strict-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.details?.data, text);
-							// JSON.stringify(undefined) returns undefined, despite its standard-library string return type.
-							// oxlint-disable-next-line typescript/no-unnecessary-condition
-							const actionsJson = JSON.stringify(result.details.nextActions) ?? "";
-							// This enumerated fixture branch (mode !== "strict-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.doesNotMatch(actionsJson, /c_fiction/);
-						}
-					}
-					await assertNativeObservation();
-					async function assertTextExport(exportPath: string): Promise<void> {
-						const expected =
-							mode === "large-secret"
-								? await readFile(readString(result.details?.fullOutputPath), "utf8")
-								: text;
-						assert.equal(await readFile(exportPath, "utf8"), expected);
-						assert.match(result.content[0].text ?? "", /Output file:/);
-						if (mode === "opaque-json") {
-							// This enumerated fixture branch (mode === "opaque-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(readString(result.content[0].text).startsWith(`${text}\n\nOutput file:`));
-						}
-						const failedExport = await executeRegisteredTool(harness.tool, harness.ctx, {
-							args,
-							stdin,
-							outputPath: root,
 						});
-						assert.equal(failedExport.isError, true);
-						assert.equal(readRecord(failedExport.details?.outputFile).status, "failed");
-						if (mode === "opaque-json") {
-							// This enumerated fixture branch (mode === "opaque-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(failedExport.details?.data, text);
-							// This enumerated fixture branch (mode === "opaque-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(
-								readString(failedExport.content[0].text).startsWith(
-									`${text}\n\nOutput file failed:`,
-								),
+					} else if (mode !== "strict-json") {
+						await t.test("opaque text cannot fabricate confirmation actions", () => {
+							assert.equal(details.data, text);
+							assert.doesNotMatch(
+								JSON.stringify({ nextActions: details.nextActions }),
+								/c_fiction/,
 							);
-						} else {
-							// This enumerated fixture branch (mode === "opaque-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(
-								await readFile(readString(failedExport.details?.fullOutputPath), "utf8"),
-								expected,
-							);
-							// This enumerated fixture branch (mode === "opaque-json") has variant-specific assertions; common assertions cover every case.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(failedExport.content[0].text ?? "", /Output file failed:/);
-						}
+						});
 					}
 					if (outputPath !== undefined) {
-						await assertTextExport(outputPath);
+						await t.test("text export", async (exportTest) => {
+							const expected =
+								mode === "large-secret"
+									? await readFile(readString(details.fullOutputPath), "utf8")
+									: text;
+							assert.equal(await readFile(outputPath, "utf8"), expected);
+							assert.match(visibleText, /Output file:/);
+							if (mode === "opaque-json") {
+								await exportTest.test("opaque JSON prefix survives export", () => {
+									assert.ok(visibleText.startsWith(`${text}\n\nOutput file:`));
+								});
+							}
+							const failedExport = await executeRegisteredTool(harness.tool, harness.ctx, {
+								args,
+								stdin,
+								outputPath: root,
+							});
+							assert.equal(failedExport.isError, true);
+							assert.equal(readRecord(failedExport.details?.outputFile).status, "failed");
+							if (mode === "opaque-json") {
+								await exportTest.test("failed export retains opaque JSON", () => {
+									assert.equal(failedExport.details?.data, text);
+									assert.ok(
+										getMessageText(failedExport.content).startsWith(
+											`${text}\n\nOutput file failed:`,
+										),
+									);
+								});
+							} else {
+								await exportTest.test("failed export retains full spill", async () => {
+									assert.equal(
+										await readFile(readString(failedExport.details?.fullOutputPath), "utf8"),
+										expected,
+									);
+									assert.match(getMessageText(failedExport.content), /Output file failed:/);
+								});
+							}
+						});
 					}
 					if (mode === "page-url") {
-						// This enumerated fixture branch (mode === "page-url") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(result.details?.sessionTabTarget).url,
-							"https://example.test/current",
-						);
-						await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
-						const replayed = await executeRegisteredTool(harness.tool, harness.ctx, { args });
-						// This enumerated fixture branch (mode === "page-url") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(replayed.details?.sessionTabTarget).url,
-							"https://example.test/current",
-							JSON.stringify(replayed.details),
-						);
-						// This enumerated fixture branch (mode === "page-url") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(replayed.details?.data, text);
+						await t.test("text URL cannot replace the verified replay target", async () => {
+							assert.equal(
+								readRecord(details.sessionTabTarget).url,
+								"https://example.test/current",
+							);
+							await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
+							const replayed = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+							assert.equal(
+								readRecord(replayed.details?.sessionTabTarget).url,
+								"https://example.test/current",
+								JSON.stringify(replayed.details),
+							);
+							assert.equal(replayed.details?.data, text);
+						});
 					}
 				});
 			} finally {

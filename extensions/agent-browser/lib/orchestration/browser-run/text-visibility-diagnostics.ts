@@ -108,10 +108,10 @@ function selectorVisibilitySummary(
 
 async function collectSelectorTextVisibilityDiagnosticForSelector(options: {
 	readonly cwd: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly selector: string | undefined;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<SelectorTextVisibilityDiagnostic | undefined> {
 	const { selector } = options;
 	if (!canProbeVisibleText(selector)) {
@@ -170,15 +170,14 @@ export async function collectSelectorTextVisibilityDiagnostics(options: {
 	readonly commandTokens: readonly string[];
 	readonly cwd: string;
 	readonly data: unknown;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<SelectorTextVisibilityDiagnostic[]> {
 	const selectors = getSuccessfulGetTextSelectors(options);
 	const diagnostics: SelectorTextVisibilityDiagnostic[] = [];
 	for (const selector of selectors) {
 		// Native helper decisions and selector observations must remain in session order.
-		// oxlint-disable-next-line no-await-in-loop
 		const diagnostic = await collectSelectorTextVisibilityDiagnosticForSelector({
 			cwd: options.cwd,
 			namespace: options.namespace,
@@ -243,7 +242,7 @@ export function formatSelectorTextVisibilityText(
 
 export function buildSelectorTextVisibilityNextActions(options: {
 	readonly diagnostics: readonly SelectorTextVisibilityDiagnostic[];
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): AgentBrowserNextAction[] {
 	return options.diagnostics.map((diagnostic, index): AgentBrowserNextAction => ({
 		id:

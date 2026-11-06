@@ -232,7 +232,7 @@ export function formatClickDispatchDiagnosticText(diagnostic: ClickDispatchDiagn
 export function buildClickDispatchNextActions(options: {
 	readonly commandTokens: readonly string[];
 	readonly diagnostic?: ClickDispatchDiagnostic;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }): AgentBrowserNextAction[] {
 	const retryArgs =
 		options.commandTokens[0] === "click" || options.commandTokens[0] === "find"
@@ -283,11 +283,11 @@ export function buildClickDispatchNextActions(options: {
 interface ClickDispatchProbeOptions {
 	readonly commandTokens: readonly string[];
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly refSnapshot?: SessionRefSnapshot;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
-	readonly timeoutMs?: number;
+	readonly namespace?: string | undefined;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
+	readonly timeoutMs?: number | undefined;
 }
 
 function nativeProbeSelector(target: ClickDispatchProbeTarget): string {
@@ -351,6 +351,19 @@ function canPrepareClickDispatchProbe(options: ClickDispatchProbeOptions): boole
 	return true;
 }
 
+class ClickDispatchProbeState implements ClickDispatchProbe {
+	declare cleaned?: boolean;
+	readonly marker = `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+	readonly target: ClickDispatchProbeTarget;
+
+	constructor(target: ClickDispatchProbeTarget) {
+		this.target = target;
+	}
+	markCleaned(): void {
+		this.cleaned = true;
+	}
+}
+
 export async function prepareClickDispatchProbe(
 	options: ClickDispatchProbeOptions,
 ): Promise<ClickDispatchProbe | undefined> {
@@ -361,10 +374,7 @@ export async function prepareClickDispatchProbe(
 	if (!target) {
 		return undefined;
 	}
-	const probe: ClickDispatchProbe = {
-		marker: `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`,
-		target,
-	};
+	const probe = new ClickDispatchProbeState(target);
 	let prepared = false;
 	try {
 		const installData = await runSessionCommandData({
@@ -438,10 +448,10 @@ function describeClickScrollContainer(selector: string | undefined): string {
 
 export async function collectClickDispatchDiagnostic(options: {
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly probe?: ClickDispatchProbe;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly probe?: ClickDispatchProbe | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<ClickDispatchDiagnostic | undefined> {
 	if (!options.probe || (options.sessionName ?? "") === "") {
 		return undefined;
@@ -458,7 +468,7 @@ export async function collectClickDispatchDiagnostic(options: {
 	if (!result) {
 		return undefined;
 	}
-	options.probe.cleaned = true;
+	options.probe.markCleaned();
 	const status = typeof result.status === "string" ? result.status : undefined;
 	if (status !== "no-native-event-observed") {
 		return undefined;
@@ -482,9 +492,9 @@ export async function collectClickDispatchDiagnostic(options: {
 
 export async function cleanupClickDispatchProbe(options: {
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly probe?: Readonly<ClickDispatchProbe>;
-	readonly sessionName?: string;
+	readonly namespace?: string | undefined;
+	readonly probe?: Readonly<ClickDispatchProbe> | undefined;
+	readonly sessionName?: string | undefined;
 }): Promise<void> {
 	if (!options.probe || options.probe.cleaned === true || (options.sessionName ?? "") === "") {
 		return;

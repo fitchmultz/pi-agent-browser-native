@@ -1,6 +1,6 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { projectUpstreamGlobalFlags } from "../../argv-grammar.js";
+import { projectUpstreamGlobalFlags, type IndexedArgvToken } from "../../argv-grammar.js";
 import { pathExists } from "../../fs-utils.js";
 import {
 	extractCommandTokens,
@@ -8,7 +8,7 @@ import {
 	parseWaitCommandTokens,
 } from "../../runtime.js";
 import { getUpstreamEffectiveBatchSteps, parseBatchStdinJsonArray } from "../batch-stdin.js";
-import { getScreenshotPathTokenIndex } from "./artifact-paths.js";
+import { getScreenshotPathOperand } from "./artifact-paths.js";
 import type {
 	PreparedAgentBrowserArgs,
 	ScreenshotArtifactRequest,
@@ -46,16 +46,16 @@ async function ensureArtifactParentDirectory(
 	await mkdir(dirname(resolve(cwd, requestedPath)), { recursive: true });
 }
 
-function screenshotPathIndex(
+function screenshotPathOperand(
 	commandTokens: readonly string[],
 	batchStep: boolean,
-): number | undefined {
+): IndexedArgvToken | undefined {
 	if (batchStep) {
-		return getScreenshotPathTokenIndex(commandTokens);
+		return getScreenshotPathOperand(commandTokens);
 	}
 	const projection = projectUpstreamGlobalFlags(commandTokens);
-	const index = getScreenshotPathTokenIndex(projection.tokens);
-	return index === undefined ? undefined : projection.indices[index];
+	const operand = getScreenshotPathOperand(projection.map(({ token }) => token));
+	return operand === undefined ? undefined : projection[operand.index];
 }
 
 async function normalizeScreenshotPathInTokens(
@@ -63,11 +63,11 @@ async function normalizeScreenshotPathInTokens(
 	cwd: string,
 	batchStep = false,
 ): Promise<{ request?: ScreenshotPathRequest; tokens: string[] }> {
-	const pathIndex = screenshotPathIndex(commandTokens, batchStep);
-	if (pathIndex === undefined) {
+	const operand = screenshotPathOperand(commandTokens, batchStep);
+	if (operand === undefined) {
 		return { tokens: [...commandTokens] };
 	}
-	const requestedPath = commandTokens[pathIndex];
+	const { index: pathIndex, token: requestedPath } = operand;
 	const absolutePath = resolve(cwd, requestedPath);
 	await mkdir(dirname(absolutePath), { recursive: true });
 	const tokens = [...commandTokens];
@@ -85,11 +85,9 @@ async function prepareRawBatchDirectories(
 ): Promise<void> {
 	for (const step of steps) {
 		// Preserve native row ordering and fail at the first unwritable directory.
-		// oxlint-disable-next-line no-await-in-loop
 		await ensureArtifactParentDirectory(step, cwd);
 		if (step[0] === "screenshot") {
 			// Resolve only for mkdir: native raw row strings must remain unchanged.
-			// oxlint-disable-next-line no-await-in-loop
 			await normalizeScreenshotPathInTokens(step, cwd, true);
 		}
 	}
@@ -112,7 +110,7 @@ async function prepareBatchScreenshotPaths(
 	if (commandTokens[0] !== "batch") {
 		return undefined;
 	}
-	const argumentSteps = getUpstreamEffectiveBatchSteps(commandTokens, undefined);
+	const argumentSteps = getUpstreamEffectiveBatchSteps(commandTokens);
 	if (argumentSteps.length > 0) {
 		await prepareRawBatchDirectories(argumentSteps, cwd);
 		return undefined;

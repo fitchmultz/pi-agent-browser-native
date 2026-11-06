@@ -2,8 +2,9 @@ import type { AgentToolResult, ToolNamespace } from "@earendil-works/pi-coding-a
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { JsonSchema } from "./json-schema.js";
 import { isRecord } from "./parsing.js";
+import { isJsonValue } from "./json-value.js";
 import { isBooleanFlagEnabled } from "./argv-grammar.js";
-import { finalizeAgentBrowserFailure } from "./pi-tool-rendering.js";
+import { finalizeAgentBrowserFailure, type FinalizedToolResult } from "./pi-tool-rendering.js";
 import { isPlainTextInspectionArgs } from "./runtime.js";
 import {
 	projectAgentBrowserObservation,
@@ -45,21 +46,6 @@ function isJsonRequest(input: unknown): boolean {
 	);
 }
 
-function isJsonValue(value: unknown): value is JsonValue {
-	if (
-		value === null ||
-		typeof value === "string" ||
-		typeof value === "number" ||
-		typeof value === "boolean"
-	) {
-		return true;
-	}
-	if (Array.isArray(value)) {
-		return value.every(isJsonValue);
-	}
-	return isRecord(value) && Object.values(value).every(isJsonValue);
-}
-
 function serializedObservation(value: unknown): JsonValue {
 	// Serialization keeps native JSON omission/coercion semantics; validate the decoded unknown boundary.
 	const decoded: unknown = JSON.parse(JSON.stringify(value));
@@ -70,16 +56,24 @@ function serializedObservation(value: unknown): JsonValue {
 }
 
 /** Final public boundary, after execution, persistence, and any requested output export. */
-export async function finalizeAgentBrowserNativeResult<T extends AgentToolResult<unknown>>(
-	result: T,
+export function finalizeAgentBrowserNativeResult(
+	result: AgentToolResult<Record<string, unknown>>,
 	input: unknown,
-): Promise<T> {
+): Promise<FinalizedToolResult<Record<string, unknown>>>;
+export function finalizeAgentBrowserNativeResult(
+	result: AgentToolResult<unknown>,
+	input: unknown,
+): Promise<FinalizedToolResult>;
+export async function finalizeAgentBrowserNativeResult(
+	result: AgentToolResult<unknown>,
+	input: unknown,
+): Promise<FinalizedToolResult> {
 	const finalized = finalizeAgentBrowserFailure(result, input);
 	// Native help/version stays plain text; the entrypoint intentionally skips observation rendering for it.
 	if (isPlainTextInspectionArgs(inputArgs(input) ?? [])) {
 		return finalized;
 	}
-	const succeeded = finalized.isError !== true;
+	const succeeded = !finalized.isError;
 	// The normal entrypoint supplies the exact bounded projection, including its complete spill.
 	if (isRecord(result.structuredContent) && result.structuredContent.success === succeeded) {
 		return finalized;

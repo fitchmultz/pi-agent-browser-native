@@ -7,21 +7,21 @@ import type {
 
 export interface AgentBrowserScriptBrowserParams {
 	readonly args: readonly string[];
-	readonly stdin?: string;
-	readonly timeoutMs?: number;
+	readonly stdin?: string | undefined;
+	readonly timeoutMs?: number | undefined;
 }
 export interface AgentBrowserScriptBrowserEnvelope extends ProjectedAgentBrowserObservation {
-	readonly failureCategory?: AgentBrowserFailureCategory;
-	readonly successCategory?: AgentBrowserSuccessCategory;
-	readonly summary?: string;
+	readonly failureCategory?: AgentBrowserFailureCategory | undefined;
+	readonly successCategory?: AgentBrowserSuccessCategory | undefined;
+	readonly summary?: string | undefined;
 }
 
 export interface AgentBrowserScriptStepSummary {
-	readonly failureCategory?: AgentBrowserFailureCategory;
+	readonly failureCategory?: AgentBrowserFailureCategory | undefined;
 	readonly index: number;
 	readonly ok: boolean;
 	readonly resultCategory: AgentBrowserResultCategory;
-	readonly successCategory?: AgentBrowserSuccessCategory;
+	readonly successCategory?: AgentBrowserSuccessCategory | undefined;
 	readonly summary: string;
 }
 

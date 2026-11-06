@@ -27,7 +27,6 @@ export async function* readRange(
 	while (position < end) {
 		const buffer = Buffer.allocUnsafe(Math.min(JOURNAL_CHUNK_BYTES, end - position));
 		// The next range read depends on the bytes actually returned by this read.
-		// oxlint-disable-next-line no-await-in-loop
 		const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
 		if (bytesRead === 0) {
 			throw new Error("Journal changed or truncated during read.");
@@ -108,7 +107,6 @@ export async function* journalRanges(
 	while (position < end) {
 		const buffer = Buffer.allocUnsafe(Math.min(JOURNAL_CHUNK_BYTES, end - position));
 		// Byte offsets and line framing depend on the preceding read's actual length.
-		// oxlint-disable-next-line no-await-in-loop
 		const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
 		if (bytesRead === 0) {
 			throw new Error("Journal truncated during read.");

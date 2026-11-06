@@ -4,6 +4,10 @@ import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import stripJsonComments from "strip-json-comments";
 
+/** @typedef {{readonly status: "pass" | "warn" | "fail", readonly title: string, readonly lines: readonly string[], readonly warnings?: readonly string[]}} DoctorCheck */
+/** @typedef {{kind: string, source: string, location: string}} PiSource */
+/** @typedef {{cwd: string, agentDir: string, settingsPaths: readonly string[], readText: (path: string) => Promise<string | undefined>, pathExists: (path: string) => Promise<boolean>}} PiSourcesOptions */
+
 const PACKAGE_NAME = "pi-agent-browser-native";
 const REPO_URL_FRAGMENT = "github.com/fitchmultz/pi-agent-browser-native";
 const EXTENSION_ENTRYPOINTS = [
@@ -12,12 +16,15 @@ const EXTENSION_ENTRYPOINTS = [
 ];
 const THIS_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+/** @param {string} childPath
+ * @param {string} parentPath */
 function isInsidePath(childPath, parentPath) {
 	const child = resolve(childPath);
 	const parent = resolve(parentPath);
 	return child === parent || child.startsWith(`${parent}${sep}`);
 }
 
+/** @param {string} path */
 function expandUserPath(path) {
 	if (path === "~") {
 		return homedir();
@@ -28,6 +35,7 @@ function expandUserPath(path) {
 	return path;
 }
 
+/** @param {string} source */
 function isPathLikeSource(source) {
 	return (
 		isAbsolute(source) ||
@@ -37,8 +45,11 @@ function isPathLikeSource(source) {
 	);
 }
 
+/** @param {unknown} source
+ * @param {string} cwd
+ * @param {string} sourceBaseDir */
 function sourceLooksLikeThisPackage(source, cwd, sourceBaseDir = cwd) {
-	const text = String(source ?? "").trim();
+	const text = String(source).trim();
 	if (text.length === 0) {
 		return false;
 	}
@@ -62,27 +73,48 @@ function sourceLooksLikeThisPackage(source, cwd, sourceBaseDir = cwd) {
 	);
 }
 
+/** @param {unknown} value
+ * @returns {Iterable<[number, unknown]>} */
 function arrayEntries(value) {
-	return Array.isArray(value) ? value.entries() : [];
+	const entries = Array.isArray(value) ? value : [];
+	return entries.entries();
 }
 
+/** @param {unknown} entry
+ * @returns {unknown} */
 function entrySource(entry) {
 	if (typeof entry === "string") {
 		return entry;
 	}
-	if (entry && typeof entry === "object") {
-		return entry.source ?? entry.path ?? entry.package;
+	if (entry !== null && typeof entry === "object") {
+		const source = "source" in entry ? entry.source : undefined;
+		const path = "path" in entry ? entry.path : undefined;
+		const packageName = "package" in entry ? entry.package : undefined;
+		return source ?? path ?? packageName;
 	}
+	return;
 }
 
+/** @param {unknown} settings
+ * @param {string} settingsPath
+ * @param {string} cwd
+ * @returns {PiSource[]} */
 function collectSettingsSources(settings, settingsPath, cwd) {
+	if (settings === null || typeof settings !== "object") {
+		return [];
+	}
+	/** @type {PiSource[]} */
 	const sources = [];
 	const sourceBaseDir = dirname(settingsPath);
-	for (const [field, kind] of [
-		["packages", "package"],
-		["extensions", "extension"],
-	]) {
-		for (const [index, entry] of arrayEntries(settings?.[field])) {
+	const fields = {
+		packages: { kind: "package", value: "packages" in settings ? settings.packages : undefined },
+		extensions: {
+			kind: "extension",
+			value: "extensions" in settings ? settings.extensions : undefined,
+		},
+	};
+	for (const [field, { kind, value }] of Object.entries(fields)) {
+		for (const [index, entry] of arrayEntries(value)) {
 			const source = entrySource(entry);
 			if (sourceLooksLikeThisPackage(source, cwd, sourceBaseDir)) {
 				sources.push({
@@ -96,12 +128,14 @@ function collectSettingsSources(settings, settingsPath, cwd) {
 	return sources;
 }
 
+/** @param {Pick<PiSourcesOptions, "cwd" | "readText"> & {path: string}} options */
 async function inspectSettingsPath({ path, cwd, readText }) {
 	try {
 		const text = await readText(path);
 		if (text === undefined) {
 			return { sources: [], warnings: [] };
 		}
+		/** @type {unknown} */
 		const settings = JSON.parse(stripJsonComments(text));
 		return { sources: collectSettingsSources(settings, path, cwd), warnings: [] };
 	} catch (error) {
@@ -114,6 +148,7 @@ async function inspectSettingsPath({ path, cwd, readText }) {
 	}
 }
 
+/** @param {Pick<PiSourcesOptions, "cwd" | "pathExists">} options */
 async function collectRepoLocalSources({ cwd, pathExists }) {
 	const candidates = [
 		resolve(cwd, ".pi/extensions/agent-browser.ts"),
@@ -122,7 +157,6 @@ async function collectRepoLocalSources({ cwd, pathExists }) {
 	const sources = [];
 	for (const candidate of candidates) {
 		// Inspect one autoload location at a time to preserve the injected read-only I/O order.
-		// oxlint-disable-next-line no-await-in-loop
 		if (await pathExists(candidate)) {
 			sources.push({
 				kind: "repo-local",
@@ -135,8 +169,8 @@ async function collectRepoLocalSources({ cwd, pathExists }) {
 }
 
 /**
- * @param {{cwd: string, agentDir: string, settingsPaths: readonly string[], readText: (path: string) => Promise<string | undefined>, pathExists: (path: string) => Promise<boolean>}} options
- * @returns {Promise<{status: "fail" | "pass" | "warn", title: string, lines: string[], warnings: string[]}>}
+ * @param {PiSourcesOptions} options
+ * @returns {Promise<DoctorCheck & {readonly warnings: readonly string[]}>}
  */
 export async function checkPiSources({ cwd, agentDir, settingsPaths, readText, pathExists }) {
 	const defaultSettingsPaths = [
@@ -150,10 +184,8 @@ export async function checkPiSources({ cwd, agentDir, settingsPaths, readText, p
 	const warnings = [];
 	for (const path of allSettingsPaths) {
 		// Settings are inspected in configured precedence order; injected I/O preserves that order.
-		// oxlint-disable-next-line no-await-in-loop
 		if (await pathExists(path)) {
 			// Finish reading this settings file before reporting and inspecting the next source.
-			// oxlint-disable-next-line no-await-in-loop
 			const result = await inspectSettingsPath({ path, cwd, readText });
 			sources.push(...result.sources);
 			warnings.push(...result.warnings);
@@ -176,11 +208,12 @@ export async function checkPiSources({ cwd, agentDir, settingsPaths, readText, p
 			warnings,
 		};
 	}
-	if (sources.length === 1) {
+	const [source] = sources;
+	if (source !== undefined) {
 		return {
 			status: "pass",
 			title: "No duplicate pi-agent-browser-native sources detected.",
-			lines: [`Detected source: ${sources[0].source} from ${sources[0].location}`],
+			lines: [`Detected source: ${source.source} from ${source.location}`],
 			warnings,
 		};
 	}

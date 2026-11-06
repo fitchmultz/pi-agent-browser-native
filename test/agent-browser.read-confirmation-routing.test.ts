@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import { convertBrowserEntries } from "../extensions/agent-browser/lib/browser-session-conversion.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
@@ -15,7 +16,7 @@ import {
 	readInvocationLog,
 	runExtensionEvent,
 } from "./helpers/agent-browser-harness.js";
-import { readRecord, readArray, readString } from "./helpers/assertions.js";
+import { readRecord, readArray, readDefined, readString } from "./helpers/assertions.js";
 import { withConfirmations } from "./helpers/read-confirmation-fixture.js";
 
 // Native Windows caller sessions share an identity across storage roots; unrelated file workers do not.
@@ -23,7 +24,7 @@ const SHARED_SESSION = `read-route-${process.pid}`;
 
 for (const shared of [false, true]) {
 	for (const command of ["confirm", "deny"]) {
-		test(
+		nodeTest(
 			`URL-read ${command} stays browserless and targets the real native session (shared=${shared})`,
 			{ concurrency: false },
 			async () => {
@@ -88,7 +89,7 @@ for (const shared of [false, true]) {
 					const confirmed = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [command, "read-id"],
 					});
-					assert.equal(confirmed.isError, false, confirmed.content[0].text);
+					assert.equal(confirmed.isError, false, getMessageText(confirmed.content));
 					assert.equal(confirmed.details?.sessionName, shared ? SHARED_SESSION : "default");
 					assert.equal(confirmed.details.managedSessionOutcome, undefined);
 					assert.deepEqual(
@@ -121,7 +122,7 @@ for (const shared of [false, true]) {
 }
 
 for (const command of ["confirm", "deny"]) {
-	test(
+	nodeTest(
 		`proven HTTP ${command} preserves an unknown DOM target without page probes`,
 		{ concurrency: false },
 		async () => {
@@ -157,7 +158,7 @@ for (const command of ["confirm", "deny"]) {
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, command, "read-id"],
 				});
-				assert.equal(result.isError, false, result.content[0].text);
+				assert.equal(result.isError, false, getMessageText(result.content));
 				assert.deepEqual(
 					(await readInvocationLog(log)).map((call) => call.args),
 					[["--json", ...prefix, command, "read-id"]],
@@ -170,14 +171,17 @@ for (const command of ["confirm", "deny"]) {
 					args: [...prefix, "click", "#guarded"],
 				});
 				assert.equal(stillUnknown.isError, true);
-				assert.match(stillUnknown.content[0].text ?? "", /active page became unverified/);
+				assert.match(
+					readDefined(stillUnknown.content[0]).text ?? "",
+					/active page became unverified/,
+				);
 				assert.deepEqual(await readInvocationLog(log), []);
 			});
 		},
 	);
 }
 
-test(
+nodeTest(
 	"legacy read confirmation retains native-default routing without the browserless exemption",
 	{ concurrency: false },
 	async () => {
@@ -190,7 +194,7 @@ test(
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["confirm", "read-id"],
 			});
-			assert.equal(result.isError, false, result.content[0].text);
+			assert.equal(result.isError, false, getMessageText(result.content));
 			assert.equal(result.details?.sessionName, "default");
 			assert.equal(result.details.managedSessionOutcome, undefined);
 			assert.deepEqual(
@@ -206,10 +210,10 @@ test(
 
 for (const legacy of [true, false]) {
 	for (const batch of [false, true]) {
-		test(
+		nodeTest(
 			`failed confirmed HTTP reads fail truthfully (legacy=${legacy}, batch=${batch})`,
 			{ concurrency: false },
-			async () => {
+			async (t) => {
 				await withConfirmations(async ({ root, log, harness }) => {
 					const prefix = ["--namespace", "team", "--session", SHARED_SESSION];
 					const read = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -229,13 +233,22 @@ for (const legacy of [true, false]) {
 					});
 					assert.equal(result.isError, true);
 					assert.equal(result.details?.resultCategory, "failure");
-					assert.equal(readRecord(JSON.parse(result.content[0].text ?? "")).success, false);
-					assert.match(result.content[0].text ?? "", /HTTP read failed: test response 500/);
+					assert.equal(
+						readRecord(JSON.parse(readDefined(result.content[0]).text ?? "")).success,
+						false,
+					);
+					assert.match(
+						readDefined(result.content[0]).text ?? "",
+						/HTTP read failed: test response 500/,
+					);
 					assert.equal(readRecord(result.details.readConfirmation).state, "cleared");
 					if (batch) {
-						// This enumerated fixture branch (batch) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readArray(result.details.batchSteps).map(readRecord)[0].success, false);
+						await t.test("batch retains the failed row", () => {
+							assert.equal(
+								readRecord(readArray(readRecord(result.details).batchSteps)[0]).success,
+								false,
+							);
+						});
 					}
 					assert.deepEqual(
 						(await readInvocationLog(log)).map((call) => extractUpstreamCommandTokens(call.args)),
@@ -252,7 +265,7 @@ for (const legacy of [true, false]) {
 	}
 }
 
-test(
+nodeTest(
 	"a stale read ID cannot consume a newer native DOM confirmation or acquire browser ownership",
 	{ concurrency: false },
 	async () => {
@@ -279,7 +292,7 @@ test(
 				args: ["confirm", "read-id"],
 			});
 			assert.equal(result.isError, true);
-			assert.match(result.content[0].text ?? "", /mismatch/);
+			assert.match(readDefined(result.content[0]).text ?? "", /mismatch/);
 			assert.equal(
 				result.details?.sessionName,
 				SHARED_SESSION,
@@ -298,10 +311,10 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"native DOM decisions suppress overwriting helpers but page-shaped and unrelated decisions keep page checks",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		await withConfirmations(async ({ log, branch, harness }) => {
 			const body = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", SHARED_SESSION, "read", "public.test/body"],
@@ -315,7 +328,7 @@ test(
 					"({ confirmed: true, action: 'read', result: { success: false, error: 'HTTP read failed: test response 500' } })",
 				],
 			});
-			assert.equal(pageJson.isError, false, pageJson.content[0].text);
+			assert.equal(pageJson.isError, false, getMessageText(pageJson.content));
 			assert.equal(pageJson.details?.readConfirmation, undefined);
 			await writeFile(log, "");
 			await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -386,30 +399,29 @@ test(
 				["--session", SHARED_SESSION, "confirm", "foreign-id"],
 				["--session", "other", "confirm", "dom-id"],
 			]) {
-				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-				// oxlint-disable-next-line no-await-in-loop
-				await writeFile(log, "");
-				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-				// oxlint-disable-next-line no-await-in-loop
-				const unrelated = await executeRegisteredTool(harness.tool, harness.ctx, { args });
-				// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(unrelated.isError, true);
-				// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.deepEqual(
-					// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-					// oxlint-disable-next-line no-await-in-loop
-					(await readInvocationLog(log)).map((call) => extractUpstreamCommandTokens(call.args)),
-					[
-						["get", "url"],
-						["confirm", readString(args.at(-1))],
-					],
-				);
+				await t.test(args.join(" "), async () => {
+					await writeFile(log, "");
+
+					const unrelated = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+
+					assert.equal(unrelated.isError, true);
+
+					assert.deepEqual(
+						(await readInvocationLog(log)).map((call) => extractUpstreamCommandTokens(call.args)),
+						[
+							["get", "url"],
+							["confirm", readString(args.at(-1))],
+						],
+					);
+				});
 			}
 			await writeFile(log, "");
-			const dom = await executeRegisteredTool(harness.tool, harness.ctx, actions[0].params);
-			assert.equal(dom.isError, false, dom.content[0].text);
+			const dom = await executeRegisteredTool(
+				harness.tool,
+				harness.ctx,
+				readDefined(actions[0]).params,
+			);
+			assert.equal(dom.isError, false, getMessageText(dom.content));
 			assert.equal(readRecord(dom.details?.readConfirmation).state, "cleared");
 			assert.deepEqual(
 				(await readInvocationLog(log)).map((call) => extractUpstreamCommandTokens(call.args)),
@@ -430,7 +442,7 @@ test(
 );
 
 for (const batch of [false, true]) {
-	test(
+	nodeTest(
 		`completed guarded decisions reconcile tabs, fail inner actions truthfully and retire confirmed close on replay (batch=${batch})`,
 		{ concurrency: false },
 		async () => {
@@ -442,7 +454,7 @@ for (const batch of [false, true]) {
 					});
 					assert.equal(pending.details?.failureCategory, "confirmation-required");
 					assert.doesNotMatch(
-						pending.content[0].text ?? "",
+						readDefined(pending.content[0]).text ?? "",
 						/Native helper|if dispatched/,
 						"the requested action itself awaits confirmation",
 					);
@@ -458,14 +470,17 @@ for (const batch of [false, true]) {
 					);
 				};
 				const failed = await decide(["eval", "throw fixture"]);
-				assert.equal(failed.isError, true, failed.content[0].text);
-				assert.match(failed.content[0].text ?? "", /HTTP read failed: test response 500/);
+				assert.equal(failed.isError, true, getMessageText(failed.content));
+				assert.match(
+					readDefined(failed.content[0]).text ?? "",
+					/HTTP read failed: test response 500/,
+				);
 				assert.equal(readRecord(failed.details?.readConfirmation).state, "cleared");
 				const newTab = await decide(["tab", "new"]);
-				assert.equal(newTab.isError, false, newTab.content[0].text);
+				assert.equal(newTab.isError, false, getMessageText(newTab.content));
 				assert.equal(readRecord(newTab.details?.sessionTabTarget).url, "about:blank");
 				const closed = await decide(["close"]);
-				assert.equal(closed.isError, false, closed.content[0].text);
+				assert.equal(closed.isError, false, getMessageText(closed.content));
 				assert.equal(closed.details?.sessionTabTarget, undefined);
 				assert.equal(
 					SessionPageState.fromBranch(
@@ -480,10 +495,10 @@ for (const batch of [false, true]) {
 
 for (const batch of [false, true]) {
 	for (const command of ["confirm", "deny"]) {
-		test(
+		nodeTest(
 			`transport tab continuation preserves the exact ${command} (batch=${batch})`,
 			{ concurrency: false },
-			async () => {
+			async (t) => {
 				await withConfirmations(async ({ state, log, harness }) => {
 					const target = "https://current.test/continued";
 					const metadata = {
@@ -504,7 +519,7 @@ for (const batch of [false, true]) {
 					assert.equal(pending.details?.failureCategory, "confirmation-required");
 					assert.equal(readRecord(pending.details.readConfirmation).action, "tab_new");
 					assert.ok(
-						readString(pending.content[0].text).includes(metadata.guidance),
+						readString(readDefined(pending.content[0]).text).includes(metadata.guidance),
 						"conditional transport guidance stays model-visible",
 					);
 					const native = readRecord(JSON.parse(await readFile(state, "utf8")));
@@ -519,26 +534,23 @@ for (const batch of [false, true]) {
 						);
 					assert.ok(action);
 					const settled = await executeRegisteredTool(harness.tool, harness.ctx, action.params);
-					assert.equal(settled.isError, command === "confirm", settled.content[0].text);
+					assert.equal(settled.isError, command === "confirm", getMessageText(settled.content));
 					const data = readRecord(settled.details?.data);
 					assert.equal(data.action, "tab_new");
 					if (command === "confirm") {
-						// This enumerated fixture branch (command === "confirm") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(data.confirmed, true);
-						// This enumerated fixture branch (command === "confirm") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							readRecord(data.result).success,
-							true,
-							"the original tab decision completed before the separately gated post-action URL helper",
-						);
-						// This enumerated fixture branch (command === "confirm") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(settled.details?.failureCategory, "confirmation-required");
-						// This enumerated fixture branch (command === "confirm") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(settled.details.readConfirmation).action, "url");
+						await t.test("completed tab decision survives the separately gated helper", () => {
+							assert.equal(data.confirmed, true);
+
+							assert.equal(
+								readRecord(data.result).success,
+								true,
+								"the original tab decision completed before the separately gated post-action URL helper",
+							);
+
+							assert.equal(settled.details?.failureCategory, "confirmation-required");
+
+							assert.equal(readRecord(settled.details.readConfirmation).action, "url");
+						});
 					}
 					const calls = (await readInvocationLog(log)).map((call) =>
 						extractUpstreamCommandTokens(call.args),
@@ -563,7 +575,7 @@ for (const batch of [false, true]) {
 	}
 }
 
-test("malformed tab transport metadata grants no confirmation provenance", () => {
+nodeTest("malformed tab transport metadata grants no confirmation provenance", () => {
 	const target = "https://current.test/continued";
 	const metadata = [
 		{ after_confirmation: ["open", target], guidance: "Continuation", action: "click" },
@@ -593,10 +605,10 @@ test("malformed tab transport metadata grants no confirmation provenance", () =>
 	);
 });
 
-test(
+nodeTest(
 	"tab continuation page content and malformed native metadata never grant control provenance",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		await withConfirmations(async ({ state, log, harness }) => {
 			await writeFile(
 				state,
@@ -611,23 +623,22 @@ test(
 				["eval", "transport-page"],
 				["read", "public.test/body"],
 			]) {
-				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-				// oxlint-disable-next-line no-await-in-loop
-				const page = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["--session", SHARED_SESSION, ...args],
+				await t.test(args.join(" "), async () => {
+					const page = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", SHARED_SESSION, ...args],
+					});
+
+					assert.equal(page.details?.readConfirmation, undefined);
 				});
-				// The nonempty args fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(page.details?.readConfirmation, undefined);
 			}
 			await writeFile(log, "");
 			await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["--session", SHARED_SESSION, "confirm", "dom-id"],
 			});
-			assert.deepEqual(extractUpstreamCommandTokens((await readInvocationLog(log))[0].args), [
-				"get",
-				"url",
-			]);
+			assert.deepEqual(
+				extractUpstreamCommandTokens(readDefined((await readInvocationLog(log))[0]).args),
+				["get", "url"],
+			);
 			await writeFile(
 				state,
 				JSON.stringify({
@@ -647,7 +658,7 @@ test(
 				args: ["--session", SHARED_SESSION, "confirm", "dom-id"],
 			});
 			assert.deepEqual(
-				extractUpstreamCommandTokens((await readInvocationLog(log))[0].args),
+				extractUpstreamCommandTokens(readDefined((await readInvocationLog(log))[0]).args),
 				["get", "url"],
 				"malformed native metadata still requires a page check before the decision",
 			);
@@ -655,7 +666,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"resumed batch confirmation reconciles click before an ordinary getter without discarding adjacent rows",
 	{ concurrency: false },
 	async () => {
@@ -666,8 +677,6 @@ test(
 				["get", "url"],
 				["click", "#guarded"],
 			]) {
-				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-				// oxlint-disable-next-line no-await-in-loop
 				await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: [...prefix, ...args],
 				});
@@ -682,18 +691,18 @@ test(
 					["get", "title"],
 				]),
 			});
-			assert.equal(confirmed.isError, false, confirmed.content[0].text);
+			assert.equal(confirmed.isError, false, getMessageText(confirmed.content));
 			assert.equal(readRecord(confirmed.details?.sessionTabTarget).url, "https://clicked.test/");
 			assert.equal(readArray(confirmed.details?.batchSteps).length, 3);
 			const title = await executeRegisteredTool(resumed.tool, resumed.ctx, {
 				args: [...prefix, "get", "title"],
 			});
-			assert.equal(title.isError, false, title.content[0].text);
+			assert.equal(title.isError, false, getMessageText(title.content));
 		});
 	},
 );
 
-test(
+nodeTest(
 	"early helper pending identifies the helper and the requested command is not dispatched",
 	{ concurrency: false },
 	async () => {
@@ -705,7 +714,7 @@ test(
 			assert.equal(result.details?.failureCategory, "confirmation-required");
 			assert.equal(result.details.agentBrowserStarted, false);
 			assert.match(
-				result.content[0].text ?? "",
+				readDefined(result.content[0]).text ?? "",
 				/Native helper get requires confirmation \(url\).*requested command was not dispatched/,
 			);
 			assert.deepEqual(
@@ -716,7 +725,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"genuine post-command helper pending remains labelled and preserves the dispatched batch receipt",
 	{ concurrency: false },
 	async () => {
@@ -728,8 +737,11 @@ test(
 			assert.equal(result.details?.failureCategory, "confirmation-required");
 			assert.equal(result.details.agentBrowserStarted, true);
 			assert.equal(readRecord(result.details.readConfirmation).command, "get");
-			assert.match(result.content[0].text ?? "", /Native helper get requires confirmation/);
-			assert.deepEqual(readArray(result.details.data).map(readRecord)[0].command, [
+			assert.match(
+				readDefined(result.content[0]).text ?? "",
+				/Native helper get requires confirmation/,
+			);
+			assert.deepEqual(readDefined(readArray(result.details.data).map(readRecord)[0]).command, [
 				"click",
 				"#dispatched",
 			]);
@@ -737,10 +749,10 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"only the first effective matching batch decision suppresses helpers and later unknown-page checks remain",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		await withConfirmations(async ({ log, state, harness }) => {
 			const prefix = ["--session", SHARED_SESSION];
 			await executeRegisteredTool(harness.tool, harness.ctx, { args: [...prefix, "get", "url"] });
@@ -763,45 +775,43 @@ test(
 					suppress: false,
 				},
 			]) {
-				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-				// oxlint-disable-next-line no-await-in-loop
-				await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: [...prefix, "click", "#guarded"],
-				});
-				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-				// oxlint-disable-next-line no-await-in-loop
-				await writeFile(log, "");
-				// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-				// oxlint-disable-next-line no-await-in-loop
-				await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: [
-						"--session",
-						control.session,
-						"batch",
-						"--bail",
-						...(control.raw !== undefined && control.raw.length > 0 ? [control.raw] : []),
-					],
-					stdin: JSON.stringify(control.rows),
-				});
-				// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-				// oxlint-disable-next-line no-await-in-loop
-				const commands = (await readInvocationLog(log)).map((call) =>
-					extractUpstreamCommandTokens(call.args),
-				);
-				// The nonempty control fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(commands[0][0] === "batch", control.suppress, JSON.stringify(control));
-				if (control.raw !== undefined && control.raw.length > 0) {
-					// This enumerated fixture branch (control.raw !== undefined && control.raw.length > 0) has variant-specific assertions; common assertions cover every case.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-						// oxlint-disable-next-line no-await-in-loop
-						readRecord(readRecord(JSON.parse(await readFile(state, "utf8"))).pending).id,
-						"dom-id",
-						"ignored stdin cannot settle the pending action",
+				await t.test(JSON.stringify(control), async (controlContext) => {
+					await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: [...prefix, "click", "#guarded"],
+					});
+
+					await writeFile(log, "");
+
+					await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: [
+							"--session",
+							control.session,
+							"batch",
+							"--bail",
+							...(control.raw !== undefined && control.raw.length > 0 ? [control.raw] : []),
+						],
+						stdin: JSON.stringify(control.rows),
+					});
+
+					const commands = (await readInvocationLog(log)).map((call) =>
+						extractUpstreamCommandTokens(call.args),
 					);
-				}
+
+					assert.equal(
+						readDefined(commands[0])[0] === "batch",
+						control.suppress,
+						JSON.stringify(control),
+					);
+					if (control.raw !== undefined && control.raw.length > 0) {
+						await controlContext.test("ignored stdin preserves the pending action", async () => {
+							assert.equal(
+								readRecord(readRecord(JSON.parse(await readFile(state, "utf8"))).pending).id,
+								"dom-id",
+								"ignored stdin cannot settle the pending action",
+							);
+						});
+					}
+				});
 			}
 			await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: [...prefix, "webmcp", "invoke", "pending"],
@@ -828,10 +838,10 @@ test(
 
 for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 	for (const failedClose of [false, true]) {
-		test(
+		nodeTest(
 			`confirmed close retires attachment on live and replay paths (${mode}, failed=${failedClose})`,
 			{ concurrency: false },
-			async () => {
+			async (t) => {
 				const expectedAttachment = failedClose ? true : undefined;
 				await withConfirmations(async ({ root, state, harness }) => {
 					const prefix = ["--session", SHARED_SESSION];
@@ -839,16 +849,19 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 						args: [...prefix, "connect", "9222"],
 					});
 					for (const args of [["--confirm-actions", "close", "get", "url"], ["close"]]) {
-						// This step consumes or replaces the shared native pending slot; later commands depend on its completion.
-						// oxlint-disable-next-line no-await-in-loop
 						await executeRegisteredTool(harness.tool, harness.ctx, {
 							args: [...prefix, ...args],
 						});
 					}
 					if (failedClose) {
 						const native = readRecord(JSON.parse(await readFile(state, "utf8")));
-						readRecord(native.pending).failure = true;
-						await writeFile(state, JSON.stringify(native));
+						await writeFile(
+							state,
+							JSON.stringify({
+								...native,
+								pending: { ...readRecord(native.pending), failure: true },
+							}),
+						);
 					}
 					const decision = mode.endsWith("batch")
 						? { args: ["batch", "--bail"], stdin: JSON.stringify([["confirm", "dom-id"]]) }
@@ -866,11 +879,11 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 								}
 							: { ...decision, args: [...prefix, ...decision.args] },
 					);
-					assert.equal(result.isError, code ? false : failedClose, result.content[0].text);
+					assert.equal(result.isError, code ? false : failedClose, getMessageText(result.content));
 					if (code) {
-						// This enumerated fixture branch (code) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(result.details?.data, !failedClose);
+						await t.test("code emits the native close outcome", () => {
+							assert.equal(result.details?.data, !failedClose);
+						});
 					}
 					const page = SessionPageState.fromBranch(
 						convertBrowserEntries(harness.ctx.sessionManager.getBranch()),
@@ -886,7 +899,7 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 					const live = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: [...prefix, "get", "title"],
 					});
-					assert.equal(live.isError, false, live.content[0].text);
+					assert.equal(live.isError, false, getMessageText(live.content));
 					assert.equal(live.details?.attachedBrowserSession, expectedAttachment);
 					const resumed = createExtensionHarness({
 						cwd: root,
@@ -901,7 +914,7 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 					const restored = await executeRegisteredTool(resumed.tool, resumed.ctx, {
 						args: [...prefix, "get", "title"],
 					});
-					assert.equal(restored.isError, false, restored.content[0].text);
+					assert.equal(restored.isError, false, getMessageText(restored.content));
 					assert.equal(
 						restored.details?.attachedBrowserSession,
 						expectedAttachment,

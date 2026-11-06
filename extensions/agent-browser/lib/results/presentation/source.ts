@@ -31,7 +31,7 @@ export interface PresentationSource {
 	readonly presentationData: unknown;
 	readonly recordingCommand: boolean;
 	readonly recordingBatch: boolean;
-	readonly readConfirmation?: ReadConfirmation;
+	readonly readConfirmation?: ReadConfirmation | undefined;
 	readonly confirmationRequired?: ReturnType<typeof detectConfirmationRequired>;
 }
 

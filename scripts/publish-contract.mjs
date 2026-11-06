@@ -8,8 +8,10 @@
 
 import { readdir, readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isConfigObject } from "../extensions/agent-browser/lib/config-policy.js";
 
 class PublishContractError extends Error {
+	/** @param {string} message */
 	constructor(message) {
 		super(message);
 		this.name = "PublishContractError";
@@ -40,6 +42,7 @@ export const FORBIDDEN_PACKED_FILES = Object.freeze([
 const ALWAYS_INCLUDED_PACKED_FILES = Object.freeze(["package.json"]);
 const NPM_IGNORED_METADATA_FILES = new Set([".DS_Store"]);
 
+/** @param {string} path */
 function toPackagePath(path) {
 	return path
 		.split(/[\\/]+/)
@@ -47,11 +50,20 @@ function toPackagePath(path) {
 		.join("/");
 }
 
-async function readPackageJson(cwd) {
-	const rawPackageJson = await readFile(resolve(cwd, "package.json"), "utf8");
-	return JSON.parse(rawPackageJson);
+/** @param {string} cwd */
+export async function readPackageJson(cwd) {
+	/** @type {unknown} */
+	const parsed = JSON.parse(await readFile(resolve(cwd, "package.json"), "utf8"));
+	if (!isConfigObject(parsed)) {
+		throw new PublishContractError("package.json must contain an object.");
+	}
+	return parsed;
 }
 
+/** @param {string} cwd
+ * @param {string} declaredPath
+ * @returns {Promise<string[]>}
+ */
 async function expandDeclaredPackageFile(cwd, declaredPath) {
 	const normalizedPath = toPackagePath(declaredPath);
 	const absolutePath = resolve(cwd, normalizedPath);
@@ -76,7 +88,6 @@ async function expandDeclaredPackageFile(cwd, declaredPath) {
 		const childPath = `${normalizedPath}/${entry.name}`;
 		if (entry.isDirectory()) {
 			// Traverse one subtree at a time to bound open-directory and stat pressure.
-			// oxlint-disable-next-line no-await-in-loop
 			expandedPaths.push(...(await expandDeclaredPackageFile(cwd, childPath)));
 		} else if (entry.isFile() && !NPM_IGNORED_METADATA_FILES.has(entry.name)) {
 			expandedPaths.push(toPackagePath(childPath));
@@ -85,27 +96,40 @@ async function expandDeclaredPackageFile(cwd, declaredPath) {
 	return expandedPaths;
 }
 
+/** @param {{ readonly cwd?: string }} [options] */
 export async function loadPublishContract(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
 	const packageJson = await readPackageJson(cwd);
-	const declaredPackageFiles = Array.isArray(packageJson.files)
-		? packageJson.files.map(toPackagePath)
-		: [];
+	/** @type {unknown[]} */
+	const files = Array.isArray(packageJson.files) ? packageJson.files : [];
+	if (!files.every((path) => typeof path === "string")) {
+		throw new PublishContractError("package.json files entries must be strings.");
+	}
+	const declaredPackageFiles = files.map(toPackagePath);
 	const requiredPackedFiles = new Set(ALWAYS_INCLUDED_PACKED_FILES);
 
 	for (const declaredPath of declaredPackageFiles) {
 		// Expand each declared tree before the next to bound filesystem traversal resources.
-		// oxlint-disable-next-line no-await-in-loop
 		for (const expandedPath of await expandDeclaredPackageFile(cwd, declaredPath)) {
 			requiredPackedFiles.add(expandedPath);
 		}
 	}
 
 	return Object.freeze({
-		declaredPackageFiles: Object.freeze([...declaredPackageFiles].sort()),
-		forbiddenPackedFiles: Object.freeze([...FORBIDDEN_PACKED_FILES].sort()),
-		forbiddenRepoFiles: Object.freeze([...FORBIDDEN_REPO_FILES].sort()),
-		requiredPackedFiles: Object.freeze([...requiredPackedFiles].sort()),
-		requiredRepoFiles: Object.freeze([...REQUIRED_REPO_FILES].sort()),
+		declaredPackageFiles: Object.freeze(
+			[...declaredPackageFiles].sort((left, right) => (left < right ? -1 : Number(left > right))),
+		),
+		forbiddenPackedFiles: Object.freeze(
+			[...FORBIDDEN_PACKED_FILES].sort((left, right) => (left < right ? -1 : Number(left > right))),
+		),
+		forbiddenRepoFiles: Object.freeze(
+			[...FORBIDDEN_REPO_FILES].sort((left, right) => (left < right ? -1 : Number(left > right))),
+		),
+		requiredPackedFiles: Object.freeze(
+			[...requiredPackedFiles].sort((left, right) => (left < right ? -1 : Number(left > right))),
+		),
+		requiredRepoFiles: Object.freeze(
+			[...REQUIRED_REPO_FILES].sort((left, right) => (left < right ? -1 : Number(left > right))),
+		),
 	});
 }

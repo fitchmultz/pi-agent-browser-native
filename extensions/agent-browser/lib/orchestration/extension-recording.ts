@@ -203,10 +203,16 @@ export function warnRecordingPersistence(
 	} else {
 		content.push({ type: "text", text: recordingPersistenceWarning });
 	}
+	const details = isRecord(result.details) ? result.details : {};
+	const warnings: readonly unknown[] = Array.isArray(details.warnings) ? details.warnings : [];
 	return {
 		...result,
 		content,
-		details: { ...(isRecord(result.details) ? result.details : {}), recordingPersistenceWarning },
+		details: {
+			...details,
+			warnings: [...warnings, recordingPersistenceWarning],
+			recordingPersistenceWarning,
+		},
 	};
 }
 

@@ -92,8 +92,8 @@ function getStructuredEditableEvidence(
 }
 
 export function getEditableRefEvidence(options: {
-	readonly ref?: Readonly<Record<string, unknown>>;
-	readonly text?: string;
+	readonly ref?: Readonly<Record<string, unknown>> | undefined;
+	readonly text?: string | undefined;
 }): boolean | undefined {
 	const structuredEvidence = getStructuredEditableEvidence(options.ref);
 	if (structuredEvidence === false) {

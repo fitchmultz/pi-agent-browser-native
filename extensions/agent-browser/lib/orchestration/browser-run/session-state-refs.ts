@@ -7,7 +7,7 @@ import {
 	type SessionTabTarget,
 } from "../../session-page-state.js";
 import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
-import { getScreenshotPositionalIndices } from "./artifact-paths.js";
+import { getScreenshotOperands } from "./artifact-paths.js";
 import type { StaleRefPreflight } from "./types.js";
 
 export function getStaleRefArgs(
@@ -23,15 +23,15 @@ export function getStaleRefArgs(
 
 function getFlaggedSelector(tokens: readonly string[]): string | undefined {
 	let selector: string | undefined;
-	for (let index = tokens[0] === "diff" ? 2 : 1; index < tokens.length; index += 1) {
-		const token = tokens[index];
+	const operands = tokens.slice(tokens[0] === "diff" ? 2 : 1).values();
+	for (const token of operands) {
 		if (token === "--selector" || token === "-s") {
-			selector = tokens[++index];
+			selector = operands.next().value;
 		} else if (
 			tokens[0] === "diff" &&
 			["--baseline", "-b", "--output", "-o", "--threshold", "-t", "--depth", "-d"].includes(token)
 		) {
-			index += 1;
+			operands.next();
 		}
 	}
 	return selector;
@@ -44,14 +44,17 @@ function getSelectorOperands(tokens: readonly string[]): readonly (string | unde
 		case "drag":
 			return tokens.slice(1, 3);
 		case "get":
-			return [!["url", "title", "cdp-url", "count"].includes(tokens[1]) ? tokens[2] : undefined];
+			return [
+				!["url", "title", "cdp-url", "count"].includes(tokens[1] ?? "") ? tokens[2] : undefined,
+			];
 		case "is":
 			return [tokens[2]];
 		case "screenshot":
-			return [tokens[getScreenshotPositionalIndices(tokens)[0]]];
+			return [getScreenshotOperands(tokens)[0]?.token];
 		case "diff":
 		case "scroll":
 			return [getFlaggedSelector(tokens)];
+		case undefined:
 		default:
 			return [tokens[1]];
 	}
@@ -106,6 +109,7 @@ function isSafeSameSnapshotFormBatchStep(
 			return roles.every((role) => role === "checkbox" || role === "radio");
 		case "select":
 			return roles.every((role) => role === "combobox");
+		case undefined:
 		default:
 			return false;
 	}
@@ -127,7 +131,7 @@ function getBatchRefInvalidationFailure(
 		const refIds = collectRefsFromTokens(step);
 		if (refIds.length > 0 && isRefGuardedCommand(step[0]) && priorStepInvalidatesRefs) {
 			return {
-				message: `Batch step ${step[0]} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`,
+				message: `Batch step ${String(step[0])} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`,
 				refIds,
 				snapshot: refSnapshot,
 			};
@@ -144,11 +148,11 @@ function getBatchRefInvalidationFailure(
 
 interface RefPreflightFacts {
 	readonly commandTokens: readonly string[];
-	readonly currentTarget?: SessionTabTarget;
+	readonly currentTarget?: SessionTabTarget | undefined;
 	readonly requireExactTargetUrl?: boolean;
-	readonly refSnapshot?: SessionRefSnapshot;
-	readonly refSnapshotInvalidation?: SessionRefSnapshotInvalidation;
-	readonly stdin?: string;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
+	readonly refSnapshotInvalidation?: SessionRefSnapshotInvalidation | undefined;
+	readonly stdin?: string | undefined;
 }
 
 function invalidatedRefFailure(

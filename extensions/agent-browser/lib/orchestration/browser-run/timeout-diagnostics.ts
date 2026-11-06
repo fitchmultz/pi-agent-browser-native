@@ -20,18 +20,18 @@ import {
 
 interface PlannedTimeoutStep {
 	readonly args: readonly string[];
-	readonly generatedFrom?: string;
+	readonly generatedFrom?: string | undefined;
 	readonly index: number;
 }
 
 interface TimeoutDiagnosticOptions {
 	readonly commandTokens: readonly string[];
-	readonly compiledJob?: CompiledAgentBrowserJob;
+	readonly compiledJob?: CompiledAgentBrowserJob | undefined;
 	readonly cwd: string;
-	readonly operationCwd?: string;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly stdin?: string;
+	readonly operationCwd?: string | undefined;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly stdin?: string | undefined;
 }
 
 function getTimeoutProgressSteps(options: TimeoutDiagnosticOptions): TimeoutProgressStep[] {
@@ -55,17 +55,13 @@ function getTimeoutProgressSteps(options: TimeoutDiagnosticOptions): TimeoutProg
 }
 
 function getLastPositionalToken(args: readonly string[], startIndex = 1): string | undefined {
-	for (let index = args.length - 1; index >= startIndex; index -= 1) {
-		const token = args[index];
-		if (token !== "" && !token.startsWith("-")) {
-			return token;
-		}
-	}
-	return undefined;
+	return args.findLast(
+		(token, index) => index >= startIndex && token !== "" && !token.startsWith("-"),
+	);
 }
 
 function getTimeoutStepArtifactPath(commandTokens: readonly string[]): string | undefined {
-	return ["screenshot", "pdf", "download", "wait"].includes(commandTokens[0])
+	return ["screenshot", "pdf", "download", "wait"].includes(commandTokens[0] ?? "")
 		? getExplicitArtifactDestination(commandTokens)
 		: undefined;
 }
@@ -76,13 +72,11 @@ async function statTimeoutArtifactPath(
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
 			// Retries observe a still-finishing native writer only after the prior stat settles.
-			// oxlint-disable-next-line no-await-in-loop
 			const stats = await stat(absolutePath);
 			return { exists: true, sizeBytes: stats.size };
 		} catch {
 			if (attempt < 2) {
 				// Backoff must complete before the next artifact observation.
-				// oxlint-disable-next-line no-await-in-loop
 				await sleepMs(25);
 			}
 		}
@@ -190,8 +184,8 @@ interface TimeoutPageObservation {
 }
 
 async function probeTimeoutPage(options: TimeoutDiagnosticOptions): Promise<{
-	readonly recoveredUrl?: string;
-	readonly title?: string;
+	readonly recoveredUrl?: string | undefined;
+	readonly title?: string | undefined;
 }> {
 	const urlData = await runSessionCommandData({
 		args: ["get", "url"],
@@ -227,10 +221,7 @@ function timeoutPageSummary(
 }
 
 function buildTimeoutPage(
-	observed: {
-		readonly recoveredUrl?: string;
-		readonly title?: string;
-	},
+	observed: Awaited<ReturnType<typeof probeTimeoutPage>>,
 	steps: readonly PlannedTimeoutStep[],
 ): TimeoutPageObservation {
 	const { recoveredUrl, title } = observed;

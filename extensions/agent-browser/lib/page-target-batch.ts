@@ -84,7 +84,7 @@ function deduplicatePossibleBatchPageStates(
 export interface BatchTargetValidationOptions {
 	readonly allowFirstBatchConfirmation?: boolean;
 	readonly allowUnverifiedPageTransitions?: boolean;
-	readonly currentPageUrl?: string;
+	readonly currentPageUrl?: string | undefined;
 	readonly pageUrlUnknown?: boolean;
 	readonly trustedFirstBatchTabSelection?: boolean;
 }
@@ -93,7 +93,7 @@ function possibleStateError(
 	states: readonly PossibleBatchPageState[],
 	step: readonly string[],
 	options: {
-		readonly allowUnverifiedPageTransitions?: boolean;
+		readonly allowUnverifiedPageTransitions?: boolean | undefined;
 		readonly trustedBatchTabSelection: boolean;
 		readonly allowsConfirmation: boolean;
 	},

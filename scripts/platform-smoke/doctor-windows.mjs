@@ -1,8 +1,37 @@
 /** Disposable Windows/Parallels doctor probes with native lease cleanup receipts. */
 import { execFileSync } from "node:child_process";
 import { buildTargetBaseArgs, leaseIdFromWarmup } from "./crabbox-runner.mjs";
-import { commandPath, setting, shell } from "./doctor-support.mjs";
+import {
+	checkCrabboxProvider,
+	commandPath,
+	isConfigObject,
+	setting,
+	shell,
+} from "./doctor-support.mjs";
 
+/** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
+/** @import { DoctorReport } from "./doctor-support.mjs" */
+
+/** @param {unknown} error */
+function failedCrabboxReceipt(error) {
+	if (!(error instanceof Error)) {
+		return { ok: false, stdout: "", stderr: String(error) };
+	}
+	const stdout = "stdout" in error ? error.stdout : undefined;
+	const stderr = "stderr" in error ? error.stderr : undefined;
+	const stdoutText = String(stdout);
+	const stderrText = String(stderr);
+	return {
+		ok: false,
+		stdout: stdout === null || stdout === undefined ? "" : stdoutText,
+		stderr: stderr === null || stderr === undefined ? error.message : stderrText,
+	};
+}
+
+/** @param {string} cbox
+ * @param {readonly string[]} args
+ * @param {number} [timeout]
+ */
 function crabbox(cbox, args, timeout = 300_000) {
 	try {
 		return {
@@ -15,11 +44,7 @@ function crabbox(cbox, args, timeout = 300_000) {
 			stderr: "",
 		};
 	} catch (error) {
-		return {
-			ok: false,
-			stdout: error.stdout?.toString?.() ?? "",
-			stderr: error.stderr?.toString?.() ?? error.message,
-		};
+		return failedCrabboxReceipt(error);
 	}
 }
 
@@ -34,29 +59,40 @@ $chrome = Get-ChildItem -Path $roots -Recurse -Filter chrome.exe -ErrorAction Si
 if (-not $chrome) { throw "agent-browser browser cache missing chrome.exe" }
 Write-Output "PLATFORM_DOCTOR_AGENT_BROWSER_CHROME=$($chrome.FullName)"`;
 
+/** @param {Readonly<ReturnType<typeof crabbox>>} run
+ * @param {string | undefined} expectedVersion
+ */
 function probeOutcome(run, expectedVersion) {
 	if (!run.ok) {
-		return { ok: false, message: `probe failed: ${(run.stderr || run.stdout).slice(-700)}` };
+		return {
+			ok: false,
+			message: `probe failed: ${(run.stderr.length > 0 ? run.stderr : run.stdout).slice(-700)}`,
+		};
 	}
 	const output = run.stdout;
+	/** @param {string} name */
 	const marker = (name) =>
 		output.match(new RegExp(`^PLATFORM_DOCTOR_AGENT_BROWSER_${name}=(.*)$`, "m"))?.[1]?.trim() ??
 		"";
 	const versionLine = marker("VERSION");
 	const pathLine = marker("PATH");
 	const chromeLine = marker("CHROME");
-	if (versionLine !== `agent-browser ${expectedVersion}`) {
+	if (versionLine !== `agent-browser ${String(expectedVersion)}`) {
 		return {
 			ok: false,
-			message: `expected agent-browser ${expectedVersion}, got ${versionLine || "missing version"}`,
+			message: `expected agent-browser ${String(expectedVersion)}, got ${versionLine.length > 0 ? versionLine : "missing version"}`,
 		};
 	}
-	if (!pathLine || !chromeLine) {
+	if (pathLine.length === 0 || chromeLine.length === 0) {
 		return { ok: false, message: "agent-browser path or browser cache marker missing" };
 	}
 	return { ok: true, message: `${versionLine} | ${pathLine} | ${chromeLine}` };
 }
 
+/** @param {string} cbox
+ * @param {Partial<PlatformSmokeConfig>} config
+ * @param {string | undefined} expectedVersion
+ */
 export function disposableWindowsAgentBrowserProbe(cbox, config, expectedVersion) {
 	const slug = "piab-doctor-agent-browser";
 	const baseArgs = buildTargetBaseArgs("windows-native", config);
@@ -67,7 +103,10 @@ export function disposableWindowsAgentBrowserProbe(cbox, config, expectedVersion
 	);
 	const leaseId = leaseIdFromWarmup(warm, slug);
 	if (!warm.ok) {
-		return { ok: false, message: `warmup failed: ${(warm.stderr || warm.stdout).slice(-500)}` };
+		return {
+			ok: false,
+			message: `warmup failed: ${(warm.stderr.length > 0 ? warm.stderr : warm.stdout).slice(-500)}`,
+		};
 	}
 	let outcome;
 	try {
@@ -86,22 +125,30 @@ export function disposableWindowsAgentBrowserProbe(cbox, config, expectedVersion
 			const prior = outcome?.ok === false ? `; prior result: ${outcome.message}` : "";
 			outcome = {
 				ok: false,
-				message: `cleanup failed: ${(stop.stderr || stop.stdout).slice(-500)}${prior}`,
+				message: `cleanup failed: ${(stop.stderr.length > 0 ? stop.stderr : stop.stdout).slice(-500)}${prior}`,
 			};
 		}
 	}
 	return outcome;
 }
 
+/** @param {string} vmName
+ * @param {string} snapshot
+ * @param {DoctorReport} report
+ */
 function checkSnapshot(vmName, snapshot, report) {
 	const snapshotsJson = shell(
 		`prlctl snapshot-list "${vmName.replace(/"/g, '\\"')}" -j 2>/dev/null`,
 	);
-	let snapshotMatch = null;
+	/** @type {[string, unknown] | undefined} */
+	let snapshotMatch;
 	try {
+		/** @type {unknown} */
 		const snapshots = JSON.parse(snapshotsJson ?? "{}");
-		snapshotMatch = Object.entries(snapshots).find(
-			([id, data]) => id === snapshot || data?.name === snapshot,
+		/** @type {[string, unknown][]} */
+		const entries = Object.entries(snapshots ?? {});
+		snapshotMatch = entries.find(
+			([id, data]) => id === snapshot || (isConfigObject(data) && data.name === snapshot),
 		);
 	} catch {
 		// Invalid native snapshot output falls through to the explicit failure below.
@@ -111,43 +158,53 @@ function checkSnapshot(vmName, snapshot, report) {
 		return;
 	}
 	report.ok(`snapshot ${snapshot} found`);
-	const snapshotState = snapshotMatch[1]?.state ?? "unknown";
+	const data = snapshotMatch[1];
+	const snapshotState = isConfigObject(data) ? data.state : undefined;
+	const stateText = String(snapshotState);
 	if (snapshotState === "poweroff") {
 		report.ok(`snapshot ${snapshot} state is poweroff`);
 	} else {
-		report.fail(`snapshot ${snapshot} must be poweroff; current snapshot state: ${snapshotState}`);
+		report.fail(
+			`snapshot ${snapshot} must be poweroff; current snapshot state: ${snapshotState === null || snapshotState === undefined ? "unknown" : stateText}`,
+		);
 	}
 }
 
+/** @param {Partial<PlatformSmokeConfig>} config
+ * @param {string} packageName
+ */
 function windowsSettings(config, packageName) {
 	return {
 		sourceVm: setting(
 			"PLATFORM_SMOKE_WINDOWS_VM",
-			config?.windowsParallels?.sourceVm,
+			config.windowsParallels?.sourceVm,
 			"pi-extension-windows-template",
 		),
 		snapshot: setting(
 			"PLATFORM_SMOKE_WINDOWS_SNAPSHOT",
-			config?.windowsParallels?.snapshot,
+			config.windowsParallels?.snapshot,
 			"crabbox-ready",
 		),
 		user: setting(
 			"PLATFORM_SMOKE_WINDOWS_USER",
-			config?.windowsParallels?.user,
+			config.windowsParallels?.user,
 			process.env.USER ?? "",
 		),
 		workRoot: setting(
 			"PLATFORM_SMOKE_WINDOWS_WORK_ROOT",
-			config?.windowsParallels?.workRoot,
+			config.windowsParallels?.workRoot,
 			`C:\\crabbox\\${packageName}`,
 		),
 	};
 }
 
+/** @param {Readonly<ReturnType<typeof windowsSettings>>} windows
+ * @param {DoctorReport} report
+ */
 function checkWindowsTemplate(windows, report) {
 	const vmName = windows.sourceVm;
 	const list = shell("prlctl list -a --no-header 2>/dev/null");
-	if (!list) {
+	if (list === null || list.length === 0) {
 		report.fail("prlctl list returned no VMs");
 		return false;
 	}
@@ -168,20 +225,15 @@ function checkWindowsTemplate(windows, report) {
 	return true;
 }
 
-export function checkWindows({
-	cbox,
-	config,
-	packageName,
-	agentBrowserVersion,
-	report,
-	checkCrabboxProvider,
-}) {
+/** @param {{readonly cbox: string; readonly config: Partial<PlatformSmokeConfig>; readonly packageName: string; readonly agentBrowserVersion: string | undefined; readonly report: DoctorReport}} options */
+export function checkWindows({ cbox, config, packageName, agentBrowserVersion, report }) {
 	console.log("\n── Windows native / Parallels ──");
-	if (!(config?.requiredTargets ?? []).includes("windows-native")) {
+	if (!(config.requiredTargets ?? []).includes("windows-native")) {
 		report.warn("windows-native not selected (best-effort); setup not checked, not a pass");
 		return;
 	}
-	if (!commandPath("prlctl")) {
+	const prlctl = commandPath("prlctl");
+	if (prlctl === null || prlctl.length === 0) {
 		report.fail("prlctl not found");
 		return;
 	}
@@ -214,7 +266,7 @@ export function checkWindows({
 	);
 	const probe = disposableWindowsAgentBrowserProbe(
 		cbox,
-		{ ...config, windowsParallels: { ...config?.windowsParallels, ...windows } },
+		{ ...config, windowsParallels: { ...config.windowsParallels, ...windows } },
 		agentBrowserVersion,
 	);
 	if (probe.ok) {

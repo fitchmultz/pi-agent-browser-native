@@ -1,14 +1,14 @@
-import type { CompatibilityWorkaround } from "../runtime.js";
+import type { CompatibilityWorkaround } from "../runtime-contracts.js";
 
-export interface OwnedManagedSession {
+import type { AgentBrowserSessionIdentity } from "../session-identity.js";
+
+export interface OwnedManagedSession extends AgentBrowserSessionIdentity {
 	readonly branchOwned: boolean;
-	readonly compatibilityWorkaround?: CompatibilityWorkaround;
+	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly cwd: string;
-	readonly headedManagedAutosaveDisabled?: boolean;
-	readonly headedManagedAutosaveInterval?: string;
-	readonly namespace?: string;
-	readonly sessionName: string;
-	readonly socketDir?: string;
+	readonly headedManagedAutosaveDisabled?: boolean | undefined;
+	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly socketDir?: string | undefined;
 }
 /** Mutable cleanup registry; entries are readonly and changes belong to its explicit mutators. */
 export type OwnedManagedSessionStore = Map<string, OwnedManagedSession>;
@@ -28,15 +28,9 @@ type LaunchSettings = Pick<
 export interface BranchManagedResourceEvents {
 	readonly electronLaunchActiveRanks: ReadonlyMap<string, number>;
 	readonly electronLaunchCleanupRanks: ReadonlyMap<string, number>;
-	readonly managedSessionActiveIdentities: ReadonlyMap<
-		string,
-		Readonly<{ namespace?: string; sessionName: string }>
-	>;
+	readonly managedSessionActiveIdentities: ReadonlyMap<string, AgentBrowserSessionIdentity>;
 	readonly managedSessionActiveRanks: ReadonlyMap<string, number>;
 	readonly managedSessionCloseRanks: ReadonlyMap<string, number>;
 	readonly managedSessionLaunchState: ReadonlyMap<string, Readonly<ManagedSessionLaunchState>>;
 }
-export interface ElectronClosedManagedSessionIdentity {
-	readonly namespace?: string;
-	readonly sessionName: string;
-}
+export type ElectronClosedManagedSessionIdentity = AgentBrowserSessionIdentity;

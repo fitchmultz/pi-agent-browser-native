@@ -25,6 +25,7 @@ import {
 	FORBIDDEN_REPO_FILES,
 	REQUIRED_REPO_FILES,
 	loadPublishContract,
+	readPackageJson,
 } from "./publish-contract.mjs";
 
 export { FORBIDDEN_PACKED_FILES, FORBIDDEN_REPO_FILES, REQUIRED_REPO_FILES, loadPublishContract };
@@ -32,6 +33,7 @@ export { FORBIDDEN_PACKED_FILES, FORBIDDEN_REPO_FILES, REQUIRED_REPO_FILES, load
 const SUPPORTED_ARGS = new Set(["--list-files", "--smoke-pi"]);
 
 class UsageError extends Error {
+	/** @param {string} message */
 	constructor(message) {
 		super(message);
 		this.name = "UsageError";
@@ -99,12 +101,12 @@ export function parseCliArgs(argv = process.argv.slice(2)) {
 	};
 }
 
+/** @param {Iterable<string>} paths */
 async function collectMissingPaths(paths, cwd = process.cwd()) {
 	const missingPaths = [];
 	for (const path of paths) {
 		try {
 			// Bound stat pressure and preserve path-order diagnostics during package prerequisite inspection.
-			// oxlint-disable-next-line no-await-in-loop
 			await access(resolve(cwd, path));
 		} catch {
 			missingPaths.push(path);
@@ -113,12 +115,12 @@ async function collectMissingPaths(paths, cwd = process.cwd()) {
 	return missingPaths;
 }
 
+/** @param {Iterable<string>} paths */
 async function collectPresentPaths(paths, cwd = process.cwd()) {
 	const presentPaths = [];
 	for (const path of paths) {
 		try {
 			// Bound stat pressure and preserve path-order diagnostics during package prerequisite inspection.
-			// oxlint-disable-next-line no-await-in-loop
 			await access(resolve(cwd, path));
 			presentPaths.push(path);
 		} catch {
@@ -128,23 +130,38 @@ async function collectPresentPaths(paths, cwd = process.cwd()) {
 	return presentPaths;
 }
 
+/** @param {readonly unknown[]} files */
 export function collectPackedPaths(files) {
-	return new Set(
-		files.filter((entry) => typeof entry?.path === "string").map((entry) => entry.path),
-	);
+	/** @type {Set<string>} */
+	const paths = new Set();
+	for (const entry of files) {
+		if (
+			entry !== null &&
+			typeof entry === "object" &&
+			"path" in entry &&
+			typeof entry.path === "string"
+		) {
+			paths.add(entry.path);
+		}
+	}
+	return paths;
 }
 
 const MARKDOWN_LINK_PATTERN = /!?\[[^\]\n]*(?:\][^[\]\n]*)*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const EXTERNAL_LINK_PATTERN = /^[a-z][a-z0-9+.-]*:/i;
 
+/** @param {string} target */
 function stripMarkdownLinkFragment(target) {
 	const hashIndex = target.indexOf("#");
 	return hashIndex >= 0 ? target.slice(0, hashIndex) : target;
 }
 
+/** @param {string} sourcePath
+ * @param {string} rawTarget
+ */
 function normalizePackedMarkdownTarget(sourcePath, rawTarget) {
 	const withoutFragment = stripMarkdownLinkFragment(rawTarget.trim());
-	if (!withoutFragment || withoutFragment.startsWith("#")) {
+	if (withoutFragment.length === 0 || withoutFragment.startsWith("#")) {
 		return;
 	}
 	if (
@@ -163,6 +180,9 @@ function normalizePackedMarkdownTarget(sourcePath, rawTarget) {
 	return posixPath.normalize(posixPath.join(posixPath.dirname(sourcePath), decoded));
 }
 
+/** @param {ReadonlySet<string>} packedPaths
+ * @param {string} targetPath
+ */
 function packedPathExists(packedPaths, targetPath) {
 	if (packedPaths.has(targetPath)) {
 		return true;
@@ -176,6 +196,10 @@ function packedPathExists(packedPaths, targetPath) {
 	return false;
 }
 
+/** @param {string} sourcePath
+ * @param {string} markdownLink
+ * @param {string} targetPath
+ */
 function isRepositoryReadmeArtwork(sourcePath, markdownLink, targetPath) {
 	return (
 		sourcePath === "README.md" &&
@@ -184,6 +208,7 @@ function isRepositoryReadmeArtwork(sourcePath, markdownLink, targetPath) {
 	);
 }
 
+/** @param {{ readonly cwd: string; readonly sourcePath: string; readonly packedPaths: ReadonlySet<string>; readonly repositoryArtwork: Set<string>; readonly failures: string[] }} options */
 async function inspectPackedMarkdown({
 	cwd,
 	sourcePath,
@@ -203,7 +228,11 @@ async function inspectPackedMarkdown({
 	for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
 		const rawTarget = match[1] ?? "";
 		const targetPath = normalizePackedMarkdownTarget(sourcePath, rawTarget);
-		if (!targetPath || packedPathExists(packedPaths, targetPath)) {
+		if (
+			targetPath === undefined ||
+			targetPath.length === 0 ||
+			packedPathExists(packedPaths, targetPath)
+		) {
 			continue;
 		}
 		// README artwork is hosted by GitHub; verify it in the repo while keeping it out of npm.
@@ -217,14 +246,18 @@ async function inspectPackedMarkdown({
 	}
 }
 
+/** @param {{ readonly cwd?: string; readonly repoCwd?: string; readonly packedPaths: ReadonlySet<string> }} options */
 export async function collectPackedMarkdownLinkFailures(options) {
 	const { cwd = process.cwd(), repoCwd = cwd, packedPaths } = options;
+	/** @type {string[]} */
 	const failures = [];
+	/** @type {Set<string>} */
 	const repositoryArtwork = new Set();
-	const markdownPaths = [...packedPaths].filter((path) => path.endsWith(".md")).sort();
+	const markdownPaths = [...packedPaths]
+		.filter((path) => path.endsWith(".md"))
+		.sort((left, right) => (left < right ? -1 : Number(left > right)));
 	for (const sourcePath of markdownPaths) {
 		// Inspect one packaged document at a time, bounding memory and retaining sorted failure order.
-		// oxlint-disable-next-line no-await-in-loop
 		await inspectPackedMarkdown({ cwd, sourcePath, packedPaths, repositoryArtwork, failures });
 	}
 	failures.push(
@@ -235,10 +268,14 @@ export async function collectPackedMarkdownLinkFailures(options) {
 	return failures;
 }
 
+/** @param {number} count
+ * @param {string} singular
+ */
 export function pluralize(count, singular, plural = `${singular}s`) {
 	return count === 1 ? singular : plural;
 }
 
+/** @param {{ readonly forbiddenPackedFiles: readonly string[]; readonly forbiddenRepoFiles: readonly string[]; readonly missingPackedFiles: readonly string[]; readonly missingRepoFiles: readonly string[] }} options */
 export function collectVerificationFailures(options) {
 	const { forbiddenPackedFiles, forbiddenRepoFiles, missingPackedFiles, missingRepoFiles } =
 		options;
@@ -268,6 +305,9 @@ export function collectVerificationFailures(options) {
 	return failures;
 }
 
+/** @template {{ readonly files?: unknown }} T
+ * @param {{ readonly forbiddenRepoFiles: readonly string[]; readonly missingRepoFiles: readonly string[]; readonly packResult: T; readonly publishContract: Pick<Awaited<ReturnType<typeof loadPublishContract>>, "requiredPackedFiles" | "forbiddenPackedFiles"> }} options
+ */
 export function evaluatePackResult(options) {
 	const { forbiddenRepoFiles, missingRepoFiles, packResult, publishContract } = options;
 	const packedPaths = collectPackedPaths(Array.isArray(packResult.files) ? packResult.files : []);
@@ -303,6 +343,9 @@ export function evaluatePackResult(options) {
 	};
 }
 
+/** @param {Awaited<ReturnType<typeof verifyPackageRelease>>} report
+ * @param {ReturnType<typeof parseCliArgs>} options
+ */
 function printVerificationReport(report, options) {
 	console.log(`Tarball: ${report.packResult.filename}`);
 	console.log(
@@ -313,7 +356,9 @@ function printVerificationReport(report, options) {
 
 	if (options.listFiles) {
 		console.log("Packed file list:");
-		for (const path of [...report.packedPaths].sort()) {
+		for (const path of [...report.packedPaths].sort((left, right) =>
+			left < right ? -1 : Number(left > right),
+		)) {
 			console.log(`- ${path}`);
 		}
 	}
@@ -329,6 +374,7 @@ function printVerificationReport(report, options) {
 	console.log("Package verification passed.");
 }
 
+/** @param {Awaited<ReturnType<typeof verifyPackagedPiLoad>>} report */
 function printPiSmokeReport(report) {
 	console.log(`Pi package smoke path: ${report.packageDir}`);
 	console.log(`agent_browser tools found: ${report.agentBrowserToolCount}`);
@@ -347,19 +393,23 @@ function printPiSmokeReport(report) {
 	console.log("Pi package smoke passed.");
 }
 
+/** @param {Awaited<ReturnType<typeof packToTemporaryPackageDir>> | undefined} candidate
+ * @param {string} cwd
+ */
 async function candidateIdentityFailures(candidate, cwd) {
 	if (!candidate) {
 		return [];
 	}
-	const manifest = JSON.parse(await readFile(resolve(cwd, "package.json"), "utf8"));
+	const manifest = await readPackageJson(cwd);
 	const { name, version } = candidate.packResult;
 	return name === manifest.name && version === manifest.version
 		? []
 		: [
-				`Candidate ${name}@${version} does not match checkout ${manifest.name}@${manifest.version}.`,
+				`Candidate ${name}@${version} does not match checkout ${String(manifest.name)}@${String(manifest.version)}.`,
 			];
 }
 
+/** @param {{ readonly cwd?: string; readonly tarballPath?: string | undefined }} [options] */
 export async function verifyPackageRelease(options = {}) {
 	const cwd = options.cwd ?? process.cwd();
 	const candidate =
@@ -393,11 +443,10 @@ export async function verifyPackageRelease(options = {}) {
 	}
 }
 
+/** @param {string} metaUrl */
 function isDirectRun(metaUrl, argv = process.argv) {
-	if (!argv[1]) {
-		return false;
-	}
-	return metaUrl === pathToFileURL(argv[1]).href;
+	const script = argv[1];
+	return script !== undefined && script.length > 0 && metaUrl === pathToFileURL(script).href;
 }
 
 function releaseTarballPath() {
@@ -408,6 +457,9 @@ function releaseTarballPath() {
 	return path;
 }
 
+/** @param {string | undefined} tarballPath
+ * @param {Awaited<ReturnType<typeof verifyPackageRelease>>} report
+ */
 async function runPiSmoke(tarballPath, report) {
 	const smokeReport = await verifyPackagedPiLoad({ tarballPath });
 	if (
@@ -459,7 +511,7 @@ if (isDirectRun(import.meta.url)) {
 		.then((exitCode) => {
 			process.exitCode = exitCode;
 		})
-		.catch((error) => {
+		.catch((/** @type {unknown} */ error) => {
 			console.error(error instanceof Error ? error.message : error);
 			process.exitCode = 1;
 		});

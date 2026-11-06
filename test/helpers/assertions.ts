@@ -8,6 +8,11 @@ function assertRecord(value: unknown): asserts value is Record<string, unknown> 
 	);
 }
 
+export function readDefined<Value>(value: Value | undefined): Value {
+	assert.ok(value !== undefined, "expected a defined fixture value");
+	return value;
+}
+
 export function readRecord(value: unknown): Record<string, unknown> {
 	assertRecord(value);
 	return value;

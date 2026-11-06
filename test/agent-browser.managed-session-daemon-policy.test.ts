@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
 	hasErrorCode,
 	readArray,
@@ -23,45 +23,48 @@ import { getImplicitSessionCloseTimeoutMs } from "../extensions/agent-browser/li
 import { withPatchedEnv, writeFakeAgentBrowserBinary } from "./helpers/agent-browser-harness.js";
 import { wallClockStepper } from "./helpers/monotonic-clock.js";
 
-test("virtual daemon generation belongs to the fixture owner, not a transient CLI launcher", async () => {
-	const root = await mkdtemp(join(tmpdir(), "piab-fake-launcher-"));
-	try {
-		await writeFakeAgentBrowserBinary(
-			root,
-			"process.stdout.write(JSON.stringify({ success: true, data: { launcherPid: process.ppid } }));",
-		);
-		const intermediary = `const { spawnSync } = require("node:child_process");
+nodeTest(
+	"virtual daemon generation belongs to the fixture owner, not a transient CLI launcher",
+	async () => {
+		const root = await mkdtemp(join(tmpdir(), "piab-fake-launcher-"));
+		try {
+			await writeFakeAgentBrowserBinary(
+				root,
+				"process.stdout.write(JSON.stringify({ success: true, data: { launcherPid: process.ppid } }));",
+			);
+			const intermediary = `const { spawnSync } = require("node:child_process");
 const result = spawnSync(process.execPath, [${JSON.stringify(join(root, "agent-browser-fake.cjs"))}, ...process.argv.slice(1)], { encoding: "utf8" });
 if (result.error) throw result.error;
 process.stdout.write(result.stdout);
 process.stderr.write(result.stderr);
 process.exit(result.status ?? 1);`;
-		const invoke = (args: readonly string[]) =>
-			readRecord(
-				JSON.parse(
-					execFileSync(process.execPath, ["-e", intermediary, "--", ...args], {
-						encoding: "utf8",
-					}),
-				),
-			);
-		const first = readRecord(invoke(["--session", "fixture", "open"]).data);
-		const firstLauncher = readNumber(first.launcherPid);
-		assert.notEqual(firstLauncher, process.pid);
-		const opened = readRecord(invoke(["--session", "fixture", "session", "info"]).data);
-		assert.equal(opened.active, true);
-		assert.equal(readRecord(opened.runtime).backgroundPid, process.pid);
-		const snapshot = readRecord(invoke(["--session", "fixture", "snapshot"]).data);
-		assert.notEqual(snapshot.launcherPid, firstLauncher);
-		const observed = readRecord(invoke(["--session", "fixture", "session", "info"]).data);
-		assert.equal(readRecord(observed.runtime).backgroundPid, process.pid);
-		invoke(["--session", "fixture", "close"]);
-		const closed = readRecord(invoke(["--session", "fixture", "session", "info"]).data);
-		assert.equal(closed.active, false);
-		assert.equal(closed.runtime, null);
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
-});
+			const invoke = (args: readonly string[]) =>
+				readRecord(
+					JSON.parse(
+						execFileSync(process.execPath, ["-e", intermediary, "--", ...args], {
+							encoding: "utf8",
+						}),
+					),
+				);
+			const first = readRecord(invoke(["--session", "fixture", "open"]).data);
+			const firstLauncher = readNumber(first.launcherPid);
+			assert.notEqual(firstLauncher, process.pid);
+			const opened = readRecord(invoke(["--session", "fixture", "session", "info"]).data);
+			assert.equal(opened.active, true);
+			assert.equal(readRecord(opened.runtime).backgroundPid, process.pid);
+			const snapshot = readRecord(invoke(["--session", "fixture", "snapshot"]).data);
+			assert.notEqual(snapshot.launcherPid, firstLauncher);
+			const observed = readRecord(invoke(["--session", "fixture", "session", "info"]).data);
+			assert.equal(readRecord(observed.runtime).backgroundPid, process.pid);
+			invoke(["--session", "fixture", "close"]);
+			const closed = readRecord(invoke(["--session", "fixture", "session", "info"]).data);
+			assert.equal(closed.active, false);
+			assert.equal(closed.runtime, null);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	},
+);
 
 const realSetTimeout = setTimeout;
 async function waitForDispatch(path: string): Promise<void> {
@@ -69,7 +72,6 @@ async function waitForDispatch(path: string): Promise<void> {
 	for (;;) {
 		try {
 			// Advance parent deadlines only after the real child publishes readiness.
-			// oxlint-disable-next-line no-await-in-loop
 			await readFile(path);
 			return;
 		} catch (error) {
@@ -77,7 +79,6 @@ async function waitForDispatch(path: string): Promise<void> {
 				throw error;
 			}
 			// Child startup/filesystem polling stays on the real clock.
-			// oxlint-disable-next-line no-await-in-loop
 			await new Promise((resolve) => {
 				realSetTimeout(resolve, 5);
 			});
@@ -95,7 +96,7 @@ const watcher = fs.watch(${JSON.stringify(tempDir)}, () => {
 fs.writeFileSync(${JSON.stringify(join(tempDir, "ready"))}, String(process.pid));`;
 }
 
-test(
+nodeTest(
 	"getRunningHeadedAutosavePolicyChangeError rejects live timer changes but allows close",
 	{ concurrency: false },
 	async () => {
@@ -111,7 +112,7 @@ test(
 				/cannot change a running wrapper-owned headed session/,
 			);
 			assert.equal(getRunningHeadedAutosavePolicyChangeError("0", true), undefined);
-			assert.equal(getRunningHeadedAutosavePolicyChangeError(undefined), undefined);
+			assert.equal(getRunningHeadedAutosavePolicyChangeError(), undefined);
 		});
 		await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" }, async () => {
 			assert.match(
@@ -126,7 +127,7 @@ for (const [stalledPhase, stepMs] of [
 	["daemon inspection", -120_000],
 	["native close", 120_000],
 ] as const) {
-	test(
+	nodeTest(
 		`cleanup reports its own deadline during ${stalledPhase} across a ${stepMs > 0 ? "forward" : "backward"} system clock step without retiring the session`,
 		{ concurrency: false },
 		async (t) => {
@@ -212,7 +213,7 @@ if (inspection === ${JSON.stringify(stalledPhase === "daemon inspection")}) {
 	);
 }
 
-test(
+nodeTest(
 	"default cleanup allows the native five-second browser shutdown grace",
 	{ concurrency: false, timeout: 15_000 },
 	async (t) => {
@@ -262,7 +263,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"pending native cleanup keeps the managed restore identity",
 	{ concurrency: false },
 	async () => {
@@ -304,7 +305,7 @@ console.log(JSON.stringify({ success: true, data }));
 	},
 );
 
-test(
+nodeTest(
 	"inspectManagedSessionDaemon waits through a temporarily busy daemon",
 	{ concurrency: false, timeout: 15_000 },
 	async (t) => {

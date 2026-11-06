@@ -4,10 +4,12 @@ import { DEFAULT_UBUNTU_IMAGE } from "../../platform-smoke.config.mjs";
 import {
 	checkAgentBrowserVersion,
 	checkArtifactRoot,
+	checkCrabboxProvider,
 	checkForbiddenProjectFiles,
 	commandPath,
 	createReporter,
 	env,
+	isConfigObject,
 	setting,
 	shell,
 	silent,
@@ -16,87 +18,91 @@ import {
 import { checkWindows } from "./doctor-windows.mjs";
 export { disposableWindowsAgentBrowserProbe } from "./doctor-windows.mjs";
 
+/** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
+/** @import { DoctorReport } from "./doctor-support.mjs" */
+/** @typedef {Pick<PlatformSmokeConfig, "requiredTargets"> & Partial<PlatformSmokeConfig>} DoctorConfig */
+
+/** @param {readonly unknown[]} providers */
+function providerNames(providers) {
+	return providers
+		.map((provider) => {
+			if (!isConfigObject(provider)) {
+				return;
+			}
+			return provider.name ?? provider.id ?? provider.provider;
+		})
+		.filter((name) => typeof name === "string")
+		.filter(Boolean);
+}
+
+/** @param {string} cbox */
 function crabboxProviders(cbox) {
 	const jsonOutput = silent(cbox, ["providers", "--json"]);
-	if (jsonOutput) {
+	if (jsonOutput !== null && jsonOutput.length > 0) {
 		try {
+			/** @type {unknown} */
 			const parsed = JSON.parse(jsonOutput);
 			if (Array.isArray(parsed)) {
-				return parsed
-					.map((provider) => provider.name ?? provider.id ?? provider.provider)
-					.filter(Boolean);
+				return providerNames(parsed);
 			}
-			if (Array.isArray(parsed.providers)) {
-				return parsed.providers
-					.map((provider) => provider.name ?? provider.id ?? provider.provider)
-					.filter(Boolean);
-			}
-			if (typeof parsed === "object" && parsed) {
-				return Object.keys(parsed.providers ?? parsed);
+			if (isConfigObject(parsed)) {
+				return Array.isArray(parsed.providers)
+					? providerNames(parsed.providers)
+					: Object.keys(parsed.providers ?? parsed);
 			}
 		} catch {
 			// Fall through to text parsing for older or non-JSON provider output.
 		}
 	}
 	const output = silent(cbox, ["providers"]);
-	if (!output) {
+	if (output === null || output.length === 0) {
 		return [];
 	}
 	return output
 		.split(/\r?\n/)
 		.filter((line) => /^\S/.test(line))
 		.map((line) => line.trim().split(/\s+/)[0])
-		.filter(Boolean);
+		.filter((name) => name !== undefined && name.length > 0);
 }
 
+/** @param {string} cbox
+ * @param {DoctorConfig} config
+ * @param {DoctorReport} report
+ */
 function checkRequiredProviders(cbox, config, report) {
 	const providers = crabboxProviders(cbox);
 	if (providers.length === 0) {
 		report.fail("could not read crabbox providers");
 		return;
 	}
-	const providersByTarget = {
-		macos: "ssh",
-		ubuntu: "local-container",
-		"windows-native": "parallels",
-	};
+	const providersByTarget = new Map([
+		["macos", "ssh"],
+		["ubuntu", "local-container"],
+		["windows-native", "parallels"],
+	]);
 	for (const target of config.requiredTargets) {
-		const provider = providersByTarget[target];
-		if (providers.includes(provider)) {
+		const provider = providersByTarget.get(target);
+		if (provider !== undefined && providers.includes(provider)) {
 			report.ok(`crabbox provider available: ${provider}`);
 		} else {
-			report.fail(`crabbox provider missing: ${provider}`);
+			report.fail(`crabbox provider missing: ${String(provider)}`);
 		}
 	}
 }
 
-function checkCrabboxProvider(cbox, args, label, report) {
-	const output = silent(cbox, ["doctor", ...args, "--json"]);
-	if (!output) {
-		report.fail(`${label} crabbox doctor failed`);
-		return;
-	}
-	try {
-		const parsed = JSON.parse(output);
-		if (parsed.ok) {
-			report.ok(`${label} provider OK`);
-		} else {
-			report.fail(`${label} provider not ready: ${parsed.error ?? "unknown error"}`);
-		}
-	} catch {
-		report.warn(`${label} provider returned non-JSON doctor output`);
-	}
-}
-
+/** @param {string} cbox
+ * @param {string | undefined} minimum
+ * @param {DoctorReport} report
+ */
 function checkCrabboxVersion(cbox, minimum, report) {
 	const version = silent(cbox, ["--version"]);
-	if (!version) {
+	if (version === null || version.length === 0) {
 		report.fail("could not read Crabbox version");
 		return;
 	}
-	const displayVersion = version.split(/\r?\n/)[0];
+	const displayVersion = version.split(/\r?\n/, 1).join("");
 	report.ok(`version: ${displayVersion}`);
-	if (minimum) {
+	if (minimum !== undefined && minimum.length > 0) {
 		if (versionAtLeast(displayVersion, minimum)) {
 			report.ok(`version ${displayVersion} >= ${minimum}`);
 		} else {
@@ -105,15 +111,19 @@ function checkCrabboxVersion(cbox, minimum, report) {
 	}
 }
 
+/** @param {string} cbox
+ * @param {Partial<PlatformSmokeConfig>} config
+ * @param {DoctorReport} report
+ */
 function checkCrabboxBinary(cbox, config, report) {
 	console.log("\n── Crabbox binary ──");
 	const override = env("PLATFORM_SMOKE_CRABBOX");
-	const cboxPath = override || commandPath("crabbox");
-	if (!cboxPath) {
+	const cboxPath = override.length > 0 ? override : commandPath("crabbox");
+	if (cboxPath === null || cboxPath.length === 0) {
 		report.fail("crabbox not found on PATH; install with Homebrew or set PLATFORM_SMOKE_CRABBOX");
 		return cboxPath;
 	}
-	if (override) {
+	if (override.length > 0) {
 		try {
 			accessSync(cboxPath, constants.X_OK);
 			report.ok(`binary: ${cboxPath}`);
@@ -123,49 +133,74 @@ function checkCrabboxBinary(cbox, config, report) {
 	} else {
 		report.ok(`binary: ${cboxPath}`);
 	}
-	checkCrabboxVersion(cbox, config?.requiredCrabbox?.minVersion, report);
+	checkCrabboxVersion(cbox, config.requiredCrabbox?.minVersion, report);
 	return cboxPath;
 }
 
-function checkHostTools(config, report) {
-	console.log("\n── Host tools ──");
-	for (const [name, command] of [
-		["node", "node --version"],
-		["npm", "npm --version"],
-		["git", "git --version"],
-		["tar", "tar --version"],
-	]) {
-		const output = shell(command);
-		if (!output) {
-			report.fail(`${name} not found`);
-		} else {
-			report.ok(`${name}: ${output.split(/\r?\n/)[0]}`);
-		}
-	}
+/** @param {string | undefined} minimum
+ * @param {DoctorReport} report
+ */
+function checkHostNodeVersion(minimum, report) {
 	const localNode = shell("node --version");
-	const nodeVersion = config?.nodeValidationVersion;
-	if (nodeVersion && localNode && versionAtLeast(localNode, nodeVersion)) {
-		report.ok(`host Node ${localNode} >= ${nodeVersion}`);
+	if (
+		minimum !== undefined &&
+		minimum.length > 0 &&
+		localNode !== null &&
+		localNode.length > 0 &&
+		versionAtLeast(localNode, minimum)
+	) {
+		report.ok(`host Node ${localNode} >= ${minimum}`);
 	} else {
-		report.fail(`host Node ${localNode || "unknown"} < ${nodeVersion ?? "configured minimum"}`);
+		report.fail(
+			`host Node ${localNode === null || localNode.length === 0 ? "unknown" : localNode} < ${minimum ?? "configured minimum"}`,
+		);
 	}
-	checkAgentBrowserVersion(config?.agentBrowserVersion, report);
 }
 
+/** @param {Partial<PlatformSmokeConfig>} config
+ * @param {DoctorReport} report
+ */
+function checkHostTools(config, report) {
+	console.log("\n── Host tools ──");
+	for (const [name, command] of Object.entries({
+		node: "node --version",
+		npm: "npm --version",
+		git: "git --version",
+		tar: "tar --version",
+	})) {
+		const output = shell(command);
+		if (output === null || output.length === 0) {
+			report.fail(`${name} not found`);
+		} else {
+			report.ok(`${name}: ${output.split(/\r?\n/, 1).join("")}`);
+		}
+	}
+	checkHostNodeVersion(config.nodeValidationVersion, report);
+	checkAgentBrowserVersion(config.agentBrowserVersion, report);
+}
+
+/** @param {Partial<PlatformSmokeConfig>} config
+ * @param {string} packageName
+ */
 function macSettings(config, packageName) {
-	const user = env("PLATFORM_SMOKE_MAC_USER") || env("USER");
+	const user = setting("PLATFORM_SMOKE_MAC_USER", undefined, env("USER"));
 	return {
 		user,
-		host: setting("PLATFORM_SMOKE_MAC_HOST", config?.macos?.host, "localhost"),
-		port: String(setting("PLATFORM_SMOKE_MAC_PORT", config?.macos?.port, 22)),
+		host: setting("PLATFORM_SMOKE_MAC_HOST", config.macos?.host, "localhost"),
+		port: String(setting("PLATFORM_SMOKE_MAC_PORT", config.macos?.port, 22)),
 		workRoot: setting(
 			"PLATFORM_SMOKE_MAC_WORK_ROOT",
-			config?.macos?.workRoot,
+			config.macos?.workRoot,
 			`/Users/${user}/crabbox/${packageName}`,
 		),
 	};
 }
 
+/** @param {string} cbox
+ * @param {DoctorConfig} config
+ * @param {{readonly packageName: string; readonly ubuntuImage: string}} settings
+ * @param {DoctorReport} report
+ */
 function checkProviders(cbox, config, settings, report) {
 	checkRequiredProviders(cbox, config, report);
 	if (config.requiredTargets.includes("ubuntu")) {
@@ -201,10 +236,13 @@ function checkProviders(cbox, config, settings, report) {
 	);
 }
 
+/** @param {string} ubuntuImage
+ * @param {DoctorReport} report
+ */
 function checkDocker(ubuntuImage, report) {
 	console.log("\n── Docker / Ubuntu ──");
 	const dockerVersion = shell("docker info --format '{{.ServerVersion}}'");
-	if (dockerVersion) {
+	if (dockerVersion !== null && dockerVersion.length > 0) {
 		report.ok(`Docker ${dockerVersion}`);
 	} else {
 		report.fail("Docker is not available or not running");
@@ -212,33 +250,43 @@ function checkDocker(ubuntuImage, report) {
 	report.ok(`Ubuntu image: ${ubuntuImage}`);
 }
 
+/** @param {Partial<PlatformSmokeConfig>} config
+ * @param {string} packageName
+ * @param {DoctorReport} report
+ */
 function checkMacSsh(config, packageName, report) {
 	console.log("\n── macOS SSH ──");
 	const mac = macSettings(config, packageName);
 	const probe = shell(
 		`ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -p ${mac.port} ${mac.user}@${mac.host} 'node --version && npm --version && git --version && agent-browser --version'`,
 	);
-	if (!probe) {
+	if (probe === null || probe.length === 0) {
 		report.fail(`SSH probe failed for ${mac.user}@${mac.host}`);
 		return;
 	}
 	report.ok(`SSH ${mac.user}@${mac.host}: ${probe.split(/\r?\n/).join(" | ")}`);
-	const expectedVersion = config?.agentBrowserVersion;
-	if (expectedVersion && !probe.includes(expectedVersion)) {
+	const expectedVersion = config.agentBrowserVersion;
+	if (
+		expectedVersion !== undefined &&
+		expectedVersion.length > 0 &&
+		!probe.includes(expectedVersion)
+	) {
 		report.fail(`macOS SSH agent-browser does not match expected ${expectedVersion}`);
 	}
 }
 
+/** @param {Partial<PlatformSmokeConfig>} config */
 function doctorSettings(config) {
 	return {
-		packageName: config?.packageName ?? "pi-agent-browser-native",
-		artifactRoot: config?.artifactRoot ?? ".artifacts/platform-smoke",
-		targets: (config?.requiredTargets ?? []).join(", "),
-		suites: (config?.requiredSuites ?? []).join(", "),
-		agentBrowserVersion: config?.agentBrowserVersion,
+		packageName: config.packageName ?? "pi-agent-browser-native",
+		artifactRoot: config.artifactRoot ?? ".artifacts/platform-smoke",
+		targets: (config.requiredTargets ?? []).join(", "),
+		suites: (config.requiredSuites ?? []).join(", "),
+		agentBrowserVersion: config.agentBrowserVersion,
 	};
 }
 
+/** @param {DoctorConfig} config */
 export async function runDoctor(config) {
 	const report = createReporter();
 	const settings = doctorSettings(config);
@@ -248,16 +296,16 @@ export async function runDoctor(config) {
 	report.ok(`targets: ${settings.targets}`);
 	report.ok(`suites: ${settings.suites}`);
 	report.ok(`agent-browser baseline: ${settings.agentBrowserVersion ?? "not configured"}`);
-	const cbox = env("PLATFORM_SMOKE_CRABBOX") || "crabbox";
+	const cbox = setting("PLATFORM_SMOKE_CRABBOX", undefined, "crabbox");
 	const cboxPath = checkCrabboxBinary(cbox, config, report);
 	checkHostTools(config, report);
 	console.log("\n── Crabbox providers ──");
 	const ubuntuImage = setting(
 		"PLATFORM_SMOKE_UBUNTU_IMAGE",
-		config?.ubuntuContainerImage,
+		config.ubuntuContainerImage,
 		DEFAULT_UBUNTU_IMAGE,
 	);
-	if (cboxPath) {
+	if (cboxPath !== null && cboxPath.length > 0) {
 		checkProviders(cbox, config, { packageName, ubuntuImage }, report);
 	}
 	if (config.requiredTargets.includes("ubuntu")) {
@@ -272,12 +320,11 @@ export async function runDoctor(config) {
 		packageName,
 		agentBrowserVersion: settings.agentBrowserVersion,
 		report,
-		checkCrabboxProvider,
 	});
 	checkArtifactRoot(artifactRoot, report);
 	console.log("\n── Repository hygiene ──");
 	const status = shell("git status --short");
-	if (status) {
+	if (status !== null && status.length > 0) {
 		report.warn(
 			`${status.split(/\r?\n/).length} uncommitted change(s) recorded for smoke evidence`,
 		);

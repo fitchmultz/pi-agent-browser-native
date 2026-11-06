@@ -342,11 +342,11 @@ function buildHintedErrorText(
 }
 
 export function buildErrorPresentation(options: {
-	readonly args?: readonly string[];
+	readonly args?: readonly string[] | undefined;
 	readonly commandInfo: CommandInfo;
 	readonly errorText: string;
-	readonly presentationCommand?: string;
-	readonly sessionName?: string;
+	readonly presentationCommand?: string | undefined;
+	readonly sessionName?: string | undefined;
 }): ToolPresentation {
 	const { args, commandInfo, errorText, presentationCommand, sessionName } = options;
 	const safeErrorText = redactModelFacingText(

@@ -279,7 +279,6 @@ async function overlapsArtifact(
 ): Promise<boolean> {
 	for (const artifact of getArtifactPaths(result, cwd)) {
 		// Stop on the first alias; never write while any browser artifact identity remains unchecked.
-		// oxlint-disable-next-line no-await-in-loop
 		if (await pathsReferToSameFile(path, artifact)) {
 			return true;
 		}
@@ -352,7 +351,7 @@ async function saveOutput(
 
 export async function applyAgentBrowserOutputPath(options: {
 	readonly cwd: string;
-	readonly outputPath?: string;
+	readonly outputPath?: string | undefined;
 	readonly preserveTextContent?: boolean;
 	readonly result: AgentBrowserToolResult;
 }): Promise<AgentBrowserToolResult> {

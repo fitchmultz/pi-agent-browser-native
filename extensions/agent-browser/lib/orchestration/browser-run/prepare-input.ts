@@ -50,9 +50,9 @@ export function buildInvocationPreview(effectiveArgs: readonly string[]): string
 }
 
 interface StdinContract {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly commandTokens: readonly string[];
-	readonly stdin?: string;
+	readonly stdin?: string | undefined;
 }
 
 function isPasswordStdinAuthSave(options: StdinContract): boolean {

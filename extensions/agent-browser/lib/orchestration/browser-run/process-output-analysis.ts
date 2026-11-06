@@ -5,6 +5,7 @@ import type {
 	NavigationSummary,
 } from "./types.js";
 import type { PublicationOutputPhase } from "./process-output-publication-phase-contracts.js";
+import type { ToolPresentation } from "../../results/contracts.js";
 import type { ToolPresentationObservation } from "../../results/presentation/observation-contracts.js";
 import {
 	analyzeNetworkSourceLookupResults,
@@ -29,94 +30,57 @@ import {
 
 type AnalyzeQaEvidenceInput = Readonly<Pick<PublicationOutputPhase, "presentationEnvelope">> & {
 	readonly presentation: ToolPresentationObservation;
-} & Pick<PublicationOutputPhase, "qaPreset"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">> & {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledQaPreset">>;
-		};
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">> & {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledQaPreset">>;
 	};
-type CollectQaAttachmentInput = Readonly<Pick<PublicationOutputPhase, "currentSessionTabTarget">> &
-	Pick<PublicationOutputPhase, "qaAttachedTarget"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
-			readonly prepared: Readonly<
-				Pick<PreparedBrowserRun, "compiledQaPreset" | "executionPlan" | "priorSessionTabTarget">
-			>;
-		};
+};
+type CollectQaAttachmentInput = Readonly<
+	Pick<PublicationOutputPhase, "currentSessionTabTarget">
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
+		readonly prepared: Readonly<
+			Pick<PreparedBrowserRun, "compiledQaPreset" | "executionPlan" | "priorSessionTabTarget">
+		>;
 	};
+};
 type LookupSourceEvidenceInput = Readonly<
 	Pick<PublicationOutputPhase, "currentSessionTabTarget" | "operationCwd" | "presentationEnvelope">
-> &
-	Pick<PublicationOutputPhase, "sourceLookup"> & {
-		readonly input: {
-			readonly prepared: Readonly<
-				Pick<PreparedBrowserRun, "compiledSourceLookup" | "executionPlan" | "priorSessionTabTarget">
-			>;
-			readonly state: BrowserRunState;
-		};
+> & {
+	readonly input: {
+		readonly prepared: Readonly<
+			Pick<PreparedBrowserRun, "compiledSourceLookup" | "executionPlan" | "priorSessionTabTarget">
+		>;
+		readonly state: BrowserRunState;
 	};
+};
 type LookupNetworkSourceEvidenceInput = Readonly<
 	Pick<PublicationOutputPhase, "operationCwd" | "presentationEnvelope">
-> &
-	Pick<PublicationOutputPhase, "networkSourceLookup"> & {
-		readonly input: {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledNetworkSourceLookup">>;
-		};
+> & {
+	readonly input: {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledNetworkSourceLookup">>;
 	};
-type PrependLookupSummaryInput = Readonly<Pick<PublicationOutputPhase, "presentation">>;
-type CompactFailedQaInput = Readonly<
-	Pick<PublicationOutputPhase, "presentationEnvelope" | "qaAttachedTarget" | "qaPreset">
-> &
-	Pick<PublicationOutputPhase, "presentation" | "succeeded"> & {
-		readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledQaPreset">> };
-	};
-type CompactPassedQaInput = Readonly<
+};
+type QaSummaryInput = Readonly<
 	Pick<
 		PublicationOutputPhase,
 		"presentationEnvelope" | "qaAttachedTarget" | "qaPreset" | "succeeded"
 	>
-> &
-	Pick<PublicationOutputPhase, "presentation"> & {
-		readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledQaPreset">> };
-	};
-type AnalyzeOutputChecksInput = Readonly<
-	Pick<PublicationOutputPhase, "currentSessionTabTarget" | "operationCwd" | "presentationEnvelope">
-> &
-	Pick<
-		PublicationOutputPhase,
-		| "networkSourceLookup"
-		| "presentation"
-		| "qaAttachedTarget"
-		| "qaPreset"
-		| "sourceLookup"
-		| "succeeded"
-	> & {
-		readonly input: Readonly<
-			Pick<ProcessBrowserOutputInput, "cwd" | "processResult" | "signal">
-		> & {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					| "compiledNetworkSourceLookup"
-					| "compiledQaPreset"
-					| "compiledSourceLookup"
-					| "executionPlan"
-					| "priorSessionTabTarget"
-				>
-			>;
-			readonly state: BrowserRunState;
-		};
-	};
+> & {
+	readonly presentation: ToolPresentationObservation;
+	readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledQaPreset">> };
+};
+type AnalyzeOutputChecksInput = AnalyzeQaEvidenceInput &
+	CollectQaAttachmentInput &
+	LookupSourceEvidenceInput &
+	LookupNetworkSourceEvidenceInput &
+	Readonly<Pick<PublicationOutputPhase, "succeeded">>;
 type AttachedDiagnosticsNoticeInput = {
 	readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "compiledQaPreset">> };
 };
-type RenderQaBannerInput = Readonly<
-	Pick<PublicationOutputPhase, "presentation" | "qaAttachedTarget" | "qaPreset">
-> &
-	AttachedDiagnosticsNoticeInput;
-type RenderAttachedQaBannerInput = Readonly<
-	Pick<PublicationOutputPhase, "presentation" | "qaAttachedTarget" | "qaPreset" | "succeeded">
-> &
-	Pick<PublicationOutputPhase, "managedSessionOutcome"> &
-	AttachedDiagnosticsNoticeInput;
+type RenderQaBannerInput = Readonly<Pick<PublicationOutputPhase, "qaAttachedTarget" | "qaPreset">> &
+	AttachedDiagnosticsNoticeInput & { readonly presentation: ToolPresentationObservation };
+type RenderAttachedQaBannerInput = RenderQaBannerInput &
+	Readonly<Pick<PublicationOutputPhase, "managedSessionOutcome" | "succeeded">>;
 type EvalPageUrlInput = Readonly<
 	Pick<PublicationOutputPhase, "currentSessionTabTarget" | "sessionStateKey">
 > & {
@@ -134,17 +98,16 @@ type CollectEvalGuidanceInput = Readonly<
 		| "readConfirmationEvent"
 		| "sessionStateKey"
 	>
-> &
-	Pick<PublicationOutputPhase, "evalResultWarning" | "evalStdinHint"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
-			readonly prepared: Readonly<
-				Pick<PreparedBrowserRun, "executionPlan" | "priorSessionTabTarget" | "runtimeToolStdin">
-			>;
-			readonly state: BrowserRunState;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "sessionPageStateUpdate">> & {
+		readonly prepared: Readonly<
+			Pick<PreparedBrowserRun, "executionPlan" | "priorSessionTabTarget" | "runtimeToolStdin">
+		>;
+		readonly state: BrowserRunState;
 	};
+};
 
-function analyzeQaEvidence(draft: AnalyzeQaEvidenceInput): void {
+function analyzeQaEvidence(draft: AnalyzeQaEvidenceInput): PublicationOutputPhase["qaPreset"] {
 	const compiled = draft.input.prepared.compiledQaPreset;
 	if (!compiled) {
 		return;
@@ -159,15 +122,17 @@ function analyzeQaEvidence(draft: AnalyzeQaEvidenceInput): void {
 			failedChecks: [...qa.failedChecks, draft.presentation.summary],
 		};
 	}
-	draft.qaPreset = qa;
+	return qa;
 }
 
-async function collectQaAttachment(draft: CollectQaAttachmentInput): Promise<void> {
+async function collectQaAttachment(
+	draft: CollectQaAttachmentInput,
+): Promise<PublicationOutputPhase["qaAttachedTarget"]> {
 	if (draft.input.prepared.compiledQaPreset?.checks.attached !== true) {
 		return;
 	}
 	const { prepared, cwd, signal } = draft.input;
-	draft.qaAttachedTarget = await collectQaAttachedTarget({
+	return collectQaAttachedTarget({
 		currentTarget: draft.currentSessionTabTarget ?? prepared.priorSessionTabTarget,
 		cwd,
 		namespace: prepared.executionPlan.namespace,
@@ -176,7 +141,9 @@ async function collectQaAttachment(draft: CollectQaAttachmentInput): Promise<voi
 	});
 }
 
-async function lookupSourceEvidence(draft: LookupSourceEvidenceInput): Promise<void> {
+async function lookupSourceEvidence(
+	draft: LookupSourceEvidenceInput,
+): Promise<PublicationOutputPhase["sourceLookup"]> {
 	const { prepared } = draft.input;
 	const compiled = prepared.compiledSourceLookup;
 	if (!compiled) {
@@ -189,7 +156,7 @@ async function lookupSourceEvidence(draft: LookupSourceEvidenceInput): Promise<v
 		priorTarget: prepared.priorSessionTabTarget,
 		sessionName: prepared.executionPlan.sessionName,
 	});
-	draft.sourceLookup = await analyzeSourceLookupResults(
+	return analyzeSourceLookupResults(
 		draft.presentationEnvelope?.data,
 		compiled,
 		draft.operationCwd,
@@ -197,12 +164,14 @@ async function lookupSourceEvidence(draft: LookupSourceEvidenceInput): Promise<v
 	);
 }
 
-async function lookupNetworkSourceEvidence(draft: LookupNetworkSourceEvidenceInput): Promise<void> {
+async function lookupNetworkSourceEvidence(
+	draft: LookupNetworkSourceEvidenceInput,
+): Promise<PublicationOutputPhase["networkSourceLookup"]> {
 	const compiled = draft.input.prepared.compiledNetworkSourceLookup;
 	if (!compiled) {
 		return;
 	}
-	draft.networkSourceLookup = redactNetworkSourceLookupAnalysis(
+	return redactNetworkSourceLookupAnalysis(
 		await analyzeNetworkSourceLookupResults(
 			draft.presentationEnvelope?.data,
 			compiled,
@@ -211,24 +180,24 @@ async function lookupNetworkSourceEvidence(draft: LookupNetworkSourceEvidenceInp
 	);
 }
 
-function prependLookupSummary(draft: PrependLookupSummaryInput, text: string): void {
-	const first = draft.presentation.content.at(0);
-	if (first?.type === "text") {
-		draft.presentation.content[0] = { ...first, text: `${text}\n\n${first.text}` };
-	} else {
-		draft.presentation.content.unshift({ type: "text", text });
-	}
+function prependLookupSummary(
+	content: ToolPresentationObservation["content"],
+	text: string,
+): ToolPresentation["content"] {
+	const first = content.at(0);
+	return first?.type === "text"
+		? [{ ...first, text: `${text}\n\n${first.text}` }, ...content.slice(1)]
+		: [{ type: "text", text }, ...content];
 }
 
-function compactFailedQa(draft: CompactFailedQaInput): void {
+function compactFailedQa(
+	draft: QaSummaryInput,
+): Pick<ToolPresentation, "failureCategory" | "summary" | "content"> | undefined {
 	const qa = draft.qaPreset;
 	const compiled = draft.input.prepared.compiledQaPreset;
 	if (!qa || qa.passed || !compiled || draft.presentation.failureCategory === "artifact-missing") {
 		return;
 	}
-	draft.succeeded = false;
-	draft.presentation.failureCategory = "qa-failure";
-	draft.presentation.summary = qa.summary;
 	const text = buildQaCompactFailureText({
 		causalError: draft.presentation.batchFailure?.failedStep.text,
 		executedStepCount: draft.presentation.batchSteps?.length,
@@ -241,10 +210,16 @@ function compactFailedQa(draft: CompactFailedQaInput): void {
 		qaPreset: qa,
 	});
 	const nonText = draft.presentation.content.filter((item) => item.type !== "text");
-	draft.presentation.content = [{ type: "text", text }, ...nonText];
+	return {
+		failureCategory: "qa-failure",
+		summary: qa.summary,
+		content: [{ type: "text", text }, ...nonText],
+	};
 }
 
-function compactPassedQa(draft: CompactPassedQaInput): void {
+function compactPassedQa(
+	draft: QaSummaryInput,
+): Pick<ToolPresentation, "summary" | "content"> | undefined {
 	const qa = draft.qaPreset;
 	const compiled = draft.input.prepared.compiledQaPreset;
 	if (qa?.passed !== true || !compiled || !draft.succeeded) {
@@ -261,26 +236,54 @@ function compactPassedQa(draft: CompactPassedQaInput): void {
 		}),
 		qaPreset: qa,
 	});
-	draft.presentation.summary = qa.summary;
 	const nonText = draft.presentation.content.filter((item) => item.type !== "text");
-	draft.presentation.content = [{ type: "text", text }, ...nonText];
+	return { summary: qa.summary, content: [{ type: "text", text }, ...nonText] };
 }
 
-export async function analyzeOutputChecks(draft: AnalyzeOutputChecksInput): Promise<void> {
-	analyzeQaEvidence(draft);
-	await Promise.all([
+export async function analyzeOutputChecks(draft: AnalyzeOutputChecksInput): Promise<
+	Pick<
+		PublicationOutputPhase,
+		"qaPreset" | "qaAttachedTarget" | "sourceLookup" | "networkSourceLookup" | "succeeded"
+	> & {
+		readonly presentationUpdate: Partial<
+			Pick<ToolPresentation, "failureCategory" | "summary" | "content">
+		>;
+	}
+> {
+	const qaPreset = analyzeQaEvidence(draft);
+	const [qaAttachedTarget, sourceLookup, networkSourceLookup] = await Promise.all([
 		collectQaAttachment(draft),
 		lookupSourceEvidence(draft),
 		lookupNetworkSourceEvidence(draft),
 	]);
-	if (draft.networkSourceLookup) {
-		prependLookupSummary(draft, draft.networkSourceLookup.summary);
+	let content: ToolPresentation["content"] | undefined;
+	if (networkSourceLookup) {
+		content = prependLookupSummary(draft.presentation.content, networkSourceLookup.summary);
 	}
-	if (draft.sourceLookup) {
-		prependLookupSummary(draft, draft.sourceLookup.summary);
+	if (sourceLookup) {
+		content = prependLookupSummary(content ?? draft.presentation.content, sourceLookup.summary);
 	}
-	compactFailedQa(draft);
-	compactPassedQa(draft);
+	const qaInput = {
+		input: draft.input,
+		presentation: draft.presentation,
+		presentationEnvelope: draft.presentationEnvelope,
+		qaAttachedTarget,
+		qaPreset,
+		succeeded: draft.succeeded,
+	};
+	const failed = compactFailedQa(qaInput);
+	return {
+		qaPreset,
+		qaAttachedTarget,
+		sourceLookup,
+		networkSourceLookup,
+		succeeded: failed ? false : draft.succeeded,
+		presentationUpdate: {
+			...(content ? { content } : {}),
+			...failed,
+			...compactPassedQa(qaInput),
+		},
+	};
 }
 
 function attachedDiagnosticsNotice(draft: AttachedDiagnosticsNoticeInput): string | undefined {
@@ -294,7 +297,7 @@ function attachedDiagnosticsNotice(draft: AttachedDiagnosticsNoticeInput): strin
 	return "Attached diagnostics: existing upstream session console/network/error buffers were preserved; rows may include events from before qa.attached started.";
 }
 
-function renderQaBanner(draft: RenderQaBannerInput): void {
+function renderQaBanner(draft: RenderQaBannerInput): ToolPresentation["content"] | undefined {
 	const text = [
 		formatQaAttachedTargetText(draft.qaAttachedTarget),
 		attachedDiagnosticsNotice(draft),
@@ -309,22 +312,33 @@ function renderQaBanner(draft: RenderQaBannerInput): void {
 		return;
 	}
 	const first = draft.presentation.content.at(0);
-	if (first?.type === "text") {
-		draft.presentation.content[0] = {
-			...first,
-			text:
-				draft.qaPreset?.passed === false ? `${first.text}\n\n${text}` : `${text}\n\n${first.text}`,
-		};
-	} else {
-		draft.presentation.content.unshift({ type: "text", text });
-	}
+	return first?.type === "text"
+		? [
+				{
+					...first,
+					text:
+						draft.qaPreset?.passed === false
+							? `${first.text}\n\n${text}`
+							: `${text}\n\n${first.text}`,
+				},
+				...draft.presentation.content.slice(1),
+			]
+		: [{ type: "text", text }, ...draft.presentation.content];
 }
 
-export function renderAttachedQaBanner(draft: RenderAttachedQaBannerInput): void {
-	renderQaBanner(draft);
-	if (draft.managedSessionOutcome && draft.managedSessionOutcome.succeeded !== draft.succeeded) {
-		draft.managedSessionOutcome = { ...draft.managedSessionOutcome, succeeded: draft.succeeded };
-	}
+export function renderAttachedQaBanner(draft: RenderAttachedQaBannerInput): Pick<
+	PublicationOutputPhase,
+	"managedSessionOutcome"
+> & {
+	readonly content: ToolPresentation["content"] | undefined;
+} {
+	return {
+		content: renderQaBanner(draft),
+		managedSessionOutcome:
+			draft.managedSessionOutcome && draft.managedSessionOutcome.succeeded !== draft.succeeded
+				? { ...draft.managedSessionOutcome, succeeded: draft.succeeded }
+				: draft.managedSessionOutcome,
+	};
 }
 
 function evalPageUrl(
@@ -344,16 +358,18 @@ function evalPageUrl(
 	);
 }
 
-export function collectEvalGuidance(draft: CollectEvalGuidanceInput): void {
+export function collectEvalGuidance(
+	draft: CollectEvalGuidanceInput,
+): Pick<PublicationOutputPhase, "evalStdinHint" | "evalResultWarning"> {
 	const summary =
 		draft.navigationSummary ?? extractNavigationSummaryFromData(draft.presentationEnvelope?.data);
 	const { prepared } = draft.input;
-	draft.evalStdinHint = getEvalStdinHint({
+	const evalStdinHint = getEvalStdinHint({
 		command: prepared.executionPlan.commandInfo.command,
 		data: draft.presentationEnvelope?.data,
 		stdin: prepared.runtimeToolStdin,
 	});
-	draft.evalResultWarning = getEvalResultWarning({
+	const evalResultWarning = getEvalResultWarning({
 		command: prepared.executionPlan.commandInfo.command,
 		data: draft.presentationEnvelope?.data,
 		navigationSummary: summary,
@@ -366,4 +382,5 @@ export function collectEvalGuidance(draft: CollectEvalGuidanceInput): void {
 			draft.input.sessionPageStateUpdate,
 		);
 	}
+	return { evalStdinHint, evalResultWarning };
 }

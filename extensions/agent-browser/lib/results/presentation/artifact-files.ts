@@ -18,30 +18,30 @@ export type ArtifactCommand = CommandInfo;
 export type { ArtifactRequestContext } from "../artifact-contracts.js";
 
 export interface ArtifactExtractionOptions {
-	readonly artifactManifest?: SessionArtifactManifest;
-	readonly artifactMaxUpdatedAtMs?: number;
-	readonly artifactMinUpdatedAtMs?: number;
-	readonly artifactRequest?: ArtifactRequestContext;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
+	readonly artifactMaxUpdatedAtMs?: number | undefined;
+	readonly artifactMinUpdatedAtMs?: number | undefined;
+	readonly artifactRequest?: ArtifactRequestContext | undefined;
 	readonly commandInfo: ArtifactCommand;
 	readonly cwd: string;
 	readonly data: unknown;
-	readonly namespace?: string;
-	readonly recordingOutcome?: boolean;
-	readonly recordingPending?: boolean;
-	readonly previousRecordingContactSheetPath?: string;
-	readonly sessionName?: string;
+	readonly namespace?: string | undefined;
+	readonly recordingOutcome?: boolean | undefined;
+	readonly recordingPending?: boolean | undefined;
+	readonly previousRecordingContactSheetPath?: string | undefined;
+	readonly sessionName?: string | undefined;
 }
 
 interface FileArtifactOptions extends ArtifactExtractionOptions {
 	readonly kind?: FileArtifactKind;
 	readonly path: string;
-	readonly recording?: RecordingReceipt;
+	readonly recording?: RecordingReceipt | undefined;
 }
 
 interface DiskEvidence {
-	readonly exists?: boolean;
+	readonly exists?: boolean | undefined;
 	readonly sizeBytes?: number;
-	readonly mediaType?: string;
+	readonly mediaType?: string | undefined;
 	readonly updatedAtMs?: number;
 }
 

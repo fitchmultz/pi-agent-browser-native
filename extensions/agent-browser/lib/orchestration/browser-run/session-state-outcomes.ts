@@ -10,13 +10,13 @@ import type { ManagedSessionOutcome } from "./types.js";
 type OutcomeFacts = Readonly<{
 	activeAfter: boolean;
 	activeBefore: boolean;
-	attemptedSessionName?: string;
-	command?: string;
+	attemptedSessionName?: string | undefined;
+	command?: string | undefined;
 	currentSessionName: string;
-	currentSessionNamespace?: string;
+	currentSessionNamespace?: string | undefined;
 	previousSessionName: string;
-	replacedSessionName?: string;
-	replacedSessionNamespace?: string;
+	replacedSessionName?: string | undefined;
+	replacedSessionNamespace?: string | undefined;
 	sessionMode: "auto" | "fresh";
 	succeeded: boolean;
 }>;

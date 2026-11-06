@@ -6,18 +6,20 @@ import {
 } from "./argv-grammar.js";
 import type { ManagedSessionRestoreState } from "./managed-session-restore-state.js";
 
+import type { AgentBrowserSessionIdentity } from "./session-identity.js";
+
 export type OwnedManagedSessionContext = {
 	/** Carry existing daemon settings without browser launch policy or sticky restore changes. */
 	readonly reuseOnly?: boolean;
-	readonly compatibilityUserAgent?: string;
-	readonly headedManagedAutosaveDisabled?: boolean;
-	readonly headedManagedAutosaveInterval?: string;
-	readonly cwd?: string;
-	readonly expectedDaemonRestoreKey?: string | null;
-	readonly namespace?: string;
-	readonly protectedStorageEnv?: Readonly<NodeJS.ProcessEnv>;
-	readonly restoreDecision?: "enabled" | "incompatible" | "opted-out";
-	readonly restoreKey?: string;
+	readonly compatibilityUserAgent?: string | undefined;
+	readonly headedManagedAutosaveDisabled?: boolean | undefined;
+	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly cwd?: string | undefined;
+	readonly expectedDaemonRestoreKey?: string | null | undefined;
+	readonly namespace?: string | undefined;
+	readonly protectedStorageEnv?: Readonly<NodeJS.ProcessEnv> | undefined;
+	readonly restoreDecision?: "enabled" | "incompatible" | "opted-out" | undefined;
+	readonly restoreKey?: string | undefined;
 	readonly restoreScope?: string;
 	readonly restoreSuppressed?: boolean;
 	readonly restoreState: ManagedSessionRestoreState;
@@ -25,17 +27,15 @@ export type OwnedManagedSessionContext = {
 };
 export interface OwnedContextResolutionOptions {
 	readonly currentManagedSessionName?: string;
-	readonly currentManagedSessionNamespace?: string;
+	readonly currentManagedSessionNamespace?: string | undefined;
 	readonly cwd?: string;
-	readonly managedSessionName?: string;
-	readonly namespace?: string;
-	readonly recordedOwnedSession?: {
-		readonly cwd: string;
-		readonly namespace?: string;
-		readonly sessionName: string;
-	};
+	readonly managedSessionName?: string | undefined;
+	readonly namespace?: string | undefined;
+	readonly recordedOwnedSession?:
+		| (AgentBrowserSessionIdentity & { readonly cwd: string })
+		| undefined;
 	readonly restoreState: ManagedSessionRestoreState;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 }
 const ownedManagedSessionStorage = new AsyncLocalStorage<OwnedManagedSessionContext | undefined>();
 export async function withOwnedManagedSessionContext<T>(

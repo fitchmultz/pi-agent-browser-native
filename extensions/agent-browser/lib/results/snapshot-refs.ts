@@ -4,8 +4,8 @@ import { compareRefIds, normalizeWhitespace } from "./text.js";
 
 export interface SnapshotRefEntry {
 	readonly id: string;
-	readonly isEditable?: boolean;
-	readonly lineIndex?: number;
+	readonly isEditable?: boolean | undefined;
+	readonly lineIndex?: number | undefined;
 	readonly name: string;
 	readonly refData?: Readonly<Record<string, unknown>>;
 	readonly role: string;
@@ -15,7 +15,7 @@ export interface SnapshotLineRefInfo {
 	readonly index: number;
 	readonly name: string;
 	readonly raw: string;
-	readonly ref?: string;
+	readonly ref?: string | undefined;
 	readonly role: string;
 }
 

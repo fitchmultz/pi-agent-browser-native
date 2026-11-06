@@ -104,9 +104,9 @@ let currentProcessStartIdentityPromise: Promise<string | undefined> | undefined;
 let currentProcessStartIdentity: string | undefined;
 
 interface ProcessIdentityBudget {
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 	/** A performance.now() timestamp, unaffected by wall-clock steps. */
-	readonly deadline?: number;
+	readonly deadline?: number | undefined;
 }
 
 function debugIdentityBudget(budget: ProcessIdentityBudget | undefined): void {
@@ -158,7 +158,6 @@ export async function resolveProcessStartIdentityFromCommands(
 ): Promise<string | undefined> {
 	for (const command of commands) {
 		// Fallback commands run only after the prior identity probe has failed.
-		// oxlint-disable-next-line no-await-in-loop
 		const identity = await execute(command);
 		if (identity !== undefined && identity.length > 0) {
 			return identity;

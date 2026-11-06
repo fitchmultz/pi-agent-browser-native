@@ -29,17 +29,17 @@ export type { ManagedSessionDaemonInspection } from "./managed-session-daemon-in
 
 interface DaemonPolicyOptions {
 	readonly context: OwnedManagedSessionContext;
-	readonly electronLaunchRecord?: ElectronLaunchRecord;
-	readonly electronVerificationTimeoutMs?: number;
+	readonly electronLaunchRecord?: ElectronLaunchRecord | undefined;
+	readonly electronVerificationTimeoutMs?: number | undefined;
 	readonly mode?: "close" | "reuse";
 	readonly includeGeneration?: boolean;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 }
 
 interface DaemonPolicyResult {
-	readonly cleanupOnlyReason?: "restore-disabled-daemon-without-provenance";
+	readonly cleanupOnlyReason?: "restore-disabled-daemon-without-provenance" | undefined;
 	readonly daemonStatus?: ManagedSessionDaemonInspection["status"];
-	readonly generationInspection?: ManagedSessionDaemonInspection;
+	readonly generationInspection?: ManagedSessionDaemonInspection | undefined;
 	readonly error?: string;
 	readonly lock?: ManagedSessionPolicyLock;
 }
@@ -122,12 +122,11 @@ async function verifyRestoredElectronAttachment(options: DaemonPolicyOptions): P
 			}),
 		),
 	);
-	return (
-		// The abort callback can change this signal during the awaited CDP read; static narrowing does not model it.
-		// oxlint-disable-next-line typescript/no-unnecessary-condition
-		!(signal?.aborted ?? false) &&
-		attachmentConnectionMatches(connection, attachment.record, status)
-	);
+	// oxlint-disable-next-line typescript/no-unnecessary-condition -- QX-005: AbortSignal can change during the awaited CDP read.
+	if (signal && signal.aborted) {
+		return false;
+	}
+	return attachmentConnectionMatches(connection, attachment.record, status);
 }
 
 function reconcileDaemonReceipt(
@@ -233,7 +232,7 @@ function finishReusableDaemonPolicy(
 	policy: {
 		readonly restoreDisabledPolicyNeedsProvenance: boolean;
 		readonly requestedDaemonRestoreKey: OwnedManagedSessionContext["expectedDaemonRestoreKey"];
-		readonly includeGeneration?: boolean;
+		readonly includeGeneration?: boolean | undefined;
 		readonly verifyAttachment: boolean;
 	},
 	hasKnownDaemonRestoreKey: boolean,

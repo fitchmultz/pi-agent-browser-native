@@ -1,100 +1,28 @@
 #!/usr/bin/env node
 /** Interactive, isolated real-site release smoke through Pi's native browser tools. */
 import assert from "node:assert/strict";
-import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
-import { promisify } from "node:util";
-import {
-	agentBrowserResults,
-	matchesSuccessfulPageResult,
-	readEntries,
-	record,
-	sessionHeaderId,
-	sleep,
-	waitFor,
-	waitForAgentBrowserResult,
-} from "./lifecycle-transcript.mjs";
-import {
-	capturePane,
-	capturePaneText,
-	killTmuxSession,
-	launchPiInTmux,
-	paneLooksReady,
-	sendLine,
-} from "./lifecycle-tmux.mjs";
+import { readFile, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { matchesSuccessfulPageResult, record, sleep, waitFor } from "./lifecycle-transcript.mjs";
+import { capturePaneText, paneLooksReady, sendLine } from "./lifecycle-tmux.mjs";
 import { packToTemporaryPackageDir } from "./package-pack.mjs";
 import { installRuntimeConsumer } from "./package-pi.mjs";
 import { parseCliArgs as lifecycleDefaults } from "./verify-lifecycle.mjs";
 
-const execFile = promisify(execFileCallback);
+import { createLiveSiteRun } from "./live-site-runtime.mjs";
+/** @import {LiveSiteRun} from "./live-site-runtime.mjs" */
+/** @import {LifecycleToolResult} from "./lifecycle-transcript.mjs" */
+/** @typedef {Awaited<ReturnType<LiveSiteRun["prompt"]>>} LiveResult */
+/** @typedef {Awaited<ReturnType<typeof packToTemporaryPackageDir>> & {sha256: string}} LiveCandidate */
 const STATIC = "https://info.cern.ch/";
 const DOCS = "https://react.dev/learn";
-const model = process.env.PIAB_LIVE_MODEL || "zai/glm-5.3-flash";
+const configuredModel = process.env.PIAB_LIVE_MODEL;
+const model =
+	configuredModel === undefined || configuredModel === "" ? "zai/glm-5.3-flash" : configuredModel;
 const timeoutMs = lifecycleDefaults([]).timeoutMs;
 
-function prompt(tool, input, suffix = "Briefly report the result.") {
-	return `Use exactly one ${tool} tool call with input ${JSON.stringify(input)}. Do not use bash. ${suffix}`;
-}
-
-function textOfMessage(message) {
-	return (message?.content ?? [])
-		.filter((part) => part.type === "text" && typeof part.text === "string")
-		.map((part) => part.text)
-		.join("\n");
-}
-
-async function awaitFinal(sessionFile, toolCallId) {
-	return waitFor({
-		describe: `final response after ${toolCallId}`,
-		timeoutMs,
-		predicate: async () => {
-			const entries = await readEntries(sessionFile);
-			const index = entries.findIndex(
-				(entry) => entry.type === "message" && entry.message?.toolCallId === toolCallId,
-			);
-			if (index < 0) {
-				return;
-			}
-			const final = entries
-				.slice(index + 1)
-				.find(
-					(entry) =>
-						entry.type === "message" &&
-						entry.message?.role === "assistant" &&
-						entry.message.stopReason === "stop",
-				);
-			return final ? { entries, text: textOfMessage(final.message) } : undefined;
-		},
-	});
-}
-
-async function runPrompt(runtime, { description, tool, input, predicate, suffix }) {
-	const { state } = runtime;
-	const before = state.sessionFile ? await readEntries(state.sessionFile) : [];
-	const count = agentBrowserResults(before).length;
-	console.log(`→ ${description}`);
-	await sendLine(runtime.tmuxSession, prompt(tool, input, suffix));
-	const observed = await waitForAgentBrowserResult({
-		describe: description,
-		sessionFile: state.sessionFile,
-		sessionDir: runtime.sessionDir,
-		timeoutMs,
-		sinceCount: count,
-		predicate: (result) => result.toolName === tool && predicate(result),
-	});
-	state.sessionFile = observed.sessionFile;
-	assert.equal(sessionHeaderId(observed.entries), runtime.sessionId, "Unexpected Pi session");
-	const final = await awaitFinal(observed.sessionFile, observed.result.toolCallId);
-	assert.equal(
-		agentBrowserResults(final.entries).length,
-		count + 1,
-		"Prompt made unexpected browser calls",
-	);
-	return { ...observed, entries: final.entries, finalText: final.text };
-}
-
+/** @param {LifecycleToolResult} result @param {string} command */
 function successful(result, command) {
 	return (
 		result.isError === false &&
@@ -103,6 +31,7 @@ function successful(result, command) {
 	);
 }
 
+/** @param {LifecycleToolResult} result @param {string} sessionName */
 function assertSameSession(result, sessionName) {
 	assert.equal(
 		result.details?.sessionName,
@@ -111,6 +40,7 @@ function assertSameSession(result, sessionName) {
 	);
 }
 
+/** @param {LifecycleToolResult} snapshot */
 function linkRef(snapshot) {
 	const refs = record(record(snapshot.details?.refSnapshot)?.refs);
 	const match = Object.entries(refs ?? {}).find(
@@ -121,6 +51,7 @@ function linkRef(snapshot) {
 	return `@${match[0]}`;
 }
 
+/** @param {string} baseline @param {string} screenshot */
 function aggregateCode(baseline, screenshot) {
 	return `const first = await browser({args:["open",${JSON.stringify(STATIC)}]});
 const title = await browser({args:["get","title"]});
@@ -136,14 +67,18 @@ if (first.success && title.success && baselineMatches && second.success && shot.
 }`;
 }
 
+/** @param {readonly unknown[]} entries @param {string} toolCallId */
 function assertOrderedCodeTransitions(entries, toolCallId) {
-	const events = entries.flatMap((entry) =>
-		entry.type === "custom" &&
-		entry.customType === "agent-browser-transition" &&
-		entry.data?.event?.toolCallId === toolCallId
-			? [entry.data.event]
-			: [],
-	);
+	const events = entries.flatMap((entry) => {
+		const row = record(entry);
+		const event = record(record(row?.data)?.event);
+		return row?.type === "custom" &&
+			row.customType === "agent-browser-transition" &&
+			event?.toolCallId === toolCallId
+			? [event]
+			: [];
+	});
+	/** @type {Map<unknown, number>} */
 	const beginnings = new Map();
 	let completed = 0;
 	for (const [index, event] of events.entries()) {
@@ -152,13 +87,15 @@ function assertOrderedCodeTransitions(entries, toolCallId) {
 		}
 		if (event.phase === "finish") {
 			assert.ok(beginnings.has(event.operationId), "Transition finished before it began");
-			assert.ok(beginnings.get(event.operationId) < index, "Transition order is invalid");
+			const beginIndex = beginnings.get(event.operationId);
+			assert.ok(beginIndex !== undefined && beginIndex < index, "Transition order is invalid");
 			completed += 1;
 		}
 	}
 	assert.ok(completed >= 4, "Code aggregation did not retain its inner browser transitions");
 }
 
+/** @param {LiveSiteRun} runtime */
 async function openStaticSite(runtime) {
 	await waitFor({
 		describe: "interactive Pi readiness",
@@ -168,19 +105,21 @@ async function openStaticSite(runtime) {
 			return paneLooksReady(pane) ? pane : undefined;
 		},
 	});
-	const opened = await runPrompt(runtime, {
+	const opened = await runtime.prompt({
 		description: "open the static site",
 		tool: "agent_browser",
 		input: { args: ["open", STATIC], sessionMode: "fresh" },
 		predicate: (result) => matchesSuccessfulPageResult(result, "open", STATIC),
 	});
-	const sessionName = opened.result.details?.sessionName;
+	const details = opened.result.details;
+	assert.ok(details, "Missing fresh-open details");
+	const sessionName = details.sessionName;
 	assert.ok(
 		typeof sessionName === "string" && sessionName.length > 0,
 		"Missing owned browser session",
 	);
-	assert.equal(opened.result.details.managedSessionOutcome?.status, "created");
-	const snapshot = await runPrompt(runtime, {
+	assert.equal(record(details.managedSessionOutcome)?.status, "created");
+	const snapshot = await runtime.prompt({
 		description: "snapshot static-site controls",
 		tool: "agent_browser",
 		input: { args: ["snapshot", "-i"] },
@@ -188,30 +127,30 @@ async function openStaticSite(runtime) {
 	});
 	assertSameSession(snapshot.result, sessionName);
 	const ref = linkRef(snapshot.result);
-	const baseline = await runPrompt(runtime, {
+	const baseline = await runtime.prompt({
 		description: "capture direct title baseline",
 		tool: "agent_browser",
 		input: { args: ["get", "title"] },
 		predicate: (result) => successful(result, "get"),
 	});
 	assertSameSession(baseline.result, sessionName);
-	const baselineTitle = record(baseline.result.details.data)?.title;
-	assert.equal(typeof baselineTitle, "string", "Missing direct title baseline");
-	const clicked = await runPrompt(runtime, {
+	const baselineTitle = record(baseline.result.details?.data)?.title;
+	assert.ok(typeof baselineTitle === "string", "Missing direct title baseline");
+	const clicked = await runtime.prompt({
 		description: "follow the observed link",
 		tool: "agent_browser",
 		input: { args: ["click", ref] },
 		predicate: (result) => successful(result, "click"),
 	});
 	assertSameSession(clicked.result, sessionName);
-	const destination = await runPrompt(runtime, {
+	const destination = await runtime.prompt({
 		description: "verify link navigation",
 		tool: "agent_browser",
 		input: { args: ["get", "url"] },
 		predicate: (result) => successful(result, "get"),
 	});
 	assertSameSession(destination.result, sessionName);
-	const destinationUrl = record(destination.result.details.data)?.url;
+	const destinationUrl = record(destination.result.details?.data)?.url;
 	assert.ok(
 		typeof destinationUrl === "string" &&
 			destinationUrl !== STATIC &&
@@ -221,11 +160,17 @@ async function openStaticSite(runtime) {
 	return { sessionName, baselineTitle };
 }
 
+/** @param {LiveResult} code @param {string} screenshot */
 async function verifySelectedScreenshot(code, screenshot) {
-	const image = code.result.content?.find(
-		(part) => part.type === "image" && typeof part.data === "string",
+	/** @type {readonly unknown[]} */
+	const content = Array.isArray(code.result.content) ? code.result.content : [];
+	const image = content
+		.map(record)
+		.find((part) => part?.type === "image" && typeof part.data === "string");
+	assert.ok(
+		typeof image?.data === "string",
+		"The selected screenshot bytes did not reach the Pi tool result",
 	);
-	assert.ok(image, "The selected screenshot bytes did not reach the Pi tool result");
 	assert.match(
 		code.finalText,
 		/quick\s+start/i,
@@ -242,9 +187,10 @@ async function verifySelectedScreenshot(code, screenshot) {
 	return screenshotSha256;
 }
 
+/** @param {LiveSiteRun} runtime @param {{sessionName: string, baselineTitle: string}} identity */
 async function openDocumentation(runtime, { sessionName, baselineTitle }) {
 	const screenshot = join(runtime.outputDir, "react-docs.png");
-	const code = await runPrompt(runtime, {
+	const code = await runtime.prompt({
 		description: "aggregate two sites and send the screenshot to the model",
 		tool: "agent_browser_code",
 		input: { code: aggregateCode(baselineTitle, screenshot) },
@@ -253,13 +199,13 @@ async function openDocumentation(runtime, { sessionName, baselineTitle }) {
 		suffix: "State the main heading visible in the attached screenshot, not the page title.",
 	});
 	assertSameSession(code.result, sessionName);
-	const data = record(code.result.details.data);
+	const data = record(code.result.details?.data);
 	assert.equal(data?.baselineMatches, true);
-	assert.equal(data?.staticUrl, STATIC);
-	assert.equal(data?.docsUrl, DOCS);
-	assert.equal(data?.screenshotVerified, true);
+	assert.equal(data.staticUrl, STATIC);
+	assert.equal(data.docsUrl, DOCS);
+	assert.equal(data.screenshotVerified, true);
 	const screenshotSha256 = await verifySelectedScreenshot(code, screenshot);
-	const docs = await runPrompt(runtime, {
+	const docs = await runtime.prompt({
 		description: "snapshot the documentation site",
 		tool: "agent_browser",
 		input: { args: ["snapshot", "-i"] },
@@ -267,24 +213,25 @@ async function openDocumentation(runtime, { sessionName, baselineTitle }) {
 	});
 	assertSameSession(docs.result, sessionName);
 	assert.ok(
-		Object.keys(record(record(docs.result.details.refSnapshot)?.refs) ?? {}).length > 0,
+		Object.keys(record(record(docs.result.details?.refSnapshot)?.refs) ?? {}).length > 0,
 		"Documentation snapshot had no interactive refs",
 	);
 	return screenshotSha256;
 }
 
+/** @param {LiveSiteRun} runtime @param {string} sessionName */
 async function verifyReloadAndClose(runtime, sessionName) {
 	await sendLine(runtime.tmuxSession, "/reload");
 	await sleep(3000);
-	const afterReload = await runPrompt(runtime, {
+	const afterReload = await runtime.prompt({
 		description: "verify the page after reload",
 		tool: "agent_browser",
 		input: { args: ["get", "url"] },
 		predicate: (result) => successful(result, "get"),
 	});
 	assertSameSession(afterReload.result, sessionName);
-	assert.equal(record(afterReload.result.details.data)?.url, DOCS);
-	const freshCode = await runPrompt(runtime, {
+	assert.equal(record(afterReload.result.details?.data)?.url, DOCS);
+	const freshCode = await runtime.prompt({
 		description: "verify fresh JavaScript and persistent browser state",
 		tool: "agent_browser_code",
 		input: {
@@ -293,20 +240,12 @@ async function verifyReloadAndClose(runtime, sessionName) {
 		predicate: (result) => result.isError === false && record(result.details?.data)?.fresh === true,
 	});
 	assertSameSession(freshCode.result, sessionName);
-	assert.equal(record(record(freshCode.result.details.data)?.current)?.url, DOCS);
-	assert.equal(record(freshCode.result.details.data)?.success, true);
-	const closed = await runPrompt(runtime, {
-		description: "close the owned browser",
-		tool: "agent_browser",
-		input: { args: ["close"] },
-		predicate: (result) => successful(result, "close"),
-	});
-	assertSameSession(closed.result, sessionName);
-	assert.equal(closed.result.details.managedSessionOutcome?.status, "closed");
-	const { state } = runtime;
-	state.closed = true;
+	assert.equal(record(record(freshCode.result.details?.data)?.current)?.url, DOCS);
+	assert.equal(record(freshCode.result.details?.data)?.success, true);
+	await runtime.close(sessionName);
 }
 
+/** @param {LiveSiteRun} runtime */
 async function smoke(runtime) {
 	const identity = await openStaticSite(runtime);
 	const screenshotSha256 = await openDocumentation(runtime, identity);
@@ -321,95 +260,25 @@ async function smoke(runtime) {
 	};
 }
 
-async function cleanup(runtime) {
-	await capturePane(runtime.tmuxSession, join(runtime.outputDir, "final-pane.txt"));
-	await killTmuxSession(runtime.tmuxSession);
-	if (!runtime.state.closed) {
-		// The socket directory is created exclusively for this run; never touch another browser.
-		await execFile("agent-browser", ["--json", "close", "--all"], {
-			env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: runtime.socketDir },
-		});
-	}
-	await rm(runtime.socketDir, { recursive: true, force: true });
-}
-
-async function createRuntime() {
-	const outputDir = resolve(
-		process.env.PIAB_LIVE_OUTPUT || (await mkdtemp("/tmp/piab-live-evidence-")),
-	);
-	const socketDir = await mkdtemp("/tmp/pb-");
-	const sessionId = `piab-live-${process.pid}`;
-	const runtime = {
-		outputDir,
-		socketDir,
-		sessionId,
-		tmuxSession: sessionId,
-		agentDir: join(outputDir, "agent"),
-		sessionDir: join(outputDir, "sessions"),
-		state: { closed: false },
-	};
-	await mkdir(runtime.agentDir, { recursive: true });
-	await mkdir(runtime.sessionDir, { recursive: true });
-	await writeFile(
-		join(runtime.agentDir, "settings.json"),
-		JSON.stringify(
-			{
-				sessionDir: runtime.sessionDir,
-				packages: [],
-				extensions: [],
-				skills: [],
-				prompts: [],
-				themes: [],
-			},
-			null,
-			2,
-		),
-	);
-	process.env.PI_AGENT_BROWSER_SOCKET_DIR = socketDir;
-	return runtime;
-}
-
 async function prepareCandidate() {
 	const tarball = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
-	if (!tarball) {
+	if (tarball === undefined || tarball === "") {
 		return { extensionPath: "." };
 	}
 	const candidate = await packToTemporaryPackageDir(process.cwd(), tarball);
 	try {
-		candidate.sha256 = createHash("sha256")
+		const sha256 = createHash("sha256")
 			.update(await readFile(candidate.tarballPath))
 			.digest("hex");
 		const extensionPath = await installRuntimeConsumer(candidate.tarballPath);
-		return { candidate, extensionPath };
+		return { candidate: { ...candidate, sha256 }, extensionPath };
 	} catch (error) {
 		await candidate.cleanup();
 		throw error;
 	}
 }
 
-async function launch(runtime, extensionPath) {
-	await launchPiInTmux({
-		...runtime,
-		cwd: process.cwd(),
-		model,
-		piCommand: process.env.PIAB_LIVE_PI || "pi",
-		paneLogPath: join(runtime.outputDir, "pane-stream.txt"),
-		launchArgs: [
-			"--approve",
-			"--no-extensions",
-			"--no-skills",
-			"-e",
-			extensionPath,
-			"--tools",
-			"agent_browser,agent_browser_code",
-			"--model",
-			model,
-			"--session-id",
-			runtime.sessionId,
-		],
-	});
-}
-
+/** @param {LiveCandidate | undefined} candidate @param {string} extensionPath */
 async function candidateEvidence(candidate, extensionPath) {
 	if (!candidate) {
 		return {};
@@ -432,11 +301,13 @@ async function candidateEvidence(candidate, extensionPath) {
 	};
 }
 
+/** @param {string} label @param {() => Promise<void> | undefined} action @param {unknown} failure */
 async function attemptCleanup(label, action, failure) {
 	try {
 		await action();
 	} catch (error) {
-		if (!failure) {
+		const hasFailure = Boolean(failure);
+		if (!hasFailure) {
 			return error;
 		}
 		console.error(
@@ -446,24 +317,27 @@ async function attemptCleanup(label, action, failure) {
 	return failure;
 }
 
+/** @param {LiveSiteRun} runtime @param {LiveCandidate | undefined} candidate @param {unknown} initialFailure */
 async function finish(runtime, candidate, initialFailure) {
-	let failure = await attemptCleanup("Cleanup", () => cleanup(runtime), initialFailure);
+	let failure = await attemptCleanup("Cleanup", () => runtime.cleanup(), initialFailure);
 	failure = await attemptCleanup("Candidate cleanup", () => candidate?.cleanup(), failure);
-	if (runtime.state.sessionFile) {
-		console.log(`Session transcript: ${runtime.state.sessionFile}`);
+	if (runtime.sessionFile !== undefined) {
+		console.log(`Session transcript: ${runtime.sessionFile}`);
 	}
 	console.log(`Evidence directory: ${basename(runtime.outputDir)} at ${runtime.outputDir}`);
 	return failure;
 }
 
 async function main() {
-	const runtime = await createRuntime();
+	const runtime = await createLiveSiteRun({ model, timeoutMs });
+	/** @type {LiveCandidate | undefined} */
 	let candidate;
+	/** @type {unknown} */
 	let failure;
 	try {
 		const prepared = await prepareCandidate();
 		candidate = prepared.candidate;
-		await launch(runtime, prepared.extensionPath);
+		await runtime.launch(prepared.extensionPath);
 		const report = {
 			...(await smoke(runtime)),
 			...(await candidateEvidence(candidate, prepared.extensionPath)),
@@ -476,13 +350,14 @@ async function main() {
 		failure = error;
 	}
 	failure = await finish(runtime, candidate, failure);
-	if (failure) {
-		throw failure;
+	const hasFailure = Boolean(failure);
+	if (hasFailure) {
+		return Promise.reject(failure);
 	}
 	console.log(`Live-site Pi smoke passed: ${runtime.outputDir}`);
 }
 
-main().catch((error) => {
+main().catch((/** @type {unknown} */ error) => {
 	console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
 	process.exitCode = 1;
 });

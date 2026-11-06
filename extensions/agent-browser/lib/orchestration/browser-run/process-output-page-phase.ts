@@ -3,6 +3,7 @@ import type { PageOutputPhase, PageOutputEvidence } from "./process-output-page-
 import { observeHelperConfirmation } from "./process-output-confirmation.js";
 import {
 	verifyClickDispatch,
+	resolveResultingPageState,
 	observeNavigationTarget,
 	correctRestoredOpenTab,
 	observeWebMcpTarget,
@@ -16,7 +17,7 @@ import {
 import { collectPageDiagnostics } from "./process-output-diagnostics.js";
 import { collectTimeoutPartialProgress } from "./diagnostics.js";
 import { normalizeSessionTabTarget } from "../../session-page-state.js";
-import { reconcileOutputRefs } from "./process-output-refs.js";
+import { observeBatchRefSnapshot, reconcileOutputRefs } from "./process-output-refs.js";
 async function recoverTimeoutPageTarget(
 	view: Readonly<
 		Pick<PageOutputPhase, "input" | "recordingStopRecovery" | "currentSessionTabTarget">
@@ -103,15 +104,16 @@ export async function observePageEffects(
 	native: NativeOutputEvidence,
 ): Promise<PageOutputEvidence> {
 	const draft = createPageOutputPhase(input, native);
-	await verifyClickDispatch(draft);
-	await observeNavigationTarget(draft);
-	await correctRestoredOpenTab(draft);
-	observeWebMcpTarget(draft);
-	observeHelperConfirmation(draft);
-	await resolveObservedPageTarget(draft);
-	await recoverUnexpectedBlankTarget(draft);
-	await pinPostCommandTarget(draft);
-	await inspectElectronHealth(draft);
+	Object.assign(draft, await verifyClickDispatch(draft));
+	Object.assign(draft, resolveResultingPageState(draft));
+	Object.assign(draft, await observeNavigationTarget(draft));
+	draft.openResultTabCorrection = await correctRestoredOpenTab(draft);
+	Object.assign(draft, observeWebMcpTarget(draft));
+	Object.assign(draft, observeHelperConfirmation(draft));
+	Object.assign(draft, await resolveObservedPageTarget(draft));
+	Object.assign(draft, await recoverUnexpectedBlankTarget(draft));
+	draft.sessionTabCorrection = await pinPostCommandTarget(draft);
+	Object.assign(draft, await inspectElectronHealth(draft));
 	const timeoutRecovery = await recoverTimeoutPageTarget(draft);
 	draft.timeoutPartialProgress = timeoutRecovery.timeoutPartialProgress;
 	draft.currentSessionTabTarget = timeoutRecovery.currentSessionTabTarget;
@@ -131,7 +133,8 @@ export async function observePageEffects(
 	draft.diagnostics = collected.diagnostics;
 	draft.activeNetworkRoutes = collected.activeNetworkRoutes;
 	draft.networkRoutesBySession = collected.networkRoutesBySession;
-	await reconcileOutputRefs(draft);
+	draft.batchRefSnapshotState = observeBatchRefSnapshot(draft);
+	Object.assign(draft, await reconcileOutputRefs(draft));
 	return {
 		aboutBlankSessionMismatch: draft.aboutBlankSessionMismatch,
 		activeNetworkRoutes: draft.activeNetworkRoutes,

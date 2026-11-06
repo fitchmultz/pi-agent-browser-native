@@ -6,11 +6,11 @@ export type AgentBrowserRecoveryKind =
 
 export interface AgentBrowserRecoveryContext {
 	readonly kind: AgentBrowserRecoveryKind;
-	readonly recoveryApplied?: boolean;
-	readonly selectedTab?: string;
-	readonly sessionName?: string;
-	readonly targetTitle?: string;
-	readonly targetUrl?: string;
+	readonly recoveryApplied?: boolean | undefined;
+	readonly selectedTab?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly targetTitle?: string | undefined;
+	readonly targetUrl?: string | undefined;
 }
 
 export interface AgentBrowserNextAction {

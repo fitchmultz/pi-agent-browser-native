@@ -104,7 +104,6 @@ export async function runCloseAllNamespaceScenarios(
 	const completed: string[] = [];
 	for (const scenario of scenarios) {
 		// Each namespace scenario owns its gates, environment, and shutdown; do not overlap them.
-		// oxlint-disable-next-line no-await-in-loop
 		await t.test(scenario.label, async () => {
 			const openingNamespace = scenario.named ? namedNamespace : "";
 			const openingPrefix = scenario.named ? ["--namespace", rawNamedNamespace] : [];
@@ -182,13 +181,11 @@ process.stdout.write(JSON.stringify(command === "batch"
 				const deadline = Date.now() + 15_000;
 				while (Date.now() <= deadline) {
 					// Observe the independently appended event before a deadline-limited retry.
-					// oxlint-disable-next-line no-await-in-loop
 					const found = (await readEvents()).find((entry) => entry.event === event);
 					if (found) {
 						return found;
 					}
 					// Wait between observations rather than overlapping native event reads.
-					// oxlint-disable-next-line no-await-in-loop
 					await new Promise((resolveDelay) => {
 						setTimeout(resolveDelay, 10);
 					});

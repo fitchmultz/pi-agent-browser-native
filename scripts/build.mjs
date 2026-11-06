@@ -8,8 +8,8 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { rm, writeFile } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import { build } from "esbuild";
@@ -21,6 +21,28 @@ const tscPath =
 	process.platform === "android"
 		? "tsgo"
 		: join(process.cwd(), "node_modules", ".bin", `tsc${binSuffix}`);
+
+const packagedLibraries = [
+	"lib/config-policy",
+	"lib/browser-session-conversion",
+	"lib/parsing",
+	"lib/playbook",
+	"lib/results/snapshot",
+	"lib/runtime",
+];
+
+/** @param {unknown} error */
+function printCompilerOutput(error) {
+	if (error === null || typeof error !== "object") {
+		return;
+	}
+	if ("stdout" in error && typeof error.stdout === "string") {
+		process.stdout.write(error.stdout);
+	}
+	if ("stderr" in error && typeof error.stderr === "string") {
+		process.stderr.write(error.stderr);
+	}
+}
 
 async function main() {
 	await rm(join(process.cwd(), "dist"), {
@@ -36,19 +58,14 @@ async function main() {
 			cwd: process.cwd(),
 			maxBuffer: 10 * 1024 * 1024,
 		});
-		if (stdout) {
+		if (stdout.length > 0) {
 			process.stdout.write(stdout);
 		}
-		if (stderr) {
+		if (stderr.length > 0) {
 			process.stderr.write(stderr);
 		}
 	} catch (error) {
-		if (error?.stdout) {
-			process.stdout.write(error.stdout);
-		}
-		if (error?.stderr) {
-			process.stderr.write(error.stderr);
-		}
+		printCompilerOutput(error);
 		throw error;
 	}
 	// Raw checkout libraries share module-owned state; package-only bundles must not overwrite them.
@@ -59,14 +76,10 @@ async function main() {
 		bundle: true,
 		entryPoints: [
 			{ in: join(runtimeDirectory, "index.js"), out: "extensions/agent-browser/index" },
-			...[
-				"lib/config-policy",
-				"lib/browser-session-conversion",
-				"lib/parsing",
-				"lib/playbook",
-				"lib/results/snapshot",
-				"lib/runtime",
-			].map((path) => ({ in: join(runtimeDirectory, `${path}.js`), out: `packaged/${path}` })),
+			...packagedLibraries.map((path) => ({
+				in: join(runtimeDirectory, `${path}.js`),
+				out: `packaged/${path}`,
+			})),
 		],
 		format: "esm",
 		outdir: distDirectory,
@@ -74,9 +87,19 @@ async function main() {
 		platform: "node",
 		target: "node24.21",
 	});
+	await Promise.all(
+		packagedLibraries.map(async (path) => {
+			const declaration = join(distDirectory, "packaged", `${path}.d.ts`);
+			const source = relative(dirname(declaration), join(runtimeDirectory, `${path}.js`));
+			await writeFile(
+				declaration,
+				`export * from ${JSON.stringify(source.replaceAll("\\", "/"))};\n`,
+			);
+		}),
+	);
 }
 
-main().catch((error) => {
+main().catch((/** @type {unknown} */ error) => {
 	console.error(error instanceof Error ? error.message : String(error));
 	process.exitCode = 1;
 });

@@ -18,6 +18,7 @@ import {
 } from "./config-validation.js";
 export * from "./config-providers.js";
 export {
+	isRecord as isConfigObject,
 	normalizeBrowserDefaultProfileName,
 	parseAgentBrowserConfigJson,
 	parseAgentBrowserConfigLayer,
@@ -39,10 +40,10 @@ export {
 /** @typedef {import("./config-validation.js").ConfigLayer} ConfigLayer */
 /** @typedef {"global" | "project" | "override" | "env-fallback"} AgentBrowserConfigScope */
 /** @typedef {"literal" | "env" | "command"} CredentialSourceKind */
-/** @typedef {{ readonly kind: CredentialSourceKind; readonly provider?: WebSearchProvider; readonly rawValue: string; readonly scope: AgentBrowserConfigScope }} CredentialSource */
+/** @typedef {{ readonly kind: CredentialSourceKind; readonly provider?: WebSearchProvider | undefined; readonly rawValue: string; readonly scope: AgentBrowserConfigScope }} CredentialSource */
 /** @typedef {{ readonly global: string; readonly project: string; readonly override?: string }} AgentBrowserConfigPaths */
 /** @typedef {{ readonly cwd?: string; readonly env?: NodeJS.ProcessEnv; readonly includeProjectConfig?: boolean }} AgentBrowserConfigLoadOptions */
-/** @typedef {{ readonly browserDefaultProfile?: Required<BrowserDefaultProfileConfig>; readonly browserDefaultProfileScope?: ConfigLayerScope; readonly browserExecutablePath?: string; readonly browserExecutablePathScope?: ConfigLayerScope; readonly trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig>; readonly trustedBrowserDefaultProfileScope?: ConfigLayerScope; readonly trustedBrowserExecutablePath?: string; readonly trustedBrowserExecutablePathScope?: ConfigLayerScope; readonly config: AgentBrowserConfig; readonly webSearchCredentialSources: Readonly<Partial<Record<WebSearchProvider, CredentialSource>>>; readonly webSearchEnabled: boolean; readonly webSearchPreferredProvider: WebSearchProvider; readonly errors: readonly string[]; readonly layers: readonly ConfigLayer[]; readonly paths: AgentBrowserConfigPaths; readonly projectConfigIncluded: boolean; readonly warnings: readonly string[] }} AgentBrowserConfigState */
+/** @typedef {{ readonly browserDefaultProfile?: Required<BrowserDefaultProfileConfig> | undefined; readonly browserDefaultProfileScope?: ConfigLayerScope | undefined; readonly browserExecutablePath?: string | undefined; readonly browserExecutablePathScope?: ConfigLayerScope | undefined; readonly trustedBrowserDefaultProfile?: Required<BrowserDefaultProfileConfig> | undefined; readonly trustedBrowserDefaultProfileScope?: ConfigLayerScope | undefined; readonly trustedBrowserExecutablePath?: string | undefined; readonly trustedBrowserExecutablePathScope?: ConfigLayerScope | undefined; readonly config: AgentBrowserConfig; readonly webSearchCredentialSources: Readonly<Partial<Record<WebSearchProvider, CredentialSource | undefined>>>; readonly webSearchEnabled: boolean; readonly webSearchPreferredProvider: WebSearchProvider; readonly errors: readonly string[]; readonly layers: readonly ConfigLayer[]; readonly paths: AgentBrowserConfigPaths; readonly projectConfigIncluded: boolean; readonly warnings: readonly string[] }} AgentBrowserConfigState */
 /** @typedef {{ readonly scope: string; readonly path: string; readonly exists: boolean }} ConfigFileSummary */
 
 const CONFIG_DIR_NAME = ".pi";
@@ -78,7 +79,7 @@ export function getProjectAgentBrowserConfigPath(cwd = process.cwd()) {
 }
 
 /**
- * @param {{ readonly cwd?: string; readonly env?: NodeJS.ProcessEnv }} [options]
+ * @param {{ readonly cwd?: string | undefined; readonly env?: NodeJS.ProcessEnv }} [options]
  * @returns {AgentBrowserConfigPaths}
  */
 export function getAgentBrowserConfigPaths(options = {}) {
@@ -232,10 +233,10 @@ function getWebSearchCredentialScope(layers, key) {
 
 /**
  * @param {{ readonly env: NodeJS.ProcessEnv; readonly layers: readonly ConfigLayer[]; readonly mergedConfig: AgentBrowserConfig }} options
- * @returns {Partial<Record<WebSearchProvider, CredentialSource>>}
+ * @returns {Partial<Record<WebSearchProvider, CredentialSource | undefined>>}
  */
 export function buildWebSearchCredentialSources(options) {
-	/** @type {Partial<Record<WebSearchProvider, CredentialSource>>} */
+	/** @type {Partial<Record<WebSearchProvider, CredentialSource | undefined>>} */
 	const sources = {};
 	for (const provider of WEB_SEARCH_PROVIDERS) {
 		const descriptor = getWebSearchProviderDescriptor(provider);
@@ -310,7 +311,7 @@ function readConfigLayerSync(path, scope, errors, warnings) {
 		);
 		return;
 	}
-	return parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings);
+	return parseAgentBrowserConfigLayer(raw, { path, scope }, errors, warnings);
 }
 
 /**
@@ -363,7 +364,7 @@ export function loadAgentBrowserConfigStateSync(options = {}) {
 export function resolveEnvInterpolations(rawValue, env) {
 	let output = "";
 	for (let index = 0; index < rawValue.length; index += 1) {
-		const char = rawValue[index];
+		const char = rawValue.charAt(index);
 		if (char !== "$") {
 			output += char;
 			continue;
@@ -383,12 +384,12 @@ export function resolveEnvInterpolations(rawValue, env) {
 			name = rawValue.slice(index + 2, end);
 			index = end;
 		} else {
-			const match = rawValue.slice(index + 1).match(/^([A-Za-z_][A-Za-z0-9_]*)/);
+			const match = rawValue.slice(index + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/u);
 			if (!match) {
 				output += "$";
 				continue;
 			}
-			name = match[1];
+			name = match[0];
 			index += name.length;
 		}
 		if (name.length === 0) {
@@ -501,10 +502,10 @@ export function formatBrowserExecutableStatus(state) {
  */
 export function summarizeConfigFiles(state, exists = existsSync) {
 	return [
-		["global", state.paths.global],
-		["project", state.paths.project],
+		{ scope: "global", path: state.paths.global },
+		{ scope: "project", path: state.paths.project },
 		...(state.paths.override !== undefined && state.paths.override.length > 0
-			? [["override", state.paths.override]]
+			? [{ scope: "override", path: state.paths.override }]
 			: []),
-	].map(([scope, path]) => ({ scope, path, exists: exists(path) }));
+	].map(({ scope, path }) => ({ scope, path, exists: exists(path) }));
 }

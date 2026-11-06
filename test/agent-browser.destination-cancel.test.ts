@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test, { after } from "node:test";
+import nodeTest, { after } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
@@ -19,6 +20,7 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 import {
+	readDefined,
 	readRecord,
 	readArray,
 	readString,
@@ -33,7 +35,7 @@ const namespace = "dc";
 const destinations = [
 	["window", "new"],
 	["diff", "url", rememberedUrl, requestedUrl],
-];
+] as const;
 
 type BrowserState = {
 	readonly active: boolean;
@@ -241,11 +243,11 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 						],
 						sessionMode: "fresh",
 					});
-					assert.equal(opened.isError, false, opened.content[0].text);
+					assert.equal(opened.isError, false, getMessageText(opened.content));
 					assert.equal(typeof opened.details?.sessionName, "string");
 					sessionName = readString(readRecord(opened.details).sessionName);
 					const snapshot = await call({ args: ["snapshot", "-i"] });
-					assert.equal(snapshot.isError, false, snapshot.content[0].text);
+					assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 					await restore(options.cold === true ? "quit" : "reload");
 					if (reusable) {
 						warmSeed = {
@@ -309,20 +311,20 @@ save(); process.stdout.write(JSON.stringify(output)); process.exitCode = failed 
 
 for (const command of destinations) {
 	for (const batch of [false, true]) {
-		test(
+		nodeTest(
 			`explicit ${command[0]} destination owns the next snapshot after resume (batch=${batch})`,
 			{ concurrency: false },
-			async () => {
+			async (t) => {
 				await withPage(async (page) => {
 					const args = batch ? ["batch"] : command;
 					const stdin = batch ? JSON.stringify([command]) : undefined;
-					const changed = await page.call({ args, stdin });
+					const changed = await page.call({ args, ...(stdin === undefined ? {} : { stdin }) });
 					assert.equal(changed.isError, false, JSON.stringify(changed));
 					const stale = await page.call({ args: ["get", "value", "@e1"] });
 					await page.reload();
 					const snapshot = await page.call({ args: ["snapshot", "-i"] });
 					const expected = command[0] === "window" ? "about:blank" : redirectedUrl;
-					assert.equal(snapshot.isError, false, snapshot.content[0].text);
+					assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 					assert.equal(
 						readRecord(snapshot.details?.data).origin,
 						expected,
@@ -343,9 +345,9 @@ for (const command of destinations) {
 						"old refs must be rejected before dispatch",
 					);
 					if (command[0] === "diff") {
-						// This enumerated fixture branch (command[0] === "diff") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal((await page.call({ args: ["get", "value", "@e2"] })).isError, false);
+						await t.test("fresh destination refs remain usable", async () => {
+							assert.equal((await page.call({ args: ["get", "value", "@e2"] })).isError, false);
+						});
 					}
 					const calls = await page.calls();
 					assert.equal(
@@ -362,20 +364,20 @@ for (const command of destinations) {
 						(row) => extractUpstreamCommandTokens(row.args)[0] === args[0],
 					);
 					assert.equal(dispatched.length, 1);
-					assert.deepEqual(extractUpstreamCommandTokens(dispatched[0].args), args);
+					assert.deepEqual(extractUpstreamCommandTokens(readDefined(dispatched[0]).args), args);
 					if (batch) {
-						// This enumerated fixture branch (batch) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(dispatched[0].stdin, stdin);
+						await t.test("batch stdin stays literal", () => {
+							assert.equal(readDefined(dispatched[0]).stdin, stdin);
+						});
 					}
 					if (command[0] === "window") {
-						// This enumerated fixture branch (command[0] === "window") has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							(await page.state()).pages[0].url,
-							rememberedUrl,
-							"the old tab still exists but must not be selected",
-						);
+						await t.test("old tab survives without reselection", async () => {
+							assert.equal(
+								readDefined((await page.state()).pages[0]).url,
+								rememberedUrl,
+								"the old tab still exists but must not be selected",
+							);
+						});
 					}
 				});
 			},
@@ -385,7 +387,7 @@ for (const command of destinations) {
 
 for (const command of destinations) {
 	for (const batch of [false, true]) {
-		test(
+		nodeTest(
 			`failed ${command[0]} observes partial navigation and invalidates refs (batch=${batch})`,
 			{ concurrency: false },
 			async () => {
@@ -407,7 +409,7 @@ for (const command of destinations) {
 						"page-transition",
 					);
 					const snapshot = await page.call({ args: ["snapshot", "-i"] });
-					assert.equal(snapshot.isError, false, snapshot.content[0].text);
+					assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 					assert.equal(readRecord(snapshot.details?.data).origin, expected);
 					assert.equal(
 						(await page.calls()).some(
@@ -420,10 +422,10 @@ for (const command of destinations) {
 		);
 	}
 	for (const bail of [false, true]) {
-		test(
+		nodeTest(
 			`native batch folds only reached ${command[0]} rows (bail=${bail})`,
 			{ concurrency: false },
-			async () => {
+			async (t) => {
 				await withPage(async (page) => {
 					const args = ["batch", ...(bail ? ["--bail"] : [])];
 					const planned = [["console", "--clear"], ["not-a-command"], command];
@@ -441,7 +443,7 @@ for (const command of destinations) {
 						bail ? [true, false] : [true, false, true],
 					);
 					const snapshot = await page.call({ args: ["snapshot", "-i"] });
-					assert.equal(snapshot.isError, false, snapshot.content[0].text);
+					assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 					assert.equal(
 						readRecord(snapshot.details?.data).origin,
 						bail ? rememberedUrl : destinationUrl,
@@ -450,22 +452,22 @@ for (const command of destinations) {
 						(row) => extractUpstreamCommandTokens(row.args)[0] === "batch",
 					);
 					assert.equal(batches.length, 1);
-					assert.deepEqual(extractUpstreamCommandTokens(batches[0].args), args);
-					assert.equal(batches[0].stdin, stdin);
+					assert.deepEqual(extractUpstreamCommandTokens(readDefined(batches[0]).args), args);
+					assert.equal(readDefined(batches[0]).stdin, stdin);
 					if (bail) {
-						// This enumerated fixture branch (bail) has variant-specific assertions; common assertions cover every case.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(
-							result.details?.refSnapshotInvalidation,
-							undefined,
-							"unreached transitions cannot invalidate the old snapshot",
-						);
+						await t.test("unreached destination preserves refs", () => {
+							assert.equal(
+								result.details?.refSnapshotInvalidation,
+								undefined,
+								"unreached transitions cannot invalidate the old snapshot",
+							);
+						});
 					}
 				});
 			},
 		);
 	}
-	test(
+	nodeTest(
 		`native ${command[0]} batch keeps a later snapshot without requiring bail or get url`,
 		{ concurrency: false },
 		async () => {
@@ -492,12 +494,12 @@ for (const command of destinations) {
 					(row) => extractUpstreamCommandTokens(row.args)[0] === "batch",
 				);
 				assert.equal(batches.length, 1);
-				assert.deepEqual(extractUpstreamCommandTokens(batches[0].args), ["batch"]);
-				assert.equal(batches[0].stdin, stdin);
+				assert.deepEqual(extractUpstreamCommandTokens(readDefined(batches[0]).args), ["batch"]);
+				assert.equal(readDefined(batches[0]).stdin, stdin);
 			});
 		},
 	);
-	test(
+	nodeTest(
 		`unobserved ${command[0]} batch retires earlier snapshot targets instead of guessing`,
 		{ concurrency: false },
 		async () => {
@@ -507,7 +509,7 @@ for (const command of destinations) {
 					args: ["batch"],
 					stdin: JSON.stringify([["snapshot", "-i"], command]),
 				});
-				assert.equal(result.isError, false, result.content[0].text);
+				assert.equal(result.isError, false, getMessageText(result.content));
 				assert.equal(result.details?.sessionTabTarget, undefined);
 				assert.equal(result.details?.sessionTabTargetUnknown, true);
 				assert.equal(result.details.refSnapshot, undefined);
@@ -521,7 +523,7 @@ for (const command of destinations) {
 				await page.patch({ failUrlProbe: false });
 				assert.equal((await page.call({ args: ["get", "url"] })).isError, false);
 				const snapshot = await page.call({ args: ["snapshot", "-i"] });
-				assert.equal(snapshot.isError, false, snapshot.content[0].text);
+				assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 				assert.equal(
 					readRecord(snapshot.details?.data).origin,
 					command[0] === "window" ? "about:blank" : redirectedUrl,
@@ -532,7 +534,7 @@ for (const command of destinations) {
 }
 
 for (const batch of [false, true]) {
-	test(
+	nodeTest(
 		`URL-diff blank redirect does not reselect a remembered duplicate tab (batch=${batch})`,
 		{ concurrency: false },
 		async () => {
@@ -547,9 +549,9 @@ for (const batch of [false, true]) {
 						? { args: ["batch"], stdin: JSON.stringify([destinations[1]]) }
 						: { args: destinations[1] },
 				);
-				assert.equal(result.isError, false, result.content[0].text);
+				assert.equal(result.isError, false, getMessageText(result.content));
 				const snapshot = await page.call({ args: ["snapshot", "-i"] });
-				assert.equal(snapshot.isError, false, snapshot.content[0].text);
+				assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 				assert.equal(readRecord(snapshot.details?.data).origin, "about:blank");
 				assert.equal(readRecord(result.details?.sessionTabTarget).url, "about:blank");
 				assert.equal(result.details?.aboutBlankSessionMismatch, undefined);
@@ -565,7 +567,7 @@ for (const batch of [false, true]) {
 	);
 }
 
-test(
+nodeTest(
 	"raw URL-diff batch preserves argv and ignores the stdin window destination",
 	{ concurrency: false },
 	async () => {
@@ -574,7 +576,7 @@ test(
 				const args = ["batch", `diff url ${rememberedUrl} ${requestedUrl}`];
 				const stdin = JSON.stringify([["window", "new"]]);
 				const result = await page.call({ args, stdin });
-				assert.equal(result.isError, false, result.content[0].text);
+				assert.equal(result.isError, false, getMessageText(result.content));
 				assert.equal(readRecord(result.details?.sessionTabTarget).url, redirectedUrl);
 				assert.equal((await page.state()).pages.length, 1);
 				const batch = (await page.calls()).find((row) => row.args.includes("batch"));
@@ -593,7 +595,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"cancellation before a cold reopen preserves the obligation without navigation",
 	{ concurrency: false },
 	async () => {
@@ -612,7 +614,7 @@ test(
 					false,
 				);
 				const snapshot = await page.call({ args: ["snapshot", "-i"] });
-				assert.equal(snapshot.isError, false, snapshot.content[0].text);
+				assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 				assert.equal(readRecord(snapshot.details?.data).origin, rememberedUrl);
 				await page.reload();
 				assert.equal((await page.call({ args: ["snapshot", "-i"] })).isError, false);
@@ -628,7 +630,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"cancellation after a cold reopen persists the consumed identity through replay",
 	{ concurrency: false },
 	async () => {
@@ -643,28 +645,22 @@ test(
 				let aborted: Awaited<ReturnType<Page["call"]>>;
 				try {
 					const deadline = Date.now() + 5000;
-					while (pid === 0 || Number.isNaN(pid)) {
+					while ((pid === 0 || Number.isNaN(pid)) && Date.now() < deadline) {
 						try {
-							// Observe the current fixture receipt before deciding whether the next poll or state transition may proceed.
-							// oxlint-disable-next-line no-await-in-loop
 							pid = Number(await readFile(page.marker, "utf8"));
 						} catch (error) {
 							if (!hasErrorCode(error, "ENOENT")) {
 								throw error;
 							}
 						}
-						// The cancellation fixture starts with no PID; every receipt poll must meet the original deadline before abort.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(
-							Date.now() < deadline,
-							"cold open must reach its native navigation before cancellation",
-						);
 						if (pid === 0 || Number.isNaN(pid)) {
-							// Wait between receipt polls so the fixture process can advance before the next observation.
-							// oxlint-disable-next-line no-await-in-loop
 							await delay(5);
 						}
 					}
+					assert.ok(
+						Date.now() < deadline,
+						"cold open must reach its native navigation before cancellation",
+					);
 				} finally {
 					controller.abort(new Error("cancel after native cold navigation"));
 					aborted = await pending;
@@ -687,7 +683,7 @@ test(
 				);
 				await page.reload();
 				const snapshot = await page.call({ args: ["snapshot", "-i"] });
-				assert.equal(snapshot.isError, false, snapshot.content[0].text);
+				assert.equal(snapshot.isError, false, getMessageText(snapshot.content));
 				assert.equal(readRecord(snapshot.details?.data).origin, rememberedUrl);
 				assert.deepEqual(
 					{

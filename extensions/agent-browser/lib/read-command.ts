@@ -21,10 +21,11 @@ export function getExplicitReadUrl(commandTokens: readonly string[]): string | n
 	}
 	let url: string | undefined;
 	const options = new Set<string>();
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const tokens = commandTokens.values();
+	tokens.next();
+	for (const token of tokens) {
 		if (READ_VALUE_OPTIONS.has(token)) {
-			if (!validReadOption(token, commandTokens.at(++index))) {
+			if (!validReadOption(token, tokens.next().value)) {
 				return null;
 			}
 			options.add(token);

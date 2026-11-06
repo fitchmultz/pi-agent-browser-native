@@ -312,7 +312,6 @@ class ElectronHostTransaction {
 		}
 		for (const key of this.keys) {
 			// Bind each ordered host snapshot to its live daemon before persisting one canonical finish.
-			// oxlint-disable-next-line no-await-in-loop
 			await this.bindSnapshotGeneration(key);
 		}
 		const finish = this.buildFinish(result);

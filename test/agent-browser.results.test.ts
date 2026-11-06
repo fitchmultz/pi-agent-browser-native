@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS,
@@ -35,14 +35,14 @@ import {
 	extractCommandTokens,
 	validateToolArgs,
 } from "../extensions/agent-browser/lib/runtime.js";
-import { readRecord, readString } from "./helpers/assertions.js";
+import { readDefined, readRecord, readString } from "./helpers/assertions.js";
 
 const MISSING_SUCCESS_PARSE_ERROR =
 	"agent-browser returned an invalid JSON envelope: missing boolean success field.";
 const NON_BOOLEAN_SUCCESS_PARSE_ERROR =
 	"agent-browser returned an invalid JSON envelope: success field must be boolean.";
 
-test("retirePendingRecordingManifestEntries retires only the closed session recording", () => {
+nodeTest("retirePendingRecordingManifestEntries retires only the closed session recording", () => {
 	const manifest: SessionArtifactManifest = {
 		entries: [
 			{
@@ -82,25 +82,27 @@ test("retirePendingRecordingManifestEntries retires only the closed session reco
 		version: 1,
 	};
 	const retired = retirePendingRecordingManifestEntries(manifest, "a", undefined, 4);
+	const closedRecording = readDefined(retired.entries[0]);
+	const otherRecording = readDefined(retired.entries[1]);
 	assert.deepEqual(
 		retired.entries.map((entry) => entry.path),
 		["a.webm", "b.webm", "a.png"],
 	);
-	assert.equal(retired.entries[0].subcommand, "close-abandoned");
-	assert.equal(retired.entries[0].retentionState, "live");
-	assert.equal(retired.entries[0].status, "unverified");
+	assert.equal(closedRecording.subcommand, "close-abandoned");
+	assert.equal(closedRecording.retentionState, "live");
+	assert.equal(closedRecording.status, "unverified");
 	assert.equal(
-		retired.entries[0].exists,
+		closedRecording.exists,
 		undefined,
 		"retiring a reservation does not prove a file is missing",
 	);
 	assert.equal(
-		retired.entries[1].subcommand,
+		otherRecording.subcommand,
 		"restart",
 		"the other session's pending recording keeps its subcommand",
 	);
 	assert.equal(
-		retired.entries[1].status,
+		otherRecording.status,
 		undefined,
 		"the other session's pending recording gets no status change",
 	);
@@ -108,7 +110,7 @@ test("retirePendingRecordingManifestEntries retires only the closed session reco
 	assert.equal(retired.updatedAtMs, 4);
 });
 
-test("recording manifests keep namespace identities distinct on the same path", () => {
+nodeTest("recording manifests keep namespace identities distinct on the same path", () => {
 	const manifest = mergeSessionArtifactManifest({
 		entries: [
 			{
@@ -147,7 +149,7 @@ test("recording manifests keep namespace identities distinct on the same path", 
 	assert.equal(retired.entries.find((entry) => entry.namespace === "two")?.subcommand, "start");
 });
 
-test("rich input recovery nextAction id helpers lock exact ids", () => {
+nodeTest("rich input recovery nextAction id helpers lock exact ids", () => {
 	assert.deepEqual(AGENT_BROWSER_RICH_INPUT_RECOVERY_NEXT_ACTION_IDS, {
 		click: "click-current-editable-ref",
 		focus: "focus-current-editable-ref",
@@ -170,7 +172,7 @@ test("rich input recovery nextAction id helpers lock exact ids", () => {
 	]);
 });
 
-test("applyNamespaceToNextActions preserves namespaced follow-up context", () => {
+nodeTest("applyNamespaceToNextActions preserves namespaced follow-up context", () => {
 	const namespaced = applyNamespaceToNextActions(
 		[
 			{
@@ -202,12 +204,12 @@ test("applyNamespaceToNextActions preserves namespaced follow-up context", () =>
 		"snapshot",
 		"-i",
 	]);
-	assert.deepEqual(namespaced[1].params, {
+	assert.deepEqual(readDefined(namespaced[1]).params, {
 		namespace: "review",
 		requestId: "req-1",
 		session: "work",
 	});
-	assert.deepEqual(namespaced[2].params, { action: "status", launchId: "l1" });
+	assert.deepEqual(readDefined(namespaced[2]).params, { action: "status", launchId: "l1" });
 	assert.deepEqual(
 		applyNamespaceToNextActions(namespaced, "review")?.[0]?.params?.args,
 		namespaced[0].params.args,
@@ -238,7 +240,7 @@ test("applyNamespaceToNextActions preserves namespaced follow-up context", () =>
 		"snapshot",
 		"-i",
 	]);
-	assert.deepEqual(defaultNamespaced[1].params, {
+	assert.deepEqual(readDefined(defaultNamespaced[1]).params, {
 		namespace: "",
 		requestId: "req-1",
 		session: "work",
@@ -249,7 +251,7 @@ test("applyNamespaceToNextActions preserves namespaced follow-up context", () =>
 	);
 });
 
-test("applySessionToNextActions preserves session-scoped follow-up context", () => {
+nodeTest("applySessionToNextActions preserves session-scoped follow-up context", () => {
 	const sessionScoped = applySessionToNextActions(
 		[
 			{ id: "snapshot", params: { args: ["snapshot", "-i"] }, reason: "r", tool: "agent_browser" },
@@ -275,7 +277,7 @@ test("applySessionToNextActions preserves session-scoped follow-up context", () 
 		"work",
 	);
 	assert.deepEqual(sessionScoped?.[0]?.params?.args, ["--session", "work", "snapshot", "-i"]);
-	assert.deepEqual(sessionScoped[1].params?.args, [
+	assert.deepEqual(readDefined(sessionScoped[1]).params?.args, [
 		"--namespace",
 		"review",
 		"--session",
@@ -283,23 +285,31 @@ test("applySessionToNextActions preserves session-scoped follow-up context", () 
 		"snapshot",
 		"-i",
 	]);
-	assert.deepEqual(sessionScoped[2].params, { requestId: "req-1" });
-	assert.deepEqual(sessionScoped[3].params, { action: "status", launchId: "l1" });
+	assert.deepEqual(readDefined(sessionScoped[2]).params, { requestId: "req-1" });
+	assert.deepEqual(readDefined(sessionScoped[3]).params, { action: "status", launchId: "l1" });
 	const repeated = applySessionToNextActions(sessionScoped, "work");
 	assert.deepEqual(repeated?.[0]?.params?.args, sessionScoped[0].params.args);
-	assert.deepEqual(repeated[1].params?.args, sessionScoped[1].params.args);
+	assert.deepEqual(
+		readDefined(repeated[1]).params?.args,
+		readDefined(readDefined(sessionScoped[1]).params).args,
+	);
 });
 
-test("appendUniqueAgentBrowserNextActions preserves order and first-id wins", () => {
+nodeTest("appendUniqueAgentBrowserNextActions preserves order and first-id wins", () => {
 	const action = (
 		id: string,
 		args?: readonly string[],
 		stdin?: string,
 	): AgentBrowserNextAction => ({
 		id,
-		params: args
-			? { args: [...args], ...(stdin !== undefined && stdin.length > 0 ? { stdin } : {}) }
-			: undefined,
+		...(args === undefined
+			? {}
+			: {
+					params: {
+						args: [...args],
+						...(stdin !== undefined && stdin.length > 0 ? { stdin } : {}),
+					},
+				}),
 		reason: id,
 		tool: "agent_browser",
 	});
@@ -327,7 +337,7 @@ test("appendUniqueAgentBrowserNextActions preserves order and first-id wins", ()
 	);
 });
 
-test("alignPageChangeSummaryNextActionIds keeps only emitted action ids", () => {
+nodeTest("alignPageChangeSummaryNextActionIds keeps only emitted action ids", () => {
 	assert.deepEqual(
 		alignPageChangeSummaryNextActionIds(
 			{ changeType: "mutation" as const, nextActionIds: ["keep", "drop"], summary: "changed" },
@@ -344,7 +354,7 @@ test("alignPageChangeSummaryNextActionIds keeps only emitted action ids", () => 
 	);
 });
 
-test("validateToolArgs rejects wrapper fields passed as upstream argv", () => {
+nodeTest("validateToolArgs rejects wrapper fields passed as upstream argv", () => {
 	assert.equal(validateToolArgs(["open", "https://example.com"]), undefined);
 	assert.match(
 		validateToolArgs(["open", "https://example.com", "--session-mode", "fresh"]) ?? "",
@@ -356,412 +366,429 @@ test("validateToolArgs rejects wrapper fields passed as upstream argv", () => {
 	);
 });
 
-test("classifyAgentBrowserFailureCategory locks common machine-readable failure categories", () => {
-	assert.equal(
-		classifyAgentBrowserFailureCategory({ errorText: "Unknown ref: e4", args: ["click", "@e4"] }),
-		"stale-ref",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({ errorText: "Failed to parse selector text=Close" }),
-		"selector-unsupported",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "Unable to find selector text=Close",
-			command: "find",
-		}),
-		"selector-unsupported",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({ errorText: "Element not found", command: "find" }),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({ errorText: "No elements found for selector .missing" }),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			command: "find",
-			errorText: '1 element has role "button", but none match name "Nope". Names seen: "Submit"',
-			args: ["find", "role", "button", "click", "--name", "Nope"],
-		}),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			command: "find",
-			errorText:
-				"No element found: getByRole('dialog', { name: 'X' }). Verify the selector, role, or name is correct and the element exists in the DOM.",
-			args: ["find", "role", "dialog", "click", "--name", "X"],
-		}),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			command: "click",
-			errorText:
-				"Element not found: text=Nope. Verify the selector, role, or name is correct and the element exists in the DOM.",
-			args: ["click", "text=Nope"],
-		}),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			command: "find",
-			errorText:
-				'1 element has role "button", but none match name "timeout missing". Names seen: "Save timeout report"',
-			args: ["find", "role", "button", "click", "--name", "timeout missing"],
-		}),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			command: "find",
-			errorText:
-				'1 element has role "button", but none match name "Operation timed out". Names seen: "Submit"',
-			args: ["find", "role", "button", "click", "--name", "Operation timed out"],
-		}),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			command: "eval",
-			errorText: 'debug dump Names seen: "not a locator miss"',
-		}),
-		"upstream-error",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			command: "find",
-			errorText:
-				'1 element has role "button", but none match name "Confirmation required". Names seen: "Submit"',
-			args: ["find", "role", "button", "click", "--name", "Confirmation required"],
-		}),
-		"selector-not-found",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({ confirmationRequired: true, errorText: "ok" }),
-		"confirmation-required",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			confirmationRequired: true,
-			command: "find",
-			errorText: '1 element has role "button", but none match name "Nope". Names seen: "Submit"',
-			args: ["find", "role", "button", "click", "--name", "Nope"],
-		}),
-		"confirmation-required",
-	);
-	assert.equal(classifyAgentBrowserFailureCategory({ timedOut: true }), "timeout");
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "Download not verified: file missing",
-			command: "download",
-		}),
-		"download-not-verified",
-	);
-	assert.equal(
-		buildAgentBrowserResultCategoryDetails({
-			failureCategory: "artifact-missing",
-			succeeded: false,
-		}).failureCategory,
-		"artifact-missing",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "agent-browser is required but was not found on PATH",
-		}),
-		"missing-binary",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "Agent-browser Unix socket path would be 140 bytes (max 103).",
-		}),
-		"validation-error",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({ parseError: "agent-browser returned invalid JSON" }),
-		"parse-failure",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({ errorText: "Confirmation required: c_demo" }),
-		"confirmation-required",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "Electron launch blocked by caller deny policy.",
-		}),
-		"policy-blocked",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "Electron cleanup partial: remaining resources detected.",
-		}),
-		"cleanup-failed",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "agent-browser could not re-select the intended tab before running the command.",
-		}),
-		"tab-drift",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText:
-				"tab_gone: bound tab is gone (target ABC). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
-		}),
-		"tab-gone",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText:
-				"tab_gone: bound tab is gone (target ABC, last url https://example.com/aborted). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
-		}),
-		"tab-gone",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText:
-				"tab_gone: bound tab is gone (target ABC, last url https://example.com/policy-blocked). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
-		}),
-		"tab-gone",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText:
-				"tab_gone: bound tab is gone (target ABC, last url about:blank). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
-			tabDrift: true,
-		}),
-		"tab-gone",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText:
-				"eval failed: help says commands fail with a `tab_gone` error instead of adopting another tab",
-		}),
-		"upstream-error",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "qa.attached requires an attached session with a readable page URL.",
-			validationError: "qa.attached requires an attached session with a readable page URL.",
-		}),
-		"validation-error",
-	);
-	assert.equal(
-		classifyAgentBrowserFailureCategory({
-			errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT",
-		}),
-		"upstream-error",
-	);
-});
+nodeTest(
+	"classifyAgentBrowserFailureCategory locks common machine-readable failure categories",
+	() => {
+		assert.equal(
+			classifyAgentBrowserFailureCategory({ errorText: "Unknown ref: e4", args: ["click", "@e4"] }),
+			"stale-ref",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({ errorText: "Failed to parse selector text=Close" }),
+			"selector-unsupported",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "Unable to find selector text=Close",
+				command: "find",
+			}),
+			"selector-unsupported",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({ errorText: "Element not found", command: "find" }),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({ errorText: "No elements found for selector .missing" }),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				command: "find",
+				errorText: '1 element has role "button", but none match name "Nope". Names seen: "Submit"',
+				args: ["find", "role", "button", "click", "--name", "Nope"],
+			}),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				command: "find",
+				errorText:
+					"No element found: getByRole('dialog', { name: 'X' }). Verify the selector, role, or name is correct and the element exists in the DOM.",
+				args: ["find", "role", "dialog", "click", "--name", "X"],
+			}),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				command: "click",
+				errorText:
+					"Element not found: text=Nope. Verify the selector, role, or name is correct and the element exists in the DOM.",
+				args: ["click", "text=Nope"],
+			}),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				command: "find",
+				errorText:
+					'1 element has role "button", but none match name "timeout missing". Names seen: "Save timeout report"',
+				args: ["find", "role", "button", "click", "--name", "timeout missing"],
+			}),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				command: "find",
+				errorText:
+					'1 element has role "button", but none match name "Operation timed out". Names seen: "Submit"',
+				args: ["find", "role", "button", "click", "--name", "Operation timed out"],
+			}),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				command: "eval",
+				errorText: 'debug dump Names seen: "not a locator miss"',
+			}),
+			"upstream-error",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				command: "find",
+				errorText:
+					'1 element has role "button", but none match name "Confirmation required". Names seen: "Submit"',
+				args: ["find", "role", "button", "click", "--name", "Confirmation required"],
+			}),
+			"selector-not-found",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({ confirmationRequired: true, errorText: "ok" }),
+			"confirmation-required",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				confirmationRequired: true,
+				command: "find",
+				errorText: '1 element has role "button", but none match name "Nope". Names seen: "Submit"',
+				args: ["find", "role", "button", "click", "--name", "Nope"],
+			}),
+			"confirmation-required",
+		);
+		assert.equal(classifyAgentBrowserFailureCategory({ timedOut: true }), "timeout");
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "Download not verified: file missing",
+				command: "download",
+			}),
+			"download-not-verified",
+		);
+		assert.equal(
+			buildAgentBrowserResultCategoryDetails({
+				failureCategory: "artifact-missing",
+				succeeded: false,
+			}).failureCategory,
+			"artifact-missing",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "agent-browser is required but was not found on PATH",
+			}),
+			"missing-binary",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "Agent-browser Unix socket path would be 140 bytes (max 103).",
+			}),
+			"validation-error",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({ parseError: "agent-browser returned invalid JSON" }),
+			"parse-failure",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({ errorText: "Confirmation required: c_demo" }),
+			"confirmation-required",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "Electron launch blocked by caller deny policy.",
+			}),
+			"policy-blocked",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "Electron cleanup partial: remaining resources detected.",
+			}),
+			"cleanup-failed",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "agent-browser could not re-select the intended tab before running the command.",
+			}),
+			"tab-drift",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText:
+					"tab_gone: bound tab is gone (target ABC). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
+			}),
+			"tab-gone",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText:
+					"tab_gone: bound tab is gone (target ABC, last url https://example.com/aborted). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
+			}),
+			"tab-gone",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText:
+					"tab_gone: bound tab is gone (target ABC, last url https://example.com/policy-blocked). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
+			}),
+			"tab-gone",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText:
+					"tab_gone: bound tab is gone (target ABC, last url about:blank). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
+				tabDrift: true,
+			}),
+			"tab-gone",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText:
+					"eval failed: help says commands fail with a `tab_gone` error instead of adopting another tab",
+			}),
+			"upstream-error",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "qa.attached requires an attached session with a readable page URL.",
+				validationError: "qa.attached requires an attached session with a readable page URL.",
+			}),
+			"validation-error",
+		);
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT",
+			}),
+			"upstream-error",
+		);
+	},
+);
 
-test("unverified recording evidence cannot become artifact-saved merely because the file exists", () => {
-	const unverified = {
-		absolutePath: "/tmp/take.webm",
-		path: "take.webm",
-		command: "record",
-		subcommand: "stop",
-		kind: "video" as const,
-		status: "unverified" as const,
-		exists: true,
-	};
-	assert.equal(
-		classifyAgentBrowserSuccessCategory({ artifacts: [unverified] }),
-		"artifact-unverified",
-	);
-	const pending = {
-		...unverified,
-		absolutePath: "/tmp/next.webm",
-		path: "next.webm",
-		exists: undefined,
-		status: "pending" as const,
-		subcommand: "restart",
-	};
-	assert.equal(
-		classifyAgentBrowserSuccessCategory({ artifacts: [unverified, pending] }),
-		"artifact-unverified",
-	);
-});
+nodeTest(
+	"unverified recording evidence cannot become artifact-saved merely because the file exists",
+	() => {
+		const unverified = {
+			absolutePath: "/tmp/take.webm",
+			path: "take.webm",
+			command: "record",
+			subcommand: "stop",
+			kind: "video" as const,
+			status: "unverified" as const,
+			exists: true,
+		};
+		assert.equal(
+			classifyAgentBrowserSuccessCategory({ artifacts: [unverified] }),
+			"artifact-unverified",
+		);
+		const pending = {
+			...unverified,
+			absolutePath: "/tmp/next.webm",
+			path: "next.webm",
+			exists: undefined,
+			status: "pending" as const,
+			subcommand: "restart",
+		};
+		assert.equal(
+			classifyAgentBrowserSuccessCategory({ artifacts: [unverified, pending] }),
+			"artifact-unverified",
+		);
+	},
+);
 
-test("classifyAgentBrowserSuccessCategory locks common machine-readable success categories", () => {
-	assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
-	assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
-	assert.equal(
-		classifyAgentBrowserSuccessCategory({
-			artifacts: [{ absolutePath: "/tmp/a.png", exists: true, kind: "image", path: "/tmp/a.png" }],
-		}),
-		"artifact-saved",
-	);
-	assert.equal(
-		classifyAgentBrowserSuccessCategory({
-			artifacts: [
-				{
-					absolutePath: "/tmp/demo.webm",
-					command: "record",
-					kind: "video",
-					path: "/tmp/demo.webm",
-					recordingState: "openRecording",
-					status: "pending",
-					subcommand: "start",
-				},
-			],
-		}),
-		"artifact-pending",
-	);
-	assert.equal(
-		classifyAgentBrowserSuccessCategory({
-			artifacts: [{ absolutePath: "/tmp/a.png", exists: false, kind: "image", path: "/tmp/a.png" }],
-		}),
-		"artifact-unverified",
-	);
-});
+nodeTest(
+	"classifyAgentBrowserSuccessCategory locks common machine-readable success categories",
+	() => {
+		assert.equal(classifyAgentBrowserSuccessCategory({}), "completed");
+		assert.equal(classifyAgentBrowserSuccessCategory({ inspection: true }), "inspection");
+		assert.equal(
+			classifyAgentBrowserSuccessCategory({
+				artifacts: [
+					{ absolutePath: "/tmp/a.png", exists: true, kind: "image", path: "/tmp/a.png" },
+				],
+			}),
+			"artifact-saved",
+		);
+		assert.equal(
+			classifyAgentBrowserSuccessCategory({
+				artifacts: [
+					{
+						absolutePath: "/tmp/demo.webm",
+						command: "record",
+						kind: "video",
+						path: "/tmp/demo.webm",
+						recordingState: "openRecording",
+						status: "pending",
+						subcommand: "start",
+					},
+				],
+			}),
+			"artifact-pending",
+		);
+		assert.equal(
+			classifyAgentBrowserSuccessCategory({
+				artifacts: [
+					{ absolutePath: "/tmp/a.png", exists: false, kind: "image", path: "/tmp/a.png" },
+				],
+			}),
+			"artifact-unverified",
+		);
+	},
+);
 
-test("buildAgentBrowserNextActions returns exact native-tool recommendations for common states", () => {
-	for (const command of ["open", "goto", "navigate"] as const) {
-		// The nonempty command fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
+nodeTest(
+	"buildAgentBrowserNextActions returns exact native-tool recommendations for common states",
+	() => {
+		const expected = [
+			{
+				id: "inspect-opened-page",
+				params: { args: ["snapshot", "-i"] },
+				reason: "Inspect the opened page before choosing interactive refs.",
+				tool: "agent_browser",
+			},
+		];
+		assert.deepEqual(
+			["open", "goto", "navigate"].map((command) =>
+				buildAgentBrowserNextActions({
+					command,
+					resultCategory: "success",
+					successCategory: "completed",
+				}),
+			),
+			[expected, expected, expected],
+		);
 		assert.deepEqual(
 			buildAgentBrowserNextActions({
-				command,
-				resultCategory: "success",
-				successCategory: "completed",
-			}),
-			[
-				{
-					id: "inspect-opened-page",
-					params: { args: ["snapshot", "-i"] },
-					reason: "Inspect the opened page before choosing interactive refs.",
-					tool: "agent_browser",
-				},
-			],
-			command,
+				command: "click",
+				resultCategory: "failure",
+				failureCategory: "stale-ref",
+			})?.[0]?.params?.args,
+			["snapshot", "-i"],
 		);
-	}
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			command: "click",
-			resultCategory: "failure",
-			failureCategory: "stale-ref",
-		})?.[0]?.params?.args,
-		["snapshot", "-i"],
-	);
-	assert.equal(
-		buildAgentBrowserNextActions({
-			command: "wait",
-			resultCategory: "failure",
-			failureCategory: "timeout",
-		})?.[0]?.id,
-		"inspect-after-timeout",
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			command: "session",
-			subcommand: "info",
-			resultCategory: "failure",
-			failureCategory: "timeout",
-			sessionName: "named",
-		})?.map((action) => ({ id: action.id, args: action.params?.args })),
-		[{ id: "retry-session-info", args: ["--session", "named", "session", "info"] }],
-	);
-	const urlWaitActions = buildAgentBrowserNextActions({
-		args: ["wait", "--url", "**/cart.html"],
-		command: "wait",
-		resultCategory: "failure",
-		failureCategory: "timeout",
-	});
-	assert.deepEqual(
-		urlWaitActions?.map((action) => action.id),
-		["inspect-after-timeout", "fresh-session-after-url-wait-timeout"],
-	);
-	assert.deepEqual(urlWaitActions[1].params, {
-		args: ["open", "about:blank"],
-		sessionMode: "fresh",
-	});
-	// Fresh-session recovery must stay unprefixed: the planner ignores sessionMode when --session is explicit.
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
+		assert.equal(
+			buildAgentBrowserNextActions({
+				command: "wait",
+				resultCategory: "failure",
+				failureCategory: "timeout",
+			})?.[0]?.id,
+			"inspect-after-timeout",
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				command: "session",
+				subcommand: "info",
+				resultCategory: "failure",
+				failureCategory: "timeout",
+				sessionName: "named",
+			})?.map((action) => ({ id: action.id, args: action.params?.args })),
+			[{ id: "retry-session-info", args: ["--session", "named", "session", "info"] }],
+		);
+		const urlWaitActions = buildAgentBrowserNextActions({
 			args: ["wait", "--url", "**/cart.html"],
 			command: "wait",
 			resultCategory: "failure",
 			failureCategory: "timeout",
-			sessionName: "named",
-		})?.map((action) => action.params),
-		[
-			{ args: ["--session", "named", "snapshot", "-i"] },
-			{ args: ["open", "about:blank"], sessionMode: "fresh" },
-		],
-	);
-});
+		});
+		assert.deepEqual(
+			urlWaitActions?.map((action) => action.id),
+			["inspect-after-timeout", "fresh-session-after-url-wait-timeout"],
+		);
+		assert.deepEqual(readDefined(urlWaitActions[1]).params, {
+			args: ["open", "about:blank"],
+			sessionMode: "fresh",
+		});
+		// Fresh-session recovery must stay unprefixed: the planner ignores sessionMode when --session is explicit.
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				args: ["wait", "--url", "**/cart.html"],
+				command: "wait",
+				resultCategory: "failure",
+				failureCategory: "timeout",
+				sessionName: "named",
+			})?.map((action) => action.params),
+			[
+				{ args: ["--session", "named", "snapshot", "-i"] },
+				{ args: ["open", "about:blank"], sessionMode: "fresh" },
+			],
+		);
+	},
+);
 
-test("buildAgentBrowserNextActions keeps failure inspection and scoped navigation recovery exact", () => {
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			args: ["wait", "--text", "Done"],
-			command: "wait",
-			resultCategory: "failure",
-			failureCategory: "timeout",
-		})?.map((action) => action.id),
-		["inspect-after-text-assertion-failure"],
-	);
-	assert.equal(
-		buildAgentBrowserNextActions({
-			command: "open",
-			resultCategory: "failure",
-			failureCategory: "upstream-error",
-		})?.[0]?.id,
-		"inspect-page-after-navigation-error",
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			command: "click",
-			failureCategory: "upstream-error",
-			overlayBlockedClick: true,
-			resultCategory: "failure",
-			sessionName: "named",
-		}),
-		[
-			{
-				id: "inspect-overlay-state",
-				params: { args: ["--session", "named", "snapshot", "-i"] },
-				reason:
-					"Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
-				safety:
-					"Read-only inspection; do not blindly retry the blocked click, and use current refs from this snapshot before interacting.",
-				tool: "agent_browser",
-			},
-		],
-	);
-	assert.equal(
-		buildAgentBrowserNextActions({
-			command: "click",
-			failureCategory: "upstream-error",
-			resultCategory: "failure",
-		}),
-		undefined,
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			command: "wait",
-			resultCategory: "failure",
-			failureCategory: "timeout",
-			sessionName: "named",
-		})?.[0]?.params?.args,
-		["--session", "named", "snapshot", "-i"],
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			command: "open",
-			resultCategory: "failure",
-			failureCategory: "upstream-error",
-			sessionName: "named",
-		})?.[0]?.params?.args,
-		["--session", "named", "get", "url"],
-	);
-});
+nodeTest(
+	"buildAgentBrowserNextActions keeps failure inspection and scoped navigation recovery exact",
+	() => {
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				args: ["wait", "--text", "Done"],
+				command: "wait",
+				resultCategory: "failure",
+				failureCategory: "timeout",
+			})?.map((action) => action.id),
+			["inspect-after-text-assertion-failure"],
+		);
+		assert.equal(
+			buildAgentBrowserNextActions({
+				command: "open",
+				resultCategory: "failure",
+				failureCategory: "upstream-error",
+			})?.[0]?.id,
+			"inspect-page-after-navigation-error",
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				command: "click",
+				failureCategory: "upstream-error",
+				overlayBlockedClick: true,
+				resultCategory: "failure",
+				sessionName: "named",
+			}),
+			[
+				{
+					id: "inspect-overlay-state",
+					params: { args: ["--session", "named", "snapshot", "-i"] },
+					reason:
+						"Refresh interactive refs and inspect whether an overlay, banner, modal, or dialog is blocking the intended click.",
+					safety:
+						"Read-only inspection; do not blindly retry the blocked click, and use current refs from this snapshot before interacting.",
+					tool: "agent_browser",
+				},
+			],
+		);
+		assert.equal(
+			buildAgentBrowserNextActions({
+				command: "click",
+				failureCategory: "upstream-error",
+				resultCategory: "failure",
+			}),
+			undefined,
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				command: "wait",
+				resultCategory: "failure",
+				failureCategory: "timeout",
+				sessionName: "named",
+			})?.[0]?.params?.args,
+			["--session", "named", "snapshot", "-i"],
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				command: "open",
+				resultCategory: "failure",
+				failureCategory: "upstream-error",
+				sessionName: "named",
+			})?.[0]?.params?.args,
+			["--session", "named", "get", "url"],
+		);
+	},
+);
 
-test("buildAgentBrowserNextActions preserves confirmation and missing-tab follow-ups", () => {
+nodeTest("buildAgentBrowserNextActions preserves confirmation and missing-tab follow-ups", () => {
 	assert.deepEqual(
 		buildAgentBrowserNextActions({
 			resultCategory: "failure",
@@ -790,125 +817,128 @@ test("buildAgentBrowserNextActions preserves confirmation and missing-tab follow
 	);
 });
 
-test("buildAgentBrowserNextActions keeps connected and restored tab target recovery exact", () => {
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			recovery: { kind: "connected-session", sessionName: "named" },
-			resultCategory: "success",
-			successCategory: "completed",
-		})?.map((action) => ({ id: action.id, args: action.params?.args })),
-		[
-			{
-				id: "verify-connected-session-url",
-				args: ["--session", "named", "get", "url"],
-			},
-			{
-				id: "list-connected-session-tabs",
-				args: ["--session", "named", "tab", "list"],
-			},
-		],
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			recovery: { kind: "no-active-page", sessionName: "named" },
-			resultCategory: "failure",
-		})?.map((action) => ({ id: action.id, args: action.params?.args })),
-		[
-			{
-				id: "list-tabs-after-no-active-page",
-				args: ["--session", "named", "tab", "list"],
-			},
-		],
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			recovery: { kind: "no-active-page", selectedTab: "t2", sessionName: "named" },
-			resultCategory: "failure",
-		})?.map((action) => ({
-			id: action.id,
-			args: action.params?.args,
-			stdin: action.params?.stdin,
-		})),
-		[
-			{
-				id: "list-tabs-after-no-active-page",
-				args: ["--session", "named", "tab", "list"],
-				stdin: undefined,
-			},
-		],
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			failureCategory: "tab-drift",
-			recovery: {
-				kind: "about-blank",
-				selectedTab: "t2",
-				sessionName: "named",
-				targetTitle: "Canvas",
-				targetUrl: "app://canvas",
-			},
-			resultCategory: "failure",
-		})?.map((action) => ({
-			id: action.id,
-			args: action.params?.args,
-			stdin: action.params?.stdin,
-		})),
-		[
-			{
-				id: "list-tabs-for-about-blank-recovery",
-				args: ["--session", "named", "tab", "list"],
-				stdin: undefined,
-			},
-			{
-				id: "select-intended-tab-after-drift",
-				args: ["--session", "named", "tab", "t2"],
-				stdin: undefined,
-			},
-			{
-				id: "snapshot-after-tab-recovery",
-				args: ["--session", "named", "batch", "--bail"],
-				stdin: '[["tab","t2"],["get","url"],["snapshot","-i"]]',
-			},
-		],
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			failureCategory: "tab-drift",
-			recovery: {
-				kind: "about-blank",
-				recoveryApplied: true,
-				selectedTab: "t2",
-				sessionName: "named",
-				targetTitle: "Canvas",
-				targetUrl: "app://canvas",
-			},
-			resultCategory: "failure",
-		})?.map((action) => ({
-			id: action.id,
-			args: action.params?.args,
-			stdin: action.params?.stdin,
-		})),
-		[
-			{
-				id: "list-tabs-for-about-blank-recovery",
-				args: ["--session", "named", "tab", "list"],
-				stdin: undefined,
-			},
-			{
-				id: "select-intended-tab-after-drift",
-				args: ["--session", "named", "tab", "t2"],
-				stdin: undefined,
-			},
-			{
-				id: "snapshot-after-tab-recovery",
-				args: ["--session", "named", "snapshot", "-i"],
-				stdin: undefined,
-			},
-		],
-	);
-});
+nodeTest(
+	"buildAgentBrowserNextActions keeps connected and restored tab target recovery exact",
+	() => {
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				recovery: { kind: "connected-session", sessionName: "named" },
+				resultCategory: "success",
+				successCategory: "completed",
+			})?.map((action) => ({ id: action.id, args: action.params?.args })),
+			[
+				{
+					id: "verify-connected-session-url",
+					args: ["--session", "named", "get", "url"],
+				},
+				{
+					id: "list-connected-session-tabs",
+					args: ["--session", "named", "tab", "list"],
+				},
+			],
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				recovery: { kind: "no-active-page", sessionName: "named" },
+				resultCategory: "failure",
+			})?.map((action) => ({ id: action.id, args: action.params?.args })),
+			[
+				{
+					id: "list-tabs-after-no-active-page",
+					args: ["--session", "named", "tab", "list"],
+				},
+			],
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				recovery: { kind: "no-active-page", selectedTab: "t2", sessionName: "named" },
+				resultCategory: "failure",
+			})?.map((action) => ({
+				id: action.id,
+				args: action.params?.args,
+				stdin: action.params?.stdin,
+			})),
+			[
+				{
+					id: "list-tabs-after-no-active-page",
+					args: ["--session", "named", "tab", "list"],
+					stdin: undefined,
+				},
+			],
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				failureCategory: "tab-drift",
+				recovery: {
+					kind: "about-blank",
+					selectedTab: "t2",
+					sessionName: "named",
+					targetTitle: "Canvas",
+					targetUrl: "app://canvas",
+				},
+				resultCategory: "failure",
+			})?.map((action) => ({
+				id: action.id,
+				args: action.params?.args,
+				stdin: action.params?.stdin,
+			})),
+			[
+				{
+					id: "list-tabs-for-about-blank-recovery",
+					args: ["--session", "named", "tab", "list"],
+					stdin: undefined,
+				},
+				{
+					id: "select-intended-tab-after-drift",
+					args: ["--session", "named", "tab", "t2"],
+					stdin: undefined,
+				},
+				{
+					id: "snapshot-after-tab-recovery",
+					args: ["--session", "named", "batch", "--bail"],
+					stdin: '[["tab","t2"],["get","url"],["snapshot","-i"]]',
+				},
+			],
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				failureCategory: "tab-drift",
+				recovery: {
+					kind: "about-blank",
+					recoveryApplied: true,
+					selectedTab: "t2",
+					sessionName: "named",
+					targetTitle: "Canvas",
+					targetUrl: "app://canvas",
+				},
+				resultCategory: "failure",
+			})?.map((action) => ({
+				id: action.id,
+				args: action.params?.args,
+				stdin: action.params?.stdin,
+			})),
+			[
+				{
+					id: "list-tabs-for-about-blank-recovery",
+					args: ["--session", "named", "tab", "list"],
+					stdin: undefined,
+				},
+				{
+					id: "select-intended-tab-after-drift",
+					args: ["--session", "named", "tab", "t2"],
+					stdin: undefined,
+				},
+				{
+					id: "snapshot-after-tab-recovery",
+					args: ["--session", "named", "snapshot", "-i"],
+					stdin: undefined,
+				},
+			],
+		);
+	},
+);
 
-test("buildAgentBrowserNextActions retains tab drift and unverified download recovery", () => {
+nodeTest("buildAgentBrowserNextActions retains tab drift and unverified download recovery", () => {
 	assert.deepEqual(
 		buildAgentBrowserNextActions({
 			failureCategory: "tab-drift",
@@ -961,207 +991,226 @@ test("buildAgentBrowserNextActions retains tab drift and unverified download rec
 	);
 });
 
-test("buildAgentBrowserNextActions preserves artifact and Electron lifecycle follow-ups", () => {
-	assert.equal(
-		buildAgentBrowserNextActions({
-			artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }],
-			resultCategory: "success",
-			successCategory: "artifact-saved",
-		})?.[0]?.artifactPath,
-		"/tmp/page.png",
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			artifacts: [
-				{
-					absolutePath: "/tmp/export.csv",
-					exists: false,
-					kind: "download",
-					path: "/tmp/export.csv",
-				},
-			],
-			resultCategory: "success",
-			savedFilePath: "/tmp/export.csv",
-			successCategory: "artifact-saved",
-		})?.map((action) => action.id),
-		["wait-for-download"],
-	);
-	assert.equal(
-		buildAgentBrowserNextActions({
-			artifacts: [
-				{ absolutePath: "/tmp/state.json", exists: false, kind: "file", path: "/tmp/state.json" },
-			],
-			resultCategory: "success",
-			successCategory: "artifact-saved",
-		})?.[0]?.id,
-		"verify-artifact-path",
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			artifacts: [
-				{
-					absolutePath: "/tmp/demo.webm",
-					command: "record",
-					kind: "video",
-					path: "/tmp/demo.webm",
-					recordingState: "openRecording",
-					status: "pending",
-					subcommand: "start",
-				},
-			],
-			resultCategory: "success",
-			sessionName: "named",
-			successCategory: "artifact-pending",
-		})?.[0],
-		{
-			id: "stop-pending-recording",
-			params: { args: ["--session", "named", "record", "stop"] },
-			reason:
-				"Stop the active recording so the requested video can be finalized and verified on disk.",
-			safety:
-				"The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
-			tool: "agent_browser",
-		},
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			electron: {
-				launchId: "el_123",
-				sessionName: "pi-agent-browser-electron-el_123",
-				status: "active",
-			},
-			resultCategory: "success",
-			successCategory: "completed",
-		})?.map((action) => ({ id: action.id, params: action.params })),
-		[
-			{ id: "status-electron-launch", params: { action: "status", launchId: "el_123" } },
-			{ id: "probe-electron-launch", params: { action: "probe", launchId: "el_123" } },
-			{ id: "cleanup-electron-launch", params: { action: "cleanup", launchId: "el_123" } },
+nodeTest(
+	"buildAgentBrowserNextActions preserves artifact and Electron lifecycle follow-ups",
+	() => {
+		assert.equal(
+			buildAgentBrowserNextActions({
+				artifacts: [{ absolutePath: "/tmp/page.png", kind: "image", path: "/tmp/page.png" }],
+				resultCategory: "success",
+				successCategory: "artifact-saved",
+			})?.[0]?.artifactPath,
+			"/tmp/page.png",
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				artifacts: [
+					{
+						absolutePath: "/tmp/export.csv",
+						exists: false,
+						kind: "download",
+						path: "/tmp/export.csv",
+					},
+				],
+				resultCategory: "success",
+				savedFilePath: "/tmp/export.csv",
+				successCategory: "artifact-saved",
+			})?.map((action) => action.id),
+			["wait-for-download"],
+		);
+		assert.equal(
+			buildAgentBrowserNextActions({
+				artifacts: [
+					{ absolutePath: "/tmp/state.json", exists: false, kind: "file", path: "/tmp/state.json" },
+				],
+				resultCategory: "success",
+				successCategory: "artifact-saved",
+			})?.[0]?.id,
+			"verify-artifact-path",
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				artifacts: [
+					{
+						absolutePath: "/tmp/demo.webm",
+						command: "record",
+						kind: "video",
+						path: "/tmp/demo.webm",
+						recordingState: "openRecording",
+						status: "pending",
+						subcommand: "start",
+					},
+				],
+				resultCategory: "success",
+				sessionName: "named",
+				successCategory: "artifact-pending",
+			})?.[0],
 			{
-				id: "list-electron-tabs",
-				params: { args: ["--session", "pi-agent-browser-electron-el_123", "tab", "list"] },
+				id: "stop-pending-recording",
+				params: { args: ["--session", "named", "record", "stop"] },
+				reason:
+					"Stop the active recording so the requested video can be finalized and verified on disk.",
+				safety:
+					"The file remains pending until record stop succeeds; verify details.artifactVerification afterward.",
+				tool: "agent_browser",
 			},
-			{
-				id: "snapshot-electron-session",
-				params: { args: ["--session", "pi-agent-browser-electron-el_123", "snapshot", "-i"] },
-			},
-		],
-	);
-	assert.deepEqual(
-		buildAgentBrowserNextActions({
-			electron: { launchId: "el_456", status: "partial" },
-			failureCategory: "cleanup-failed",
-			resultCategory: "failure",
-		})?.map((action) => ({ id: action.id, params: action.params })),
-		[
-			{ id: "status-electron-launch", params: { action: "status", launchId: "el_456" } },
-			{ id: "retry-electron-cleanup", params: { action: "cleanup", launchId: "el_456" } },
-		],
-	);
-	assert.equal(
-		buildAgentBrowserNextActions({ resultCategory: "success", successCategory: "completed" }),
-		undefined,
-	);
-});
-
-test("extractCommandTokens strips wrapper-level global flags and keeps the command tail intact", () => {
-	assert.deepEqual(extractCommandTokens(["--session", "named", "snapshot", "-i"]), [
-		"snapshot",
-		"-i",
-	]);
-	assert.deepEqual(
-		extractCommandTokens(["--session", "named", "--user-agent", "Mozilla/5.0", "click", "@e9"]),
-		["click", "@e9"],
-	);
-});
-
-test("chooseOpenResultTabCorrection targets the navigated tab without disturbing already-correct active tabs", () => {
-	assert.deepEqual(
-		chooseOpenResultTabCorrection({
-			tabs: [
-				{ active: false, tabId: "t1", title: "Example Domain", url: "https://example.com/" },
-				{ active: true, tabId: "t2", title: "Grok", url: "https://grok.com/" },
-			],
-			targetTitle: "Example Domain",
-			targetUrl: "https://example.com",
-		}),
-		{
-			selectedTab: "t1",
-			selectionKind: "tabId",
-			targetTitle: "Example Domain",
-			targetUrl: "https://example.com/",
-		},
-	);
-	assert.deepEqual(
-		chooseOpenResultTabCorrection({
-			tabs: [
-				{ active: true, tabId: "blank", title: "", url: "about:blank" },
-				{ active: false, tabId: "app", title: "Example Domain", url: "https://example.com/" },
-			],
-			targetTitle: "Example Domain",
-			targetUrl: "https://example.com/",
-		}),
-		{
-			selectedTab: "app",
-			selectionKind: "tabId",
-			targetTitle: "Example Domain",
-			targetUrl: "https://example.com/",
-		},
-	);
-	assert.equal(
-		chooseOpenResultTabCorrection({
-			tabs: [{ active: true, tabId: "t1", title: "Example Domain", url: "https://example.com/" }],
-			targetTitle: "Example Domain",
-			targetUrl: "https://example.com/",
-		}),
-		undefined,
-	);
-	assert.equal(
-		chooseOpenResultTabCorrection({
-			tabs: [
-				{ active: true, tabId: "current", title: "Guide", url: "https://example.com/guide#intro" },
-				{ active: false, tabId: "anchor", title: "Guide", url: "https://example.com/guide#setup" },
-			],
-			targetTitle: "Guide",
-			targetUrl: "https://example.com/guide#setup",
-		}),
-		undefined,
-		"a fragment-only difference keeps the already-correct active tab",
-	);
-	assert.deepEqual(
-		chooseOpenResultTabCorrection({
-			tabs: [
-				{ active: true, tabId: "old", title: "Search", url: "https://example.com/search?q=old" },
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				electron: {
+					launchId: "el_123",
+					sessionName: "pi-agent-browser-electron-el_123",
+					status: "active",
+				},
+				resultCategory: "success",
+				successCategory: "completed",
+			})?.map((action) => ({ id: action.id, params: action.params })),
+			[
+				{ id: "status-electron-launch", params: { action: "status", launchId: "el_123" } },
+				{ id: "probe-electron-launch", params: { action: "probe", launchId: "el_123" } },
+				{ id: "cleanup-electron-launch", params: { action: "cleanup", launchId: "el_123" } },
 				{
-					active: false,
-					tabId: "new",
-					title: "Search",
-					url: "https://example.com/search?q=new#results",
+					id: "list-electron-tabs",
+					params: { args: ["--session", "pi-agent-browser-electron-el_123", "tab", "list"] },
+				},
+				{
+					id: "snapshot-electron-session",
+					params: { args: ["--session", "pi-agent-browser-electron-el_123", "snapshot", "-i"] },
 				},
 			],
-			targetTitle: "Search",
-			targetUrl: "https://example.com/search?q=new#top",
-		}),
-		{
-			selectedTab: "new",
-			selectionKind: "tabId",
-			targetTitle: "Search",
-			targetUrl: "https://example.com/search?q=new",
-		},
-		"query strings stay significant while fragments do not",
-	);
-	assert.equal(
-		chooseOpenResultTabCorrection({
-			tabs: [{ active: false, tabId: "raw", title: "Draft", url: "not a url" }],
-			targetTitle: "Draft",
-			targetUrl: "not a url",
-		}),
-		undefined,
-		"an unparseable target URL never matches raw tab text",
-	);
-});
+		);
+		assert.deepEqual(
+			buildAgentBrowserNextActions({
+				electron: { launchId: "el_456", status: "partial" },
+				failureCategory: "cleanup-failed",
+				resultCategory: "failure",
+			})?.map((action) => ({ id: action.id, params: action.params })),
+			[
+				{ id: "status-electron-launch", params: { action: "status", launchId: "el_456" } },
+				{ id: "retry-electron-cleanup", params: { action: "cleanup", launchId: "el_456" } },
+			],
+		);
+		assert.equal(
+			buildAgentBrowserNextActions({ resultCategory: "success", successCategory: "completed" }),
+			undefined,
+		);
+	},
+);
 
-test("buildToolPresentation renders stable tab ids from tab list output", async () => {
+nodeTest(
+	"extractCommandTokens strips wrapper-level global flags and keeps the command tail intact",
+	() => {
+		assert.deepEqual(extractCommandTokens(["--session", "named", "snapshot", "-i"]), [
+			"snapshot",
+			"-i",
+		]);
+		assert.deepEqual(
+			extractCommandTokens(["--session", "named", "--user-agent", "Mozilla/5.0", "click", "@e9"]),
+			["click", "@e9"],
+		);
+	},
+);
+
+nodeTest(
+	"chooseOpenResultTabCorrection targets the navigated tab without disturbing already-correct active tabs",
+	() => {
+		assert.deepEqual(
+			chooseOpenResultTabCorrection({
+				tabs: [
+					{ active: false, tabId: "t1", title: "Example Domain", url: "https://example.com/" },
+					{ active: true, tabId: "t2", title: "Grok", url: "https://grok.com/" },
+				],
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com",
+			}),
+			{
+				selectedTab: "t1",
+				selectionKind: "tabId",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			},
+		);
+		assert.deepEqual(
+			chooseOpenResultTabCorrection({
+				tabs: [
+					{ active: true, tabId: "blank", title: "", url: "about:blank" },
+					{ active: false, tabId: "app", title: "Example Domain", url: "https://example.com/" },
+				],
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			}),
+			{
+				selectedTab: "app",
+				selectionKind: "tabId",
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			},
+		);
+		assert.equal(
+			chooseOpenResultTabCorrection({
+				tabs: [{ active: true, tabId: "t1", title: "Example Domain", url: "https://example.com/" }],
+				targetTitle: "Example Domain",
+				targetUrl: "https://example.com/",
+			}),
+			undefined,
+		);
+		assert.equal(
+			chooseOpenResultTabCorrection({
+				tabs: [
+					{
+						active: true,
+						tabId: "current",
+						title: "Guide",
+						url: "https://example.com/guide#intro",
+					},
+					{
+						active: false,
+						tabId: "anchor",
+						title: "Guide",
+						url: "https://example.com/guide#setup",
+					},
+				],
+				targetTitle: "Guide",
+				targetUrl: "https://example.com/guide#setup",
+			}),
+			undefined,
+			"a fragment-only difference keeps the already-correct active tab",
+		);
+		assert.deepEqual(
+			chooseOpenResultTabCorrection({
+				tabs: [
+					{ active: true, tabId: "old", title: "Search", url: "https://example.com/search?q=old" },
+					{
+						active: false,
+						tabId: "new",
+						title: "Search",
+						url: "https://example.com/search?q=new#results",
+					},
+				],
+				targetTitle: "Search",
+				targetUrl: "https://example.com/search?q=new#top",
+			}),
+			{
+				selectedTab: "new",
+				selectionKind: "tabId",
+				targetTitle: "Search",
+				targetUrl: "https://example.com/search?q=new",
+			},
+			"query strings stay significant while fragments do not",
+		);
+		assert.equal(
+			chooseOpenResultTabCorrection({
+				tabs: [{ active: false, tabId: "raw", title: "Draft", url: "not a url" }],
+				targetTitle: "Draft",
+				targetUrl: "not a url",
+			}),
+			undefined,
+			"an unparseable target URL never matches raw tab text",
+		);
+	},
+);
+
+nodeTest("buildToolPresentation renders stable tab ids from tab list output", async () => {
 	const presentation = await buildToolPresentation({
 		commandInfo: { command: "tab", subcommand: "list" },
 		cwd: process.cwd(),
@@ -1183,7 +1232,7 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 		},
 	});
 
-	assert.equal(presentation.content[0].type, "text");
+	assert.equal(readDefined(presentation.content[0]).type, "text");
 	assert.match(
 		readString(readRecord(presentation.content[0]).text),
 		/- \[t1\] label=chat target=4A0B7C4E1F2D3A4B5C6D7E8F90A1B2C3 ChatGPT — https:\/\/chatgpt\.com\//,
@@ -1195,39 +1244,42 @@ test("buildToolPresentation renders stable tab ids from tab list output", async 
 	assert.equal(presentation.summary, "Tabs: 2");
 });
 
-test("buildToolPresentation classifies tab_gone envelopes and recommends tab recovery", async () => {
-	const errorText = getAgentBrowserErrorText({
-		aborted: false,
-		envelope: {
-			success: false,
-			error:
-				"tab_gone: bound tab is gone (target ABC, last url https://example.com/aborted). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
-		},
-		exitCode: 1,
-		plainTextInspection: false,
-		stderr: "",
-	});
-	assert.match(errorText ?? "", /^tab_gone:/);
+nodeTest(
+	"buildToolPresentation classifies tab_gone envelopes and recommends tab recovery",
+	async () => {
+		const errorText = getAgentBrowserErrorText({
+			aborted: false,
+			envelope: {
+				success: false,
+				error:
+					"tab_gone: bound tab is gone (target ABC, last url https://example.com/aborted). Run `agent-browser tab new <url>` to bind a new tab, or `agent-browser tab list` to pick an existing one",
+			},
+			exitCode: 1,
+			plainTextInspection: false,
+			stderr: "",
+		});
+		assert.match(errorText ?? "", /^tab_gone:/);
 
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot", subcommand: "-i" },
-		cwd: process.cwd(),
-		errorText,
-	});
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot", subcommand: "-i" },
+			cwd: process.cwd(),
+			errorText,
+		});
 
-	assert.equal(presentation.failureCategory, "tab-gone");
-	assert.deepEqual(
-		presentation.nextActions?.map((action) => action.id),
-		["list-tabs-after-tab-gone", "open-tab-after-tab-gone"],
-	);
-});
+		assert.equal(presentation.failureCategory, "tab-gone");
+		assert.deepEqual(
+			presentation.nextActions?.map((action) => action.id),
+			["list-tabs-after-tab-gone", "open-tab-after-tab-gone"],
+		);
+	},
+);
 
-test("parseAgentBrowserEnvelope reports invalid JSON clearly", async () => {
+nodeTest("parseAgentBrowserEnvelope reports invalid JSON clearly", async () => {
 	const parsed = await parseAgentBrowserEnvelope("not-json");
 	assert.match(parsed.parseError ?? "", /invalid JSON/i);
 });
 
-test("parseAgentBrowserEnvelope accepts batch JSON arrays", async () => {
+nodeTest("parseAgentBrowserEnvelope accepts batch JSON arrays", async () => {
 	const parsed = await parseAgentBrowserEnvelope(
 		JSON.stringify([
 			{
@@ -1244,23 +1296,26 @@ test("parseAgentBrowserEnvelope accepts batch JSON arrays", async () => {
 	assert.equal(parsed.envelope?.success, true);
 });
 
-test("parseAgentBrowserEnvelope accepts exact plugin list and show success envelopes", async () => {
-	const list = await parseAgentBrowserEnvelope(JSON.stringify({ plugins: [] }));
-	const show = await parseAgentBrowserEnvelope(
-		JSON.stringify({ plugin: { capabilities: ["command.run"], name: "demo" } }),
-	);
+nodeTest(
+	"parseAgentBrowserEnvelope accepts exact plugin list and show success envelopes",
+	async () => {
+		const list = await parseAgentBrowserEnvelope(JSON.stringify({ plugins: [] }));
+		const show = await parseAgentBrowserEnvelope(
+			JSON.stringify({ plugin: { capabilities: ["command.run"], name: "demo" } }),
+		);
 
-	assert.equal(list.parseError, undefined);
-	assert.equal(list.envelope?.success, true);
-	assert.deepEqual(list.envelope.data, { plugins: [] });
-	assert.equal(show.parseError, undefined);
-	assert.equal(show.envelope?.success, true);
-	assert.deepEqual(show.envelope.data, {
-		plugin: { capabilities: ["command.run"], name: "demo" },
-	});
-});
+		assert.equal(list.parseError, undefined);
+		assert.equal(list.envelope?.success, true);
+		assert.deepEqual(list.envelope.data, { plugins: [] });
+		assert.equal(show.parseError, undefined);
+		assert.equal(show.envelope?.success, true);
+		assert.deepEqual(show.envelope.data, {
+			plugin: { capabilities: ["command.run"], name: "demo" },
+		});
+	},
+);
 
-test("parseAgentBrowserEnvelope rejects object envelopes without boolean success", async () => {
+nodeTest("parseAgentBrowserEnvelope rejects object envelopes without boolean success", async () => {
 	const parsed = await parseAgentBrowserEnvelope(JSON.stringify({ error: "boom" }));
 	const malformedPlugin = await parseAgentBrowserEnvelope(JSON.stringify({ plugin: ["demo"] }));
 
@@ -1270,42 +1325,51 @@ test("parseAgentBrowserEnvelope rejects object envelopes without boolean success
 	assert.equal(malformedPlugin.parseError, MISSING_SUCCESS_PARSE_ERROR);
 });
 
-test("parseAgentBrowserEnvelope rejects object envelopes with non-boolean success", async () => {
-	const parsed = await parseAgentBrowserEnvelope(
-		JSON.stringify({ success: "true", data: { title: "ok" } }),
-	);
+nodeTest(
+	"parseAgentBrowserEnvelope rejects object envelopes with non-boolean success",
+	async () => {
+		const parsed = await parseAgentBrowserEnvelope(
+			JSON.stringify({ success: "true", data: { title: "ok" } }),
+		);
 
-	assert.equal(parsed.envelope, undefined);
-	assert.equal(parsed.parseError, NON_BOOLEAN_SUCCESS_PARSE_ERROR);
-});
+		assert.equal(parsed.envelope, undefined);
+		assert.equal(parsed.parseError, NON_BOOLEAN_SUCCESS_PARSE_ERROR);
+	},
+);
 
-test("parseAgentBrowserEnvelope accepts valid object envelopes with boolean success", async () => {
-	const parsed = await parseAgentBrowserEnvelope(
-		JSON.stringify({ success: true, data: { title: "ok" } }),
-	);
+nodeTest(
+	"parseAgentBrowserEnvelope accepts valid object envelopes with boolean success",
+	async () => {
+		const parsed = await parseAgentBrowserEnvelope(
+			JSON.stringify({ success: true, data: { title: "ok" } }),
+		);
 
-	assert.equal(parsed.parseError, undefined);
-	assert.deepEqual(parsed.envelope, { success: true, data: { title: "ok" } });
-});
+		assert.equal(parsed.parseError, undefined);
+		assert.deepEqual(parsed.envelope, { success: true, data: { title: "ok" } });
+	},
+);
 
-test("parseAgentBrowserEnvelope treats top-level success responses as data when data is omitted", async () => {
-	const parsed = await parseAgentBrowserEnvelope(
-		JSON.stringify({
+nodeTest(
+	"parseAgentBrowserEnvelope treats top-level success responses as data when data is omitted",
+	async () => {
+		const parsed = await parseAgentBrowserEnvelope(
+			JSON.stringify({
+				checks: [{ message: "ok", status: "pass" }],
+				success: true,
+				summary: { fail: 0, pass: 1 },
+			}),
+		);
+
+		assert.equal(parsed.parseError, undefined);
+		assert.equal(parsed.envelope?.success, true);
+		assert.deepEqual(parsed.envelope.data, {
 			checks: [{ message: "ok", status: "pass" }],
-			success: true,
 			summary: { fail: 0, pass: 1 },
-		}),
-	);
+		});
+	},
+);
 
-	assert.equal(parsed.parseError, undefined);
-	assert.equal(parsed.envelope?.success, true);
-	assert.deepEqual(parsed.envelope.data, {
-		checks: [{ message: "ok", status: "pass" }],
-		summary: { fail: 0, pass: 1 },
-	});
-});
-
-test("getAgentBrowserErrorText explains wrapper watchdog timeouts", () => {
+nodeTest("getAgentBrowserErrorText explains wrapper watchdog timeouts", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,
 		exitCode: 124,
@@ -1333,12 +1397,12 @@ test("getAgentBrowserErrorText explains wrapper watchdog timeouts", () => {
 	);
 });
 
-test("getAgentBrowserErrorText explains upstream IPC read timeouts", () => {
-	for (const upstreamError of [
+nodeTest("getAgentBrowserErrorText explains upstream IPC read timeouts", () => {
+	const errors = [
 		"Failed to read: Resource temporarily unavailable (os error 35) (after 5 retries - daemon may be busy or unresponsive)",
 		"Failed to read: Resource temporarily unavailable (os error 11) (after 5 retries - daemon may be busy or unresponsive)",
-	]) {
-		const errorText = getAgentBrowserErrorText({
+	].map((upstreamError) =>
+		getAgentBrowserErrorText({
 			aborted: false,
 			envelope: {
 				success: false,
@@ -1347,18 +1411,19 @@ test("getAgentBrowserErrorText explains upstream IPC read timeouts", () => {
 			exitCode: 1,
 			plainTextInspection: false,
 			stderr: "",
-		});
-
-		// The nonempty upstreamError fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(errorText ?? "", /30s IPC read timeout/);
-		// The nonempty upstreamError fixture matrix exhaustively verifies each case; any failed assertion fails the test.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(errorText ?? "", /daemon may still be alive/);
-	}
+		}),
+	);
+	assert.deepEqual(
+		errors.filter(
+			(errorText) =>
+				!/30s IPC read timeout/.test(errorText ?? "") ||
+				!/daemon may still be alive/.test(errorText ?? ""),
+		),
+		[],
+	);
 });
 
-test("getAgentBrowserErrorText prefers envelope errors over generic exit codes", () => {
+nodeTest("getAgentBrowserErrorText prefers envelope errors over generic exit codes", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,
 		envelope: { success: false, error: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" },
@@ -1370,7 +1435,7 @@ test("getAgentBrowserErrorText prefers envelope errors over generic exit codes",
 	assert.equal(errorText, "Navigation failed: net::ERR_BLOCKED_BY_CLIENT");
 });
 
-test("getAgentBrowserErrorText adds stale-ref recovery guidance for failed @refs", () => {
+nodeTest("getAgentBrowserErrorText adds stale-ref recovery guidance for failed @refs", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,
 		effectiveArgs: ["--json", "--session", "named", "get", "text", "@e4"],
@@ -1385,7 +1450,7 @@ test("getAgentBrowserErrorText adds stale-ref recovery guidance for failed @refs
 	assert.match(errorText ?? "", /snapshot/);
 });
 
-test("getAgentBrowserErrorText extracts nested envelope error messages", () => {
+nodeTest("getAgentBrowserErrorText extracts nested envelope error messages", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,
 		envelope: { success: false, error: { details: { message: "Profile directory is locked" } } },
@@ -1397,78 +1462,87 @@ test("getAgentBrowserErrorText extracts nested envelope error messages", () => {
 	assert.equal(errorText, "Profile directory is locked");
 });
 
-test("getAgentBrowserErrorText falls back to stderr or an invocation-aware message when a failed envelope has no simple error field", () => {
-	const stderrFallback = getAgentBrowserErrorText({
-		aborted: false,
-		command: "open",
-		effectiveArgs: ["--json", "open", "https://example.com"],
-		envelope: { success: false, data: { title: "Wrong page" } },
-		exitCode: 1,
-		plainTextInspection: false,
-		stderr: "Navigation failed upstream",
-	});
-	const invocationFallback = getAgentBrowserErrorText({
-		aborted: false,
-		command: "open",
-		effectiveArgs: ["--json", "open", "https://example.com"],
-		envelope: { success: false, data: { title: "Wrong page" } },
-		exitCode: 1,
-		plainTextInspection: false,
-		stderr: "",
-	});
+nodeTest(
+	"getAgentBrowserErrorText falls back to stderr or an invocation-aware message when a failed envelope has no simple error field",
+	() => {
+		const stderrFallback = getAgentBrowserErrorText({
+			aborted: false,
+			command: "open",
+			effectiveArgs: ["--json", "open", "https://example.com"],
+			envelope: { success: false, data: { title: "Wrong page" } },
+			exitCode: 1,
+			plainTextInspection: false,
+			stderr: "Navigation failed upstream",
+		});
+		const invocationFallback = getAgentBrowserErrorText({
+			aborted: false,
+			command: "open",
+			effectiveArgs: ["--json", "open", "https://example.com"],
+			envelope: { success: false, data: { title: "Wrong page" } },
+			exitCode: 1,
+			plainTextInspection: false,
+			stderr: "",
+		});
 
-	assert.equal(stderrFallback, "Navigation failed upstream");
-	assert.equal(
-		invocationFallback,
-		"agent-browser --json open https://example.com reported failure (exit code 1).",
-	);
-});
+		assert.equal(stderrFallback, "Navigation failed upstream");
+		assert.equal(
+			invocationFallback,
+			"agent-browser --json open https://example.com reported failure (exit code 1).",
+		);
+	},
+);
 
-test("getAgentBrowserErrorText falls back to command-aware exit codes when no envelope error exists", () => {
-	const errorText = getAgentBrowserErrorText({
-		aborted: false,
-		command: "snapshot",
-		envelope: { success: true, data: null },
-		exitCode: 1,
-		plainTextInspection: false,
-		stderr: "",
-	});
+nodeTest(
+	"getAgentBrowserErrorText falls back to command-aware exit codes when no envelope error exists",
+	() => {
+		const errorText = getAgentBrowserErrorText({
+			aborted: false,
+			command: "snapshot",
+			envelope: { success: true, data: null },
+			exitCode: 1,
+			plainTextInspection: false,
+			stderr: "",
+		});
 
-	assert.equal(errorText, "agent-browser snapshot exited with code 1.");
-});
+		assert.equal(errorText, "agent-browser snapshot exited with code 1.");
+	},
+);
 
-test("getAgentBrowserErrorText appends wrapper recovery hints only to fallback messages", () => {
-	const wrapperRecoveryHint =
-		"Wrapper recovery hint: inspect details.effectiveArgs and run tab list before retrying.";
-	const fallbackErrorText = getAgentBrowserErrorText({
-		aborted: false,
-		command: "batch",
-		effectiveArgs: ["--json", "--session", "named", "batch"],
-		envelope: { success: false, data: { title: "Wrong page" } },
-		exitCode: 1,
-		plainTextInspection: false,
-		stderr: "",
-		wrapperRecoveryHint,
-	});
-	const explicitErrorText = getAgentBrowserErrorText({
-		aborted: false,
-		command: "batch",
-		effectiveArgs: ["--json", "--session", "named", "batch"],
-		envelope: { success: false, error: "Upstream failure" },
-		exitCode: 1,
-		plainTextInspection: false,
-		stderr: "",
-		wrapperRecoveryHint,
-	});
+nodeTest(
+	"getAgentBrowserErrorText appends wrapper recovery hints only to fallback messages",
+	() => {
+		const wrapperRecoveryHint =
+			"Wrapper recovery hint: inspect details.effectiveArgs and run tab list before retrying.";
+		const fallbackErrorText = getAgentBrowserErrorText({
+			aborted: false,
+			command: "batch",
+			effectiveArgs: ["--json", "--session", "named", "batch"],
+			envelope: { success: false, data: { title: "Wrong page" } },
+			exitCode: 1,
+			plainTextInspection: false,
+			stderr: "",
+			wrapperRecoveryHint,
+		});
+		const explicitErrorText = getAgentBrowserErrorText({
+			aborted: false,
+			command: "batch",
+			effectiveArgs: ["--json", "--session", "named", "batch"],
+			envelope: { success: false, error: "Upstream failure" },
+			exitCode: 1,
+			plainTextInspection: false,
+			stderr: "",
+			wrapperRecoveryHint,
+		});
 
-	assert.equal(
-		fallbackErrorText,
-		"agent-browser --json --session named batch reported failure (exit code 1).\nWrapper recovery hint: inspect details.effectiveArgs and run tab list before retrying.",
-	);
-	assert.equal(explicitErrorText, "Upstream failure");
-});
+		assert.equal(
+			fallbackErrorText,
+			"agent-browser --json --session named batch reported failure (exit code 1).\nWrapper recovery hint: inspect details.effectiveArgs and run tab list before retrying.",
+		);
+		assert.equal(explicitErrorText, "Upstream failure");
+	},
+);
 
-test("getAgentBrowserErrorText defers mixed batch failures to batch rendering", () => {
+nodeTest("getAgentBrowserErrorText defers mixed batch failures to batch rendering", () => {
 	const errorText = getAgentBrowserErrorText({
 		aborted: false,
 		envelope: {
@@ -1490,20 +1564,23 @@ test("getAgentBrowserErrorText defers mixed batch failures to batch rendering", 
 	assert.equal(errorText, undefined);
 });
 
-test("getAgentBrowserErrorText prefers spill/write failures over downstream parse errors", () => {
-	const errorText = getAgentBrowserErrorText({
-		aborted: false,
-		exitCode: 0,
-		parseError: "agent-browser returned invalid JSON: Unexpected end of JSON input",
-		plainTextInspection: false,
-		spawnError: new Error("pi-agent-browser temp spill budget exceeded"),
-		stderr: "",
-	});
+nodeTest(
+	"getAgentBrowserErrorText prefers spill/write failures over downstream parse errors",
+	() => {
+		const errorText = getAgentBrowserErrorText({
+			aborted: false,
+			exitCode: 0,
+			parseError: "agent-browser returned invalid JSON: Unexpected end of JSON input",
+			plainTextInspection: false,
+			spawnError: new Error("pi-agent-browser temp spill budget exceeded"),
+			stderr: "",
+		});
 
-	assert.equal(errorText, "pi-agent-browser temp spill budget exceeded");
-});
+		assert.equal(errorText, "pi-agent-browser temp spill budget exceeded");
+	},
+);
 
-test("extractQaPageContext prefers native batch page over compiled checks url", async () => {
+nodeTest("extractQaPageContext prefers native batch page over compiled checks url", async () => {
 	const { extractQaPageContext } =
 		await import("../extensions/agent-browser/lib/input-modes/job.js");
 	const page = extractQaPageContext({
@@ -1535,7 +1612,7 @@ test("extractQaPageContext prefers native batch page over compiled checks url", 
 	assert.equal(page.url, "https://example.test/");
 });
 
-test("buildQaCompactPassText summarizes successful URL QA", async () => {
+nodeTest("buildQaCompactPassText summarizes successful URL QA", async () => {
 	const { buildQaCompactPassText } =
 		await import("../extensions/agent-browser/lib/input-modes/job.js");
 	const compact = buildQaCompactPassText({
@@ -1570,49 +1647,52 @@ test("buildQaCompactPassText summarizes successful URL QA", async () => {
 	assert.match(compact, /Full diagnostic matrix: see details\.qaPreset and details\.batchSteps\./);
 });
 
-test("buildQaCompactFailureText leads with the redacted cause and reports execution coverage", async () => {
-	const { buildQaCompactFailureText } =
-		await import("../extensions/agent-browser/lib/input-modes/job.js");
-	const compact = buildQaCompactFailureText({
-		causalError: "Navigation failed: https://[REDACTED]/",
-		executedStepCount: 5,
-		plannedStepCount: 13,
-		qaPreset: {
-			failedChecks: ["open failed"],
-			notRunChecks: ['expected text: "Welcome"'],
-			passed: false,
-			summary: "QA preset failed: token=raw-secret.",
-			warnings: [],
-		},
-	});
-	assert.equal(compact.split("\n")[0], "Navigation failed: https://[REDACTED]/");
-	assert.match(compact, /Failed checks:\n- open failed/);
-	assert.match(compact, /Not run:\n- expected text: "Welcome"/);
-	assert.match(compact, /Execution: 5\/13 batch steps/);
-	assert.doesNotMatch(compact, /raw-secret/);
-	const unknown = buildQaCompactFailureText({
-		plannedStepCount: 13,
-		qaPreset: {
-			failedChecks: ["expected text was not verified before timeout"],
-			notRunChecks: [],
-			passed: false,
-			summary: "QA preset failed.",
-			warnings: [],
-		},
-	});
-	assert.match(unknown, /Execution: unknown\/13 batch steps/);
-	assert.doesNotMatch(unknown, /Execution: 0\/|Not run:/);
-	const longCause = buildQaCompactFailureText({
-		causalError: "Navigation failed:\n" + "x".repeat(10000),
-		plannedStepCount: 13,
-		qaPreset: {
-			failedChecks: ["open failed"],
-			notRunChecks: [],
-			passed: false,
-			summary: "QA preset failed.",
-			warnings: [],
-		},
-	});
-	assert.ok(longCause.split("\n")[0].length <= 700);
-	assert.match(longCause, /^Navigation failed: x/);
-});
+nodeTest(
+	"buildQaCompactFailureText leads with the redacted cause and reports execution coverage",
+	async () => {
+		const { buildQaCompactFailureText } =
+			await import("../extensions/agent-browser/lib/input-modes/job.js");
+		const compact = buildQaCompactFailureText({
+			causalError: "Navigation failed: https://[REDACTED]/",
+			executedStepCount: 5,
+			plannedStepCount: 13,
+			qaPreset: {
+				failedChecks: ["open failed"],
+				notRunChecks: ['expected text: "Welcome"'],
+				passed: false,
+				summary: "QA preset failed: token=raw-secret.",
+				warnings: [],
+			},
+		});
+		assert.equal(compact.split("\n")[0], "Navigation failed: https://[REDACTED]/");
+		assert.match(compact, /Failed checks:\n- open failed/);
+		assert.match(compact, /Not run:\n- expected text: "Welcome"/);
+		assert.match(compact, /Execution: 5\/13 batch steps/);
+		assert.doesNotMatch(compact, /raw-secret/);
+		const unknown = buildQaCompactFailureText({
+			plannedStepCount: 13,
+			qaPreset: {
+				failedChecks: ["expected text was not verified before timeout"],
+				notRunChecks: [],
+				passed: false,
+				summary: "QA preset failed.",
+				warnings: [],
+			},
+		});
+		assert.match(unknown, /Execution: unknown\/13 batch steps/);
+		assert.doesNotMatch(unknown, /Execution: 0\/|Not run:/);
+		const longCause = buildQaCompactFailureText({
+			causalError: "Navigation failed:\n" + "x".repeat(10000),
+			plannedStepCount: 13,
+			qaPreset: {
+				failedChecks: ["open failed"],
+				notRunChecks: [],
+				passed: false,
+				summary: "QA preset failed.",
+				warnings: [],
+			},
+		});
+		assert.ok(readDefined(longCause.split("\n")[0]).length <= 700);
+		assert.match(longCause, /^Navigation failed: x/);
+	},
+);

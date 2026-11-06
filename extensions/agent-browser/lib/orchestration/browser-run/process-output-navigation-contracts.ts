@@ -1,8 +1,7 @@
 import type { ProcessBrowserOutputInput, PreparedBrowserRun, BrowserRunState } from "./types.js";
 import type { PageOutputPhase } from "./process-output-page-phase-contracts.js";
-export type VerifyClickDispatchInput = Pick<
-	PageOutputPhase,
-	"clickDispatchDiagnostic" | "presentationEnvelope" | "succeeded"
+export type VerifyClickDispatchInput = Readonly<
+	Pick<PageOutputPhase, "presentationEnvelope" | "succeeded">
 > & {
 	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
 		readonly prepared: Readonly<Pick<PreparedBrowserRun, "clickDispatchProbe" | "executionPlan">>;
@@ -17,17 +16,16 @@ export type ResolveResultingPageStateInput = Readonly<
 		| "presentationEnvelope"
 		| "sessionStateKey"
 	>
-> &
-	Pick<PageOutputPhase, "resultingPageState" | "tabTransition"> & {
-		readonly input: {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"executionPlan" | "priorSessionTabTarget" | "priorSessionTabTargetUnknown"
-				>
-			>;
-		} & { readonly state: BrowserRunState };
-	};
+> & {
+	readonly input: {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				"executionPlan" | "priorSessionTabTarget" | "priorSessionTabTargetUnknown"
+			>
+		>;
+	} & { readonly state: BrowserRunState };
+};
 export type HasNativeNavigationEvidenceInput = Readonly<
 	Pick<PageOutputPhase, "confirmedEffects" | "dispatchedCommands" | "presentationEnvelope">
 > & { readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> } };
@@ -68,7 +66,6 @@ export type CanReverifyFailedNavigationInput = Readonly<
 		| "directClose"
 		| "dispatchedCommands"
 		| "nativeCommandMayHaveExecuted"
-		| "navigationSummary"
 		| "nestedBatchClosed"
 		| "readConfirmation"
 		| "succeeded"
@@ -79,11 +76,10 @@ export type CanReverifyFailedNavigationInput = Readonly<
 	};
 };
 export type MergeObservedNavigationInput = Readonly<
-	Pick<PageOutputPhase, "navigationSummary" | "textOutput">
-> &
-	Pick<PageOutputPhase, "presentationEnvelope"> & {
-		readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> };
-	};
+	Pick<PageOutputPhase, "presentationEnvelope" | "textOutput">
+> & {
+	readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> };
+};
 export type ObserveNavigationTargetInput = Readonly<
 	Pick<
 		PageOutputPhase,
@@ -95,18 +91,18 @@ export type ObserveNavigationTargetInput = Readonly<
 		| "nestedBatchClosed"
 		| "processSucceeded"
 		| "readConfirmation"
-		| "sessionStateKey"
 		| "succeeded"
 		| "textOutput"
 	>
 > &
-	Pick<
-		PageOutputPhase,
-		| "failedTransitionReverification"
-		| "navigationSummary"
-		| "presentationEnvelope"
-		| "resultingPageState"
-		| "tabTransition"
+	Readonly<
+		Pick<
+			PageOutputPhase,
+			| "failedTransitionReverification"
+			| "navigationSummary"
+			| "presentationEnvelope"
+			| "tabTransition"
+		>
 	> & {
 		readonly input: Readonly<
 			Pick<ProcessBrowserOutputInput, "cwd" | "processResult" | "signal">
@@ -118,20 +114,18 @@ export type ObserveNavigationTargetInput = Readonly<
 					| "compiledSemanticAction"
 					| "executionPlan"
 					| "priorSessionTabTarget"
-					| "priorSessionTabTargetUnknown"
 					| "runtimeToolStdin"
 				>
 			>;
-		} & { readonly state: BrowserRunState };
-	};
-export type CorrectRestoredOpenTabInput = Readonly<
-	Pick<PageOutputPhase, "presentationEnvelope" | "succeeded">
-> &
-	Pick<PageOutputPhase, "openResultTabCorrection"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
 		};
 	};
+export type CorrectRestoredOpenTabInput = Readonly<
+	Pick<PageOutputPhase, "presentationEnvelope" | "succeeded" | "openResultTabCorrection">
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
+	};
+};
 export type VerifiesCurrentUrlInput = Readonly<
 	Pick<PageOutputPhase, "presentationEnvelope" | "readConfirmationEvent">
 > & {
@@ -155,17 +149,16 @@ export type ObserveWebMcpTargetInput = Readonly<
 		PageOutputPhase,
 		"presentationEnvelope" | "readConfirmationEvent" | "resultingPageState" | "succeeded"
 	>
-> &
-	Pick<PageOutputPhase, "trustsReportedPageTarget" | "unsettledWebMcpMutation"> & {
-		readonly input: {
-			readonly prepared: Readonly<
-				Pick<
-					PreparedBrowserRun,
-					"commandTokens" | "executionPlan" | "priorSessionTabTargetUnknown" | "readConfirmation"
-				>
-			>;
-		};
+> & {
+	readonly input: {
+		readonly prepared: Readonly<
+			Pick<
+				PreparedBrowserRun,
+				"commandTokens" | "executionPlan" | "priorSessionTabTargetUnknown" | "readConfirmation"
+			>
+		>;
 	};
+};
 export type ObservedPageTargetInput = Readonly<
 	Pick<
 		PageOutputPhase,
@@ -187,12 +180,11 @@ export type ResolveObservedTargetIdentityInput = Readonly<
 		PageOutputPhase,
 		"browserIndependentRead" | "directClose" | "nestedBatchClosed" | "readConfirmation"
 	>
-> &
-	Pick<PageOutputPhase, "observedSessionTabTarget"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
-			readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
+		readonly prepared: Readonly<Pick<PreparedBrowserRun, "commandTokens" | "executionPlan">>;
 	};
+};
 export type FallbackPageTargetInput = Readonly<
 	Pick<
 		PageOutputPhase,
@@ -228,14 +220,13 @@ export type ResolveObservedPageTargetInput = Readonly<
 		| "unobservedMutation"
 		| "unsettledWebMcpMutation"
 	>
-> &
-	Pick<PageOutputPhase, "currentSessionTabTarget" | "observedSessionTabTarget"> & {
-		readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
-			readonly prepared: Readonly<
-				Pick<PreparedBrowserRun, "commandTokens" | "executionPlan" | "priorSessionTabTarget">
-			>;
-		};
+> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "signal">> & {
+		readonly prepared: Readonly<
+			Pick<PreparedBrowserRun, "commandTokens" | "executionPlan" | "priorSessionTabTarget">
+		>;
 	};
+};
 export type ProcessCannotVerifyPageInput = Readonly<
 	Pick<PageOutputPhase, "nativeCommandMayHaveExecuted">
 > & { readonly input: Readonly<Pick<ProcessBrowserOutputInput, "processResult">> };

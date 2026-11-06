@@ -15,30 +15,45 @@ function nextQuotePosition(options: {
 	return options.char === "\\" ? options.quoteAfterNext : options.quoteAtNext;
 }
 
-function buildJsonBoundaries(text: string): Int32Array {
+function buildJsonBoundaries(text: string): DataView {
 	// Resolve each suffix once: skip strings and balanced groups to its first unmatched closer.
-	const boundaries = new Int32Array(text.length + 1).fill(-1);
+	const boundaries = new DataView(
+		new ArrayBuffer((text.length + 1) * Int32Array.BYTES_PER_ELEMENT),
+	);
+	boundaries.setInt32(text.length * Int32Array.BYTES_PER_ELEMENT, -1);
 	let quoteAtNext = -1;
 	let quoteAfterNext = -1;
 	for (let index = text.length - 1; index >= 0; index -= 1) {
-		const char = text[index];
+		const char = text.charAt(index);
 		switch (char) {
 			case "}":
 			case "]":
-				boundaries[index] = index;
+				boundaries.setInt32(index * Int32Array.BYTES_PER_ELEMENT, index);
 				break;
 			case '"':
-				boundaries[index] = quoteAtNext < 0 ? -1 : boundaries[quoteAtNext + 1];
+				boundaries.setInt32(
+					index * Int32Array.BYTES_PER_ELEMENT,
+					quoteAtNext < 0
+						? -1
+						: boundaries.getInt32((quoteAtNext + 1) * Int32Array.BYTES_PER_ELEMENT),
+				);
 				break;
 			case "{":
 			case "[": {
-				const end = boundaries[index + 1];
-				boundaries[index] =
-					end >= 0 && text[end] === (char === "{" ? "}" : "]") ? boundaries[end + 1] : -1;
+				const end = boundaries.getInt32((index + 1) * Int32Array.BYTES_PER_ELEMENT);
+				boundaries.setInt32(
+					index * Int32Array.BYTES_PER_ELEMENT,
+					end >= 0 && text[end] === (char === "{" ? "}" : "]")
+						? boundaries.getInt32((end + 1) * Int32Array.BYTES_PER_ELEMENT)
+						: -1,
+				);
 				break;
 			}
 			default:
-				boundaries[index] = boundaries[index + 1];
+				boundaries.setInt32(
+					index * Int32Array.BYTES_PER_ELEMENT,
+					boundaries.getInt32((index + 1) * Int32Array.BYTES_PER_ELEMENT),
+				);
 		}
 		const quote = nextQuotePosition({ char, index, quoteAtNext, quoteAfterNext });
 		quoteAfterNext = quoteAtNext;
@@ -48,14 +63,14 @@ function buildJsonBoundaries(text: string): Int32Array {
 }
 
 function createBalancedJsonEndFinder(text: string): (startIndex: number) => number | undefined {
-	let boundaries: Int32Array | undefined;
+	let boundaries: DataView | undefined;
 	return (startIndex) => {
 		const opener = text[startIndex];
 		if (opener !== "{" && opener !== "[") {
 			return;
 		}
 		boundaries ??= buildJsonBoundaries(text);
-		const end = boundaries[startIndex + 1];
+		const end = boundaries.getInt32((startIndex + 1) * Int32Array.BYTES_PER_ELEMENT);
 		return end >= 0 && text[end] === (opener === "{" ? "}" : "]") ? end : undefined;
 	};
 }
@@ -100,7 +115,7 @@ function findJsonValueEnd(
 		return parseJsonString(fieldValue[0]) === "[REDACTED]" ? undefined : strings.lastIndex;
 	}
 	let end = start;
-	while (end < text.length && !/[\s,\]}]/.test(text[end])) {
+	while (end < text.length && !/[\s,\]}]/.test(text.charAt(end))) {
 		end += 1;
 	}
 	return end;

@@ -158,7 +158,7 @@ export function buildElectronHostFailureResult(
 			| "upstream-error"
 			| "validation-error";
 		launchFailure?: ElectronLaunchFailure;
-		managedSessionOutcome?: ManagedSessionOutcome;
+		managedSessionOutcome?: ManagedSessionOutcome | undefined;
 		status?: string;
 	}>,
 ): AgentBrowserToolResult {

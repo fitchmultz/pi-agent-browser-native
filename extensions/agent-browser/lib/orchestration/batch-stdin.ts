@@ -1,4 +1,4 @@
-import { projectUpstreamGlobalFlags } from "../argv-grammar.js";
+import { projectUpstreamGlobalFlags, type IndexedArgvToken } from "../argv-grammar.js";
 import { isStringArray } from "../input-modes/shared.js";
 import { isRecord } from "../parsing.js";
 import type { AgentBrowserEnvelope } from "../results/contracts.js";
@@ -15,40 +15,40 @@ export function normalizeUrlLessOpen(
 	args: readonly string[],
 	stdin?: string,
 	batchStep = false,
-): { args: readonly string[]; stdin?: string } {
-	const { tokens, indices } = batchStep
-		? { tokens: args, indices: args.map((_, index) => index) }
+): { args: readonly string[]; stdin?: string | undefined } {
+	const [command, ...operands] = batchStep
+		? args.map((token, index) => ({ token, index }))
 		: projectUpstreamGlobalFlags(args);
-	if (tokens[0] === "open" && !tokens.slice(1).some((token) => !token.startsWith("--"))) {
-		const index = indices[0];
+	if (command?.token === "open" && !operands.some(({ token }) => !token.startsWith("--"))) {
+		const index = command.index;
 		return { args: [...args.slice(0, index), "get", "url", ...args.slice(index + 1)], stdin };
 	}
-	if (tokens[0] !== "batch") {
+	if (command?.token !== "batch") {
 		return { args, stdin };
 	}
-	if (tokens.slice(1).some((token) => !isNativeBatchOption(token))) {
-		return { args: normalizeRawBatchRows(args, tokens, indices), stdin };
+	if (operands.some(({ token }) => !isNativeBatchOption(token))) {
+		return { args: normalizeRawBatchRows(args, operands), stdin };
 	}
+	return { args, stdin: normalizeBatchStdinOpens(stdin) };
+}
+
+function normalizeBatchStdinOpens(stdin: string | undefined): string | undefined {
 	const steps = parseUserBatchStdin(stdin).steps;
 	if (steps === undefined || steps.length === 0) {
-		return { args, stdin };
+		return stdin;
 	}
 	const normalized = steps.map((step) => normalizeUrlLessOpen(step, undefined, true).args);
-	return {
-		args,
-		stdin: normalized.some((step, index) => step !== steps[index])
-			? JSON.stringify(normalized)
-			: stdin,
-	};
+	return normalized.some((step, index) => step !== steps[index])
+		? JSON.stringify(normalized)
+		: stdin;
 }
 
 function normalizeRawBatchRows(
 	args: readonly string[],
-	tokens: readonly string[],
-	indices: readonly number[],
+	operands: readonly IndexedArgvToken[],
 ): readonly string[] {
 	let normalized: string[] | undefined;
-	for (const [offset, token] of tokens.slice(1).entries()) {
+	for (const { index, token } of operands) {
 		if (isNativeBatchOption(token)) {
 			continue;
 		}
@@ -61,9 +61,7 @@ function normalizeRawBatchRows(
 			continue;
 		}
 		normalized ??= [...args];
-		normalized[indices[offset + 1]] = row
-			.map((word) => `'${word.replaceAll("'", "'\\''")}'`)
-			.join(" ");
+		normalized[index] = row.map((word) => `'${word.replaceAll("'", "'\\''")}'`).join(" ");
 	}
 	return normalized ?? args;
 }
@@ -128,7 +126,7 @@ export function parseBatchCommandArgument(command: string): {
 } {
 	const words = new BatchWords();
 	for (let index = 0; index < command.length; index++) {
-		if (words.consume(command[index], command.at(index + 1))) {
+		if (words.consume(command.charAt(index), command.at(index + 1))) {
 			index++;
 		}
 	}
@@ -206,7 +204,7 @@ export function parseUserBatchStdin(stdin: string | undefined): {
  */
 export function getUpstreamEffectiveBatchSteps(
 	commandTokens: readonly string[],
-	stdin: string | undefined,
+	stdin?: string,
 ): BatchCommandStep[] {
 	return getUpstreamBatchInputSteps(commandTokens, stdin).filter((step) => step.length > 0);
 }

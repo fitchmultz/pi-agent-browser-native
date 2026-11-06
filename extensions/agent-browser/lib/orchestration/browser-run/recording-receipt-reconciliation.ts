@@ -80,7 +80,7 @@ function buildStartReservation(
 
 function recoverySource(options: RecordingRecoveryOptions): {
 	readonly batch: boolean;
-	readonly rows?: readonly unknown[];
+	readonly rows?: readonly unknown[] | undefined;
 	readonly steps: readonly (readonly string[])[];
 } {
 	const batch = options.commandTokens[0] === "batch";
@@ -179,7 +179,7 @@ function sameNativeSession(info: unknown, options: RecordingRecoveryOptions): bo
 }
 
 export interface RecordingReceiptEvidence {
-	readonly current?: RecordingReceipt;
+	readonly current?: RecordingReceipt | undefined;
 	readonly data?: unknown;
 	readonly receipt?: RecordingReceipt;
 	readonly reason: string;

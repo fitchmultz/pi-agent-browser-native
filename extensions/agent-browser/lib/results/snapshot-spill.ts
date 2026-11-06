@@ -44,10 +44,10 @@ export async function writeSnapshotSpillFile(
 }
 
 export function applySnapshotArtifactManifest(options: {
-	readonly baseManifest?: SessionArtifactManifest;
+	readonly baseManifest?: SessionArtifactManifest | undefined;
 	readonly command?: string;
-	readonly fullOutputPath?: string;
-	readonly spill?: SnapshotSpillWriteResult;
+	readonly fullOutputPath?: string | undefined;
+	readonly spill?: SnapshotSpillWriteResult | undefined;
 }): { artifactManifest?: SessionArtifactManifest; artifactRetentionSummary?: string } {
 	if (
 		options.fullOutputPath === undefined ||

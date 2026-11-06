@@ -45,7 +45,7 @@ async function isArtifactRequired(artifact: Readonly<PromptRequestedArtifact>): 
 }
 
 export async function findRequestedArtifactCloseViolation(options: {
-	readonly artifactManifest?: SessionArtifactManifest;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly command: string | undefined;
 	readonly cwd: string;
 	readonly promptPolicy: {

@@ -51,7 +51,9 @@ async function pruneTempRoot(
 	if ((await getMarkerOwnerLiveness(marker)) !== "dead") {
 		return;
 	}
-	const stats = await stat(path).catch(() => undefined);
+	const stats = await stat(path).catch((): undefined => {
+		// A root that cannot be inspected is not eligible for pruning.
+	});
 	if (stats?.isDirectory() !== true) {
 		return;
 	}
@@ -87,10 +89,9 @@ async function pruneStaleTempRoots(currentTempRoot: string): Promise<void> {
 					0,
 					candidates.findIndex((name) => name > previousName),
 				);
-	const batch = Array.from(
-		{ length: Math.min(STALE_TEMP_ROOT_BATCH_SIZE, candidates.length) },
-		(_, offset) => candidates[(start + offset) % candidates.length],
-	);
+	const count = Math.min(STALE_TEMP_ROOT_BATCH_SIZE, candidates.length);
+	const batch = candidates.slice(start, start + count);
+	batch.push(...candidates.slice(0, count - batch.length));
 	lastTempGcName = batch.at(-1);
 	await Promise.all(
 		batch.map(async (name) => {
@@ -190,7 +191,9 @@ export async function cleanupSecureTempArtifacts(
 	options: { readonly preservePaths?: readonly string[] } = {},
 ): Promise<void> {
 	await enqueueTempMutation(async () => {
-		const tempRoot = await sessionTempRootPromise?.catch(() => undefined);
+		const tempRoot = await sessionTempRootPromise?.catch((): undefined => {
+			// Failed root creation leaves no owned root to clean.
+		});
 		if (tempRoot === undefined || tempRoot.length === 0) {
 			return;
 		}

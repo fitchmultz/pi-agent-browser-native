@@ -13,7 +13,8 @@ import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "no
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import test from "node:test";
+import nodeTest from "node:test";
+import { parseSinglePackResult } from "../scripts/package-pack.mjs";
 import {
 	FORBIDDEN_PACKED_FILES,
 	FORBIDDEN_REPO_FILES,
@@ -28,7 +29,7 @@ import {
 	verifyPackageRelease,
 } from "../scripts/verify-package.mjs";
 
-test("parseCliArgs supports help, list-files, and smoke-pi modes", () => {
+nodeTest("parseCliArgs supports help, list-files, and smoke-pi modes", () => {
 	assert.deepEqual(parseCliArgs([]), { listFiles: false, showHelp: false, smokePi: false });
 	assert.deepEqual(parseCliArgs(["--list-files"]), {
 		listFiles: true,
@@ -49,11 +50,11 @@ test("parseCliArgs supports help, list-files, and smoke-pi modes", () => {
 	assert.deepEqual(parseCliArgs(["-h"]), { listFiles: false, showHelp: true, smokePi: false });
 });
 
-test("parseCliArgs rejects unknown options with a usage error", () => {
+nodeTest("parseCliArgs rejects unknown options with a usage error", () => {
 	assert.throws(() => parseCliArgs(["--wat"]), /Unknown option/);
 });
 
-test("collectVerificationFailures reports each repo and packed invariant breach", () => {
+nodeTest("collectVerificationFailures reports each repo and packed invariant breach", () => {
 	const failures = collectVerificationFailures({
 		forbiddenPackedFiles: ["AGENTS.md"],
 		forbiddenRepoFiles: [".pi/extensions/agent-browser.ts"],
@@ -68,183 +69,171 @@ test("collectVerificationFailures reports each repo and packed invariant breach"
 	assert.match(failures[3] ?? "", /Forbidden packed file present/);
 });
 
-test("evaluatePiSmokeResult requires exactly one packaged agent_browser source and allows optional companion tools", () => {
-	assert.deepEqual(
-		evaluatePiSmokeResult({
-			packageDir: "/tmp/pkg/package",
-			tools: [
-				{
-					name: "agent_browser",
-					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
+nodeTest(
+	"evaluatePiSmokeResult requires exactly one packaged agent_browser source and allows optional companion tools",
+	() => {
+		assert.deepEqual(
+			evaluatePiSmokeResult({
+				packageDir: "/tmp/pkg/package",
+				tools: [
+					{
+						name: "agent_browser",
+						sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
+					},
+					{
+						name: "agent_browser_web_search",
+						sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
+					},
+				],
+			}),
+			[],
+		);
+
+		assert.match(
+			evaluatePiSmokeResult({
+				packageDir: "/tmp/pkg/package",
+				tools: [],
+			})[0] ?? "",
+			/Expected exactly one/,
+		);
+		assert.deepEqual(
+			evaluatePiSmokeResult({
+				packageDir: "/tmp/pkg/package",
+				tools: [
+					{
+						name: "agent_browser",
+						sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
+					},
+					{
+						name: "agent_browser",
+						sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/duplicate.js" },
+					},
+				],
+			}),
+			["Expected exactly one packaged agent_browser tool, found 2."],
+		);
+		assert.match(
+			evaluatePiSmokeResult({
+				packageDir: "/tmp/pkg/package",
+				tools: [
+					{
+						name: "agent_browser",
+						sourceInfo: { path: "/repo/extensions/agent-browser/index.ts" },
+					},
+				],
+			})[0] ?? "",
+			/expected a source inside packed package/,
+		);
+		assert.match(
+			evaluatePiSmokeResult({
+				packageDir: "/tmp/pkg/package",
+				tools: [{ name: "agent_browser" }],
+			})[0] ?? "",
+			/source path metadata/,
+		);
+	},
+);
+
+nodeTest(
+	"executePackagedAgentBrowserSmoke invokes the callable packaged tool with deterministic version args",
+	async () => {
+		const calls: Array<{ params: unknown; toolCallId: string }> = [];
+		const report = await executePackagedAgentBrowserSmoke([
+			{
+				name: "agent_browser",
+				execute: async (toolCallId, params, _signal, onUpdate) => {
+					onUpdate?.({
+						content: [{ type: "text", text: "Running agent-browser --version" }],
+						details: {},
+					});
+					calls.push({ params, toolCallId });
+					return {
+						content: [{ type: "text", text: "agent-browser 0.0.0-packaged-smoke" }],
+						details: {
+							exitCode: 0,
+							inspection: true,
+							stdout: "agent-browser 0.0.0-packaged-smoke",
+						},
+						isError: false,
+					};
 				},
-				{
-					name: "agent_browser_web_search",
-					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
-				},
-			],
-		}),
-		[],
-	);
+			},
+		]);
+		assert.deepEqual(report.failures, []);
+		assert.deepEqual(calls, [
+			{
+				toolCallId: "verify-package-agent-browser-smoke",
+				params: { args: ["--version"] },
+			},
+		]);
+	},
+);
 
-	assert.match(
-		evaluatePiSmokeResult({
-			packageDir: "/tmp/pkg/package",
-			tools: [],
-		})[0] ?? "",
-		/Expected exactly one/,
-	);
-	assert.deepEqual(
-		evaluatePiSmokeResult({
-			packageDir: "/tmp/pkg/package",
-			tools: [
-				{
-					name: "agent_browser",
-					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/index.js" },
-				},
-				{
-					name: "agent_browser",
-					sourceInfo: { path: "/tmp/pkg/package/dist/extensions/agent-browser/duplicate.js" },
-				},
-			],
-		}),
-		["Expected exactly one packaged agent_browser tool, found 2."],
-	);
-	assert.match(
-		evaluatePiSmokeResult({
-			packageDir: "/tmp/pkg/package",
-			tools: [
-				{ name: "agent_browser", sourceInfo: { path: "/repo/extensions/agent-browser/index.ts" } },
-			],
-		})[0] ?? "",
-		/expected a source inside packed package/,
-	);
-	assert.match(
-		evaluatePiSmokeResult({
-			packageDir: "/tmp/pkg/package",
-			tools: [{ name: "agent_browser" }],
-		})[0] ?? "",
-		/source path metadata/,
-	);
-});
-
-test("executePackagedAgentBrowserSmoke invokes the packaged agent_browser tool with deterministic version args", async () => {
-	const calls: Array<{
-		ctx: unknown;
-		params: Readonly<{ args: readonly string[] }>;
-		toolCallId: string;
-	}> = [];
-	const context = { cwd: "/tmp/pkg/package" };
-	const report = await executePackagedAgentBrowserSmoke({
-		packageDir: "/tmp/pkg/package",
-		session: {
-			createReplacedSessionContext: () => context,
-			getToolDefinition: (name: string) =>
-				name === "agent_browser"
-					? {
-							execute: async (
-								toolCallId: string,
-								params: Readonly<{ args: readonly string[] }>,
-								_signal: AbortSignal | undefined,
-								onUpdate: ((update: unknown) => void) | undefined,
-								ctx: unknown,
-							) => {
-								onUpdate?.({
-									content: [{ type: "text", text: "Running agent-browser --version" }],
-								});
-								calls.push({ ctx, params, toolCallId });
-								return {
-									content: [{ type: "text", text: "agent-browser 0.0.0-packaged-smoke" }],
-									details: {
-										exitCode: 0,
-										inspection: true,
-										stdout: "agent-browser 0.0.0-packaged-smoke",
-									},
-									isError: false,
-								};
-							},
-						}
-					: undefined,
-		},
-	});
-
-	assert.deepEqual(report.failures, []);
-	assert.equal(calls.length, 1);
-	assert.equal(calls[0]?.toolCallId, "verify-package-agent-browser-smoke");
-	assert.deepEqual(calls[0]?.params, { args: ["--version"] });
-	assert.equal(calls[0]?.ctx, context);
-});
-
-test("executePackagedAgentBrowserSmoke reports a non-executable packaged tool definition", async () => {
-	const report = await executePackagedAgentBrowserSmoke({
-		packageDir: "/tmp/pkg/package",
-		session: { getToolDefinition: () => undefined },
-	});
-
+nodeTest("executePackagedAgentBrowserSmoke reports a non-executable packaged tool", async () => {
+	const report = await executePackagedAgentBrowserSmoke([]);
 	assert.match(report.failures[0] ?? "", /not executable/);
 });
 
-test("executePackagedAgentBrowserSmoke reports packaged invocation failures clearly", async () => {
-	const report = await executePackagedAgentBrowserSmoke({
-		packageDir: "/tmp/pkg/package",
-		session: {
-			getToolDefinition: () => ({
+nodeTest(
+	"executePackagedAgentBrowserSmoke reports packaged invocation failures clearly",
+	async () => {
+		const report = await executePackagedAgentBrowserSmoke([
+			{
+				name: "agent_browser",
 				execute: async () => ({
 					content: [{ type: "text", text: "boom from fake binary" }],
 					details: { exitCode: 64, inspection: true, stderr: "boom" },
 					isError: true,
 				}),
-			}),
-		},
-	});
+			},
+		]);
+		const failures = report.failures.join("\n");
+		assert.match(failures, /Packaged agent_browser invocation failed/);
+		assert.match(failures, /--version/);
+		assert.match(failures, /boom/);
+	},
+);
 
-	const failures = report.failures.join("\n");
-	assert.match(failures, /Packaged agent_browser invocation failed/);
-	assert.match(failures, /--version/);
-	assert.match(failures, /boom/);
-});
+nodeTest(
+	"package metadata keeps Pi peers host-provided and declares the qualified runtime graph",
+	async () => {
+		const packageJson = readRecord(JSON.parse(await readFile("package.json", "utf8")));
 
-test("package metadata keeps Pi peers host-provided and declares the qualified runtime graph", async () => {
-	const packageJson = readRecord(JSON.parse(await readFile("package.json", "utf8")));
-
-	const dependencies = readRecord(packageJson.dependencies);
-	assert.equal(typeof dependencies["cross-spawn"], "string");
-	assert.equal(typeof dependencies["path-key"], "string");
-	assert.equal(typeof dependencies.which, "string");
-	assert.equal(readRecord(packageJson.engines).node, ">=24.21.0");
-	assert.equal(packageJson.packageManager, "npm@12.2.0");
-	for (const packageName of [
-		"@earendil-works/pi-ai",
-		"@earendil-works/pi-coding-agent",
-		"@earendil-works/pi-tui",
-		"typebox",
-	]) {
-		// All four literal Pi peer names are checked; no peer-dependent branch skips a row.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(
-			readRecord(packageJson.peerDependencies)[packageName],
-			"*",
-			`${packageName} should stay host-provided per Pi package docs`,
+		const dependencies = readRecord(packageJson.dependencies);
+		assert.equal(typeof dependencies["cross-spawn"], "string");
+		assert.equal(typeof dependencies["path-key"], "string");
+		assert.equal(typeof dependencies.which, "string");
+		assert.equal(readRecord(packageJson.engines).node, ">=24.21.0");
+		assert.equal(packageJson.packageManager, "npm@12.2.0");
+		const peers = [
+			"@earendil-works/pi-ai",
+			"@earendil-works/pi-coding-agent",
+			"@earendil-works/pi-tui",
+			"typebox",
+		];
+		assert.deepEqual(
+			peers.map((name) => ({
+				name,
+				version: readRecord(packageJson.peerDependencies)[name],
+				optional: readRecord(readRecord(packageJson.peerDependenciesMeta)[name]).optional,
+			})),
+			peers.map((name) => ({ name, version: "*", optional: true })),
+			"Pi peers remain host-provided and optional for host-free installations",
 		);
-		// Every host peer must remain optional for consumer installations without a Pi host.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.equal(
-			readRecord(readRecord(packageJson.peerDependenciesMeta)[packageName]).optional,
-			true,
+			readRecord(packageJson.scripts).prepare,
+			"node ./scripts/prepare.mjs",
+			"Packed and GitHub/source installs must build the ignored dist entrypoint before Pi loads it, even when Pi installs with --omit=dev",
 		);
-	}
-	assert.equal(
-		readRecord(packageJson.scripts).prepare,
-		"node ./scripts/prepare.mjs",
-		"Packed and GitHub/source installs must build the ignored dist entrypoint before Pi loads it, even when Pi installs with --omit=dev",
-	);
-	assert.equal(
-		readRecord(packageJson.scripts).prepack,
-		undefined,
-		"npm pack must not duplicate the prepare-owned build",
-	);
-});
+		assert.equal(
+			readRecord(packageJson.scripts).prepack,
+			undefined,
+			"npm pack must not duplicate the prepare-owned build",
+		);
+	},
+);
 
-test("publish contract derives required packed files from package.json", async () => {
+nodeTest("publish contract derives required packed files from package.json", async () => {
 	const publishContract = await loadPublishContract();
 
 	assert.equal(FORBIDDEN_REPO_FILES.includes(".pi/extensions/agent-browser.ts"), true);
@@ -290,7 +279,7 @@ test("publish contract derives required packed files from package.json", async (
 		publishContract.requiredPackedFiles.includes("dist/packaged/lib/results/snapshot.js"),
 		true,
 	);
-	for (const path of [
+	const platformFiles = [
 		"docs/platform-smoke.md",
 		"platform-smoke.config.mjs",
 		"scripts/platform-smoke.mjs",
@@ -301,21 +290,19 @@ test("publish contract derives required packed files from package.json", async (
 		"scripts/platform-smoke/platform-build-windows.ps1",
 		"scripts/platform-smoke/browser-dogfood-windows.ps1",
 		"scripts/platform-smoke/linux-image/Dockerfile",
-	]) {
-		// Every literal platform publish path is required by this nonempty contract table.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(
-			publishContract.requiredPackedFiles.includes(path),
-			`expected publish contract to require ${path}`,
-		);
-	}
+	];
+	assert.deepEqual(
+		platformFiles.filter((path) => !publishContract.requiredPackedFiles.includes(path)),
+		[],
+		"Every platform entry belongs in the publish contract",
+	);
 	assert.equal(
 		publishContract.requiredPackedFiles.includes("extensions/agent-browser/index.ts"),
 		false,
 	);
 });
 
-test("loadPublishContract reports missing package.json files entries clearly", async () => {
+nodeTest("loadPublishContract reports missing package.json files entries clearly", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "publish-contract-test-"));
 	try {
 		await writeFile(
@@ -332,100 +319,107 @@ test("loadPublishContract reports missing package.json files entries clearly", a
 	}
 });
 
-test("collectPackedMarkdownLinkFailures reports local links absent from the packed tarball", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "packed-doc-links-test-"));
-	try {
-		await writeFile(
-			join(tempDir, "README.md"),
-			"[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n" +
-				"![art](.github/readme/flow.png) ![missing art](.github/readme/missing.png) " +
-				"[ordinary link](.github/readme/flow.png) ![other image](docs/missing.png)\n",
-			"utf8",
-		);
-		await writeFile(join(tempDir, "CHANGELOG.md"), "[root](README.md)\n", "utf8");
-		await mkdir(join(tempDir, "docs"));
-		await writeFile(join(tempDir, "docs", "TOOL_CONTRACT.md"), "# Contract\n", "utf8");
-		await mkdir(join(tempDir, ".github", "readme"), { recursive: true });
-		await writeFile(join(tempDir, ".github", "readme", "flow.png"), "repo-only artwork", "utf8");
+nodeTest(
+	"collectPackedMarkdownLinkFailures reports local links absent from the packed tarball",
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "packed-doc-links-test-"));
+		try {
+			await writeFile(
+				join(tempDir, "README.md"),
+				"[ok](docs/TOOL_CONTRACT.md) [missing](docs/support-notes.md) [anchor](#usage) [external](https://example.com)\n" +
+					"![art](.github/readme/flow.png) ![missing art](.github/readme/missing.png) " +
+					"[ordinary link](.github/readme/flow.png) ![other image](docs/missing.png)\n",
+				"utf8",
+			);
+			await writeFile(join(tempDir, "CHANGELOG.md"), "[root](README.md)\n", "utf8");
+			await mkdir(join(tempDir, "docs"));
+			await writeFile(join(tempDir, "docs", "TOOL_CONTRACT.md"), "# Contract\n", "utf8");
+			await mkdir(join(tempDir, ".github", "readme"), { recursive: true });
+			await writeFile(join(tempDir, ".github", "readme", "flow.png"), "repo-only artwork", "utf8");
 
-		const failures = await collectPackedMarkdownLinkFailures({
-			cwd: tempDir,
-			packedPaths: new Set(["README.md", "CHANGELOG.md", "docs/TOOL_CONTRACT.md"]),
+			const failures = await collectPackedMarkdownLinkFailures({
+				cwd: tempDir,
+				packedPaths: new Set(["README.md", "CHANGELOG.md", "docs/TOOL_CONTRACT.md"]),
+			});
+
+			assert.deepEqual(failures, [
+				"Packed Markdown link README.md -> docs/support-notes.md resolves to missing packed file docs/support-notes.md.",
+				"Packed Markdown link README.md -> .github/readme/flow.png resolves to missing packed file .github/readme/flow.png.",
+				"Packed Markdown link README.md -> docs/missing.png resolves to missing packed file docs/missing.png.",
+				"README artwork is missing from the repository: .github/readme/missing.png.",
+			]);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
+	"evaluatePackResult rejects private paths and tarballs without rejecting neighboring names",
+	async () => {
+		const publishContract = await loadPublishContract();
+		const cases = [
+			["docs/plans/internal.md", ["docs/plans/"]],
+			["docs/plans/.secret.md", ["docs/plans/"]],
+			["AGENTS.md", ["AGENTS.md"]],
+			["dist/extensions/agent-browser/lib/runtime.js", ["dist/extensions/agent-browser/lib/"]],
+			["dist/packaged/lib/runtime.js", []],
+			[".artifacts/nested/report.json", [".artifacts/"]],
+			[".artifacts/.hidden/foo", [".artifacts/"]],
+			[".crabbox/lease.json", [".crabbox/"]],
+			[".crabbox/.lease", [".crabbox/"]],
+			[".debug/log.txt", [".debug/"]],
+			[".github/readme/flow.png", [".github/readme/"]],
+			[".debug/.hidden/log.txt", [".debug/"]],
+			[".platform-smoke-runs/report.json", [".platform-smoke-runs/"]],
+			[".platform-smoke-runs/.receipt", [".platform-smoke-runs/"]],
+			[".env", [".env*"]],
+			[".env.local", [".env*"]],
+			[".env-fixture/private.txt", [".env*"]],
+			[".env-dir/.secret", [".env*"]],
+			["package.tgz", ["**/*.tgz"]],
+			["nested/package.tgz", ["**/*.tgz"]],
+			[".tgz", ["**/*.tgz"]],
+			[".hidden.tgz", ["**/*.tgz"]],
+			["nested/.hidden.tgz", ["**/*.tgz"]],
+			["nested/.hidden/file.tgz", ["**/*.tgz"]],
+			["docs/plans-public.md", []],
+			["docs/AGENTS.md", []],
+			[".artifacts-public.json", []],
+			["docs/env.md", []],
+			["archive.tgz.md", []],
+		] as const;
+		const reports = cases.map(([path]) => {
+			const report = evaluatePackResult({
+				forbiddenRepoFiles: [],
+				missingRepoFiles: [],
+				packResult: {
+					entryCount: 2,
+					filename: "fixture.tgz",
+					files: [{ path: "package.json" }, { path }],
+					size: 123,
+					unpackedSize: 456,
+				},
+				publishContract: {
+					forbiddenPackedFiles: publishContract.forbiddenPackedFiles,
+					requiredPackedFiles: ["package.json"],
+				},
+			});
+			return { path, forbidden: report.forbiddenPackedFiles, failures: report.failures };
 		});
-
-		assert.deepEqual(failures, [
-			"Packed Markdown link README.md -> docs/support-notes.md resolves to missing packed file docs/support-notes.md.",
-			"Packed Markdown link README.md -> .github/readme/flow.png resolves to missing packed file .github/readme/flow.png.",
-			"Packed Markdown link README.md -> docs/missing.png resolves to missing packed file docs/missing.png.",
-			"README artwork is missing from the repository: .github/readme/missing.png.",
-		]);
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
-test("evaluatePackResult rejects private paths and tarballs without rejecting neighboring names", async () => {
-	const publishContract = await loadPublishContract();
-	for (const [path, forbidden] of [
-		["docs/plans/internal.md", ["docs/plans/"]],
-		["docs/plans/.secret.md", ["docs/plans/"]],
-		["AGENTS.md", ["AGENTS.md"]],
-		["dist/extensions/agent-browser/lib/runtime.js", ["dist/extensions/agent-browser/lib/"]],
-		["dist/packaged/lib/runtime.js", []],
-		[".artifacts/nested/report.json", [".artifacts/"]],
-		[".artifacts/.hidden/foo", [".artifacts/"]],
-		[".crabbox/lease.json", [".crabbox/"]],
-		[".crabbox/.lease", [".crabbox/"]],
-		[".debug/log.txt", [".debug/"]],
-		[".github/readme/flow.png", [".github/readme/"]],
-		[".debug/.hidden/log.txt", [".debug/"]],
-		[".platform-smoke-runs/report.json", [".platform-smoke-runs/"]],
-		[".platform-smoke-runs/.receipt", [".platform-smoke-runs/"]],
-		[".env", [".env*"]],
-		[".env.local", [".env*"]],
-		[".env-fixture/private.txt", [".env*"]],
-		[".env-dir/.secret", [".env*"]],
-		["package.tgz", ["**/*.tgz"]],
-		["nested/package.tgz", ["**/*.tgz"]],
-		[".tgz", ["**/*.tgz"]],
-		[".hidden.tgz", ["**/*.tgz"]],
-		["nested/.hidden.tgz", ["**/*.tgz"]],
-		["nested/.hidden/file.tgz", ["**/*.tgz"]],
-		["docs/plans-public.md", []],
-		["docs/AGENTS.md", []],
-		[".artifacts-public.json", []],
-		["docs/env.md", []],
-		["archive.tgz.md", []],
-	] as const) {
-		const report = evaluatePackResult({
-			forbiddenRepoFiles: [],
-			missingRepoFiles: [],
-			packResult: {
-				entryCount: 2,
-				filename: "fixture.tgz",
-				files: [{ path: "package.json" }, { path }],
-				size: 123,
-				unpackedSize: 456,
-			},
-			publishContract: {
-				forbiddenPackedFiles: publishContract.forbiddenPackedFiles,
-				requiredPackedFiles: ["package.json"],
-			},
-		});
-		// Each literal allowed/forbidden path row checks both classification and failures.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(report.forbiddenPackedFiles, [...forbidden], path);
-		// Each literal allowed/forbidden path row checks both classification and failures.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
 		assert.deepEqual(
-			report.failures,
-			forbidden.length > 0 ? [`Forbidden packed file present: ${forbidden.join(", ")}`] : [],
-			path,
+			reports,
+			cases.map(([path, forbidden]) => ({
+				path,
+				forbidden: [...forbidden],
+				failures:
+					forbidden.length > 0 ? [`Forbidden packed file present: ${forbidden.join(", ")}`] : [],
+			})),
 		);
-	}
-});
+	},
+);
 
-test("verifyPackageRelease lets prepare create a missing dist directory", async () => {
+nodeTest("verifyPackageRelease lets prepare create a missing dist directory", async () => {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-build-owner-"));
 	try {
 		await writeFile(join(tempDir, "LICENSE"), "fixture\n", "utf8");
@@ -449,53 +443,83 @@ test("verifyPackageRelease lets prepare create a missing dist directory", async 
 	}
 });
 
-test("packToTemporaryPackageDir runs prepare and preserves compiled checkout state under npm publish dry-run env", async (t) => {
-	const source = resolve(import.meta.dirname, "..");
-	const directory = await mkdtemp(join(tmpdir(), "piab-package-source-"));
-	t.after(() => rm(directory, { recursive: true, force: true }));
-	const excluded = new Set([".git", "node_modules", "dist", ".artifacts", ".crabbox", ".cueloop"]);
-	await cp(source, directory, {
-		recursive: true,
-		filter: (file) => !excluded.has(relative(source, file).split(sep)[0]),
-	});
-	await symlink(join(source, "node_modules"), join(directory, "node_modules"), "junction");
-	const lock = await readFile(join(directory, "package-lock.json"), "utf8");
-	await assert.rejects(access(join(directory, "dist")));
-	const previousDryRun = process.env.npm_config_dry_run;
-	const previousOffline = process.env.npm_config_offline;
-	process.env.npm_config_dry_run = "true";
-	process.env.npm_config_offline = "true";
-	let packed: Awaited<ReturnType<typeof packToTemporaryPackageDir>> | undefined;
-
-	try {
-		packed = await packToTemporaryPackageDir(directory);
-		const entrypoint: unknown = await import(
-			pathToFileURL(join(directory, "dist/extensions/agent-browser/index.js")).href
-		);
-		assert.equal(typeof readRecord(entrypoint).default, "function");
-		assert.equal(await readFile(join(directory, "package-lock.json"), "utf8"), lock);
-		await access(join(packed.packageDir, "package.json"));
-		assert.match(
-			readString(readRecord(packed.packResult).filename),
-			/^pi-agent-browser-native-.*\.tgz$/,
-		);
-		const report = evaluatePackResult({
-			forbiddenRepoFiles: [],
-			missingRepoFiles: [],
-			packResult: readRecord(packed.packResult),
-			publishContract: await loadPublishContract({ cwd: directory }),
+nodeTest(
+	"packToTemporaryPackageDir runs prepare and preserves compiled checkout state under npm publish dry-run env",
+	async (t) => {
+		const source = resolve(import.meta.dirname, "..");
+		const directory = await mkdtemp(join(tmpdir(), "piab-package-source-"));
+		t.after(() => rm(directory, { recursive: true, force: true }));
+		const excluded = new Set([
+			".git",
+			"node_modules",
+			"dist",
+			".artifacts",
+			".crabbox",
+			".cueloop",
+		]);
+		await cp(source, directory, {
+			recursive: true,
+			filter: (file) => !excluded.has(relative(source, file).split(sep)[0] ?? ""),
 		});
-		assert.deepEqual(
-			report.failures,
-			[],
-			"real tarball must satisfy the canonical required and forbidden paths",
-		);
-		const compiledState = execFileSync(
-			process.execPath,
-			[
-				"--input-type=module",
-				"--eval",
-				`import assert from "node:assert/strict";
+		await symlink(join(source, "node_modules"), join(directory, "node_modules"), "junction");
+		const lock = await readFile(join(directory, "package-lock.json"), "utf8");
+		await assert.rejects(access(join(directory, "dist")));
+		const previousDryRun = process.env.npm_config_dry_run;
+		const previousOffline = process.env.npm_config_offline;
+		process.env.npm_config_dry_run = "true";
+		process.env.npm_config_offline = "true";
+		let packed: Awaited<ReturnType<typeof packToTemporaryPackageDir>> | undefined;
+
+		try {
+			packed = await packToTemporaryPackageDir(directory);
+			const entrypoint: unknown = await import(
+				pathToFileURL(join(directory, "dist/extensions/agent-browser/index.js")).href
+			);
+			assert.equal(typeof readRecord(entrypoint).default, "function");
+			assert.equal(await readFile(join(directory, "package-lock.json"), "utf8"), lock);
+			await access(join(packed.packageDir, "package.json"));
+			assert.match(packed.packResult.filename, /^pi-agent-browser-native-.*\.tgz$/);
+			const report = evaluatePackResult({
+				forbiddenRepoFiles: [],
+				missingRepoFiles: [],
+				packResult: packed.packResult,
+				publishContract: await loadPublishContract({ cwd: directory }),
+			});
+			assert.deepEqual(
+				report.failures,
+				[],
+				"real tarball must satisfy the canonical required and forbidden paths",
+			);
+			const invalidMetadata = JSON.stringify({
+				[packed.packResult.name]: { ...packed.packResult, files: [{ path: 42 }] },
+			});
+			assert.throws(() => parseSinglePackResult(invalidMetadata), /Unexpected npm pack output/);
+			const standalonePlatform = execFileSync(
+				process.execPath,
+				[
+					"--input-type=module",
+					"--eval",
+					`import assert from "node:assert/strict";
+import { runDoctor } from "./scripts/platform-smoke/doctor.mjs";
+import { runTargetSuites } from "./scripts/platform-smoke/targets.mjs";
+assert.equal(typeof runDoctor, "function");
+assert.equal(typeof runTargetSuites, "function");
+console.log("standalone platform modules loaded");`,
+				],
+				{
+					cwd: packed.packageDir,
+					env: { ...process.env, NODE_OPTIONS: "" },
+					encoding: "utf8",
+					timeout: 10_000,
+				},
+			);
+			assert.equal(standalonePlatform.trim(), "standalone platform modules loaded");
+			const compiledState = execFileSync(
+				process.execPath,
+				[
+					"--input-type=module",
+					"--eval",
+					`import assert from "node:assert/strict";
 import { access, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { withAgentBrowserProcessEnvironment } from "./dist/extensions/agent-browser/lib/process-environment.js";
@@ -527,69 +551,80 @@ try {
 } finally {
 	await rm(dirname(presentation.fullOutputPath), { recursive: true, force: true });
 }`,
-			],
-			{
-				cwd: directory,
-				env: { ...process.env, NODE_OPTIONS: "" },
-				encoding: "utf8",
-				timeout: 10_000,
-			},
-		);
-		assert.deepEqual(JSON.parse(compiledState), {
-			effectiveArgs: ["--json", "--session", "compiled-caller", "get", "title"],
-			namespace: "compiled-namespace",
-			spillRemains: false,
-		});
-
-		const candidateBytes = await readFile(packed.tarballPath);
-		const candidateEntrypoint = await readFile(
-			join(packed.packageDir, "dist/extensions/agent-browser/index.js"),
-		);
-		await writeFile(join(directory, "README.md"), "[broken](not-in-the-candidate.md)\n");
-		const candidateReport = await verifyPackageRelease({
-			cwd: directory,
-			tarballPath: packed.tarballPath,
-		});
-		assert.deepEqual(candidateReport.failures, [], "inspect the candidate docs, not the checkout");
-		const candidateIntegrity = readString(readRecord(packed.packResult).integrity);
-		assert.equal(readString(readRecord(candidateReport.packResult).integrity), candidateIntegrity);
-
-		await writeFile(
-			join(directory, "dist/extensions/agent-browser/index.js"),
-			'throw new Error("checkout entrypoint must not be packed");\n',
-		);
-		const candidateCopy = await packToTemporaryPackageDir(directory, packed.tarballPath);
-		try {
-			assert.deepEqual(
-				await readFile(join(candidateCopy.packageDir, "dist/extensions/agent-browser/index.js")),
-				candidateEntrypoint,
-				"extract the candidate, not a new checkout pack",
+				],
+				{
+					cwd: directory,
+					env: { ...process.env, NODE_OPTIONS: "" },
+					encoding: "utf8",
+					timeout: 10_000,
+				},
 			);
-			assert.equal(readString(readRecord(candidateCopy.packResult).integrity), candidateIntegrity);
-		} finally {
-			await candidateCopy.cleanup();
-		}
-		assert.deepEqual(await readFile(packed.tarballPath), candidateBytes);
+			assert.deepEqual(JSON.parse(compiledState), {
+				effectiveArgs: ["--json", "--session", "compiled-caller", "get", "title"],
+				namespace: "compiled-namespace",
+				spillRemains: false,
+			});
 
-		const manifestPath = join(directory, "package.json");
-		const manifest = readRecord(JSON.parse(await readFile(manifestPath, "utf8")));
-		await writeFile(manifestPath, JSON.stringify({ ...manifest, version: "999.0.0" }));
-		const wrongVersion = await verifyPackageRelease({
-			cwd: directory,
-			tarballPath: packed.tarballPath,
-		});
-		assert.match(wrongVersion.failures.join("\n"), /does not match checkout/);
-	} finally {
-		if (previousDryRun === undefined) {
-			delete process.env.npm_config_dry_run;
-		} else {
-			process.env.npm_config_dry_run = previousDryRun;
+			const candidateBytes = await readFile(packed.tarballPath);
+			const candidateEntrypoint = await readFile(
+				join(packed.packageDir, "dist/extensions/agent-browser/index.js"),
+			);
+			await writeFile(join(directory, "README.md"), "[broken](not-in-the-candidate.md)\n");
+			const candidateReport = await verifyPackageRelease({
+				cwd: directory,
+				tarballPath: packed.tarballPath,
+			});
+			assert.deepEqual(
+				candidateReport.failures,
+				[],
+				"inspect the candidate docs, not the checkout",
+			);
+			const candidateIntegrity = readString(readRecord(packed.packResult).integrity);
+			assert.equal(
+				readString(readRecord(candidateReport.packResult).integrity),
+				candidateIntegrity,
+			);
+
+			await writeFile(
+				join(directory, "dist/extensions/agent-browser/index.js"),
+				'throw new Error("checkout entrypoint must not be packed");\n',
+			);
+			const candidateCopy = await packToTemporaryPackageDir(directory, packed.tarballPath);
+			try {
+				assert.deepEqual(
+					await readFile(join(candidateCopy.packageDir, "dist/extensions/agent-browser/index.js")),
+					candidateEntrypoint,
+					"extract the candidate, not a new checkout pack",
+				);
+				assert.equal(
+					readString(readRecord(candidateCopy.packResult).integrity),
+					candidateIntegrity,
+				);
+			} finally {
+				await candidateCopy.cleanup();
+			}
+			assert.deepEqual(await readFile(packed.tarballPath), candidateBytes);
+
+			const manifestPath = join(directory, "package.json");
+			const manifest = readRecord(JSON.parse(await readFile(manifestPath, "utf8")));
+			await writeFile(manifestPath, JSON.stringify({ ...manifest, version: "999.0.0" }));
+			const wrongVersion = await verifyPackageRelease({
+				cwd: directory,
+				tarballPath: packed.tarballPath,
+			});
+			assert.match(wrongVersion.failures.join("\n"), /does not match checkout/);
+		} finally {
+			if (previousDryRun === undefined) {
+				delete process.env.npm_config_dry_run;
+			} else {
+				process.env.npm_config_dry_run = previousDryRun;
+			}
+			if (previousOffline === undefined) {
+				delete process.env.npm_config_offline;
+			} else {
+				process.env.npm_config_offline = previousOffline;
+			}
+			await packed?.cleanup();
 		}
-		if (previousOffline === undefined) {
-			delete process.env.npm_config_offline;
-		} else {
-			process.env.npm_config_offline = previousOffline;
-		}
-		await packed?.cleanup();
-	}
-});
+	},
+);

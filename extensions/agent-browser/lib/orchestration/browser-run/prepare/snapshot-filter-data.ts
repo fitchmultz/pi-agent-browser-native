@@ -4,8 +4,8 @@ import type { SessionRefSnapshot } from "../../../session-page-state.js";
 export interface SnapshotFilterRequest {
 	readonly cleanArgs: readonly string[];
 	readonly diff: boolean;
-	readonly role?: string;
-	readonly search?: string;
+	readonly role?: string | undefined;
+	readonly search?: string | undefined;
 	readonly viewport: boolean;
 }
 
@@ -47,8 +47,8 @@ export function parseSnapshotFilterRequest(
 	const cleanArgs: string[] = [];
 	let role: string | undefined;
 	let search: string | undefined;
-	for (let index = 0; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const tokens = commandTokens.entries();
+	for (const [index, token] of tokens) {
 		// Wrapper filters require the complete native tree, never a revision-relative patch.
 		if (["--delta", "--full", "--viewport", "--diff"].includes(token)) {
 			continue;
@@ -61,7 +61,7 @@ export function parseSnapshotFilterRequest(
 			if (operand.role !== undefined) {
 				role = operand.role;
 			}
-			index += 1;
+			tokens.next();
 		} else {
 			cleanArgs.push(token);
 		}

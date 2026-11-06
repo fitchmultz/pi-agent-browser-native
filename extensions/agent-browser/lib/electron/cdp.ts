@@ -4,19 +4,19 @@ const ELECTRON_CDP_FETCH_TIMEOUT_MS = 1_000;
 
 export interface ElectronCdpVersion {
 	readonly browser?: string;
-	readonly protocolVersion?: string;
-	readonly userAgent?: string;
-	readonly v8Version?: string;
-	readonly webKitVersion?: string;
-	readonly webSocketDebuggerUrl?: string;
+	readonly protocolVersion?: string | undefined;
+	readonly userAgent?: string | undefined;
+	readonly v8Version?: string | undefined;
+	readonly webKitVersion?: string | undefined;
+	readonly webSocketDebuggerUrl?: string | undefined;
 }
 
 export interface ElectronCdpTarget {
-	readonly id?: string;
-	readonly title?: string;
-	readonly type?: string;
-	readonly url?: string;
-	readonly webSocketDebuggerUrl?: string;
+	readonly id?: string | undefined;
+	readonly title?: string | undefined;
+	readonly type?: string | undefined;
+	readonly url?: string | undefined;
+	readonly webSocketDebuggerUrl?: string | undefined;
 }
 
 function asString(value: unknown): string | undefined {

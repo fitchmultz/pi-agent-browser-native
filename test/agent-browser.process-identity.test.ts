@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { existsSync } from "node:fs";
 import fs, { readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { promisify } from "node:util";
 import { readChildStdoutJsonLine, stopChildProcess } from "./helpers/agent-browser-harness.js";
 
@@ -23,73 +23,80 @@ import {
 const nativeReadFile = fs.readFile;
 
 for (const cancel of [false, true]) {
-	test(`process identity probes honor ${cancel ? "abort" : "the shared deadline"} while a native helper is stalled`, async (t) => {
-		if (process.platform === "linux") {
-			t.skip("Linux reads procfs directly and launches no native helper.");
-			return;
-		}
-		const original = childProcess.execFile;
-		let launched = 0;
-		let dispatched = 0;
-		const probes: ReturnType<typeof execFile>[] = [];
-		t.mock.method(
-			childProcess,
-			"execFile",
-			(
-				_file: string,
-				_args: readonly string[],
-				options: Parameters<typeof execFile>[2],
-				callback: Parameters<typeof execFile>[3],
-			) => {
-				launched++;
-				// Substitute only the slow helper executable; Node owns real timeout/abort termination.
-				const child = original(
-					process.execPath,
-					["-e", "setTimeout(() => console.log('late identity'), 10000)"],
-					options,
-					callback,
-				);
-				child.once("spawn", () => {
-					dispatched++;
-				});
-				probes.push(child);
-				return child;
-			},
-		);
-		syncBuiltinESMExports();
-		const controller = new AbortController();
-		const timer = cancel
-			? setTimeout(() => {
-					controller.abort();
-				}, 50)
-			: undefined;
-		const started = performance.now();
-		try {
-			assert.equal(
-				await readProcessStartIdentity(process.pid, process.platform, {
-					signal: controller.signal,
-					deadline: started + (cancel ? 2_000 : 50),
-				}),
-				undefined,
+	nodeTest(
+		`process identity probes honor ${cancel ? "abort" : "the shared deadline"} while a native helper is stalled`,
+		async (t) => {
+			if (process.platform === "linux") {
+				t.skip("Linux reads procfs directly and launches no native helper.");
+				return;
+			}
+			const original = childProcess.execFile;
+			let launched = 0;
+			let dispatched = 0;
+			const probes: ReturnType<typeof execFile>[] = [];
+			t.mock.method(
+				childProcess,
+				"execFile",
+				(
+					_file: string,
+					_args: readonly string[],
+					options: Parameters<typeof execFile>[2],
+					callback: Parameters<typeof execFile>[3],
+				) => {
+					launched++;
+					// Substitute only the slow helper executable; Node owns real timeout/abort termination.
+					const child = original(
+						process.execPath,
+						["-e", "setTimeout(() => console.log('late identity'), 10000)"],
+						options,
+						callback,
+					);
+					child.once("spawn", () => {
+						dispatched++;
+					});
+					probes.push(child);
+					return child;
+				},
 			);
-			assert.equal(launched, 1, "exhausted budget must not launch fallback helpers");
-			assert.equal(dispatched, 1, "the deadline must terminate a genuinely spawned native helper");
-			assert.ok(
-				performance.now() - started < 1_000,
-				"coordination must not wait for the helper's ten-second run",
-			);
-			assert.ok(probes.every((probe) => probe.killed));
-		} finally {
-			clearTimeout(timer);
-			t.mock.restoreAll();
 			syncBuiltinESMExports();
-			for (const probe of probes) {
-				if (probe.exitCode === null) {
-					probe.kill("SIGKILL");
+			const controller = new AbortController();
+			const timer = cancel
+				? setTimeout(() => {
+						controller.abort();
+					}, 50)
+				: undefined;
+			const started = performance.now();
+			try {
+				assert.equal(
+					await readProcessStartIdentity(process.pid, process.platform, {
+						signal: controller.signal,
+						deadline: started + (cancel ? 2_000 : 50),
+					}),
+					undefined,
+				);
+				assert.equal(launched, 1, "exhausted budget must not launch fallback helpers");
+				assert.equal(
+					dispatched,
+					1,
+					"the deadline must terminate a genuinely spawned native helper",
+				);
+				assert.ok(
+					performance.now() - started < 1_000,
+					"coordination must not wait for the helper's ten-second run",
+				);
+				assert.ok(probes.every((probe) => probe.killed));
+			} finally {
+				clearTimeout(timer);
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+				for (const probe of probes) {
+					if (probe.exitCode === null) {
+						probe.kill("SIGKILL");
+					}
 				}
 			}
-		}
-	});
+		},
+	);
 }
 
 const systemPs = ["/bin/ps", "/usr/bin/ps"].find(existsSync);
@@ -101,17 +108,18 @@ const psLocation =
 async function readKernelProcessIdentity(pid: number): Promise<string> {
 	const bootId = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
 	const stat = await readFile(`/proc/${String(pid)}/stat`, "latin1");
-	const startTicks = stat
-		.slice(stat.lastIndexOf(")") + 1)
-		.trim()
-		.split(" ")[22 - 3];
+	const startTicks = readString(
+		stat
+			.slice(stat.lastIndexOf(")") + 1)
+			.trim()
+			.split(" ")[22 - 3],
+	);
 	assert.match(startTicks, /^[0-9]+$/);
 	return `linux-proc-boot-ticks-v1:${bootId}:${startTicks}`;
 }
 
 async function readUtcPsStart(pid: number): Promise<string> {
 	// Node's execFile custom promisify symbol preserves its callback-bearing overload.
-	// oxlint-disable-next-line typescript/strict-void-return
 	const { stdout } = await promisify(execFile)(
 		systemPs ?? "ps",
 		["-p", String(pid), "-o", "lstart="],
@@ -122,7 +130,7 @@ async function readUtcPsStart(pid: number): Promise<string> {
 	return start;
 }
 
-test(
+nodeTest(
 	"real Linux process identity uses the kernel boot ID and start ticks instead of wall-clock ps",
 	{ skip: process.platform !== "linux" },
 	async () => {
@@ -142,7 +150,7 @@ test(
 			const expected = await readKernelProcessIdentity(pid);
 			assert.ok(stat.includes(" (a ) ( b) "), "the native comm must contain separators");
 			assert.notEqual(
-				`:${stat.trim().split(/\s+/)[21]}`,
+				`:${String(stat.trim().split(/\s+/)[21])}`,
 				expected.slice(expected.lastIndexOf(":")),
 				"the native control must defeat whole-line whitespace parsing",
 			);
@@ -164,10 +172,10 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"real POSIX process identity survives observer timezone and locale changes",
 	{ skip: !["darwin", "linux"].includes(process.platform) || psLocation === "missing" },
-	async () => {
+	async (t) => {
 		const source = `
 			import { execFileSync } from "node:child_process";
 			import { normalizeProcessStartIdentity, readProcessStartIdentity } from "./extensions/agent-browser/lib/process-identity.ts";
@@ -179,7 +187,6 @@ test(
 		`;
 		const observe = async (timezone: string, locale: string) => {
 			// Node's execFile custom promisify symbol preserves its callback-bearing overload.
-			// oxlint-disable-next-line typescript/strict-void-return
 			const { stdout } = await promisify(execFile)(
 				process.execPath,
 				[
@@ -200,9 +207,9 @@ test(
 		const localized = await observe("UTC-1", "fr_FR.UTF-8");
 		assert.notEqual(utc.raw, offset.raw, "the native control must expose local-time drift");
 		if (process.platform === "darwin") {
-			// macOS ships this locale; minimal Linux images may only provide the C locale.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.notEqual(offset.raw, localized.raw, "the native control must expose locale drift");
+			await t.test("native macOS control exposes locale drift", () => {
+				assert.notEqual(offset.raw, localized.raw, "the native control must expose locale drift");
+			});
 		}
 		const identity = readString(utc.identity);
 		assert.ok(identity.length > 0);
@@ -230,7 +237,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	`real POSIX ${psLocation} ps preserves process identity and lock integrity`,
 	{
 		// Linux identity reads procfs, so only its ordinary system-ps layout supplies old formats.
@@ -256,12 +263,13 @@ test(
 		let foreignOwner: ReturnType<typeof spawn> | undefined;
 		try {
 			if (psLocation === "missing") {
-				// The explicit missing-ps variant must fail closed before returning.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(await readProcessStartIdentity(process.pid), undefined);
-				// The same missing-ps variant must also refuse lock acquisition.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(await acquireManagedSessionPolicyLock({ sessionName, namespace }), undefined);
+				await t.test("missing ps refuses identity and lock acquisition", async () => {
+					assert.equal(await readProcessStartIdentity(process.pid), undefined);
+					assert.equal(
+						await acquireManagedSessionPolicyLock({ sessionName, namespace }),
+						undefined,
+					);
+				});
 				return;
 			}
 			const nativeStart = await readUtcPsStart(process.pid);
@@ -293,7 +301,7 @@ test(
 				name.startsWith(`${basename(basePath)}.claim-`),
 			);
 			assert.equal(claimNames.length, 1);
-			const ownerPath = join(dirname(basePath), claimNames[0], "owner.json");
+			const ownerPath = join(dirname(basePath), readString(claimNames[0]), "owner.json");
 			const owner = readRecord(JSON.parse(await readFile(ownerPath, "utf8")));
 			assert.equal(owner.startIdentity, expected);
 			foreignOwner = spawn(
@@ -364,7 +372,6 @@ test(
 			const observed = [];
 			for (const startIdentity of earlierFormats) {
 				// Each format is observed against the same live owner before the next rewrite.
-				// oxlint-disable-next-line no-await-in-loop
 				observed.push(await activateAgainst(startIdentity));
 			}
 			assert.deepEqual(

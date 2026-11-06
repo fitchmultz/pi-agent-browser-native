@@ -41,11 +41,11 @@ interface AdditionalPreview {
 
 interface PagePreview {
 	readonly useStructured: boolean;
-	readonly primarySegment?: SnapshotSegment;
-	readonly primaryPreview?: SnapshotPreview;
+	readonly primarySegment?: SnapshotSegment | undefined;
+	readonly primaryPreview?: SnapshotPreview | undefined;
 	readonly additionalSegments: readonly SnapshotSegment[];
 	readonly additionalPreviews: readonly AdditionalPreview[];
-	readonly fallbackPreview?: SnapshotPreview;
+	readonly fallbackPreview?: SnapshotPreview | undefined;
 	readonly omittedAdditionalSectionCount: number;
 }
 

@@ -145,7 +145,9 @@ function optionalEvidenceIsValid(value: EvidenceRow): boolean {
 	);
 }
 
-function isManifestEntry(value: unknown): value is SessionArtifactManifestEntry {
+export function isSessionArtifactManifestEntry(
+	value: unknown,
+): value is SessionArtifactManifestEntry {
 	if (!isRecord(value)) {
 		return false;
 	}
@@ -181,7 +183,7 @@ export function isSessionArtifactManifest(value: unknown): value is SessionArtif
 	return (
 		value.version === 1 &&
 		Array.isArray(value.entries) &&
-		value.entries.every(isManifestEntry) &&
+		value.entries.every(isSessionArtifactManifestEntry) &&
 		typeof value.updatedAtMs === "number" &&
 		Number.isFinite(value.updatedAtMs) &&
 		manifestCountsAreValid(value)

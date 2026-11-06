@@ -6,7 +6,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -76,11 +76,9 @@ function worker(t: TestContext, options: WorkerOptions) {
 		for (const identity of await identities) {
 			const base = getBrowserExecutionLockPath(identity);
 			// Task-owned claim cleanup must finish before the next identity's cleanup.
-			// oxlint-disable-next-line no-await-in-loop
 			for (const name of await readdir(dirname(base))) {
 				if (name.startsWith(`${basename(base)}.claim-`)) {
 					// Task-owned native claims must be removed before fixture teardown.
-					// oxlint-disable-next-line no-await-in-loop
 					await rm(join(dirname(base), name), { recursive: true, force: true });
 				}
 			}
@@ -110,11 +108,9 @@ function worker(t: TestContext, options: WorkerOptions) {
 async function until(check: () => boolean | Promise<boolean>, diagnostic: () => string) {
 	const deadline = Date.now() + 15_000;
 	// Poll completion before each deadline-limited retry.
-	// oxlint-disable-next-line no-await-in-loop
 	while (!(await check())) {
 		assert.ok(Date.now() < deadline, diagnostic());
 		// The next poll must wait for its bounded retry delay.
-		// oxlint-disable-next-line no-await-in-loop
 		await delay(10);
 	}
 }
@@ -137,7 +133,6 @@ async function fixture(t: TestContext, selectedNamespace?: string) {
 		await Promise.all(cleanups.map((cleanup) => cleanup()));
 		for (const name of await claims()) {
 			// Remove task-owned claims after all child cleanup has completed.
-			// oxlint-disable-next-line no-await-in-loop
 			await rm(join(dirname(base), name), { force: true, recursive: true });
 		}
 		await rm(root, { recursive: true, force: true });
@@ -165,12 +160,9 @@ async function fixture(t: TestContext, selectedNamespace?: string) {
 	};
 }
 
-test("direct-call lock waiting leaves execution to native watchdogs", async (t) => {
+nodeTest("direct-call lock waiting leaves execution to native watchdogs", async (t) => {
 	const f = await fixture(t);
-	let started!: () => void;
-	const entered = new Promise<void>((resolve) => {
-		started = resolve;
-	});
+	const entered: PromiseWithResolvers<void> = Promise.withResolvers();
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const clock = mockMonotonicClock(t);
 	const pending = withBrowserExecutionLock(
@@ -179,7 +171,7 @@ test("direct-call lock waiting leaves execution to native watchdogs", async (t) 
 			const running = new Promise<void>((resolve) => {
 				setTimeout(resolve, 1_100);
 			});
-			started();
+			entered.resolve();
 			await running;
 			assert.equal(
 				signal.aborted,
@@ -189,7 +181,7 @@ test("direct-call lock waiting leaves execution to native watchdogs", async (t) 
 		},
 	);
 	try {
-		await entered;
+		await entered.promise;
 		// Pass the coordination deadline on its own clock, then let the native command finish.
 		clock.tick(1_100);
 		t.mock.timers.tick(1_100);
@@ -201,38 +193,48 @@ test("direct-call lock waiting leaves execution to native watchdogs", async (t) 
 	assert.deepEqual(await f.claims(), []);
 });
 
-test("cancelled execution can lend an already-held claim to independently bounded cleanup", async (t) => {
-	const f = await fixture(t);
-	const controller = new AbortController();
-	await withAgentBrowserProcessEnvironment(
-		{ PI_AGENT_BROWSER_SOCKET_DIR: f.root, AGENT_BROWSER_SOCKET_DIR: f.root },
-		() =>
-			withBrowserExecutionLock(
-				{ identity: f.identity, signal: controller.signal, deadline: performance.now() + 5_000 },
-				async (signal) => {
-					controller.abort();
-					assert.equal(signal.aborted, true);
-					const cleanup = await acquireManagedSessionPolicyLock({
-						sessionName: "one",
-						namespace: f.namespace,
-						signal: new AbortController().signal,
-					});
-					assert.ok(cleanup, "cleanup borrows the covered claim until the callback drains");
-					assert.equal(
-						await acquireManagedSessionPolicyLock({ sessionName: "other", namespace: f.namespace }),
-						undefined,
-						"cleanup cannot upgrade identity",
-					);
-					await cleanup.release();
-					assert.equal((await f.claims()).length, 1, "borrowing does not release the outer claim");
-				},
-			),
-	);
-	assert.deepEqual(await f.claims(), []);
-});
+nodeTest(
+	"cancelled execution can lend an already-held claim to independently bounded cleanup",
+	async (t) => {
+		const f = await fixture(t);
+		const controller = new AbortController();
+		await withAgentBrowserProcessEnvironment(
+			{ PI_AGENT_BROWSER_SOCKET_DIR: f.root, AGENT_BROWSER_SOCKET_DIR: f.root },
+			() =>
+				withBrowserExecutionLock(
+					{ identity: f.identity, signal: controller.signal, deadline: performance.now() + 5_000 },
+					async (signal) => {
+						controller.abort();
+						assert.equal(signal.aborted, true);
+						const cleanup = await acquireManagedSessionPolicyLock({
+							sessionName: "one",
+							namespace: f.namespace,
+							signal: new AbortController().signal,
+						});
+						assert.ok(cleanup, "cleanup borrows the covered claim until the callback drains");
+						assert.equal(
+							await acquireManagedSessionPolicyLock({
+								sessionName: "other",
+								namespace: f.namespace,
+							}),
+							undefined,
+							"cleanup cannot upgrade identity",
+						);
+						await cleanup.release();
+						assert.equal(
+							(await f.claims()).length,
+							1,
+							"borrowing does not release the outer claim",
+						);
+					},
+				),
+		);
+		assert.deepEqual(await f.claims(), []);
+	},
+);
 
 for (const ablate of [true, false]) {
-	test(
+	nodeTest(
 		`two processes ${ablate ? "reproduce the uncoordinated" : "prevent the"} verify-then-action race`,
 		{ timeout: 30_000 },
 		async (t) => {
@@ -251,9 +253,9 @@ for (const ablate of [true, false]) {
 					async () => (await f.claims()).length === 2,
 					() => "B never published its waiting claim",
 				);
-				// The lock-enabled control checks blocked navigation before releasing the gate.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.ok(!b.messages.some((message) => message.event === "navigated"));
+				await t.test("navigation remains blocked until release", () => {
+					assert.ok(!b.messages.some((message) => message.event === "navigated"));
+				});
 			}
 			a.send("release");
 			await Promise.all([a.done(), b.done()]);
@@ -263,7 +265,7 @@ for (const ablate of [true, false]) {
 	);
 }
 
-test(
+nodeTest(
 	"different sessions and native socket roots execute concurrently across processes",
 	{ timeout: 30_000 },
 	async (t) => {
@@ -279,25 +281,23 @@ test(
 			"B must publish its own claim while A still owns its claim",
 		);
 		if (process.platform !== "win32") {
-			const second = await fixture(t, f.namespace);
-			const c = worker(t, second.options);
-			await c.event("acquired");
-			// These native claim-file counts apply to the POSIX lock transport.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(
-				(await second.claims()).length,
-				1,
-				"C must hold its claim on the second socket root",
-			);
-			// The same POSIX control must leave both first-root claims present.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(
-				(await f.claims()).length,
-				2,
-				"A and B claims must survive C acquiring on another socket root",
-			);
-			c.send("release");
-			await c.done();
+			await t.test("POSIX socket roots hold independent claims", async () => {
+				const second = await fixture(t, f.namespace);
+				const c = worker(t, second.options);
+				await c.event("acquired");
+				assert.equal(
+					(await second.claims()).length,
+					1,
+					"C must hold its claim on the second socket root",
+				);
+				assert.equal(
+					(await f.claims()).length,
+					2,
+					"A and B claims must survive C acquiring on another socket root",
+				);
+				c.send("release");
+				await c.done();
+			});
 		}
 		a.send("release");
 		b.send("release");
@@ -305,7 +305,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"namespace close drains earlier sessions and excludes later arrivals without blocking another namespace",
 	{ timeout: 30_000 },
 	async (t) => {
@@ -313,7 +313,7 @@ test(
 		const a = worker(t, f.options);
 		const b = worker(t, { ...f.options, sessionName: "two" });
 		await Promise.all([a.event("acquired"), b.event("acquired")]);
-		const close = worker(t, { ...f.options, sessionName: undefined });
+		const close = worker(t, { socketDir: f.root, namespace: f.namespace, mode: "hold" });
 		await until(
 			() => f.published(3),
 			() => "close ticket missing",
@@ -342,7 +342,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"multi-browser operations acquire canonical context order, dedupe session claims, and borrow every managed policy",
 	{ timeout: 30_000 },
 	async (t) => {
@@ -374,7 +374,7 @@ test(
 			() => "reversed multi-identity waiter missing",
 		);
 		assert.ok(!reversed.messages.some((message) => message.event === "acquired"));
-		const close = worker(t, { ...f.options, sessionName: undefined });
+		const close = worker(t, { socketDir: f.root, namespace: f.namespace, mode: "hold" });
 		await until(
 			() => f.published(3),
 			() => "namespace close waiter missing",
@@ -391,7 +391,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"aborting multi-context acquisition releases earlier claims without disturbing the blocking owner",
 	{ timeout: 30_000 },
 	async (t) => {
@@ -418,7 +418,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"abort and deadline withdraw only the waiter; cancellation retains a running callback until cleanup",
 	{ timeout: 30_000 },
 	async (t) => {
@@ -454,7 +454,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"recursive calls borrow policy ownership and process death releases the shared identity",
 	{ timeout: 30_000 },
 	async (t) => {
@@ -477,133 +477,134 @@ test(
 	},
 );
 
-test("nested siblings serialize, throws release, and scope upgrades or escaped callbacks fail without waiting", async (t) => {
-	const f = await fixture(t);
-	const options = { identity: f.identity, deadline: performance.now() + 10_000 };
-	let active = 0;
-	let maximum = 0;
-	let escaped!: () => Promise<void>;
-	await assert.rejects(
-		withBrowserExecutionLock(options, async () => {
-			await Promise.all(
-				[1, 2, 3].map(() =>
-					withBrowserExecutionLock(options, async () => {
-						maximum = Math.max(maximum, ++active);
-						await delay(10);
-						active--;
-					}),
-				),
-			);
-			await assert.rejects(
-				withBrowserExecutionLock(
-					{ ...options, identity: { socketContext: f.identity.socketContext } },
-					async () => {
-						// Admission is the tested operation; no lock work is needed.
-					},
-				),
-				/change or upgrade/,
-			);
-			// AsyncResource captures the scope like a deferred IPC callback would.
-			const { AsyncResource } = await import("node:async_hooks");
-			escaped = AsyncResource.bind(() =>
-				withBrowserExecutionLock(options, async () => {
-					// Escaped work is empty; admission itself must fail.
-				}),
-			);
-			throw new Error("callback failure");
-		}),
-		/callback failure/,
-	);
-	assert.equal(maximum, 1);
-	await assert.rejects(escaped(), /already finished/);
-	await withBrowserExecutionLock(
-		{ ...options, identity: { socketContext: f.identity.socketContext } },
-		async () => {
-			await withBrowserExecutionLock(options, async () => {
-				await withBrowserExecutionLock(
-					{ ...options, identity: { ...f.identity, sessionName: "two" } },
-					async () => {
-						// Admission is the tested operation; no lock work is needed.
-					},
+nodeTest(
+	"nested siblings serialize, throws release, and scope upgrades or escaped callbacks fail without waiting",
+	async (t) => {
+		const f = await fixture(t);
+		const options = { identity: f.identity, deadline: performance.now() + 10_000 };
+		let active = 0;
+		let maximum = 0;
+		let escaped: (() => Promise<void>) | undefined;
+		await assert.rejects(
+			withBrowserExecutionLock(options, async () => {
+				await Promise.all(
+					[1, 2, 3].map(() =>
+						withBrowserExecutionLock(options, async () => {
+							maximum = Math.max(maximum, ++active);
+							await delay(10);
+							active--;
+						}),
+					),
 				);
+				await assert.rejects(
+					withBrowserExecutionLock(
+						{ ...options, identity: { socketContext: f.identity.socketContext } },
+						async () => {
+							// Admission is the tested operation; no lock work is needed.
+						},
+					),
+					/change or upgrade/,
+				);
+				// AsyncResource captures the scope like a deferred IPC callback would.
+				const { AsyncResource } = await import("node:async_hooks");
+				escaped = AsyncResource.bind(() =>
+					withBrowserExecutionLock(options, async () => {
+						// Escaped work is empty; admission itself must fail.
+					}),
+				);
+				throw new Error("callback failure");
+			}),
+			/callback failure/,
+		);
+		assert.equal(maximum, 1);
+		assert.ok(escaped);
+		await assert.rejects(escaped(), /already finished/);
+		await withBrowserExecutionLock(
+			{ ...options, identity: { socketContext: f.identity.socketContext } },
+			async () => {
+				await withBrowserExecutionLock(options, async () => {
+					await withBrowserExecutionLock(
+						{ ...options, identity: { ...f.identity, sessionName: "two" } },
+						async () => {
+							// Admission is the tested operation; no lock work is needed.
+						},
+					);
+				});
+			},
+		);
+		// A callback that returns without awaiting an already-started inner operation
+		// must not release its claim while that operation still uses the browser.
+		const pending: PromiseWithResolvers<void> = Promise.withResolvers();
+		const entered: PromiseWithResolvers<void> = Promise.withResolvers();
+		let inner: Promise<void> | undefined;
+		const outer = withBrowserExecutionLock(options, async () => {
+			inner = withBrowserExecutionLock(options, async () => {
+				entered.resolve();
+				await pending.promise;
 			});
-		},
-	);
-	// A callback that returns without awaiting an already-started inner operation
-	// must not release its claim while that operation still uses the browser.
-	let release!: () => void;
-	const pending = new Promise<void>((resolve) => {
-		release = resolve;
-	});
-	let started!: () => void;
-	const entered = new Promise<void>((resolve) => {
-		started = resolve;
-	});
-	let inner: Promise<void> | undefined;
-	const outer = withBrowserExecutionLock(options, async () => {
-		inner = withBrowserExecutionLock(options, async () => {
-			started();
-			await pending;
 		});
-	});
-	await entered;
-	assert.equal((await f.claims()).length, 1);
-	release();
-	assert.ok(inner);
-	await Promise.all([outer, inner]);
-	await assert.rejects(
-		withBrowserExecutionLock(
-			{ ...options, identity: { ...f.identity, sessionName: "x".repeat(1_048_576) } },
-			async () => assert.fail("unreadable ownership metadata must never be published"),
-		),
-		/unavailable or busy/,
-	);
-	assert.deepEqual(await f.claims(), []);
-});
+		await entered.promise;
+		assert.equal((await f.claims()).length, 1);
+		pending.resolve();
+		assert.ok(inner);
+		await Promise.all([outer, inner]);
+		await assert.rejects(
+			withBrowserExecutionLock(
+				{ ...options, identity: { ...f.identity, sessionName: "x".repeat(1_048_576) } },
+				async () => assert.fail("unreadable ownership metadata must never be published"),
+			),
+			/unavailable or busy/,
+		);
+		assert.deepEqual(await f.claims(), []);
+	},
+);
 
-test("execution identity shares process socket precedence and native namespace/path aliases", async (t) => {
-	const f = await fixture(t);
-	const parentEnv = { AGENT_BROWSER_SOCKET_DIR: "/native", PI_AGENT_BROWSER_SOCKET_DIR: "/pi" };
-	assert.equal(resolveAgentBrowserSocketDir({ parentEnv }), "/pi");
-	assert.equal(
-		resolveAgentBrowserSocketDir({ parentEnv, env: { AGENT_BROWSER_SOCKET_DIR: "/call" } }),
-		"/call",
-	);
-	assert.equal(
-		resolveAgentBrowserSocketDir({ parentEnv: { AGENT_BROWSER_SOCKET_DIR: "/native" } }),
-		"/native",
-	);
-	assert.notEqual(
-		resolveAgentBrowserSocketDir({
-			parentEnv: { AGENT_BROWSER_SOCKET_DIR: "/native" },
-			ownedManagedSession: true,
-		}),
-		"/native",
-	);
-	const alias = await resolveBrowserExecutionIdentity({
-		env: { AGENT_BROWSER_SOCKET_DIR: join(f.root, ".") },
-		namespace: " Team / Space ",
-		sessionName: "one",
-	});
-	const canonical = await resolveBrowserExecutionIdentity({
-		env: { AGENT_BROWSER_SOCKET_DIR: f.root },
-		namespace: "team-space",
-		sessionName: "one",
-	});
-	assert.deepEqual(alias, canonical);
-	const scoped = await withAgentBrowserProcessEnvironment(
-		{ PI_AGENT_BROWSER_SOCKET_DIR: f.root },
-		() => resolveBrowserExecutionIdentity({ namespace: f.namespace, sessionName: "one" }),
-	);
-	assert.deepEqual(scoped, f.identity);
-	if (process.platform === "darwin") {
-		const tmpAlias = await resolveBrowserExecutionIdentity({
-			env: { AGENT_BROWSER_SOCKET_DIR: f.root.replace(/^\/var\//, "/private/var/") },
-			namespace: f.namespace,
-			sessionName: "ONE",
+nodeTest(
+	"execution identity shares process socket precedence and native namespace/path aliases",
+	async (t) => {
+		const f = await fixture(t);
+		const parentEnv = { AGENT_BROWSER_SOCKET_DIR: "/native", PI_AGENT_BROWSER_SOCKET_DIR: "/pi" };
+		assert.equal(resolveAgentBrowserSocketDir({ parentEnv }), "/pi");
+		assert.equal(
+			resolveAgentBrowserSocketDir({ parentEnv, env: { AGENT_BROWSER_SOCKET_DIR: "/call" } }),
+			"/call",
+		);
+		assert.equal(
+			resolveAgentBrowserSocketDir({ parentEnv: { AGENT_BROWSER_SOCKET_DIR: "/native" } }),
+			"/native",
+		);
+		assert.notEqual(
+			resolveAgentBrowserSocketDir({
+				parentEnv: { AGENT_BROWSER_SOCKET_DIR: "/native" },
+				ownedManagedSession: true,
+			}),
+			"/native",
+		);
+		const alias = await resolveBrowserExecutionIdentity({
+			env: { AGENT_BROWSER_SOCKET_DIR: join(f.root, ".") },
+			namespace: " Team / Space ",
+			sessionName: "one",
 		});
-		// macOS /tmp aliases must resolve to the same native lock identity.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(tmpAlias, f.identity);
-	}
-});
+		const canonical = await resolveBrowserExecutionIdentity({
+			env: { AGENT_BROWSER_SOCKET_DIR: f.root },
+			namespace: "team-space",
+			sessionName: "one",
+		});
+		assert.deepEqual(alias, canonical);
+		const scoped = await withAgentBrowserProcessEnvironment(
+			{ PI_AGENT_BROWSER_SOCKET_DIR: f.root },
+			() => resolveBrowserExecutionIdentity({ namespace: f.namespace, sessionName: "one" }),
+		);
+		assert.deepEqual(scoped, f.identity);
+		if (process.platform === "darwin") {
+			await t.test("macOS temp path aliases preserve identity", async () => {
+				const tmpAlias = await resolveBrowserExecutionIdentity({
+					env: { AGENT_BROWSER_SOCKET_DIR: f.root.replace(/^\/var\//, "/private/var/") },
+					namespace: f.namespace,
+					sessionName: "ONE",
+				});
+				assert.deepEqual(tmpAlias, f.identity);
+			});
+		}
+	},
+);

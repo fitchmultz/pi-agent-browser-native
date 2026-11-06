@@ -49,7 +49,7 @@ export function observeNativeWebMcp(data: unknown): void {
 /** Native discovery is edge-triggered; helper reads must not swallow its updates. */
 export async function collectNativeWebMcp<T>(
 	run: () => Promise<T>,
-): Promise<{ result: T; catalog?: Record<string, unknown> }> {
+): Promise<{ result: T; catalog?: Record<string, unknown> | undefined }> {
 	const current: { catalog?: Record<string, unknown> } = {};
 	return observation.run(current, async () => ({ result: await run(), catalog: current.catalog }));
 }

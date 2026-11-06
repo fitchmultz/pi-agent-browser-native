@@ -7,9 +7,9 @@ import {
 import { isOpenNavigationCommand } from "./command-taxonomy.js";
 
 export interface CommandInfo {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly commandTokens?: readonly string[];
-	readonly subcommand?: string;
+	readonly subcommand?: string | undefined;
 }
 
 export interface ArgvDescriptor {
@@ -19,9 +19,9 @@ export interface ArgvDescriptor {
 }
 
 export interface WaitCommandShape {
-	readonly downloadPath?: string;
-	readonly downloadPathIndex?: number;
-	readonly subcommand?: string;
+	readonly downloadPath?: string | undefined;
+	readonly downloadPathIndex?: number | undefined;
+	readonly subcommand?: string | undefined;
 }
 
 function isBooleanLiteral(token: string | undefined): boolean {
@@ -44,8 +44,8 @@ function flagConsumesFollowingToken(token: string, nextToken: string | undefined
 }
 
 export function findCommandStartIndex(args: readonly string[]): number | undefined {
-	for (let index = 0; index < args.length; index += 1) {
-		const token = args[index];
+	const entries = args.entries();
+	for (const [index, token] of entries) {
 		if (
 			token.startsWith("--session=") ||
 			token.startsWith("--namespace=") ||
@@ -55,7 +55,7 @@ export function findCommandStartIndex(args: readonly string[]): number | undefin
 		}
 		if (token.startsWith("-")) {
 			if (flagConsumesFollowingToken(token, args[index + 1])) {
-				index += 1;
+				entries.next();
 			}
 			continue;
 		}
@@ -75,14 +75,14 @@ export function extractUpstreamCommandTokens(args: readonly string[]): string[] 
 
 function waitDownloadShape(
 	considered: readonly { readonly token: string; readonly index: number }[],
-	downloadIndex: number,
+	download: { readonly token: string; readonly index: number },
 ): WaitCommandShape {
-	const next = considered.at(downloadIndex + 1);
+	const next = considered.at(considered.indexOf(download) + 1);
 	const candidate = next?.token.startsWith("--") === false ? next : undefined;
 	return {
 		downloadPath: candidate?.token,
 		downloadPathIndex: candidate?.index,
-		subcommand: considered[downloadIndex].token,
+		subcommand: download.token,
 	};
 }
 
@@ -106,20 +106,19 @@ export function parseWaitCommandTokens(commandTokens: readonly string[]): WaitCo
 			return { subcommand: match.token };
 		}
 	}
-	const downloadIndex = considered.findIndex(
-		(entry) => entry.token === "--download" || entry.token === "-d",
-	);
-	if (downloadIndex >= 0) {
-		return waitDownloadShape(considered, downloadIndex);
+	const download = considered.find((entry) => entry.token === "--download" || entry.token === "-d");
+	if (download !== undefined) {
+		return waitDownloadShape(considered, download);
 	}
 	return { subcommand: considered[0]?.token };
 }
 
 function getOpenCommandTarget(commandTokens: readonly string[]): string | undefined {
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const tokens = commandTokens.values();
+	tokens.next();
+	for (const token of tokens) {
 		if (token === "--init-script" || token === "--enable") {
-			index += 1;
+			tokens.next();
 			continue;
 		}
 		if (token.startsWith("--init-script=") || token.startsWith("--enable=")) {

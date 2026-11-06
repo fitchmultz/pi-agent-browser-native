@@ -30,11 +30,12 @@ export async function listArtifactFiles(
 	const candidates = entries.filter((entry) => entry.isFile() && !excludedNames.has(entry.name));
 	for (let index = 0; index < candidates.length; index += 4) {
 		// Four independent stats bound filesystem work; eviction still consumes the original order.
-		// oxlint-disable-next-line no-await-in-loop
 		const batch = await Promise.all(
 			candidates.slice(index, index + 4).map(async (entry) => {
 				const path = join(directory, entry.name);
-				const stats = await stat(path).catch(() => undefined);
+				const stats = await stat(path).catch((): undefined => {
+					// Uninspectable files do not enter the eviction inventory.
+				});
 				return stats?.isFile() === true
 					? { mtimeMs: stats.mtimeMs, path, size: stats.size }
 					: undefined;
@@ -101,7 +102,6 @@ export async function prunePersistentSessionArtifactsToBudget(
 			continue;
 		}
 		// Evict oldest first and stop immediately once the required budget is available.
-		// oxlint-disable-next-line no-await-in-loop
 		const removed = await rm(file.path, { force: true }).then(
 			() => true,
 			() => false,

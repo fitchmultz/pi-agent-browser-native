@@ -4,6 +4,7 @@ import { inspect } from "node:util";
 import { getImageDimensions } from "@earendil-works/pi-tui";
 import { isRecord, parsePositiveInteger } from "../../parsing.js";
 import type { ImageObservation, ToolPresentation } from "../contracts.js";
+import type { ToolPresentationObservation } from "./observation-contracts.js";
 import { LIGHTPANDA_IMAGE_REASON } from "./common.js";
 import {
 	type ArtifactCommand,
@@ -22,12 +23,19 @@ function getInlineImageMaxBytes(env: Readonly<NodeJS.ProcessEnv> = process.env):
 	);
 }
 
-export function appendPresentationNotice(presentation: ToolPresentation, message: string): void {
-	const existingText = presentation.content[0]?.type === "text" ? presentation.content[0].text : "";
-	presentation.content[0] = {
-		type: "text",
-		text: existingText.length > 0 ? `${existingText}\n\n${message}` : message,
-	};
+export function appendPresentationNotice(
+	content: ToolPresentationObservation["content"],
+	message: string,
+): ToolPresentation["content"] {
+	const first = content.at(0);
+	const existingText = first?.type === "text" ? first.text : "";
+	return [
+		{
+			type: "text",
+			text: existingText.length > 0 ? `${existingText}\n\n${message}` : message,
+		},
+		...content.slice(1),
+	];
 }
 
 export function getScreenshotSummary(data: Readonly<Record<string, unknown>>): string | undefined {
@@ -90,39 +98,28 @@ function buildImageObservation(
 	};
 }
 
-async function attachVisibleImage(
-	presentation: ToolPresentation,
-	options: {
-		readonly imagePath: string;
-		readonly size: number;
-		readonly mimeType: string;
-		readonly textRendered: boolean;
-	},
-): Promise<void> {
-	if (options.textRendered) {
-		appendPresentationNotice(presentation, LIGHTPANDA_IMAGE_REASON);
-	}
+async function readInlineImage(options: {
+	readonly imagePath: string;
+	readonly size: number;
+	readonly mimeType: string;
+}): Promise<ToolPresentation["content"][number]> {
 	const limit = getInlineImageMaxBytes();
 	if (options.size > limit) {
-		appendPresentationNotice(
-			presentation,
-			`Image attachment skipped: ${formatByteCount(options.size)} exceeds the inline limit of ${formatByteCount(limit)}.`,
-		);
-		return;
+		return {
+			type: "text",
+			text: `Image attachment skipped: ${formatByteCount(options.size)} exceeds the inline limit of ${formatByteCount(limit)}.`,
+		};
 	}
 	const file = await readFile(options.imagePath);
-	presentation.content.push({
-		type: "image",
-		data: file.toString("base64"),
-		mimeType: options.mimeType,
-	});
+	return { type: "image", data: file.toString("base64"), mimeType: options.mimeType };
 }
 
 export async function attachInlineImage(
-	presentation: ToolPresentation,
+	presentation: ToolPresentationObservation,
 	imagePath: string,
 	modelVisible = true,
-): Promise<ToolPresentation> {
+): Promise<Partial<Pick<ToolPresentation, "content" | "imagePath" | "imageObservations">>> {
+	const update: Partial<Pick<ToolPresentation, "content" | "imagePath" | "imageObservations">> = {};
 	try {
 		const [fileStats, header] = await Promise.all([
 			stat(imagePath),
@@ -131,26 +128,29 @@ export async function attachInlineImage(
 		]);
 		const mimeType = getImageMimeType(header);
 		if (mimeType === undefined) {
-			return presentation;
+			return update;
 		}
 		const textRendered = isTextRendered(presentation.data);
-		presentation.imagePath = imagePath;
-		presentation.imageObservations = [
-			buildImageObservation(imagePath, header, mimeType, textRendered),
-		];
+		update.imagePath = imagePath;
+		update.imageObservations = [buildImageObservation(imagePath, header, mimeType, textRendered)];
 		if (modelVisible) {
-			await attachVisibleImage(presentation, {
-				imagePath,
-				size: fileStats.size,
-				mimeType,
-				textRendered,
-			});
+			if (textRendered) {
+				update.content = appendPresentationNotice(presentation.content, LIGHTPANDA_IMAGE_REASON);
+			}
+			const inline = await readInlineImage({ imagePath, size: fileStats.size, mimeType });
+			const content = update.content ?? presentation.content;
+			update.content =
+				inline.type === "text"
+					? appendPresentationNotice(content, inline.text)
+					: [...content, inline];
 		}
-		return presentation;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : inspect(error);
-		appendPresentationNotice(presentation, `Image attachment failed: ${message}`);
-		presentation.imagePath = imagePath;
-		return presentation;
+		update.content = appendPresentationNotice(
+			update.content ?? presentation.content,
+			`Image attachment failed: ${message}`,
+		);
+		update.imagePath = imagePath;
 	}
+	return update;
 }

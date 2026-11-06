@@ -11,24 +11,24 @@ import type {
 } from "../../results/evidence-contracts.js";
 
 export interface RecordingRecoveryOptions {
-	readonly modelVisible?: boolean;
-	readonly artifactManifest?: SessionArtifactManifest;
+	readonly modelVisible?: boolean | undefined;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly artifactRunStartedAtMs: number;
 	readonly commandTokens: readonly string[];
 	readonly cwd: string;
-	readonly envelope?: AgentBrowserEnvelope;
-	readonly namespace?: string;
-	readonly parseError?: string;
+	readonly envelope?: AgentBrowserEnvelope | undefined;
+	readonly namespace?: string | undefined;
+	readonly parseError?: string | undefined;
 	readonly processResult: ProcessRunResult;
-	readonly reservation?: ActiveRecordingReservation;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
-	readonly stdin?: string;
+	readonly reservation?: ActiveRecordingReservation | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
+	readonly stdin?: string | undefined;
 }
 
 export interface RecordingStopRecoveryResult {
 	readonly batch: boolean;
-	readonly envelope?: AgentBrowserEnvelope;
+	readonly envelope?: AgentBrowserEnvelope | undefined;
 	readonly partialBatch: boolean;
 	readonly stopPosition: number;
 	readonly presentation: ToolPresentation;
@@ -41,9 +41,9 @@ export type RecordingStopRecoveryObservation = Omit<RecordingStopRecoveryResult,
 
 export interface RecordingRecoveryPlan {
 	readonly batch: boolean;
-	readonly rows?: readonly unknown[];
+	readonly rows?: readonly unknown[] | undefined;
 	/** Compact dispatched-row position; native input indexes can include skipped empty rows. */
 	readonly stopPosition: number;
-	readonly expected?: ActiveRecordingReservation;
+	readonly expected?: ActiveRecordingReservation | undefined;
 	readonly attempt: RecordingRecovery["attempt"];
 }

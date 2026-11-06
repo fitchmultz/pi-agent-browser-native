@@ -96,7 +96,6 @@ function reservationChanged(
 }
 export function applyRecordingArtifactsToReservations(
 	// This mutator owns changes to the namespace/session reservation index, not to reservation values.
-	// oxlint-disable-next-line typescript/prefer-readonly-parameter-types
 	reservations: Map<string, ActiveRecordingReservation>,
 	artifacts: readonly FileArtifactMetadata[],
 ): RecordingReservationTransition[] {
@@ -125,7 +124,6 @@ export function applyRecordingArtifactsToReservations(
 
 export function retireRecordingReservation(
 	// This mutator owns changes to the namespace/session reservation index, not to reservation values.
-	// oxlint-disable-next-line typescript/prefer-readonly-parameter-types
 	reservations: Map<string, ActiveRecordingReservation>,
 	sessionName: string,
 	namespace?: string,
@@ -177,7 +175,7 @@ function optionalReservationMetadata(data: Readonly<Record<string, unknown>>): b
 }
 function parseActiveReservation(
 	data: Readonly<Record<string, unknown>>,
-	identity: { readonly sessionName: string; readonly namespace?: string },
+	identity: { readonly sessionName: string; readonly namespace?: string | undefined },
 ): ActiveRecordingReservation | undefined {
 	if (!optionalReservationMetadata(data)) {
 		return undefined;

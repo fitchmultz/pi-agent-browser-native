@@ -13,12 +13,12 @@ export interface PreparationObservationOwners {
 	readonly pageState: SessionPageState;
 	readonly restoreState: ManagedSessionRestoreState;
 	readonly update: ReturnType<SessionPageState["beginUpdate"]>;
-	readonly artifactManifest?: SessionArtifactManifest;
-	readonly artifactStore?: PersistentSessionArtifactStore;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
+	readonly artifactStore?: PersistentSessionArtifactStore | undefined;
 }
 
 export interface PreparationObservationFacts extends PreparationProcessFacts {
-	readonly modelVisible?: boolean;
+	readonly modelVisible?: boolean | undefined;
 }
 import type { PreparationGuardContext, PreparationGuardEvidence } from "./prepare-guards.js";
 import type { PrepareBrowserRunResult } from "./types.js";

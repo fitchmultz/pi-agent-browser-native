@@ -36,7 +36,6 @@ async function walkWorkspaceSourceFiles(root: string, maxFiles: number): Promise
 			const path = join(directory, entry.name);
 			if (entry.isDirectory() && !SOURCE_LOOKUP_IGNORED_DIRECTORIES.has(entry.name)) {
 				// Ordered depth-first traversal preserves which files enter the bounded scan.
-				// oxlint-disable-next-line no-await-in-loop
 				await visit(path);
 			}
 			if (entry.isFile() && SOURCE_LOOKUP_WORKSPACE_EXTENSIONS.has(extname(entry.name))) {
@@ -81,7 +80,6 @@ export async function scanWorkspaceComponent(
 	const candidates: AgentBrowserSourceLookupCandidate[] = [];
 	for (const file of files) {
 		// Reads remain serial so the ten-candidate budget stops further filesystem work.
-		// oxlint-disable-next-line no-await-in-loop
 		const text = await readWorkspaceText(file);
 		if (text === undefined) {
 			continue;
@@ -162,7 +160,6 @@ export async function scanWorkspaceRequests(
 	let candidates: AgentBrowserNetworkSourceLookupCandidate[] = [];
 	for (const file of files) {
 		// Preserve first-match ordering and stop reading files at the candidate budget.
-		// oxlint-disable-next-line no-await-in-loop
 		const text = await readWorkspaceText(file);
 		if (text === undefined) {
 			continue;

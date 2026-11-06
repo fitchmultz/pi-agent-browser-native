@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { readDefined, readArray, readRecord, readString } from "./helpers/assertions.js";
 import { withAgentBrowserProcessEnvironment } from "../extensions/agent-browser/lib/process-environment.js";
 import { execFileSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
@@ -27,7 +27,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { compileAgentBrowserQaPreset } from "../extensions/agent-browser/lib/input-modes/job.js";
@@ -133,7 +133,7 @@ async function executeControlledTimeout(
 	}
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects dangling value-taking flags before spawning agent-browser",
 	{ concurrency: false },
 	async () => {
@@ -176,10 +176,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { args } }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension passes through managed state capabilities and list rows",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-state-access-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -205,15 +205,11 @@ process.stdout.write(JSON.stringify({ success: true, data: { files: [{ filename:
 					["state", "clear", "--all"],
 					["--restore", restoreKey, "open", "https://example.com"],
 				]) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
-					// All three literal state/restore commands check passthrough success and visible details.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(result.details);
-					// All three literal state/restore commands check passthrough success and visible details.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, false, JSON.stringify(result));
+					await t.test(args.join(" "), async () => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+						assert.ok(result.details);
+						assert.equal(result.isError, false, JSON.stringify(result));
+					});
 				}
 				const invocations = await readInvocationLog(logPath);
 				assert.deepEqual(
@@ -234,10 +230,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { files: [{ filename:
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension passes through file access, local navigation, and protected-looking paths",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-file-access-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -279,15 +275,11 @@ if (args.includes("screenshot")) {
 						["screenshot", artifactPath],
 						["--config", "/tmp/explicit-agent-browser.json", "open", "https://example.com"],
 					]) {
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
-						// All three literal local/config/artifact commands check passthrough success and details.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(result.details);
-						// All three literal local/config/artifact commands check passthrough success and details.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(result.isError, false, JSON.stringify(result));
+						await t.test(args.join(" "), async () => {
+							const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+							assert.ok(result.details);
+							assert.equal(result.isError, false, JSON.stringify(result));
+						});
 					}
 					const invocations = await readInvocationLog(logPath);
 					assert.deepEqual(
@@ -325,10 +317,10 @@ if (args.includes("screenshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension live-verifies caller-owned explicit sessions before content reads",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-explicit-live-url-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -353,21 +345,15 @@ if (args.includes("url")) {
 				for (const [sessionName, content] of [
 					["caller-local", "LOCAL CONTENT"],
 					["caller-safe", "SAFE CONTENT"],
-				]) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--session", sessionName, "get", "html", "body"],
+				] as const) {
+					await t.test(sessionName, async () => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", sessionName, "get", "html", "body"],
+						});
+						assert.ok(result.details);
+						assert.equal(result.isError, false, JSON.stringify(result));
+						assert.match(result.content[0]?.text ?? "", new RegExp(content));
 					});
-					// Both literal local/remote caller sessions check successful reads of their expected content.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(result.details);
-					// Both literal local/remote caller sessions check successful reads of their expected content.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, false, JSON.stringify(result));
-					// Both literal local/remote caller sessions check successful reads of their expected content.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(result.content[0]?.text ?? "", new RegExp(content));
 				}
 				const failed = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["--session", "caller-failed", "get", "html", "body"],
@@ -377,13 +363,13 @@ if (args.includes("url")) {
 				assert.match(failed.content[0]?.text ?? "", /active page became unverified/);
 				const invocations = await readInvocationLog(logPath);
 				for (const sessionName of ["caller-local", "caller-safe"]) {
-					const calls = invocations.filter((entry) => entry.args.includes(sessionName));
-					// Both literal successful caller sessions check exact live-verification/read order.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.deepEqual(
-						calls.map((entry) => (entry.args.includes("url") ? "url" : "html")),
-						["url", "html"],
-					);
+					await t.test(sessionName + " dispatch order", () => {
+						const calls = invocations.filter((entry) => entry.args.includes(sessionName));
+						assert.deepEqual(
+							calls.map((entry) => (entry.args.includes("url") ? "url" : "html")),
+							["url", "html"],
+						);
+					});
 				}
 				assert.equal(invocations.filter((entry) => entry.args.includes("caller-failed")).length, 1);
 			});
@@ -393,7 +379,7 @@ if (args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension lets a cold caller-owned launch keep its flags instead of probing first",
 	{ concurrency: false },
 	async () => {
@@ -431,7 +417,7 @@ process.stdout.write(JSON.stringify({ success: true, data: args.includes("url") 
 				);
 				assert.equal((await read("cold-flags", ["--ignore-https-errors"])).isError, false);
 				assert.ok(
-					(await readInvocationLog(logPath))[0]?.args.includes("--ignore-https-errors"),
+					(await readInvocationLog(logPath))[0]?.args.includes("--ignore-https-errors") === true,
 					"the first browser command retains the caller's launch flag",
 				);
 				assert.deepEqual(
@@ -469,7 +455,7 @@ process.stdout.write(JSON.stringify({ success: true, data: args.includes("url") 
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension serializes caller-owned live verification with same-session commands",
 	{ concurrency: false },
 	async () => {
@@ -623,7 +609,7 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps failed navigation targets unverified",
 	{ concurrency: false },
 	async () => {
@@ -677,10 +663,10 @@ if (args.includes("pushstate")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports local-page navigation and continues normally",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-local-navigation-helper-"));
 		const logPath = join(tempDir, "invocations.log");
 		const statePath = join(tempDir, "page-state.txt");
@@ -719,69 +705,43 @@ if (args.includes("back")) {
 				for (const transitionArgs of [
 					["back"],
 					["eval", "location.href='file:///tmp/.agent-browser/auth.html'"],
-				]) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["open", "https://safe.example/"],
-					});
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(opened.details);
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(opened.isError, false, JSON.stringify(opened));
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const beforeTransition = (await readInvocationLog(logPath)).length;
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const transitioned = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: transitionArgs,
-					});
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(transitioned.isError, false, JSON.stringify(transitioned));
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(JSON.stringify(transitioned), /SECRET COOKIE TITLE/);
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const invocations = await readInvocationLog(logPath);
-					const transitionIndex = invocations.findIndex(
-						(entry, index) => index >= beforeTransition && entry.args.includes(transitionArgs[0]),
-					);
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(transitionIndex >= beforeTransition);
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						invocations
-							.slice(transitionIndex + 1)
-							.some((entry) => entry.args.includes("get") && entry.args.includes("url")),
-						true,
-					);
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						invocations
-							.slice(transitionIndex + 1)
-							.some((entry) => entry.args.includes("get") && entry.args.includes("title")),
-						true,
-					);
+				] as const) {
+					await t.test(transitionArgs.join(" "), async () => {
+						const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["open", "https://safe.example/"],
+						});
+						assert.ok(opened.details);
+						assert.equal(opened.isError, false, JSON.stringify(opened));
+						const beforeTransition = (await readInvocationLog(logPath)).length;
+						const transitioned = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: transitionArgs,
+						});
+						assert.equal(transitioned.isError, false, JSON.stringify(transitioned));
+						assert.match(JSON.stringify(transitioned), /SECRET COOKIE TITLE/);
+						const invocations = await readInvocationLog(logPath);
+						const transitionIndex = invocations.findIndex(
+							(entry, index) => index >= beforeTransition && entry.args.includes(transitionArgs[0]),
+						);
+						assert.ok(transitionIndex >= beforeTransition);
+						assert.equal(
+							invocations
+								.slice(transitionIndex + 1)
+								.some((entry) => entry.args.includes("get") && entry.args.includes("url")),
+							true,
+						);
+						assert.equal(
+							invocations
+								.slice(transitionIndex + 1)
+								.some((entry) => entry.args.includes("get") && entry.args.includes("title")),
+							true,
+						);
 
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["snapshot", "-i"],
+						const snapshot = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["snapshot", "-i"],
+						});
+						assert.ok(snapshot.details);
+						assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
 					});
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(snapshot.details);
-					// Both literal history/eval transitions check reconciliation before their next snapshot.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
 				}
 			});
 		} finally {
@@ -790,10 +750,10 @@ if (args.includes("back")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension exposes and targets wrapper-prefixed live sessions",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-managed-session-access-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -826,17 +786,13 @@ if (args.includes("get") && args.includes("url")) {
 				]);
 
 				for (const sessionName of ["piab-foreign-live", "PIAB-foreign-live"]) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--session", sessionName, "get", "url"],
+					await t.test(sessionName, async () => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", sessionName, "get", "url"],
+						});
+						assert.ok(result.details);
+						assert.equal(result.isError, false, JSON.stringify(result));
 					});
-					// Both literal wrapper-looking session names must remain targetable without reservation gates.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(result.details);
-					// Both literal wrapper-looking session names must remain targetable without reservation gates.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, false, JSON.stringify(result));
 				}
 				assert.deepEqual(
 					(await readInvocationLog(logPath)).map((entry) => entry.args),
@@ -855,10 +811,10 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects incompatible launch reuse of an active restore-enabled managed daemon",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "rp-"));
 		initializeGitProject(tempDir);
 		const logPath = join(tempDir, "invocations.log");
@@ -928,11 +884,11 @@ if (args.includes("session") && args.includes("info")) {
 						"inspect before launch and capture the resulting daemon generation",
 					);
 					assert.ok(
-						afterCloudflareOpen.indexOf(daemonProbes[0]) <
+						afterCloudflareOpen.indexOf(readDefined(daemonProbes[0])) <
 							afterCloudflareOpen.findIndex((entry) => entry.args.includes("open")),
 					);
 					assert.ok(
-						afterCloudflareOpen.indexOf(daemonProbes[1]) >
+						afterCloudflareOpen.indexOf(readDefined(daemonProbes[1])) >
 							afterCloudflareOpen.findIndex((entry) => entry.args.includes("open")),
 					);
 					const cloudflareInvocation = afterCloudflareOpen.find((entry) =>
@@ -1035,38 +991,24 @@ if (args.includes("session") && args.includes("info")) {
 						},
 						{ args: ["batch", "connect wss://remote.example/devtools/browser/test"] },
 					]) {
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const verified = await executeRegisteredTool(harness.tool, harness.ctx, {
-							args: ["get", "url"],
+						await t.test("stdin" in params ? "stdin batch" : "raw batch", async () => {
+							const verified = await executeRegisteredTool(harness.tool, harness.ctx, {
+								args: ["get", "url"],
+							});
+							// Each negative policy case starts with an independently verified page, not an unknown-target denial.
+							assert.equal(verified.isError, false, JSON.stringify(verified));
+							// Count the deliberate verification before checking that policy denial adds no user dispatch.
+							invocationCount = await userInvocationCount();
+							const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
+							assert.ok(blockedBatch.details);
+							assert.equal(blockedBatch.isError, true);
+							assert.match(
+								readString(blockedBatch.details.validationError ?? ""),
+								/does not match the requested managed-restore policy/,
+							);
+							const afterBatchInvocationCount = await userInvocationCount();
+							assert.equal(afterBatchInvocationCount, invocationCount);
 						});
-						// Each negative policy case starts with an independently verified page, not an unknown-target denial.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(verified.isError, false, JSON.stringify(verified));
-						// Count the deliberate verification before checking that policy denial adds no user dispatch.
-						// oxlint-disable-next-line no-await-in-loop
-						invocationCount = await userInvocationCount();
-						// The two raw/stdin policy cases share the daemon and run after their page verification.
-						// oxlint-disable-next-line no-await-in-loop
-						const blockedBatch = await executeRegisteredTool(harness.tool, harness.ctx, params);
-						// Both literal raw/stdin connect batches must fail without increasing user dispatch count.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(blockedBatch.details);
-						// Both literal raw/stdin connect batches must fail without increasing user dispatch count.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(blockedBatch.isError, true);
-						// Both literal raw/stdin connect batches must fail without increasing user dispatch count.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.match(
-							readString(blockedBatch.details.validationError ?? ""),
-							/does not match the requested managed-restore policy/,
-						);
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						const afterBatchInvocationCount = await userInvocationCount();
-						// Both literal raw/stdin connect batches must fail without increasing user dispatch count.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(afterBatchInvocationCount, invocationCount);
 					}
 
 					const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1096,11 +1038,7 @@ if (args.includes("session") && args.includes("info")) {
 					await mkdir(sessionsDir, { recursive: true });
 					for (const [index, suffix] of ["old", "middle", "new"].entries()) {
 						const path = join(sessionsDir, `${restoreKey}-${suffix}.json`);
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
 						await writeFile(path, "{}");
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
 						await utimes(path, index + 1, index + 1);
 					}
 					const callerState = join(sessionsDir, "caller-owned.json");
@@ -1160,7 +1098,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension revalidates daemon policy after cross-instance lock contention",
 	{ concurrency: false },
 	async () => {
@@ -1280,7 +1218,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension re-inspects a locally known daemon after an external restart",
 	{ concurrency: false },
 	async () => {
@@ -1362,7 +1300,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension serializes caller-owned artifact writes and preserves their aggregate manifest",
 	{ concurrency: false },
 	async () => {
@@ -1431,7 +1369,7 @@ if (args.includes("get") && args.includes("url")) {
 						controller.signal,
 					);
 					const pending = [slowScreenshot];
-					let concurrentResults: Awaited<ReturnType<typeof executeRegisteredTool>>[];
+					let concurrentResults;
 					try {
 						await Promise.race([
 							ready,
@@ -1541,7 +1479,7 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects an externally replaced restore-disabled daemon",
 	{ concurrency: false },
 	async () => {
@@ -1630,7 +1568,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects an unproven restore-disabled daemon",
 	{ concurrency: false },
 	async () => {
@@ -1686,7 +1624,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension blocks a prior checkout generation daemon after path reuse",
 	{ concurrency: false },
 	async () => {
@@ -1867,7 +1805,10 @@ if (args.includes("session") && args.includes("info")) {
 					);
 					assert.equal(ownershipRecords.length, 1);
 					assert.match(
-						await readFile(join(sessions, ownershipDirectoryName, ownershipRecords[0]), "utf8"),
+						await readFile(
+							join(sessions, ownershipDirectoryName, readDefined(ownershipRecords[0])),
+							"utf8",
+						),
 						new RegExp(`${priorKey}-`),
 					);
 				},
@@ -1878,7 +1819,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension blocks incompatible reuse when an explicit restore key remains active",
 	{ concurrency: false },
 	async () => {
@@ -1966,10 +1907,10 @@ for (const testCase of [
 		env: { AGENT_BROWSER_RESTORE: "caller-key" },
 	},
 ] as const) {
-	test(
+	nodeTest(
 		`agentBrowserExtension reuses restore-disabled managed sessions with ${testCase.name}`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
 			const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-restore-disabled-reuse-"));
 			initializeGitProject(tempDir);
 			const logPath = join(tempDir, "invocations.log");
@@ -2054,55 +1995,46 @@ if (args.includes("session") && args.includes("info")) {
 						);
 
 						if (testCase.name === "documented restore opt-out") {
-							const resumed = createExtensionHarness({ cwd: tempDir });
-							resumed.setBranch(branch);
-							await runExtensionEvent(
-								resumed.handlers,
-								"session_start",
-								{ reason: "resume" },
-								resumed.ctx,
-							);
-							const blockedAfterReload = await executeRegisteredTool(resumed.tool, resumed.ctx, {
-								args: ["get", "url"],
-							});
-							// The registered restore-opt-out fixture runs these reload and idle-restart assertions.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(blockedAfterReload.details);
-							// The registered restore-opt-out fixture runs these reload and idle-restart assertions.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(blockedAfterReload.isError, true, JSON.stringify(blockedAfterReload));
-							// The registered restore-opt-out fixture runs these reload and idle-restart assertions.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(
-								readString(blockedAfterReload.details.validationError ?? ""),
-								/does not match the requested managed-restore policy/,
-							);
+							await t.test("reload policy and idle restart", async () => {
+								const resumed = createExtensionHarness({ cwd: tempDir });
+								resumed.setBranch(branch);
+								await runExtensionEvent(
+									resumed.handlers,
+									"session_start",
+									{ reason: "resume" },
+									resumed.ctx,
+								);
+								const blockedAfterReload = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+									args: ["get", "url"],
+								});
+								assert.ok(blockedAfterReload.details);
+								assert.equal(blockedAfterReload.isError, true, JSON.stringify(blockedAfterReload));
+								assert.match(
+									readString(blockedAfterReload.details.validationError ?? ""),
+									/does not match the requested managed-restore policy/,
+								);
 
-							await writeFile(daemonStatePath, JSON.stringify({ active: false, restoreKey: null }));
-							const restartedAfterIdle = await executeRegisteredTool(resumed.tool, resumed.ctx, {
-								electron: { action: "probe" },
+								await writeFile(
+									daemonStatePath,
+									JSON.stringify({ active: false, restoreKey: null }),
+								);
+								const restartedAfterIdle = await executeRegisteredTool(resumed.tool, resumed.ctx, {
+									electron: { action: "probe" },
+								});
+								assert.equal(restartedAfterIdle.isError, false, JSON.stringify(restartedAfterIdle));
+								const reusedAfterIdleRestart = await executeRegisteredTool(
+									resumed.tool,
+									resumed.ctx,
+									{ args: ["get", "url"] },
+								);
+								assert.ok(reusedAfterIdleRestart.details);
+								assert.equal(
+									reusedAfterIdleRestart.isError,
+									false,
+									JSON.stringify(reusedAfterIdleRestart),
+								);
+								assert.equal(reusedAfterIdleRestart.details.managedSessionRestoreDisabled, true);
 							});
-							// The registered restore-opt-out fixture runs these reload and idle-restart assertions.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(restartedAfterIdle.isError, false, JSON.stringify(restartedAfterIdle));
-							const reusedAfterIdleRestart = await executeRegisteredTool(
-								resumed.tool,
-								resumed.ctx,
-								{ args: ["get", "url"] },
-							);
-							// The registered restore-opt-out fixture runs these reload and idle-restart assertions.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(reusedAfterIdleRestart.details);
-							// The registered restore-opt-out fixture runs these reload and idle-restart assertions.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(
-								reusedAfterIdleRestart.isError,
-								false,
-								JSON.stringify(reusedAfterIdleRestart),
-							);
-							// The registered restore-opt-out fixture runs these reload and idle-restart assertions.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(reusedAfterIdleRestart.details.managedSessionRestoreDisabled, true);
 						}
 					},
 				);
@@ -2113,7 +2045,7 @@ if (args.includes("session") && args.includes("info")) {
 	);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension does not sticky-disable restore when a suppressed spawn fails",
 	{ concurrency: false },
 	async () => {
@@ -2183,7 +2115,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Example", u
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension exposes killed CLI diagnostics without leaking stderr secrets",
 	{ concurrency: false, skip: process.platform === "win32" },
 	async (t) => {
@@ -2206,7 +2138,6 @@ test(
 			},
 		]) {
 			// Each child fixture owns its PATH and lifecycle until completion.
-			// oxlint-disable-next-line no-await-in-loop
 			await t.test(name, async () => {
 				const tempDir = await mkdtemp(join(tmpdir(), "pi-browser-signal-"));
 				try {
@@ -2248,7 +2179,7 @@ test(
 const MISSING_SUCCESS_PARSE_ERROR =
 	"agent-browser returned an invalid JSON envelope: missing boolean success field.";
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects malformed JSON envelopes that omit success",
 	{ concurrency: false },
 	async () => {
@@ -2292,7 +2223,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension forwards long waits and extends the subprocess watchdog from explicit wait timeouts",
 	{ concurrency: false },
 	async (t) => {
@@ -2341,87 +2272,64 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 						{ args: ["wait", "--download", outputPath, "--timeout", "30000"] },
 						{ args: ["batch"], stdin: batchWaitStdin },
 					];
-					const realSetTimeout = setTimeout;
-					for (const [index, params] of cases.entries()) {
-						// Fixture transitions and their assertions run in order against this test's shared state.
-						// oxlint-disable-next-line no-await-in-loop
-						await rm(releasePath, { force: true });
-						const controller = new AbortController();
-						const timers = t.mock.method(globalThis, "setTimeout");
-						const clearedTimers = t.mock.method(globalThis, "clearTimeout");
-						const pending = executeRegisteredTool(
-							harness.tool,
-							harness.ctx,
-							params,
-							controller.signal,
-						);
-						// A result before the held child starts is a preflight failure; report it immediately.
-						const early: { result?: string } = {};
-						const settled = Promise.allSettled([pending]).then(([outcome]) => {
-							early.result = JSON.stringify(outcome);
-							return outcome;
+					for (const params of cases) {
+						await t.test(params.args.join(" "), async (caseContext) => {
+							await rm(releasePath, { force: true });
+							const controller = new AbortController();
+							const ready = waitForFile(
+								logPath,
+								AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]),
+							);
+							const timers = caseContext.mock.method(globalThis, "setTimeout");
+							const clearedTimers = caseContext.mock.method(globalThis, "clearTimeout");
+							const pending = executeRegisteredTool(
+								harness.tool,
+								harness.ctx,
+								params,
+								controller.signal,
+							);
+							try {
+								await Promise.race([
+									ready,
+									pending.then((result) =>
+										assert.fail(`Wait child never started: ${JSON.stringify(result)}`),
+									),
+								]);
+								for (const timerCall of timers.mock.calls.filter(
+									(call) =>
+										typeof call.arguments[1] === "number" &&
+										call.arguments[1] <= elapsed &&
+										!clearedTimers.mock.calls.some(
+											(cleared) => cleared.arguments[0] === call.result,
+										),
+								)) {
+									clearTimeout(timerCall.result);
+									timerCall.arguments[0]();
+								}
+								timers.mock.restore();
+								clearedTimers.mock.restore();
+								await writeFile(releasePath, "release");
+								const result = await pending;
+								assert.equal(result.isError, false, JSON.stringify(result));
+								assert.equal(result.details?.resultCategory, "success");
+							} finally {
+								timers.mock.restore();
+								clearedTimers.mock.restore();
+								controller.abort();
+								await Promise.allSettled([pending, ready]);
+							}
 						});
-						try {
-							// Preflight and native process startup use real I/O. Advance the
-							// watchdog only once the requested command is running and held.
-							const deadline = Date.now() + 15_000;
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							while ((await readInvocationLog(logPath)).length <= index) {
-								// This polling guard fails stalled startup; an already-started child needs no polling iteration.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.equal(early.result, undefined, "tool settled before the wait child started");
-								// This polling guard fails stalled startup; an already-started child needs no polling iteration.
-								// oxlint-disable-next-line node-test/no-conditional-assertion
-								assert.ok(Date.now() < deadline, "controlled wait child must start");
-								// Fixture transitions and their assertions run in order against this test's shared state.
-								// oxlint-disable-next-line no-await-in-loop
-								await new Promise((resolveDelay) => {
-									realSetTimeout(resolveDelay, 5);
-								});
-							}
-							for (const timerCall of timers.mock.calls.filter(
-								(call) =>
-									typeof call.arguments[1] === "number" &&
-									call.arguments[1] <= elapsed &&
-									!clearedTimers.mock.calls.some((cleared) => cleared.arguments[0] === call.result),
-							)) {
-								clearTimeout(timerCall.result);
-								timerCall.arguments[0]();
-							}
-							timers.mock.restore();
-							clearedTimers.mock.restore();
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await writeFile(releasePath, "release");
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							const result = await pending;
-							// All three literal wait plans check success after their controlled watchdog advancement.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.isError, false, JSON.stringify(result));
-							// All three literal wait plans check success after their controlled watchdog advancement.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.details?.resultCategory, "success");
-						} finally {
-							timers.mock.restore();
-							clearedTimers.mock.restore();
-							controller.abort();
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await settled;
-						}
 					}
 					const invocations = await readInvocationLog(logPath);
 					assert.deepEqual(
 						invocations.map((entry) => entry.args.slice(-4)),
 						[
-							["--session", invocations[0].args[2], "wait", "31000"],
+							["--session", readDefined(invocations[0]).args[2], "wait", "31000"],
 							["--download", outputPath, "--timeout", "30000"],
-							["--json", "--session", invocations[2].args[2], "batch"],
+							["--json", "--session", readDefined(invocations[2]).args[2], "batch"],
 						],
 					);
-					assert.equal(invocations[2].stdin, batchWaitStdin);
+					assert.equal(readDefined(invocations[2]).stdin, batchWaitStdin);
 					assert.deepEqual(
 						invocations.map((entry) => entry.defaultTimeout),
 						["25000", "25000", "25000"],
@@ -2434,7 +2342,7 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.arg
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension warns when eval stdin returns an empty object from a function-shaped snippet",
 	{ concurrency: false },
 	async () => {
@@ -2554,7 +2462,7 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension normalizes eval --stdin scripts misplaced in args",
 	{ concurrency: false },
 	async () => {
@@ -2596,6 +2504,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: stdin.trim(
 						"Fixture Title",
 					);
 					const [invocation] = await readInvocationLog(logPath);
+					assert.ok(invocation);
 					assert.deepEqual(invocation.args.slice(-2), ["eval", "--stdin"]);
 					assert.equal(invocation.stdin, "document.title");
 				},
@@ -2606,13 +2515,16 @@ process.stdout.write(JSON.stringify({ success: true, data: { result: stdin.trim(
 	},
 );
 
-test("agentBrowserExtension allows eval on local file pages", { concurrency: false }, async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-file-null-"));
-	const logPath = join(tempDir, "invocations.log");
-	const basePath = process.env.PATH ?? "";
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
+nodeTest(
+	"agentBrowserExtension allows eval on local file pages",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-eval-file-null-"));
+		const logPath = join(tempDir, "invocations.log");
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
 const args = process.argv.slice(2);
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
@@ -2625,35 +2537,39 @@ if (args.includes("open")) {
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
 }`,
-	);
+		);
 
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			const openResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["open", "file:///tmp/fixture.html"],
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const openResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["open", "file:///tmp/fixture.html"],
+				});
+				assert.ok(openResult.details);
+				assert.equal(openResult.isError, false);
+				assert.equal(
+					readRecord(openResult.details.sessionTabTarget).url,
+					"file:///tmp/fixture.html",
+				);
+
+				const nullEvalResult = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["eval", "--stdin"],
+					stdin: "document.getElementById('missing')?.textContent",
+				});
+				assert.equal(nullEvalResult.isError, false, JSON.stringify(nullEvalResult));
+				assert.equal(
+					(await readInvocationLog(logPath)).some((entry) => entry.args.includes("eval")),
+					true,
+				);
 			});
-			assert.ok(openResult.details);
-			assert.equal(openResult.isError, false);
-			assert.equal(readRecord(openResult.details.sessionTabTarget).url, "file:///tmp/fixture.html");
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
 
-			const nullEvalResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["eval", "--stdin"],
-				stdin: "document.getElementById('missing')?.textContent",
-			});
-			assert.equal(nullEvalResult.isError, false, JSON.stringify(nullEvalResult));
-			assert.equal(
-				(await readInvocationLog(logPath)).some((entry) => entry.args.includes("eval")),
-				true,
-			);
-		});
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
-test(
+nodeTest(
 	"agentBrowserExtension retains and closes a fresh daemon when its first non-batch command fails",
 	{ concurrency: false },
 	async () => {
@@ -2736,7 +2652,7 @@ if (args.includes("session") && args.includes("info")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports managed-session outcomes after failed fresh launches",
 	{ concurrency: false },
 	async (context) => {
@@ -2962,10 +2878,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "ok", url: a
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension writes eval and get output data to requested files",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-file-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -3123,7 +3039,7 @@ if (args.includes("batch")) {
 				const fullBatchText = await readFile(join(tempDir, "logs/full-batch.json"), "utf8");
 				const fullBatch = readArray(JSON.parse(fullBatchText)).map(readRecord);
 				assert.equal(
-					readArray(readRecord(fullBatch[0]?.result).cookies).map(readRecord)[0].value,
+					readDefined(readArray(readRecord(fullBatch[0]?.result).cookies).map(readRecord)[0]).value,
 					"[REDACTED]",
 				);
 				assert.match(
@@ -3172,29 +3088,27 @@ if (args.includes("batch")) {
 				);
 				await assert.rejects(access(screenshotPath));
 
-				if (process.platform !== "android") {
-					const hardlinkedScreenshotPath = join(tempDir, "captures/hardlinked.png");
-					const hardlinkedOutputPath = join(tempDir, "captures/hardlinked-result.json");
-					await mkdir(join(tempDir, "captures"), { recursive: true });
-					await writeFile(hardlinkedScreenshotPath, "seed");
-					await link(hardlinkedScreenshotPath, hardlinkedOutputPath);
-					const hardlinkedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["screenshot", hardlinkedScreenshotPath],
-						outputPath: hardlinkedOutputPath,
-					});
-					// Hardlink collision is checked on supported hosts; all platforms check direct path collision.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(hardlinkedOutput.isError, true);
-					// Hardlink collision is checked on supported hosts; all platforms check direct path collision.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(readRecord(hardlinkedOutput.content[0]).text),
-						/outputPath.*same destination as artifact path/i,
-					);
-					// Hardlink collision is checked on supported hosts; all platforms check direct path collision.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "seed");
-				}
+				await t.test(
+					"hardlink output collision",
+					{ skip: process.platform === "android" },
+					async () => {
+						const hardlinkedScreenshotPath = join(tempDir, "captures/hardlinked.png");
+						const hardlinkedOutputPath = join(tempDir, "captures/hardlinked-result.json");
+						await mkdir(join(tempDir, "captures"), { recursive: true });
+						await writeFile(hardlinkedScreenshotPath, "seed");
+						await link(hardlinkedScreenshotPath, hardlinkedOutputPath);
+						const hardlinkedOutput = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["screenshot", hardlinkedScreenshotPath],
+							outputPath: hardlinkedOutputPath,
+						});
+						assert.equal(hardlinkedOutput.isError, true);
+						assert.match(
+							readString(readRecord(hardlinkedOutput.content[0]).text),
+							/outputPath.*same destination as artifact path/i,
+						);
+						assert.equal(await readFile(hardlinkedScreenshotPath, "utf8"), "seed");
+					},
+				);
 
 				const titleCalls = async () =>
 					(await readFile(logPath, "utf8"))
@@ -3259,109 +3173,118 @@ if (args.includes("batch")) {
 	},
 );
 
-test("applyAgentBrowserOutputPath refuses compact metadata without a live wrapper-managed spill", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-missing-spill-"));
-	const arbitraryPath = join(tempDir, "arbitrary.json");
-	const outputPath = join(tempDir, "result.json");
-	try {
-		await writeFile(arbitraryPath, '{"secret":"must-not-copy"}');
-		const result = await applyAgentBrowserOutputPath({
-			cwd: tempDir,
-			outputPath,
-			result: {
-				content: [{ type: "text", text: "Large output compacted" }],
-				details: {
-					artifactManifest: {
-						entries: [],
-						evictedCount: 0,
-						liveCount: 0,
-						maxEntries: 10,
-						updatedAtMs: Date.now(),
-						version: 1,
-					},
-					data: { compacted: true },
-					fullOutputPath: arbitraryPath,
-					resultCategory: "success",
-				},
-				isError: false,
-			},
-		});
-		assert.equal(result.isError, true);
-		const details = readRecord(result.details);
-		assert.equal(details.resultCategory, "failure");
-		assert.match(readString(readRecord(details.outputFile).error), /wrapper-managed spill/);
-		await assert.rejects(readFile(outputPath, "utf8"));
-		assert.equal(await readFile(arbitraryPath, "utf8"), '{"secret":"must-not-copy"}');
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
-
-test("applyAgentBrowserOutputPath rehydrates compacted batch rows from live wrapper spills", async () => {
-	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-batch-spill-"));
-	const spillPath = join(tempDir, "batch-spill.json");
-	const outputPath = join(tempDir, "batch-output.json");
-	const fullRead = {
-		content: `Long documentation ${"x".repeat(9_000)} END-SENTINEL`,
-		source: "raw",
-	};
-	const now = Date.now();
-	try {
-		await writeFile(spillPath, JSON.stringify(fullRead));
-		const result = await applyAgentBrowserOutputPath({
-			cwd: tempDir,
-			outputPath,
-			result: {
-				content: [{ type: "text", text: "Batch output compacted" }],
-				details: {
-					artifactManifest: {
-						entries: [
-							{
-								createdAtMs: now,
-								kind: "spill",
-								path: spillPath,
-								retentionState: "live",
-								storageScope: "process-temp",
-							},
-						],
-						evictedCount: 0,
-						liveCount: 1,
-						maxEntries: 10,
-						updatedAtMs: now,
-						version: 1,
-					},
-					batchSteps: [{ fullOutputPath: spillPath }, {}],
-					data: [
-						{
-							command: ["read", "https://example.test/docs"],
-							result: { compacted: true, fullOutputPath: spillPath },
-							success: true,
+nodeTest(
+	"applyAgentBrowserOutputPath refuses compact metadata without a live wrapper-managed spill",
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-missing-spill-"));
+		const arbitraryPath = join(tempDir, "arbitrary.json");
+		const outputPath = join(tempDir, "result.json");
+		try {
+			await writeFile(arbitraryPath, '{"secret":"must-not-copy"}');
+			const result = await applyAgentBrowserOutputPath({
+				cwd: tempDir,
+				outputPath,
+				result: {
+					content: [{ type: "text", text: "Large output compacted" }],
+					details: {
+						artifactManifest: {
+							entries: [],
+							evictedCount: 0,
+							liveCount: 0,
+							maxEntries: 10,
+							updatedAtMs: Date.now(),
+							version: 1,
 						},
-						{ command: ["get", "title"], result: { title: "Docs" }, success: true },
-					],
-					resultCategory: "success",
+						data: { compacted: true },
+						fullOutputPath: arbitraryPath,
+						resultCategory: "success",
+					},
+					isError: false,
 				},
-				isError: false,
-			},
-		});
-		assert.equal(result.isError, false, JSON.stringify(result));
-		const saved = readArray(JSON.parse(await readFile(outputPath, "utf8"))).map(readRecord);
-		assert.deepEqual(saved[0]?.result, fullRead);
-		assert.deepEqual(saved[1]?.result, { title: "Docs" });
-		assert.doesNotMatch(await readFile(outputPath, "utf8"), /"compacted"/);
-	} finally {
-		await rm(tempDir, { force: true, recursive: true });
-	}
-});
+			});
+			assert.equal(result.isError, true);
+			const details = readRecord(result.details);
+			assert.equal(details.resultCategory, "failure");
+			assert.match(readString(readRecord(details.outputFile).error), /wrapper-managed spill/);
+			await assert.rejects(readFile(outputPath, "utf8"));
+			assert.equal(await readFile(arbitraryPath, "utf8"), '{"secret":"must-not-copy"}');
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
 
-test("timeout observations do not prove planned steps ran", { concurrency: false }, async (t) => {
-	const tempDir = await mkdtemp(join(tmpdir(), "piab-timeout-evidence-"));
-	const logPath = join(tempDir, "executed.log");
-	const startedPath = join(tempDir, "started");
-	await writeFile(join(tempDir, "receipt.png"), "old receipt");
-	await writeFakeAgentBrowserBinary(
-		tempDir,
-		`const fs = require("node:fs");
+nodeTest(
+	"applyAgentBrowserOutputPath rehydrates compacted batch rows from live wrapper spills",
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-output-batch-spill-"));
+		const spillPath = join(tempDir, "batch-spill.json");
+		const outputPath = join(tempDir, "batch-output.json");
+		const fullRead = {
+			content: `Long documentation ${"x".repeat(9_000)} END-SENTINEL`,
+			source: "raw",
+		};
+		const now = Date.now();
+		try {
+			await writeFile(spillPath, JSON.stringify(fullRead));
+			const result = await applyAgentBrowserOutputPath({
+				cwd: tempDir,
+				outputPath,
+				result: {
+					content: [{ type: "text", text: "Batch output compacted" }],
+					details: {
+						artifactManifest: {
+							entries: [
+								{
+									createdAtMs: now,
+									kind: "spill",
+									path: spillPath,
+									retentionState: "live",
+									storageScope: "process-temp",
+								},
+							],
+							evictedCount: 0,
+							liveCount: 1,
+							maxEntries: 10,
+							updatedAtMs: now,
+							version: 1,
+						},
+						batchSteps: [{ fullOutputPath: spillPath }, {}],
+						data: [
+							{
+								command: ["read", "https://example.test/docs"],
+								result: { compacted: true, fullOutputPath: spillPath },
+								success: true,
+							},
+							{ command: ["get", "title"], result: { title: "Docs" }, success: true },
+						],
+						resultCategory: "success",
+					},
+					isError: false,
+				},
+			});
+			assert.equal(result.isError, false, JSON.stringify(result));
+			const saved = readArray(JSON.parse(await readFile(outputPath, "utf8"))).map(readRecord);
+			assert.deepEqual(saved[0]?.result, fullRead);
+			assert.deepEqual(saved[1]?.result, { title: "Docs" });
+			assert.doesNotMatch(await readFile(outputPath, "utf8"), /"compacted"/);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
+	"timeout observations do not prove planned steps ran",
+	{ concurrency: false },
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "piab-timeout-evidence-"));
+		const logPath = join(tempDir, "executed.log");
+		const startedPath = join(tempDir, "started");
+		await writeFile(join(tempDir, "receipt.png"), "old receipt");
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args.includes("batch")) {
   const steps = JSON.parse(fs.readFileSync(0, "utf8"));
@@ -3373,84 +3296,76 @@ if (args.includes("batch")) {
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Start" } }));
 }`,
-	);
-	try {
-		await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
-			const harness = createExtensionHarness({ cwd: tempDir });
-			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
-			for (const lastStep of [
-				["screenshot", "receipt.png"],
-				["open", "https://example.test/start"],
-			]) {
-				// Fixture transitions and their assertions run in order against this test's shared state.
-				// oxlint-disable-next-line no-await-in-loop
-				const result = await executeControlledTimeout(
-					t,
-					harness,
-					{
-						args: ["--session", "timeout-proof", "batch", "--bail"],
-						stdin: JSON.stringify([
-							["wait", "60000"],
-							["fill", "#amount", "100"],
-							["click", "#submit"],
-							lastStep,
-						]),
-					},
-					startedPath,
-				);
-				// Both literal timeout endings check unknown steps rather than inferring completed work.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.ok(result.details);
-				// Both literal timeout endings check unknown steps rather than inferring completed work.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(result.isError, true);
-				const progress = readRecord(result.details.timeoutPartialProgress);
-				// Both literal timeout endings check unknown steps rather than inferring completed work.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.deepEqual(
-					readArray(progress.steps)
-						.map(readRecord)
-						.map((step) => step.status),
-					["unknown", "unknown", "unknown", "unknown"],
-				);
-				// Both literal timeout endings check unknown steps rather than inferring completed work.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(progress.retryStep, undefined);
-				// Both literal timeout endings check unknown steps rather than inferring completed work.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(progress.openedButPostOpenTimedOut, undefined);
-				if (lastStep[0] === "screenshot") {
-					// The literal screenshot-ending case verifies its old receipt without claiming execution.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readArray(progress.artifacts).map(readRecord)[0].exists, true);
+		);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				for (const lastStep of [
+					["screenshot", "receipt.png"],
+					["open", "https://example.test/start"],
+				]) {
+					await t.test(lastStep.join(" "), async (caseContext) => {
+						const result = await executeControlledTimeout(
+							caseContext,
+							harness,
+							{
+								args: ["--session", "timeout-proof", "batch", "--bail"],
+								stdin: JSON.stringify([
+									["wait", "60000"],
+									["fill", "#amount", "100"],
+									["click", "#submit"],
+									lastStep,
+								]),
+							},
+							startedPath,
+						);
+						assert.ok(result.details);
+						assert.equal(result.isError, true);
+						const progress = readRecord(result.details.timeoutPartialProgress);
+						assert.deepEqual(
+							readArray(progress.steps)
+								.map(readRecord)
+								.map((step) => step.status),
+							["unknown", "unknown", "unknown", "unknown"],
+						);
+						assert.equal(progress.retryStep, undefined);
+						assert.equal(progress.openedButPostOpenTimedOut, undefined);
+						if (lastStep[0] === "screenshot") {
+							await caseContext.test("old receipt is file evidence only", () => {
+								assert.equal(
+									readDefined(readArray(progress.artifacts).map(readRecord)[0]).exists,
+									true,
+								);
+							});
+						}
+						assert.equal(
+							readArray(result.details.nextActions)
+								.map(readRecord)
+								.some((action) => action.id === "retry-timeout-step"),
+							false,
+						);
+					});
 				}
-				// Both literal timeout endings check unknown steps rather than inferring completed work.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(
-					readArray(result.details.nextActions)
-						.map(readRecord)
-						.some((action) => action.id === "retry-timeout-step"),
-					false,
+				assert.deepEqual(
+					(await readFile(logPath, "utf8"))
+						.trim()
+						.split("\n")
+						.map((line) => readArray(JSON.parse(line))),
+					[
+						["wait", "60000"],
+						["wait", "60000"],
+					],
 				);
-			}
-			assert.deepEqual(
-				(await readFile(logPath, "utf8"))
-					.trim()
-					.split("\n")
-					.map((line) => readArray(JSON.parse(line))),
-				[
-					["wait", "60000"],
-					["wait", "60000"],
-				],
-			);
-			assert.equal(await readFile(join(tempDir, "receipt.png"), "utf8"), "old receipt");
-		});
-	} finally {
-		await rm(tempDir, { recursive: true, force: true });
-	}
-});
+				assert.equal(await readFile(join(tempDir, "receipt.png"), "utf8"), "old receipt");
+			});
+		} finally {
+			await rm(tempDir, { recursive: true, force: true });
+		}
+	},
+);
 
-test(
+nodeTest(
 	"agentBrowserExtension reports partial progress and artifacts after native batch timeout",
 	{ concurrency: false },
 	async (t) => {
@@ -3631,7 +3546,7 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"timeout recovery verifies an unknown page target before snapshotting",
 	{ concurrency: false },
 	async (t) => {
@@ -3732,7 +3647,7 @@ if (args.includes("batch")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension retries fresh timed-out navigation in a new session when no live URL is recovered",
 	{ concurrency: false },
 	async (t) => {
@@ -3827,178 +3742,184 @@ if (args.includes("batch")) {
 	},
 );
 
-test("timeout retries preserve native row semantics in visible and structured payloads", async () => {
-	const cwd = await mkdtemp(join(tmpdir(), "timeout-retry-"));
-	try {
-		const step = ["pdf", "--quick", "ignored.pdf"];
-		const progress = await collectTimeoutPartialProgress({
-			commandTokens: ["batch"],
-			cwd,
-			stdin: JSON.stringify([step]),
-		});
-		assert.ok(progress);
-		const retry = { args: ["batch"], stdin: JSON.stringify([step]) };
-		assert.deepEqual(progress.retryStep?.retry, retry);
-		assert.ok(
-			formatTimeoutPartialProgressText(progress).includes(
-				`Retry candidate for step 1 (outcome unknown): ${JSON.stringify(retry)}`,
-			),
-		);
-	} finally {
-		await rm(cwd, { recursive: true, force: true });
-	}
-});
-
-test("timeout artifact evidence follows native operands, not ignored tails or outer globals", async () => {
-	const cwd = await mkdtemp(join(tmpdir(), "timeout-argv-"));
-	const paths = [
-		"actual.pdf",
-		"-actual.bin",
-		"--quick",
-		"--screenshot-dir",
-		"capture.csv",
-		"dogfood/option-full-page.png",
-	];
-	try {
-		await mkdir(join(cwd, "dogfood"));
-		for (const path of paths) {
-			// Fixture transitions and their assertions run in order against this test's shared state.
-			// oxlint-disable-next-line no-await-in-loop
-			await writeFile(join(cwd, path), "saved bytes");
-		}
-		const progress = await collectTimeoutPartialProgress({
-			commandTokens: ["batch"],
-			cwd,
-			stdin: JSON.stringify([
-				["pdf", paths[0], "ignored.pdf"],
-				["download", "#link", paths[1], "ignored.bin"],
-				["pdf", paths[2], "ignored.pdf"],
-				["screenshot", "body", paths[3], "ignored.png"],
-				["wait", "--download", "--timeout", "30000", paths[4], "ignored.csv"],
-				["state", "save", "not-a-timeout-family.json"],
-				["screenshot", "--full-page", paths[5]],
-				["wait", "--download", "dogfood/download.csv", "--timeout", "1000"],
-				["wait", "--download", "--timeout", "1000"],
-			]),
-		});
-		assert.deepEqual(
-			progress?.artifacts.map(({ path, exists, stepIndex }) => ({ path, exists, stepIndex })),
-			[
-				...paths.map((path, index) => ({
-					path,
-					exists: true,
-					stepIndex: index < 5 ? index + 1 : 7,
-				})),
-				{ exists: false, path: "dogfood/download.csv", stepIndex: 8 },
-			],
-		);
-	} finally {
-		await rm(cwd, { recursive: true, force: true });
-	}
-});
-
-test("timeout artifact observations overlap independent retry windows without claiming execution", async (t) => {
-	const cwd = await mkdtemp(join(tmpdir(), "timeout paths-"));
-	const paths = Array.from({ length: 33 }, (_, index) => join(cwd, `${index}.pdf`));
-	const attempts = new Map<string, number[]>();
-	const realStat = fsPromises.stat;
-	try {
-		t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
-		t.mock.method(
-			fsPromises,
-			"stat",
-			async (...args: Readonly<Parameters<typeof fsPromises.stat>>) => {
-				const path = String(args[0]);
-				if (!paths.includes(path)) {
-					return realStat(...args);
-				}
-				attempts.set(path, [...(attempts.get(path) ?? []), Date.now()]);
-				if (path === paths[0] && attempts.get(path)?.length === 3) {
-					return realStat(...args);
-				}
-				throw new Error("ENOENT: file is still missing");
-			},
-		);
-		syncBuiltinESMExports();
-		const pending = collectTimeoutPartialProgress({
-			// Native raw batch rows use shell-word quoting on every host, including Windows paths.
-			commandTokens: ["batch", ...paths.map((path) => `pdf ${JSON.stringify(path)}`)],
-			cwd,
-			stdin: JSON.stringify([["pdf", "ignored.pdf"]]),
-		});
-		await nextTurn();
-		assert.equal(
-			attempts.size,
-			paths.length,
-			"independent files start within the same retry window",
-		);
-		t.mock.timers.tick(25);
-		await nextTurn();
-		await writeFile(paths[0], "late finishing writer");
-		t.mock.timers.tick(25);
-		await nextTurn();
-		t.mock.timers.reset();
-		const progress = await pending;
-		assert.ok(progress);
-		assert.equal(attempts.size, paths.length, "native argv wins over ignored stdin");
-		assert.deepEqual(
-			progress.artifacts.map((artifact) => artifact.path),
-			paths,
-		);
-		assert.deepEqual(
-			progress.artifacts.map((artifact) => artifact.stepIndex),
-			paths.map((_, index) => index + 1),
-		);
-		assert.equal(
-			progress.artifacts[0].exists,
-			true,
-			"a writer finishing during the retry window is observed",
-		);
-		assert.equal(progress.artifacts[0].sizeBytes, Buffer.byteLength("late finishing writer"));
-		assert.deepEqual(Object.keys(progress.artifacts[0]), [
-			"absolutePath",
-			"exists",
-			"path",
-			"sizeBytes",
-			"state",
-			"stepIndex",
-		]);
-		assert.deepEqual(Object.keys(progress.artifacts[1]), [
-			"absolutePath",
-			"exists",
-			"path",
-			"state",
-			"stepIndex",
-		]);
-		assert.equal(
-			progress.artifacts.slice(1).every((artifact) => !artifact.exists),
-			true,
-		);
-		assert.deepEqual(
-			progress.steps?.map((step) => step.status),
-			Array.from({ length: paths.length }, () => "unknown"),
-		);
-		assert.equal(progress.retryStep, undefined);
-		for (const observations of attempts.values()) {
-			// Every declared path must retain three attempts with independently bounded backoff.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(observations.length, 3);
-			// Every declared path must retain three attempts with independently bounded backoff.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.deepEqual(
-				observations.map((time) => time - observations[0]),
-				[0, 25, 50],
+nodeTest(
+	"timeout retries preserve native row semantics in visible and structured payloads",
+	async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "timeout-retry-"));
+		try {
+			const step = ["pdf", "--quick", "ignored.pdf"];
+			const progress = await collectTimeoutPartialProgress({
+				commandTokens: ["batch"],
+				cwd,
+				stdin: JSON.stringify([step]),
+			});
+			assert.ok(progress);
+			const retry = { args: ["batch"], stdin: JSON.stringify([step]) };
+			assert.deepEqual(progress.retryStep?.retry, retry);
+			assert.ok(
+				formatTimeoutPartialProgressText(progress).includes(
+					`Retry candidate for step 1 (outcome unknown): ${JSON.stringify(retry)}`,
+				),
 			);
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
 		}
-	} finally {
-		t.mock.timers.reset();
-		t.mock.restoreAll();
-		syncBuiltinESMExports();
-		await rm(cwd, { recursive: true, force: true });
-	}
-});
+	},
+);
 
-test(
+nodeTest(
+	"timeout artifact evidence follows native operands, not ignored tails or outer globals",
+	async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "timeout-argv-"));
+		const paths = [
+			"actual.pdf",
+			"-actual.bin",
+			"--quick",
+			"--screenshot-dir",
+			"capture.csv",
+			"dogfood/option-full-page.png",
+		];
+		try {
+			await mkdir(join(cwd, "dogfood"));
+			for (const path of paths) {
+				await writeFile(join(cwd, path), "saved bytes");
+			}
+			const progress = await collectTimeoutPartialProgress({
+				commandTokens: ["batch"],
+				cwd,
+				stdin: JSON.stringify([
+					["pdf", paths[0], "ignored.pdf"],
+					["download", "#link", paths[1], "ignored.bin"],
+					["pdf", paths[2], "ignored.pdf"],
+					["screenshot", "body", paths[3], "ignored.png"],
+					["wait", "--download", "--timeout", "30000", paths[4], "ignored.csv"],
+					["state", "save", "not-a-timeout-family.json"],
+					["screenshot", "--full-page", paths[5]],
+					["wait", "--download", "dogfood/download.csv", "--timeout", "1000"],
+					["wait", "--download", "--timeout", "1000"],
+				]),
+			});
+			assert.deepEqual(
+				progress?.artifacts.map(({ path, exists, stepIndex }) => ({ path, exists, stepIndex })),
+				[
+					...paths.map((path, index) => ({
+						path,
+						exists: true,
+						stepIndex: index < 5 ? index + 1 : 7,
+					})),
+					{ exists: false, path: "dogfood/download.csv", stepIndex: 8 },
+				],
+			);
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	},
+);
+
+nodeTest(
+	"timeout artifact observations overlap independent retry windows without claiming execution",
+	async (t) => {
+		const cwd = await mkdtemp(join(tmpdir(), "timeout paths-"));
+		const paths = Array.from({ length: 33 }, (_, index) => join(cwd, `${index}.pdf`));
+		const lateWriterPath = readDefined(paths[0]);
+		const attempts = new Map<string, number[]>();
+		const realStat = fsPromises.stat;
+		try {
+			t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+			t.mock.method(
+				fsPromises,
+				"stat",
+				async (...args: Readonly<Parameters<typeof fsPromises.stat>>) => {
+					const path = String(args[0]);
+					if (!paths.includes(path)) {
+						return realStat(...args);
+					}
+					attempts.set(path, [...(attempts.get(path) ?? []), Date.now()]);
+					if (path === lateWriterPath && attempts.get(path)?.length === 3) {
+						return realStat(...args);
+					}
+					throw new Error("ENOENT: file is still missing");
+				},
+			);
+			syncBuiltinESMExports();
+			const pending = collectTimeoutPartialProgress({
+				// Native raw batch rows use shell-word quoting on every host, including Windows paths.
+				commandTokens: ["batch", ...paths.map((path) => `pdf ${JSON.stringify(path)}`)],
+				cwd,
+				stdin: JSON.stringify([["pdf", "ignored.pdf"]]),
+			});
+			await nextTurn();
+			assert.equal(
+				attempts.size,
+				paths.length,
+				"independent files start within the same retry window",
+			);
+			t.mock.timers.tick(25);
+			await nextTurn();
+			await writeFile(lateWriterPath, "late finishing writer");
+			t.mock.timers.tick(25);
+			await nextTurn();
+			t.mock.timers.reset();
+			const progress = await pending;
+			assert.ok(progress);
+			assert.equal(attempts.size, paths.length, "native argv wins over ignored stdin");
+			assert.deepEqual(
+				progress.artifacts.map((artifact) => artifact.path),
+				paths,
+			);
+			assert.deepEqual(
+				progress.artifacts.map((artifact) => artifact.stepIndex),
+				paths.map((_, index) => index + 1),
+			);
+			const writtenArtifact = readDefined(progress.artifacts[0]);
+			const missingArtifact = readDefined(progress.artifacts[1]);
+			assert.equal(
+				writtenArtifact.exists,
+				true,
+				"a writer finishing during the retry window is observed",
+			);
+			assert.equal(writtenArtifact.sizeBytes, Buffer.byteLength("late finishing writer"));
+			assert.deepEqual(Object.keys(writtenArtifact), [
+				"absolutePath",
+				"exists",
+				"path",
+				"sizeBytes",
+				"state",
+				"stepIndex",
+			]);
+			assert.deepEqual(Object.keys(missingArtifact), [
+				"absolutePath",
+				"exists",
+				"path",
+				"state",
+				"stepIndex",
+			]);
+			assert.equal(
+				progress.artifacts.slice(1).every((artifact) => !artifact.exists),
+				true,
+			);
+			assert.deepEqual(
+				progress.steps?.map((step) => step.status),
+				Array.from({ length: paths.length }, () => "unknown"),
+			);
+			assert.equal(progress.retryStep, undefined);
+			assert.deepEqual(
+				Array.from(attempts.values(), (observations) => {
+					const first = readDefined(observations[0]);
+					return observations.map((time) => time - first);
+				}),
+				paths.map(() => [0, 25, 50]),
+			);
+		} finally {
+			t.mock.timers.reset();
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			await rm(cwd, { recursive: true, force: true });
+		}
+	},
+);
+
+nodeTest(
 	"collectTimeoutPartialProgress recovers live page state when session probes succeed",
 	{ concurrency: false },
 	async () => {
@@ -4085,7 +4006,7 @@ if (args.includes("get") && args.includes("url")) {
 	},
 );
 
-test(
+nodeTest(
 	"collectTimeoutPartialProgress reads page context for local URLs",
 	{ concurrency: false },
 	async () => {
@@ -4125,64 +4046,52 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	},
 );
 
-test(
+nodeTest(
 	"collectTimeoutPartialProgress falls back to the planned page URL when live page recovery is unavailable",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-test-"));
 		try {
 			for (const command of ["open", "goto", "navigate"] as const) {
-				// Fixture transitions and their assertions run in order against this test's shared state.
-				// oxlint-disable-next-line no-await-in-loop
-				const progress = await collectTimeoutPartialProgress({
-					commandTokens: ["batch"],
-					cwd: tempDir,
-					stdin: JSON.stringify([
-						[command, `https://example.test/${command}-planned`],
-						["screenshot", `${command}-planned.png`],
-						["wait", "--download", `${command}-download.csv`],
-					]),
-				});
+				await t.test(command, async () => {
+					const progress = await collectTimeoutPartialProgress({
+						commandTokens: ["batch"],
+						cwd: tempDir,
+						stdin: JSON.stringify([
+							[command, `https://example.test/${command}-planned`],
+							["screenshot", `${command}-planned.png`],
+							["wait", "--download", `${command}-download.csv`],
+						]),
+					});
 
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.ok(progress, command);
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(progress.currentPage?.url, `https://example.test/${command}-planned`, command);
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(progress.currentPage.source, "planned", command);
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(progress.liveUrlRecovered, false, command);
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(progress.currentPage.title, undefined, command);
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.match(progress.summary, /planned page URL/, command);
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.deepEqual(
-					progress.artifacts.map((artifact) => ({
-						exists: artifact.exists,
-						path: artifact.path,
-						stepIndex: artifact.stepIndex,
-					})),
-					[
-						{ exists: false, path: `${command}-planned.png`, stepIndex: 2 },
-						{ exists: false, path: `${command}-download.csv`, stepIndex: 3 },
-					],
-					command,
-				);
-				// All three literal navigation aliases check planned-URL fallback and missing artifact receipts.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.match(
-					formatTimeoutPartialProgressText(progress),
-					new RegExp(`Current page: https://example\\.test/${command}-planned`),
-					command,
-				);
+					assert.ok(progress, command);
+					assert.equal(
+						progress.currentPage?.url,
+						`https://example.test/${command}-planned`,
+						command,
+					);
+					assert.equal(progress.currentPage.source, "planned", command);
+					assert.equal(progress.liveUrlRecovered, false, command);
+					assert.equal(progress.currentPage.title, undefined, command);
+					assert.match(progress.summary, /planned page URL/, command);
+					assert.deepEqual(
+						progress.artifacts.map((artifact) => ({
+							exists: artifact.exists,
+							path: artifact.path,
+							stepIndex: artifact.stepIndex,
+						})),
+						[
+							{ exists: false, path: `${command}-planned.png`, stepIndex: 2 },
+							{ exists: false, path: `${command}-download.csv`, stepIndex: 3 },
+						],
+						command,
+					);
+					assert.match(
+						formatTimeoutPartialProgressText(progress),
+						new RegExp(`Current page: https://example\\.test/${command}-planned`),
+						command,
+					);
+				});
 			}
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
@@ -4190,7 +4099,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps wait download metadata while rejecting a missing saved file",
 	{ concurrency: false },
 	async () => {
@@ -4245,7 +4154,8 @@ test(
 					assert.equal(readRecord(result.details.artifactVerification).missingCount, 1);
 					assert.equal(readRecord(result.details.artifactVerification).verified, false);
 					assert.deepEqual(
-						readRecord(readArray(result.details.nextActions).map(readRecord)[0].params).args,
+						readRecord(readDefined(readArray(result.details.nextActions).map(readRecord)[0]).params)
+							.args,
 						["--session", result.details.sessionName, "wait", "--download", outputPath],
 					);
 					assert.equal(readRecord(result.details.pageChangeSummary).changeType, "artifact");
@@ -4272,7 +4182,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension reports artifact lifecycle guidance on close",
 	{ concurrency: false },
 	async () => {
@@ -4359,7 +4269,7 @@ if (args.includes("screenshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension warns when get text may read hidden selector matches",
 	{ concurrency: false },
 	async () => {
@@ -4520,7 +4430,7 @@ if (args.includes("get") && args.includes("text")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension surfaces overlay blockers in snapshot actionability metadata",
 	{ concurrency: false },
 	async () => {
@@ -4556,7 +4466,10 @@ if (args.includes("snapshot")) {
 				assert.equal(snapshot.isError, false, JSON.stringify(snapshot));
 				assert.match(snapshot.content[0]?.text ?? "", /Possible overlay blockers:/);
 				const overlayBlockers = readRecord(snapshot.details.overlayBlockers);
-				assert.equal(readArray(overlayBlockers.candidates).map(readRecord)[0].ref, "@e5");
+				assert.equal(
+					readDefined(readArray(overlayBlockers.candidates).map(readRecord)[0]).ref,
+					"@e5",
+				);
 				assert.ok(
 					readArray(snapshot.details.nextActions)
 						.map(readRecord)
@@ -4569,7 +4482,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension surfaces likely overlay blockers after a no-op click",
 	{ concurrency: false },
 	async () => {
@@ -4628,7 +4541,10 @@ if (args.includes("open")) {
 				assert.equal(readRecord(click.details.pageChangeSummary).observed, false);
 				assert.doesNotMatch(readString(text.text), /Agent-browser candidate fallbacks:/);
 				const overlayBlockers = readRecord(click.details.overlayBlockers);
-				assert.equal(readArray(overlayBlockers.candidates).map(readRecord)[0].ref, "@e5");
+				assert.equal(
+					readDefined(readArray(overlayBlockers.candidates).map(readRecord)[0]).ref,
+					"@e5",
+				);
 				assert.equal(click.details.refSnapshot, undefined);
 				assert.deepEqual(
 					SessionPageState.fromBranch(harness.ctx.sessionManager.getBranch()).get(
@@ -4641,20 +4557,20 @@ if (args.includes("open")) {
 					nextActions.map((action) => action.id),
 					["inspect-after-mutation", "inspect-overlay-state", "try-overlay-blocker-candidate-1"],
 				);
-				assert.deepEqual(readRecord(nextActions[1].params).args, [
+				assert.deepEqual(readRecord(readDefined(nextActions[1]).params).args, [
 					"--session",
 					readString(click.details.sessionName),
 					"snapshot",
 					"-i",
 				]);
-				assert.deepEqual(readRecord(nextActions[2].params).args, [
+				assert.deepEqual(readRecord(readDefined(nextActions[2]).params).args, [
 					"--session",
 					readString(click.details.sessionName),
 					"click",
 					"@e5",
 				]);
 
-				const closeCandidateArgs = readRecord(nextActions[2].params).args;
+				const closeCandidateArgs = readRecord(readDefined(nextActions[2]).params).args;
 				assert.ok(closeCandidateArgs !== undefined);
 				const closeCandidate = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: closeCandidateArgs,
@@ -4669,7 +4585,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension does not report overlay blockers from unrelated page chrome after a successful same-page click",
 	{ concurrency: false },
 	async () => {
@@ -4727,7 +4643,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension returns tab-drift next actions for early tab re-selection failures",
 	{ concurrency: false },
 	async () => {

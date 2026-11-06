@@ -169,7 +169,6 @@ process.exitCode = failed ? 1 : 0;
 					[...prefix, "snapshot", "-i"],
 				]) {
 					// These dependent calls reuse the same page, restore state, and shutdown ownership.
-					// oxlint-disable-next-line no-await-in-loop
 					const result = await bootstrapCall({
 						args,
 						...(args.includes("open") ? { sessionMode: "fresh" as const } : {}),

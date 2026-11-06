@@ -12,7 +12,7 @@ export interface TimeoutArtifactEvidence {
 
 export interface TimeoutProgressStep {
 	readonly args: readonly string[];
-	readonly generatedFrom?: string;
+	readonly generatedFrom?: string | undefined;
 	readonly index: number;
 	readonly reason?: string;
 	readonly retry?: { readonly args: readonly string[]; readonly stdin: string };
@@ -21,14 +21,16 @@ export interface TimeoutProgressStep {
 
 export interface TimeoutPartialProgressDetails {
 	readonly artifacts: readonly TimeoutArtifactEvidence[];
-	readonly currentPage?: {
-		readonly source?: "live" | "planned";
-		readonly title?: string;
-		readonly url?: string;
-	};
+	readonly currentPage?:
+		| {
+				readonly source?: "live" | "planned" | undefined;
+				readonly title?: string | undefined;
+				readonly url?: string | undefined;
+		  }
+		| undefined;
 	readonly liveUrlRecovered?: boolean;
-	readonly retryStep?: TimeoutProgressStep;
-	readonly steps?: readonly TimeoutProgressStep[];
+	readonly retryStep?: TimeoutProgressStep | undefined;
+	readonly steps?: readonly TimeoutProgressStep[] | undefined;
 	readonly summary: string;
 }
 

@@ -45,9 +45,13 @@ export function getResultingPageTargetState(options: {
 	readonly args: readonly string[];
 	readonly executedBatchSteps: readonly (readonly string[])[];
 	readonly batchResults?: unknown;
-	readonly currentPageUrl?: string;
+	readonly currentPageUrl?: string | undefined;
 	readonly pageUrlUnknown?: boolean;
-}): { currentPageUrl?: string; pageTargetMayHaveChanged: boolean; pageUrlUnknown: boolean } {
+}): {
+	currentPageUrl?: string | undefined;
+	pageTargetMayHaveChanged: boolean;
+	pageUrlUnknown: boolean;
+} {
 	let state: PageTargetState = {
 		currentPageUrl: options.currentPageUrl,
 		pageUrlUnknown: options.pageUrlUnknown ?? false,
@@ -75,7 +79,7 @@ export function getResultingPageTargetState(options: {
 export function getPageTargetValidationError(
 	options: BatchTargetValidationOptions & {
 		readonly args: readonly string[];
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 	},
 ): string | undefined {
 	const descriptor = parseArgvDescriptor(options.args);
@@ -108,7 +112,7 @@ export function getPageTargetValidationError(
 
 export function getExplicitSessionPageVerificationRequirement(options: {
 	readonly args: readonly string[];
-	readonly stdin?: string;
+	readonly stdin?: string | undefined;
 }): string | undefined {
 	const descriptor = parseArgvDescriptor(options.args);
 	if (

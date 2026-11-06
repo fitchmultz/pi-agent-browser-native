@@ -24,91 +24,93 @@ export interface ElectronHostLaunchCleanupState {
 	readonly ownedManagedSessions: ReadonlyMap<string, ElectronManagedSessionOwner>;
 }
 export interface ElectronHostInput extends ElectronHostLaunchCleanupState {
-	readonly compiledElectron?: CompiledAgentBrowserElectron;
+	readonly compiledElectron?: CompiledAgentBrowserElectron | undefined;
 	readonly cwd: string;
 	readonly implicitSessionCloseTimeoutMs: number;
 	readonly managedSessionActive: boolean;
 	readonly managedSessionName: string;
-	readonly managedSessionNamespace?: string;
-	readonly redactedCompiledElectron?: CompiledAgentBrowserElectron;
-	readonly signal?: AbortSignal;
+	readonly managedSessionNamespace?: string | undefined;
+	readonly redactedCompiledElectron?: CompiledAgentBrowserElectron | undefined;
+	readonly signal?: AbortSignal | undefined;
 }
 export interface ElectronHostObservationInput {
 	readonly electronLaunchRecords: ReadonlyMap<string, ElectronLaunchRecord>;
 	readonly cwd: string;
 	readonly managedSessionActive: boolean;
 	readonly managedSessionName: string;
-	readonly managedSessionNamespace?: string;
+	readonly managedSessionNamespace?: string | undefined;
 	readonly managedSessionRestoreState: ManagedSessionRestoreState;
 	readonly ownedManagedSessions: ReadonlyMap<string, ElectronManagedSessionOwner>;
 	readonly sessionPageState: SessionPageState;
 	readonly attachedSessionKeys: ReadonlySet<string>;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 }
 export interface ElectronManagedSessionInspection {
 	readonly cwd: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly sessionName: string;
-	readonly signal?: AbortSignal;
-	readonly timeoutMs?: number;
+	readonly signal?: AbortSignal | undefined;
+	readonly timeoutMs?: number | undefined;
 }
 export interface ElectronManagedSessionPolicy extends ElectronManagedSessionInspection {
-	readonly confirmActions?: string;
-	readonly electronLaunchRecord?: ElectronLaunchRecord;
-	readonly headedManagedAutosaveDisabled?: boolean;
-	readonly headedManagedAutosaveInterval?: string;
+	readonly confirmActions?: string | undefined;
+	readonly electronLaunchRecord?: ElectronLaunchRecord | undefined;
+	readonly headedManagedAutosaveDisabled?: boolean | undefined;
+	readonly headedManagedAutosaveInterval?: string | undefined;
 	readonly restoreState: ManagedSessionRestoreState;
 }
 export interface ElectronProbeContext {
-	readonly launchId?: string;
+	readonly launchId?: string | undefined;
 	readonly mode: "current-managed-session" | "launchId";
-	readonly note?: string;
+	readonly note?: string | undefined;
 	readonly sessionName: string;
 }
 export interface ElectronProbeFocusedElement {
-	readonly ariaLabel?: string;
-	readonly id?: string;
-	readonly isContentEditable?: boolean;
-	readonly name?: string;
-	readonly placeholder?: string;
-	readonly role?: string;
-	readonly tagName?: string;
-	readonly textLength?: number;
-	readonly textPreview?: string;
-	readonly title?: string;
-	readonly type?: string;
-	readonly valueLength?: number;
+	readonly ariaLabel?: string | undefined;
+	readonly id?: string | undefined;
+	readonly isContentEditable?: boolean | undefined;
+	readonly name?: string | undefined;
+	readonly placeholder?: string | undefined;
+	readonly role?: string | undefined;
+	readonly tagName?: string | undefined;
+	readonly textLength?: number | undefined;
+	readonly textPreview?: string | undefined;
+	readonly title?: string | undefined;
+	readonly type?: string | undefined;
+	readonly valueLength?: number | undefined;
 }
 export interface ElectronProbeTab {
-	readonly active?: boolean;
+	readonly active?: boolean | undefined;
 	readonly index?: number;
-	readonly tabId?: string;
-	readonly title?: string;
-	readonly type?: string;
-	readonly url?: string;
+	readonly tabId?: string | undefined;
+	readonly title?: string | undefined;
+	readonly type?: string | undefined;
+	readonly url?: string | undefined;
 }
 export interface ElectronProbeSnapshotSummary {
 	readonly lineCount: number;
-	readonly omittedLineCount?: number;
-	readonly omittedRefCount?: number;
+	readonly omittedLineCount?: number | undefined;
+	readonly omittedRefCount?: number | undefined;
 	readonly refCount: number;
 	readonly refIds: readonly string[];
-	readonly text?: string;
+	readonly text?: string | undefined;
 }
 export interface ElectronProbeResult {
-	readonly activeTab?: ElectronProbeTab;
-	readonly errors?: readonly string[];
-	readonly focusedElement?: ElectronProbeFocusedElement;
-	readonly refSnapshot?: SessionRefSnapshot;
+	readonly activeTab?: ElectronProbeTab | undefined;
+	readonly errors?: readonly string[] | undefined;
+	readonly focusedElement?: ElectronProbeFocusedElement | undefined;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
 	readonly sessionName: string;
-	readonly snapshot?: ElectronProbeSnapshotSummary;
+	readonly snapshot?: ElectronProbeSnapshotSummary | undefined;
 	readonly status: "partial" | "succeeded";
 	readonly summary: string;
-	readonly tabs?: {
-		readonly omittedCount?: number;
-		readonly shown: readonly ElectronProbeTab[];
-		readonly total: number;
-	};
-	readonly title?: string;
-	readonly url?: string;
+	readonly tabs?:
+		| {
+				readonly omittedCount?: number | undefined;
+				readonly shown: readonly ElectronProbeTab[];
+				readonly total: number;
+		  }
+		| undefined;
+	readonly title?: string | undefined;
+	readonly url?: string | undefined;
 }

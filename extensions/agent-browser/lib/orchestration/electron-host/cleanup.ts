@@ -84,7 +84,6 @@ export async function cleanupTrackedElectronHostLaunches(
 	for (const record of options.records) {
 		// Close the managed connection before its process/profile, and publish each
 		// terminal record before proceeding to the next owned launch.
-		// oxlint-disable-next-line no-await-in-loop
 		const result = await cleanupTrackedLaunch(options, record);
 		results.push(result);
 		options.electronLaunchRecords.set(record.launchId, result.record);

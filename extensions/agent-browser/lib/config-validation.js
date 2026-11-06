@@ -13,7 +13,7 @@ import {
 /** @typedef {"global" | "project" | "override"} ConfigLayerScope */
 /** @typedef {{ readonly name: string; readonly policy?: BrowserDefaultProfilePolicy }} BrowserDefaultProfileConfig */
 /** @typedef {{ readonly enabled?: boolean; readonly preferredProvider?: WebSearchProvider; readonly defaultSearchType?: ExaSearchType; readonly braveApiKey?: string; readonly exaApiKey?: string }} WebSearchConfig */
-/** @typedef {{ readonly defaultProfile?: BrowserDefaultProfileConfig; readonly executablePath?: string }} BrowserConfig */
+/** @typedef {{ readonly defaultProfile?: BrowserDefaultProfileConfig | undefined; readonly executablePath?: string }} BrowserConfig */
 /** @typedef {{ readonly version?: 1; readonly webSearch?: WebSearchConfig; readonly browser?: BrowserConfig }} AgentBrowserConfig */
 /** @typedef {{ readonly config: AgentBrowserConfig; readonly path: string; readonly scope: ConfigLayerScope }} ConfigLayer */
 /** Validation deliberately appends diagnostics to the caller's collectors.
@@ -29,7 +29,7 @@ export const DEFAULT_BROWSER_DEFAULT_PROFILE_POLICY = "authenticated-only";
 
 /** @param {unknown} value
  * @returns {value is Readonly<Record<string, unknown>>} */
-function isRecord(value) {
+export function isRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -261,12 +261,11 @@ export function parseAgentBrowserConfigJson(raw) {
 }
 
 /** @param {string} raw
- * @param {string} path
- * @param {ConfigLayerScope} scope
+ * @param {Pick<ConfigLayer, 'path' | 'scope'>} source
  * @param {ConfigDiagnostics} errors
  * @param {ConfigDiagnostics} warnings
  * @returns {ConfigLayer | undefined} */
-export function parseAgentBrowserConfigLayer(raw, path, scope, errors, warnings) {
+export function parseAgentBrowserConfigLayer(raw, { path, scope }, errors, warnings) {
 	const parsed = parseAgentBrowserConfigJson(raw);
 	if (!parsed.ok) {
 		errors.push(`Could not parse ${scope} config ${path}: ${parsed.error}`);

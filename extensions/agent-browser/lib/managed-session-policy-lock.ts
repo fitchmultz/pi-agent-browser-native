@@ -67,7 +67,6 @@ async function acquireClaimsInOrder(
 ): Promise<void> {
 	for (const identity of identities) {
 		// Acquiring sorted native socket contexts in order prevents lock-order cycles.
-		// oxlint-disable-next-line no-await-in-loop
 		const lock = await acquireExecutionClaim({
 			identity,
 			deadline: budget.deadline,
@@ -107,9 +106,9 @@ async function runInScope<T>(
 export async function withBrowserExecutionLocks<T>(
 	options: {
 		readonly identities: readonly BrowserExecutionIdentity[];
-		readonly signal?: AbortSignal;
+		readonly signal?: AbortSignal | undefined;
 		readonly deadline: number;
-		readonly waitOnly?: boolean;
+		readonly waitOnly?: boolean | undefined;
 	},
 	run: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
@@ -166,8 +165,13 @@ export async function withBrowserExecutionLocks<T>(
 		const result = parent.children.then(execute);
 		// The caller owns this result; the parent drains both outcomes before releasing claims.
 		parent.children = result.then(
-			() => undefined,
-			() => undefined,
+			(): undefined => {
+				// The parent drains completion without retaining the child result.
+				return undefined;
+			},
+			() => {
+				// The returned result owns failure; draining still releases the parent claims.
+			},
 		);
 		return await result;
 	} finally {
@@ -195,9 +199,9 @@ export function withBrowserExecutionLock<T>(
 	);
 }
 export async function acquireManagedSessionPolicyLock(options: {
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly sessionName: string;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 	readonly timeoutMs?: number;
 }): Promise<ManagedSessionPolicyLock | undefined> {
 	if (options.signal?.aborted === true) {

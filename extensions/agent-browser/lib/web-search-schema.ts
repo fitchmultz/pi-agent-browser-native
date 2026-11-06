@@ -25,19 +25,19 @@ const MAX_EXA_DOMAIN_FILTERS = 20;
 const MAX_EXA_ADDITIONAL_QUERIES = 10;
 
 export type AgentBrowserWebSearchParamsInput = {
-	readonly additionalQueries?: readonly string[];
-	readonly category?: ExaSearchCategory;
-	readonly country?: string;
+	readonly additionalQueries?: readonly string[] | undefined;
+	readonly category?: ExaSearchCategory | undefined;
+	readonly country?: string | undefined;
 	readonly count?: number;
-	readonly excludeDomains?: readonly string[];
-	readonly freshness?: SearchFreshness;
-	readonly highlightsDynamic?: boolean;
-	readonly includeDomains?: readonly string[];
+	readonly excludeDomains?: readonly string[] | undefined;
+	readonly freshness?: SearchFreshness | undefined;
+	readonly highlightsDynamic?: boolean | undefined;
+	readonly includeDomains?: readonly string[] | undefined;
 	readonly offset?: number;
 	readonly provider?: WebSearchProviderParam;
 	readonly query: string;
-	readonly safesearch?: "off" | "moderate" | "strict";
-	readonly searchLang?: string;
+	readonly safesearch?: "off" | "moderate" | "strict" | undefined;
+	readonly searchLang?: string | undefined;
 	readonly searchType?: ExaSearchType;
 };
 export type WebSearchExecutionParams = AgentBrowserWebSearchParamsInput & {

@@ -218,6 +218,7 @@ export class BrowserPrompt {
 		);
 		this.pi.on("before_agent_start", async (event, ctx) => {
 			if (!isInstructionsManaged()) {
+				// oxlint-disable-next-line no-param-reassign -- QX-003: Pi composes additive prompt sections through this mutable event.
 				event.systemPromptOptions.sections.agent_browser = this.instructions(ctx);
 			}
 		});

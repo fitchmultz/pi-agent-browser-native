@@ -113,16 +113,6 @@ async function countPublishedReceipts(
 	}
 	return matches;
 }
-function appendToBranch(
-	manager: BrowserJournalManager,
-	append: () => void,
-	branch: BrowserBranch,
-): void {
-	append();
-	if (branch.anchorId === null) {
-		branch.anchorId = manager.getLeafId();
-	}
-}
 async function verifyAppend(
 	file: FileHandle,
 	path: string,
@@ -170,7 +160,7 @@ async function appendPublishedRecord(
 		if (!operation.branch.isCurrent()) {
 			return false;
 		}
-		appendToBranch(manager, operation.append, operation.branch);
+		operation.branch.append(operation.append);
 		const nativeId = manager.getLeafId();
 		// Native repair may flush several records or replace the file. Reopen and frame the actual journal.
 		file = await open(path, constants.O_RDONLY);
@@ -195,7 +185,7 @@ export async function appendBrowserRecord(
 		if (!branch.isCurrent()) {
 			return false;
 		}
-		appendToBranch(manager, append, branch);
+		branch.append(append);
 		return branch.isCurrent();
 	}
 	requirePublishedBrowserJournal(manager);

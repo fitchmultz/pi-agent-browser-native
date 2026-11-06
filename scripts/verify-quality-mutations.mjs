@@ -1,18 +1,35 @@
 #!/usr/bin/env node
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	cpSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
+/** @typedef {{name: string, file: string, text?: string, stage: (label: string) => boolean, diagnostic: RegExp, evidencePath?: string}} QualityMutation */
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const excluded = new Set([".git", "node_modules", "dist", ".artifacts", ".crabbox", ".cueloop"]);
-const lintStage = /scripts\/code-quality\.mjs lint$/u;
-const contractStage = new RegExp(
-	`^${RegExp.escape(`${process.execPath} ${fileURLToPath(import.meta.resolve("tsx/cli"))} --test test/**/!(*.serial).test.ts`.replaceAll("\\", "/"))}$`,
-	"u",
-);
+/** @param {string} label */
+const lintStage = (label) => label.endsWith("scripts/code-quality.mjs lint");
+const testCommand =
+	`${process.execPath} ${fileURLToPath(import.meta.resolve("tsx/cli"))} --test test/**/!(*.serial).test.ts`.replaceAll(
+		"\\",
+		"/",
+	);
+/** @param {string} label */
+const contractStage = (label) => label === testCommand;
+/** @type {readonly QualityMutation[]} */
 const mutations = [
 	{
 		name: "syntax",
@@ -32,69 +49,84 @@ const mutations = [
 		name: "compiler",
 		file: "test/helpers/quality-mutation.ts",
 		text: "export const value: number = 'wrong';\n",
-		stage: lintStage,
-		diagnostic: /typescript\(TS2322\)/u,
+		stage: (label) => /\/tsc(?:\.cmd)? --noEmit$/u.test(label),
+		diagnostic: /quality-mutation\.ts\(1,14\): error TS2322:/u,
 	},
 	{
 		name: "format",
 		file: "quality-format-mutation.json",
 		text: '{"format":"not formatted"}',
-		stage: /\/oxfmt(?:\.cmd)? --check \.$/u,
+		stage: (label) => /\/oxfmt(?:\.cmd)? --check \.$/u.test(label),
 		diagnostic: /quality-format-mutation\.json/u,
+	},
+	{
+		name: "test",
+		file: "test/quality-mutation.test.ts",
+		text: "import assert from 'node:assert/strict';\nimport nodeTest from 'node:test';\nnodeTest('quality aggregate rejects a failed assertion', () => { assert.equal(1, 2); });\n",
+		stage: contractStage,
+		diagnostic: /ERR_ASSERTION/u,
 	},
 	{
 		name: "allowance-isolation",
 		file: ".oxlintrc.json",
 		stage: contractStage,
 		diagnostic:
-			/^(?:not ok \d+ - |✖ )qualified registration allowance cannot exempt shadows, other declarations or ordinary work(?: \([\d.]+ms\))?$/mu,
+			/(?:not ok \d+ - |✖ )QX-001 admits actual registrations but rejects wrong origins and floating body work/u,
 		evidencePath: "test/code-quality.test.ts",
 	},
 ];
 
-// GitHub Actions stops showing a step log after one very long line, such as the
-// policy inventory JSON; shorten such lines wherever child output is printed.
+/** @param {string} text */
 function forLog(text) {
 	return text.replace(
 		/^.{2001,}$/gmu,
-		(line) => `${line.slice(0, 2000)}… [${line.length - 2000} more characters]`,
+		(/** @type {string} */ line) =>
+			`${line.slice(0, 2000)}… [${line.length - 2000} more characters]`,
 	);
 }
 
+/** @param {string} directory @param {readonly string[]} args */
 function runNode(directory, args) {
-	const result = spawnSync(process.execPath, args, {
-		cwd: directory,
-		encoding: "utf8",
-		timeout: 1_200_000,
-		maxBuffer: 64 * 1024 * 1024,
-	});
-	if (result.error !== undefined || result.signal !== null || result.status === null) {
-		console.error(
-			forLog(stripVTControlCharacters(`${result.stdout ?? ""}\n${result.stderr ?? ""}`)),
-		);
-		throw result.error ?? new Error(`Quality child did not complete: ${result.signal}`);
+	const logs = mkdtempSync(path.join(tmpdir(), "piab-quality-output-"));
+	const log = path.join(logs, "output.txt");
+	const fd = openSync(log, "w");
+	try {
+		// One native descriptor preserves stage boundaries across stdout and stderr.
+		const result = spawnSync(process.execPath, args, {
+			cwd: directory,
+			timeout: 1_200_000,
+			stdio: ["ignore", fd, fd],
+		});
+		const output = stripVTControlCharacters(readFileSync(log, "utf8"));
+		if (result.error !== undefined || result.signal !== null || result.status === null) {
+			console.error(forLog(output));
+			throw result.error ?? new Error(`Quality child did not complete: ${String(result.signal)}`);
+		}
+		return { status: result.status, output };
+	} finally {
+		closeSync(fd);
+		rmSync(logs, { recursive: true, force: true });
 	}
-	return {
-		status: result.status,
-		stdout: stripVTControlCharacters(result.stdout),
-		output: stripVTControlCharacters(`${result.stdout}\n${result.stderr}`),
-	};
 }
 
+/** @param {string} directory */
 function acceptance(directory) {
 	return runNode(directory, ["scripts/project.mjs", "verify", "quality"]);
 }
 
+/** @param {string} directory @param {QualityMutation} mutation */
 function applyMutation(directory, mutation) {
 	const file = path.join(directory, mutation.file);
-	if (mutation.name === "allowance-isolation") {
-		const config = JSON.parse(readFileSync(file, "utf8"));
-		config.rules["typescript/no-floating-promises"][1].allowForKnownSafePromises = [
-			{ from: "lib", name: "Promise" },
-		];
-		writeFileSync(file, `${JSON.stringify(config, null, "\t")}\n`);
-	} else {
+	if (mutation.text !== undefined) {
 		writeFileSync(file, mutation.text);
+	} else {
+		const source = readFileSync(file, "utf8");
+		const anchor = '"allowForKnownSafePromises": []';
+		assert.ok(source.includes(anchor), "Missing native Promise allowance option");
+		writeFileSync(
+			file,
+			source.replaceAll(anchor, '"allowForKnownSafePromises": [{"from":"lib","name":"Promise"}]'),
+		);
 	}
 	if (mutation.name !== "format") {
 		const formatter = runNode(directory, [
@@ -108,16 +140,21 @@ function applyMutation(directory, mutation) {
 	}
 }
 
+/** @param {ReturnType<typeof runNode>} result @param {QualityMutation} mutation */
 function verifyRejection(result, mutation) {
-	const stage = [...result.stdout.matchAll(/^> (.+)$/gmu)].at(-1);
-	// Require the diagnostic to survive the shortening applied whenever child output is printed.
-	const stageOutput = stage === undefined ? "" : forLog(result.output.slice(stage.index));
+	const stages = [...result.output.matchAll(/^> (.+)$/gmu)];
+	const stageIndex = stages.findIndex((stage) =>
+		mutation.stage((stage[1] ?? "").replaceAll("\\", "/")),
+	);
+	const stage = stages[stageIndex];
+	const nextStage = stages[stageIndex + 1];
+	const output =
+		stage === undefined ? "" : forLog(result.output.slice(stage.index, nextStage?.index));
 	if (
 		result.status === 0 ||
 		stage === undefined ||
-		!mutation.stage.test(stage[1].replaceAll("\\", "/")) ||
-		!mutation.diagnostic.test(stageOutput) ||
-		!stageOutput.replaceAll("\\", "/").includes(mutation.evidencePath ?? mutation.file)
+		!mutation.diagnostic.test(output) ||
+		!output.replaceAll("\\", "/").includes(mutation.evidencePath ?? mutation.file)
 	) {
 		throw new Error(
 			`${mutation.name} did not fail at its expected stage/diagnostic:\n${forLog(result.output)}`,
@@ -125,30 +162,44 @@ function verifyRejection(result, mutation) {
 	}
 }
 
+/** @param {QualityMutation} mutation */
 function verifyMutation(mutation) {
 	const directory = mkdtempSync(path.join(tmpdir(), "piab-quality-mutation-"));
 	try {
 		cpSync(root, directory, {
 			recursive: true,
-			filter: (file) => !excluded.has(path.relative(root, file).split(path.sep)[0]),
+			filter: (file) => !excluded.has(path.relative(root, file).split(path.sep)[0] ?? ""),
 		});
 		symlinkSync(path.join(root, "node_modules"), path.join(directory, "node_modules"), "junction");
+		const initialized = spawnSync("git", ["init", "--quiet"], { cwd: directory, encoding: "utf8" });
+		assert.equal(initialized.error, undefined);
+		assert.equal(initialized.status, 0, initialized.stderr);
 		applyMutation(directory, mutation);
 		const result = acceptance(directory);
 		verifyRejection(result, mutation);
+		if (mutation.name === "allowance-isolation") {
+			verifyRejection(result, {
+				name: "policy",
+				file: mutation.file,
+				stage: lintStage,
+				diagnostic: /Oxlint policy differs from guide and repository mappings/u,
+				evidencePath: "scripts/code-quality.mjs",
+			});
+		}
 		console.log(`${mutation.name}: real acceptance rejected the mutation`);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
 }
 
+/** @param {readonly string[]} args */
 function main(args) {
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(`Usage: node scripts/verify-quality-mutations.mjs
 
-Copy the checkout into disposable directories and prove the real quality acceptance
-fails for syntax, semantic, compiler, formatting and allowance-isolation mutations.
-Requires a passing clean npm run quality baseline. Original files are never changed.
+Copy the checkout into disposable directories and prove real quality acceptance
+rejects syntax, semantic, compiler, formatting, test, policy and allowance-isolation
+mutations. Requires a passing npm run quality baseline. Original files are unchanged.
 Exit codes: 0 all controls verified/help; 1 baseline or mutation failure.`);
 		return;
 	}

@@ -78,6 +78,8 @@ export const sourceEvidence = Object.freeze({
 	]),
 });
 
+/** @param {string} label
+ * @param {readonly string[]} args */
 const helpCommand = (label, args) => Object.freeze({ label, args: Object.freeze(args) });
 export const helpCommands = Object.freeze([
 	helpCommand("root help", ["--help"]),

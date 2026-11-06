@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import {
@@ -12,280 +12,261 @@ function batch(steps: readonly (readonly string[])[]): string {
 	return JSON.stringify(steps);
 }
 
-test("getCommandAwareProcessTimeoutMs extends process timeout for wait, read, and WebMCP budgets", async () => {
-	await withPatchedEnv({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "10000" }, async () => {
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(["open", "https://example.com"], undefined),
-			undefined,
-		);
-		assert.equal(getCommandAwareProcessTimeoutMs(["wait", "4000"], undefined), undefined);
-		assert.equal(getCommandAwareProcessTimeoutMs(["wait", "6000"], undefined), 11000);
-		assert.equal(getCommandAwareProcessTimeoutMs(["wait", "--timeout", "7000"], undefined), 12000);
-		assert.equal(getCommandAwareProcessTimeoutMs(["wait", "--timeout=8000"], undefined), 13000);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["read", "https://example.com", "--timeout", "7000"],
-				undefined,
-			),
-			33000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["read", "--timeout", "8000", "https://example.com"],
-				undefined,
-			),
-			37000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["read", "https://example.com/a/b", "--timeout", "7000"],
-				undefined,
-			),
-			47000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				extractUpstreamCommandTokens([
-					"read",
-					"--session",
-					"custom",
-					"--timeout",
-					"8000",
+nodeTest(
+	"getCommandAwareProcessTimeoutMs extends process timeout for wait, read, and WebMCP budgets",
+	async () => {
+		await withPatchedEnv({ PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS: "10000" }, async () => {
+			assert.equal(getCommandAwareProcessTimeoutMs(["open", "https://example.com"]), undefined);
+			assert.equal(getCommandAwareProcessTimeoutMs(["wait", "4000"]), undefined);
+			assert.equal(getCommandAwareProcessTimeoutMs(["wait", "6000"]), 11000);
+			assert.equal(getCommandAwareProcessTimeoutMs(["wait", "--timeout", "7000"]), 12000);
+			assert.equal(getCommandAwareProcessTimeoutMs(["wait", "--timeout=8000"]), 13000);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["read", "https://example.com", "--timeout", "7000"]),
+				33000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["read", "--timeout", "8000", "https://example.com"]),
+				37000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["read", "https://example.com/a/b", "--timeout", "7000"]),
+				47000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					extractUpstreamCommandTokens([
+						"read",
+						"--session",
+						"custom",
+						"--timeout",
+						"8000",
+						"https://example.com/a/b",
+					]),
+				),
+				53000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					extractUpstreamCommandTokens([
+						"read",
+						"--restore",
+						"https://example.com/a/b",
+						"--timeout",
+						"8000",
+					]),
+				),
+				53000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					extractUpstreamCommandTokens([
+						"read",
+						"--session",
+						"custom",
+						"--require-md",
+						"--timeout",
+						"8000",
+					]),
+					undefined,
 					"https://example.com/a/b",
-				]),
-				undefined,
-			),
-			53000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				extractUpstreamCommandTokens([
+				),
+				53000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs([
 					"read",
-					"--restore",
 					"https://example.com/a/b",
+					"--raw",
 					"--timeout",
-					"8000",
+					"7000",
 				]),
-				undefined,
-			),
-			53000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				extractUpstreamCommandTokens([
+				12000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs([
 					"read",
-					"--session",
-					"custom",
-					"--require-md",
+					"https://example.com/a/b",
+					"--llms",
+					"index",
 					"--timeout",
-					"8000",
+					"7000",
 				]),
+				26000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					["read", "--require-md", "--timeout=8000"],
+					undefined,
+					"https://example.com/a/b",
+				),
+				53000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["webmcp", "invoke", "slow_tool", "--timeout", "6000"]),
+				11000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["webmcp", "result", "invocation-1", "--timeout=7000"]),
+				12000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["webmcp", "cancel", "invocation-1", "--timeout", "8000"]),
 				undefined,
-				"https://example.com/a/b",
-			),
-			53000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["read", "https://example.com/a/b", "--raw", "--timeout", "7000"],
-				undefined,
-			),
-			12000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["read", "https://example.com/a/b", "--llms", "index", "--timeout", "7000"],
-				undefined,
-			),
-			26000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["read", "--require-md", "--timeout=8000"],
-				undefined,
-				"https://example.com/a/b",
-			),
-			53000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["webmcp", "invoke", "slow_tool", "--timeout", "6000"],
-				undefined,
-			),
-			11000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["webmcp", "result", "invocation-1", "--timeout=7000"],
-				undefined,
-			),
-			12000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["webmcp", "cancel", "invocation-1", "--timeout", "8000"],
-				undefined,
-			),
-			undefined,
-		);
+			);
 
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["batch"],
-				batch([
-					["wait", "2000"],
-					["get", "url"],
-					["wait", "3000"],
-				]),
-			),
-			undefined,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["batch"],
-				batch([
-					["wait", "4000"],
-					["read", "https://example.com", "--timeout", "3000"],
-				]),
-			),
-			21000,
-		);
-		for (const navigationCommand of ["open", "goto", "navigate"]) {
-			for (const navigationFlags of [["--session", "custom"], ["--restore"]]) {
-				// Both fixed navigation-flag variants must retain their own timeout assertion.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(
-					getCommandAwareProcessTimeoutMs(
-						["batch"],
-						batch([
-							[navigationCommand, ...navigationFlags, "https://example.com/a/b"],
-							["read", "--require-md", "--timeout", "3000"],
-						]),
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					["batch"],
+					batch([
+						["wait", "2000"],
+						["get", "url"],
+						["wait", "3000"],
+					]),
+				),
+				undefined,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					["batch"],
+					batch([
+						["wait", "4000"],
+						["read", "https://example.com", "--timeout", "3000"],
+					]),
+				),
+				21000,
+			);
+			assert.deepEqual(
+				["open", "goto", "navigate"].map((navigationCommand) =>
+					[["--session", "custom"], ["--restore"]].map((navigationFlags) =>
+						getCommandAwareProcessTimeoutMs(
+							["batch"],
+							batch([
+								[navigationCommand, ...navigationFlags, "https://example.com/a/b"],
+								["read", "--require-md", "--timeout", "3000"],
+							]),
+						),
 					),
-					23000,
-				);
-			}
-		}
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["batch"],
-				batch([
-					["get", "title"],
-					["snapshot", "-i"],
-				]),
-			),
-			undefined,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["batch"],
-				batch([
-					["webmcp", "invoke", "slow_tool", "--timeout", "6000"],
-					["webmcp", "result", "invocation-1", "--timeout", "7000"],
-				]),
-			),
-			18000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["batch", "webmcp result invocation-1 --timeout 7000"],
-				undefined,
-			),
-			12000,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
+				),
 				[
-					"batch",
-					"webmcp invoke slow_tool --timeout 6000",
-					"webmcp result invocation-1 --timeout 7000",
+					[23000, 23000],
+					[23000, 23000],
+					[23000, 23000],
 				],
-				batch([["wait", "99999"]]),
-			),
-			18000,
-		);
-		assert.equal(
-			commandTimeoutNeedsActivePageUrl(["read", "--require-md", "--timeout", "8000"], undefined),
-			true,
-		);
-		assert.equal(
-			commandTimeoutNeedsActivePageUrl(
-				extractUpstreamCommandTokens([
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					["batch"],
+					batch([
+						["get", "title"],
+						["snapshot", "-i"],
+					]),
+				),
+				undefined,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					["batch"],
+					batch([
+						["webmcp", "invoke", "slow_tool", "--timeout", "6000"],
+						["webmcp", "result", "invocation-1", "--timeout", "7000"],
+					]),
+				),
+				18000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["batch", "webmcp result invocation-1 --timeout 7000"]),
+				12000,
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					[
+						"batch",
+						"webmcp invoke slow_tool --timeout 6000",
+						"webmcp result invocation-1 --timeout 7000",
+					],
+					batch([["wait", "99999"]]),
+				),
+				18000,
+			);
+			assert.equal(
+				commandTimeoutNeedsActivePageUrl(["read", "--require-md", "--timeout", "8000"]),
+				true,
+			);
+			assert.equal(
+				commandTimeoutNeedsActivePageUrl(
+					extractUpstreamCommandTokens([
+						"read",
+						"--session",
+						"custom",
+						"--require-md",
+						"--timeout",
+						"8000",
+					]),
+				),
+				true,
+			);
+			assert.equal(
+				commandTimeoutNeedsActivePageUrl(
+					extractUpstreamCommandTokens([
+						"read",
+						"--restore",
+						"https://example.com",
+						"--require-md",
+						"--timeout",
+						"8000",
+					]),
+				),
+				false,
+			);
+			assert.equal(
+				commandTimeoutNeedsActivePageUrl([
 					"read",
-					"--session",
-					"custom",
 					"--require-md",
 					"--timeout",
 					"8000",
-				]),
-				undefined,
-			),
-			true,
-		);
-		assert.equal(
-			commandTimeoutNeedsActivePageUrl(
-				extractUpstreamCommandTokens([
-					"read",
-					"--restore",
 					"https://example.com",
-					"--require-md",
-					"--timeout",
-					"8000",
 				]),
-				undefined,
-			),
-			false,
-		);
-		assert.equal(
-			commandTimeoutNeedsActivePageUrl(
-				["read", "--require-md", "--timeout", "8000", "https://example.com"],
-				undefined,
-			),
-			false,
-		);
-		assert.equal(
-			commandTimeoutNeedsActivePageUrl(
-				["batch"],
-				batch([["read", "--llms", "index", "--timeout", "8000"]]),
-			),
-			true,
-		);
-		assert.equal(
-			commandTimeoutNeedsActivePageUrl(["batch", "read --llms index --timeout 8000"], undefined),
-			true,
-		);
-		assert.equal(
-			commandTimeoutNeedsActivePageUrl(
-				["batch"],
-				batch([
-					["goto", "https://example.com/a"],
-					["read", "--llms", "index", "--timeout", "8000"],
-				]),
-			),
-			false,
-		);
+				false,
+			);
+			assert.equal(
+				commandTimeoutNeedsActivePageUrl(
+					["batch"],
+					batch([["read", "--llms", "index", "--timeout", "8000"]]),
+				),
+				true,
+			);
+			assert.equal(
+				commandTimeoutNeedsActivePageUrl(["batch", "read --llms index --timeout 8000"]),
+				true,
+			);
+			assert.equal(
+				commandTimeoutNeedsActivePageUrl(
+					["batch"],
+					batch([
+						["goto", "https://example.com/a"],
+						["read", "--llms", "index", "--timeout", "8000"],
+					]),
+				),
+				false,
+			);
 
-		assert.equal(getCommandAwareProcessTimeoutMs(["wait", "not-a-number"], undefined), undefined);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(["wait", "--timeout", "bad"], undefined),
-			undefined,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["read", "https://example.com", "--timeout", "bad"],
+			assert.equal(getCommandAwareProcessTimeoutMs(["wait", "not-a-number"]), undefined);
+			assert.equal(getCommandAwareProcessTimeoutMs(["wait", "--timeout", "bad"]), undefined);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(["read", "https://example.com", "--timeout", "bad"]),
 				undefined,
-			),
-			undefined,
-		);
-		assert.equal(
-			getCommandAwareProcessTimeoutMs(
-				["batch"],
-				batch([
-					["wait", "bad"],
-					["read", "https://example.com", "--timeout=bad"],
-				]),
-			),
-			undefined,
-		);
-	});
-});
+			);
+			assert.equal(
+				getCommandAwareProcessTimeoutMs(
+					["batch"],
+					batch([
+						["wait", "bad"],
+						["read", "https://example.com", "--timeout=bad"],
+					]),
+				),
+				undefined,
+			);
+		});
+	},
+);

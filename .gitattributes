@@ -1,2 +1,0 @@
-# Apply the reviewed checker patch with identical bytes on native Windows too.
-patches/*.patch text eol=lf

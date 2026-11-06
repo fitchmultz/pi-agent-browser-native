@@ -82,7 +82,7 @@ interface PresentationSpill {
 
 async function tryWritePresentationSpill(options: {
 	readonly data: unknown;
-	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore>;
+	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
 	readonly text: string;
 }): Promise<PresentationSpill> {
 	try {
@@ -122,42 +122,47 @@ function buildCompactedText(
 	return { compactedText: lines.join("\n"), previewText };
 }
 
-// The presentation owner supplies its mutable assembly draft; compaction preserves that identity.
 function applyCompactedPresentation(
-	draft: ToolPresentation,
+	draft: ToolPresentationObservation,
 	text: string,
 	rendered: { readonly compactedText: string; readonly previewText: string },
 	persisted: PresentationSpill,
-): void {
+): Pick<ToolPresentation, "content" | "data" | "fullOutputPath" | "summary"> {
 	const firstTextIndex = draft.content.findIndex((part) => part.type === "text");
-	if (firstTextIndex >= 0) {
-		draft.content[firstTextIndex] = { type: "text", text: rendered.compactedText };
-	} else {
-		draft.content.unshift({ type: "text", text: rendered.compactedText });
-	}
-	draft.data = {
-		compacted: true,
+	const content: ToolPresentation["content"] =
+		firstTextIndex >= 0
+			? [
+					...draft.content.slice(0, firstTextIndex),
+					{ type: "text", text: rendered.compactedText },
+					...draft.content.slice(firstTextIndex + 1),
+				]
+			: [{ type: "text", text: rendered.compactedText }, ...draft.content];
+	return {
+		content,
+		data: {
+			compacted: true,
+			fullOutputPath: persisted.spill?.path,
+			outputCharCount: text.length,
+			outputLineCount: countLines(text),
+			previewCharCount: rendered.previewText.length,
+			previewLineCount: countLines(rendered.previewText),
+			spillError: persisted.error,
+		},
 		fullOutputPath: persisted.spill?.path,
-		outputCharCount: text.length,
-		outputLineCount: countLines(text),
-		previewCharCount: rendered.previewText.length,
-		previewLineCount: countLines(rendered.previewText),
-		spillError: persisted.error,
+		summary: `${draft.summary} (compact)`,
 	};
-	draft.fullOutputPath = persisted.spill?.path;
-	draft.summary = `${draft.summary} (compact)`;
 }
 
 export async function compactLargePresentationOutput(options: {
-	readonly artifactManifest?: SessionArtifactManifest;
+	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly commandInfo: CommandInfo;
 	readonly data: unknown;
-	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore>;
-	readonly presentation: ToolPresentation;
-}): Promise<ToolPresentation> {
+	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
+	readonly presentation: ToolPresentationObservation;
+}): Promise<Partial<ToolPresentation>> {
 	const text = getPresentationText(options.presentation);
 	if (text.length === 0 || !shouldCompactLargeOutput(text)) {
-		return options.presentation;
+		return {};
 	}
 	const persisted = await tryWritePresentationSpill({
 		data: options.data,
@@ -170,12 +175,15 @@ export async function compactLargePresentationOutput(options: {
 		options.presentation,
 		persisted,
 	);
-	applyCompactedPresentation(options.presentation, text, rendered, persisted);
+	const update = applyCompactedPresentation(options.presentation, text, rendered, persisted);
 	return persisted.spill
-		? applyArtifactManifest(
-				options.presentation,
-				options.presentation.artifactManifest ?? options.artifactManifest,
-				buildSpillArtifactEntries({ ...persisted.spill, commandInfo: options.commandInfo }),
-			)
-		: options.presentation;
+		? {
+				...update,
+				...applyArtifactManifest(
+					{ ...options.presentation, ...update },
+					options.presentation.artifactManifest ?? options.artifactManifest,
+					buildSpillArtifactEntries({ ...persisted.spill, commandInfo: options.commandInfo }),
+				),
+			}
+		: update;
 }

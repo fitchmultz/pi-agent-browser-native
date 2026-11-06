@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	buildOwnedManagedSessionRestoreContext,
@@ -18,7 +18,7 @@ import {
 } from "../extensions/agent-browser/lib/process.js";
 
 // Run only inside the disposable Linux user/mount namespace described in docs/RELEASE.md.
-test(
+nodeTest(
 	"native namespace accepts an unmapped filesystem root for private sockets",
 	{
 		skip: process.env.PI_AGENT_BROWSER_SOCKET_NAMESPACE !== "1",
@@ -60,10 +60,10 @@ test(
 			try {
 				const chunks: Buffer[] = [];
 				for await (const chunk of client) {
-					// Every received chunk is checked; the final exact nonempty socket payload prevents a zero-chunk pass.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(Buffer.isBuffer(chunk));
-					chunks.push(Buffer.from(chunk));
+					await t.test(`socket chunk ${chunks.length + 1}`, () => {
+						assert.ok(Buffer.isBuffer(chunk));
+						chunks.push(Buffer.from(chunk));
+					});
 				}
 				assert.equal(Buffer.concat(chunks).toString(), "native-unix-socket-ok");
 			} finally {

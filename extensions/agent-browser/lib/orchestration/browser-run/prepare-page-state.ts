@@ -20,12 +20,12 @@ import {
 } from "./managed-session-daemon-inspection.js";
 
 export interface PreparationPageState {
-	readonly sessionStateKey?: string;
-	readonly priorSessionTabTarget?: SessionTabTarget;
-	readonly priorSessionTabTargetUnknown?: true;
-	readonly sessionTabPinningReason?: string;
-	readonly priorRefSnapshotState?: SessionRefSnapshot;
-	readonly priorRefSnapshotInvalidation?: SessionRefSnapshotInvalidation;
+	readonly sessionStateKey?: string | undefined;
+	readonly priorSessionTabTarget?: SessionTabTarget | undefined;
+	readonly priorSessionTabTargetUnknown?: true | undefined;
+	readonly sessionTabPinningReason?: string | undefined;
+	readonly priorRefSnapshotState?: SessionRefSnapshot | undefined;
+	readonly priorRefSnapshotInvalidation?: SessionRefSnapshotInvalidation | undefined;
 	readonly reuseConfirmedCapture: boolean;
 	readonly coldManagedSession: boolean;
 }
@@ -33,12 +33,14 @@ export interface PreparationPageState {
 export async function inspectPreparationGeneration(
 	process: PreparationProcessFacts,
 	identity: {
-		readonly namespace?: string;
+		readonly namespace?: string | undefined;
 		readonly sessionName: string;
-		readonly owned?: {
-			readonly headedManagedAutosaveInterval?: string;
-			readonly headedManagedAutosaveDisabled?: boolean;
-		};
+		readonly owned?:
+			| {
+					readonly headedManagedAutosaveInterval?: string | undefined;
+					readonly headedManagedAutosaveDisabled?: boolean | undefined;
+			  }
+			| undefined;
 	},
 	priorInspection?: ManagedSessionDaemonInspection,
 ): Promise<Awaited<ReturnType<typeof inspectManagedSessionDaemon>>> {
@@ -70,7 +72,7 @@ function consumeConfirmedCapture(
 	const consumed = { ...confirmed };
 	delete consumed.refSnapshotFresh;
 	state.sessionPageState.applyReadConfirmation(consumed, update);
-	state.observedBrowserEffects = { ...state.observedBrowserEffects, readConfirmation: consumed };
+	state.recordReadConfirmation(consumed);
 	return true;
 }
 
@@ -99,7 +101,7 @@ async function reconcileGeneration(
 		readonly session: PreparationSessionPlan;
 		readonly page: PreparationPageState;
 		readonly update: ReturnType<SessionPageState["beginUpdate"]>;
-		readonly generationInspection?: ManagedSessionDaemonInspection;
+		readonly generationInspection?: ManagedSessionDaemonInspection | undefined;
 	},
 ): Promise<PreparationPageState & { readonly nativeGenerationChanged: boolean }> {
 	const { page, plan, session } = request;
@@ -153,7 +155,7 @@ function coldSessionEligible(request: {
 	readonly inactive: boolean;
 	readonly page: PreparationPageState & { readonly nativeGenerationChanged: boolean };
 	readonly reopenPending: boolean;
-	readonly preserveAttachedBrowserSession?: boolean;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
 }): boolean {
 	const nativeCold =
 		request.inactive || request.page.nativeGenerationChanged || request.reopenPending;
@@ -172,9 +174,9 @@ export async function preparePageState(
 		readonly plan: AgentBrowserExecutionPlan;
 		readonly session: PreparationSessionPlan;
 		readonly inactive: boolean;
-		readonly preserveAttachedBrowserSession?: boolean;
+		readonly preserveAttachedBrowserSession?: boolean | undefined;
 		readonly update: ReturnType<SessionPageState["beginUpdate"]>;
-		readonly generationInspection?: ManagedSessionDaemonInspection;
+		readonly generationInspection?: ManagedSessionDaemonInspection | undefined;
 	},
 ): Promise<PreparationPageState> {
 	const { plan, session, update } = request;

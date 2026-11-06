@@ -13,9 +13,9 @@ export interface SemanticActionVisibleRefResolution {
 }
 
 export interface NavigationSummary {
-	readonly title?: string;
-	readonly url?: string;
-	readonly urlChanged?: boolean;
+	readonly title?: string | undefined;
+	readonly url?: string | undefined;
+	readonly urlChanged?: boolean | undefined;
 }
 
 export interface OverlayBlockerCandidate {
@@ -43,16 +43,17 @@ export type ClickDispatchProbeTarget =
 	  };
 
 export interface ClickDispatchProbe {
-	cleaned?: boolean;
+	readonly cleaned?: boolean;
+	readonly markCleaned: () => void;
 	readonly marker: string;
 	readonly target: ClickDispatchProbeTarget;
 }
 
 export interface ClickDispatchScrollContainerDiagnostic {
-	readonly selector?: string;
+	readonly selector?: string | undefined;
 	readonly summary: string;
-	readonly targetOutsideContainer?: boolean;
-	readonly targetOutsideViewport?: boolean;
+	readonly targetOutsideContainer?: boolean | undefined;
+	readonly targetOutsideViewport?: boolean | undefined;
 }
 
 export interface ClickDispatchDiagnostic {
@@ -72,20 +73,20 @@ export interface SelectorTextVisibilityCandidate {
 }
 
 export interface SelectorTextVisibilityDiagnostic {
-	readonly firstMatchVisible?: boolean;
-	readonly firstVisibleTextPreview?: string;
+	readonly firstMatchVisible?: boolean | undefined;
+	readonly firstVisibleTextPreview?: string | undefined;
 	readonly matchCount: number;
 	readonly selector: string;
 	readonly summary: string;
-	readonly visibleCandidates?: readonly SelectorTextVisibilityCandidate[];
+	readonly visibleCandidates?: readonly SelectorTextVisibilityCandidate[] | undefined;
 	readonly visibleCount: number;
 }
 
 export interface ElectronBroadGetTextScopeDiagnostic {
 	readonly electronContext: {
-		readonly launchId?: string;
-		readonly sessionName?: string;
-		readonly url?: string;
+		readonly launchId?: string | undefined;
+		readonly sessionName?: string | undefined;
+		readonly url?: string | undefined;
 	};
 	readonly selector: string;
 	readonly summary: string;
@@ -94,8 +95,8 @@ export interface ElectronBroadGetTextScopeDiagnostic {
 export interface QaAttachedTarget {
 	readonly error?: string;
 	readonly sessionName: string;
-	readonly title?: string;
-	readonly url?: string;
+	readonly title?: string | undefined;
+	readonly url?: string | undefined;
 }
 
 export interface QaAttachedPreconditionFailure {
@@ -132,11 +133,11 @@ export interface ManagedSessionOutcome {
 	readonly activeBefore: boolean;
 	readonly attemptedSessionName?: string;
 	readonly currentSessionName: string;
-	readonly currentSessionNamespace?: string;
+	readonly currentSessionNamespace?: string | undefined;
 	readonly previousSessionName: string;
 	readonly replacedSessionClosed?: boolean;
-	readonly replacedSessionName?: string;
-	readonly replacedSessionNamespace?: string;
+	readonly replacedSessionName?: string | undefined;
+	readonly replacedSessionNamespace?: string | undefined;
 	readonly sessionMode: "auto" | "fresh";
 	readonly status: "abandoned" | "closed" | "created" | "preserved" | "replaced" | "unchanged";
 	readonly succeeded: boolean;
@@ -169,10 +170,10 @@ export interface ScrollNoopDiagnostic {
 export interface ComboboxFocusDiagnostic {
 	readonly activeElement: {
 		readonly expanded?: string;
-		readonly hasPopup?: string;
-		readonly name?: string;
-		readonly role?: string;
-		readonly tagName?: string;
+		readonly hasPopup?: string | undefined;
+		readonly name?: string | undefined;
+		readonly role?: string | undefined;
+		readonly tagName?: string | undefined;
 	};
 	readonly message: string;
 	readonly reason: "focused-combobox-without-visible-options";
@@ -203,13 +204,13 @@ export interface PreparedAgentBrowserArgs {
 
 export interface ScreenshotArtifactRequest extends ScreenshotPathRequest {
 	readonly status?: "missing" | "repaired-from-temp" | "saved" | "upstream-temp-only";
-	readonly tempPath?: string;
+	readonly tempPath?: string | undefined;
 }
 
 export interface StaleRefPreflight {
 	readonly message: string;
 	readonly refIds: readonly string[];
-	readonly snapshot?: SessionRefSnapshot;
+	readonly snapshot?: SessionRefSnapshot | undefined;
 	readonly snapshotInvalidation?: SessionRefSnapshotInvalidation;
 }
 
@@ -217,7 +218,7 @@ export interface AboutBlankSessionMismatch {
 	readonly activeUrl: "about:blank";
 	readonly recoveryApplied: boolean;
 	readonly recoveryHint: string;
-	readonly targetTitle?: string;
+	readonly targetTitle?: string | undefined;
 	readonly targetUrl: string;
 }
 
@@ -225,7 +226,7 @@ export interface ElectronHandoffSummary {
 	readonly error?: string;
 	readonly failureCategory?: "aborted" | "upstream-error" | "validation-error";
 	readonly handoff: "connect" | "snapshot" | "tabs";
-	readonly refSnapshot?: SessionRefSnapshot;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
 	readonly snapshot?: unknown;
 	readonly snapshotRetryCount?: number;
 	readonly tabs?: unknown;
@@ -233,10 +234,10 @@ export interface ElectronHandoffSummary {
 
 export interface ElectronManagedSessionTarget {
 	readonly error?: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly sessionName: string;
-	readonly title?: string;
-	readonly url?: string;
+	readonly title?: string | undefined;
+	readonly url?: string | undefined;
 }
 
 export type ElectronSessionMismatchReason =
@@ -246,11 +247,11 @@ export type ElectronSessionMismatchReason =
 
 export interface ElectronSessionMismatch {
 	readonly launchId: string;
-	readonly liveTarget?: ElectronCdpTarget;
+	readonly liveTarget?: ElectronCdpTarget | undefined;
 	readonly managedSession: ElectronManagedSessionTarget;
 	readonly nextActionIds: readonly string[];
 	readonly reason: ElectronSessionMismatchReason;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 	readonly statusTargets: readonly ElectronCdpTarget[];
 	readonly summary: string;
 }
@@ -262,18 +263,18 @@ export type ElectronPostCommandHealthReason =
 
 export interface ElectronPostCommandHealthDiagnostic {
 	readonly appName: string;
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly launchId: string;
 	readonly nextActionIds: readonly string[];
 	readonly reason: ElectronPostCommandHealthReason;
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 	readonly status: ElectronLaunchStatus;
 	readonly summary: string;
-	readonly target?: SessionTabTarget;
+	readonly target?: SessionTabTarget | undefined;
 }
 
 export interface FillVerificationDiagnostic {
-	readonly actual?: string;
+	readonly actual?: string | undefined;
 	readonly expected: string;
 	readonly method: "text" | "value";
 	readonly nextActionIds: readonly string[];
@@ -284,9 +285,9 @@ export interface FillVerificationDiagnostic {
 }
 
 export interface ElectronRefFreshnessDiagnostic {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly launchId: string;
 	readonly nextActionIds: readonly string[];
-	readonly sessionName?: string;
+	readonly sessionName?: string | undefined;
 	readonly summary: string;
 }

@@ -9,10 +9,9 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 		return Promise.resolve();
 	}
 	if (signal?.aborted === true) {
-		const reason: unknown = signal.reason;
+		const reason: unknown = signal.reason ?? new Error("Web search cancelled");
 		// A caller-owned abort reason may be non-Error; preserve the original reason.
-		// oxlint-disable-next-line typescript/prefer-promise-reject-errors
-		return Promise.reject(reason ?? new Error("Web search cancelled"));
+		return Promise.reject(reason);
 	}
 	return new Promise((resolve, reject) => {
 		const cleanup = () => signal?.removeEventListener("abort", abort);
@@ -23,10 +22,9 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 		const abort = () => {
 			clearTimeout(timeout);
 			cleanup();
-			const reason: unknown = signal?.reason;
+			const reason: unknown = signal?.reason ?? new Error("Web search cancelled");
 			// A caller-owned abort reason may be non-Error; preserve the original reason.
-			// oxlint-disable-next-line typescript/prefer-promise-reject-errors
-			reject(reason ?? new Error("Web search cancelled"));
+			reject(reason);
 		};
 		signal?.addEventListener("abort", abort, { once: true });
 	});
@@ -86,7 +84,7 @@ export async function fetchSearchJson(options: {
 	readonly invalidJsonMessage: string;
 	readonly provider: WebSearchProvider;
 	readonly request: string | URL;
-	readonly signal?: AbortSignal;
+	readonly signal?: AbortSignal | undefined;
 	readonly timeoutMessage: string;
 	readonly timeoutMs: number;
 }): Promise<unknown> {

@@ -84,12 +84,12 @@ function targetPrecludesFreshness(
 export async function collectSamePageRefFreshnessPreflight(options: {
 	readonly commandTokens: readonly string[];
 	readonly cwd: string;
-	readonly currentTarget?: SessionTabTarget;
-	readonly stdin?: string;
-	readonly previousSnapshot?: SessionRefSnapshot;
-	readonly namespace?: string;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly currentTarget?: SessionTabTarget | undefined;
+	readonly stdin?: string | undefined;
+	readonly previousSnapshot?: SessionRefSnapshot | undefined;
+	readonly namespace?: string | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<StaleRefPreflight | undefined> {
 	const refIds = [...new Set(getGuardedRefUsage(options.commandTokens, options.stdin))];
 	if (
@@ -149,10 +149,10 @@ export function requiresResolvedSemanticVisibleRef(
 export async function resolveSemanticActionVisibleRefArgs(options: {
 	readonly compiled: CompiledAgentBrowserSemanticAction | undefined;
 	readonly cwd: string;
-	readonly namespace?: string;
-	readonly refSnapshot?: SessionRefSnapshot;
-	readonly sessionName?: string;
-	readonly signal?: AbortSignal;
+	readonly namespace?: string | undefined;
+	readonly refSnapshot?: SessionRefSnapshot | undefined;
+	readonly sessionName?: string | undefined;
+	readonly signal?: AbortSignal | undefined;
 }): Promise<SemanticActionVisibleRefResolution | undefined> {
 	if (
 		!canResolveSemanticVisibleRef(options.compiled) ||

@@ -3,7 +3,7 @@ import { readRecord, readString } from "./helpers/assertions.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
 	createExtensionHarness,
 	executeRegisteredTool,
@@ -14,10 +14,10 @@ import {
 } from "./helpers/agent-browser-harness.js";
 import { stripWrapperPrefix, needsRootSessionPageCheck } from "./helpers/passthrough-fixture.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension exposes native session-info facts in model-visible content",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const root = await mkdtemp(join(tmpdir(), "piab-si-"));
 		const home = join(root, "home");
 		const temp = join(root, "tmp");
@@ -84,51 +84,39 @@ process.stdout.write(JSON.stringify({ success: true, data: JSON.parse(fs.readFil
 								runtimeError: "Runtime info unavailable",
 							},
 						]) {
-							const data = {
-								session: "fixture",
-								namespace: "fixture",
-								socketDir: sockets,
-								...status,
-							};
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							await writeFile(dataPath, JSON.stringify(data));
-							// Fixture transitions and their assertions run in order against this test's shared state.
-							// oxlint-disable-next-line no-await-in-loop
-							const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-								args: ["--session", "fixture", "session", "info"],
-							});
-							// All three literal daemon states must preserve native receipts and caller ownership.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(result.details);
-							// All three literal daemon states must preserve native receipts and caller ownership.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.equal(result.isError, false);
-							const text = result.content[0]?.text ?? "";
-							// All three literal daemon states must preserve native receipts and caller ownership.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(
-								text.startsWith(
-									`Daemon: ${status.active ? "active" : "inactive"}; PID: ${status.pid ?? "unknown"}\n`,
-								),
-							);
-							// All three literal daemon states must preserve native receipts and caller ownership.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.match(
-								text,
-								/\nBrowser: unknown; alive: unknown; Chrome PID: unknown\nExact profile: unknown\nNative browser ownership: unknown; Pi cleanup ownership: caller-owned\n\n/,
-							);
-							// All three literal daemon states must preserve native receipts and caller ownership.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.deepEqual(
-								JSON.parse(text.slice(text.indexOf("\n\n") + 2).split("\n\nObservation:")[0]),
-								data,
-							);
-							// All three literal daemon states must preserve native receipts and caller ownership.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.deepEqual(result.details.data, {
-								...data,
-								piCleanupOwnership: "caller-owned",
+							await t.test(JSON.stringify(status), async () => {
+								const data = {
+									session: "fixture",
+									namespace: "fixture",
+									socketDir: sockets,
+									...status,
+								};
+								await writeFile(dataPath, JSON.stringify(data));
+								const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+									args: ["--session", "fixture", "session", "info"],
+								});
+								assert.ok(result.details);
+								assert.equal(result.isError, false);
+								const text = result.content[0]?.text ?? "";
+								assert.ok(
+									text.startsWith(
+										`Daemon: ${status.active ? "active" : "inactive"}; PID: ${status.pid ?? "unknown"}\n`,
+									),
+								);
+								assert.match(
+									text,
+									/\nBrowser: unknown; alive: unknown; Chrome PID: unknown\nExact profile: unknown\nNative browser ownership: unknown; Pi cleanup ownership: caller-owned\n\n/,
+								);
+								assert.deepEqual(
+									JSON.parse(
+										readString(text.slice(text.indexOf("\n\n") + 2).split("\n\nObservation:")[0]),
+									),
+									data,
+								);
+								assert.deepEqual(result.details.data, {
+									...data,
+									piCleanupOwnership: "caller-owned",
+								});
 							});
 						}
 						await writeFile(dataPath, JSON.stringify({ session: "fixture" }));
@@ -151,7 +139,7 @@ process.stdout.write(JSON.stringify({ success: true, data: JSON.parse(fs.readFil
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps successful plain-text inspection stateless and machine-readable",
 	{ concurrency: false },
 	async () => {
@@ -233,10 +221,10 @@ if (args.includes("--version")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects unsupported global equals assignments before upstream dispatch",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-equals-flags-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -256,21 +244,15 @@ process.stdout.write(JSON.stringify({ success: true, data: {} }));`,
 					["--args=--user-agent=TARS", "open", "https://example.com/"],
 					["screenshot", "page.png", "--user-agent=TARS"],
 				]) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
-					// Both literal unsupported global-equals variants must fail before upstream dispatch.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(result.details);
-					// Both literal unsupported global-equals variants must fail before upstream dispatch.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, true, args.join(" "));
-					// Both literal unsupported global-equals variants must fail before upstream dispatch.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(result.details.validationError),
-						/does not support `--(?:args|user-agent)=<value>`/,
-					);
+					await t.test(args.join(" "), async () => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+						assert.ok(result.details);
+						assert.equal(result.isError, true, args.join(" "));
+						assert.match(
+							readString(result.details.validationError),
+							/does not support `--(?:args|user-agent)=<value>`/,
+						);
+					});
 				}
 
 				for (const params of [
@@ -281,18 +263,12 @@ process.stdout.write(JSON.stringify({ success: true, data: {} }));`,
 					},
 					{ args: ["batch", "screenshot page.png --restore=auth"] },
 				]) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
-					// All three literal batch-global variants must fail before upstream dispatch.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(result.details);
-					// All three literal batch-global variants must fail before upstream dispatch.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, true, params.args.join(" "));
-					// All three literal batch-global variants must fail before upstream dispatch.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(readString(result.details.validationError), /before `batch`/);
+					await t.test(JSON.stringify(params), async () => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, params);
+						assert.ok(result.details);
+						assert.equal(result.isError, true, params.args.join(" "));
+						assert.match(readString(result.details.validationError), /before `batch`/);
+					});
 				}
 				assert.deepEqual(await readInvocationLog(logPath), []);
 			});
@@ -302,7 +278,7 @@ process.stdout.write(JSON.stringify({ success: true, data: {} }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension passes through plugin list/show and blocks bare mcp one-shots",
 	{ concurrency: false },
 	async () => {
@@ -386,7 +362,7 @@ if (command === "mcp" && args.includes("--help")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps skills inspection flows stateless and useful",
 	{ concurrency: false },
 	async () => {
@@ -459,10 +435,10 @@ if (subcommand === "list") {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension passes through core command coverage fallback matrix",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-core-matrix-"));
 		const logPath = join(tempDir, "invocations.log");
 		const downloadPath = join(tempDir, "download.txt");
@@ -572,29 +548,24 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
 				for (const args of commands) {
-					// Fixture transitions and their assertions run in order against this test's shared state.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: [...args],
+					await t.test(args.join(" "), async (commandTest) => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: [...args],
+						});
+						assert.ok(result.details);
+						assert.equal(
+							result.isError,
+							false,
+							`${args.join(" ")}: ${result.content[0]?.type === "text" ? readString(result.content[0].text) : ""}`,
+						);
+						if (args[0] === "get" && args.at(1) === "url") {
+							const details = result.details;
+							await commandTest.test("preserves get-url payload", () => {
+								assert.deepEqual(details.args, ["get", "url"]);
+								assert.equal(readRecord(details.data).url, "https://example.test/current");
+							});
+						}
 					});
-					// Every row in the fixed nonempty core-command sequence checks dispatch success.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.ok(result.details);
-					// Every row in the fixed nonempty core-command sequence checks dispatch success.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(
-						result.isError,
-						false,
-						`${args.join(" ")}: ${result.content[0]?.type === "text" ? readString(result.content[0].text) : ""}`,
-					);
-					if (args[0] === "get" && args.at(1) === "url") {
-						// The literal get-url row runs these payload checks; every command also checks success.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.deepEqual(result.details.args, ["get", "url"]);
-						// The literal get-url row runs these payload checks; every command also checks success.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.equal(readRecord(result.details.data).url, "https://example.test/current");
-					}
 				}
 
 				const invocations = await readInvocationLog(logPath);

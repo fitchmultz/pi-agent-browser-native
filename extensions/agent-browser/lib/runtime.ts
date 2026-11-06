@@ -189,7 +189,7 @@ function activeLaunchRecovery(
 }
 
 interface CompatibilityPlan extends LaunchRecovery {
-	readonly compatibilityWorkaround?: CompatibilityWorkaround;
+	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 }
 
 function activeCompatibilityPlan(

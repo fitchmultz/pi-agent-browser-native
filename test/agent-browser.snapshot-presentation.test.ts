@@ -10,8 +10,8 @@ import assert from "node:assert/strict";
 import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import test from "node:test";
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import nodeTest from "node:test";
+import { readArray, readRecord, readString, readDefined } from "./helpers/assertions.js";
 
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import {
@@ -32,13 +32,19 @@ for (const data of [
 		refs: { ignoredOuterRef: {} },
 	},
 ]) {
-	test(`snapshot formatting counts every ref key in ${typeof data.snapshot === "string" ? "ordinary" : "native full"} snapshots`, () => {
-		assert.equal(formatSnapshotSummary(data), "Snapshot: 3 refs on page");
-		assert.equal(formatRawSnapshotText(data), "Origin: (unknown origin)\nRefs: 3\n\nVisible tree");
-	});
+	nodeTest(
+		`snapshot formatting counts every ref key in ${typeof data.snapshot === "string" ? "ordinary" : "native full"} snapshots`,
+		() => {
+			assert.equal(formatSnapshotSummary(data), "Snapshot: 3 refs on page");
+			assert.equal(
+				formatRawSnapshotText(data),
+				"Origin: (unknown origin)\nRefs: 3\n\nVisible tree",
+			);
+		},
+	);
 }
 
-test("snapshot formatting treats non-record refs as an empty set", () => {
+nodeTest("snapshot formatting treats non-record refs as an empty set", () => {
 	assert.equal(formatSnapshotSummary({ refs: [] }), "Snapshot: 0 refs on page");
 	assert.equal(
 		formatRawSnapshotText({ refs: null }),
@@ -46,75 +52,76 @@ test("snapshot formatting treats non-record refs as an empty set", () => {
 	);
 });
 
-test("buildToolPresentation compacts oversized snapshots and spills a redacted snapshot to a private temp file", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 90 }, (_, index) => [
-			`e${index + 1}`,
-			{
-				name: index % 3 === 0 ? `Actionable control ${index + 1}` : "",
-				role: index % 5 === 0 ? "button" : "generic",
+nodeTest(
+	"buildToolPresentation compacts oversized snapshots and spills a redacted snapshot to a private temp file",
+	async (t) => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 90 }, (_, index) => [
+				`e${index + 1}`,
+				{
+					name: index % 3 === 0 ? `Actionable control ${index + 1}` : "",
+					role: index % 5 === 0 ? "button" : "generic",
+				},
+			]),
+		);
+		const snapshot = Array.from({ length: 120 }, (_, index) => {
+			const ref = `e${index + 1}`;
+			return `- generic "Large snapshot row ${index + 1} with lots of repeated visible text that should not all stay inline" [ref=${ref}] clickable [onclick]`;
+		}).join("\n");
+
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "https://example.com/huge?SAMLRequest=saml-secret&RelayState=relay-secret",
+					refs,
+					snapshot,
+				},
 			},
-		]),
-	);
-	const snapshot = Array.from({ length: 120 }, (_, index) => {
-		const ref = `e${index + 1}`;
-		return `- generic "Large snapshot row ${index + 1} with lots of repeated visible text that should not all stay inline" [ref=${ref}] clickable [onclick]`;
-	}).join("\n");
+		});
 
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "https://example.com/huge?SAMLRequest=saml-secret&RelayState=relay-secret",
-				refs,
-				snapshot,
-			},
-		},
-	});
+		assert.equal(readDefined(presentation.content[0]).type, "text");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Compact snapshot view/);
+		assert.match(text, /Viewport note: compact snapshots are DOM\/signal-prioritized/);
+		assert.match(text, /Key refs:/);
+		assert.match(
+			presentation.summary,
+			/Snapshot: 90 refs on https:\/\/example.com\/huge\?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D \(compact\)/,
+		);
+		assert.equal(typeof presentation.fullOutputPath, "string");
+		assert.equal(readRecord(presentation.data).compacted, true);
+		assert.equal(readRecord(presentation.data).viewportOrdering, "dom-signal-prioritized");
 
-	assert.equal(presentation.content[0].type, "text");
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Compact snapshot view/);
-	assert.match(text, /Viewport note: compact snapshots are DOM\/signal-prioritized/);
-	assert.match(text, /Key refs:/);
-	assert.match(
-		presentation.summary,
-		/Snapshot: 90 refs on https:\/\/example.com\/huge\?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D \(compact\)/,
-	);
-	assert.equal(typeof presentation.fullOutputPath, "string");
-	assert.equal(readRecord(presentation.data).compacted, true);
-	assert.equal(readRecord(presentation.data).viewportOrdering, "dom-signal-prioritized");
+		const spillPath = presentation.fullOutputPath;
+		assert.ok(typeof spillPath === "string" && spillPath.length > 0);
+		assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		const spillText = await readFile(spillPath, "utf8");
+		const spillStats = await lstat(spillPath);
+		const spillDirStats = await lstat(dirname(spillPath));
+		assert.match(spillText, /Large snapshot row 120/);
+		assert.match(spillText, /Actionable control 1/);
+		assert.match(spillText, /SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D/);
+		assert.doesNotMatch(spillText, /saml-secret|relay-secret/);
+		assert.equal(spillStats.isFile(), true);
+		assert.equal(spillDirStats.isDirectory(), true);
+		// Windows mode bits do not represent POSIX owner-only access; retain type and content proof there.
+		if (process.platform !== "win32") {
+			await t.test("POSIX spill permissions are owner-only", () => {
+				assert.equal(spillStats.mode & 0o777, 0o600);
+				assert.equal(spillDirStats.mode & 0o777, 0o700);
+			});
+		}
+		await rm(spillPath, { force: true });
+	},
+);
 
-	const spillPath = presentation.fullOutputPath;
-	assert.ok(typeof spillPath === "string" && spillPath.length > 0);
-	assert.match(text, new RegExp(spillPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-	const spillText = await readFile(spillPath, "utf8");
-	const spillStats = await lstat(spillPath);
-	const spillDirStats = await lstat(dirname(spillPath));
-	assert.match(spillText, /Large snapshot row 120/);
-	assert.match(spillText, /Actionable control 1/);
-	assert.match(spillText, /SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D/);
-	assert.doesNotMatch(spillText, /saml-secret|relay-secret/);
-	assert.equal(spillStats.isFile(), true);
-	assert.equal(spillDirStats.isDirectory(), true);
-	// Windows mode bits do not represent POSIX owner-only access; retain type and content proof there.
-	if (process.platform !== "win32") {
-		// Windows has no POSIX mode-bit contract; native POSIX variants assert owner-only file/directory permissions.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(spillStats.mode & 0o777, 0o600);
-		// Windows has no POSIX mode-bit contract; native POSIX variants assert owner-only file/directory permissions.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(spillDirStats.mode & 0o777, 0o700);
-	}
-	await rm(spillPath, { force: true });
-});
-
-test(
+nodeTest(
 	"buildToolPresentation keeps compact snapshot spill files in the persisted session artifact directory when available",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		await cleanupSecureTempArtifacts();
 		const sessionDir = await mkdtemp(join(tmpdir(), "pi-session-store-"));
 		const refs = Object.fromEntries(
@@ -161,12 +168,10 @@ test(
 			assert.equal(spillDirStats.isDirectory(), true);
 			// NTFS access is governed by ACLs, not the POSIX permission bits exposed by stat.
 			if (process.platform !== "win32") {
-				// Windows has no POSIX mode-bit contract; native POSIX variants assert owner-only file/directory permissions.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(spillStats.mode & 0o777, 0o600);
-				// Windows has no POSIX mode-bit contract; native POSIX variants assert owner-only file/directory permissions.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(spillDirStats.mode & 0o777, 0o700);
+				await t.test("POSIX persisted spill permissions are owner-only", () => {
+					assert.equal(spillStats.mode & 0o777, 0o600);
+					assert.equal(spillDirStats.mode & 0o777, 0o700);
+				});
 			}
 		} finally {
 			await cleanupSecureTempArtifacts();
@@ -175,7 +180,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"buildToolPresentation evicts the oldest persisted snapshot spill files when the per-session artifact budget is exceeded",
 	{ concurrency: false },
 	async () => {
@@ -265,7 +270,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"buildToolPresentation keeps earlier batch snapshot spill paths live when a later persisted spill exceeds the budget",
 	{ concurrency: false },
 	async () => {
@@ -334,595 +339,612 @@ test(
 	},
 );
 
-test("buildToolPresentation prefers main content sections over top-of-page chrome in compact snapshots", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 90 }, (_, index) => {
-			const id = `e${index + 1}`;
-			if (id === "e1") {
-				return [id, { name: "Skip to main content", role: "link" }];
-			}
-			if (id === "e2") {
-				return [id, { name: "AD", role: "link" }];
-			}
-			if (id === "e3") {
-				return [id, { name: "JavaScript", role: "heading" }];
-			}
-			if (id === "e4") {
-				return [id, { name: "Beginner's tutorials", role: "region" }];
-			}
-			if (id === "e5") {
-				return [id, { name: "Intermediate", role: "region" }];
-			}
-			if (id === "e6") {
-				return [id, { name: "Reference", role: "region" }];
-			}
-			return [
-				id,
-				{ name: `Content item ${index + 1}`, role: index % 6 === 0 ? "link" : "generic" },
-			];
-		}),
-	);
-	const snapshot = [
-		'- link "Skip to main content" [ref=e1]',
-		'- link "AD" [ref=e2]',
-		'- heading "JavaScript" [level=1, ref=e3]',
-		...Array.from(
-			{ length: 18 },
-			(_, index) => `- link "Overview topic ${index + 1}" [ref=e${index + 10}]`,
-		),
-		'- region "Beginner\'s tutorials" [ref=e4]',
-		'  - link "Your first website: Adding interactivity" [ref=e40]',
-		'  - link "Dynamic scripting with JavaScript" [ref=e41]',
-		'- region "Intermediate" [ref=e5]',
-		'  - link "Asynchronous JavaScript" [ref=e42]',
-		'  - link "Client-side web APIs" [ref=e43]',
-		'- region "Reference" [ref=e6]',
-		...Array.from(
-			{ length: 70 },
-			(_, index) => `  - link "Reference entry ${index + 1}" [ref=e${index + 50}]`,
-		),
-	].join("\n");
-
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "https://example.com/docs/javascript",
-				refs,
-				snapshot,
-			},
-		},
-	});
-
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Primary content:/);
-	assert.match(text, /heading "JavaScript"/);
-	assert.match(text, /Additional sections:/);
-	assert.match(text, /region "Beginner's tutorials"/);
-	assert.doesNotMatch(text, /Skip to main content/);
-	assert.doesNotMatch(text, /^- AD$/m);
-	assert.equal(readRecord(presentation.data).previewMode, "structured");
-
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
-
-test("buildToolPresentation surfaces omitted high-value controls in compact snapshots", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 100 }, (_, index) => {
-			const id = `e${index + 1}`;
-			if (id === "e2") {
-				return [id, { name: "Search", role: "button" }];
-			}
-			if (id === "e3") {
-				return [id, { name: "Search docs", role: "searchbox" }];
-			}
-			if (["e4", "e5", "e6", "e7", "e8", "e9"].includes(id)) {
-				return [id, { name: `Package tab ${id.slice(1)}`, role: "tab" }];
-			}
-			return [id, { name: `Article link ${index + 1}`, role: "link" }];
-		}),
-	);
-	const snapshot = [
-		'- heading "Docs Home" [level=1, ref=e1]',
-		...Array.from(
-			{ length: 80 },
-			(_, index) => `  - link "Article link ${index + 10}" [ref=e${index + 10}]`,
-		),
-		'- navigation "Top navigation"',
-		'  - button "Search" [ref=e2]',
-		'  - searchbox "Search docs" [ref=e3]',
-		'- tablist "Package managers"',
-		'  - tab "Package tab 4" [ref=e4]',
-		'  - tab "Package tab 5" [ref=e5]',
-		'  - tab "Package tab 6" [ref=e6]',
-		'  - tab "Package tab 7" [ref=e7]',
-		'  - tab "Package tab 8" [ref=e8]',
-		'  - tab "Package tab 9" [ref=e9]',
-	].join("\n");
-
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "https://example.com/docs",
-				refs,
-				snapshot,
-			},
-		},
-	});
-
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Other refs:/);
-	assert.match(text, /e3 searchbox "Search docs"/);
-	assert.match(text, /e2 button "Search"/);
-	assert.match(text, /Omitted high-value controls:/);
-	assert.match(text, /e6 tab "Package tab 6"/);
-	assert.match(text, /e9 tab "Package tab 9"/);
-	const surfaced = readArray(readRecord(presentation.data).highValueControlRefIds);
-	assert.ok(surfaced.length <= 10);
-	assert.equal(new Set(surfaced).size, surfaced.length);
-	["e6", "e7", "e8", "e9"].forEach((id) => {
-		assert.ok(surfaced.includes(id), `${id} remains discoverable`);
-		assert.ok(text.includes(`${id} tab "Package tab ${id.slice(1)}"`));
-	});
-
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
-
-test("buildToolPresentation surfaces dense repository result links as high-value refs", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 95 }, (_, index) => {
-			const id = `e${index + 1}`;
-			if (id === "e70") {
-				return [id, { name: "vercel-labs/agent-browser", role: "link" }];
-			}
-			return [id, { name: `Result heading ${index + 1}`, role: "heading" }];
-		}),
-	);
-	const snapshot = [
-		'- main "Repository search results" [ref=e1]',
-		...Array.from(
-			{ length: 68 },
-			(_, index) => `  - heading "Result heading ${index + 2}" [ref=e${index + 2}]`,
-		),
-		'  - heading "vercel-labs/agent-browser" [ref=e69]',
-		'    - link "vercel-labs/agent-browser" [ref=e70]',
-		...Array.from(
-			{ length: 25 },
-			(_, index) => `  - heading "Result heading ${index + 71}" [ref=e${index + 71}]`,
-		),
-	].join("\n");
-
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "https://github.com/search?q=agent-browser&type=repositories",
-				refs,
-				snapshot,
-			},
-		},
-	});
-
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Omitted high-value controls:/);
-	assert.match(text, /e70 link "vercel-labs\/agent-browser"/);
-	assert.ok(readArray(readRecord(presentation.data).highValueControlRefIds).includes("e70"));
-
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
-
-test("buildToolPresentation keeps dense desktop host high-value controls discoverable in compact snapshots", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 170 }, (_, index) => {
-			const id = `e${index + 1}`;
-			if (id === "e1") {
-				return [id, { name: "Desktop host", role: "main" }];
-			}
-			if (id === "e130") {
-				return [id, { name: "Search workspace", role: "searchbox" }];
-			}
-			if (id === "e131") {
-				return [id, { name: "Composer", role: "textbox" }];
-			}
-			if (id === "e132") {
-				return [id, { name: "Model picker", role: "combobox" }];
-			}
-			if (id === "e140") {
-				return [id, { name: "Canvas", role: "tab" }];
-			}
-			if (id === "e141") {
-				return [id, { name: "Agents", role: "tab" }];
-			}
-			if (id === "e142") {
-				return [id, { name: "Canvas surface", role: "button" }];
-			}
-			if (id === "e160") {
-				return [id, { name: "Send", role: "button" }];
-			}
-			if (id === "e161") {
-				return [id, { name: "Run task", role: "button" }];
-			}
-			if (id === "e162") {
-				return [id, { name: "Save", role: "button" }];
-			}
-			if (index + 1 >= 90 && index + 1 <= 119) {
-				return [id, { name: `Toolbar action ${index + 1}`, role: "button" }];
-			}
-			return [id, { name: `Dense host row ${index + 1}`, role: "generic" }];
-		}),
-	);
-	const snapshot = [
-		'- main "Desktop host" [ref=e1]',
-		...Array.from(
-			{ length: 88 },
-			(_, index) => `  - generic "Dense host row ${index + 2}" [ref=e${index + 2}]`,
-		),
-		...Array.from(
-			{ length: 30 },
-			(_, index) => `  - button "Toolbar action ${index + 90}" [ref=e${index + 90}]`,
-		),
-		'  - searchbox "Search workspace" [ref=e130]',
-		'  - textbox "Composer" [ref=e131] editable',
-		'  - combobox "Model picker" [ref=e132]',
-		'  - tablist "Host surfaces"',
-		'    - tab "Canvas" [ref=e140]',
-		'    - tab "Agents" [ref=e141]',
-		'    - button "Canvas surface" [ref=e142]',
-		'  - button "Send" [ref=e160]',
-		'  - button "Run task" [ref=e161]',
-		'  - button "Save" [ref=e162]',
-	].join("\n");
-
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "app://desktop-host",
-				refs,
-				snapshot,
-			},
-		},
-	});
-
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Compact snapshot view/);
-	assert.match(text, /e130 searchbox "Search workspace"/);
-	assert.match(text, /e131 textbox "Composer"/);
-	assert.match(text, /e132 combobox "Model picker"/);
-	assert.match(text, /Omitted high-value controls:/);
-	assert.match(text, /e140 tab "Canvas"/);
-	assert.match(text, /e141 tab "Agents"/);
-	assert.match(text, /e142 button "Canvas surface"/);
-	assert.match(text, /e160 button "Send"/);
-	assert.match(text, /e161 button "Run task"/);
-	assert.match(text, /e162 button "Save"/);
-
-	const highValueControlRefIds = readArray(
-		readRecord(presentation.data).highValueControlRefIds ?? [],
-	);
-	assert.ok(highValueControlRefIds.length <= 10);
-	for (const expectedRef of ["e140", "e141", "e142", "e160", "e161", "e162"]) {
-		// The fixed expected-ref list is nonempty, so every required surfaced ref must be asserted.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(
-			highValueControlRefIds.includes(expectedRef),
-			`${expectedRef} should remain surfaced in high-value refs`,
+nodeTest(
+	"buildToolPresentation prefers main content sections over top-of-page chrome in compact snapshots",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 90 }, (_, index) => {
+				const id = `e${index + 1}`;
+				if (id === "e1") {
+					return [id, { name: "Skip to main content", role: "link" }];
+				}
+				if (id === "e2") {
+					return [id, { name: "AD", role: "link" }];
+				}
+				if (id === "e3") {
+					return [id, { name: "JavaScript", role: "heading" }];
+				}
+				if (id === "e4") {
+					return [id, { name: "Beginner's tutorials", role: "region" }];
+				}
+				if (id === "e5") {
+					return [id, { name: "Intermediate", role: "region" }];
+				}
+				if (id === "e6") {
+					return [id, { name: "Reference", role: "region" }];
+				}
+				return [
+					id,
+					{ name: `Content item ${index + 1}`, role: index % 6 === 0 ? "link" : "generic" },
+				];
+			}),
 		);
-	}
+		const snapshot = [
+			'- link "Skip to main content" [ref=e1]',
+			'- link "AD" [ref=e2]',
+			'- heading "JavaScript" [level=1, ref=e3]',
+			...Array.from(
+				{ length: 18 },
+				(_, index) => `- link "Overview topic ${index + 1}" [ref=e${index + 10}]`,
+			),
+			'- region "Beginner\'s tutorials" [ref=e4]',
+			'  - link "Your first website: Adding interactivity" [ref=e40]',
+			'  - link "Dynamic scripting with JavaScript" [ref=e41]',
+			'- region "Intermediate" [ref=e5]',
+			'  - link "Asynchronous JavaScript" [ref=e42]',
+			'  - link "Client-side web APIs" [ref=e43]',
+			'- region "Reference" [ref=e6]',
+			...Array.from(
+				{ length: 70 },
+				(_, index) => `  - link "Reference entry ${index + 1}" [ref=e${index + 50}]`,
+			),
+		].join("\n");
 
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
-
-test("buildToolPresentation round-robins omitted high-value control categories in compact snapshots", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 140 }, (_, index) => {
-			const id = `e${index + 1}`;
-			if (id === "e1") {
-				return [id, { name: "Settings", role: "main" }];
-			}
-			if (index + 1 >= 120 && index + 1 <= 129) {
-				return [id, { name: `Field ${index + 1}`, role: "textbox" }];
-			}
-			if (id === "e130") {
-				return [id, { name: "Enable sync", role: "checkbox" }];
-			}
-			if (id === "e131") {
-				return [id, { name: "Beta channel", role: "radio" }];
-			}
-			if (id === "e132") {
-				return [id, { name: "Workspace option", role: "option" }];
-			}
-			if (id === "e133") {
-				return [id, { name: "Archive project", role: "menuitem" }];
-			}
-			return [id, { name: `Result ${index + 1}`, role: "link" }];
-		}),
-	);
-	const snapshot = [
-		'- main "Settings" [ref=e1]',
-		...Array.from(
-			{ length: 118 },
-			(_, index) => `  - link "Result ${index + 2}" [ref=e${index + 2}]`,
-		),
-		...Array.from(
-			{ length: 10 },
-			(_, index) => `  - textbox "Field ${index + 120}" [ref=e${index + 120}]`,
-		),
-		'  - checkbox "Enable sync" [ref=e130]',
-		'  - radio "Beta channel" [ref=e131]',
-		'  - option "Workspace option" [ref=e132]',
-		'  - menuitem "Archive project" [ref=e133]',
-	].join("\n");
-
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "app://settings",
-				refs,
-				snapshot,
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "https://example.com/docs/javascript",
+					refs,
+					snapshot,
+				},
 			},
-		},
-	});
+		});
 
-	const highValueControlRefIds = readArray(
-		readRecord(presentation.data).highValueControlRefIds ?? [],
-	);
-	assert.ok(highValueControlRefIds.length <= 10);
-	for (const expectedRef of ["e130", "e131", "e132", "e133"]) {
-		// The fixed expected-ref list is nonempty, so every required surfaced ref must be asserted.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(
-			highValueControlRefIds.includes(expectedRef),
-			`${expectedRef} should not be starved by editable controls`,
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Primary content:/);
+		assert.match(text, /heading "JavaScript"/);
+		assert.match(text, /Additional sections:/);
+		assert.match(text, /region "Beginner's tutorials"/);
+		assert.doesNotMatch(text, /Skip to main content/);
+		assert.doesNotMatch(text, /^- AD$/m);
+		assert.equal(readRecord(presentation.data).previewMode, "structured");
+
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
+
+nodeTest(
+	"buildToolPresentation surfaces omitted high-value controls in compact snapshots",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 100 }, (_, index) => {
+				const id = `e${index + 1}`;
+				if (id === "e2") {
+					return [id, { name: "Search", role: "button" }];
+				}
+				if (id === "e3") {
+					return [id, { name: "Search docs", role: "searchbox" }];
+				}
+				if (["e4", "e5", "e6", "e7", "e8", "e9"].includes(id)) {
+					return [id, { name: `Package tab ${id.slice(1)}`, role: "tab" }];
+				}
+				return [id, { name: `Article link ${index + 1}`, role: "link" }];
+			}),
 		);
-	}
+		const snapshot = [
+			'- heading "Docs Home" [level=1, ref=e1]',
+			...Array.from(
+				{ length: 80 },
+				(_, index) => `  - link "Article link ${index + 10}" [ref=e${index + 10}]`,
+			),
+			'- navigation "Top navigation"',
+			'  - button "Search" [ref=e2]',
+			'  - searchbox "Search docs" [ref=e3]',
+			'- tablist "Package managers"',
+			'  - tab "Package tab 4" [ref=e4]',
+			'  - tab "Package tab 5" [ref=e5]',
+			'  - tab "Package tab 6" [ref=e6]',
+			'  - tab "Package tab 7" [ref=e7]',
+			'  - tab "Package tab 8" [ref=e8]',
+			'  - tab "Package tab 9" [ref=e9]',
+		].join("\n");
 
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "https://example.com/docs",
+					refs,
+					snapshot,
+				},
+			},
+		});
 
-test("buildToolPresentation keeps lower high-value categories visible on saturated desktop screens", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 180 }, (_, index) => {
-			const id = `e${index + 1}`;
-			if (id === "e1") {
-				return [id, { name: "Desktop", role: "main" }];
-			}
-			if (["e160", "e161", "e162", "e163"].includes(id)) {
-				return [id, { name: `Editor ${id.slice(1)}`, role: "textbox" }];
-			}
-			if (id === "e164") {
-				return [id, { name: "Canvas", role: "tab" }];
-			}
-			if (id === "e165") {
-				return [id, { name: "Agents", role: "tab" }];
-			}
-			if (id === "e166") {
-				return [id, { name: "Canvas surface", role: "button" }];
-			}
-			if (id === "e167") {
-				return [id, { name: "Send", role: "button" }];
-			}
-			if (id === "e168") {
-				return [id, { name: "Run", role: "button" }];
-			}
-			if (id === "e169") {
-				return [id, { name: "Save", role: "button" }];
-			}
-			if (id === "e170") {
-				return [id, { name: "Enable sync", role: "checkbox" }];
-			}
-			if (id === "e171") {
-				return [id, { name: "Beta channel", role: "radio" }];
-			}
-			if (id === "e172") {
-				return [id, { name: "Workspace option", role: "option" }];
-			}
-			if (id === "e173") {
-				return [id, { name: "Archive project", role: "menuitem" }];
-			}
-			return [id, { name: `Dense row ${index + 1}`, role: "generic" }];
-		}),
-	);
-	const snapshot = [
-		'- main "Desktop" [ref=e1]',
-		...Array.from(
-			{ length: 158 },
-			(_, index) => `  - generic "Dense row ${index + 2}" [ref=e${index + 2}]`,
-		),
-		...Array.from(
-			{ length: 4 },
-			(_, index) => `  - textbox "Editor ${index + 160}" [ref=e${index + 160}]`,
-		),
-		'  - tab "Canvas" [ref=e164]',
-		'  - tab "Agents" [ref=e165]',
-		'  - button "Canvas surface" [ref=e166]',
-		'  - button "Send" [ref=e167]',
-		'  - button "Run" [ref=e168]',
-		'  - button "Save" [ref=e169]',
-		'  - checkbox "Enable sync" [ref=e170]',
-		'  - radio "Beta channel" [ref=e171]',
-		'  - option "Workspace option" [ref=e172]',
-		'  - menuitem "Archive project" [ref=e173]',
-	].join("\n");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Other refs:/);
+		assert.match(text, /e3 searchbox "Search docs"/);
+		assert.match(text, /e2 button "Search"/);
+		assert.match(text, /Omitted high-value controls:/);
+		assert.match(text, /e6 tab "Package tab 6"/);
+		assert.match(text, /e9 tab "Package tab 9"/);
+		const surfaced = readArray(readRecord(presentation.data).highValueControlRefIds);
+		assert.ok(surfaced.length <= 10);
+		assert.equal(new Set(surfaced).size, surfaced.length);
+		["e6", "e7", "e8", "e9"].forEach((id) => {
+			assert.ok(surfaced.includes(id), `${id} remains discoverable`);
+			assert.ok(text.includes(`${id} tab "Package tab ${id.slice(1)}"`));
+		});
 
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: { success: true, data: { origin: "app://desktop", refs, snapshot } },
-	});
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
 
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /e160 textbox "Editor 160"/);
-	assert.match(text, /e164 tab "Canvas"/);
-	assert.match(text, /e167 button "Send"/);
-	const highValueControlRefIds = readArray(
-		readRecord(presentation.data).highValueControlRefIds ?? [],
-	);
-	assert.ok(highValueControlRefIds.length <= 10);
-	for (const expectedRef of ["e170", "e171", "e172", "e173"]) {
-		// The fixed expected-ref list is nonempty, so every required surfaced ref must be asserted.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.ok(
-			highValueControlRefIds.includes(expectedRef),
-			`${expectedRef} should stay visible in saturated compact high-value refs`,
+nodeTest(
+	"buildToolPresentation surfaces dense repository result links as high-value refs",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 95 }, (_, index) => {
+				const id = `e${index + 1}`;
+				if (id === "e70") {
+					return [id, { name: "vercel-labs/agent-browser", role: "link" }];
+				}
+				return [id, { name: `Result heading ${index + 1}`, role: "heading" }];
+			}),
 		);
-	}
+		const snapshot = [
+			'- main "Repository search results" [ref=e1]',
+			...Array.from(
+				{ length: 68 },
+				(_, index) => `  - heading "Result heading ${index + 2}" [ref=e${index + 2}]`,
+			),
+			'  - heading "vercel-labs/agent-browser" [ref=e69]',
+			'    - link "vercel-labs/agent-browser" [ref=e70]',
+			...Array.from(
+				{ length: 25 },
+				(_, index) => `  - heading "Result heading ${index + 71}" [ref=e${index + 71}]`,
+			),
+		].join("\n");
 
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
-
-test("buildToolPresentation does not promote false editable markers in compact snapshots", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 112 }, (_, index) => {
-			const id = `e${index + 1}`;
-			if (id === "e1") {
-				return [id, { name: "Host", role: "main" }];
-			}
-			if (id === "e100") {
-				return [id, { contenteditable: false, name: "Read-only composer", role: "generic" }];
-			}
-			if (id === "e101") {
-				return [id, { editable: false, name: "Disabled editor", role: "unknown" }];
-			}
-			if (id === "e102") {
-				return [id, { name: "Composer", role: "generic" }];
-			}
-			if (id === "e103") {
-				return [id, { name: "Editable settings", role: "generic" }];
-			}
-			if (id === "e104") {
-				return [id, { name: "contenteditable demo", role: "unknown" }];
-			}
-			if (id === "e105") {
-				return [id, { editable: false, name: "Read-only search", role: "searchbox" }];
-			}
-			if (id === "e106") {
-				return [id, { contenteditable: false, name: "Read-only textbox", role: "textbox" }];
-			}
-			if (id === "e107") {
-				return [id, { contentEditable: false, name: "Read-only combo", role: "combobox" }];
-			}
-			return [id, { name: `Result ${index + 1}`, role: "link" }];
-		}),
-	);
-	const snapshot = [
-		'- main "Host" [ref=e1]',
-		...Array.from(
-			{ length: 98 },
-			(_, index) => `  - link "Result ${index + 2}" [ref=e${index + 2}]`,
-		),
-		'  - generic "Read-only composer" [ref=e100] contenteditable=false',
-		'  - generic "Disabled editor" [ref=e101] editable=false',
-		'  - generic "Composer" [ref=e102] contenteditable=true',
-		'  - generic "Editable settings" [ref=e103]',
-		'  - unknown "contenteditable demo" [ref=e104]',
-		'  - searchbox "Read-only search" [ref=e105] editable=false',
-		'  - textbox "Read-only textbox" [ref=e106] contenteditable=false',
-		'  - combobox "Read-only combo" [ref=e107] contenteditable=false',
-		...Array.from(
-			{ length: 5 },
-			(_, index) => `  - link "Result ${index + 108}" [ref=e${index + 108}]`,
-		),
-	].join("\n");
-
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "app://desktop-host",
-				refs,
-				snapshot,
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "https://github.com/search?q=agent-browser&type=repositories",
+					refs,
+					snapshot,
+				},
 			},
-		},
-	});
+		});
 
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Compact snapshot view/);
-	assert.match(text, /e102 textbox "Composer"/);
-	assert.doesNotMatch(text, /e100 textbox "Read-only composer"/);
-	assert.doesNotMatch(text, /e101 textbox "Disabled editor"/);
-	assert.doesNotMatch(text, /e103 textbox "Editable settings"/);
-	assert.doesNotMatch(text, /e104 textbox "contenteditable demo"/);
-	const data = readRecord(presentation.data);
-	assert.equal(readRecord(data.roleCounts).textbox, 2);
-	assert.equal(readArray(data.highValueControlRefIds).includes("e100"), false);
-	assert.equal(readArray(data.highValueControlRefIds).includes("e101"), false);
-	assert.equal(readArray(data.highValueControlRefIds).includes("e103"), false);
-	assert.equal(readArray(data.highValueControlRefIds).includes("e104"), false);
-	assert.equal(readArray(data.highValueControlRefIds).includes("e105"), false);
-	assert.equal(readArray(data.highValueControlRefIds).includes("e106"), false);
-	assert.equal(readArray(data.highValueControlRefIds).includes("e107"), false);
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Omitted high-value controls:/);
+		assert.match(text, /e70 link "vercel-labs\/agent-browser"/);
+		assert.ok(readArray(readRecord(presentation.data).highValueControlRefIds).includes("e70"));
 
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
 
-test("buildToolPresentation falls back to an outline when the raw snapshot format is unfamiliar", async () => {
-	const refs = Object.fromEntries(
-		Array.from({ length: 90 }, (_, index) => [
-			`e${index + 1}`,
-			{ name: `Action ${index + 1}`, role: "button" },
-		]),
-	);
-	const snapshot = Array.from(
-		{ length: 120 },
-		(_, index) => `node e${index + 1}: Action ${index + 1} -> click target`,
-	).join("\n");
+nodeTest(
+	"buildToolPresentation keeps dense desktop host high-value controls discoverable in compact snapshots",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 170 }, (_, index) => {
+				const id = `e${index + 1}`;
+				if (id === "e1") {
+					return [id, { name: "Desktop host", role: "main" }];
+				}
+				if (id === "e130") {
+					return [id, { name: "Search workspace", role: "searchbox" }];
+				}
+				if (id === "e131") {
+					return [id, { name: "Composer", role: "textbox" }];
+				}
+				if (id === "e132") {
+					return [id, { name: "Model picker", role: "combobox" }];
+				}
+				if (id === "e140") {
+					return [id, { name: "Canvas", role: "tab" }];
+				}
+				if (id === "e141") {
+					return [id, { name: "Agents", role: "tab" }];
+				}
+				if (id === "e142") {
+					return [id, { name: "Canvas surface", role: "button" }];
+				}
+				if (id === "e160") {
+					return [id, { name: "Send", role: "button" }];
+				}
+				if (id === "e161") {
+					return [id, { name: "Run task", role: "button" }];
+				}
+				if (id === "e162") {
+					return [id, { name: "Save", role: "button" }];
+				}
+				if (index + 1 >= 90 && index + 1 <= 119) {
+					return [id, { name: `Toolbar action ${index + 1}`, role: "button" }];
+				}
+				return [id, { name: `Dense host row ${index + 1}`, role: "generic" }];
+			}),
+		);
+		const snapshot = [
+			'- main "Desktop host" [ref=e1]',
+			...Array.from(
+				{ length: 88 },
+				(_, index) => `  - generic "Dense host row ${index + 2}" [ref=e${index + 2}]`,
+			),
+			...Array.from(
+				{ length: 30 },
+				(_, index) => `  - button "Toolbar action ${index + 90}" [ref=e${index + 90}]`,
+			),
+			'  - searchbox "Search workspace" [ref=e130]',
+			'  - textbox "Composer" [ref=e131] editable',
+			'  - combobox "Model picker" [ref=e132]',
+			'  - tablist "Host surfaces"',
+			'    - tab "Canvas" [ref=e140]',
+			'    - tab "Agents" [ref=e141]',
+			'    - button "Canvas surface" [ref=e142]',
+			'  - button "Send" [ref=e160]',
+			'  - button "Run task" [ref=e161]',
+			'  - button "Save" [ref=e162]',
+		].join("\n");
 
-	const presentation = await buildToolPresentation({
-		commandInfo: { command: "snapshot" },
-		cwd: process.cwd(),
-		envelope: {
-			success: true,
-			data: {
-				origin: "https://example.com/unfamiliar",
-				refs,
-				snapshot,
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "app://desktop-host",
+					refs,
+					snapshot,
+				},
 			},
-		},
-	});
+		});
 
-	const text = readString(readRecord(presentation.content[0]).text);
-	assert.match(text, /Compact outline:/);
-	assert.doesNotMatch(text, /Primary content:/);
-	assert.match(text, /node e1: Action 1 -> click target/);
-	assert.match(text, /Key refs:/);
-	assert.match(text, /Action 1/);
-	assert.equal(readRecord(presentation.data).previewMode, "outline");
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Compact snapshot view/);
+		assert.match(text, /e130 searchbox "Search workspace"/);
+		assert.match(text, /e131 textbox "Composer"/);
+		assert.match(text, /e132 combobox "Model picker"/);
+		assert.match(text, /Omitted high-value controls:/);
+		assert.match(text, /e140 tab "Canvas"/);
+		assert.match(text, /e141 tab "Agents"/);
+		assert.match(text, /e142 button "Canvas surface"/);
+		assert.match(text, /e160 button "Send"/);
+		assert.match(text, /e161 button "Run task"/);
+		assert.match(text, /e162 button "Save"/);
 
-	if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-		await rm(presentation.fullOutputPath, { force: true });
-	}
-});
+		const highValueControlRefIds = readArray(
+			readRecord(presentation.data).highValueControlRefIds ?? [],
+		);
+		assert.ok(highValueControlRefIds.length <= 10);
+		assert.deepEqual(
+			["e140", "e141", "e142", "e160", "e161", "e162"].filter(
+				(ref) => !highValueControlRefIds.includes(ref),
+			),
+			[],
+			"required high-value refs must remain surfaced",
+		);
 
-test(
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
+
+nodeTest(
+	"buildToolPresentation round-robins omitted high-value control categories in compact snapshots",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 140 }, (_, index) => {
+				const id = `e${index + 1}`;
+				if (id === "e1") {
+					return [id, { name: "Settings", role: "main" }];
+				}
+				if (index + 1 >= 120 && index + 1 <= 129) {
+					return [id, { name: `Field ${index + 1}`, role: "textbox" }];
+				}
+				if (id === "e130") {
+					return [id, { name: "Enable sync", role: "checkbox" }];
+				}
+				if (id === "e131") {
+					return [id, { name: "Beta channel", role: "radio" }];
+				}
+				if (id === "e132") {
+					return [id, { name: "Workspace option", role: "option" }];
+				}
+				if (id === "e133") {
+					return [id, { name: "Archive project", role: "menuitem" }];
+				}
+				return [id, { name: `Result ${index + 1}`, role: "link" }];
+			}),
+		);
+		const snapshot = [
+			'- main "Settings" [ref=e1]',
+			...Array.from(
+				{ length: 118 },
+				(_, index) => `  - link "Result ${index + 2}" [ref=e${index + 2}]`,
+			),
+			...Array.from(
+				{ length: 10 },
+				(_, index) => `  - textbox "Field ${index + 120}" [ref=e${index + 120}]`,
+			),
+			'  - checkbox "Enable sync" [ref=e130]',
+			'  - radio "Beta channel" [ref=e131]',
+			'  - option "Workspace option" [ref=e132]',
+			'  - menuitem "Archive project" [ref=e133]',
+		].join("\n");
+
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "app://settings",
+					refs,
+					snapshot,
+				},
+			},
+		});
+
+		const highValueControlRefIds = readArray(
+			readRecord(presentation.data).highValueControlRefIds ?? [],
+		);
+		assert.ok(highValueControlRefIds.length <= 10);
+		assert.deepEqual(
+			["e130", "e131", "e132", "e133"].filter((ref) => !highValueControlRefIds.includes(ref)),
+			[],
+			"required high-value refs must remain surfaced",
+		);
+
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
+
+nodeTest(
+	"buildToolPresentation keeps lower high-value categories visible on saturated desktop screens",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 180 }, (_, index) => {
+				const id = `e${index + 1}`;
+				if (id === "e1") {
+					return [id, { name: "Desktop", role: "main" }];
+				}
+				if (["e160", "e161", "e162", "e163"].includes(id)) {
+					return [id, { name: `Editor ${id.slice(1)}`, role: "textbox" }];
+				}
+				if (id === "e164") {
+					return [id, { name: "Canvas", role: "tab" }];
+				}
+				if (id === "e165") {
+					return [id, { name: "Agents", role: "tab" }];
+				}
+				if (id === "e166") {
+					return [id, { name: "Canvas surface", role: "button" }];
+				}
+				if (id === "e167") {
+					return [id, { name: "Send", role: "button" }];
+				}
+				if (id === "e168") {
+					return [id, { name: "Run", role: "button" }];
+				}
+				if (id === "e169") {
+					return [id, { name: "Save", role: "button" }];
+				}
+				if (id === "e170") {
+					return [id, { name: "Enable sync", role: "checkbox" }];
+				}
+				if (id === "e171") {
+					return [id, { name: "Beta channel", role: "radio" }];
+				}
+				if (id === "e172") {
+					return [id, { name: "Workspace option", role: "option" }];
+				}
+				if (id === "e173") {
+					return [id, { name: "Archive project", role: "menuitem" }];
+				}
+				return [id, { name: `Dense row ${index + 1}`, role: "generic" }];
+			}),
+		);
+		const snapshot = [
+			'- main "Desktop" [ref=e1]',
+			...Array.from(
+				{ length: 158 },
+				(_, index) => `  - generic "Dense row ${index + 2}" [ref=e${index + 2}]`,
+			),
+			...Array.from(
+				{ length: 4 },
+				(_, index) => `  - textbox "Editor ${index + 160}" [ref=e${index + 160}]`,
+			),
+			'  - tab "Canvas" [ref=e164]',
+			'  - tab "Agents" [ref=e165]',
+			'  - button "Canvas surface" [ref=e166]',
+			'  - button "Send" [ref=e167]',
+			'  - button "Run" [ref=e168]',
+			'  - button "Save" [ref=e169]',
+			'  - checkbox "Enable sync" [ref=e170]',
+			'  - radio "Beta channel" [ref=e171]',
+			'  - option "Workspace option" [ref=e172]',
+			'  - menuitem "Archive project" [ref=e173]',
+		].join("\n");
+
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: { success: true, data: { origin: "app://desktop", refs, snapshot } },
+		});
+
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /e160 textbox "Editor 160"/);
+		assert.match(text, /e164 tab "Canvas"/);
+		assert.match(text, /e167 button "Send"/);
+		const highValueControlRefIds = readArray(
+			readRecord(presentation.data).highValueControlRefIds ?? [],
+		);
+		assert.ok(highValueControlRefIds.length <= 10);
+		assert.deepEqual(
+			["e170", "e171", "e172", "e173"].filter((ref) => !highValueControlRefIds.includes(ref)),
+			[],
+			"required high-value refs must remain surfaced",
+		);
+
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
+
+nodeTest(
+	"buildToolPresentation does not promote false editable markers in compact snapshots",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 112 }, (_, index) => {
+				const id = `e${index + 1}`;
+				if (id === "e1") {
+					return [id, { name: "Host", role: "main" }];
+				}
+				if (id === "e100") {
+					return [id, { contenteditable: false, name: "Read-only composer", role: "generic" }];
+				}
+				if (id === "e101") {
+					return [id, { editable: false, name: "Disabled editor", role: "unknown" }];
+				}
+				if (id === "e102") {
+					return [id, { name: "Composer", role: "generic" }];
+				}
+				if (id === "e103") {
+					return [id, { name: "Editable settings", role: "generic" }];
+				}
+				if (id === "e104") {
+					return [id, { name: "contenteditable demo", role: "unknown" }];
+				}
+				if (id === "e105") {
+					return [id, { editable: false, name: "Read-only search", role: "searchbox" }];
+				}
+				if (id === "e106") {
+					return [id, { contenteditable: false, name: "Read-only textbox", role: "textbox" }];
+				}
+				if (id === "e107") {
+					return [id, { contentEditable: false, name: "Read-only combo", role: "combobox" }];
+				}
+				return [id, { name: `Result ${index + 1}`, role: "link" }];
+			}),
+		);
+		const snapshot = [
+			'- main "Host" [ref=e1]',
+			...Array.from(
+				{ length: 98 },
+				(_, index) => `  - link "Result ${index + 2}" [ref=e${index + 2}]`,
+			),
+			'  - generic "Read-only composer" [ref=e100] contenteditable=false',
+			'  - generic "Disabled editor" [ref=e101] editable=false',
+			'  - generic "Composer" [ref=e102] contenteditable=true',
+			'  - generic "Editable settings" [ref=e103]',
+			'  - unknown "contenteditable demo" [ref=e104]',
+			'  - searchbox "Read-only search" [ref=e105] editable=false',
+			'  - textbox "Read-only textbox" [ref=e106] contenteditable=false',
+			'  - combobox "Read-only combo" [ref=e107] contenteditable=false',
+			...Array.from(
+				{ length: 5 },
+				(_, index) => `  - link "Result ${index + 108}" [ref=e${index + 108}]`,
+			),
+		].join("\n");
+
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "app://desktop-host",
+					refs,
+					snapshot,
+				},
+			},
+		});
+
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Compact snapshot view/);
+		assert.match(text, /e102 textbox "Composer"/);
+		assert.doesNotMatch(text, /e100 textbox "Read-only composer"/);
+		assert.doesNotMatch(text, /e101 textbox "Disabled editor"/);
+		assert.doesNotMatch(text, /e103 textbox "Editable settings"/);
+		assert.doesNotMatch(text, /e104 textbox "contenteditable demo"/);
+		const data = readRecord(presentation.data);
+		assert.equal(readRecord(data.roleCounts).textbox, 2);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e100"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e101"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e103"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e104"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e105"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e106"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e107"), false);
+
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
+
+nodeTest(
+	"buildToolPresentation falls back to an outline when the raw snapshot format is unfamiliar",
+	async () => {
+		const refs = Object.fromEntries(
+			Array.from({ length: 90 }, (_, index) => [
+				`e${index + 1}`,
+				{ name: `Action ${index + 1}`, role: "button" },
+			]),
+		);
+		const snapshot = Array.from(
+			{ length: 120 },
+			(_, index) => `node e${index + 1}: Action ${index + 1} -> click target`,
+		).join("\n");
+
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "snapshot" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					origin: "https://example.com/unfamiliar",
+					refs,
+					snapshot,
+				},
+			},
+		});
+
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Compact outline:/);
+		assert.doesNotMatch(text, /Primary content:/);
+		assert.match(text, /node e1: Action 1 -> click target/);
+		assert.match(text, /Key refs:/);
+		assert.match(text, /Action 1/);
+		assert.equal(readRecord(presentation.data).previewMode, "outline");
+
+		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+			await rm(presentation.fullOutputPath, { force: true });
+		}
+	},
+);
+
+nodeTest(
 	"buildToolPresentation degrades gracefully when snapshot spill creation exceeds the temp budget",
 	{ concurrency: false },
 	async () => {
@@ -970,57 +992,60 @@ test(
 );
 
 for (const ordinary of [false, true]) {
-	test(`compact snapshots count omitted refs separately: ${ordinary ? "mixed ordinary and controls" : "all high-value controls"}`, async () => {
-		const refs: Record<string, { name: string; role: string }> = {
-			e1: { name: "Dashboard", role: "main" },
-		};
-		for (let index = 2; index <= 81; index += 1) {
-			refs[`e${index}`] = { name: `Document row ${index}`, role: ordinary ? "generic" : "link" };
-		}
-		for (let index = 82; index <= 101; index += 1) {
-			refs[`e${index}`] = { name: `Run action ${index}`, role: "button" };
-		}
+	nodeTest(
+		`compact snapshots count omitted refs separately: ${ordinary ? "mixed ordinary and controls" : "all high-value controls"}`,
+		async () => {
+			const refs: Record<string, { name: string; role: string }> = {
+				e1: { name: "Dashboard", role: "main" },
+			};
+			for (let index = 2; index <= 81; index += 1) {
+				refs[`e${index}`] = { name: `Document row ${index}`, role: ordinary ? "generic" : "link" };
+			}
+			for (let index = 82; index <= 101; index += 1) {
+				refs[`e${index}`] = { name: `Run action ${index}`, role: "button" };
+			}
 
-		const snapshot = [
-			'- main "Dashboard" [ref=e1]',
-			...Array.from(
-				{ length: 80 },
-				(_, index) =>
-					`  - ${ordinary ? "generic" : "link"} "Document row ${index + 2}" [ref=e${index + 2}]`,
-			),
-			...Array.from(
-				{ length: 20 },
-				(_, index) => `  - button "Run action ${index + 82}" [ref=e${index + 82}]`,
-			),
-		].join("\n");
+			const snapshot = [
+				'- main "Dashboard" [ref=e1]',
+				...Array.from(
+					{ length: 80 },
+					(_, index) =>
+						`  - ${ordinary ? "generic" : "link"} "Document row ${index + 2}" [ref=e${index + 2}]`,
+				),
+				...Array.from(
+					{ length: 20 },
+					(_, index) => `  - button "Run action ${index + 82}" [ref=e${index + 82}]`,
+				),
+			].join("\n");
 
-		const presentation = await buildToolPresentation({
-			commandInfo: { command: "snapshot" },
-			cwd: process.cwd(),
-			envelope: {
-				data: {
-					origin: "https://example.test/dashboard",
-					refs,
-					snapshot,
+			const presentation = await buildToolPresentation({
+				commandInfo: { command: "snapshot" },
+				cwd: process.cwd(),
+				envelope: {
+					data: {
+						origin: "https://example.test/dashboard",
+						refs,
+						snapshot,
+					},
+					success: true,
 				},
-				success: true,
-			},
-		});
+			});
 
-		const text = readString(readRecord(presentation.content[0]).text);
-		assert.match(text, /Omitted high-value controls:/);
-		assert.equal(/\d+ additional refs omitted/.test(text), ordinary);
-		assert.ok(text.includes(`${ordinary ? 6 : 79} additional high-value controls omitted`));
-		assert.equal(text.includes("73 additional refs omitted"), ordinary);
-		assert.equal(readArray(readRecord(presentation.data).highValueControlRefIds).length, 10);
+			const text = readString(readRecord(presentation.content[0]).text);
+			assert.match(text, /Omitted high-value controls:/);
+			assert.equal(/\d+ additional refs omitted/.test(text), ordinary);
+			assert.ok(text.includes(`${ordinary ? 6 : 79} additional high-value controls omitted`));
+			assert.equal(text.includes("73 additional refs omitted"), ordinary);
+			assert.equal(readArray(readRecord(presentation.data).highValueControlRefIds).length, 10);
 
-		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
-			await rm(presentation.fullOutputPath, { force: true });
-		}
-	});
+			if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
+				await rm(presentation.fullOutputPath, { force: true });
+			}
+		},
+	);
 }
 
-test("compact snapshots surface named row-action links as high-value controls", async () => {
+nodeTest("compact snapshots surface named row-action links as high-value controls", async () => {
 	const refs = Object.fromEntries(
 		Array.from({ length: 120 }, (_, index) => {
 			const id = `e${index + 1}`;

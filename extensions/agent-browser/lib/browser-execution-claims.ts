@@ -44,8 +44,8 @@ export interface ManagedSessionPolicyLock {
 }
 interface ClaimOptions {
 	readonly identity: ExecutionClaimIdentity;
-	readonly signal?: AbortSignal;
-	readonly timeoutMs?: number;
+	readonly signal?: AbortSignal | undefined;
+	readonly timeoutMs?: number | undefined;
 	readonly deadline?: number;
 }
 interface PreparedClaim {
@@ -140,7 +140,6 @@ async function firstBlockingPredecessor(
 ): Promise<BlockingPredecessor | undefined> {
 	for (const claim of claims) {
 		// Contender inspection/removal is ordered before the next ticket decision.
-		// oxlint-disable-next-line no-await-in-loop
 		const blocking = await blockingPredecessor(claim, own, budget);
 		if (blocking) {
 			return blocking;
@@ -217,7 +216,6 @@ async function publishCandidate(claim: PreparedClaim, budget: ClaimBudget): Prom
 	while (true) {
 		try {
 			// The initial native publication attempt retains its existing single-probe semantics.
-			// oxlint-disable-next-line no-await-in-loop
 			await rename(claim.candidatePath, claim.path);
 			return true;
 		} catch (error) {
@@ -229,13 +227,11 @@ async function publishCandidate(claim: PreparedClaim, budget: ClaimBudget): Prom
 				throw error;
 			}
 			// Retry only the observed Windows publication conflict, within the original budget.
-			// oxlint-disable-next-line no-await-in-loop
 			await waitForRetry(budget.signal);
 			if (!publicationRetryAvailable(budget)) {
 				throw error;
 			}
 			// Every retry must still own this unpublished candidate and its complete captured scope.
-			// oxlint-disable-next-line no-await-in-loop
 			const candidate = await readClaim(claim.candidatePath);
 			if (!candidateMatchesPreparedClaim(candidate, claim)) {
 				debugPolicyFailure("publish.verify", "candidate-unconfirmed", error);
@@ -351,7 +347,6 @@ async function waitForTurn(
 	try {
 		while (budget.signal?.aborted !== true) {
 			// Each wake observes a fresh published ticket set after the previous delay.
-			// oxlint-disable-next-line no-await-in-loop
 			const claims = await readClaims(claim.basePath);
 			if (!claims) {
 				debugPolicyFailure("acquire.wait-scan", "claims-unavailable");
@@ -363,11 +358,9 @@ async function waitForTurn(
 				return false;
 			}
 			// Liveness checks and stale-claim removal must finish before acquisition.
-			// oxlint-disable-next-line no-await-in-loop
 			const blocking = await firstBlockingPredecessor(claims, own, budget);
 			if (!blocking) {
 				// Winning ends the loop once GC and the final cancellation check complete.
-				// oxlint-disable-next-line no-await-in-loop
 				return await acquireTurn(claim, budget);
 			}
 			if (performance.now() >= deadline) {
@@ -375,7 +368,6 @@ async function waitForTurn(
 				return false;
 			}
 			// Waiting respects ordering and cancellation; contenders cannot run concurrently here.
-			// oxlint-disable-next-line no-await-in-loop
 			await predecessorWait.wait(blocking, budget, deadline);
 		}
 		debugPolicyFailure("acquire.wait", "cancelled");

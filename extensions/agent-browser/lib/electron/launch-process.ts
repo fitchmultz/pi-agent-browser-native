@@ -15,12 +15,12 @@ interface CapturedStream {
 }
 
 interface OutputEvidence {
-	readonly stdoutTail?: string;
-	readonly stdoutTruncated?: boolean;
-	readonly stdoutError?: string;
-	readonly stderrTail?: string;
-	readonly stderrTruncated?: boolean;
-	readonly stderrError?: string;
+	readonly stdoutTail?: string | undefined;
+	readonly stdoutTruncated?: boolean | undefined;
+	readonly stdoutError?: string | undefined;
+	readonly stderrTail?: string | undefined;
+	readonly stderrTruncated?: boolean | undefined;
+	readonly stderrError?: string | undefined;
 }
 
 async function closeOutputHandle(file: FileHandle): Promise<string | undefined> {
@@ -129,13 +129,15 @@ export class ElectronLaunchProcess {
 		const handles: FileHandle[] = [];
 		try {
 			// Open in native stdout/stderr order; a partial open still owns its first handle.
-			handles.push(await open(join(this.userDataDir, "stdout.log"), "wx", 0o600));
-			handles.push(await open(join(this.userDataDir, "stderr.log"), "wx", 0o600));
+			const stdout = await open(join(this.userDataDir, "stdout.log"), "wx", 0o600);
+			handles.push(stdout);
+			const stderr = await open(join(this.userDataDir, "stderr.log"), "wx", 0o600);
+			handles.push(stderr);
 			signal?.throwIfAborted();
 			this.process = spawn(executablePath, args, {
 				cwd: dirname(executablePath),
 				detached: process.platform !== "win32",
-				stdio: ["ignore", handles[0].fd, handles[1].fd],
+				stdio: ["ignore", stdout.fd, stderr.fd],
 			});
 			this.capturedOutput = true;
 			this.process.once("error", this.onError);
@@ -179,7 +181,6 @@ export class ElectronLaunchProcess {
 				return true;
 			}
 			// Observe exit between sleeps; simultaneous waits cannot establish the grace window.
-			// oxlint-disable-next-line no-await-in-loop
 			await waitForElectronPoll(50);
 		}
 		return child.exitCode !== null || child.signalCode !== null;

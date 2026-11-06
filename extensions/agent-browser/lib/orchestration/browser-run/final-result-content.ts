@@ -233,8 +233,14 @@ export function buildFinalResultContent(
 	options: ContentInput,
 	details: Readonly<Record<string, unknown>>,
 	nextActions: readonly AgentBrowserNextAction[] | undefined,
-	evidence: Readonly<{ lifecycle?: AgentBrowserLifecycle; browserWindow?: AgentBrowserWindow }>,
-): Readonly<{ content: AgentBrowserToolResult["content"]; warnings?: readonly unknown[] }> {
+	evidence: Readonly<{
+		lifecycle?: AgentBrowserLifecycle | undefined;
+		browserWindow?: AgentBrowserWindow | undefined;
+	}>,
+): Readonly<{
+	content: AgentBrowserToolResult["content"];
+	warnings?: readonly unknown[] | undefined;
+}> {
 	if (options.userRequestedJson && !options.plainTextInspection) {
 		const warnings = readJsonWarnings(options.redactedContent);
 		return {

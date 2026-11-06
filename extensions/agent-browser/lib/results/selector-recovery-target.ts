@@ -12,7 +12,7 @@ export interface VisibleRefFallbackTarget {
 	readonly action: SelectorRecoveryActionName;
 	readonly optionValues?: readonly string[];
 	readonly roles: readonly string[];
-	readonly text?: string;
+	readonly text?: string | undefined;
 	readonly targetName: string;
 }
 

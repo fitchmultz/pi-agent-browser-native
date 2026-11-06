@@ -25,20 +25,17 @@ const OPTIONS = Type.Object({
 	timeoutMs: Type.Optional(Type.Number()),
 	identities: Type.Optional(Type.Array(SELECTION)),
 });
-const rawOptions: unknown = JSON.parse(process.argv[2]);
+const serializedOptions = process.argv[2];
+assert.ok(serializedOptions !== undefined, "lock worker options are required");
+const rawOptions: unknown = JSON.parse(serializedOptions);
 assert.ok(Check(OPTIONS, rawOptions), "invalid lock worker options");
 const options = rawOptions;
 process.env.PI_AGENT_BROWSER_SOCKET_DIR = options.socketDir;
 const controller = new AbortController();
-let release = (): void => {
-	throw new Error("release used before promise initialization");
-};
-const released = new Promise<void>((resolve) => {
-	release = resolve;
-});
+const released: PromiseWithResolvers<void> = Promise.withResolvers();
 process.on("message", (message) => {
 	if (message === "release") {
-		release();
+		released.resolve();
 	}
 	if (message === "abort") {
 		controller.abort();
@@ -80,10 +77,9 @@ const run = async (signal: AbortSignal) => {
 	if (options.mode === "nested") {
 		for (const [index, identity] of identities.entries()) {
 			const selection = selections[index];
-			assert.notEqual(selection, undefined);
+			assert.ok(selection !== undefined);
 			const nested = { identity, signal, deadline };
 			// Exercise each lock's reentrant ownership serially before releasing the outer set.
-			// oxlint-disable-next-line no-await-in-loop
 			await withBrowserExecutionLock(nested, async () => {
 				await withBrowserExecutionLock(nested, async () => {
 					const policy = await withAgentBrowserProcessEnvironment(
@@ -103,7 +99,7 @@ const run = async (signal: AbortSignal) => {
 		}
 		send("nested");
 	}
-	await released;
+	await released.promise;
 	if (options.mode === "read-action") {
 		assert.ok(options.logPath !== undefined && options.logPath.length > 0);
 		assert.ok(options.statePath !== undefined && options.statePath.length > 0);

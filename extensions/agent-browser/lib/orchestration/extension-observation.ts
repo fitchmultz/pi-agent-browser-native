@@ -155,7 +155,7 @@ class ObservationPublication {
 		result: AgentToolResult<unknown>,
 		params: ObservationParams,
 	): Promise<AgentBrowserToolResult> {
-		if ("args" in params && params.args && isPlainTextInspectionArgs([...params.args])) {
+		if ("args" in params && isPlainTextInspectionArgs([...params.args])) {
 			return result;
 		}
 		const observation = await this.render(result, params);

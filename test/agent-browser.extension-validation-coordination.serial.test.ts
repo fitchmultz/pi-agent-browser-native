@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { readRecord, readString } from "./helpers/assertions.js";
 import { executeRegisteredTool } from "./helpers/agent-browser-harness.js";
 import {
@@ -16,7 +16,7 @@ import {
 	withRecordingReservationHarness,
 } from "./helpers/extension-validation-coordination-fixtures.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension makes close --all exclusive within the default namespace",
 	{ concurrency: false },
 	async (t) => {
@@ -28,7 +28,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps browser ownership when the first managed batch call fails after close",
 	{ concurrency: false },
 	async () => {
@@ -88,7 +88,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension releases recording reservations by namespace on close --all",
 	{ concurrency: false },
 	async () => {

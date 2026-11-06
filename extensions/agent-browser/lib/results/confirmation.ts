@@ -2,7 +2,7 @@ import { isRecord } from "../parsing.js";
 
 export interface ConfirmationRequiredPresentation {
 	readonly id: string;
-	readonly actionText?: string;
+	readonly actionText?: string | undefined;
 }
 
 const CONFIRMATION_REQUIRED_FIELD_NAMES = [

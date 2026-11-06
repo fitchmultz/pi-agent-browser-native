@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { readRecord, readArray, readString } from "./helpers/assertions.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 
@@ -23,10 +23,10 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects incomplete semantic actions before spawning agent-browser",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-action-invalid-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -81,18 +81,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 						error: /selector cannot be combined with locator, role, or name for select/,
 					},
 				]) {
-					// Validate each input before the next case; the final log asserts none dispatched.
-					// oxlint-disable-next-line no-await-in-loop
-					const result = await executeRegisteredTool(harness.tool, harness.ctx, { semanticAction });
-					// All eight literal invalid inputs must fail for their own compiler validation reason.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(result.isError, true, JSON.stringify(semanticAction));
-					// All eight literal invalid inputs must fail for their own compiler validation reason.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(readString(readRecord(result.content[0]).text), error);
-					// All eight literal invalid inputs must fail for their own compiler validation reason.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(readRecord(result.details).failureCategory, "validation-error");
+					await t.test(JSON.stringify(semanticAction), async () => {
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							semanticAction,
+						});
+						assert.equal(result.isError, true, JSON.stringify(semanticAction));
+						assert.match(readString(readRecord(result.content[0]).text), error);
+						assert.equal(readRecord(result.details).failureCategory, "validation-error");
+					});
 				}
 
 				const invocations = await readInvocationLog(logPath);
@@ -104,10 +100,10 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension returns rich input recovery when semanticAction fill misses current editable refs",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-semantic-candidates-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
@@ -284,20 +280,14 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 						],
 					);
 					for (const action of nextActions) {
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(
-							!readArray(readRecord(readRecord(action).params).args).includes("- [ ] item"),
-						);
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(!readArray(readRecord(readRecord(action).params).args).includes("Enter"));
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(readString(readRecord(action).id ?? ""), /submit/i);
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(readString(readRecord(action).reason ?? ""), /agent browser/);
+						await t.test(`nextActions: ${readString(readRecord(action).id)}`, () => {
+							assert.ok(
+								!readArray(readRecord(readRecord(action).params).args).includes("- [ ] item"),
+							);
+							assert.ok(!readArray(readRecord(readRecord(action).params).args).includes("Enter"));
+							assert.doesNotMatch(readString(readRecord(action).id ?? ""), /submit/i);
+							assert.doesNotMatch(readString(readRecord(action).reason ?? ""), /agent browser/);
+						});
 					}
 
 					const rawDashFillMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -338,11 +328,11 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 					const rawNextActions = readArray(readRecord(rawDashFillMiss.details).nextActions);
 					assert.ok(rawNextActions.length > 0);
 					for (const action of rawNextActions) {
-						// The nonempty raw recovery list is asserted above; validate every payload without skipping an empty list.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(
-							!readArray(readRecord(readRecord(action).params).args).includes("- [ ] item"),
-						);
+						await t.test(`rawNextActions: ${readString(readRecord(action).id)}`, () => {
+							assert.ok(
+								!readArray(readRecord(readRecord(action).params).args).includes("- [ ] item"),
+							);
+						});
 					}
 
 					const clickMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -445,25 +435,19 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 						],
 					);
 					for (const action of textFillNextActions) {
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(
-							!readArray(readRecord(readRecord(action).params).args).includes(
-								"private smoke prompt",
-							),
-						);
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.ok(!readArray(readRecord(readRecord(action).params).args).includes("Enter"));
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(readString(readRecord(action).id ?? ""), /submit/i);
-						// The preceding exact action-ID assertion proves this recovery list is nonempty before validating every payload.
-						// oxlint-disable-next-line node-test/no-conditional-assertion
-						assert.doesNotMatch(
-							readString(readRecord(action).reason ?? ""),
-							/private smoke prompt/,
-						);
+						await t.test(`textFillNextActions: ${readString(readRecord(action).id)}`, () => {
+							assert.ok(
+								!readArray(readRecord(readRecord(action).params).args).includes(
+									"private smoke prompt",
+								),
+							);
+							assert.ok(!readArray(readRecord(readRecord(action).params).args).includes("Enter"));
+							assert.doesNotMatch(readString(readRecord(action).id ?? ""), /submit/i);
+							assert.doesNotMatch(
+								readString(readRecord(action).reason ?? ""),
+								/private smoke prompt/,
+							);
+						});
 					}
 
 					const selectMiss = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -507,7 +491,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "ok" }));`,
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension suggests current snapshot refs when raw find role locators miss",
 	{ concurrency: false },
 	async () => {
@@ -616,7 +600,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension offers current ref fallback for failed semantic find steps inside batch",
 	{ concurrency: false },
 	async () => {
@@ -680,7 +664,7 @@ process.stdin.on("end", () => {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension returns a safe semantic retry action only for stale-ref find shorthand failures",
 	{ concurrency: false },
 	async () => {

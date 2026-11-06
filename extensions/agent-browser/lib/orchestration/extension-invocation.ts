@@ -32,7 +32,7 @@ export interface AdmittedBrowserCall extends BrowserInvocation {
 	readonly branch: Readonly<BrowserBranch>;
 	readonly operationCwd: string;
 	readonly promptPolicy: ReturnType<typeof buildPromptPolicy>;
-	readonly outputPath?: string;
+	readonly outputPath?: string | undefined;
 	readonly admittedInput: ResolvedAgentBrowserValidInput;
 	readonly explicitConfig: boolean;
 	readonly managedAtAdmission: boolean;
@@ -45,18 +45,18 @@ export interface PreparedBrowserCall extends AdmittedBrowserCall {
 }
 
 export interface NativeBrowserCall extends PreparedBrowserCall {
-	readonly readConfirmation?: ReadConfirmation;
-	readonly withLaunchDefaults?: NativeLaunchDefaultsRunner;
+	readonly readConfirmation?: ReadConfirmation | undefined;
+	readonly withLaunchDefaults?: NativeLaunchDefaultsRunner | undefined;
 	readonly toolArgs: readonly string[];
-	readonly compiledElectron?: CompiledAgentBrowserElectron;
-	readonly redactedCompiledElectron?: CompiledAgentBrowserElectron;
+	readonly compiledElectron?: CompiledAgentBrowserElectron | undefined;
+	readonly redactedCompiledElectron?: CompiledAgentBrowserElectron | undefined;
 }
 
 export interface CoordinatedBrowserCall extends NativeBrowserCall {
-	readonly explicitSessionName?: string;
-	readonly callerOwnedSessionNamespace?: string;
+	readonly explicitSessionName?: string | undefined;
+	readonly callerOwnedSessionNamespace?: string | undefined;
 	readonly serializeBrowserCommand: boolean;
-	readonly callerOwnedSessionQueueKey?: string;
+	readonly callerOwnedSessionQueueKey?: string | undefined;
 	readonly closesAllSessions: boolean;
 }
 

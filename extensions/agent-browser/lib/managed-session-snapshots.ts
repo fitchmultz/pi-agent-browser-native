@@ -27,21 +27,21 @@ import {
 type Snapshot = Readonly<{ mtimeMs: number; path: string; recordPath: string }>;
 interface SnapshotScope {
 	readonly home: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly platform: NodeJS.Platform;
 	readonly restoreKey: string;
 	readonly directory: string;
 	readonly manifestDirectory: string;
 	readonly hasCurrentManifest: boolean;
-	readonly lineage?: string;
+	readonly lineage?: string | undefined;
 }
 interface PruneOptions {
 	readonly cwd: string;
-	readonly namespace?: string;
+	readonly namespace?: string | undefined;
 	readonly parentEnv?: NodeJS.ProcessEnv;
 	readonly platform?: NodeJS.Platform;
 	readonly restoreKey: string | null;
-	readonly statePath?: string;
+	readonly statePath?: string | undefined;
 }
 
 function discardRecord(path: string): void {
@@ -179,7 +179,6 @@ function removeEmptyManifest(directory: string, platform: NodeJS.Platform): void
 function pruneOtherManifest(scope: SnapshotScope, name: string, staleBefore: number): number {
 	const restoreKey = name.slice(`${OWNED_RESTORE_SNAPSHOT_MANIFEST_PREFIX}-`.length);
 	// The predicate also validates the restore-key format on this untrusted directory name.
-	// oxlint-disable-next-line typescript/no-unnecessary-condition
 	if (!isManagedSessionRestoreKey(restoreKey) || restoreKey === scope.restoreKey) {
 		return 0;
 	}

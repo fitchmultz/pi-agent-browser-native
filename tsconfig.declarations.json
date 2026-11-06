@@ -1,0 +1,7 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"skipLibCheck": false
+	},
+	"include": ["extensions/agent-browser/lib/stream-json.d.ts"]
+}

@@ -12,7 +12,7 @@ function hasStructuredBatchStepFailure(data: unknown): boolean {
 
 async function readEnvelopeSource(options: {
 	readonly stdout: string;
-	readonly stdoutPath?: string;
+	readonly stdoutPath?: string | undefined;
 }): Promise<string> {
 	if (options.stdoutPath === undefined || options.stdoutPath.length === 0) {
 		return options.stdout;
@@ -65,7 +65,7 @@ function extractStructuredEnvelopeErrorText(
 
 type EnvelopeSourceOptions = {
 	readonly stdout: string;
-	readonly stdoutPath?: string;
+	readonly stdoutPath?: string | undefined;
 	readonly plainText?: boolean;
 	readonly textOutput?: boolean;
 };
@@ -113,7 +113,7 @@ export async function parseAgentBrowserEnvelope(
 }
 
 function buildInvocationLabel(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly effectiveArgs?: readonly string[];
 }): string {
 	if (options.effectiveArgs && options.effectiveArgs.length > 0) {
@@ -131,10 +131,10 @@ function appendWrapperRecoveryHint(message: string, wrapperRecoveryHint?: string
 }
 
 function buildFailureFallback(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly effectiveArgs?: readonly string[];
 	readonly exitCode: number;
-	readonly wrapperRecoveryHint?: string;
+	readonly wrapperRecoveryHint?: string | undefined;
 }): string {
 	const invocation = buildInvocationLabel(options);
 	const exitSuffix = options.exitCode !== 0 ? ` (exit code ${options.exitCode})` : "";
@@ -145,10 +145,10 @@ function buildFailureFallback(options: {
 }
 
 function buildExitCodeFallback(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly effectiveArgs?: readonly string[];
 	readonly exitCode: number;
-	readonly wrapperRecoveryHint?: string;
+	readonly wrapperRecoveryHint?: string | undefined;
 }): string {
 	const invocation = buildInvocationLabel(options);
 	return appendWrapperRecoveryHint(
@@ -157,7 +157,7 @@ function buildExitCodeFallback(options: {
 	);
 }
 
-function buildWatchdogTimeoutMessage(options: { readonly timeoutMs?: number }): string {
+function buildWatchdogTimeoutMessage(options: { readonly timeoutMs?: number | undefined }): string {
 	const timeoutText =
 		options.timeoutMs === undefined
 			? "the wrapper watchdog"
@@ -198,19 +198,19 @@ function maybeAppendStaleRefHint(message: string, args?: readonly string[]): str
 
 interface AgentBrowserErrorOptions {
 	readonly aborted: boolean;
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly effectiveArgs?: readonly string[];
-	readonly envelope?: Readonly<AgentBrowserEnvelope>;
+	readonly envelope?: Readonly<AgentBrowserEnvelope> | undefined;
 	readonly exitCode: number;
-	readonly exitSignal?: NodeJS.Signals;
-	readonly parseError?: string;
+	readonly exitSignal?: NodeJS.Signals | undefined;
+	readonly parseError?: string | undefined;
 	readonly plainTextInspection: boolean;
-	readonly spawnError?: Error;
+	readonly spawnError?: Error | undefined;
 	readonly staleRefArgs?: readonly string[];
 	readonly stderr: string;
 	readonly timedOut?: boolean;
-	readonly timeoutMs?: number;
-	readonly wrapperRecoveryHint?: string;
+	readonly timeoutMs?: number | undefined;
+	readonly wrapperRecoveryHint?: string | undefined;
 }
 
 function getTransportErrorText(options: AgentBrowserErrorOptions): string | undefined {

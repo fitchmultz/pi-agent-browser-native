@@ -1,4 +1,4 @@
-import { readArray, readRecord, readString } from "./helpers/assertions.js";
+import { readArray, readDefined, readRecord, readString } from "./helpers/assertions.js";
 /**
  * Purpose: Verify extension entrypoint page-scoped ref guards and session target restoration.
  * Responsibilities: Assert stale-ref preflight, batch invalidation latches, no-active-page recovery, snapshot ref recording, and diagnostic URL filtering.
@@ -12,7 +12,7 @@ import { existsSync, watch } from "node:fs";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import { readBrowserEntries } from "../extensions/agent-browser/lib/browser-journal.js";
 
@@ -34,7 +34,7 @@ for (const snapshotFlags of [
 	["--diff"],
 	["--viewport"],
 ]) {
-	test(
+	nodeTest(
 		`agentBrowserExtension keeps fresh snapshot refs usable after an in-page URL change (${snapshotFlags.length === 0 ? "unfiltered" : snapshotFlags.join(" ")})`,
 		{ concurrency: false },
 		async () => {
@@ -133,7 +133,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 	);
 }
 
-test(
+nodeTest(
 	"agentBrowserExtension blocks page-scoped ref reuse after navigation before upstream can recycle it",
 	{ concurrency: false },
 	async () => {
@@ -203,7 +203,7 @@ if (args.includes("snapshot")) {
 				const nextActions = readArray(staleClickDetails.nextActions ?? []).map((value) =>
 					readRecord(value),
 				);
-				assert.deepEqual(readRecord(nextActions[0].params).args, [
+				assert.deepEqual(readRecord(readDefined(nextActions[0]).params).args, [
 					"--session",
 					readString(staleClickDetails.sessionName),
 					"snapshot",
@@ -219,7 +219,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension invalidates prior refs when a failed transition command keeps the page verified",
 	{ concurrency: false },
 	async () => {
@@ -309,7 +309,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rehydrates page-scoped refs from the current tree branch",
 	{ concurrency: false },
 	async () => {
@@ -382,7 +382,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }))
 				const staleClickDetails = readRecord(staleClick.details);
 				assert.equal(staleClick.isError, true);
 				assert.equal(staleClickDetails.failureCategory, "stale-ref");
-				assert.match(readString(staleClick.content[0].text ?? ""), /@e1/);
+				assert.match(readString(readDefined(staleClick.content[0]).text ?? ""), /@e1/);
 				assert.equal((await readInvocationLog(logPath)).length, 0);
 			});
 		} finally {
@@ -391,7 +391,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }))
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rehydrates managed browser session state from the current tree branch",
 	{ concurrency: false },
 	async () => {
@@ -470,7 +470,7 @@ if (args.includes("open")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rehydrates artifact manifest state from the current tree branch",
 	{ concurrency: false },
 	async () => {
@@ -558,7 +558,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 					secondArtifact,
 				]);
 				assert.doesNotMatch(
-					readString(close.content[0].text ?? ""),
+					readString(readDefined(close.content[0]).text ?? ""),
 					new RegExp(firstArtifact.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
 				);
 			});
@@ -568,7 +568,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension recommends tab recovery after No active page snapshot failures",
 	{ concurrency: false },
 	async () => {
@@ -764,7 +764,7 @@ if (command === "connect") {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension invalidates refs after No active page snapshot failures inside batch",
 	{ concurrency: false },
 	async () => {
@@ -930,7 +930,7 @@ if (command === "connect") {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps network request diagnostics from replacing the active page target",
 	{ concurrency: false },
 	async () => {
@@ -1079,7 +1079,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension ignores restored diagnostic session targets that contain request URLs",
 	{ concurrency: false },
 	async () => {
@@ -1208,7 +1208,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension restores empty successful batch snapshots as ref state",
 	{ concurrency: false },
 	async () => {
@@ -1301,10 +1301,10 @@ if (args.includes("click")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension treats successful snapshots without refs as empty ref state",
 	{ concurrency: false },
-	async () => {
+	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-missing-refs-snapshot-"));
 		const logPath = join(tempDir, "invocations.log");
 		const statePath = join(tempDir, "snapshot-count.txt");
@@ -1358,7 +1358,7 @@ if (args.includes("snapshot")) {
 				assert.equal(missingRefClick.isError, true);
 				assert.equal(missingRefClick.details?.failureCategory, "stale-ref");
 				assert.match(
-					readString(missingRefClick.content[0].text),
+					readString(readDefined(missingRefClick.content[0]).text),
 					/Ref @e9 was not present in the latest snapshot/,
 				);
 				assert.equal(
@@ -1371,24 +1371,17 @@ if (args.includes("snapshot")) {
 					["get", "attr", "e999", "id"],
 					["diff", "screenshot", "--baseline", join(tempDir, "unused.png"), "--selector", "e999"],
 				]) {
-					// Each absent-ref command must be rejected against the same successful snapshot.
-					// oxlint-disable-next-line no-await-in-loop
-					const missing = await executeRegisteredTool(harness.tool, harness.ctx, { args });
-					// Every fixed getter/diff variant must fail for missing snapshot membership, not native errors.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(missing.isError, true, JSON.stringify(missing));
-					// Every fixed getter/diff variant must fail for missing snapshot membership, not native errors.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(missing.details?.failureCategory, "stale-ref");
-					// Every fixed getter/diff variant must fail for missing snapshot membership, not native errors.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.match(
-						readString(missing.content[0].text),
-						/Ref @e999 was not present in the latest snapshot/,
-					);
-					// Every fixed getter/diff variant must be rejected before native dispatch.
-					// oxlint-disable-next-line node-test/no-conditional-assertion
-					assert.equal(missing.details.exitCode, undefined);
+					await t.test(args.join(" "), async () => {
+						// Each absent-ref command must be rejected against the same successful snapshot.
+						const missing = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+						assert.equal(missing.isError, true, JSON.stringify(missing));
+						assert.equal(missing.details?.failureCategory, "stale-ref");
+						assert.match(
+							readString(readDefined(missing.content[0]).text),
+							/Ref @e999 was not present in the latest snapshot/,
+						);
+						assert.equal(missing.details.exitCode, undefined);
+					});
 				}
 				const absentRefInvocations = await readInvocationLog(logPath);
 				assert.equal(absentRefInvocations.filter((entry) => entry.args.includes("e999")).length, 0);
@@ -1428,7 +1421,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension blocks stale refs after page-changing steps inside a batch",
 	{ concurrency: false },
 	async () => {
@@ -1579,7 +1572,7 @@ if (args.includes("snapshot")) {
 				assert.equal(snapshotThenClickThenRead.isError, true);
 				assert.equal(snapshotThenClickThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
-					readString(snapshotThenClickThenRead.content[0].text),
+					readString(readDefined(snapshotThenClickThenRead.content[0]).text),
 					/Batch step get uses page-scoped ref @e2 after an earlier batch step/,
 				);
 				const rawSnapshotThenClickThenRead = await executeRegisteredTool(
@@ -1590,7 +1583,7 @@ if (args.includes("snapshot")) {
 				assert.equal(rawSnapshotThenClickThenRead.isError, true);
 				assert.equal(rawSnapshotThenClickThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
-					readString(rawSnapshotThenClickThenRead.content[0].text),
+					readString(readDefined(rawSnapshotThenClickThenRead.content[0]).text),
 					/Batch step get uses page-scoped ref @e2 after an earlier batch step/,
 				);
 
@@ -1604,7 +1597,7 @@ if (args.includes("snapshot")) {
 				assert.equal(windowThenRead.isError, true);
 				assert.equal(windowThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
-					readString(windowThenRead.content[0].text),
+					readString(readDefined(windowThenRead.content[0]).text),
 					/Batch step get uses page-scoped ref @e1 after an earlier batch step/,
 				);
 				const diffThenRead = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1617,7 +1610,7 @@ if (args.includes("snapshot")) {
 				assert.equal(diffThenRead.isError, true);
 				assert.equal(diffThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
-					readString(diffThenRead.content[0].text),
+					readString(readDefined(diffThenRead.content[0]).text),
 					/Batch step get uses page-scoped ref @e1 after an earlier batch step/,
 				);
 
@@ -1630,7 +1623,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps pending WebMCP targets unknown and trusts a later batch snapshot",
 	{ concurrency: false },
 	async () => {
@@ -1720,7 +1713,7 @@ if (args.includes("batch")) {
 				});
 				assert.equal(blockedSnapshot.isError, true, JSON.stringify(blockedSnapshot));
 				assert.match(
-					readString(blockedSnapshot.content[0].text ?? ""),
+					readString(readDefined(blockedSnapshot.content[0]).text ?? ""),
 					/active page became unverified/,
 				);
 				assert.equal((await readInvocationLog(logPath)).length, invocationCount);
@@ -1817,7 +1810,7 @@ if (args.includes("batch")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension conservatively invalidates direct and batched refs on recording starts and URL restarts",
 	{ concurrency: false },
 	async () => {
@@ -1903,7 +1896,7 @@ if (args.includes("snapshot")) {
 				assert.equal(staleBatch.isError, true, JSON.stringify(staleBatch));
 				assert.equal(staleBatchDetails.failureCategory, "stale-ref", JSON.stringify(staleBatch));
 				assert.match(
-					readString(staleBatch.content[0].text ?? ""),
+					readString(readDefined(staleBatch.content[0]).text ?? ""),
 					/after an earlier batch step can navigate or mutate/,
 				);
 
@@ -1933,7 +1926,7 @@ if (args.includes("snapshot")) {
 				assert.equal(staleClick.isError, true, JSON.stringify(staleClick));
 				assert.equal(staleClickDetails.failureCategory, "stale-ref", JSON.stringify(staleClick));
 				assert.match(
-					readString(staleClick.content[0].text ?? ""),
+					readString(readDefined(staleClick.content[0]).text ?? ""),
 					/cannot be used yet\..*conservatively invalidate/,
 				);
 
@@ -2152,15 +2145,15 @@ if (args.includes("snapshot")) {
 					JSON.stringify(rawArgvLatch),
 				);
 				assert.match(
-					readString(rawArgvLatch.content[0].text ?? ""),
+					readString(readDefined(rawArgvLatch.content[0]).text ?? ""),
 					/after an earlier batch step can navigate or mutate/,
 				);
 
 				const invocations = await readInvocationLog(logPath);
 				const batches = invocations.filter((entry) => entry.args.includes("batch"));
 				assert.equal(batches.length, 2);
-				assert.deepEqual(batches[1].args.slice(-2), ["batch", "wait 100"]);
-				assert.equal(batches[1].stdin, JSON.stringify([["click", "@e1"]]));
+				assert.deepEqual(readDefined(batches[1]).args.slice(-2), ["batch", "wait 100"]);
+				assert.equal(readDefined(batches[1]).stdin, JSON.stringify([["click", "@e1"]]));
 				assert.equal(
 					invocations.filter(
 						(entry) => entry.args.includes("click") && !entry.args.includes("find"),
@@ -2197,7 +2190,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension invalidates refs when a batch recording start times out before returning rows",
 	{ concurrency: false },
 	async (t) => {
@@ -2349,7 +2342,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension allows same-snapshot form control batches before a hard invalidating click",
 	{ concurrency: false },
 	async () => {
@@ -2474,7 +2467,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension allows batch stdin ref steps after snapshot following an invalidating step",
 	{ concurrency: false },
 	async () => {
@@ -2550,7 +2543,7 @@ if (args.includes("batch")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension rejects batched getter refs after same-page rerender changes current snapshot identity",
 	{ concurrency: false },
 	async () => {
@@ -2641,7 +2634,7 @@ if (args.includes("snapshot")) {
 	},
 );
 
-test(
+nodeTest(
 	"agentBrowserExtension keeps upstream-ignored batch stdin out of artifact and screenshot preflights",
 	{ concurrency: false },
 	async () => {
@@ -2715,7 +2708,10 @@ if (args.includes("snapshot")) {
 							.length,
 						0,
 					);
-					assert.match(readString(bailEquals.content[0].text ?? ""), /Use exact batch --bail/);
+					assert.match(
+						readString(readDefined(bailEquals.content[0]).text ?? ""),
+						/Use exact batch --bail/,
+					);
 
 					// Malformed ignored stdin must not fail artifact preflight for a valid raw-argv call.
 					const malformedIgnoredStdin = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2747,7 +2743,10 @@ if (args.includes("snapshot")) {
 						stdin: "not json",
 					});
 					assert.equal(bailEqualsMalformed.isError, true, JSON.stringify(bailEqualsMalformed));
-					assert.match(readString(bailEqualsMalformed.content[0].text ?? ""), /stdin is ignored/);
+					assert.match(
+						readString(readDefined(bailEqualsMalformed.content[0]).text ?? ""),
+						/stdin is ignored/,
+					);
 
 					// Upstream-effective raw artifact rows get parent directories prepared.
 					const rawScreenshot = await executeRegisteredTool(harness.tool, harness.ctx, {

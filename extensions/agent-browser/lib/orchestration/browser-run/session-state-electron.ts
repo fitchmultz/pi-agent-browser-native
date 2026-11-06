@@ -161,7 +161,8 @@ export function buildElectronSessionMismatch(options: {
 	readonly statusTargets: readonly Readonly<ElectronCdpTarget>[];
 }): ElectronSessionMismatch | undefined {
 	const liveTargets = getLiveElectronRendererTargets(options.statusTargets);
-	if (liveTargets.length === 0) {
+	const liveTarget = liveTargets[0];
+	if (liveTarget === undefined) {
 		return;
 	}
 	const managedUrl = normalizeComparableUrl(options.managedSession.url);
@@ -172,7 +173,6 @@ export function buildElectronSessionMismatch(options: {
 	if (matchingLiveTarget) {
 		return;
 	}
-	const liveTarget = liveTargets[0];
 	const reason = getElectronMismatchReason(options.managedSession, options.record.sessionName);
 	if (reason === undefined) {
 		return;
@@ -226,10 +226,10 @@ function formatElectronHealthStatus(
 }
 
 export function buildElectronPostCommandHealthDiagnostic(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly record: Readonly<ElectronLaunchRecord>;
 	readonly status: ElectronLaunchStatus;
-	readonly target?: Readonly<SessionTabTarget>;
+	readonly target?: Readonly<SessionTabTarget> | undefined;
 }): ElectronPostCommandHealthDiagnostic | undefined {
 	const reason = getElectronHealthReason(options.status, options.target?.url);
 	if (reason === undefined) {
@@ -271,7 +271,7 @@ export function formatElectronPostCommandHealthText(
 export function buildElectronIdentifiers(record: Readonly<ElectronLaunchRecord>): {
 	appName: string;
 	launchId: string;
-	sessionName?: string;
+	sessionName?: string | undefined;
 } {
 	return { appName: record.appName, launchId: record.launchId, sessionName: record.sessionName };
 }
@@ -298,11 +298,11 @@ export function buildElectronRefFreshnessNextActions(
 }
 
 export function buildElectronRefFreshnessDiagnostic(options: {
-	readonly command?: string;
+	readonly command?: string | undefined;
 	readonly commandTokens: readonly string[];
 	readonly record?: Readonly<ElectronLaunchRecord>;
-	readonly sessionName?: string;
-	readonly stdin?: string;
+	readonly sessionName?: string | undefined;
+	readonly stdin?: string | undefined;
 }): ElectronRefFreshnessDiagnostic | undefined {
 	if (!options.record || !shouldInspectElectronPostCommandHealth(options.command)) {
 		return;

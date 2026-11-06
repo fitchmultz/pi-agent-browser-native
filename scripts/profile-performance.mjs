@@ -16,6 +16,13 @@ import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { isConfigObject } from "../extensions/agent-browser/lib/config-policy.js";
+import { readModuleOperation } from "./runtime-module.mjs";
+
+/** @import { JsonValue } from "@earendil-works/pi-ai" */
+/** @import { RuntimeOperation } from "./runtime-module.mjs" */
+/** @typedef {{readonly name: string; readonly fixture: Readonly<Record<string, unknown>>; readonly run: () => unknown; readonly verify: (output: unknown) => Readonly<Record<string, unknown>>}} Workload */
+/** @typedef {Awaited<ReturnType<typeof measure>>["sample"]} Sample */
 
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WARMUPS = 2;
@@ -54,31 +61,36 @@ function options() {
 	return { root: values.root, samples: Number(values.samples), help: values.help };
 }
 
+/** @param {import("node:crypto").BinaryLike} value */
 function sha256(value) {
 	return createHash("sha256").update(value).digest("hex");
 }
 
+/** @param {string} directory */
 async function treeIdentity(directory) {
 	const entries = await readdir(directory, { recursive: true, withFileTypes: true });
 	const files = entries
 		.filter((entry) => entry.isFile() && /\.(?:ts|js|json)$/.test(entry.name))
 		.map((entry) => resolve(entry.parentPath, entry.name))
-		.sort();
+		.sort((left, right) => (left < right ? -1 : Number(left > right)));
 	const digest = createHash("sha256");
 	for (const file of files) {
 		digest.update(relative(directory, file).replaceAll("\\", "/")).update("\0");
 		// Sequential reads bound memory and give the digest a deterministic file order.
-		// oxlint-disable-next-line no-await-in-loop
 		digest.update(await readFile(file)).update("\0");
 	}
 	return { directory, fileCount: files.length, sha256: digest.digest("hex") };
 }
 
+/** @param {JsonValue} value */
 function fixtureIdentity(value) {
 	const serialized = typeof value === "string" ? value : JSON.stringify(value);
 	return { sha256: sha256(serialized), utf8Bytes: Buffer.byteLength(serialized) };
 }
 
+/** @param {RuntimeOperation} redactSensitiveText
+ * @returns {Workload}
+ */
 function redactionWorkload(redactSensitiveText) {
 	const bytes = 1024 * 1024;
 	const phrase = "Ordinary documentation with helpful words and numbers 1234.\n";
@@ -96,6 +108,9 @@ function redactionWorkload(redactSensitiveText) {
 	};
 }
 
+/** @param {RuntimeOperation} formatSnapshotSummary
+ * @returns {Workload}
+ */
 function snapshotWorkload(formatSnapshotSummary) {
 	const count = 20_000;
 	const refs = Object.fromEntries(
@@ -121,6 +136,9 @@ function snapshotWorkload(formatSnapshotSummary) {
 	};
 }
 
+/** @param {RuntimeOperation} projectAgentBrowserObservation
+ * @returns {Workload}
+ */
 function observationWorkload(projectAgentBrowserObservation) {
 	const count = 10_000;
 	const recovery = {
@@ -151,10 +169,14 @@ function observationWorkload(projectAgentBrowserObservation) {
 		fixture: { batchSteps: 1, discardedRows: count, ...fixtureIdentity(input) },
 		run: () => projectAgentBrowserObservation(input, true),
 		verify(output) {
+			assert.ok(isConfigObject(output), "Observation must return an object.");
 			assert.equal(output.success, true);
 			assert.equal(output.resultCategory, "success");
+			assert.ok(Array.isArray(output.batchSteps));
 			assert.equal(output.batchSteps.length, 1);
+			/** @type {unknown} */
 			const step = output.batchSteps[0];
+			assert.ok(isConfigObject(step));
 			assert.equal(Object.hasOwn(step, "data"), false);
 			assert.equal(step.index, 0);
 			assert.deepEqual(step.warnings, ["password=[REDACTED]"]);
@@ -170,8 +192,12 @@ function observationWorkload(projectAgentBrowserObservation) {
 	};
 }
 
+/** @param {RuntimeOperation} mergeSessionArtifactManifest
+ * @returns {Workload}
+ */
 function manifestWorkload(mergeSessionArtifactManifest) {
 	const count = 10_000;
+	/** @param {number} index */
 	const path = (index) => `benchmark-artifact-${index}.png`;
 	const entries = Array.from({ length: count }, (_, index) => ({
 		path: path(index),
@@ -189,13 +215,18 @@ function manifestWorkload(mergeSessionArtifactManifest) {
 		fixture: { inputEntries: count, retainedEntries: MANIFEST_LIMIT, ...fixtureIdentity(entries) },
 		run: () => mergeSessionArtifactManifest({ entries, nowMs: 20_000 }),
 		verify(output) {
+			assert.ok(isConfigObject(output), "Manifest must return an object.");
 			assert.equal(output.version, 1);
 			assert.equal(output.updatedAtMs, 20_000);
 			assert.equal(output.maxEntries, MANIFEST_LIMIT);
 			assert.equal(output.liveCount, MANIFEST_LIMIT);
 			assert.equal(output.evictedCount, 0);
+			assert.ok(Array.isArray(output.entries));
 			assert.deepEqual(
-				output.entries.map((entry) => entry.path),
+				output.entries.map((/** @type {unknown} */ entry) => {
+					assert.ok(isConfigObject(entry));
+					return entry.path;
+				}),
 				expectedPaths,
 			);
 			return {
@@ -206,12 +237,18 @@ function manifestWorkload(mergeSessionArtifactManifest) {
 	};
 }
 
+/** @param {Buffer} buffer
+ * @param {number} [size]
+ */
 async function* byteChunks(buffer, size = 65_536) {
 	for (let offset = 0; offset < buffer.length; offset += size) {
 		yield buffer.subarray(offset, offset + size);
 	}
 }
 
+/** @param {RuntimeOperation} projectJson
+ * @returns {Workload}
+ */
 function journalWorkload(projectJson) {
 	const count = 1000;
 	const record = {
@@ -255,12 +292,12 @@ function journalWorkload(projectJson) {
 			const outputs = [];
 			for (let index = 0; index < count; index++) {
 				// Journal scanning is sequential; parallel calls would measure a different workload.
-				// oxlint-disable-next-line no-await-in-loop
 				outputs.push(await projectJson(byteChunks(buffer), JOURNAL_FIELDS));
 			}
 			return outputs;
 		},
 		verify(outputs) {
+			assert.ok(Array.isArray(outputs));
 			assert.equal(outputs.length, count);
 			for (const output of outputs) {
 				assert.deepEqual(output, expected);
@@ -270,6 +307,9 @@ function journalWorkload(projectJson) {
 	};
 }
 
+/** @param {RuntimeOperation} projectJson
+ * @param {RuntimeOperation} mergeSessionArtifactManifest
+ */
 async function validateControls(projectJson, mergeSessionArtifactManifest) {
 	const utf8 = Buffer.from('{"id":"🧪é","rows":[{"label":"first","ignored":true},{"label":"終"}]}');
 	assert.deepEqual(await projectJson(byteChunks(utf8, 1), [["id"], ["rows", "*", "label"]]), {
@@ -277,14 +317,17 @@ async function validateControls(projectJson, mergeSessionArtifactManifest) {
 		rows: [{ label: "first" }, { label: "終" }],
 	});
 	await assert.rejects(
-		projectJson(byteChunks(Buffer.from('{"ignored":[false,invalid],"id":"never"}')), [["id"]]),
+		async () =>
+			await projectJson(byteChunks(Buffer.from('{"ignored":[false,invalid],"id":"never"}')), [
+				["id"],
+			]),
 	);
 	const invalidUtf8 = Buffer.concat([
 		Buffer.from('{"ignored":"'),
 		Buffer.from([0xc3, 0x28]),
 		Buffer.from('","id":"kept"}'),
 	]);
-	await assert.rejects(projectJson(byteChunks(invalidUtf8, 1), [["id"]]));
+	await assert.rejects(async () => await projectJson(byteChunks(invalidUtf8, 1), [["id"]]));
 	const old = {
 		path: "old.webm",
 		kind: "video",
@@ -299,8 +342,13 @@ async function validateControls(projectJson, mergeSessionArtifactManifest) {
 	const newer = { ...old, path: "new.webm", createdAtMs: 2 };
 	const other = { ...old, path: "other.webm", namespace: "two", createdAtMs: 0 };
 	const manifest = mergeSessionArtifactManifest({ entries: [newer, old, other], nowMs: 3 });
+	assert.ok(isConfigObject(manifest));
+	assert.ok(Array.isArray(manifest.entries));
 	assert.deepEqual(
-		manifest.entries.map((entry) => entry.path),
+		manifest.entries.map((/** @type {unknown} */ entry) => {
+			assert.ok(isConfigObject(entry));
+			return entry.path;
+		}),
 		["new.webm", "other.webm"],
 	);
 	return {
@@ -311,8 +359,12 @@ async function validateControls(projectJson, mergeSessionArtifactManifest) {
 	};
 }
 
-async function measure(workload, sampleIndex) {
-	global.gc();
+/** @param {Workload} workload
+ * @param {number} sampleIndex
+ * @param {NonNullable<typeof global.gc>} gc
+ */
+async function measure(workload, sampleIndex, gc) {
+	gc();
 	const before = process.memoryUsage();
 	const cpu = process.cpuUsage();
 	const start = performance.now();
@@ -337,30 +389,41 @@ async function measure(workload, sampleIndex) {
 	return { sample, verifiedOutput: workload.verify(output) };
 }
 
+/** @param {readonly Sample[]} samples */
 function summarize(samples) {
+	const metrics = {
+		wallMs: samples.map((sample) => sample.wallMs),
+		cpuMs: samples.map((sample) => sample.cpuMs),
+		heapUsedDeltaBytes: samples.map((sample) => sample.heapUsedDeltaBytes),
+		rssDeltaBytes: samples.map((sample) => sample.rssDeltaBytes),
+	};
 	return Object.fromEntries(
-		["wallMs", "cpuMs", "heapUsedDeltaBytes", "rssDeltaBytes"].map((key) => {
-			const values = samples.map((sample) => sample[key]).sort((a, b) => a - b);
-			const middle = Math.floor(values.length / 2);
-			const median =
-				values.length % 2 === 0 ? (values[middle - 1] + values[middle]) / 2 : values[middle];
+		Object.entries(metrics).map(([key, values]) => {
+			values.sort((left, right) => left - right);
+			const central = values.slice(
+				Math.floor((values.length - 1) / 2),
+				Math.floor(values.length / 2) + 1,
+			);
+			const median = central.reduce((sum, value) => sum + value, 0) / central.length;
 			return [key, { min: values[0], median, max: values.at(-1) }];
 		}),
 	);
 }
 
-async function runWorkload(workload, sampleCount) {
+/** @param {Workload} workload
+ * @param {number} sampleCount
+ * @param {NonNullable<typeof global.gc>} gc
+ */
+async function runWorkload(workload, sampleCount, gc) {
 	for (let index = 0; index < WARMUPS; index++) {
 		// Warmups and samples must not compete for CPU or retain each other's output.
-		// oxlint-disable-next-line no-await-in-loop
 		workload.verify(await workload.run());
 	}
 	const samples = [];
 	let verifiedOutput;
 	for (let index = 0; index < sampleCount; index++) {
 		// Each sample owns a GC boundary and runs without competing samples.
-		// oxlint-disable-next-line no-await-in-loop
-		const measured = await measure(workload, index + 1);
+		const measured = await measure(workload, index + 1, gc);
 		samples.push(measured.sample);
 		verifiedOutput = measured.verifiedOutput;
 	}
@@ -373,21 +436,32 @@ async function runWorkload(workload, sampleCount) {
 	};
 }
 
+/** @param {string} root
+ * @param {string} path
+ * @param {string} name
+ */
+async function loadOperation(root, path, name) {
+	/** @type {unknown} */
+	const module = await import(
+		pathToFileURL(resolve(root, "dist/extensions/agent-browser/lib", path)).href
+	);
+	return readModuleOperation(module, name);
+}
+
+/** @param {string} root */
 async function loadWorkloads(root) {
-	const owner = (path) =>
-		import(pathToFileURL(resolve(root, "dist/extensions/agent-browser/lib", path)).href);
 	const [
-		{ redactSensitiveText },
-		{ formatSnapshotSummary },
-		{ projectAgentBrowserObservation },
-		{ mergeSessionArtifactManifest },
-		{ projectJson },
+		redactSensitiveText,
+		formatSnapshotSummary,
+		projectAgentBrowserObservation,
+		mergeSessionArtifactManifest,
+		projectJson,
 	] = await Promise.all([
-		owner("runtime-redaction.js"),
-		owner("results/snapshot-content.js"),
-		owner("results/presentation/content.js"),
-		owner("results/artifact-manifest.js"),
-		owner("browser-journal-projection.js"),
+		loadOperation(root, "runtime-redaction.js", "redactSensitiveText"),
+		loadOperation(root, "results/snapshot-content.js", "formatSnapshotSummary"),
+		loadOperation(root, "results/presentation/content.js", "projectAgentBrowserObservation"),
+		loadOperation(root, "results/artifact-manifest.js", "mergeSessionArtifactManifest"),
+		loadOperation(root, "browser-journal-projection.js", "projectJson"),
 	]);
 	// Fix native retention policy so inherited operator settings cannot change this fixture.
 	process.env.PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES = String(MANIFEST_LIMIT);
@@ -402,11 +476,13 @@ async function loadWorkloads(root) {
 	return { controls, workloads };
 }
 
+/** @param {string} root */
 async function sourceIdentity(root) {
+	/** @type {unknown} */
 	const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 	return {
 		root,
-		packageVersion: packageJson.version,
+		packageVersion: isConfigObject(packageJson) ? packageJson.version : undefined,
 		sourceTree: await treeIdentity(resolve(root, "extensions/agent-browser")),
 		compiledTree: await treeIdentity(resolve(root, "dist/extensions/agent-browser")),
 		lockfileSha256: sha256(await readFile(resolve(root, "package-lock.json"))),
@@ -427,7 +503,8 @@ RSS is process-wide; CPU is process user + system time. No timing thresholds.
 Redirect stdout to retain comparable reports; use the same Node, fixtures and host load.`);
 		return;
 	}
-	assert.equal(typeof global.gc, "function", "Run with node --expose-gc.");
+	const gc = global.gc;
+	assert.ok(typeof gc === "function", "Run with node --expose-gc.");
 	const root = await realpath(parsed.root);
 	const source = await sourceIdentity(root);
 	const { controls, workloads } = await loadWorkloads(root);
@@ -444,8 +521,7 @@ Redirect stdout to retain comparable reports; use the same Node, fixtures and ho
 	const results = [];
 	for (const workload of workloads) {
 		// The benchmark intentionally measures one hotpath at a time on this process.
-		// oxlint-disable-next-line no-await-in-loop
-		results.push(await runWorkload(workload, parsed.samples));
+		results.push(await runWorkload(workload, parsed.samples, gc));
 	}
 	console.log(
 		JSON.stringify(
@@ -477,7 +553,7 @@ Redirect stdout to retain comparable reports; use the same Node, fixtures and ho
 	);
 }
 
-main().catch((error) => {
+main().catch((/** @type {unknown} */ error) => {
 	console.error(error instanceof Error ? error.message : String(error));
 	process.exitCode = 1;
 });

@@ -265,7 +265,7 @@ class HighValueSelection {
 	}
 
 	private buildRemainingBuckets(): HighValueControlCandidate[][] {
-		const buckets = new Map<string, HighValueControlCandidate[]>();
+		const buckets = new Map<string, [HighValueControlCandidate, ...HighValueControlCandidate[]]>();
 		for (const candidate of this.candidates) {
 			if (this.selectedIds.has(candidate.entry.id)) {
 				continue;
@@ -285,13 +285,16 @@ class HighValueSelection {
 
 	private fillRemaining(): void {
 		const buckets = this.buildRemainingBuckets();
-		let bucketIndex = 0;
 		while (this.selected.length < this.limit && buckets.some((bucket) => bucket.length > 0)) {
-			const candidate = buckets[bucketIndex % buckets.length].shift();
-			if (candidate) {
-				this.take(candidate);
+			for (const bucket of buckets) {
+				if (this.selected.length >= this.limit) {
+					break;
+				}
+				const candidate = bucket.shift();
+				if (candidate) {
+					this.take(candidate);
+				}
 			}
-			bucketIndex += 1;
 		}
 	}
 

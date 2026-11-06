@@ -17,7 +17,7 @@ type ElectronRecordMap = ReadonlyMap<string, Readonly<ElectronLaunchRecord>>;
 interface ElectronMergeOptions {
 	readonly markBranchOwned?: boolean;
 	readonly ownerSessionId?: string;
-	readonly touchedLaunchIds?: ReadonlySet<string>;
+	readonly touchedLaunchIds?: ReadonlySet<string> | undefined;
 }
 
 export function getTouchedElectronLaunchIds(

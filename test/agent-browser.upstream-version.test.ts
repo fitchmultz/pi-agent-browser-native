@@ -3,7 +3,7 @@ import { readRecord } from "./helpers/assertions.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 
 import {
 	MINIMUM_AGENT_BROWSER_VERSION,
@@ -18,21 +18,23 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test("upstream version output accepts stable versions at or above the supported floor", () => {
+nodeTest("upstream version output accepts stable versions at or above the supported floor", () => {
 	assert.equal(
 		parseAgentBrowserVersionOutput(`agent-browser ${TARGET_AGENT_BROWSER_VERSION}\n`),
 		TARGET_AGENT_BROWSER_VERSION,
 	);
-	for (const version of [
+	const supportedVersions = [
 		MINIMUM_AGENT_BROWSER_VERSION,
 		TARGET_AGENT_BROWSER_VERSION,
 		"0.35.2",
 		"1.0.0",
-	]) {
-		// Every fixed supported stable version must pass the minimum-version contract.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(getAgentBrowserVersionValidationError(`agent-browser ${version}\n`), undefined);
-	}
+	];
+	assert.deepEqual(
+		supportedVersions.map((version) =>
+			getAgentBrowserVersionValidationError(`agent-browser ${version}\n`),
+		),
+		[undefined, undefined, undefined, undefined],
+	);
 	assert.match(
 		getAgentBrowserVersionValidationError("agent-browser 0.34.99\n") ?? "",
 		/at least agent-browser 0\.35\.0/,
@@ -48,7 +50,7 @@ test("upstream version output accepts stable versions at or above the supported 
 	assert.match(getAgentBrowserVersionValidationError("v0.35.1\n") ?? "", /unrecognized value/);
 });
 
-test(
+nodeTest(
 	"browser-backed calls fail before launch on upstream version mismatch while inspection stays available",
 	{ concurrency: false },
 	async () => {

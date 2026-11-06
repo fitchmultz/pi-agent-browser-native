@@ -21,7 +21,7 @@ function supportsCommandTimeout(commandTokens: readonly string[]): boolean {
 	return (
 		command === "wait" ||
 		command === "read" ||
-		(command === "webmcp" && ["invoke", "result"].includes(subcommand))
+		(command === "webmcp" && (subcommand === "invoke" || subcommand === "result"))
 	);
 }
 
@@ -29,10 +29,10 @@ function findCommandTimeoutMs(commandTokens: readonly string[]): number | undefi
 	if (!supportsCommandTimeout(commandTokens)) {
 		return undefined;
 	}
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
+	const operands = commandTokens.slice(1).values();
+	for (const token of operands) {
 		if (token === "--timeout") {
-			return parseMillisecondsToken(commandTokens[index + 1]);
+			return parseMillisecondsToken(operands.next().value);
 		}
 		if (token.startsWith("--timeout=")) {
 			return parseMillisecondsToken(token.slice("--timeout=".length));
@@ -47,12 +47,13 @@ function findCommandTimeoutMs(commandTokens: readonly string[]): number | undefi
 }
 
 export function findFirstPositionalArgument(commandTokens: readonly string[]): string | undefined {
-	for (let index = 1; index < commandTokens.length; index += 1) {
-		const token = commandTokens[index];
-		const flag = token.split("=", 1)[0];
+	const entries = commandTokens.entries();
+	entries.next();
+	for (const [index, token] of entries) {
+		const [flag = token] = token.split("=", 1);
 		if (POSITIONAL_VALUE_FLAGS.has(flag)) {
 			if (!token.includes("=")) {
-				index += 1;
+				entries.next();
 			}
 			continue;
 		}
@@ -60,7 +61,7 @@ export function findFirstPositionalArgument(commandTokens: readonly string[]): s
 			GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES.has(flag) &&
 			["true", "false"].includes(commandTokens[index + 1] ?? "")
 		) {
-			index += 1;
+			entries.next();
 			continue;
 		}
 		if (!token.startsWith("-")) {
@@ -149,7 +150,7 @@ function activeReadNeedsPageUrl(commandTokens: readonly string[]): boolean {
 
 export function commandTimeoutNeedsActivePageUrl(
 	commandTokens: readonly string[],
-	stdin: string | undefined,
+	stdin?: string,
 ): boolean {
 	if (commandTokens[0] === "read") {
 		return activeReadNeedsPageUrl(commandTokens);
@@ -171,7 +172,7 @@ export function commandTimeoutNeedsActivePageUrl(
 
 export function getCommandAwareProcessTimeoutMs(
 	commandTokens: readonly string[],
-	stdin: string | undefined,
+	stdin?: string,
 	activePageUrl?: string,
 ): number | undefined {
 	const timeoutBudgetMs = findCommandTimeoutBudgetMs(commandTokens, stdin, activePageUrl);

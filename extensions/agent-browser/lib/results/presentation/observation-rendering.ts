@@ -1,5 +1,5 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
-import { isRecord } from "../../parsing.js";
+import { isJsonValue } from "../../json-value.js";
 import type { PersistentSessionArtifactStore } from "../../temp.js";
 import { isSessionArtifactManifest } from "../artifact-manifest-validation.js";
 import type {
@@ -25,29 +25,14 @@ interface RenderObservationOptions {
 	readonly succeeded: boolean;
 	/** Keep exact caller text; bound structured output and spill the complete observation. */
 	readonly preserveContent?: boolean;
-	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore>;
+	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
 	readonly withArtifactWrite?: <T>(write: () => Promise<T>) => Promise<T>;
 }
 
 interface ObservationSpill {
 	readonly spill?: LargeOutputSpillWriteResult;
 	readonly error?: string;
-	readonly manifest?: SessionArtifactManifest;
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-	if (
-		value === null ||
-		typeof value === "string" ||
-		typeof value === "number" ||
-		typeof value === "boolean"
-	) {
-		return true;
-	}
-	if (Array.isArray(value)) {
-		return value.every(isJsonValue);
-	}
-	return isRecord(value) && Object.values(value).every(isJsonValue);
+	readonly manifest?: SessionArtifactManifest | undefined;
 }
 
 function toJsonValue(value: unknown): JsonValue {
@@ -156,7 +141,7 @@ async function persistObservation(
 /** Bound final model-visible output after recovery assembly; never truncate executable actions. */
 export async function renderAgentBrowserObservation(options: RenderObservationOptions): Promise<{
 	content: ToolPresentation["content"];
-	artifactManifest?: SessionArtifactManifest;
+	artifactManifest?: SessionArtifactManifest | undefined;
 	structuredContent: JsonValue;
 }> {
 	const observation = projectAgentBrowserObservation(options.details, options.succeeded);

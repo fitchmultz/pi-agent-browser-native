@@ -27,8 +27,8 @@ export async function buildToolPresentation(
 	const source = buildPresentationSource(options, commands);
 	const artifacts = await extractPresentationArtifacts(options, source);
 	const draft = await buildSourcePresentation(options, source, artifacts, buildToolPresentation);
-	applyPresentationNotices(draft, options, source);
-	const completed = await completePresentationOutput(draft, options, source, artifacts);
-	applyPresentationOutcome(completed, options, source);
-	return sanitizeModelFacingPresentation(completed);
+	Object.assign(draft, applyPresentationNotices(draft, options, source));
+	Object.assign(draft, await completePresentationOutput(draft, options, source, artifacts));
+	Object.assign(draft, applyPresentationOutcome(draft, options, source));
+	return sanitizeModelFacingPresentation(draft);
 }

@@ -66,7 +66,7 @@ function decodeParameterName(raw: string): string {
 function redactLooseUrlParameterText(text: string): string {
 	return text.replace(/(?<![^\s"'`<>\])}])[^\s"'`<>\])}]*[?#&][^\s"'`<>\])}]*/g, (token) => {
 		const queryNames = [...token.matchAll(/[?#&]([^=&#\s"'`<>\])}]+)=/g)].map((match) =>
-			decodeParameterName(match[1]),
+			decodeParameterName(match[0].slice(1, -1)),
 		);
 		const authContext =
 			AUTH_URL_CONTEXT_PATTERN.test(token) || queryNames.some(shouldRedactQueryParam);

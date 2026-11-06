@@ -100,6 +100,7 @@ function describeDiagnosticCheck(step: CompiledAgentBrowserJobStep): string | un
 			return step.generatedFrom === "qa.errorBaselineAfterClear"
 				? undefined
 				: "page error diagnostics";
+		case undefined:
 		default:
 			return undefined;
 	}
@@ -110,7 +111,7 @@ function describePlannedCheck(
 	checks: CompiledAgentBrowserQaPreset["checks"],
 ): string | undefined {
 	if (step.args[0] === "wait" && step.args[1] === "--load") {
-		return `load state: ${step.args[2]}`;
+		return `load state: ${String(step.args[2])}`;
 	}
 	const selector = checks.expectedSelector;
 	if (

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import childProcess, { execFileSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { pathToFileURL } from "node:url";
-import test from "node:test";
+import nodeTest from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -37,33 +37,36 @@ import {
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
 
-test("code child resolves a real Node runtime on Bun binaries and fails clearly without one", () => {
-	assert.equal(
-		resolveScriptChildNodePath({
-			runtime: {},
-			execPath: "/usr/bin/node",
-			whichNode: () => "/usr/bin/node",
-		}),
-		"/usr/bin/node",
-	);
-	assert.equal(
-		resolveScriptChildNodePath({
-			runtime: { bun: "1.2.0" },
-			execPath: "/usr/local/bin/pi",
-			whichNode: () => "/opt/node/bin/node",
-		}),
-		"/opt/node/bin/node",
-	);
-	assert.throws(
-		() =>
+nodeTest(
+	"code child resolves a real Node runtime on Bun binaries and fails clearly without one",
+	() => {
+		assert.equal(
+			resolveScriptChildNodePath({
+				runtime: {},
+				execPath: "/usr/bin/node",
+				whichNode: () => "/usr/bin/node",
+			}),
+			"/usr/bin/node",
+		);
+		assert.equal(
 			resolveScriptChildNodePath({
 				runtime: { bun: "1.2.0" },
 				execPath: "/usr/local/bin/pi",
-				whichNode: () => null,
+				whichNode: () => "/opt/node/bin/node",
 			}),
-		/requires a `node` runtime on PATH when pi runs on a Bun binary/,
-	);
-});
+			"/opt/node/bin/node",
+		);
+		assert.throws(
+			() =>
+				resolveScriptChildNodePath({
+					runtime: { bun: "1.2.0" },
+					execPath: "/usr/local/bin/pi",
+					whichNode: () => null,
+				}),
+			/requires a `node` runtime on PATH when pi runs on a Bun binary/,
+		);
+	},
+);
 
 const successEnvelope = (data: unknown): AgentBrowserScriptBrowserEnvelope => ({
 	data,
@@ -78,111 +81,120 @@ const PNG = Buffer.from(
 	"base64",
 );
 
-test("code runner uses branches and native batch while serializing concurrent inner calls", async () => {
-	let active = 0;
-	let maxActive = 0;
-	const calls: string[][] = [];
-	const result = await runAgentBrowserScript({
-		code: `const kept=[]; for (const name of ["one","skip","two"]) { const r=await browser({args:["get",name]}); if(r.success && name!=="skip") kept.push(r.data.value); }
+nodeTest(
+	"code runner uses branches and native batch while serializing concurrent inner calls",
+	async () => {
+		let active = 0;
+		let maxActive = 0;
+		const calls: string[][] = [];
+		const result = await runAgentBrowserScript({
+			code: `const kept=[]; for (const name of ["one","skip","two"]) { const r=await browser({args:["get",name]}); if(r.success && name!=="skip") kept.push(r.data.value); }
 const parallel=await Promise.all([browser({args:["get","three"]}),browser({args:["get","four"]})]);
 const batch=await browser({args:["batch","--bail"],stdin:JSON.stringify([["get","title"],["get","url"]])});
 emit({kept,parallel:parallel.map(r=>r.data.value),batch:batch.data.value});`,
-		dispatch: async (params) => {
-			active += 1;
-			maxActive = Math.max(active, maxActive);
-			calls.push([...params.args]);
-			await Promise.resolve();
-			active -= 1;
-			return successEnvelope({ value: params.args[1] });
-		},
-	});
-	assert.equal(result.ok, true, result.error);
-	assert.deepEqual(result.data, {
-		kept: ["one", "two"],
-		parallel: ["three", "four"],
-		batch: "--bail",
-	});
-	assert.equal(maxActive, 1);
-	assert.equal(calls.length, 6);
-	assert.deepEqual(calls.at(-1), ["batch", "--bail"]);
-});
+			dispatch: async (params) => {
+				active += 1;
+				maxActive = Math.max(active, maxActive);
+				calls.push([...params.args]);
+				await Promise.resolve();
+				active -= 1;
+				return successEnvelope({ value: params.args[1] });
+			},
+		});
+		assert.equal(result.ok, true, result.error);
+		assert.deepEqual(result.data, {
+			kept: ["one", "two"],
+			parallel: ["three", "four"],
+			batch: "--bail",
+		});
+		assert.equal(maxActive, 1);
+		assert.equal(calls.length, 6);
+		assert.deepEqual(calls.at(-1), ["batch", "--bail"]);
+	},
+);
 
-test("code validates JSON calls without restricting native commands or local authority", async () => {
-	for (const args of [
-		["close"],
-		["connect", "9222"],
-		["state", "save", "saved.json"],
-		["auth", "login", "example"],
-		["--profile", "Default", "open", "https://example.test"],
-		["batch", "--bail"],
-	]) {
-		// Every fixed allowed native command must preserve its validated argv.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.deepEqual(validateAgentBrowserScriptBrowserParams({ args }).params?.args, args);
-	}
-	assert.match(
-		validateAgentBrowserScriptBrowserParams({ args: ["get", "title"], job: {} }).error ?? "",
-		/does not support job/,
-	);
-	const oversize = await runAgentBrowserScript({
-		code: "💥".repeat(AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES / 2),
-		dispatch: async () => ({ success: true, data: {}, resultCategory: "success" as const }),
-	});
-	assert.equal(oversize.failureCategory, "validation-error");
-	assert.match(oversize.error ?? "", /65536 bytes or less/);
-	assert.deepEqual(
-		bindBrowserCodeCall(
-			{ args: ["--namespace", "", "--session", "chosen", "get", "url"] },
-			{ sessionName: "chosen" },
-		).args,
-		["--namespace", "", "--session", "chosen", "get", "url"],
-	);
-	assert.throws(
-		() => bindBrowserCodeCall({ args: ["batch", "close --all"] }, { sessionName: "chosen" }),
-		/namespace-wide close/,
-	);
-});
+nodeTest(
+	"code validates JSON calls without restricting native commands or local authority",
+	async () => {
+		const nativeCommands = [
+			["close"],
+			["connect", "9222"],
+			["state", "save", "saved.json"],
+			["auth", "login", "example"],
+			["--profile", "Default", "open", "https://example.test"],
+			["batch", "--bail"],
+		];
+		assert.deepEqual(
+			nativeCommands.map((args) => validateAgentBrowserScriptBrowserParams({ args }).params?.args),
+			nativeCommands,
+		);
+		assert.match(
+			validateAgentBrowserScriptBrowserParams({ args: ["get", "title"], job: {} }).error ?? "",
+			/does not support job/,
+		);
+		const oversize = await runAgentBrowserScript({
+			code: "💥".repeat(AGENT_BROWSER_SCRIPT_CODE_MAX_BYTES / 2),
+			dispatch: async () => ({ success: true, data: {}, resultCategory: "success" as const }),
+		});
+		assert.equal(oversize.failureCategory, "validation-error");
+		assert.match(oversize.error ?? "", /65536 bytes or less/);
+		assert.deepEqual(
+			bindBrowserCodeCall(
+				{ args: ["--namespace", "", "--session", "chosen", "get", "url"] },
+				{ sessionName: "chosen" },
+			).args,
+			["--namespace", "", "--session", "chosen", "get", "url"],
+		);
+		assert.throws(
+			() => bindBrowserCodeCall({ args: ["batch", "close --all"] }, { sessionName: "chosen" }),
+			/namespace-wide close/,
+		);
+	},
+);
 
-test("code observations carry failures and exact recoveries without duplicated text/details", async () => {
-	const result = await runAgentBrowserScript({
-		code: `const failed=await browser({args:["click","#missing"]}); emit({success:failed.success,retry:failed.nextActions[0].params,text:typeof failed.text,details:typeof failed.details});`,
-		dispatch: async () => ({
+nodeTest(
+	"code observations carry failures and exact recoveries without duplicated text/details",
+	async () => {
+		const result = await runAgentBrowserScript({
+			code: `const failed=await browser({args:["click","#missing"]}); emit({success:failed.success,retry:failed.nextActions[0].params,text:typeof failed.text,details:typeof failed.details});`,
+			dispatch: async () => ({
+				success: false,
+				data: null,
+				resultCategory: "failure",
+				failureCategory: "selector-not-found",
+				error: "Missing selector",
+				nextActions: [
+					{
+						id: "inspect",
+						params: { args: ["snapshot", "-i"] },
+						reason: "Inspect the current page",
+						tool: "agent_browser",
+					},
+				],
+			}),
+		});
+		assert.equal(result.ok, true, result.error);
+		assert.deepEqual(result.data, {
 			success: false,
-			data: null,
-			resultCategory: "failure",
-			failureCategory: "selector-not-found",
-			error: "Missing selector",
-			nextActions: [
-				{
-					id: "inspect",
-					params: { args: ["snapshot", "-i"] },
-					reason: "Inspect the current page",
-					tool: "agent_browser",
-				},
-			],
-		}),
-	});
-	assert.equal(result.ok, true, result.error);
-	assert.deepEqual(result.data, {
-		success: false,
-		retry: { args: ["snapshot", "-i"] },
-		text: "undefined",
-		details: "undefined",
-	});
-	const failure = readRecord(readArray(result.failures)[0]);
-	assert.equal(failure.failureCategory, "selector-not-found");
-	assert.deepEqual(readRecord(readArray(failure.nextActions)[0]).params, {
-		args: ["snapshot", "-i"],
-	});
-	const failedInput = await runAgentBrowserScript({
-		code: `emit(await browser());`,
-		dispatch: async () => assert.fail("invalid input must not dispatch"),
-	});
-	assert.equal(failedInput.rejectedCallCount, 1);
-	assert.equal(failedInput.failures?.[0]?.failureCategory, "validation-error");
-});
+			retry: { args: ["snapshot", "-i"] },
+			text: "undefined",
+			details: "undefined",
+		});
+		const failure = readRecord(readArray(result.failures)[0]);
+		assert.equal(failure.failureCategory, "selector-not-found");
+		assert.deepEqual(readRecord(readArray(failure.nextActions)[0]).params, {
+			args: ["snapshot", "-i"],
+		});
+		const failedInput = await runAgentBrowserScript({
+			code: `emit(await browser());`,
+			dispatch: async () => assert.fail("invalid input must not dispatch"),
+		});
+		assert.equal(failedInput.rejectedCallCount, 1);
+		assert.equal(failedInput.failures?.[0]?.failureCategory, "validation-error");
+	},
+);
 
-test("permissioned fresh contexts expose only native JSON bridge functions", async () => {
+nodeTest("permissioned fresh contexts expose only native JSON bridge functions", async () => {
 	const result = await runAgentBrowserScript({
 		code: `const blocked=fn=>{try{fn();return false}catch{return true}}; const promise=browser({args:["get","title"]}); const r=await promise;
 emit({nullPrototypes:[browser,emit,emitImage].every(fn=>Object.getPrototypeOf(fn)===null), promise:promise.constructor===Promise, result:Object.getPrototypeOf(r)===Object.prototype,
@@ -214,318 +226,324 @@ host:[typeof process,typeof require,typeof fetch,typeof setTimeout,typeof WebSoc
 	assert.match(imported.error ?? "", /sandbox exited before completion|dynamic import callback/i);
 });
 
-test("code enforces call, output, IPC and time limits and retains partial emissions", async (t) => {
-	let dispatched = 0;
-	const calls = await runAgentBrowserScript({
-		code: `for(let i=0;i<${AGENT_BROWSER_SCRIPT_MAX_CALLS + 1};i++) await browser({args:["get","title"]});`,
-		dispatch: async () => {
-			dispatched++;
-			return successEnvelope(null);
-		},
-	});
-	assert.equal(calls.ok, false);
-	assert.equal(dispatched, AGENT_BROWSER_SCRIPT_MAX_CALLS);
-	assert.match(calls.error ?? "", /call limit exceeded/);
-	const output = await runAgentBrowserScript({
-		code: `emit("x".repeat(${AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES + 1}));`,
-		dispatch: async () => successEnvelope(null),
-	});
-	assert.equal(output.ok, false);
-	assert.match(output.error ?? "", /output exceeds/);
-	const request = await runAgentBrowserScript({
-		code: `await browser({args:["get","x".repeat(${AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES})]});`,
-		dispatch: async () => assert.fail("oversized request must not dispatch"),
-	});
-	assert.equal(request.ok, false);
-	assert.match(request.error ?? "", /IPC limit exceeded/);
-	const response = await runAgentBrowserScript({
-		code: `await browser({args:["get","title"]});`,
-		dispatch: async () => successEnvelope("x".repeat(AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES)),
-	});
-	assert.equal(response.ok, false);
-	assert.match(response.error ?? "", /Unable to return a browser result/);
-	const raw = await runAgentBrowserScript({
-		code: `const r=await browser({args:["eval","--stdin"],stdin:"[]"}); emit(r.data.length);`,
-		dispatch: async () => successEnvelope("x".repeat(512 * 1_024)),
-	});
-	assert.equal(raw.data, 512 * 1_024);
-	const loopEntered = Promise.withResolvers<true>();
-	const controller = new AbortController();
-	const realSetTimeout = setTimeout;
-	const realClearTimeout = clearTimeout;
-	let watchdogTimer: NodeJS.Timeout | undefined;
-	const watchdog = new Promise<never>((_resolve, reject) => {
-		watchdogTimer = realSetTimeout(
-			() => reject(new Error("Code timeout fixture stalled.")),
-			15_000,
-		);
-	});
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	const spawned = t.mock.method(childProcess, "spawn");
-	syncBuiltinESMExports();
-	let settled = false;
-	const pending = runAgentBrowserScript({
-		// Flush the prefix first; the second call is sent from the unbounded loop.
-		code: `emit("completed prefix");
+nodeTest(
+	"code enforces call, output, IPC and time limits and retains partial emissions",
+	async (t) => {
+		let dispatched = 0;
+		const calls = await runAgentBrowserScript({
+			code: `for(let i=0;i<${AGENT_BROWSER_SCRIPT_MAX_CALLS + 1};i++) await browser({args:["get","title"]});`,
+			dispatch: async () => {
+				dispatched++;
+				return successEnvelope(null);
+			},
+		});
+		assert.equal(calls.ok, false);
+		assert.equal(dispatched, AGENT_BROWSER_SCRIPT_MAX_CALLS);
+		assert.match(calls.error ?? "", /call limit exceeded/);
+		const output = await runAgentBrowserScript({
+			code: `emit("x".repeat(${AGENT_BROWSER_SCRIPT_FINAL_OUTPUT_MAX_BYTES + 1}));`,
+			dispatch: async () => successEnvelope(null),
+		});
+		assert.equal(output.ok, false);
+		assert.match(output.error ?? "", /output exceeds/);
+		const request = await runAgentBrowserScript({
+			code: `await browser({args:["get","x".repeat(${AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES})]});`,
+			dispatch: async () => assert.fail("oversized request must not dispatch"),
+		});
+		assert.equal(request.ok, false);
+		assert.match(request.error ?? "", /IPC limit exceeded/);
+		const response = await runAgentBrowserScript({
+			code: `await browser({args:["get","title"]});`,
+			dispatch: async () => successEnvelope("x".repeat(AGENT_BROWSER_SCRIPT_IPC_MESSAGE_MAX_BYTES)),
+		});
+		assert.equal(response.ok, false);
+		assert.match(response.error ?? "", /Unable to return a browser result/);
+		const raw = await runAgentBrowserScript({
+			code: `const r=await browser({args:["eval","--stdin"],stdin:"[]"}); emit(r.data.length);`,
+			dispatch: async () => successEnvelope("x".repeat(512 * 1_024)),
+		});
+		assert.equal(raw.data, 512 * 1_024);
+		const loopEntered = Promise.withResolvers<true>();
+		const controller = new AbortController();
+		const realSetTimeout = setTimeout;
+		const realClearTimeout = clearTimeout;
+		let watchdogTimer: NodeJS.Timeout | undefined;
+		const watchdog = new Promise<never>((_resolve, reject) => {
+			watchdogTimer = realSetTimeout(
+				() => reject(new Error("Code timeout fixture stalled.")),
+				15_000,
+			);
+		});
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const spawned = t.mock.method(childProcess, "spawn");
+		syncBuiltinESMExports();
+		let settled = false;
+		const pending = runAgentBrowserScript({
+			// Flush the prefix first; the second call is sent from the unbounded loop.
+			code: `emit("completed prefix");
 await browser({args:["get","title"]});
 let reported = false;
 while(true) {
   if (!reported) { reported = true; void browser({args:["get","url"]}); }
 }`,
-		timeoutMs: 200,
-		signal: controller.signal,
-		dispatch: async (params) => {
-			if (params.args[1] === "url") {
-				loopEntered.resolve(true);
+			timeoutMs: 200,
+			signal: controller.signal,
+			dispatch: async (params) => {
+				if (params.args[1] === "url") {
+					loopEntered.resolve(true);
+				}
+				return successEnvelope(null);
+			},
+		}).then((result) => {
+			settled = true;
+			return result;
+		});
+		const child = spawned.mock.calls[0]?.result;
+		try {
+			assert.ok(child, "the permissioned worker must be spawned");
+			const childHasExited = () => child.exitCode !== null || child.signalCode !== null;
+			await Promise.race([
+				loopEntered.promise,
+				watchdog,
+				pending.then((result) =>
+					assert.fail(`Worker stopped before loop entry: ${JSON.stringify(result)}`),
+				),
+			]);
+			// The parent drains the prefix before the loop's call; let that dispatch finish.
+			await new Promise<void>((resolve) => {
+				setImmediate(resolve);
+			});
+			t.mock.timers.tick(199);
+			assert.equal(settled, false);
+			assert.equal(childHasExited(), false);
+			t.mock.timers.tick(1);
+			const timedOut = await Promise.race([pending, watchdog]);
+			assert.equal(timedOut.ok, false);
+			assert.equal(timedOut.failureCategory, "timeout");
+			assert.equal(timedOut.timedOut, true);
+			assert.equal(timedOut.data, "completed prefix");
+			assert.equal(timedOut.emitCount, 1);
+			assert.equal(timedOut.callCount, 2);
+			assert.equal(timedOut.steps.length, 2);
+			assert.equal(childHasExited(), true, "the worker must be reaped");
+		} finally {
+			realClearTimeout(watchdogTimer);
+			t.mock.timers.reset();
+			controller.abort();
+			if (child?.exitCode === null && child.signalCode === null) {
+				child.kill("SIGKILL");
 			}
-			return successEnvelope(null);
-		},
-	}).then((result) => {
-		settled = true;
-		return result;
-	});
-	const child = spawned.mock.calls[0]?.result;
-	try {
-		assert.ok(child, "the permissioned worker must be spawned");
-		const childHasExited = () => child.exitCode !== null || child.signalCode !== null;
-		await Promise.race([
-			loopEntered.promise,
-			watchdog,
-			pending.then((result) =>
-				assert.fail(`Worker stopped before loop entry: ${JSON.stringify(result)}`),
-			),
-		]);
-		// The parent drains the prefix before the loop's call; let that dispatch finish.
-		await new Promise<void>((resolve) => {
-			setImmediate(resolve);
-		});
-		t.mock.timers.tick(199);
-		assert.equal(settled, false);
-		assert.equal(childHasExited(), false);
-		t.mock.timers.tick(1);
-		const timedOut = await Promise.race([pending, watchdog]);
-		assert.equal(timedOut.ok, false);
-		assert.equal(timedOut.failureCategory, "timeout");
-		assert.equal(timedOut.timedOut, true);
-		assert.equal(timedOut.data, "completed prefix");
-		assert.equal(timedOut.emitCount, 1);
-		assert.equal(timedOut.callCount, 2);
-		assert.equal(timedOut.steps.length, 2);
-		assert.equal(childHasExited(), true, "the worker must be reaped");
-	} finally {
-		realClearTimeout(watchdogTimer);
-		t.mock.timers.reset();
-		controller.abort();
-		if (child?.exitCode === null && child.signalCode === null) {
-			child.kill("SIGKILL");
+			await Promise.allSettled([pending]);
+			spawned.mock.restore();
+			syncBuiltinESMExports();
 		}
-		await Promise.allSettled([pending]);
-		spawned.mock.restore();
-		syncBuiltinESMExports();
-	}
-	for (const code of ["emit(undefined);", "emit(()=>1);"]) {
-		// Finish each serialization attempt before launching the next permissioned child.
-		// oxlint-disable-next-line no-await-in-loop
-		const invalid = await runAgentBrowserScript({
-			code,
-			dispatch: async () => successEnvelope(null),
-		});
-		// Both fixed non-JSON values must fail emission.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal(invalid.ok, false);
-		// Both failures must identify serialization rather than another child failure.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.match(invalid.error ?? "", /JSON-serializable value/);
-	}
-});
+		for (const code of ["emit(undefined);", "emit(()=>1);"]) {
+			await t.test(`rejects non-JSON emission: ${code}`, async () => {
+				const invalid = await runAgentBrowserScript({
+					code,
+					dispatch: async () => successEnvelope(null),
+				});
+				assert.equal(invalid.ok, false);
+				assert.match(invalid.error ?? "", /JSON-serializable value/);
+			});
+		}
+	},
+);
 
-test("abort waits for the dispatched operation and does not start queued siblings", async (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	const controller = new AbortController();
-	let started!: () => void;
-	const active = new Promise<void>((resolve) => {
-		started = resolve;
-	});
-	const aborted = Promise.withResolvers<undefined>();
-	const release = Promise.withResolvers<undefined>();
-	let settled = false;
-	let drained = false;
-	let calls = 0;
-	const pending = runAgentBrowserScript({
-		code: `await Promise.all([browser({args:["get","slow"]}),browser({args:["get","late"]})]);`,
-		signal: controller.signal,
-		dispatch: async (_params, signal) => {
-			calls++;
-			started();
-			signal.addEventListener("abort", () => aborted.resolve(undefined), { once: true });
-			await release.promise;
-			drained = true;
-			return {
-				success: false,
-				resultCategory: "failure",
-				failureCategory: "aborted",
-				error: "aborted",
-			};
-		},
-	});
-	const observed = pending.finally(() => {
-		settled = true;
-	});
-	await active;
-	controller.abort();
-	try {
-		await aborted.promise;
-		// Dispatch has entered and received abort; allow child-reaping deadlines to expire
-		// without releasing the unresolved browser operation.
-		t.mock.timers.tick(1000);
-		await new Promise<void>((resolve) => {
-			setImmediate(resolve);
+nodeTest(
+	"abort waits for the dispatched operation and does not start queued siblings",
+	async (t) => {
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const controller = new AbortController();
+		const active: PromiseWithResolvers<void> = Promise.withResolvers();
+		const aborted: PromiseWithResolvers<void> = Promise.withResolvers();
+		const release: PromiseWithResolvers<void> = Promise.withResolvers();
+		let settled = false;
+		let drained = false;
+		let calls = 0;
+		const pending = runAgentBrowserScript({
+			code: `await Promise.all([browser({args:["get","slow"]}),browser({args:["get","late"]})]);`,
+			signal: controller.signal,
+			dispatch: async (_params, signal) => {
+				calls++;
+				active.resolve();
+				signal.addEventListener("abort", () => aborted.resolve(), { once: true });
+				await release.promise;
+				drained = true;
+				return {
+					success: false,
+					resultCategory: "failure",
+					failureCategory: "aborted",
+					error: "aborted",
+				};
+			},
 		});
-		assert.equal(settled, false, "abort cannot finish before the active effect drains");
-		assert.equal(calls, 1, "queued siblings must not dispatch during abort");
-	} finally {
-		release.resolve(undefined);
-	}
-	const result = await observed;
-	assert.equal(result.aborted, true);
-	assert.equal(drained, true);
-	assert.equal(calls, 1);
-	assert.equal(result.steps.length, 1);
-	assert.equal(result.failures?.[0]?.failureCategory, "aborted");
-});
+		const observed = pending.finally(() => {
+			settled = true;
+		});
+		await active.promise;
+		controller.abort();
+		try {
+			await aborted.promise;
+			// Dispatch has entered and received abort; allow child-reaping deadlines to expire
+			// without releasing the unresolved browser operation.
+			t.mock.timers.tick(1000);
+			await new Promise<void>((resolve) => {
+				setImmediate(resolve);
+			});
+			assert.equal(settled, false, "abort cannot finish before the active effect drains");
+			assert.equal(calls, 1, "queued siblings must not dispatch during abort");
+		} finally {
+			release.resolve();
+		}
+		const result = await observed;
+		assert.equal(result.aborted, true);
+		assert.equal(drained, true);
+		assert.equal(calls, 1);
+		assert.equal(result.steps.length, 1);
+		assert.equal(result.failures?.[0]?.failureCategory, "aborted");
+	},
+);
 
-test("selected image emission forwards real bytes once and rejects stale or invented handles", async (t) => {
-	const dir = await mkdtemp(join(tmpdir(), "piab-code-image-"));
-	try {
-		const path = join(dir, "capture.png");
-		await writeFile(path, PNG);
-		const output = createBrowserCodeOutput();
-		const observation = await output.observe({
-			content: [],
-			details: {
-				resultCategory: "success",
-				data: { path },
-				imageObservations: [
+nodeTest(
+	"selected image emission forwards real bytes once and rejects stale or invented handles",
+	async (t) => {
+		const dir = await mkdtemp(join(tmpdir(), "piab-code-image-"));
+		try {
+			const path = join(dir, "capture.png");
+			await writeFile(path, PNG);
+			const output = createBrowserCodeOutput();
+			const observation = await output.observe({
+				content: [],
+				details: {
+					resultCategory: "success",
+					data: { path },
+					imageObservations: [
+						{
+							path,
+							mimeType: "image/png",
+							pixels: { width: 1, height: 1 },
+							capture: "unknown",
+							geometry: { status: "unknown", reason: "Fixture" },
+						},
+					],
+				},
+			});
+			const result = await runAgentBrowserScript({
+				code: `const r=await browser({args:["screenshot"]}); emitImage(r.imageObservations[0]); emitImage(r.imageObservations[0]); emit({visible:true});`,
+				dispatch: async () => observation,
+				emitImage: output.emitImage.bind(output),
+			});
+			assert.equal(result.ok, true, result.error);
+			const final = await output.finish(result, "persistent");
+			assert.equal(final.content.filter((item) => item.type === "image").length, 1);
+			const image = final.content.find((item) => item.type === "image");
+			assert.ok(image?.type === "image");
+			assert.deepEqual(Buffer.from(image.data, "base64"), PNG);
+			const validImage = readRecord(observation.imageObservations?.[0]);
+			const malformedImages = [
+				["pixel width type", { pixels: { width: "1", height: 1 } }],
+				["non-finite pixels", { pixels: { width: 1, height: Infinity } }],
+				["geometry container", { geometry: "measured" }],
+				["geometry status", { geometry: { status: "invented", reason: "Fixture" } }],
+				["geometry reason", { geometry: { status: "unknown", reason: 1 } }],
+				[
+					"partial sample",
+					{ geometry: { status: "measured", reason: "Fixture", before: { dpr: 1 } } },
+				],
+				[
+					"crop dimensions",
 					{
-						path,
-						mimeType: "image/png",
-						pixels: { width: 1, height: 1 },
-						capture: "unknown",
-						geometry: { status: "unknown", reason: "Fixture" },
+						geometry: {
+							status: "measured",
+							reason: "Fixture",
+							crop: { x: 0, y: 0, width: "1", height: 1 },
+						},
 					},
 				],
-			},
-		});
-		const result = await runAgentBrowserScript({
-			code: `const r=await browser({args:["screenshot"]}); emitImage(r.imageObservations[0]); emitImage(r.imageObservations[0]); emit({visible:true});`,
-			dispatch: async () => observation,
-			emitImage: output.emitImage.bind(output),
-		});
-		assert.equal(result.ok, true, result.error);
-		const final = await output.finish(result, "persistent");
-		assert.equal(final.content.filter((item) => item.type === "image").length, 1);
-		const image = final.content.find((item) => item.type === "image");
-		assert.ok(image?.type === "image");
-		assert.deepEqual(Buffer.from(image.data, "base64"), PNG);
-		const validImage = readRecord(observation.imageObservations?.[0]);
-		const malformedImages = [
-			["pixel width type", { pixels: { width: "1", height: 1 } }],
-			["non-finite pixels", { pixels: { width: 1, height: Infinity } }],
-			["geometry container", { geometry: "measured" }],
-			["geometry status", { geometry: { status: "invented", reason: "Fixture" } }],
-			["geometry reason", { geometry: { status: "unknown", reason: 1 } }],
-			[
-				"partial sample",
-				{ geometry: { status: "measured", reason: "Fixture", before: { dpr: 1 } } },
-			],
-			[
-				"crop dimensions",
-				{
-					geometry: {
-						status: "measured",
-						reason: "Fixture",
-						crop: { x: 0, y: 0, width: "1", height: 1 },
+				[
+					"CSS mapping",
+					{
+						geometry: {
+							status: "measured",
+							reason: "Fixture",
+							pixelsPerCssPixel: { x: "1", y: 1 },
+						},
 					},
+				],
+			] as const;
+			await Promise.all(
+				malformedImages.map(([name, malformed]) =>
+					t.test(`rejects malformed ${name} without publishing an image handle`, async () => {
+						const invalid = createBrowserCodeOutput();
+						await assert.rejects(
+							invalid.observe({
+								content: [],
+								details: {
+									resultCategory: "success",
+									imageObservations: [{ ...validImage, ...malformed }],
+								},
+							}),
+							/invalid image observation geometry/,
+						);
+						await assert.rejects(
+							invalid.emitImage({ id: "image-1", path }),
+							/handle returned by browser/,
+						);
+						const rejected = await invalid.finish(result, "persistent");
+						assert.deepEqual(readRecord(rejected.details).imageObservations, []);
+						assert.equal(
+							rejected.content.some((part) => part.type === "image"),
+							false,
+						);
+					}),
+				),
+			);
+			await t.test(
+				"unknown geometry with absent pixels remains a usable verified handle",
+				async () => {
+					const unknown = createBrowserCodeOutput();
+					const captured = await unknown.observe({
+						content: [],
+						details: {
+							resultCategory: "success",
+							imageObservations: [
+								{
+									path,
+									mimeType: "image/png",
+									capture: "unknown",
+									geometry: { status: "unknown", reason: "No geometry evidence" },
+								},
+							],
+						},
+					});
+					await unknown.emitImage({ id: captured.imageObservations?.[0]?.id });
+					const selected = await unknown.finish(result, "persistent");
+					assert.equal(selected.content.filter((part) => part.type === "image").length, 1);
+					const metadata = readRecord(readArray(readRecord(selected.details).imageObservations)[0]);
+					assert.equal(metadata.pixels, undefined);
+					assert.equal(readRecord(metadata.geometry).status, "unknown");
+					assert.equal(readRecord(metadata.geometry).pixelsPerCssPixel, undefined);
 				},
-			],
-			[
-				"CSS mapping",
-				{
-					geometry: { status: "measured", reason: "Fixture", pixelsPerCssPixel: { x: "1", y: 1 } },
-				},
-			],
-		] as const;
-		await Promise.all(
-			malformedImages.map(([name, malformed]) =>
-				t.test(`rejects malformed ${name} without publishing an image handle`, async () => {
-					const invalid = createBrowserCodeOutput();
-					await assert.rejects(
-						invalid.observe({
-							content: [],
-							details: {
-								resultCategory: "success",
-								imageObservations: [{ ...validImage, ...malformed }],
-							},
-						}),
-						/invalid image observation geometry/,
-					);
-					await assert.rejects(
-						invalid.emitImage({ id: "image-1", path }),
-						/handle returned by browser/,
-					);
-					const rejected = await invalid.finish(result, "persistent");
-					assert.deepEqual(readRecord(rejected.details).imageObservations, []);
-					assert.equal(
-						rejected.content.some((part) => part.type === "image"),
-						false,
-					);
-				}),
-			),
-		);
-		await t.test(
-			"unknown geometry with absent pixels remains a usable verified handle",
-			async () => {
-				const unknown = createBrowserCodeOutput();
-				const captured = await unknown.observe({
-					content: [],
-					details: {
-						resultCategory: "success",
-						imageObservations: [
-							{
-								path,
-								mimeType: "image/png",
-								capture: "unknown",
-								geometry: { status: "unknown", reason: "No geometry evidence" },
-							},
-						],
-					},
-				});
-				await unknown.emitImage({ id: captured.imageObservations?.[0]?.id });
-				const selected = await unknown.finish(result, "persistent");
-				assert.equal(selected.content.filter((part) => part.type === "image").length, 1);
-				const metadata = readRecord(readArray(readRecord(selected.details).imageObservations)[0]);
-				assert.equal(metadata.pixels, undefined);
-				assert.equal(readRecord(metadata.geometry).status, "unknown");
-				assert.equal(readRecord(metadata.geometry).pixelsPerCssPixel, undefined);
-			},
-		);
-		await assert.rejects(output.emitImage({ id: "not-captured" }), /handle returned by browser/);
-		const staleOutput = createBrowserCodeOutput();
-		const stale = await staleOutput.observe({
-			content: [],
-			details: { imageObservations: observation.imageObservations, resultCategory: "success" },
-		});
-		await writeFile(path, Buffer.concat([PNG, Buffer.from("changed")]));
-		await assert.rejects(
-			staleOutput.emitImage(stale.imageObservations?.[0]),
-			/changed since capture/,
-		);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
-	}
-});
+			);
+			await assert.rejects(output.emitImage({ id: "not-captured" }), /handle returned by browser/);
+			const staleOutput = createBrowserCodeOutput();
+			const stale = await staleOutput.observe({
+				content: [],
+				details: { imageObservations: observation.imageObservations, resultCategory: "success" },
+			});
+			await writeFile(path, Buffer.concat([PNG, Buffer.from("changed")]));
+			await assert.rejects(
+				staleOutput.emitImage(stale.imageObservations?.[0]),
+				/changed since capture/,
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	},
+);
 
-test("missing compiled worker returns a setup failure", async (t) => {
+nodeTest("missing compiled worker returns a setup failure", async (t) => {
 	const consumer = await mkdtemp(join(tmpdir(), "piab-missing-worker-"));
 	t.after(() => rm(consumer, { recursive: true, force: true }));
 	await cp(join(process.cwd(), "dist"), join(consumer, "dist"), { recursive: true });
@@ -553,7 +571,7 @@ test("missing compiled worker returns a setup failure", async (t) => {
 	assert.match(readString(result.error), /Compiled script worker is missing/);
 });
 
-test("permissioned code runs when the installed module path retains a symlink", async (t) => {
+nodeTest("permissioned code runs when the installed module path retains a symlink", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "piab-symlink-worker-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const consumer = join(root, "consumer");
@@ -643,7 +661,7 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 	}
 }
 
-test(
+nodeTest(
 	"code shares the selected persistent browser with direct calls and persists ordered resume state",
 	{ concurrency: false },
 	async () => {
@@ -705,7 +723,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"code raw data remains available for reduction without presentation spills",
 	{ concurrency: false },
 	async () => {
@@ -733,7 +751,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"code cannot silently switch its leased identity or close another session",
 	{ concurrency: false },
 	async () => {
@@ -744,11 +762,13 @@ test(
 				session: "selected",
 				code: `emit(await browser({args:["--session","other","open","https://fixture.test/other"]})); emit(await browser({args:["close","--all"]}));`,
 			});
-			const values = readArray(readRecord(result.details).data).map(readRecord);
-			assert.equal(values[0].success, false);
-			assert.match(readString(values[0].error), /one browser identity/);
-			assert.equal(values[1].success, false);
-			assert.match(readString(values[1].error), /namespace-wide close/);
+			const values = readArray(readRecord(result.details).data);
+			const switched = readRecord(values[0]);
+			const closed = readRecord(values[1]);
+			assert.equal(switched.success, false);
+			assert.match(readString(switched.error), /one browser identity/);
+			assert.equal(closed.success, false);
+			assert.match(readString(closed.error), /namespace-wide close/);
 			assert.equal(
 				(await readInvocationLog(logPath)).some(
 					(call) => call.args.includes("other") || call.args.includes("close"),
@@ -767,7 +787,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"a code deadline expires while waiting behind another local code cell",
 	{ concurrency: false, timeout: 10_000 },
 	async () => {
@@ -781,10 +801,8 @@ test(
 			let second: ReturnType<typeof executeRegisteredTool> | undefined;
 			try {
 				// Wait for the actual upstream dispatch receipt, not a cold-child deadline.
-				// oxlint-disable-next-line no-await-in-loop
 				while (!(await readInvocationLog(logPath)).some((call) => call.args.includes("eval"))) {
 					// Receipt observations must stay ordered.
-					// oxlint-disable-next-line no-await-in-loop
 					await delay(10);
 				}
 				second = executeRegisteredTool(tool, harness.ctx, {
@@ -817,7 +835,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"code export failures preserve partial data and render one truthful observation",
 	{ concurrency: false },
 	async () => {
@@ -843,7 +861,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"session_tree joins oversized code observation finalization without publishing A artifacts onto independent B",
 	{ concurrency: false, timeout: 15_000 },
 	async () => {
@@ -890,24 +908,21 @@ else process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixtur
 						code: 'emit("x".repeat(24000)); await browser({args:["eval","--stdin"],stdin:"1"});',
 					});
 					const deadline = Date.now() + 10_000;
-					while (true) {
+					let effectStarted = false;
+					while (!effectStarted && Date.now() < deadline) {
 						try {
 							// Observe the real child effect before triggering branch navigation.
-							// oxlint-disable-next-line no-await-in-loop
 							await readFile(marker);
-							break;
+							effectStarted = true;
 						} catch {
-							// Missing markers must stay within the deadline; a successful read ends polling.
-							// oxlint-disable-next-line node-test/no-conditional-assertion
-							assert.ok(
-								Date.now() < deadline,
-								"code must reach the real fake-upstream effect before tree navigation",
-							);
-							// Wait between missing-marker observations rather than overlapping reads.
-							// oxlint-disable-next-line no-await-in-loop
 							await delay(10);
 						}
 					}
+					assert.equal(
+						effectStarted,
+						true,
+						"code must reach the real fake-upstream effect before tree navigation",
+					);
 					harness.setBranch(branch("b"));
 					await runExtensionEvent(
 						harness.handlers,
@@ -966,7 +981,7 @@ else process.stdout.write(JSON.stringify({success:true,data:{url:'https://fixtur
 	},
 );
 
-test(
+nodeTest(
 	"raw batch credentials are absent from code intent and completion journals",
 	{ concurrency: false },
 	async () => {
@@ -995,7 +1010,7 @@ test(
 	},
 );
 
-test("converted legacy explicit unknown-target outcomes invalidate restored refs", () => {
+nodeTest("converted legacy explicit unknown-target outcomes invalidate restored refs", () => {
 	const key = getAgentBrowserSessionIdentityKey("selected");
 	const state = SessionPageState.fromBranch(
 		convertBrowserEntries([
@@ -1030,7 +1045,7 @@ test("converted legacy explicit unknown-target outcomes invalidate restored refs
 	assert.equal(state.get(key).refSnapshot, undefined);
 });
 
-test(
+nodeTest(
 	"pre-0.7 script cleanup leases remain recoverable after upgrade",
 	{ concurrency: false },
 	async () => {

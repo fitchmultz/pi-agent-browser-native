@@ -156,15 +156,15 @@ export interface AgentBrowserProcessOptions {
 	readonly args: readonly string[];
 	readonly nativeConfirmationDecision?: boolean;
 	readonly cwd: string;
-	readonly env?: NodeJS.ProcessEnv;
+	readonly env?: NodeJS.ProcessEnv | undefined;
 	readonly managedSessionRestoreState?: ManagedSessionRestoreState;
-	readonly managedStateCurrentPageUrl?: string;
+	readonly managedStateCurrentPageUrl?: string | undefined;
 	readonly managedStatePageUrlUnknown?: boolean;
 	readonly ownedManagedSession?: boolean;
-	readonly preserveAttachedBrowserSession?: boolean;
-	readonly signal?: AbortSignal;
-	readonly stdin?: string;
-	readonly timeoutMs?: number;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
+	readonly signal?: AbortSignal | undefined;
+	readonly stdin?: string | undefined;
+	readonly timeoutMs?: number | undefined;
 }
 
 function failureResult(error: string): ProcessRunResult {
@@ -181,7 +181,7 @@ function failureResult(error: string): ProcessRunResult {
 
 async function prepareProcessEnvironment(options: ManagedSessionRestoreEnvOptions): Promise<{
 	readonly env: NodeJS.ProcessEnv;
-	readonly userAgent?: string;
+	readonly userAgent?: string | undefined;
 	readonly error?: string;
 }> {
 	const restoreEnv = getManagedSessionRestoreEnv(options);
@@ -297,8 +297,7 @@ export async function runAgentBrowserProcess(
 		return failureResult(planningError);
 	}
 	const prepared = await prepareProcessEnvironment(restoreOptions);
-	// Cancellation can arrive while filesystem validation is suspended.
-	// oxlint-disable-next-line typescript/no-unnecessary-condition
+	// oxlint-disable-next-line typescript/no-unnecessary-condition -- QX-005: AbortSignal can change while filesystem validation is suspended.
 	if (signal && signal.aborted) {
 		return cancelledResult();
 	}
@@ -306,8 +305,7 @@ export async function runAgentBrowserProcess(
 		return failureResult(prepared.error);
 	}
 	const stockLauncher = resolveWindowsStockLauncher(options.cwd, prepared.env);
-	// A reentrant launch/environment observer can cancel during synchronous launch preparation.
-	// oxlint-disable-next-line typescript/no-unnecessary-condition
+	// oxlint-disable-next-line typescript/no-unnecessary-condition -- QX-005: Reentrant launch preparation can abort the signal.
 	if (signal && signal.aborted) {
 		return cancelledResult();
 	}

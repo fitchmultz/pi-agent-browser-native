@@ -21,10 +21,10 @@ import { extractStringResultField, type SessionPageState } from "../../session-p
 import type { PreparationProcessFacts } from "./prepare-contracts.js";
 
 export interface PreparationPageFacts extends PreparationProcessFacts {
-	readonly preserveAttachedBrowserSession?: boolean;
-	readonly establishAttachedBrowserSession?: boolean;
+	readonly preserveAttachedBrowserSession?: boolean | undefined;
+	readonly establishAttachedBrowserSession?: boolean | undefined;
 	/** Resolves true when the caller's launch flags target a caller-owned daemon that is not running. */
-	readonly callerColdLaunch?: () => Promise<boolean>;
+	readonly callerColdLaunch?: (() => Promise<boolean>) | undefined;
 }
 import type {
 	BrowserRunInputFields,
@@ -42,14 +42,14 @@ export interface PreparationPageSelection {
 	readonly page: PreparationPageState;
 	readonly executionPlan: AgentBrowserExecutionPlan;
 	readonly sessionTabCorrection?: PreparedBrowserRun["sessionTabCorrection"];
-	readonly sessionTabSelectionError?: string;
+	readonly sessionTabSelectionError?: string | undefined;
 	readonly livePageVerified: boolean;
 }
 
 interface SelectionRequest {
 	readonly page: PreparationPageState;
 	readonly preparedArgs: PreparedAgentBrowserArgs;
-	readonly stdin?: string;
+	readonly stdin?: string | undefined;
 	readonly input: BrowserRunInputFields;
 	readonly sessionMode: "auto" | "fresh";
 }
@@ -324,8 +324,8 @@ export async function verifyPreparationLivePage(
 	selection: PreparationPageSelection,
 	request: {
 		readonly args: readonly string[];
-		readonly requirement?: string;
-		readonly stdin?: string;
+		readonly requirement?: string | undefined;
+		readonly stdin?: string | undefined;
 	},
 ): Promise<PreparationPageSelection> {
 	const plan = selection.executionPlan;
@@ -366,7 +366,7 @@ export async function verifyCommandLivePage(
 	request: {
 		readonly commandTokens: readonly string[];
 		readonly resolvedSnapshot?: PreparationPageState["priorRefSnapshotState"];
-		readonly stdin?: string;
+		readonly stdin?: string | undefined;
 	},
 ): Promise<PreparationPageSelection> {
 	const { page, executionPlan: plan } = selection;

@@ -21,7 +21,7 @@ import { syncBuiltinESMExports } from "node:module";
 import net, { createServer } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import test, { type TestContext } from "node:test";
+import nodeTest, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -81,288 +81,277 @@ async function claimPaths(): Promise<string[]> {
 async function onlyClaimPath(): Promise<string> {
 	const paths = await claimPaths();
 	assert.equal(paths.length, 1);
-	return paths[0];
+	return readString(paths[0]);
 }
 
-test.afterEach(async () => {
+nodeTest.afterEach(async () => {
 	for (const path of await claimPaths()) {
 		// Finish task-owned native claim cleanup before subsequent acquisitions.
-		// oxlint-disable-next-line no-await-in-loop
 		await rm(path, { force: true, recursive: true });
 		// A holder stopped while holding leaves its endpoint name; production removes it with the claim.
-		// oxlint-disable-next-line no-await-in-loop
 		await rm(endpointPath(path), { force: true });
 	}
 });
 
-test("managed session policy lock waits asynchronously and releases only its immutable claim", async () => {
-	const first = await acquireManagedSessionPolicyLock({ sessionName });
-	assert.ok(first);
-	let timerRan = false;
-	const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 });
-	setTimeout(() => {
-		timerRan = true;
-	}, 5);
-	assert.equal(await waiting, undefined);
-	assert.equal(timerRan, true);
+nodeTest(
+	"managed session policy lock waits asynchronously and releases only its immutable claim",
+	async () => {
+		const first = await acquireManagedSessionPolicyLock({ sessionName });
+		assert.ok(first);
+		let timerRan = false;
+		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 });
+		setTimeout(() => {
+			timerRan = true;
+		}, 5);
+		assert.equal(await waiting, undefined);
+		assert.equal(timerRan, true);
 
-	const claimPath = await onlyClaimPath();
-	const ownerPath = join(claimPath, "owner.json");
-	const original = await readFile(ownerPath, "utf8");
-	const replacement = JSON.stringify({
-		...readRecord(JSON.parse(original)),
-		token: "replacement-token",
-	});
-	await writeFile(ownerPath, replacement, "utf8");
-	await first.release();
-	assert.equal(await readFile(ownerPath, "utf8"), replacement);
-	await rm(claimPath, { force: true, recursive: true });
-
-	const next = await acquireManagedSessionPolicyLock({ sessionName });
-	assert.ok(next);
-	await next.release();
-	assert.deepEqual(await claimPaths(), []);
-});
-
-test("managed session policy lock retains malformed removal tokens and reclaims valid orphan artifacts", async (t) => {
-	const directory = await privateGcDirectory(t);
-	const malformedTokens = [
-		`../../../piab-${randomUUID()}`,
-		`..\\..\\..\\piab-${randomUUID()}`,
-		`piab-${randomUUID()}\0suffix`,
-	];
-	const orphanPath = join(directory, ".pi-agent-browser-policy-remove-test");
-	const malformedPaths = malformedTokens.map((_, index) =>
-		join(directory, `.pi-agent-browser-policy-remove-malformed-${index}`),
-	);
-	const fixtures = [
-		{ path: orphanPath, token: "orphan" },
-		...malformedPaths.map((path, index) => ({ path, token: malformedTokens[index] })),
-	];
-	const ownerContents = new Map<string, string>();
-	for (const fixture of fixtures) {
-		// Publish each complete owner fixture in order within the private GC directory.
-		// oxlint-disable-next-line no-await-in-loop
-		await mkdir(fixture.path, { mode: 0o700 });
-		const content = JSON.stringify({
-			pid: 2_147_483_647,
-			startIdentity: "dead",
-			token: fixture.token,
-			sessionNames: null,
-			version: 4,
+		const claimPath = await onlyClaimPath();
+		const ownerPath = join(claimPath, "owner.json");
+		const original = await readFile(ownerPath, "utf8");
+		const replacement = JSON.stringify({
+			...readRecord(JSON.parse(original)),
+			token: "replacement-token",
 		});
-		ownerContents.set(fixture.path, content);
-		// Finish this directory's owner record before publishing the next GC candidate.
-		// oxlint-disable-next-line no-await-in-loop
-		await writeFile(join(fixture.path, "owner.json"), content, { mode: 0o600 });
-	}
+		await writeFile(ownerPath, replacement, "utf8");
+		await first.release();
+		assert.equal(await readFile(ownerPath, "utf8"), replacement);
+		await rm(claimPath, { force: true, recursive: true });
 
-	const fixturePaths = new Set(fixtures.map(({ path }) => path));
-	const inspected = new Set<string>();
-	const renamed: Array<{ source: string; destination: string }> = [];
-	const nativeLstat = fs.lstat;
-	const nativeRename = fs.rename;
-	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
-		if (fixturePaths.has(String(args[0]))) {
-			inspected.add(String(args[0]));
-		}
-		return nativeLstat(...args);
-	});
-	t.mock.method(fs, "rename", async (...args: Readonly<Parameters<typeof fs.rename>>) => {
-		const source = String(args[0]);
-		const destination = String(args[1]);
-		if (fixturePaths.has(source)) {
-			renamed.push({ source, destination });
-		}
-		return nativeRename(...args);
-	});
-	syncBuiltinESMExports();
-	try {
-		for (let pass = 0; pass < fixtures.length && inspected.size < fixturePaths.size; pass += 1) {
-			// Each production sweep advances the process-wide bounded GC cursor.
-			// oxlint-disable-next-line no-await-in-loop
-			await cleanDeadPolicyArtifacts(directory, {});
-		}
-		assert.deepEqual(
-			[...inspected].sort(),
-			[...fixturePaths].sort(),
-			"GC must inspect every fixture before their outcomes are checked",
+		const next = await acquireManagedSessionPolicyLock({ sessionName });
+		assert.ok(next);
+		await next.release();
+		assert.deepEqual(await claimPaths(), []);
+	},
+);
+
+nodeTest(
+	"managed session policy lock retains malformed removal tokens and reclaims valid orphan artifacts",
+	async (t) => {
+		const directory = await privateGcDirectory(t);
+		const malformedTokens = [
+			`../../../piab-${randomUUID()}`,
+			`..\\..\\..\\piab-${randomUUID()}`,
+			`piab-${randomUUID()}\0suffix`,
+		];
+		const orphanPath = join(directory, ".pi-agent-browser-policy-remove-test");
+		const malformedPaths = malformedTokens.map((_, index) =>
+			join(directory, `.pi-agent-browser-policy-remove-malformed-${index}`),
 		);
-		assert.deepEqual(
-			renamed.filter(({ source }) => malformedPaths.includes(source)),
-			[],
-			"malformed tokens must never reach native rename",
-		);
-		for (const path of malformedPaths) {
-			// Read each preserved owner before checking its bytes and existence.
-			// oxlint-disable-next-line no-await-in-loop
-			const ownerContent = await readFile(join(path, "owner.json"), "utf8");
-			// Every fixed malformed owner must preserve its original bytes.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(ownerContent, ownerContents.get(path));
-			// Complete this owner observation before inspecting the next fixture.
-			// oxlint-disable-next-line no-await-in-loop
-			await stat(path);
+		const fixtures = [
+			{ path: orphanPath, token: "orphan" },
+			...malformedPaths.map((path, index) => ({ path, token: malformedTokens[index] })),
+		];
+		const ownerContents = new Map<string, string>();
+		for (const fixture of fixtures) {
+			// Publish each complete owner fixture in order within the private GC directory.
+			await mkdir(fixture.path, { mode: 0o700 });
+			const content = JSON.stringify({
+				pid: 2_147_483_647,
+				startIdentity: "dead",
+				token: fixture.token,
+				sessionNames: null,
+				version: 4,
+			});
+			ownerContents.set(fixture.path, content);
+			// Finish this directory's owner record before publishing the next GC candidate.
+			await writeFile(join(fixture.path, "owner.json"), content, { mode: 0o600 });
 		}
-		assert.ok(
-			renamed.some(({ source }) => source === orphanPath),
-			"an ordinary opaque token still uses native rename cleanup",
-		);
-		await assert.rejects(stat(orphanPath), (error: unknown) => hasErrorCode(error, "ENOENT"));
-	} finally {
-		t.mock.restoreAll();
+
+		const fixturePaths = new Set(fixtures.map(({ path }) => path));
+		const inspected = new Set<string>();
+		const renamed: Array<{ source: string; destination: string }> = [];
+		const nativeLstat = fs.lstat;
+		const nativeRename = fs.rename;
+		t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
+			if (fixturePaths.has(String(args[0]))) {
+				inspected.add(String(args[0]));
+			}
+			return nativeLstat(...args);
+		});
+		t.mock.method(fs, "rename", async (...args: Readonly<Parameters<typeof fs.rename>>) => {
+			const source = String(args[0]);
+			const destination = String(args[1]);
+			if (fixturePaths.has(source)) {
+				renamed.push({ source, destination });
+			}
+			return nativeRename(...args);
+		});
 		syncBuiltinESMExports();
-		for (const { destination } of renamed) {
-			if (!destination.includes("\0")) {
-				// A regression could rename a malformed token outside the private directory.
-				// oxlint-disable-next-line no-await-in-loop
-				await rm(destination, { force: true, recursive: true });
+		try {
+			for (let pass = 0; pass < fixtures.length && inspected.size < fixturePaths.size; pass += 1) {
+				// Each production sweep advances the process-wide bounded GC cursor.
+				await cleanDeadPolicyArtifacts(directory, {});
+			}
+			assert.deepEqual(
+				[...inspected].sort(),
+				[...fixturePaths].sort(),
+				"GC must inspect every fixture before their outcomes are checked",
+			);
+			assert.deepEqual(
+				renamed.filter(({ source }) => malformedPaths.includes(source)),
+				[],
+				"malformed tokens must never reach native rename",
+			);
+			for (const path of malformedPaths) {
+				await t.test(`preserves ${basename(path)}`, async () => {
+					const ownerContent = await readFile(join(path, "owner.json"), "utf8");
+					assert.equal(ownerContent, ownerContents.get(path));
+					await stat(path);
+				});
+			}
+			assert.ok(
+				renamed.some(({ source }) => source === orphanPath),
+				"an ordinary opaque token still uses native rename cleanup",
+			);
+			await assert.rejects(stat(orphanPath), (error: unknown) => hasErrorCode(error, "ENOENT"));
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			for (const { destination } of renamed) {
+				if (!destination.includes("\0")) {
+					// A regression could rename a malformed token outside the private directory.
+					await rm(destination, { force: true, recursive: true });
+				}
 			}
 		}
-	}
-});
+	},
+);
 
-test("bounded policy GC passes rotate without reclaiming live, young or ambiguous claims", async (t) => {
-	const directory = await privateGcDirectory(t);
-	const first = await acquireManagedSessionPolicyLock({ sessionName });
-	assert.ok(first);
-	const liveOwner = readRecord(
-		JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8")),
-	);
-	await first.release();
-	const paths: string[] = [];
-	const old = new Date(Date.now() - 31 * 60 * 1_000);
-	for (let index = 0; index < 16; index += 1) {
-		const token = randomUUID();
-		const path = join(directory, `${basename(lockBasePath)}.claim-${token}`);
-		paths.push(path);
-		// Publish native GC candidates in directory/owner/timestamp order.
-		// oxlint-disable-next-line no-await-in-loop
-		await mkdir(path, { mode: 0o700 });
-		const owner: Record<string, unknown> = {
-			...liveOwner,
-			pid: index === 0 ? process.pid : 2_147_483_647,
-			token,
-		};
-		if (index === 2) {
-			owner.version = 2;
-		}
-		if (index === 3) {
-			owner.startIdentity = "";
-		}
-		// The owner must exist before this candidate can receive its stale timestamp.
-		// oxlint-disable-next-line no-await-in-loop
-		await writeFile(join(path, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
-		if (index !== 1) {
-			// Complete this stale candidate before publishing the next one.
-			// oxlint-disable-next-line no-await-in-loop
-			await utimes(path, old, old);
-		}
-	}
-	const exists = (path: string) =>
-		stat(path).then(
-			() => true,
-			() => false,
+nodeTest(
+	"bounded policy GC passes rotate without reclaiming live, young or ambiguous claims",
+	async (t) => {
+		const directory = await privateGcDirectory(t);
+		const first = await acquireManagedSessionPolicyLock({ sessionName });
+		assert.ok(first);
+		const liveOwner = readRecord(
+			JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8")),
 		);
-	const inspected = new Set<string>();
-	const nativeLstat = fs.lstat;
-	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
-		if (paths.includes(String(args[0]))) {
-			inspected.add(String(args[0]));
+		await first.release();
+		const paths: string[] = [];
+		const old = new Date(Date.now() - 31 * 60 * 1_000);
+		for (let index = 0; index < 16; index += 1) {
+			const token = randomUUID();
+			const path = join(directory, `${basename(lockBasePath)}.claim-${token}`);
+			paths.push(path);
+			// Publish native GC candidates in directory/owner/timestamp order.
+			await mkdir(path, { mode: 0o700 });
+			const owner: Record<string, unknown> = {
+				...liveOwner,
+				pid: index === 0 ? process.pid : 2_147_483_647,
+				token,
+			};
+			if (index === 2) {
+				owner.version = 2;
+			}
+			if (index === 3) {
+				owner.startIdentity = "";
+			}
+			// The owner must exist before this candidate can receive its stale timestamp.
+			await writeFile(join(path, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
+			if (index !== 1) {
+				// Complete this stale candidate before publishing the next one.
+				await utimes(path, old, old);
+			}
 		}
-		return nativeLstat(...args);
-	});
-	syncBuiltinESMExports();
-	try {
-		let remaining = 12;
-		for (let pass = 0; pass < 32 && remaining > 0; pass += 1) {
-			inspected.clear();
-			// Each production sweep advances one shared bounded GC experiment.
-			// oxlint-disable-next-line no-await-in-loop
-			await cleanDeadPolicyArtifacts(directory, {});
-			// Every pass must respect its independent inspection budget.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(
-				inspected.size <= 8,
-				"each pass inspects at most eight GC candidates, including retained ones",
+		const exists = (path: string) =>
+			stat(path).then(
+				() => true,
+				() => false,
 			);
-			// Observe this completed pass before advancing the shared GC experiment.
-			// oxlint-disable-next-line no-await-in-loop
-			const after = (await Promise.all(paths.slice(4).map(exists))).filter(Boolean).length;
-			// Every pass must also respect its deletion budget; final checks require collection.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(remaining - after <= 8, "each pass may reclaim at most eight GC candidates");
-			remaining = after;
-		}
-		assert.equal(remaining, 0, "rotating passes must eventually collect old dead claims");
-		assert.deepEqual(await Promise.all(paths.slice(0, 4).map(exists)), [true, true, true, true]);
-	} finally {
-		t.mock.restoreAll();
+		const inspected = new Set<string>();
+		const nativeLstat = fs.lstat;
+		t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
+			if (paths.includes(String(args[0]))) {
+				inspected.add(String(args[0]));
+			}
+			return nativeLstat(...args);
+		});
 		syncBuiltinESMExports();
-	}
-});
+		try {
+			let remaining = 12;
+			for (let pass = 0; pass < 32 && remaining > 0; pass += 1) {
+				inspected.clear();
+				await cleanDeadPolicyArtifacts(directory, {});
+				const after = (await Promise.all(paths.slice(4).map(exists))).filter(Boolean).length;
+				await t.test(`bounded GC pass ${pass}`, () => {
+					assert.ok(
+						inspected.size <= 8,
+						"each pass inspects at most eight GC candidates, including retained ones",
+					);
+					assert.ok(remaining - after <= 8, "each pass may reclaim at most eight GC candidates");
+				});
+				remaining = after;
+			}
+			assert.equal(remaining, 0, "rotating passes must eventually collect old dead claims");
+			assert.deepEqual(await Promise.all(paths.slice(0, 4).map(exists)), [true, true, true, true]);
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+		}
+	},
+);
 
-test("an uncontended acquisition survives opportunistic GC that outlasts its wait budget", async (t) => {
-	// Loaded hosts can make native GC probes outlast the default wait; model that with one slow
-	// inspection of an unrelated entry, longer than the requested budget. GC never reclaims a young
-	// claim, so no process can remove this unrelated fixture while the test runs.
-	const unrelatedToken = randomUUID();
-	const unrelatedClaimPath = `${getBrowserExecutionLockPath({ socketContext: join(socketDir, "gc-fixture") })}.claim-${unrelatedToken}`;
-	await mkdir(unrelatedClaimPath, { mode: 0o700 });
-	await writeFile(
-		join(unrelatedClaimPath, "owner.json"),
-		JSON.stringify({
-			pid: 2_147_483_647,
-			startIdentity: "dead",
-			token: unrelatedToken,
-			sessionNames: null,
-			version: 4,
-		}),
-		{ mode: 0o600 },
-	);
-	const coordinationDirectory = dirname(lockBasePath);
-	const ownLockFamily = basename(lockBasePath);
-	const nativeLstat = fs.lstat;
-	const gc = { acquiring: false, slowInspections: 0 };
-	t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
-		const path = String(args[0]);
-		// While acquiring, only GC reads entries outside this claim's lock family.
-		if (
-			gc.acquiring &&
-			gc.slowInspections === 0 &&
-			dirname(path) === coordinationDirectory &&
-			!basename(path).startsWith(ownLockFamily)
-		) {
-			gc.slowInspections += 1;
-			await delay(150);
-		}
-		return nativeLstat(...args);
-	});
-	syncBuiltinESMExports();
-	try {
-		// GC inspects up to eight shared candidates per acquisition, at most one in this lock family.
-		for (let attempt = 0; attempt < 16 && gc.slowInspections === 0; attempt += 1) {
-			gc.acquiring = true;
-			// Each acquisition advances the shared GC cursor before the next attempt.
-			// oxlint-disable-next-line no-await-in-loop
-			const lock = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 });
-			gc.acquiring = false;
-			// Every uncontended pass must acquire, including the one whose GC overran the budget.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.ok(lock, "opportunistic GC must not revoke an uncontended acquisition");
-			// Release before the next GC pass.
-			// oxlint-disable-next-line no-await-in-loop
-			await lock.release();
-		}
-		assert.equal(gc.slowInspections, 1, "GC must reach a slow unrelated entry");
-	} finally {
-		t.mock.restoreAll();
+nodeTest(
+	"an uncontended acquisition survives opportunistic GC that outlasts its wait budget",
+	async (t) => {
+		// Loaded hosts can make native GC probes outlast the default wait; model that with one slow
+		// inspection of an unrelated entry, longer than the requested budget. GC never reclaims a young
+		// claim, so no process can remove this unrelated fixture while the test runs.
+		const unrelatedToken = randomUUID();
+		const unrelatedClaimPath = `${getBrowserExecutionLockPath({ socketContext: join(socketDir, "gc-fixture") })}.claim-${unrelatedToken}`;
+		await mkdir(unrelatedClaimPath, { mode: 0o700 });
+		await writeFile(
+			join(unrelatedClaimPath, "owner.json"),
+			JSON.stringify({
+				pid: 2_147_483_647,
+				startIdentity: "dead",
+				token: unrelatedToken,
+				sessionNames: null,
+				version: 4,
+			}),
+			{ mode: 0o600 },
+		);
+		const coordinationDirectory = dirname(lockBasePath);
+		const ownLockFamily = basename(lockBasePath);
+		const nativeLstat = fs.lstat;
+		const gc = { acquiring: false, slowInspections: 0 };
+		t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
+			const path = String(args[0]);
+			// While acquiring, only GC reads entries outside this claim's lock family.
+			if (
+				gc.acquiring &&
+				gc.slowInspections === 0 &&
+				dirname(path) === coordinationDirectory &&
+				!basename(path).startsWith(ownLockFamily)
+			) {
+				gc.slowInspections += 1;
+				await delay(150);
+			}
+			return nativeLstat(...args);
+		});
 		syncBuiltinESMExports();
-		await rm(unrelatedClaimPath, { force: true, recursive: true });
-	}
-});
+		try {
+			// GC inspects up to eight shared candidates per acquisition, at most one in this lock family.
+			for (let attempt = 0; attempt < 16 && gc.slowInspections === 0; attempt += 1) {
+				await t.test(`uncontended acquisition ${attempt}`, async () => {
+					gc.acquiring = true;
+					const lock = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 });
+					gc.acquiring = false;
+					assert.ok(lock, "opportunistic GC must not revoke an uncontended acquisition");
+					await lock.release();
+				});
+			}
+			assert.equal(gc.slowInspections, 1, "GC must reach a slow unrelated entry");
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			await rm(unrelatedClaimPath, { force: true, recursive: true });
+		}
+	},
+);
 
-test("short-lived processes randomize GC past retained removal artifacts", async (t) => {
+nodeTest("short-lived processes randomize GC past retained removal artifacts", async (t) => {
 	const directory = await privateGcDirectory(t);
 	const tag = randomUUID();
 	const paths: string[] = [];
@@ -374,10 +363,8 @@ test("short-lived processes randomize GC past retained removal artifacts", async
 		);
 		paths.push(path);
 		// Publish each GC candidate's directory before its owner record.
-		// oxlint-disable-next-line no-await-in-loop
 		await mkdir(path, { mode: 0o700 });
 		// Complete this candidate before publishing the next native GC fixture.
-		// oxlint-disable-next-line no-await-in-loop
 		await writeFile(
 			join(path, "owner.json"),
 			JSON.stringify({
@@ -391,12 +378,13 @@ test("short-lived processes randomize GC past retained removal artifacts", async
 		);
 	}
 	for (let attempt = 0; attempt < 4; attempt += 1) {
-		const child = spawn(
-			process.execPath,
-			[
-				"--input-type=module",
-				"-e",
-				`
+		await t.test(`short-lived GC process ${attempt}`, async () => {
+			const child = spawn(
+				process.execPath,
+				[
+					"--input-type=module",
+					"-e",
+					`
 				import crypto from "node:crypto";
 				import { syncBuiltinESMExports } from "node:module";
 				// Control the random draw; assert actual reclamation below.
@@ -406,28 +394,22 @@ test("short-lived processes randomize GC past retained removal artifacts", async
 				await cleanDeadPolicyArtifacts(${JSON.stringify(directory)}, {});
 				console.log(JSON.stringify({ done: true }));
 			`,
-			],
-			{ cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
-		);
-		const exited = once(child, "exit");
-		try {
-			// Read this GC process's receipt before starting its successor.
-			// oxlint-disable-next-line no-await-in-loop
-			const receipt = await readChildStdoutJsonLine(child);
-			// Every one of the four fixed GC passes must report success.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.deepEqual(receipt, { done: true });
-			// Join this GC process's exit before starting its successor.
-			// oxlint-disable-next-line no-await-in-loop
-			const [exitCode] = readArray(await exited);
-			// Every one of the four fixed GC passes must exit successfully.
-			// oxlint-disable-next-line node-test/no-conditional-assertion
-			assert.equal(exitCode, 0);
-		} finally {
-			// Reap this task-owned GC process before starting its successor.
-			// oxlint-disable-next-line no-await-in-loop
-			await stopChildProcess(child);
-		}
+				],
+				{ cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
+			);
+			const exited = once(child, "exit");
+			try {
+				// Read this GC process's receipt before starting its successor.
+				const receipt = await readChildStdoutJsonLine(child);
+				assert.deepEqual(receipt, { done: true });
+				// Join this GC process's exit before starting its successor.
+				const [exitCode] = readArray(await exited);
+				assert.equal(exitCode, 0);
+			} finally {
+				// Reap this task-owned GC process before starting its successor.
+				await stopChildProcess(child);
+			}
+		});
 	}
 	assert.deepEqual(
 		await Promise.all(
@@ -442,181 +424,194 @@ test("short-lived processes randomize GC past retained removal artifacts", async
 	);
 });
 
-test("managed session policy lock fails closed without repairing unsafe owner metadata or POSIX permissions", async () => {
-	const first = await acquireManagedSessionPolicyLock({ sessionName });
-	assert.ok(first);
-	const claimPath = await onlyClaimPath();
-	const ownerPath = join(claimPath, "owner.json");
-	if (process.platform === "win32") {
-		// chmod cannot express POSIX group/world access on Windows. Corrupt
-		// the required identity instead and retain the same fail-closed contract.
-		const owner = readRecord(JSON.parse(await readFile(ownerPath, "utf8")));
-		await writeFile(ownerPath, JSON.stringify({ ...owner, startIdentity: "" }));
-	} else {
-		await chmod(ownerPath, 0o644);
-	}
-	const unsafeOwner = await readFile(ownerPath, "utf8");
-	assert.equal(await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 25 }), undefined);
-	assert.equal(await readFile(ownerPath, "utf8"), unsafeOwner);
-	if (process.platform !== "win32") {
-		// POSIX permissions must remain unchanged; Windows checks corrupt identity instead.
-		// oxlint-disable-next-line node-test/no-conditional-assertion
-		assert.equal((await stat(ownerPath)).mode & 0o777, 0o644);
-	}
-	await first.release();
-	await stat(claimPath);
-});
+nodeTest(
+	"managed session policy lock fails closed without repairing unsafe owner metadata or POSIX permissions",
+	async () => {
+		const first = await acquireManagedSessionPolicyLock({ sessionName });
+		assert.ok(first);
+		const claimPath = await onlyClaimPath();
+		const ownerPath = join(claimPath, "owner.json");
+		if (process.platform === "win32") {
+			// chmod cannot express POSIX group/world access on Windows. Corrupt
+			// the required identity instead and retain the same fail-closed contract.
+			const owner = readRecord(JSON.parse(await readFile(ownerPath, "utf8")));
+			await writeFile(ownerPath, JSON.stringify({ ...owner, startIdentity: "" }));
+		} else {
+			await chmod(ownerPath, 0o644);
+		}
+		const unsafeOwner = await readFile(ownerPath, "utf8");
+		assert.equal(await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 25 }), undefined);
+		assert.equal(await readFile(ownerPath, "utf8"), unsafeOwner);
+		const permissions = process.platform === "win32" ? [] : [(await stat(ownerPath)).mode & 0o777];
+		assert.deepEqual(permissions, process.platform === "win32" ? [] : [0o644]);
+		await first.release();
+		await stat(claimPath);
+	},
+);
 
 for (const publicationRead of [1, 2]) {
-	test(`managed session policy lock refreshes a choosing ticket published after missing read ${publicationRead}`, async (t) => {
-		// Obtain real native owner identity, then model another live claim choosing
-		// its ticket. Only filesystem interleaving is controlled, never identity results.
-		const seed = await acquireManagedSessionPolicyLock({ sessionName });
-		assert.ok(seed);
-		const owner = readRecord(
-			JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8")),
-		);
-		await seed.release();
-		owner.token = randomUUID();
-		const choosingPath = `${lockBasePath}.claim-${readString(owner.token)}`;
-		const ticketPath = join(choosingPath, "ticket.json");
-		await mkdir(choosingPath, { mode: 0o700 });
-		await writeFile(join(choosingPath, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
-		const nativeLstat = fs.lstat;
-		const nativeRename = fs.rename;
-		let ownTicketPublished = false;
-		let missingReads = 0;
-		t.mock.method(fs, "rename", async (...args: Readonly<Parameters<typeof fs.rename>>) => {
-			await nativeRename(...args);
-			if (String(args[1]).endsWith("ticket.json") && String(args[1]) !== ticketPath) {
-				ownTicketPublished = true;
-			}
-			return;
-		});
-		t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
-			try {
-				return await nativeLstat(...args);
-			} catch (error) {
-				if (hasErrorCode(error, "ENOENT") && String(args[0]) === ticketPath && ownTicketPublished) {
-					missingReads += 1;
-					if (missingReads === publicationRead) {
-						const candidate = join(choosingPath, ".ticket.tmp");
-						await writeFile(
-							candidate,
-							JSON.stringify({ ticket: 2, token: owner.token, version: 4 }),
-							{ mode: 0o600 },
-						);
-						await nativeRename(candidate, ticketPath);
-					}
+	nodeTest(
+		`managed session policy lock refreshes a choosing ticket published after missing read ${publicationRead}`,
+		async (t) => {
+			// Obtain real native owner identity, then model another live claim choosing
+			// its ticket. Only filesystem interleaving is controlled, never identity results.
+			const seed = await acquireManagedSessionPolicyLock({ sessionName });
+			assert.ok(seed);
+			const owner = readRecord(
+				JSON.parse(await readFile(join(await onlyClaimPath(), "owner.json"), "utf8")),
+			);
+			await seed.release();
+			owner.token = randomUUID();
+			const choosingPath = `${lockBasePath}.claim-${readString(owner.token)}`;
+			const ticketPath = join(choosingPath, "ticket.json");
+			await mkdir(choosingPath, { mode: 0o700 });
+			await writeFile(join(choosingPath, "owner.json"), JSON.stringify(owner), { mode: 0o600 });
+			const nativeLstat = fs.lstat;
+			const nativeRename = fs.rename;
+			let ownTicketPublished = false;
+			let missingReads = 0;
+			t.mock.method(fs, "rename", async (...args: Readonly<Parameters<typeof fs.rename>>) => {
+				await nativeRename(...args);
+				if (String(args[1]).endsWith("ticket.json") && String(args[1]) !== ticketPath) {
+					ownTicketPublished = true;
 				}
-				throw error; // Preserve the actual missing-file observation.
-			}
-		});
-		syncBuiltinESMExports();
-		try {
-			// No waiting is needed once the later ticket is published. A stale
-			// choosing snapshot must not consume even an immediate wait budget.
-			const lock = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 0 });
-			assert.ok(lock, "a completed later ticket must not block the earlier ticket");
-			assert.equal(missingReads, publicationRead);
-			await lock.release();
-			assert.deepEqual(await claimPaths(), [choosingPath]);
-			assert.equal(readRecord(JSON.parse(await readFile(ticketPath, "utf8"))).ticket, 2);
-		} finally {
-			t.mock.restoreAll();
+				return;
+			});
+			t.mock.method(fs, "lstat", async (...args: Readonly<Parameters<typeof fs.lstat>>) => {
+				try {
+					return await nativeLstat(...args);
+				} catch (error) {
+					if (
+						hasErrorCode(error, "ENOENT") &&
+						String(args[0]) === ticketPath &&
+						ownTicketPublished
+					) {
+						missingReads += 1;
+						if (missingReads === publicationRead) {
+							const candidate = join(choosingPath, ".ticket.tmp");
+							await writeFile(
+								candidate,
+								JSON.stringify({ ticket: 2, token: owner.token, version: 4 }),
+								{ mode: 0o600 },
+							);
+							await nativeRename(candidate, ticketPath);
+						}
+					}
+					throw error; // Preserve the actual missing-file observation.
+				}
+			});
 			syncBuiltinESMExports();
-		}
-	});
+			try {
+				// No waiting is needed once the later ticket is published. A stale
+				// choosing snapshot must not consume even an immediate wait budget.
+				const lock = await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 0 });
+				assert.ok(lock, "a completed later ticket must not block the earlier ticket");
+				assert.equal(missingReads, publicationRead);
+				await lock.release();
+				assert.deepEqual(await claimPaths(), [choosingPath]);
+				assert.equal(readRecord(JSON.parse(await readFile(ticketPath, "utf8"))).ticket, 2);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+		},
+	);
 }
 
 for (const holdMs of [0, 1_100]) {
-	test(`managed session policy lock releases after a native open-file rename conflict ${holdMs === 0 ? "within" : "after"} its acquisition wait`, async (t) => {
-		const lock = await acquireManagedSessionPolicyLock({ sessionName });
-		assert.ok(lock);
-		// A protected native close can outlast the default 1,000 ms acquisition wait.
-		mockMonotonicClock(t, performance.now() + holdMs);
-		const claimPath = await onlyClaimPath();
-		const reader = await fs.open(join(claimPath, "owner.json"), "r");
-		const nativeRename = fs.rename;
-		let nativeConflict = false;
-		t.mock.method(fs, "rename", async (...args: Readonly<Parameters<typeof fs.rename>>) => {
-			try {
-				await nativeRename(...args);
-				return;
-			} catch (error) {
-				if (String(args[0]) === claimPath && hasErrorCode(error, "EPERM")) {
-					nativeConflict = true;
-					await reader.close(); // The actual competing reader finishes.
+	nodeTest(
+		`managed session policy lock releases after a native open-file rename conflict ${holdMs === 0 ? "within" : "after"} its acquisition wait`,
+		async (t) => {
+			const lock = await acquireManagedSessionPolicyLock({ sessionName });
+			assert.ok(lock);
+			// A protected native close can outlast the default 1,000 ms acquisition wait.
+			mockMonotonicClock(t, performance.now() + holdMs);
+			const claimPath = await onlyClaimPath();
+			const reader = await fs.open(join(claimPath, "owner.json"), "r");
+			const nativeRename = fs.rename;
+			let nativeConflict = false;
+			t.mock.method(fs, "rename", async (...args: Readonly<Parameters<typeof fs.rename>>) => {
+				try {
+					await nativeRename(...args);
+					return;
+				} catch (error) {
+					if (String(args[0]) === claimPath && hasErrorCode(error, "EPERM")) {
+						nativeConflict = true;
+						await reader.close(); // The actual competing reader finishes.
+					}
+					throw error; // Never fabricate or replace the native rename result.
 				}
-				throw error; // Never fabricate or replace the native rename result.
-			}
-		});
-		syncBuiltinESMExports();
-		try {
-			await lock.release();
-			if (process.platform === "win32") {
-				// Windows native rename reports this conflict; common winner-ticket checks still run.
-				// oxlint-disable-next-line node-test/no-conditional-assertion
-				assert.equal(nativeConflict, true);
-			}
-			assert.deepEqual(await claimPaths(), []);
-		} finally {
-			t.mock.restoreAll();
+			});
 			syncBuiltinESMExports();
-			await reader.close();
-		}
-	});
+			try {
+				await lock.release();
+				assert.deepEqual(await claimPaths(), []);
+				if (process.platform === "win32") {
+					await t.test("observes the native Windows rename conflict", () => {
+						assert.equal(nativeConflict, true);
+					});
+				}
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+				await reader.close();
+			}
+		},
+	);
 }
 
-test("managed session policy lock replaces only a proven-dead claim and excludes its live successor", async (t) => {
-	const moduleUrl = new URL(
-		"../dist/extensions/agent-browser/lib/managed-session-policy-lock.js",
-		import.meta.url,
-	).href;
-	const acquire = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
-	const stale = spawn(
-		process.execPath,
-		[
-			"--input-type=module",
-			"--eval",
-			`${acquire} console.log(JSON.stringify({ acquired: true }));`,
-		],
-		{ stdio: ["ignore", "pipe", "pipe"] },
-	);
-	t.after(async () => {
-		await stopChildProcess(stale);
-	});
-	const staleExit = once(stale, "exit");
-	assert.deepEqual(await readChildStdoutJsonLine(stale), { acquired: true });
-	assert.equal(readArray(await staleExit)[0], 0);
-	const staleClaimPath = await onlyClaimPath();
-	const child = spawn(
-		process.execPath,
-		[
-			"--input-type=module",
-			"--eval",
-			`${acquire} console.log(JSON.stringify({ acquired: true })); await new Promise((resolve) => process.stdin.once("data", resolve)); await lock.release();`,
-		],
-		{ stdio: ["pipe", "pipe", "pipe"] },
-	);
-	t.after(async () => {
-		await stopChildProcess(child);
-	});
-	const childExit = once(child, "exit");
-	assert.deepEqual(await readChildStdoutJsonLine(child), { acquired: true });
-	const liveClaimPath = await onlyClaimPath();
-	assert.notEqual(liveClaimPath, staleClaimPath);
-	await assert.rejects(stat(staleClaimPath), { code: "ENOENT" });
-	await assert.rejects(stat(endpointPath(staleClaimPath)), { code: "ENOENT" });
-	assert.equal(await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 }), undefined);
-	assert.deepEqual(await claimPaths(), [liveClaimPath]);
-	child.stdin.end("release");
-	assert.equal(readArray(await childExit)[0], 0);
-	const recovered = await acquireManagedSessionPolicyLock({ sessionName });
-	assert.ok(recovered);
-	await recovered.release();
-	assert.deepEqual(await claimPaths(), []);
-});
+nodeTest(
+	"managed session policy lock replaces only a proven-dead claim and excludes its live successor",
+	async (t) => {
+		const moduleUrl = new URL(
+			"../dist/extensions/agent-browser/lib/managed-session-policy-lock.js",
+			import.meta.url,
+		).href;
+		const acquire = `import { acquireManagedSessionPolicyLock } from ${JSON.stringify(moduleUrl)}; const lock = await acquireManagedSessionPolicyLock({ sessionName: ${JSON.stringify(sessionName)} }); if (!lock) process.exit(2);`;
+		const stale = spawn(
+			process.execPath,
+			[
+				"--input-type=module",
+				"--eval",
+				`${acquire} console.log(JSON.stringify({ acquired: true }));`,
+			],
+			{ stdio: ["ignore", "pipe", "pipe"] },
+		);
+		t.after(async () => {
+			await stopChildProcess(stale);
+		});
+		const staleExit = once(stale, "exit");
+		assert.deepEqual(await readChildStdoutJsonLine(stale), { acquired: true });
+		assert.equal(readArray(await staleExit)[0], 0);
+		const staleClaimPath = await onlyClaimPath();
+		const child = spawn(
+			process.execPath,
+			[
+				"--input-type=module",
+				"--eval",
+				`${acquire} console.log(JSON.stringify({ acquired: true })); await new Promise((resolve) => process.stdin.once("data", resolve)); await lock.release();`,
+			],
+			{ stdio: ["pipe", "pipe", "pipe"] },
+		);
+		t.after(async () => {
+			await stopChildProcess(child);
+		});
+		const childExit = once(child, "exit");
+		assert.deepEqual(await readChildStdoutJsonLine(child), { acquired: true });
+		const liveClaimPath = await onlyClaimPath();
+		assert.notEqual(liveClaimPath, staleClaimPath);
+		await assert.rejects(stat(staleClaimPath), { code: "ENOENT" });
+		await assert.rejects(stat(endpointPath(staleClaimPath)), { code: "ENOENT" });
+		assert.equal(await acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 50 }), undefined);
+		assert.deepEqual(await claimPaths(), [liveClaimPath]);
+		child.stdin.end("release");
+		assert.equal(readArray(await childExit)[0], 0);
+		const recovered = await acquireManagedSessionPolicyLock({ sessionName });
+		assert.ok(recovered);
+		await recovered.release();
+		assert.deepEqual(await claimPaths(), []);
+	},
+);
 
 function endpointPath(claimPath: string): string {
 	const token = basename(claimPath).slice(claimPrefix.length);
@@ -633,13 +628,13 @@ async function endpointBindingSkip(): Promise<string | false> {
 	const directory = getCoordinationDirectory();
 	assert.ok(await ensureCoordinationDirectory(directory, process.platform));
 	const server = createServer();
-	const error = await new Promise<unknown>((resolve) => {
+	const error = await new Promise<Error | null>((resolve) => {
 		server.once("error", resolve);
 		server.listen(join(directory, `.l-${randomUUID()}`), () => {
-			resolve(undefined);
+			resolve(null);
 		});
 	});
-	if (error === undefined) {
+	if (error === null) {
 		server.close();
 		return false;
 	}
@@ -711,7 +706,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 	return holder;
 }
 
-test(
+nodeTest(
 	"a waiter sleeps on a live holder without identity polling and wakes on its release",
 	{ skip: endpointSkip },
 	async (t) => {
@@ -761,7 +756,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"a subscribed waiter reclaims a killed holder whose surviving child inherited nothing",
 	{ skip: endpointSkip },
 	async (t) => {
@@ -829,7 +824,7 @@ async function writeChoosingClaim(owner: Readonly<Record<string, unknown>>) {
 	};
 }
 
-test(
+nodeTest(
 	"a choosing predecessor that publishes a later ticket never puts the earlier waiter to sleep",
 	{ skip: windowsSkip },
 	async () => {
@@ -873,37 +868,48 @@ async function settlePastBudget(
 	return { outcome, elapsedMs };
 }
 
-test("a polling waiter survives a forward wall-clock step and acquires when its blocker leaves", async (t) => {
-	const choosing = await writeChoosingClaim(await ownOwnerRecord());
-	const stepWallClock = wallClockStepper(t);
-	const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 10_000 });
-	await delay(200);
-	stepWallClock(120_000);
-	await delay(300);
-	await choosing.withdraw();
-	const lock = await waiting;
-	assert.ok(lock, "a forward wall-clock step must not expire the remaining wait");
-	await lock.release();
-});
+nodeTest(
+	"a polling waiter survives a forward wall-clock step and acquires when its blocker leaves",
+	async (t) => {
+		const choosing = await writeChoosingClaim(await ownOwnerRecord());
+		const stepWallClock = wallClockStepper(t);
+		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 10_000 });
+		await delay(200);
+		stepWallClock(120_000);
+		await delay(300);
+		await choosing.withdraw();
+		const lock = await waiting;
+		assert.ok(lock, "a forward wall-clock step must not expire the remaining wait");
+		await lock.release();
+	},
+);
 
-test("a polling waiter times out on its monotonic budget despite a backward wall-clock step", async (t) => {
-	const choosing = await writeChoosingClaim(await ownOwnerRecord());
-	const stepWallClock = wallClockStepper(t);
-	const started = performance.now();
-	const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 1_000 });
-	await delay(200);
-	stepWallClock(-120_000);
-	// A backward wall-clock step must neither extend the wait nor expire it early.
-	const { outcome, elapsedMs } = await settlePastBudget(waiting, started, 1_000, choosing.withdraw);
-	assert.deepEqual(
-		outcome,
-		{ value: undefined },
-		`the 1000 ms wait did not time out by ${elapsedMs} ms`,
-	);
-	assert.ok(elapsedMs >= 1_000, `the 1000 ms wait expired after ${elapsedMs} ms`);
-});
+nodeTest(
+	"a polling waiter times out on its monotonic budget despite a backward wall-clock step",
+	async (t) => {
+		const choosing = await writeChoosingClaim(await ownOwnerRecord());
+		const stepWallClock = wallClockStepper(t);
+		const started = performance.now();
+		const waiting = acquireManagedSessionPolicyLock({ sessionName, timeoutMs: 1_000 });
+		await delay(200);
+		stepWallClock(-120_000);
+		// A backward wall-clock step must neither extend the wait nor expire it early.
+		const { outcome, elapsedMs } = await settlePastBudget(
+			waiting,
+			started,
+			1_000,
+			choosing.withdraw,
+		);
+		assert.deepEqual(
+			outcome,
+			{ value: undefined },
+			`the 1000 ms wait did not time out by ${elapsedMs} ms`,
+		);
+		assert.ok(elapsedMs >= 1_000, `the 1000 ms wait expired after ${elapsedMs} ms`);
+	},
+);
 
-test(
+nodeTest(
 	"an endpoint waiter woken after a forward wall-clock step keeps waiting for a remaining contender",
 	{ skip: endpointSkip },
 	async (t) => {
@@ -930,7 +936,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"an endpoint waiter times out on its monotonic budget despite a backward wall-clock step",
 	{ skip: endpointSkip },
 	async (t) => {
@@ -954,23 +960,26 @@ test(
 	},
 );
 
-test("a forward wall-clock step does not expire a direct call's coordination deadline", async (t) => {
-	const choosing = await writeChoosingClaim(await ownOwnerRecord());
-	const stepWallClock = wallClockStepper(t);
-	const identity = await resolveBrowserExecutionIdentity({
-		sessionName,
-		ownedManagedSession: true,
-	});
-	const ran = withBrowserExecutionLocks(
-		{ identities: [identity], deadline: performance.now() + 10_000, waitOnly: true },
-		async () => "ran",
-	);
-	await delay(200);
-	stepWallClock(120_000);
-	await delay(300);
-	await choosing.withdraw();
-	assert.equal(await ran, "ran");
-});
+nodeTest(
+	"a forward wall-clock step does not expire a direct call's coordination deadline",
+	async (t) => {
+		const choosing = await writeChoosingClaim(await ownOwnerRecord());
+		const stepWallClock = wallClockStepper(t);
+		const identity = await resolveBrowserExecutionIdentity({
+			sessionName,
+			ownedManagedSession: true,
+		});
+		const ran = withBrowserExecutionLocks(
+			{ identities: [identity], deadline: performance.now() + 10_000, waitOnly: true },
+			async () => "ran",
+		);
+		await delay(200);
+		stepWallClock(120_000);
+		await delay(300);
+		await choosing.withdraw();
+		assert.equal(await ran, "ran");
+	},
+);
 
 async function endpointFixtureRoot(t: TestContext): Promise<string> {
 	// The product's own coordination parent: /tmp on macOS/Linux, the private tmpdir on Android.
@@ -981,7 +990,7 @@ async function endpointFixtureRoot(t: TestContext): Promise<string> {
 	return root;
 }
 
-test(
+nodeTest(
 	"a short endpoint path binds and accepts a subscription",
 	{ skip: endpointSkip },
 	async (t) => {
@@ -1003,7 +1012,7 @@ test(
 	},
 );
 
-test(
+nodeTest(
 	"an endpoint path beyond the Unix socket limit falls back without an unhandled error",
 	{ skip: windowsSkip },
 	async (t) => {
@@ -1055,7 +1064,7 @@ function assertSerializedJournal(journal: string, pids: readonly number[]): void
 	const lines = journal.trim().split("\n");
 	assert.equal(lines.length, 8, journal);
 	const observed = Array.from({ length: 4 }, (_, index) => {
-		const start = lines[index * 2];
+		const start = readString(lines[index * 2]);
 		assert.match(start, /^start:\d+$/, journal);
 		assert.equal(lines[index * 2 + 1], start.replace("start:", "end:"), journal);
 		return start.slice("start:".length);
@@ -1073,7 +1082,7 @@ function assertSerializedJournal(journal: string, pids: readonly number[]): void
 	assert.equal(maxActive, 1, journal);
 }
 
-test("competing cross-process reclaimers stay serialized after a stale claim", async (t) => {
+nodeTest("competing cross-process reclaimers stay serialized after a stale claim", async (t) => {
 	const moduleUrl = new URL(
 		"../dist/extensions/agent-browser/lib/managed-session-policy-lock.js",
 		import.meta.url,
