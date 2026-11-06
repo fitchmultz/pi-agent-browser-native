@@ -28,25 +28,29 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.41.1` command/help surface, audited against vercel-labs/agent-browser@5868f7c05020e047c00e68e4abf9253cce864f41. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.41.2` command/help surface, audited against vercel-labs/agent-browser@d52a5e90c372ec4710c69adc3837ac14bbd852aa. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
-### Upstream 0.41.1 qualification
+### Upstream 0.41.2 qualification
 
-The recommended upstream is 0.41.1. Native owns cookie-attribute parsing, error clearing, MCP selector waits, plugin-error redaction, and output/timeout limit validation. Published npm 0.41.1 help is qualified separately from the [pinned Android source](REFERENCE.md#android--termux), which includes additional CDP transport-header support. The wrapper recognizes that source's `--cdp-headers <json>` as one global value and redacts it from invocation presentation; native owns discovery and authentication. The stable runtime floor remains 0.35.0, with no version-specific shim.
+The recommended upstream is 0.41.2. Native owns timeout-setting continuity, bare `open` launch settings, and browserless-command behavior. `skills get <name> --ref <ref>` loads only the requested reference or template; repeat `--ref` for several files from one skill. It cannot combine with `--all` or `--full`. The core overview routes to references rather than requiring the full guide for every task.
+
+Native checks for newer stable Chrome releases with CVE fixes and reports advisory warnings without blocking browser commands. `AGENT_BROWSER_NO_VERSION_CHECK=1` skips that check and its request to the Chrome Releases blog. The wrapper adds no version-checking or session-restart layer. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.2).
+
+Published npm help includes `--cdp-headers <json>` and `AGENT_BROWSER_CDP_HEADERS`. The wrapper already treats that flag as one global value and redacts it from invocation presentation; native owns discovery and authentication. The [pinned Android source](REFERENCE.md#android--termux) remains separately qualified. The stable runtime floor remains 0.35.0, with no version-specific shim.
 
 ### Upstream 0.41.0 rebaseline
 
-The recommended stock npm `agent-browser@0.41.1` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
+The recommended stock npm `agent-browser@0.41.2` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
 
 - Native 0.39.4+ `wait --download <path>` handles downloads that completed before the wait and moves a locally launched browser's downloaded bytes to the requested destination. Native refuses to move files reported by an attached/remote CDP browser. The wrapper still requires on-disk artifact verification; a reported path alone is not success, so supported 0.35.0–0.39.3 natives, which report the path without moving the file, fail as `artifact-missing`. See [native download handling](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L11403-L11508).
 - Native daemon shutdown removes its own `<session>.config` along with other daemon files, while retaining `.target` and `.log`. This prevents new configuration-file accumulation; it does not sweep all historical orphans or optimize the wrapper's socket-directory scan. Updating this metadata cannot speed an installation already running 0.41.0. See [file ownership](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/session_files.rs#L75-L104) and [shutdown cleanup](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/daemon.rs#L147-L151).
 - `batch --bail --omit-command` reduces native JSON output by replacing command arrays with original zero-based indexes. It is not secret redaction: returned values and errors can still contain credentials. See the [batch contract](#batch-auth-confirmations-sessions-chat-dashboard-devices-and-setup) for wrapper handling.
 - `network route --body` accepts `--allow-origin <origin>` for cross-origin mock responses and preflights; JSON mock bodies default to `application/json`. For example: `network route https://api.example.com/data --body '{"ok":true}' --allow-origin https://app.example.com`. Native owns CORS behavior; see [the route parser](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/commands.rs#L3392-L3415).
-- Auto-discovered `./agent-browser.json` cannot set `executablePath`, `args`, or `plugins`; native warns and ignores those fields. User config, environment, CLI flags, or explicitly selected `--config ./agent-browser.json` retain their native authority. This is upstream config loading, not a new Pi wrapper restriction. See [native config precedence](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/flags.rs#L368-L424).
+- Auto-discovered `./agent-browser.json` accepts only native allowlisted presentation preferences: `headed`, `json`, `debug`, `userAgent`, `hideScrollbars`, `annotate`, `colorScheme`, `maxOutput`, `screenshotQuality`, `screenshotFormat`, and `idleTimeout`. Other runtime settings warn and are ignored; `$schema` is ignored silently. User config, environment, CLI flags, or explicitly selected `--config ./agent-browser.json` retain their native authority. This is upstream config loading, not a new Pi wrapper restriction. See [native config precedence](https://github.com/vercel-labs/agent-browser/blob/d52a5e90c372ec4710c69adc3837ac14bbd852aa/cli/src/flags.rs#L271-L319).
 - Native 0.40+ state restoration uses origin-scoped DevTools storage writes rather than page-script setters and writes an origin only while the page stays on it. `state load` reports `skippedOrigins`; `session info` reports `restoreSkippedOrigins` for automatic restore and launch-time `--state`. Default wrapper text shows a nonempty `skippedOrigins` list after `State loaded` and includes `restoreSkippedOrigins` in `session info` runtime metadata; `details.data` and explicit `--json` keep the native fields. Inspect skipped origins instead of assuming every saved origin restored. See [storage restoration](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/state.rs#L463-L543) and [restore reporting](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L7529-L7590).
 - Native 0.41 adds finite `mcp call <tool>` invocations and `@agent-browser/sandbox/mcp-tools.json`. **This extension does not support non-help MCP invocations**, including `mcp call`; its current validation rejects them. Session identity, cross-session coordination, credential presentation, and image handling remain unresolved. See the [MCP boundary](TOOL_CONTRACT.md#native-mcp-boundary), not a promise of wrapper support.
 - Crossed upstream fixes also cover auth-key preservation, copied-profile crash prompts, process-identity cleanup, Windows output capture, high-DPI/element screenshots, wedged tabs, and pinned-tab ownership. Those are upstream fixes, not wrapper emulation or full Windows qualification. The upstream `@agent-browser/eve` extension's 0.41 tool renaming does not rename this package's Pi tools.
@@ -703,15 +707,16 @@ Native-tool note: upstream skills are written for the standalone `agent-browser`
 
 Session note: `skills list`, `skills get …`, and `skills path …` are **stateless** in this wrapper. Even with default `sessionMode: "auto"`, the extension does not prepend the implicit managed `--session` for those commands, so reading bundled skills does not attach to or rotate the active browser session (same intent as plain-text `--help` / `--version` inspection). Other `skills` subcommands follow normal session rules until explicitly allowlisted in `extensions/agent-browser/lib/runtime.ts` alongside regression coverage in `test/agent-browser.runtime.test.ts`.
 
-| Command                    | Purpose                                                                                                                                                                                                                                                                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `skills list`              | List available CLI-bundled skills.                                                                                                                                                                                                                                                                                                    |
-| `skills get core`          | Print the core usage guide.                                                                                                                                                                                                                                                                                                           |
-| `skills get core --full`   | Print the full version-matched core command reference and templates.                                                                                                                                                                                                                                                                  |
-| `skills get <name>`        | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, `skills get derive-client` (HAR-to-API-client workflow), and `skills get webmcp-gen` (create and validate page tools). |
-| `skills get <name> --full` | Include a skill's supplementary references/templates when present.                                                                                                                                                                                                                                                                    |
-| `skills get --all`         | Print all visible bundled skills for broad audit/debug work.                                                                                                                                                                                                                                                                          |
-| `skills path [name]`       | Print a skill directory path.                                                                                                                                                                                                                                                                                                         |
+| Command                         | Purpose                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skills list`                   | List available CLI-bundled skills.                                                                                                                                                                                                                                                                                                    |
+| `skills get core`               | Print the core usage guide.                                                                                                                                                                                                                                                                                                           |
+| `skills get core --full`        | Print the full version-matched core command reference and templates.                                                                                                                                                                                                                                                                  |
+| `skills get <name>`             | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, `skills get derive-client` (HAR-to-API-client workflow), and `skills get webmcp-gen` (create and validate page tools). |
+| `skills get <name> --full`      | Include a skill's supplementary references/templates when present.                                                                                                                                                                                                                                                                    |
+| `skills get <name> --ref <ref>` | Load only the named reference or template by relative path, file name, or stem. Repeat `--ref` for several files from one skill.                                                                                                                                                                                                      |
+| `skills get --all`              | Print all visible bundled skills for broad audit/debug work.                                                                                                                                                                                                                                                                          |
+| `skills path [name]`            | Print a skill directory path.                                                                                                                                                                                                                                                                                                         |
 
 Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an override for bundled skill discovery. Normal agents should not need it, but it is useful when validating package layout or upstream skill packaging.
 
@@ -1091,7 +1096,7 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 - `--webgpu`: enable upstream's platform-specific WebGPU launch preset. Environment: `AGENT_BROWSER_WEBGPU`; config: `"webgpu": true`. Use it on a fresh local launch. It is incompatible while enabled with `--cdp`, `--auto-connect`, and provider launches. `AGENT_BROWSER_NO_XVFB=1` disables upstream's automatic Xvfb for displayless headed Linux sessions.
 - `--no-webmcp`: disable experimental WebMCP support, which upstream 0.36.0 enables by default for locally managed Chrome. Environment: `AGENT_BROWSER_NO_WEBMCP`; config: `noWebmcp`. Use it on a fresh launch; `--no-webmcp false` explicitly enables the launch feature when config or environment disabled it.
 - `--cdp <port|url>`: connect through Chrome DevTools Protocol. Use it, `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
-- `--cdp-headers <json>` (pinned Android source build): send a JSON object of string-valued headers for native CDP HTTP discovery and WebSocket authentication. Environment: `AGENT_BROWSER_CDP_HEADERS`. Supply it with the initial `--cdp` call or an explicit `connect`; these are transport credentials, not page/origin `--headers`. Values pass through unchanged and are redacted from invocation presentation. Published stock 0.41.1 help does not advertise this flag.
+- `--cdp-headers <json>`: send a JSON object of string-valued headers for native CDP HTTP discovery and WebSocket authentication. Environment: `AGENT_BROWSER_CDP_HEADERS`. Supply it with the initial `--cdp` call or an explicit `connect`; these are transport credentials, not page/origin `--headers`. Values pass through unchanged and are redacted from invocation presentation. Published stock 0.41.2 help advertises this flag.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
 - `--engine <name>`: `chrome` by default, `lightpanda`, or experimental `obscura`. Environment: `AGENT_BROWSER_ENGINE`. Launch-scoped; use `sessionMode: "fresh"` when changing a managed browser. See [Lightpanda](#lightpanda-engine) and [Obscura](#obscura-engine-experimental).
@@ -1212,16 +1217,17 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.41.1</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.41.2</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `5868f7c05020e047c00e68e4abf9253cce864f41`
-- upstream package version: `0.41.1`
-- inspected: `stock npm agent-browser@0.41.1 package, official release binary, and upstream source`
+- upstream HEAD: `d52a5e90c372ec4710c69adc3837ac14bbd852aa`
+- upstream package version: `0.41.2`
+- inspected: `stock npm agent-browser@0.41.2 package and official release binary`
+- inspected: `v0.41.1...v0.41.2 release notes and interface source diff`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1230,6 +1236,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `agent-browser plugin --help`
 - inspected: `agent-browser skills list`
 - inspected: `agent-browser skills get core --full`
+- inspected: `agent-browser skills get core --ref commands --json`
+- inspected: `cli/src/skills.rs`
+- inspected: `cli/src/browser_security.rs`
+- inspected: `cli/src/session_settings/running.rs`
 - inspected: `agent-browser skills get derive-client --full`
 - inspected: `agent-browser skills get webmcp-gen --full`
 - inspected: `README.md`
@@ -1299,6 +1309,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills help: `agent-browser skills --help`
 - skills list: `agent-browser skills list`
 - core skill full: `agent-browser skills get core --full`
+- core command reference: `agent-browser skills get core --ref commands`
 - vercel sandbox skill full: `agent-browser skills get vercel-sandbox --full`
 - protected Vercel deployments skill full: `agent-browser skills get protected-vercel-deployments --full`
 - WebMCP generation skill full: `agent-browser skills get webmcp-gen --full`
@@ -1357,12 +1368,12 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Inventory sections
 
-- Built-in skills: 19 human-doc token(s), 24 upstream token(s)
+- Built-in skills: 20 human-doc token(s), 26 upstream token(s)
 - Core page, element, navigation, and extraction commands: 89 human-doc token(s), 94 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 30 human-doc token(s), 27 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 63 human-doc token(s), 72 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 40 human-doc token(s), 47 upstream token(s)
-- Global flags, config, providers, policy, and environment: 163 human-doc token(s), 130 upstream token(s)
+- Global flags, config, providers, policy, and environment: 166 human-doc token(s), 133 upstream token(s)
 
 #### Human-authored doc tokens required
 
@@ -1373,6 +1384,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get core --full`
 - `skills get <name>`
 - `skills get <name> --full`
+- `skills get <name> --ref <ref>`
 - `skills get --all`
 - `skills get electron`
 - `skills get slack`
@@ -1690,8 +1702,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_NO_WEBMCP`
 - `noWebmcp`
 - `AGENT_BROWSER_NO_XVFB`
+- `AGENT_BROWSER_NO_VERSION_CHECK`
 - `"webgpu": true`
 - `--cdp <port|url>`
+- `--cdp-headers <json>`
+- `AGENT_BROWSER_CDP_HEADERS`
 - `--color-scheme <scheme>`
 - `AGENT_BROWSER_COLOR_SCHEME`
 - `--download-path <path>`
@@ -1794,6 +1809,8 @@ This generated block is review data for maintainers. The human-authored referenc
 
 - root help: `skills get core --full`
 - skills help: `get <name> --full`
+- skills help: `get <name> --ref <ref>`
+- core command reference: `# Command Reference`
 - skills help: `get --all`
 - skills help: `AGENT_BROWSER_SKILLS_DIR`
 - skills list: `core`
@@ -2033,7 +2050,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - dashboard help: `AGENT_BROWSER_DASHBOARD_ALLOWED_ORIGINS`
 - device help: `device list`
 - root help: `install --with-deps`
-- install help: `fails if deps fail`
+- install help: `directly as root; non-root uses sudo.`
 - root help: `upgrade`
 - root help: `doctor [--fix]`
 - root help: `profiles`
@@ -2135,6 +2152,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--no-webmcp`
 - root help: `AGENT_BROWSER_NO_WEBMCP`
 - root help: `--cdp <port|url>`
+- root help: `--cdp-headers <json>`
+- root help: `AGENT_BROWSER_CDP_HEADERS`
+- root help: `AGENT_BROWSER_NO_VERSION_CHECK`
 - root help: `--color-scheme <scheme>`
 - root help: `AGENT_BROWSER_COLOR_SCHEME`
 - root help: `--download-path <path>`
@@ -2187,7 +2207,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--debug`
 - root help: `AGENT_BROWSER_DEBUG`
 - root help: `--config <path>`
-- root help: `The auto-discovered ./agent-browser.json cannot set executablePath, args or plugins`
+- root help: `The auto-discovered ./agent-browser.json accepts only:`
 - root help: `AGENT_BROWSER_CONFIG`
 - root help: `AGENT_BROWSER_DEFAULT_TIMEOUT`
 - root help: `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS`

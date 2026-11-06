@@ -1,10 +1,11 @@
 /** Audited upstream source evidence and the native help commands sampled for drift. */
 export const sourceEvidence = Object.freeze({
 	repository: "vercel-labs/agent-browser",
-	upstreamHead: "5868f7c05020e047c00e68e4abf9253cce864f41",
-	upstreamPackageVersion: "0.41.1",
+	upstreamHead: "d52a5e90c372ec4710c69adc3837ac14bbd852aa",
+	upstreamPackageVersion: "0.41.2",
 	inspectedSources: Object.freeze([
-		"stock npm agent-browser@0.41.1 package, official release binary, and upstream source",
+		"stock npm agent-browser@0.41.2 package and official release binary",
+		"v0.41.1...v0.41.2 release notes and interface source diff",
 		"agent-browser --version",
 		"agent-browser --help",
 		"selected agent-browser <command> --help output",
@@ -13,6 +14,10 @@ export const sourceEvidence = Object.freeze({
 		"agent-browser plugin --help",
 		"agent-browser skills list",
 		"agent-browser skills get core --full",
+		"agent-browser skills get core --ref commands --json",
+		"cli/src/skills.rs",
+		"cli/src/browser_security.rs",
+		"cli/src/session_settings/running.rs",
 		"agent-browser skills get derive-client --full",
 		"agent-browser skills get webmcp-gen --full",
 		"README.md",
@@ -84,6 +89,7 @@ export const helpCommands = Object.freeze([
 	helpCommand("skills help", ["skills", "--help"]),
 	helpCommand("skills list", ["skills", "list"]),
 	helpCommand("core skill full", ["skills", "get", "core", "--full"]),
+	helpCommand("core command reference", ["skills", "get", "core", "--ref", "commands"]),
 	helpCommand("vercel sandbox skill full", ["skills", "get", "vercel-sandbox", "--full"]),
 	helpCommand("protected Vercel deployments skill full", [
 		"skills",
