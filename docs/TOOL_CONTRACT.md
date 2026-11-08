@@ -148,7 +148,7 @@ For Exa, `details.searchType` is the effective requested type even when the prov
 | UI/source candidates             | `agent_browser_source`         | Flat selector/fiber/component fields                      |
 | Failed-request/source candidates | `agent_browser_network_source` | Flat request/filter fields                                |
 
-The five specialized tools are deferred: load one with native `tool_search` (for example `{ "query": "agent_browser_qa" }`) or call it from a codemode script. Pi's native selected-tool history handles reload/resume. When neither `tool_search` nor codemode is active, the extension warns once that specialized tools that are not selected directly cannot be called. If an exact recovery action names a deferred tool that is not declared yet, load it or run it from codemode before using that payload.
+The five specialized tools are deferred: load one with native `tool_search` (for example `{ "query": "agent_browser_qa" }`) or call it from a codemode script. Pi's native selected-tool history handles reload/resume. When neither `tool_search` nor codemode is active as a run starts, the extension warns once that specialized tools that are not selected directly cannot be called. If an exact recovery action names a deferred tool that is not declared yet, load it or run it from codemode before using that payload.
 
 Use exact labels from the latest snapshot. Return to the model when a fresh observation needs judgment. Neither native batch nor codemode is a named recipe registry.
 

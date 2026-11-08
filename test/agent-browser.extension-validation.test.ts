@@ -67,21 +67,23 @@ nodeTest(
 		const extension: unknown = await import(
 			pathToFileURL(resolve("dist/extensions/agent-browser/index.js")).href
 		);
-		let beforeStart: ((event: unknown, ctx: unknown) => Promise<void>) | undefined;
+		const beforeStart: ((event: unknown, ctx: unknown) => Promise<void> | void)[] = [];
 		const pi = {
 			events: {
 				on: () => () => {
 					/* No event bus listeners are exercised by prompt composition. */
 				},
 			},
-			on: (name: string, handler: typeof beforeStart) => {
+			on: (name: string, handler: (typeof beforeStart)[number]) => {
 				if (name === "before_agent_start") {
-					beforeStart = handler;
+					beforeStart.push(handler);
 				}
 			},
 			registerTool: () => {
 				/* This fixture exercises prompt hooks, not tool registration. */
 			},
+			getAllTools: () => [],
+			getActiveTools: () => [],
 		};
 		const factory = readRecord(extension).default;
 		assert.ok(typeof factory === "function");
@@ -89,8 +91,9 @@ nodeTest(
 
 		const sections: Record<string, string> = {};
 		const event = { systemPromptOptions: { sections } };
-		assert.ok(beforeStart);
-		await beforeStart(event, { cwd: process.cwd(), isProjectTrusted: () => true });
+		for (const handler of beforeStart) {
+			await handler(event, { cwd: process.cwd(), isProjectTrusted: () => true });
+		}
 		const guideline = readDefined(event.systemPromptOptions.sections.agent_browser)
 			.split("\n")
 			.find((line) => line.includes("COMMAND_REFERENCE.md"));

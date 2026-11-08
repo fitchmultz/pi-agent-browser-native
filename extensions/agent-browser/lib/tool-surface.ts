@@ -246,9 +246,12 @@ export function registerAgentBrowserToolSurface(
 	options: AgentBrowserToolSurfaceOptions,
 ): void {
 	// Like Pi's own MCP extension, warn once instead of leaving deferred tools silently unreachable.
+	// Check as a run starts: extensions that load later, such as Pi's MCP extension, can still
+	// activate tool_search or codemode in their own session_start handlers.
 	let warnedUnreachable = false;
-	const settleToolSearch = (ctx: ExtensionContext): void => {
-		activateToolSearch(pi, ctx);
+	pi.on("session_start", (_event, ctx) => activateToolSearch(pi, ctx));
+	pi.on("session_tree", (_event, ctx) => activateToolSearch(pi, ctx));
+	pi.on("before_agent_start", (_event, ctx) => {
 		if (warnedUnreachable || deferredToolsReachable(pi)) {
 			return;
 		}
@@ -257,9 +260,7 @@ export function registerAgentBrowserToolSurface(
 			"Browser tools that are not selected directly are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
 			"warning",
 		);
-	};
-	pi.on("session_start", (_event, ctx) => settleToolSearch(ctx));
-	pi.on("session_tree", (_event, ctx) => settleToolSearch(ctx));
+	});
 	// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 	const execute: AgentBrowserExecutor = async (id, params, signal, onUpdate, ctx) =>
 		finalizeAgentBrowserNativeResult(
