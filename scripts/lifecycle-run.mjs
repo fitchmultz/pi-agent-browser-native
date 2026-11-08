@@ -276,7 +276,7 @@ async function resumeLifecycle(runtime, observed) {
 	const qaFailureReport = await runPromptAndWaitForResult({
 		...common,
 		describe: "qa reclassification failure patch",
-		prompt: `First use agent_browser_tools with {"enable":["qa"]}. Then ${buildToolInputPrompt({ url: "https://fail.example.test/", expectedText: ["Welcome"], expectedSelector: "main" }, "", "agent_browser_qa")}`,
+		prompt: `First use tool_search with {"query":"agent_browser_qa"}. Then ${buildToolInputPrompt({ url: "https://fail.example.test/", expectedText: ["Welcome"], expectedSelector: "main" }, "", "agent_browser_qa")}`,
 		predicate: (result) =>
 			result.details?.failureCategory === "qa-failure" &&
 			result.details.resultCategory === "failure" &&

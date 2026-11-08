@@ -18,7 +18,7 @@ export const AGENT_BROWSER_NAMESPACE: ToolNamespace = {
 	description:
 		"Browser commands, bounded browser code, advanced UI checks, Electron, and optional web search.",
 	instructions:
-		"Use agent_browser for native commands and batch --bail for fixed sequences. Use agent_browser_code for a fresh bounded JS cell with a persistent browser. Enable advanced direct tools with agent_browser_tools before calling them. Check success and nextActions; structured imageObservations are capture metadata, not inline images. Optional web search is available only when configured. Full browser instructions remain in the agent_browser prompt section.",
+		"Use agent_browser for native commands and batch --bail for fixed sequences. Deferred tools (action, qa, electron, source, network_source) load through tool_search or run directly from codemode scripts. Check success and nextActions; structured imageObservations are capture metadata, not inline images. Optional web search is available only when configured.",
 };
 
 export const AGENT_BROWSER_OUTPUT_SCHEMA = JsonSchema.Object(

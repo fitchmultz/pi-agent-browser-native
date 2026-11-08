@@ -24,8 +24,7 @@ export function printDocsHelp() {
 	console.log(`npm run docs -- [target] [mode]
 
 Targets:
-  all                 Playbook and command-reference generated blocks (default).
-  playbook            Only generated playbook blocks.
+  all                 Command-reference generated blocks (default).
   command-reference   Only command-reference baseline blocks.
 
 Modes:
@@ -35,7 +34,6 @@ Modes:
 Examples:
   npm run docs
   npm run docs -- write
-  npm run docs -- playbook write
   npm run docs -- command-reference check
 
 Exit codes:

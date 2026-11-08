@@ -246,6 +246,7 @@ nodeTest("buildSettingsPayload isolates the configured package source", () => {
 	assert.deepEqual(settings.skills, []);
 	assert.deepEqual(settings.prompts, []);
 	assert.deepEqual(settings.themes, []);
+	assert.deepEqual(settings.defaultTools, ["+tool_search"]);
 	assert.equal(settings.enableInstallTelemetry, false);
 });
 
@@ -286,7 +287,7 @@ nodeTest(
 				}),
 				JSON.stringify({
 					type: "message",
-					message: { role: "toolResult", toolName: "agent_browser_tools" },
+					message: { role: "toolResult", toolName: "tool_search" },
 				}),
 				JSON.stringify({
 					type: "message",

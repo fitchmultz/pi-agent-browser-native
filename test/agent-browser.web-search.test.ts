@@ -113,12 +113,9 @@ nodeTest(
 			async () => {
 				const harness = createExtensionHarness({ cwd: fixture.cwd });
 				assert.equal(harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME), undefined);
-				assert.equal(
-					(await getBrowserInstructions(harness)).includes(
-						"Use agent_browser for real browser or live web content.",
-					),
-					true,
-				);
+				const guidelines = await getBrowserInstructions(harness);
+				assert.doesNotMatch(guidelines, /agent_browser_web_search/);
+				assert.match(guidelines, /CAPTCHA/);
 			},
 		);
 	},
@@ -446,9 +443,6 @@ nodeTest(
 				[AGENT_BROWSER_CONFIG_ENV]: undefined,
 				[BRAVE_API_KEY_ENV]: "test-secret",
 				[EXA_API_KEY_ENV]: undefined,
-				// Ambient compact settings omit WEB_SEARCH_TOOL_PROMPT_GUIDELINES from the unmanaged fallback.
-				AGENT_BROWSER_COMPACT_FALLBACK: undefined,
-				AGENT_BROWSER_PLAYBOOK: undefined,
 			},
 			async () => {
 				const harness = createExtensionHarness({ cwd: fixture.cwd });
@@ -456,22 +450,9 @@ nodeTest(
 				assert.ok(tool);
 				assert.ok(harness.getTool("agent_browser"));
 				const guidelines = await getBrowserInstructions(harness);
-				assert.match(
-					guidelines,
-					/Prefer agent_browser_web_search for current or external web facts/,
-				);
-				assert.match(guidelines, /public search-engine forms/);
-				assert.match(guidelines, /anti-bot\/CAPTCHA-gated/);
-				assert.match(guidelines, /searchType: deep-lite/);
-				assert.match(guidelines, /omit it for everyday lookups/);
-				assert.match(guidelines, /Provider rank is not proof of authority/);
-				assert.match(guidelines, /primary current docs/);
-				assert.match(guidelines, /Exa includeDomains; Brave site:/);
-				assert.match(guidelines, /URL aliases/);
-				assert.match(guidelines, /after you have a target URL/);
-				assert.doesNotMatch(guidelines, /one query, one follow-up max/);
-				assert.match(guidelines, /Do not run parallel agent_browser_web_search calls/);
-				assert.match(guidelines, /HTTP 429/);
+				assert.match(guidelines, /agent_browser_web_search for live discovery/);
+				assert.match(guidelines, /searchType deep-lite/);
+				assert.match(guidelines, /Cite result URLs/);
 				assert.match(tool.description, /deep-lite/);
 				const schemaProperties = readRecord(readRecord(tool.parameters).properties);
 				assert.match(

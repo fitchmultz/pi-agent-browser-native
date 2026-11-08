@@ -20,7 +20,6 @@ import {
 	createAgentBrowserElectronParamsSchema,
 	createAgentBrowserSourceParamsSchema,
 	createAgentBrowserNetworkSourceParamsSchema,
-	createAgentBrowserToolsParamsSchema,
 } from "../extensions/agent-browser/lib/input-modes/params.js";
 import { compileAgentBrowserSemanticAction } from "../extensions/agent-browser/lib/input-modes/semantic-action.js";
 import { AGENT_BROWSER_SEMANTIC_LOCATORS } from "../extensions/agent-browser/lib/input-modes/types.js";
@@ -323,11 +322,6 @@ nodeTest("advanced schemas keep host timeouts and bounded scanner controls", asy
 			assert.equal(Check(createSchema(), { maxWorkspaceFiles: 5001 }), false);
 		});
 	}
-	const loader = createAgentBrowserToolsParamsSchema();
-	assert.equal(Check(loader, {}), true);
-	assert.equal(Check(loader, { enable: ["action", "qa", "electron", "source", "network"] }), true);
-	assert.equal(Check(loader, { enable: ["script"] }), false);
-	assert.equal(Check(loader, { disable: ["qa"] }), false);
 });
 
 nodeTest(

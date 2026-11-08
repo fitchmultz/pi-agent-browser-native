@@ -16,6 +16,7 @@ import { pathToFileURL } from "node:url";
 import nodeTest from "node:test";
 
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import * as piTui from "@earendil-works/pi-tui";
 import { Text, visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
@@ -30,7 +31,6 @@ import {
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
-	runExtensionEventResults,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 	type AgentBrowserToolParams,
@@ -48,6 +48,17 @@ import {
 	isTestPidAlive,
 } from "./helpers/extension-validation-fixtures.js";
 import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
+
+const isTextTransform = (value: unknown): value is (text: string) => string =>
+	typeof value === "function";
+/**
+ * The maintained fork annotates rendered rows with private selection metadata that it strips
+ * before terminal output; official pi-tui renders plain rows. Assertions compare visible text.
+ */
+const stripPrivateRenderMetadata: (text: string) => string = (() => {
+	const candidate: unknown = Reflect.get(piTui, "stripSelectionMetadata");
+	return isTextTransform(candidate) ? candidate : (text) => text;
+})();
 
 nodeTest(
 	"built extension prompt doc pointers resolve to package-root docs",
@@ -148,8 +159,7 @@ nodeTest(
 					/\/Applications\/Global Browser\.app\/Contents\/MacOS\/Global Browser/,
 				);
 				assert.match(globalGuidance, /browser\.executablePath/);
-				assert.match(globalGuidance, /--executable-path/);
-				assert.match(globalGuidance, /profiles lists Chrome profiles only/);
+				assert.match(globalGuidance, /--profile "Global Profile"/);
 			});
 			await writeFile(
 				projectConfigPath,
@@ -214,7 +224,7 @@ nodeTest("agentBrowserExtension rejects unsupported public schema fields", () =>
 	assert.equal(harness.tool.name, "agent_browser");
 	assert.match(harness.tool.description, /native agent-browser commands/);
 	assert.match(harness.tool.promptSnippet, /native command batches/);
-	assert.match(harness.tool.description, /agent_browser_tools for advanced capabilities/);
+	assert.match(harness.tool.description, /codemode scripts/);
 	const parameterProperties = readRecord(readRecord(schema).properties);
 	assert.deepEqual(Object.keys(parameterProperties).sort(), [
 		"args",
@@ -231,10 +241,6 @@ nodeTest("agentBrowserExtension rejects unsupported public schema fields", () =>
 	assert.match(
 		harness.getTool("agent_browser_code")?.description ?? "",
 		/persistent browser.*emitImage/,
-	);
-	assert.match(
-		harness.getTool("agent_browser_tools")?.description ?? "",
-		/adds tools.*preserves other active tools/,
 	);
 	const direct = {
 		args: ["open", "https://example.test/"],
@@ -3098,6 +3104,7 @@ nodeTest(
 		};
 		const callText = renderCall(params, PLAIN_RENDER_THEME, createRenderContext({ args: params }))
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(callText, /<toolTitle>\*\*agent_browser\*\*<\/toolTitle>/);
 		assert.match(callText, /<accent>eval --stdin<\/accent>/);
@@ -3111,6 +3118,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(qaCallText, /<accent>qa<\/accent>/);
 		assert.match(qaCallText, /<dim>→<\/dim> <accent>batch --bail<\/accent>/);
@@ -3121,6 +3129,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(semanticActionCallText, /<accent>semanticAction<\/accent>/);
 		assert.match(
@@ -3136,6 +3145,7 @@ nodeTest(
 			createRenderContext({ args: scriptParams }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(collapsedScriptCallText, /<toolTitle>\*\*agent_browser_code\*\*<\/toolTitle>/);
 		assert.match(collapsedScriptCallText, /const rows = \[\]/);
@@ -3148,6 +3158,7 @@ nodeTest(
 			createRenderContext({ args: scriptParams, expanded: true }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(expandedScriptCallText, /<dim>Source:<\/dim>/);
 		assert.match(
@@ -3170,6 +3181,7 @@ nodeTest(
 			createRenderContext({ args: maliciousParams }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		// Model-supplied text must not emit NUL, BEL, or terminal escape controls.
 		assert.doesNotMatch(maliciousCallText, /[\x00\x07\x1B]/);
@@ -3198,14 +3210,17 @@ nodeTest(
 			PLAIN_RENDER_THEME,
 			createRenderContext({ args: params }),
 		);
-		const collapsedLines = collapsedComponent.render(80);
+		const collapsedLines = collapsedComponent.render(80).map(stripPrivateRenderMetadata);
 		const collapsedText = collapsedLines.join("\n");
-		const wideCollapsedText = collapsedComponent.render(200).join("\n");
+		const wideCollapsedText = collapsedComponent
+			.render(200)
+			.map(stripPrivateRenderMetadata)
+			.join("\n");
 		assert.ok(
 			collapsedLines.every((line) => visibleWidth(line) <= 80),
 			"collapsed render lines must fit width",
 		);
-		const narrowCollapsedLines = collapsedComponent.render(24);
+		const narrowCollapsedLines = collapsedComponent.render(24).map(stripPrivateRenderMetadata);
 		assert.ok(
 			narrowCollapsedLines.every((line) => visibleWidth(line) <= 24),
 			"narrow collapsed render lines must fit width",
@@ -3239,6 +3254,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(100)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(
 			failedCollapsedText,
@@ -3258,7 +3274,7 @@ nodeTest(
 			PLAIN_RENDER_THEME,
 			createRenderContext({ args: params, expanded: true, lastComponent: collapsedComponent }),
 		);
-		const expandedText = expandedComponent.render(80).join("\n");
+		const expandedText = expandedComponent.render(80).map(stripPrivateRenderMetadata).join("\n");
 		assert.match(expandedText, /item-24/);
 		assert.doesNotMatch(expandedText, /\.\.\. \(\d+ more lines/);
 
@@ -3293,7 +3309,7 @@ nodeTest(
 			renderState(false),
 		);
 		assert.ok(colorCalls > 20, "initial JSON tokens are colorized");
-		const firstCachedLines = cached.render(80);
+		const firstCachedLines = cached.render(80).map(stripPrivateRenderMetadata);
 		colorCalls = 0;
 		const setTextDescriptor = Object.getOwnPropertyDescriptor(Text.prototype, "setText");
 		assert.ok(setTextDescriptor);
@@ -3336,35 +3352,44 @@ nodeTest(
 		} finally {
 			Object.defineProperty(Text.prototype, "setText", setTextDescriptor);
 		}
-		assert.deepEqual(cached.render(80), firstCachedLines);
+		assert.deepEqual(cached.render(80).map(stripPrivateRenderMetadata), firstCachedLines);
 		cached.setResult(
 			longResult,
 			{ expanded: true, isPartial: false },
 			liveTheme,
 			renderState(false),
 		);
-		assert.match(cached.render(24).join("\n"), /item-24/);
+		assert.match(cached.render(24).map(stripPrivateRenderMetadata).join("\n"), /item-24/);
 		cached.setResult(
 			failedResult,
 			{ expanded: false, isPartial: false },
 			liveTheme,
 			renderState(true),
 		);
-		assert.match(cached.render(200).join("\n"), /selector-not-found/);
+		assert.match(
+			cached.render(200).map(stripPrivateRenderMetadata).join("\n"),
+			/selector-not-found/,
+		);
 		cached.setResult(
 			{ ...failedResult, details: { resultCategory: "failure", failureCategory: "timeout" } },
 			{ expanded: false, isPartial: false },
 			liveTheme,
 			renderState(true),
 		);
-		assert.match(cached.render(200).join("\n"), /failureCategory: timeout/);
+		assert.match(
+			cached.render(200).map(stripPrivateRenderMetadata).join("\n"),
+			/failureCategory: timeout/,
+		);
 		cached.setResult(
 			longResult,
 			{ expanded: false, isPartial: true },
 			liveTheme,
 			renderState(false),
 		);
-		assert.match(cached.render(200).join("\n"), /Running agent-browser/);
+		assert.match(
+			cached.render(200).map(stripPrivateRenderMetadata).join("\n"),
+			/Running agent-browser/,
+		);
 		themeVersion = {};
 		themePrefix = "changed-theme:";
 		cached.setResult(
@@ -3373,7 +3398,7 @@ nodeTest(
 			liveTheme,
 			renderState(false),
 		);
-		assert.match(cached.render(200).join("\n"), /changed-theme:/);
+		assert.match(cached.render(200).map(stripPrivateRenderMetadata).join("\n"), /changed-theme:/);
 
 		const scalarResult: AgentToolResult<unknown> = {
 			content: [
@@ -3391,6 +3416,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(120)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		// Scalar output must strip NUL, BEL, and terminal escape controls.
 		assert.doesNotMatch(scalarText, /[\x00\x07\x1B]/);
@@ -3410,6 +3436,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(120)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		// Fallback prose must strip NUL, BEL, and terminal escape controls too.
 		assert.doesNotMatch(fallbackText, /[\x00\x07\x1B]/);
@@ -3417,191 +3444,13 @@ nodeTest(
 	},
 );
 
-nodeTest(
-	"agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt, env, or package dev cwd explicitly allows it",
-	async (t) => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bash-policy-"));
-		t.after(async () => await rm(tempDir, { force: true, recursive: true }));
-		const defaultHarness = createExtensionHarness({
-			cwd: tempDir,
-			prompt: "Open a page and summarize it.",
-		});
-		const noHistoryCtx = {
-			...defaultHarness.ctx,
-			sessionManager: {
-				...defaultHarness.ctx.sessionManager,
-				getBranch() {
-					throw new Error("Unrelated tool calls must not copy the branch");
-				},
-				getEntry() {
-					throw new Error("Unrelated tool calls must not query history");
-				},
-			},
-		};
-		for (const event of [
-			{ toolName: "read", input: { path: "README.md" } },
-			{ toolName: "agent_browser_tools", input: {} },
-			{ toolName: "bash", input: { command: "printf audit" } },
-			{ toolName: "bash", input: { command: "which agent-browser" } },
-		]) {
-			await t.test(JSON.stringify(event), async () => {
-				assert.deepEqual(
-					// Preserve event order against the shared branch-history guard fixture.
-					await runExtensionEventResults(defaultHarness.handlers, "tool_call", event, noHistoryCtx),
-					[],
-				);
-			});
-		}
-		for (const command of [
-			"agent-browser open https://example.com",
-			"FOO=bar agent-browser --version",
-			'FOO="bar baz" agent-browser --version',
-			"PATH=/tmp:$PATH agent-browser open https://example.com",
-			"echo ready\nagent-browser open https://example.com",
-			"which agent-browser && agent-browser open https://example.com",
-			"cat <<'EOF'\nwhich agent-browser\nEOF\nagent-browser open https://example.com",
-			"env agent-browser --version",
-			"npx --yes agent-browser open https://example.com",
-			"pnpm dlx agent-browser open https://example.com",
-			"/opt/homebrew/bin/agent-browser open https://example.com",
-		]) {
-			await t.test(`blocked: ${command}`, async () => {
-				// Shell probes share mutable user-intent and branch state.
-				const [blocked] = await runExtensionEventResults(
-					defaultHarness.handlers,
-					"tool_call",
-					{ toolName: "bash", input: { command } },
-					defaultHarness.ctx,
-				);
-				assert.equal(readRecord(blocked).block, true, command);
-				assert.match(
-					readString(readRecord(blocked).reason),
-					/Use the native agent_browser tool instead of bash/i,
-				);
-			});
-		}
-
-		const userMessage = {
-			role: "user",
-			content: "Please debug the browser integration via bash.",
-			timestamp: 0,
-		};
-		await runExtensionEvent(
-			defaultHarness.handlers,
-			"message_end",
-			{ message: userMessage },
-			defaultHarness.ctx,
-		);
-		const directEvent = {
-			toolName: "bash",
-			input: { command: "agent-browser open https://example.com" },
-		};
-		assert.deepEqual(
-			await runExtensionEventResults(
-				defaultHarness.handlers,
-				"tool_call",
-				directEvent,
-				noHistoryCtx,
-			),
-			[],
-		);
-		// Pi applies later message_end replacements to this same message before persistence.
-		userMessage.content = "Open a page and summarize it.";
-		const [blockedAfterReplacement] = await runExtensionEventResults(
-			defaultHarness.handlers,
-			"tool_call",
-			directEvent,
-			noHistoryCtx,
-		);
-		assert.equal(readRecord(blockedAfterReplacement).block, true);
-		userMessage.content = "Please debug the browser integration via bash.";
-		await runExtensionEvent(
-			defaultHarness.handlers,
-			"session_tree",
-			{ newLeafId: "original", oldLeafId: "steered" },
-			defaultHarness.ctx,
-		);
-		const [blockedAfterTree] = await runExtensionEventResults(
-			defaultHarness.handlers,
-			"tool_call",
-			directEvent,
-			noHistoryCtx,
-		);
-		assert.equal(
-			readRecord(blockedAfterTree).block,
-			true,
-			"branch navigation restores raw user intent instead of retaining steered text",
-		);
-
-		const inspectionAllowed = await runExtensionEventResults(
-			defaultHarness.handlers,
-			"tool_call",
-			{ toolName: "bash", input: { command: "which agent-browser" } },
-			defaultHarness.ctx,
-		);
-		assert.deepEqual(inspectionAllowed, []);
-
-		for (const command of [
-			"echo agent-browser",
-			"grep agent-browser README.md",
-			"printf '%s\\n' agent-browser",
-			"echo ok && grep agent-browser README.md",
-			"cat <<'EOF'\nagent-browser open https://example.com\nEOF",
-		]) {
-			await t.test(`allowed: ${command}`, async () => {
-				// Preserve shell-probe order against the shared user-intent/branch fixture.
-				const innocuousResults = await runExtensionEventResults(
-					defaultHarness.handlers,
-					"tool_call",
-					{ toolName: "bash", input: { command } },
-					defaultHarness.ctx,
-				);
-				assert.deepEqual(innocuousResults, [], command);
-			});
-		}
-
-		const debugHarness = createExtensionHarness({
-			cwd: tempDir,
-			prompt: "Please debug the browser integration via bash.",
-		});
-		const debugAllowed = await runExtensionEventResults(
-			debugHarness.handlers,
-			"tool_call",
-			{ toolName: "bash", input: { command: "npx --yes agent-browser open https://example.com" } },
-			debugHarness.ctx,
-		);
-		assert.deepEqual(debugAllowed, []);
-
-		await withPatchedEnv({ PI_AGENT_BROWSER_ALLOW_DIRECT_BASH: "1" }, async () => {
-			const envAllowed = await runExtensionEventResults(
-				defaultHarness.handlers,
-				"tool_call",
-				{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
-				defaultHarness.ctx,
-			);
-			assert.deepEqual(envAllowed, []);
-		});
-
-		const packageDevDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-dev-"));
-		t.after(async () => await rm(packageDevDir, { force: true, recursive: true }));
-		await writeFile(
-			join(packageDevDir, "package.json"),
-			JSON.stringify({ name: "pi-agent-browser-native" }),
-			"utf8",
-		);
-		const packageDevHarness = createExtensionHarness({
-			cwd: packageDevDir,
-			prompt: "Open a page and summarize it.",
-		});
-		const packageDevAllowed = await runExtensionEventResults(
-			packageDevHarness.handlers,
-			"tool_call",
-			{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
-			packageDevHarness.ctx,
-		);
-		assert.deepEqual(packageDevAllowed, []);
-	},
-);
+nodeTest("agentBrowserExtension registers no bash interception", () => {
+	const harness = createExtensionHarness({
+		cwd: process.cwd(),
+		prompt: "Open a page and summarize it.",
+	});
+	assert.equal(harness.handlers.has("tool_call"), false);
+});
 
 nodeTest(
 	"agentBrowserExtension keeps the page verified after a failed eval by probing the live URL",

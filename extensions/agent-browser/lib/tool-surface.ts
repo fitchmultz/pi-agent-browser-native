@@ -1,7 +1,11 @@
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { formatAgentBrowserRenderCall } from "./pi-tool-rendering.js";
-import { JsonSchema, type TUnsafe } from "./json-schema.js";
+import type { TUnsafe } from "./json-schema.js";
 import {
 	AGENT_BROWSER_NAMESPACE,
 	AGENT_BROWSER_OUTPUT_SCHEMA,
@@ -15,7 +19,6 @@ import {
 	AGENT_BROWSER_ELECTRON_PARAMS,
 	AGENT_BROWSER_SOURCE_PARAMS,
 	AGENT_BROWSER_NETWORK_SOURCE_PARAMS,
-	AGENT_BROWSER_TOOLS_PARAMS,
 	type AgentBrowserCodeParams,
 	type AgentBrowserAdvancedTool,
 } from "./input-modes/params.js";
@@ -58,16 +61,6 @@ export const AGENT_BROWSER_TOOL_INVENTORY = {
 	},
 } as const satisfies Record<AgentBrowserAdvancedTool, { name: string; description: string }>;
 
-export const AGENT_BROWSER_INSTRUCTION_GROUP = {
-	name: "browser",
-	description:
-		"Search the web, browse and interact with pages, verify browser UI, and inspect Electron apps.",
-} as const;
-
-const advancedNames = new Set<string>(
-	Object.values(AGENT_BROWSER_TOOL_INVENTORY).map(({ name }) => name),
-);
-
 function nativeToolOptions(
 	options: AgentBrowserToolSurfaceOptions,
 ): Pick<ToolDefinition<TUnsafe>, "namespace" | "outputSchema" | "executionMode" | "renderResult"> {
@@ -89,7 +82,7 @@ function registerCoreTools(
 		...nativeToolOptions(options),
 		label: "Agent Browser",
 		description:
-			"Browse and interact through native agent-browser commands. One command in args; fixed sequences use batch --bail and JSON-array stdin. Use agent_browser_code for loops/branches and agent_browser_tools for advanced capabilities.",
+			"Browse and interact through native agent-browser commands. One command in args; fixed sequences use batch --bail and JSON-array stdin; loops and branches belong in codemode scripts.",
 		promptSnippet: "Browse pages, inspect current refs, interact, and run native command batches.",
 		parameters: AGENT_BROWSER_PARAMS,
 		...(options.renderCall === undefined ? {} : { renderCall: options.renderCall }),
@@ -127,7 +120,7 @@ function registerActionTool(
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.action,
 		...nativeToolOptions(options),
-		defaultActive: false,
+		exposure: "deferred",
 		label: "Browser Action",
 		parameters: AGENT_BROWSER_ACTION_PARAMS,
 		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
@@ -145,7 +138,7 @@ function registerQaTool(
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.qa,
 		...nativeToolOptions(options),
-		defaultActive: false,
+		exposure: "deferred",
 		label: "Browser QA",
 		parameters: AGENT_BROWSER_QA_PARAMS,
 		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
@@ -163,7 +156,7 @@ function registerElectronTool(
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.electron,
 		...nativeToolOptions(options),
-		defaultActive: false,
+		exposure: "deferred",
 		label: "Browser Electron",
 		parameters: AGENT_BROWSER_ELECTRON_PARAMS,
 		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
@@ -181,7 +174,7 @@ function registerSourceTools(
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.source,
 		...nativeToolOptions(options),
-		defaultActive: false,
+		exposure: "deferred",
 		label: "Browser Source",
 		parameters: AGENT_BROWSER_SOURCE_PARAMS,
 		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
@@ -198,7 +191,7 @@ function registerSourceTools(
 	pi.registerTool({
 		...AGENT_BROWSER_TOOL_INVENTORY.network,
 		...nativeToolOptions(options),
-		defaultActive: false,
+		exposure: "deferred",
 		label: "Browser Network Source",
 		parameters: AGENT_BROWSER_NETWORK_SOURCE_PARAMS,
 		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
@@ -220,124 +213,49 @@ function registerSourceTools(
 	});
 }
 
-function toolStatus(available: boolean, active: boolean): string {
-	if (!available) {
-		return "unavailable in this Pi tool selection";
+/** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
+function removedOnBranch(ctx: ExtensionContext, name: string): boolean {
+	let removed = false;
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type !== "message" || entry.message.role !== "system") {
+			continue;
+		}
+		if (entry.message.toolsRemoved?.some((tool) => tool.name === name) === true) {
+			removed = true;
+		}
+		if (entry.message.toolsAdded?.some((tool) => tool.name === name) === true) {
+			removed = false;
+		}
 	}
-	return active ? "active" : "inactive";
+	return removed;
 }
 
-function registerToolLoader(pi: ExtensionAPI): void {
-	pi.registerTool({
-		name: "agent_browser_tools",
-		namespace: AGENT_BROWSER_NAMESPACE,
-		outputSchema: JsonSchema.Object({
-			inventory: JsonSchema.Array(
-				JsonSchema.Object({
-					key: JsonSchema.String(),
-					name: JsonSchema.String(),
-					description: JsonSchema.String(),
-					available: JsonSchema.Boolean(),
-					active: JsonSchema.Boolean(),
-				}),
-			),
-			added: JsonSchema.Array(JsonSchema.String()),
-		}),
-		label: "Browser Tools",
-		description:
-			"List or enable advanced browser tools: action → agent_browser_action; qa → agent_browser_qa; electron → agent_browser_electron; source → agent_browser_source; network → agent_browser_network_source. Omit enable for inventory. Activation only adds tools; it preserves other active tools.",
-		promptSnippet:
-			"Discover and enable specialized browser actions, QA, Electron, and source tools.",
-		parameters: AGENT_BROWSER_TOOLS_PARAMS,
-		async execute(_id, params) {
-			const available = new Set(pi.getAllTools().map(({ name }) => name));
-			const active = new Set(pi.getActiveTools());
-			const added = (params.enable ?? [])
-				.map((key) => AGENT_BROWSER_TOOL_INVENTORY[key].name)
-				.filter((name) => available.has(name) && !active.has(name));
-			if (added.length > 0) {
-				pi.setActiveTools([...new Set([...active, ...added])]);
-			}
-			const current = new Set(pi.getActiveTools());
-			const inventory = Object.entries(AGENT_BROWSER_TOOL_INVENTORY).map(([key, tool]) => ({
-				key,
-				name: tool.name,
-				description: tool.description,
-				available: available.has(tool.name),
-				active: current.has(tool.name),
-			}));
-			return {
-				content: [
-					{
-						type: "text",
-						text: inventory
-							.map(
-								(tool) =>
-									`${tool.key}: ${tool.name} (${toolStatus(tool.available, tool.active)}) — ${tool.description}`,
-							)
-							.join("\n"),
-					},
-				],
-				details: { inventory, added: [...new Set(added)] },
-				structuredContent: { inventory, added: [...new Set(added)] },
-			};
-		},
-	});
+/**
+ * Pi's own MCP extension activates tool_search when it registers deferred tools, since only
+ * tool_search declares them. Only a registered tool_search that reaches other tools qualifies.
+ * Pi restores each branch's recorded loadout before session_start and session_tree; a branch
+ * that recorded removing tool_search keeps it off, as Pi keeps any recorded removal.
+ */
+function activateToolSearch(pi: ExtensionAPI, ctx: ExtensionContext): void {
+	const active = pi.getActiveTools();
+	if (
+		!active.includes("tool_search") &&
+		pi
+			.getAllTools()
+			.some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined) &&
+		!removedOnBranch(ctx, "tool_search")
+	) {
+		pi.setActiveTools([...active, "tool_search"]);
+	}
 }
 
-function hasExplicitToolSelection(): boolean {
-	const argv = process.argv.slice(2);
-	const delimiter = argv.indexOf("--");
-	return (delimiter < 0 ? argv : argv.slice(0, delimiter)).some(
-		(arg) => arg === "--tools" || arg === "-t",
-	);
-}
-
-function registerAdvancedToolReplay(pi: ExtensionAPI): void {
-	pi.on("session_start", async (_event, ctx) => {
-		// ponytail: Pi restores a transcript's tool loadout natively only in default-tool sessions;
-		// `--no-builtin-tools` (SDK `noTools: "builtin"`) skips it. Remove once Pi restores that mode too.
-		if (hasExplicitToolSelection()) {
-			return;
-		}
-		// A host-filtered catalog is an explicit selection, not our default surface.
-		const available = new Set(pi.getAllTools().map(({ name }) => name));
-		if (
-			!["agent_browser", "agent_browser_code", "agent_browser_tools", ...advancedNames].every(
-				(name) => available.has(name),
-			)
-		) {
-			return;
-		}
-		// Native dynamic imports bypass Pi's host-package aliases in consumer installs.
-		// Only tool names are needed; replay native deltas without requiring the optional pi-ai peer.
-		const restored = new Set<string>();
-		for (const message of ctx.sessionManager.buildSessionProjection().messages) {
-			if (message.role !== "system") {
-				continue;
-			}
-			for (const removed of message.toolsRemoved ?? []) {
-				restored.delete(removed.name);
-			}
-			for (const added of message.toolsAdded ?? []) {
-				restored.add(added.name);
-			}
-		}
-		const active = new Set(pi.getActiveTools());
-		const added = [...restored].filter(
-			(name) => advancedNames.has(name) && available.has(name) && !active.has(name),
-		);
-		if (added.length > 0) {
-			pi.setActiveTools([...active, ...added]);
-		}
-	});
-}
-
-/** Register once; adapters retain native execution, output, activation, and replay contracts. */
+/** Register once; advanced tools are deferred, so tool_search and codemode scripts reach them natively. */
 export function registerAgentBrowserToolSurface(
 	pi: ExtensionAPI,
 	options: AgentBrowserToolSurfaceOptions,
 ): void {
+	pi.on("session_start", (_event, ctx) => activateToolSearch(pi, ctx));
+	pi.on("session_tree", (_event, ctx) => activateToolSearch(pi, ctx));
 	// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 	const execute: AgentBrowserExecutor = async (id, params, signal, onUpdate, ctx) =>
 		finalizeAgentBrowserNativeResult(
@@ -349,6 +267,4 @@ export function registerAgentBrowserToolSurface(
 	registerQaTool(pi, options, execute);
 	registerElectronTool(pi, options, execute);
 	registerSourceTools(pi, options, execute);
-	registerToolLoader(pi);
-	registerAdvancedToolReplay(pi);
 }

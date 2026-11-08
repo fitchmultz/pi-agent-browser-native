@@ -215,9 +215,7 @@ function promptSites(program) {
 	assert.ok(
 		callback?.type === "ArrowFunctionExpression" && callback.body.type === "BlockStatement",
 	);
-	const condition = callback.body.body[0];
-	assert.ok(condition?.type === "IfStatement" && condition.consequent.type === "BlockStatement");
-	const statement = condition.consequent.body[0];
+	const statement = callback.body.body[0];
 	assert.ok(
 		statement?.type === "ExpressionStatement" &&
 			statement.expression.type === "AssignmentExpression",

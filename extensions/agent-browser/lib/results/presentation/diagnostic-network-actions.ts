@@ -212,7 +212,7 @@ function candidateActions(
 			},
 			reason: `Look for local source candidates related to ${descriptor}.`,
 			safety:
-				"Read-only experimental helper; enable network with agent_browser_tools when this tool is inactive. It reports bounded candidates and may miss bundled or dynamic call sites.",
+				"Read-only experimental helper; load it with tool_search or call it from codemode when it is not declared. It reports bounded candidates and may miss bundled or dynamic call sites.",
 			tool: "agent_browser_network_source",
 		});
 	}

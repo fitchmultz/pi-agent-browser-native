@@ -35,11 +35,6 @@ import {
 import { isRecord, parsePositiveInteger } from "../extensions/agent-browser/lib/parsing.js";
 import { LAUNCH_SCOPED_FLAGS } from "../extensions/agent-browser/lib/launch-scoped-flags.js";
 import {
-	QUICK_START_GUIDELINES,
-	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-	TOOL_PROMPT_GUIDELINES_SUFFIX,
-} from "../extensions/agent-browser/lib/playbook.js";
-import {
 	getAgentBrowserSocketDir,
 	getAgentBrowserSocketPathValidationError,
 } from "../extensions/agent-browser/lib/process.js";
@@ -2071,13 +2066,8 @@ nodeTest("buildExecutionPlan allows dash-starting --args values", () => {
 });
 
 nodeTest(
-	"launch-scoped flag metadata is reflected in playbook and command reference guidance",
+	"launch-scoped flag metadata is reflected in the command reference guidance",
 	async (t) => {
-		const playbookText = [
-			...QUICK_START_GUIDELINES,
-			...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-			...TOOL_PROMPT_GUIDELINES_SUFFIX,
-		].join("\n");
 		const commandReference = readFileSync("docs/COMMAND_REFERENCE.md", "utf8");
 		for (const flag of LAUNCH_SCOPED_FLAGS) {
 			await t.test(flag, () => {
@@ -2085,8 +2075,6 @@ nodeTest(
 				const delimitedFlag = new RegExp(
 					`(?<![\\w-])${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`,
 				);
-
-				assert.match(playbookText, delimitedFlag, `playbook missing ${flag}`);
 
 				assert.match(commandReference, delimitedFlag, `command reference missing ${flag}`);
 			});
