@@ -7,8 +7,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, delimiter, join } from "node:path";
 import nodeTest, { type TestContext } from "node:test";
 
-import { recoverRecordingStop } from "../extensions/agent-browser/lib/orchestration/browser-run/recording-recovery.js";
-import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
 import { redactSensitiveValue } from "../extensions/agent-browser/lib/runtime-redaction.js";
 import { extractUpstreamCommandTokens } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import type { SessionArtifactManifest } from "../extensions/agent-browser/lib/results/contracts.js";
@@ -227,43 +225,6 @@ async function executeWithRecordingTimeout(
 		}
 	}
 }
-
-nodeTest("code-mode recording recovery retains receipt data without rendering", async () => {
-	await withRecorder("no-recording", async ({ root, harness, prefix }) => {
-		const path = join(root, "code.webm");
-		const started = await executeRegisteredTool(harness.tool, harness.ctx, {
-			args: [...prefix, "record", "start", path],
-		});
-		assert.equal(started.isError, false);
-		const processResult = await runAgentBrowserProcess({
-			args: ["--json", ...prefix, "record", "stop"],
-			cwd: root,
-		});
-		const result = await recoverRecordingStop({
-			modelVisible: false,
-			artifactRunStartedAtMs: Date.now() - 1000,
-			commandTokens: ["record", "stop"],
-			cwd: root,
-			namespace: "scope",
-			sessionName: "recorder",
-			processResult,
-			envelope: { success: false, error: "No recording in progress" },
-			reservation: {
-				absolutePath: path,
-				cwd: root,
-				path,
-				namespace: "scope",
-				sessionName: "recorder",
-				recordingId: "new-take",
-			},
-		});
-		assert.ok(result);
-		assert.equal(result.recovery.healed, true);
-		assert.deepEqual(result.presentation.content, []);
-		assert.equal(result.presentation.fullOutputPath, undefined);
-		assert.equal(readRecord(result.presentation.data).recordingId, "new-take");
-	});
-});
 
 nodeTest("record stop rejects recording outputPath aliases without dispatch", async (t) => {
 	await withRecorder("no-recording", async ({ root, logPath, harness, prefix }) => {

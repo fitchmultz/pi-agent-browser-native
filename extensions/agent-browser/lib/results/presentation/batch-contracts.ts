@@ -12,7 +12,6 @@ import type {
 } from "../contracts.js";
 
 export interface BuildNestedToolPresentationOptions {
-	readonly modelVisible?: boolean | undefined;
 	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly artifactMaxUpdatedAtMs?: number | undefined;
 	readonly artifactMinUpdatedAtMs?: number | undefined;
@@ -40,7 +39,6 @@ export interface BatchPresentedStep {
 }
 
 export interface BuildBatchStepOptions {
-	readonly modelVisible?: boolean | undefined;
 	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly artifactMaxUpdatedAtMs?: number | undefined;
 	readonly artifactMinUpdatedAtMs?: number | undefined;
@@ -57,7 +55,6 @@ export interface BuildBatchStepOptions {
 }
 
 export interface BuildBatchPresentationOptions {
-	readonly modelVisible?: boolean | undefined;
 	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly artifactMaxUpdatedAtMs?: number | undefined;
 	readonly artifactMinUpdatedAtMs?: number | undefined;

@@ -97,7 +97,7 @@ class BrowserAdmission {
 		const branch = invocation.selectedBranch ?? runtime.branch.capture(invocation.ctx);
 		let operationCwd: string;
 		try {
-			operationCwd = invocation.capturedCwd ?? resolveExecutionCwd(runtime.pi, invocation.ctx);
+			operationCwd = resolveExecutionCwd(runtime.pi, invocation.ctx);
 		} catch (error) {
 			return {
 				failure: buildValidationFailureResult({
@@ -255,7 +255,7 @@ class BrowserAdmission {
 			return prepared.failure;
 		}
 		const { call } = prepared;
-		await this.runtime.beforeExecute?.(call.nativeToolCallId, { ...call.ctx, signal: call.signal });
+		await this.runtime.beforeExecute?.(call.toolCallId, { ...call.ctx, signal: call.signal });
 		const config = loadAgentBrowserConfigSync({
 			cwd: call.ctx.cwd,
 			includeProjectConfig: shouldIncludeProjectConfig(call.ctx),

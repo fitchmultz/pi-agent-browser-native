@@ -179,7 +179,6 @@ function buildNestedRequest(
 ): BuildNestedToolPresentationOptions {
 	const commandInfo = parseCommandInfo(command ?? []);
 	return {
-		modelVisible: options.modelVisible,
 		artifactManifest: options.artifactManifest,
 		artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs,
 		artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,

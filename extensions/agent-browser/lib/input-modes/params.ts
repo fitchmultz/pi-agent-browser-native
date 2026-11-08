@@ -5,7 +5,6 @@ import {
 	ELECTRON_DISCOVERY_MAX_RESULTS,
 } from "../electron/discovery-types.js";
 import {
-	AGENT_BROWSER_CODE_MAX_TIMEOUT_MS,
 	AGENT_BROWSER_ELECTRON_HANDOFFS,
 	AGENT_BROWSER_ELECTRON_TARGET_TYPES,
 	AGENT_BROWSER_QA_LOAD_STATES,
@@ -28,12 +27,6 @@ export interface AgentBrowserParams extends AgentBrowserOutputParams {
 	args: string[];
 	stdin?: string;
 	sessionMode?: "auto" | "fresh";
-}
-
-export interface AgentBrowserCodeParams extends AgentBrowserOutputParams {
-	code: string;
-	session?: string;
-	namespace?: string;
 }
 
 export interface AgentBrowserActionParams extends AgentBrowserOutputParams {
@@ -131,37 +124,6 @@ export function createAgentBrowserParamsSchema(): TUnsafe<AgentBrowserParams> {
 				),
 				...outputProperties(),
 				sessionMode: sessionModeProperty(),
-			},
-			{ additionalProperties: false },
-		),
-	);
-}
-
-export function createAgentBrowserCodeParamsSchema(): TUnsafe<AgentBrowserCodeParams> {
-	return Type.Unsafe<AgentBrowserCodeParams>(
-		Type.Object(
-			{
-				code: Type.String({
-					description:
-						"JavaScript with await browser({args, stdin?, timeoutMs?}), emit(JSON), and emitImage(image handle). Fresh JS context; persistent browser.",
-					minLength: 1,
-					maxLength: 65_536,
-				}),
-				session: Type.Optional(
-					Type.String({
-						description: "Explicit native session; omitted uses the ordinary default browser.",
-						minLength: 1,
-					}),
-				),
-				namespace: Type.Optional(
-					Type.String({
-						description: "Native namespace; empty string selects the default namespace.",
-					}),
-				),
-				...outputProperties(),
-				timeoutMs: Type.Optional(
-					Type.Integer({ minimum: 1, maximum: AGENT_BROWSER_CODE_MAX_TIMEOUT_MS }),
-				),
 			},
 			{ additionalProperties: false },
 		),
@@ -372,7 +334,6 @@ export function createAgentBrowserNetworkSourceParamsSchema(): TUnsafe<AgentBrow
 }
 
 export const AGENT_BROWSER_PARAMS = createAgentBrowserParamsSchema();
-export const AGENT_BROWSER_CODE_PARAMS = createAgentBrowserCodeParamsSchema();
 export const AGENT_BROWSER_ACTION_PARAMS = createAgentBrowserActionParamsSchema();
 export const AGENT_BROWSER_QA_PARAMS = createAgentBrowserQaParamsSchema();
 export const AGENT_BROWSER_ELECTRON_PARAMS = createAgentBrowserElectronParamsSchema();

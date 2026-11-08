@@ -43,18 +43,16 @@ export async function renderNativePresentation(
 	const upgrade = renderUpgradeFailure(draft, presentation);
 	if (upgrade) {
 		Object.assign(presentation, upgrade);
-		if (draft.input.modelVisible !== false) {
-			Object.assign(
+		Object.assign(
+			presentation,
+			await compactLargePresentationOutput({
+				artifactManifest: draft.artifactManifest,
+				commandInfo: draft.input.prepared.executionPlan.commandInfo,
+				data: presentation.data,
+				persistentArtifactStore: draft.persistentArtifactStore,
 				presentation,
-				await compactLargePresentationOutput({
-					artifactManifest: draft.artifactManifest,
-					commandInfo: draft.input.prepared.executionPlan.commandInfo,
-					data: presentation.data,
-					persistentArtifactStore: draft.persistentArtifactStore,
-					presentation,
-				}),
-			);
-		}
+			}),
+		);
 	}
 	if (
 		draft.electronHandoff?.error !== undefined &&
@@ -337,7 +335,6 @@ async function buildNativePresentation(
 	return buildToolPresentation({
 		textOutput: draft.textOutput,
 		stdin: draft.input.prepared.processStdin,
-		modelVisible: draft.input.modelVisible,
 		args: draft.input.prepared.redactedProcessArgs,
 		artifactManifest: draft.artifactManifest,
 		artifactMaxUpdatedAtMs: Date.now(),

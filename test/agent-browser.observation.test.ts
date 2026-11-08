@@ -16,7 +16,6 @@ import {
 	buildJsonVisibleContent,
 	buildRedactedPresentationContent,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/final-result.js";
-import { trySnapshotFilter } from "../extensions/agent-browser/lib/orchestration/browser-run/prepare/snapshot-filter.js";
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import { buildScreenshotGeometry } from "../extensions/agent-browser/lib/orchestration/browser-run/screenshot-observation.js";
 import type {
@@ -123,30 +122,18 @@ nodeTest(
 	},
 );
 
-nodeTest(
-	"code observations retain identity, un-emitted failures, counters and opaque image handles",
-	() => {
-		const fields = {
-			sessionName: "code-target",
-			namespace: "",
-			codeRun: { callCount: 2, failedCallCount: 1 },
-			failures: [
-				{
-					success: false,
-					resultCategory: "failure",
-					error: "missing selector",
-					nextActions: actions,
-				},
-			],
-			imageObservations: [{ id: "image-1", path: "/tmp/selected.png" }],
-		};
-		const observation = projectAgentBrowserObservation(fields, false);
-		assert.deepEqual(
-			Object.fromEntries(Object.keys(fields).map((key) => [key, observation[key]])),
-			fields,
-		);
-	},
-);
+nodeTest("observations retain browser identity and image observations", () => {
+	const fields = {
+		sessionName: "target",
+		namespace: "",
+		imageObservations: [{ path: "/tmp/selected.png" }],
+	};
+	const observation = projectAgentBrowserObservation(fields, false);
+	assert.deepEqual(
+		Object.fromEntries(Object.keys(fields).map((key) => [key, observation[key]])),
+		fields,
+	);
+});
 
 nodeTest("exact string redaction cannot corrupt JSON booleans or structural tokens", () => {
 	const content = buildRedactedPresentationContent({
@@ -343,126 +330,44 @@ nodeTest(
 	},
 );
 
-nodeTest(
-	"code observations preserve full snapshot/batch data without model compaction or image encoding",
-	async (t) => {
-		const dir = await mkdtemp(join(tmpdir(), "piab-code-observation-"));
-		try {
-			const path = join(dir, "screenshot.png");
-			await writeFile(
-				path,
-				Buffer.from(
-					"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
-					"base64",
-				),
-			);
-			const data = {
-				snapshot: "- button 'A' [ref=e1]\n".repeat(3000),
-				refs: { e1: { role: "button", name: "A" } },
-			};
-			const snapshot = await buildToolPresentation({
-				modelVisible: false,
-				commandInfo: { command: "snapshot" },
-				cwd: dir,
-				envelope: { success: true, data },
-			});
-			assert.deepEqual(snapshot.content, []);
-			assert.deepEqual(snapshot.data, data);
-			assert.equal(snapshot.fullOutputPath, undefined);
-			const batch = await buildToolPresentation({
-				modelVisible: false,
-				commandInfo: { command: "batch" },
-				cwd: dir,
-				envelope: {
-					success: true,
-					data: [
-						{ command: ["snapshot", "-i"], success: true, result: data },
-						{ command: ["screenshot", path], success: true, result: { path } },
-					],
-				},
-			});
-			assert.deepEqual(batch.content, []);
-			assert.equal(batch.fullOutputPath, undefined);
-			assert.deepEqual(batch.batchSteps?.[0]?.data, data);
-			const image = readDefined(batch.imageObservations?.[0]);
-			assert.deepEqual(image.pixels, { width: 1, height: 1 });
-			assert.equal(image.geometry.status, "unknown");
-			assert.equal(batch.artifactVerification?.verified, true);
-			for (const modelVisible of [false, true]) {
-				await t.test(modelVisible ? "model observation" : "code observation", async () => {
-					const unchanged = await buildToolPresentation({
-						modelVisible,
-						commandInfo: { command: "screenshot" },
-						cwd: dir,
-						envelope: { success: true, data: { changed: false, path } },
-					});
-					assert.equal(unchanged.imageObservations, undefined);
-					assert.equal(
-						unchanged.content.some((part) => part.type === "image"),
-						false,
-					);
-				});
-			}
-			await utimes(path, new Date(1000), new Date(1000));
-			const stale = await buildToolPresentation({
-				commandInfo: { command: "screenshot" },
-				cwd: dir,
-				artifactMinUpdatedAtMs: Date.now(),
-				envelope: { success: true, data: { path } },
-			});
-			assert.equal(stale.failureCategory, "artifact-missing");
-			assert.equal(stale.imageObservations, undefined);
-			assert.equal(
-				stale.content.some((part) => part.type === "image"),
-				false,
-			);
-		} finally {
-			await rm(dir, { recursive: true, force: true });
-		}
-	},
-);
-
-nodeTest(
-	"code-mode snapshot filters retain full filtered data without an early spill",
-	async () => {
-		const dir = await mkdtemp(join(tmpdir(), "piab-filter-observation-"));
-		const data = {
-			origin: "https://example.test/",
-			snapshot: '- button "needle" [ref=e1]\n'.repeat(3000),
-			refs: { e1: { role: "button", name: "needle" } },
-		};
-		await writeFakeAgentBrowserBinary(
-			dir,
-			`process.stdout.write(JSON.stringify({success:true,data:process.argv.includes('snapshot')?${JSON.stringify(data)}:{result:[]}}));`,
+nodeTest("unchanged and stale screenshots attach no image", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "piab-screenshot-observation-"));
+	try {
+		const path = join(dir, "screenshot.png");
+		await writeFile(
+			path,
+			Buffer.from(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+				"base64",
+			),
 		);
-		try {
-			await withPatchedEnv({ PATH: `${dir}:${process.env.PATH ?? ""}` }, async () => {
-				const page = SessionPageState.fromBranch([]);
-				const result = await trySnapshotFilter({
-					modelVisible: false,
-					commandTokens: ["snapshot", "--search", "needle"],
-					cwd: dir,
-					effectiveArgs: [],
-					redactedArgs: [],
-					managedSessionRestoreDisabled: () => false,
-					sessionMode: "auto",
-					sessionName: "filter-code",
-					usedImplicitSession: false,
-					sessionPageState: page,
-					sessionPageStateUpdate: page.beginUpdate(),
-				});
-				assert.ok(result);
-				const details = readRecord(result.result.details);
-				assert.deepEqual(result.result.content, []);
-				assert.equal(details.fullOutputPath, undefined);
-				assert.ok(readString(readRecord(details.data).snapshot).length > 60_000);
-				readRecord(projectAgentBrowserObservation(details, true).snapshotFilter);
-			});
-		} finally {
-			await rm(dir, { recursive: true, force: true });
-		}
-	},
-);
+		const unchanged = await buildToolPresentation({
+			commandInfo: { command: "screenshot" },
+			cwd: dir,
+			envelope: { success: true, data: { changed: false, path } },
+		});
+		assert.equal(unchanged.imageObservations, undefined);
+		assert.equal(
+			unchanged.content.some((part) => part.type === "image"),
+			false,
+		);
+		await utimes(path, new Date(1000), new Date(1000));
+		const stale = await buildToolPresentation({
+			commandInfo: { command: "screenshot" },
+			cwd: dir,
+			artifactMinUpdatedAtMs: Date.now(),
+			envelope: { success: true, data: { path } },
+		});
+		assert.equal(stale.failureCategory, "artifact-missing");
+		assert.equal(stale.imageObservations, undefined);
+		assert.equal(
+			stale.content.some((part) => part.type === "image"),
+			false,
+		);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
 
 nodeTest(
 	"aborted dispatched mutations retire prior target/refs, while aborted reads preserve them",

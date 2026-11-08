@@ -3128,23 +3128,6 @@ if (args.includes("batch")) {
 					{ result: "Example", title: "Example" },
 				);
 
-				const codeTool = harness.getTool("agent_browser_code");
-				assert.ok(codeTool, "code tool must be registered");
-				const codeResult = await executeRegisteredTool(codeTool, harness.ctx, {
-					code: 'emit((await browser({ args: ["get", "title"] })).data);',
-					outputPath: "logs/code-title.json",
-				});
-				assert.equal(codeResult.isError, false, JSON.stringify(codeResult.content));
-				const codeVisible = readRecord(
-					JSON.parse(readString(readRecord(codeResult.content[0]).text)),
-				);
-				assert.equal(readRecord(codeVisible.outputFile).status, "saved");
-				assert.deepEqual(codeVisible.outputFile, readRecord(codeResult.details).outputFile);
-				assert.deepEqual(
-					JSON.parse(await readFile(join(tempDir, "logs/code-title.json"), "utf8")),
-					{ result: "Example", title: "Example" },
-				);
-
 				await writeFile(join(tempDir, "blocked-output-parent"), "not a directory");
 				const writeFailureResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["eval", "--stdin"],

@@ -339,7 +339,7 @@ export class BrowserCommandResult {
 				phase: this.prepared.browserAffecting ? "finish" : "state",
 				operationId: this.prepared.operationId,
 				toolCallId: this.call.toolCallId,
-				commandIndex: this.call.commandIndex ?? 0,
+				commandIndex: 0,
 				isError: this.result.isError === true,
 				state: this.finishState(),
 				pages: changes.pages,

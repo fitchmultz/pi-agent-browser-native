@@ -234,31 +234,29 @@ if (args.includes("open") && !fs.existsSync(${JSON.stringify(releasePath)})) {
 						first.then(() => assert.fail("fresh launch finished before fixture release")),
 					]);
 					assert.equal(await readFile(startedPath, "utf8"), "started");
-					const tool = harness.getTool("agent_browser_code");
-					assert.ok(tool);
-					const queuedCode = executeRegisteredTool(tool, harness.ctx, {
-						code: 'emit((await browser({args:["get","title"]})).data.title);',
+					const queued = executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "title"],
 					});
 					await writeFile(releasePath, "go");
-					const [fresh, code] = await Promise.all([first, queuedCode]);
+					const [fresh, followed] = await Promise.all([first, queued]);
 					result = fresh;
-					assert.equal(code.isError, false, getMessageText(code.content));
-					assert.equal(code.details?.data, "Fixture");
+					assert.equal(followed.isError, false, getMessageText(followed.content));
+					assert.equal(readRecord(followed.details?.data).title, "Fixture");
 					assert.equal(
-						code.details.sessionName,
+						followed.details?.sessionName,
 						result.details?.sessionName,
-						"code admitted behind the paused fresh launch must select its new managed browser",
+						"a call admitted behind the paused fresh launch must select its new managed browser",
 					);
 					const calls = await readInvocationLog(log);
 					assert.ok(
 						calls.some((call) => call.args.includes("title")),
-						"code reached native dispatch",
+						"the queued call reached native dispatch",
 					);
 					assert.ok(
 						calls.every(
 							(call) => readRecord(call).profile === null && readRecord(call).restore === null,
 						),
-						"root profile/restore defaults must not leak into the queued managed code or its helpers",
+						"root profile/restore defaults must not leak into the queued managed call or its helpers",
 					);
 				} finally {
 					watcher.close();
@@ -531,22 +529,6 @@ console.log(JSON.stringify({ success: !(args.includes("close") && process.env.FA
 						[...prefix, "--confirm-actions", "navigate", "get", "title"],
 						"navigate",
 					);
-					await writeFile(log, "");
-					const codeTool = resumed.getTool("agent_browser_code");
-					assert.ok(codeTool);
-					const code = await executeRegisteredTool(codeTool, resumed.ctx, {
-						session: "selected",
-						namespace: "team-space",
-						code: 'emit((await browser({args:["get","title"]})).success);',
-					});
-					assert.equal(code.isError, false, getMessageText(code.content));
-					assert.equal(code.details?.data, true);
-					const codeCalls = await readInvocationLog(log);
-					assert.ok(
-						codeCalls.some((call) => call.args.includes("get") && call.args.includes("title")),
-						"code reached the requested native getter",
-					);
-					assert.ok(codeCalls.every((call) => readRecord(call).confirmActions === "navigate"));
 					await writeFile(log, "");
 					const qaTool = resumed.getTool("agent_browser_qa");
 					assert.ok(qaTool);
@@ -877,16 +859,11 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "http
 						args: ["--session", readString(a.details?.sessionName), "get", "title"],
 					});
 					assert.equal(followup.isError, false, getMessageText(followup.content));
-					// A delegated child reads through direct and code calls, then quits before the next child.
+					// A delegated child reads, then quits before the next child.
 					const delegatedChild = (lineage: Readonly<Record<string, string>>) =>
 						withPatchedEnv(lineage, async () => {
 							const child = createExtensionHarness({ cwd: root, sessionId: "child-id" });
-							const codeTool = child.getTool("agent_browser_code");
-							assert.ok(codeTool);
 							const direct = await read(child);
-							const code = await executeRegisteredTool(codeTool, child.ctx, {
-								code: 'emit((await browser({args:["get","title"]})).data.title);',
-							});
 							await runExtensionEvent(
 								child.handlers,
 								"session_shutdown",
@@ -894,16 +871,9 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "http
 								child.ctx,
 							);
 							return {
-								direct: {
-									isError: direct.isError,
-									sessionName: direct.details?.sessionName,
-									text: getMessageText(direct.content),
-								},
-								code: {
-									isError: code.isError,
-									sessionName: code.details?.sessionName,
-									text: getMessageText(code.content),
-								},
+								isError: direct.isError,
+								sessionName: direct.details?.sessionName,
+								text: getMessageText(direct.content),
 							};
 						});
 					// Current pi-subagents sets the main's ID as both intercom IDs; older releases set
@@ -917,14 +887,10 @@ console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "http
 						PI_SUBAGENT_ROOT_SESSION_ID: "root-one",
 					});
 					const rootName = a.details?.sessionName;
-					assert.equal(current.direct.isError, false, current.direct.text);
-					assert.equal(current.direct.sessionName, rootName);
-					assert.equal(current.code.isError, false, current.code.text);
-					assert.equal(current.code.sessionName, rootName);
-					assert.equal(legacy.direct.isError, false, legacy.direct.text);
-					assert.equal(legacy.direct.sessionName, rootName);
-					assert.equal(legacy.code.isError, false, legacy.code.text);
-					assert.equal(legacy.code.sessionName, rootName);
+					assert.equal(current.isError, false, current.text);
+					assert.equal(current.sessionName, rootName);
+					assert.equal(legacy.isError, false, legacy.text);
+					assert.equal(legacy.sessionName, rootName);
 					await mkdir(join(root, "other-cwd"));
 					const resumed = createExtensionHarness({
 						cwd: join(root, "other-cwd"),
@@ -1362,105 +1328,93 @@ console.log(JSON.stringify({ success: true, data: { session: "default", title: "
 	},
 );
 
-nodeTest(
-	"root bootstrap gives direct and code calls the trusted executable and only always profile names",
-	async (t) => {
-		const root = await mkdtemp(join(tmpdir(), "pbs-profile-"));
-		const socketDir = createShortPrivateSocketDir(root);
-		const log = join(root, "calls.jsonl");
-		const packageConfig = join(root, "package-config.json");
-		await writeFakeAgentBrowserBinary(
-			root,
-			`
+nodeTest("root bootstrap gives the trusted executable and only always profile names", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "pbs-profile-"));
+	const socketDir = createShortPrivateSocketDir(root);
+	const log = join(root, "calls.jsonl");
+	const packageConfig = join(root, "package-config.json");
+	await writeFakeAgentBrowserBinary(
+		root,
+		`
 const args = process.argv.slice(2);
 require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, profile: process.env.AGENT_BROWSER_PROFILE ?? null, executablePath: process.env.AGENT_BROWSER_EXECUTABLE_PATH ?? null }) + "\\n");
 console.log(JSON.stringify({ success: true, data: { title: "Fixture", url: "https://fixture.test/" } }));
 `,
-		);
-		try {
-			await withPatchedEnv(
-				{
-					...clearedBrowserEnv,
-					HOME: root,
-					USERPROFILE: root,
-					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
-					PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
-					PI_AGENT_BROWSER_CONFIG: packageConfig,
-					PI_SUBAGENT_CHILD: undefined,
-					PI_SUBAGENT_ROOT_SESSION_ID: undefined,
-				},
-				async () => {
-					for (const scenario of [
-						{ name: "always name", policy: "always", profile: "Default", expected: "Default" },
-						{
-							name: "authenticated-only",
-							policy: "authenticated-only",
-							profile: "Default",
-							expected: null,
-						},
-						{ name: "explicit-only", policy: "explicit-only", profile: "Default", expected: null },
-						{ name: "slash path", policy: "always", profile: "profiles/Work", expected: null },
-						{ name: "backslash path", policy: "always", profile: "profiles\\Work", expected: null },
-						{ name: "tilde path", policy: "always", profile: "~Work", expected: null },
-					]) {
-						for (const call of [
-							{ name: "direct", tool: "agent_browser", params: { args: ["get", "title"] } },
+	);
+	try {
+		await withPatchedEnv(
+			{
+				...clearedBrowserEnv,
+				HOME: root,
+				USERPROFILE: root,
+				PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+				PATH: `${root}${delimiter}${process.env.PATH ?? ""}`,
+				PI_AGENT_BROWSER_CONFIG: packageConfig,
+				PI_SUBAGENT_CHILD: undefined,
+				PI_SUBAGENT_ROOT_SESSION_ID: undefined,
+			},
+			async () => {
+				for (const scenario of [
+					{ name: "always name", policy: "always", profile: "Default", expected: "Default" },
+					{
+						name: "authenticated-only",
+						policy: "authenticated-only",
+						profile: "Default",
+						expected: null,
+					},
+					{ name: "explicit-only", policy: "explicit-only", profile: "Default", expected: null },
+					{ name: "slash path", policy: "always", profile: "profiles/Work", expected: null },
+					{ name: "backslash path", policy: "always", profile: "profiles\\Work", expected: null },
+					{ name: "tilde path", policy: "always", profile: "~Work", expected: null },
+				]) {
+					// Rows share one package config file, so each must finish before the next rewrites it.
+					await t.test(scenario.name, async () => {
+						await writeFile(
+							packageConfig,
+							JSON.stringify({
+								browser: {
+									defaultProfile: { name: scenario.profile, policy: scenario.policy },
+									executablePath: "/wrapper/chrome",
+								},
+							}),
+						);
+						const harness = createExtensionHarness({
+							cwd: root,
+							sessionId: scenario.name,
+						});
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["get", "title"],
+						});
+						assert.equal(result.isError, false, getMessageText(result.content));
+						const session = readString(result.details?.sessionName);
+						assert.match(session, /^pi-root-[a-f0-9]{24}$/);
+						const launch = (await readInvocationLog(log)).find(
+							(entry) => entry.args.includes(session) && entry.args.includes("title"),
+						);
+						assert.ok(launch, "the inactive root browser command reached upstream");
+						assert.deepEqual(
 							{
-								name: "code",
-								tool: "agent_browser_code",
-								params: { code: 'emit((await browser({args:["get","title"]})).data.title);' },
+								profile: readRecord(launch).profile,
+								executablePath: readRecord(launch).executablePath,
 							},
-						]) {
-							// Rows share one package config file, so each must finish before the next rewrites it.
-							await t.test(`${scenario.name} via ${call.name}`, async () => {
-								await writeFile(
-									packageConfig,
-									JSON.stringify({
-										browser: {
-											defaultProfile: { name: scenario.profile, policy: scenario.policy },
-											executablePath: "/wrapper/chrome",
-										},
-									}),
-								);
-								const harness = createExtensionHarness({
-									cwd: root,
-									sessionId: `${scenario.name} via ${call.name}`,
-								});
-								const tool = harness.getTool(call.tool);
-								assert.ok(tool);
-								const result = await executeRegisteredTool(tool, harness.ctx, call.params);
-								assert.equal(result.isError, false, getMessageText(result.content));
-								const session = readString(result.details?.sessionName);
-								assert.match(session, /^pi-root-[a-f0-9]{24}$/);
-								const launch = (await readInvocationLog(log)).find(
-									(entry) => entry.args.includes(session) && entry.args.includes("title"),
-								);
-								assert.ok(launch, "the inactive root browser command reached upstream");
-								assert.deepEqual(
-									{
-										profile: readRecord(launch).profile,
-										executablePath: readRecord(launch).executablePath,
-									},
-									{ profile: scenario.expected, executablePath: "/wrapper/chrome" },
-									"profile paths and other policies stay advisory; the trusted executable still applies",
-								);
-								await runExtensionEvent(
-									harness.handlers,
-									"session_shutdown",
-									{ reason: "quit" },
-									harness.ctx,
-								);
-							});
-						}
-					}
-				},
-			);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-			await rm(socketDir, { recursive: true, force: true });
-		}
-	},
-);
+							{ profile: scenario.expected, executablePath: "/wrapper/chrome" },
+							"profile paths and other policies stay advisory; the trusted executable still applies",
+						);
+						await runExtensionEvent(
+							harness.handlers,
+							"session_shutdown",
+							{ reason: "quit" },
+							harness.ctx,
+						);
+					});
+				}
+			},
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+		await rm(socketDir, { recursive: true, force: true });
+	}
+});
 
 nodeTest(
 	"real root group retains explicit profile across child helpers and persistent-profile restart",
@@ -1637,7 +1591,7 @@ nodeTest(
 );
 
 nodeTest(
-	"real native config shares a persistent fixture profile with fresh code contexts",
+	"real native config shares a persistent fixture profile across extension instances and helpers",
 	{ skip: process.env.PI_AGENT_BROWSER_REAL_UPSTREAM !== "1", timeout: 120_000 },
 	async () => {
 		const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "pbs-"));
@@ -1760,18 +1714,10 @@ nodeTest(
 						});
 						assert.equal(network.isError, false, getMessageText(network.content));
 						assert.equal(network.details?.sessionName, "shared");
-						const codeTool = two.getTool("agent_browser_code");
-						assert.ok(codeTool);
-						const code = await executeRegisteredTool(codeTool, two.ctx, {
-							code: `const marker = await browser({args:["eval","--stdin"],stdin:'localStorage.getItem("fixture-marker")'}); emit({success:marker.success, data:marker.data});`,
-						});
-						assert.equal(code.isError, false, getMessageText(code.content));
-						assert.match(JSON.stringify(code.details?.data), /kept/);
-						assert.equal(code.details?.sessionName, "shared");
 						assert.equal(
 							await readFile(pidPath, "utf8"),
 							pid,
-							"helpers and code must not restart or close the shared daemon",
+							"helpers must not restart or close the shared daemon",
 						);
 						await runExtensionEvent(two.handlers, "session_shutdown", { reason: "quit" }, two.ctx);
 						assert.equal(

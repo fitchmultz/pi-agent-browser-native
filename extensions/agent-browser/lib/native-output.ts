@@ -15,8 +15,7 @@ import { renderAgentBrowserObservation } from "./results/presentation/large-outp
 
 export const AGENT_BROWSER_NAMESPACE: ToolNamespace = {
 	name: "browser",
-	description:
-		"Browser commands, bounded browser code, advanced UI checks, Electron, and optional web search.",
+	description: "Browser commands, advanced UI checks, Electron, and optional web search.",
 	instructions:
 		"Use agent_browser for native commands and batch --bail for fixed sequences. Deferred tools (action, qa, electron, source, network_source) load through tool_search or run directly from codemode scripts. Check success and nextActions; structured imageObservations are capture metadata, not inline images. Optional web search is available only when configured.",
 };
@@ -41,9 +40,7 @@ function inputArgs(input: unknown): readonly string[] | undefined {
 }
 
 function isJsonRequest(input: unknown): boolean {
-	return (
-		isRecord(input) && ("code" in input || isBooleanFlagEnabled(inputArgs(input) ?? [], "--json"))
-	);
+	return isBooleanFlagEnabled(inputArgs(input) ?? [], "--json");
 }
 
 function serializedObservation(value: unknown): JsonValue {

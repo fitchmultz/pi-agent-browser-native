@@ -117,13 +117,12 @@ async function readInlineImage(options: {
 export async function attachInlineImage(
 	presentation: ToolPresentationObservation,
 	imagePath: string,
-	modelVisible = true,
 ): Promise<Partial<Pick<ToolPresentation, "content" | "imagePath" | "imageObservations">>> {
 	const update: Partial<Pick<ToolPresentation, "content" | "imagePath" | "imageObservations">> = {};
 	try {
 		const [fileStats, header] = await Promise.all([
 			stat(imagePath),
-			// Pi's dimension API accepts base64. Encode only a bounded header, never the whole code-mode image.
+			// Pi's dimension API accepts base64. Encode only a bounded header, never the whole image.
 			readImageHeader(imagePath, 64 * 1024),
 		]);
 		const mimeType = getImageMimeType(header);
@@ -133,17 +132,15 @@ export async function attachInlineImage(
 		const textRendered = isTextRendered(presentation.data);
 		update.imagePath = imagePath;
 		update.imageObservations = [buildImageObservation(imagePath, header, mimeType, textRendered)];
-		if (modelVisible) {
-			if (textRendered) {
-				update.content = appendPresentationNotice(presentation.content, LIGHTPANDA_IMAGE_REASON);
-			}
-			const inline = await readInlineImage({ imagePath, size: fileStats.size, mimeType });
-			const content = update.content ?? presentation.content;
-			update.content =
-				inline.type === "text"
-					? appendPresentationNotice(content, inline.text)
-					: [...content, inline];
+		if (textRendered) {
+			update.content = appendPresentationNotice(presentation.content, LIGHTPANDA_IMAGE_REASON);
 		}
+		const inline = await readInlineImage({ imagePath, size: fileStats.size, mimeType });
+		const content = update.content ?? presentation.content;
+		update.content =
+			inline.type === "text"
+				? appendPresentationNotice(content, inline.text)
+				: [...content, inline];
 	} catch (error) {
 		const message = error instanceof Error ? error.message : inspect(error);
 		update.content = appendPresentationNotice(

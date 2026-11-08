@@ -10,22 +10,13 @@ export type NativeLaunchDefaultsRunner = NonNullable<
 	Parameters<Parameters<typeof withNativeSessionDefaults>[2]>[1]
 >;
 
-export interface BrowserInvocationInput {
+export interface BrowserInvocation {
 	readonly toolCallId: string;
 	readonly params: AgentBrowserExecuteParams;
 	readonly signal: Parameters<AgentBrowserExecutor>[2];
 	readonly onUpdate?: Parameters<AgentBrowserExecutor>[3];
 	readonly ctx: Parameters<AgentBrowserExecutor>[4];
-	readonly nativeToolCallId?: string;
-	readonly capturedCwd?: string;
-	readonly modelVisible?: boolean;
-	readonly commandIndex?: number;
 	readonly selectedBranch?: Readonly<BrowserBranch>;
-}
-
-export interface BrowserInvocation extends BrowserInvocationInput {
-	readonly nativeToolCallId: string;
-	readonly modelVisible: boolean;
 }
 
 export interface AdmittedBrowserCall extends BrowserInvocation {
@@ -68,7 +59,6 @@ export type BrowserHostCall = Pick<
 	| "signal"
 	| "branch"
 	| "toolCallId"
-	| "commandIndex"
 	| "executionTimeoutMs"
 	| "outputPath"
 	| "operationCwd"
@@ -80,18 +70,5 @@ export type BrowserOutputCall = Pick<
 >;
 export type BrowserCommandCall = Omit<
 	CoordinatedBrowserCall,
-	| "nativeToolCallId"
-	| "capturedCwd"
-	| "selectedBranch"
-	| "admittedInput"
-	| "explicitConfig"
-	| "managedAtAdmission"
+	"selectedBranch" | "admittedInput" | "explicitConfig" | "managedAtAdmission"
 >;
-
-export function createBrowserInvocation(input: BrowserInvocationInput): BrowserInvocation {
-	return {
-		...input,
-		nativeToolCallId: input.nativeToolCallId ?? input.toolCallId,
-		modelVisible: input.modelVisible ?? true,
-	};
-}

@@ -96,7 +96,7 @@ async function runInScope<T>(
 		await scope.children;
 	}
 }
-/** Hold across helpers/actions or a complete code cell. Nested siblings serialize and recursive
+/** Hold across helpers and actions. Nested siblings serialize and recursive
  * calls borrow existing claims. Declare every replacement/cleanup identity up front: upgrades
  * mid-operation would permit lock-order cycles. One set-valued claim per socket context prevents
  * namespace-wide contenders from deadlocking between individual session acquisitions.

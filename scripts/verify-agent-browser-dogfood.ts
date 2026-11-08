@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Purpose: Run a deterministic, model-free live-browser smoke through the native agent_browser extension surface.
- * Responsibilities: Exercise persistent code, QA, semantic actions, native batch, artifact verification, and close without relying on an LLM to choose tool calls.
+ * Responsibilities: Exercise QA, semantic actions, native batch, artifact verification, and close without relying on an LLM to choose tool calls.
  * Scope: Maintainer verification only; it uses a loopback HTTP fixture and the local extension harness, and it is not part of the published runtime package.
  * Usage: `npm run verify -- dogfood` or `npx tsx scripts/verify-agent-browser-dogfood.ts [--keep-artifacts] [--artifact-dir <path>] [--json]`.
  * Invariants/Assumptions: `agent-browser` is installed on PATH; the script serves a loopback fixture so platform checks do not depend on public network reachability.
@@ -128,18 +128,6 @@ async function startDogfoodFixture(): Promise<{
 }> {
 	const server = createServer((request, response) => {
 		response.setHeader("content-type", "text/html; charset=utf-8");
-		if (request.url === "/script-a") {
-			response.end(
-				'<!doctype html><html lang="en"><head><title>Script A</title></head><body><div role="dialog"><button id="dismiss" onclick="this.parentElement.remove()">Dismiss</button></div><ul><li data-value="a1">A1</li><li data-value="a2">A2</li></ul></body></html>',
-			);
-			return;
-		}
-		if (request.url === "/script-b") {
-			response.end(
-				'<!doctype html><html lang="en"><head><title>Script B</title></head><body><ul><li data-value="b1">B1</li><li data-value="b2">B2</li></ul></body></html>',
-			);
-			return;
-		}
 		if (request.url === "/example-domains.html") {
 			response.end(
 				'<!doctype html><html lang="en"><head><title>Example Domain Help</title></head><body><h1>Example Domain Help</h1><p>Learn more target reached.</p></body></html>',
@@ -226,44 +214,6 @@ function requireTool(
 		throw new Error(`Required browser tool ${name} was not registered.`);
 	}
 	return tool;
-}
-
-async function runPersistentCode(
-	harness: BrowserHarness,
-	origin: string,
-): Promise<DogfoodStepReport> {
-	const scriptResult = await executeRegisteredTool(
-		requireTool(harness, "agent_browser_code"),
-		harness.ctx,
-		{
-			code: `const values = [];
-for (const url of ${JSON.stringify([`${origin}script-a`, `${origin}script-b`])}) {
-  const opened = await browser({ args: ["open", url] });
-  if (!opened.success) throw new Error(opened.error);
-  const probe = await browser({ args: ["eval", "--stdin"], stdin: "({ hasBanner: Boolean(document.querySelector('[role=dialog]')), values: [...document.querySelectorAll('[data-value]')].map(node => node.getAttribute('data-value')) })" });
-  if (!probe.success) throw new Error(probe.error);
-  if (probe.data.result.hasBanner) {
-    const dismissed = await browser({ args: ["click", "#dismiss"] });
-    if (!dismissed.success) throw new Error(dismissed.error);
-  }
-  values.push(...probe.data.result.values);
-}
-emit(values);`,
-		},
-	);
-	assert.ok(scriptResult.details);
-	assert.deepEqual(scriptResult.details.data, ["a1", "a2", "b1", "b2"]);
-	const afterCode = await executeRegisteredTool(harness.tool, harness.ctx, {
-		args: ["get", "url"],
-	});
-	assert.ok(afterCode.details);
-	assert.equal(afterCode.details.sessionName, scriptResult.details.sessionName);
-	assert.match(JSON.stringify(afterCode.details.data), /script-b/);
-	return assertSuccessfulStep({
-		id: "code-branch-and-aggregate",
-		result: scriptResult,
-		textPattern: /a1/,
-	});
 }
 
 async function runCoreFlows(
@@ -360,7 +310,6 @@ export async function runAgentBrowserDogfood(
 			}),
 		);
 
-		reports.push(await runPersistentCode(harness, fixture.origin));
 		reports.push(...(await runCoreFlows(harness, fixture.origin, batchScreenshotPath)));
 
 		const closeResult = await executeRegisteredTool(harness.tool, harness.ctx, { args: ["close"] });

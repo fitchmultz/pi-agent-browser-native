@@ -138,7 +138,6 @@ nodeTest(
 for (const mode of [
 	"direct",
 	"batch",
-	"code",
 	"intervening",
 	"absent",
 	"drift",
@@ -194,31 +193,17 @@ for (const mode of [
 				}
 				await writeFile(log, "");
 				const getterArgs = ["get", "text", mode === "absent" ? "@e99" : "@e1"];
-				const codeTool = harness.getTool("agent_browser_code");
-				assert.ok(codeTool);
-				const code = codeTool;
-				const getterRequests: Readonly<Record<string, unknown>> = {
-					code: {
-						session: SHARED_SESSION,
-						code: `emit((await browser({args:${JSON.stringify(getterArgs)}})).success);`,
-					},
-					batch: { args: [...prefix, "batch", "--bail"], stdin: JSON.stringify([getterArgs]) },
-				};
 				const getter = await executeRegisteredTool(
-					mode === "code" ? code : harness.tool,
+					harness.tool,
 					harness.ctx,
-					getterRequests[mode] ?? { args: [...prefix, ...getterArgs] },
+					mode === "batch"
+						? { args: [...prefix, "batch", "--bail"], stdin: JSON.stringify([getterArgs]) }
+						: { args: [...prefix, ...getterArgs] },
 				);
-				const fresh = ["direct", "batch", "code"].includes(mode);
-				if (mode === "code") {
-					await t.test("code receives successful capture reuse", () => {
-						assert.equal(getter.details?.data, true, getMessageText(getter.content));
-					});
-				} else {
-					await t.test("native result reflects capture freshness", () => {
-						assert.equal(getter.isError, !fresh, getMessageText(getter.content));
-					});
-				}
+				const fresh = mode === "direct" || mode === "batch";
+				await t.test("native result reflects capture freshness", () => {
+					assert.equal(getter.isError, !fresh, getMessageText(getter.content));
+				});
 				const commands = (await readInvocationLog(log)).map((call) =>
 					extractUpstreamCommandTokens(call.args),
 				);

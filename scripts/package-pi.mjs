@@ -1,7 +1,7 @@
 /** Isolated packaged Pi SDK/CLI loading and deterministic browser invocation evidence. */
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
@@ -299,17 +299,6 @@ export async function installRuntimeConsumer(tarballPath) {
 	return packageDir;
 }
 
-/** @param {readonly SmokeTool[]} tools */
-async function verifyPackagedCodeSmoke(tools) {
-	const tool = tools.find((entry) => entry.name === "agent_browser_code");
-	assert.ok(tool, "Packaged agent_browser_code is not executable");
-	const result = await tool.execute("verify-package-agent-browser-code", {
-		code: "emit({ answer: 42 });",
-	});
-	assert.equal(result.isError, false, summarizeToolResult(result));
-	assert.deepEqual(objectDetails(result).data, { answer: 42 });
-}
-
 /** @param {string} packageDir
  * @param {string} tempAgentDir
  */
@@ -346,35 +335,6 @@ async function verifyPackagedRuntimeFiles(packageDir, tempAgentDir) {
 	const converted = JSON.parse(await readFile(destination, "utf8"));
 	assert.ok(isConfigObject(converted));
 	assert.equal(converted.id, "packaged-conversion");
-	const worker = execFile(
-		process.execPath,
-		[
-			"--permission",
-			"--max-old-space-size=64",
-			realpathSync(join(packageDir, "dist/extensions/agent-browser/script-worker.js")),
-			"1048576",
-			"8388608",
-		],
-		{ cwd: tempAgentDir, env: {}, timeout: 10_000 },
-	);
-	assert.ok(worker.child.stdin);
-	worker.child.stdin.end(`${JSON.stringify({ type: "start", code: "return 42;" })}\n`);
-	const { stdout } = await worker;
-	assert.ok(
-		stdout
-			.trim()
-			.split("\n")
-			.some((line) => {
-				/** @type {unknown} */
-				const row = JSON.parse(line);
-				return (
-					isConfigObject(row) &&
-					row.type === "complete" &&
-					row.hasValue === true &&
-					row.value === 42
-				);
-			}),
-	);
 }
 
 /** @param {{ readonly cwd?: string; readonly tarballPath?: string | undefined }} [options] */
@@ -406,7 +366,7 @@ export async function verifyPackagedPiLoad(options = {}) {
 		const sessionManager = SessionManager.create(packageDir, tempAgentDir);
 		sessionManager.appendMessage({
 			role: "user",
-			content: "Run the packaged code smoke.",
+			content: "Run the packaged smoke.",
 			timestamp: Date.now(),
 		});
 		const result = await createAgentSession({
@@ -432,7 +392,6 @@ export async function verifyPackagedPiLoad(options = {}) {
 			);
 			failures.push(...executionReport.failures);
 			invocation = executionReport.invocation;
-			await verifyPackagedCodeSmoke(session.agent.state.tools);
 			await verifyPackagedCli(packageDir, tempAgentDir, hostCli);
 		}
 		return {

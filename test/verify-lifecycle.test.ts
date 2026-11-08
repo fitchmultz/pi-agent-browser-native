@@ -273,14 +273,6 @@ nodeTest(
 					type: "message",
 					message: {
 						role: "toolResult",
-						toolName: "agent_browser_code",
-						details: { sessionName: "s1" },
-					},
-				}),
-				JSON.stringify({
-					type: "message",
-					message: {
-						role: "toolResult",
 						toolName: "agent_browser_qa",
 						details: { sessionName: "s1" },
 					},
@@ -311,7 +303,7 @@ nodeTest(
 		const results = readArray(agentBrowserResults(entries)).map(readRecord);
 		assert.deepEqual(
 			results.map((result) => result.toolName),
-			["agent_browser", "agent_browser_code", "agent_browser_qa"],
+			["agent_browser", "agent_browser_qa"],
 		);
 		const [first] = results;
 		assert.ok(first);

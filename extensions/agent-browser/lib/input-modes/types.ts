@@ -1,7 +1,5 @@
 export const DEFAULT_SESSION_MODE = "auto";
 
-export const AGENT_BROWSER_CODE_MAX_TIMEOUT_MS = 300_000;
-
 export const AGENT_BROWSER_SEMANTIC_ACTIONS = ["check", "click", "fill", "select"] as const;
 
 export const AGENT_BROWSER_SEMANTIC_LOCATORS = [

@@ -197,15 +197,6 @@ nodeTest("SDK type and expression callbacks cannot conceal same-line functions",
 		() => sourcePolicy(callbackFile, extraCallback),
 		/unauthorized operation on the same line/u,
 	);
-	const extraRegistration = callbackSource.replace(
-		/execute: async \(id, params, signal, onUpdate, ctx\) =>\s+finalizeAgentBrowserNativeResult\(\s+await options.executeCode\(id, params, signal, onUpdate, ctx\),\s+params,\s+\),/u,
-		"execute: async (id, params, signal, onUpdate, ctx) => ((a, b, c, d, e) => a)(await options.executeCode(id, params, signal, onUpdate, ctx), params, signal, onUpdate, ctx),",
-	);
-	assert.notEqual(extraRegistration, callbackSource);
-	assert.throws(
-		() => sourcePolicy(callbackFile, extraRegistration),
-		/unauthorized operation on the same line/u,
-	);
 });
 
 nodeTest("cancellation exceptions cannot cover unrelated conditions or inline body checks", () => {

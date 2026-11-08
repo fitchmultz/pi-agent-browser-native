@@ -519,24 +519,6 @@ for (const mode of ["root", "explicit", "fresh", "config", "env", "initial", "he
 							);
 							assert.equal((await pages()).length, 1);
 							assert.equal(await browserPid(), pid);
-							if (mode === "headless") {
-								await t.test("code keeps the same browser", async () => {
-									const codeTool = harness.getTool("agent_browser_code");
-									assert.ok(codeTool, "code tool must be registered");
-									const script = await executeRegisteredTool(codeTool, harness.ctx, {
-										code: `await browser({args:["open"]}); await browser({args:["open",${JSON.stringify(fixture.baseUrl)}]}); emit((await browser({args:["open"]})).data.url);`,
-									});
-									const scriptDetails = readRecord(script.details);
-
-									assert.equal(script.isError, false, getMessageText(script.content));
-
-									assert.equal(scriptDetails.data, `${fixture.baseUrl}/`);
-
-									assert.equal(scriptDetails.sessionName, openedDetails.sessionName);
-
-									assert.equal(await browserPid(), pid);
-								});
-							}
 							console.log(
 								JSON.stringify({
 									mode,

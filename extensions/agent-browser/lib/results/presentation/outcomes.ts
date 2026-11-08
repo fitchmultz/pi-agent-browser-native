@@ -16,7 +16,7 @@ import type { ToolPresentationObservation } from "./observation-contracts.js";
 
 type OutcomeOptions = Pick<
 	BuildToolPresentationOptions,
-	"args" | "envelope" | "errorText" | "modelVisible" | "sessionName"
+	"args" | "envelope" | "errorText" | "sessionName"
 >;
 
 type FailurePresentationUpdate = Pick<
@@ -210,9 +210,6 @@ export function applyPresentationOutcome(
 			},
 			...classified.content.slice(1),
 		];
-	}
-	if (options.modelVisible === false) {
-		result.content = [];
 	}
 	return result;
 }

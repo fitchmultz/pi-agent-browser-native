@@ -56,7 +56,6 @@ class BrowserLifecycle {
 
 	async tree(ctx: ExtensionContext): Promise<void> {
 		this.runtime.branch.invalidateRestore();
-		await this.runtime.code.settle();
 		await this.runtime.managedSessionExecutionQueue.run(() =>
 			this.runtime.artifacts.queue.run(() => this.restore(ctx, false)),
 		);
@@ -141,7 +140,6 @@ class BrowserLifecycle {
 	}
 
 	async shutdown(ctx: ExtensionContext | undefined, scope: ShutdownScope): Promise<void> {
-		await this.runtime.code.settle();
 		this.runtime.branch.invalidate();
 		const preservePaths = await this.runtime.managedSessionExecutionQueue.run(() =>
 			this.runtime.artifacts.queue.run(() => this.cleanup(ctx, scope)),

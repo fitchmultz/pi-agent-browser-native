@@ -206,7 +206,6 @@ export function buildFailureNextActions(
 		case "parse-failure":
 		case "policy-blocked":
 		case "qa-failure":
-		case "script-error":
 		case "validation-error":
 		case undefined:
 			return [];

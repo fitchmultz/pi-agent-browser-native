@@ -47,25 +47,20 @@ async function buildNativeTextPresentation(
 			: undefined;
 	const presentation: ToolPresentation = {
 		...failure,
-		content:
-			options.modelVisible === false
-				? []
-				: [{ type: "text", text: [options.errorText, text].filter(Boolean).join("\n\n") }],
+		content: [{ type: "text", text: [options.errorText, text].filter(Boolean).join("\n\n") }],
 		data: text,
 		summary: failure?.summary ?? getNativeTextSummary(text),
 	};
-	if (options.modelVisible !== false) {
-		Object.assign(
+	Object.assign(
+		presentation,
+		await compactLargePresentationOutput({
+			artifactManifest: options.artifactManifest,
+			commandInfo: options.commandInfo,
+			data: presentation.data,
+			persistentArtifactStore: options.persistentArtifactStore,
 			presentation,
-			await compactLargePresentationOutput({
-				artifactManifest: options.artifactManifest,
-				commandInfo: options.commandInfo,
-				data: presentation.data,
-				persistentArtifactStore: options.persistentArtifactStore,
-				presentation,
-			}),
-		);
-	}
+		}),
+	);
 	return sanitizeModelFacingPresentation(presentation);
 }
 

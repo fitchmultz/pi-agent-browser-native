@@ -18,11 +18,11 @@ export {
 export { readBrowserEntries } from "./browser-journal-replay.js";
 
 /** A filename is not durability evidence on official Pi before its first conversation. */
-export function requirePublishedBrowserJournal(manager: BrowserJournalManager): void {
+function requirePublishedBrowserJournal(manager: BrowserJournalManager): void {
 	const path = manager.getSessionFile();
 	if (path === undefined || path.length === 0) {
 		throw new Error(
-			"Browser code requires a published Pi conversation; relaunch without --no-session.",
+			"Browser work requires a published Pi conversation; relaunch without --no-session.",
 		);
 	}
 	let fd: number | undefined;

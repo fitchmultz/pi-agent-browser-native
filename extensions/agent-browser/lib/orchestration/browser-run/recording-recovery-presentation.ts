@@ -37,7 +37,6 @@ export async function presentRecordingReceipt(
 	const expected = plan.expected;
 	const data = recordingRecoveryData(plan, evidence);
 	return buildToolPresentation({
-		modelVisible: options.modelVisible,
 		artifactManifest: options.artifactManifest,
 		artifactMinUpdatedAtMs: expected?.startedAtMs ?? options.artifactRunStartedAtMs,
 		artifactMaxUpdatedAtMs: Date.now(),
@@ -194,12 +193,10 @@ export function finishRecordingPresentation(
 	recovery: RecordingRecovery,
 ): ToolPresentation {
 	const content = [...presentation.content];
-	if (options.modelVisible !== false) {
-		content.unshift({
-			type: "text",
-			text: `Recording receipt recovery (${recovery.status}): ${recovery.reason}\nOriginal attempt: ${recovery.attempt.error}`,
-		});
-	}
+	content.unshift({
+		type: "text",
+		text: `Recording receipt recovery (${recovery.status}): ${recovery.reason}\nOriginal attempt: ${recovery.attempt.error}`,
+	});
 	const failure: Partial<
 		Pick<ToolPresentation, "resultCategory" | "failureCategory" | "successCategory" | "summary">
 	> = recovery.healed

@@ -41,7 +41,7 @@ import {
 /** @typedef {Required<LifecycleOptions> & {tempRoot: string, artifactsDir: string, agentDir: string, sessionDir: string, packageDir: string, fakeBinDir: string, fakeStateDir: string, sessionId: string, tmuxSession: string}} LifecycleRuntime */
 
 const EXPECTED_URL = "https://react.dev/";
-const CODE_URL = "https://react.dev/learn";
+const NAVIGATED_URL = "https://react.dev/learn";
 
 /** @param {boolean} condition @param {string} message @returns {asserts condition} */
 function assert(condition, message) {
@@ -192,22 +192,15 @@ async function reloadLifecycle(runtime, openReport) {
 		"Initial fresh open did not create a managed session.",
 	);
 	const common = { sessionFile, timeoutMs, tmuxSession, verbose: runtime.verbose };
-	const codeNavigation = await runPromptAndWaitForResult({
+	const navigation = await runPromptAndWaitForResult({
 		...common,
-		describe: "persistent code navigation before reload",
-		prompt: buildToolInputPrompt(
-			{ code: `emit((await browser({args:["open",${JSON.stringify(CODE_URL)}]})).data);` },
-			"",
-			"agent_browser_code",
-		),
-		predicate: (result) =>
-			result.isError === false &&
-			record(result.details?.data)?.url === CODE_URL &&
-			record(result.details?.codeRun)?.callCount === 1,
+		describe: "managed navigation before reload",
+		prompt: buildPrompt(["open", NAVIGATED_URL]),
+		predicate: (result) => matchesSuccessfulPageResult(result, "open", NAVIGATED_URL),
 	});
 	assert(
-		codeNavigation.result.details?.sessionName === sessionName,
-		"Code navigation used a different browser.",
+		navigation.result.details?.sessionName === sessionName,
+		"Navigation before reload used a different browser.",
 	);
 	await sendLine(tmuxSession, `/${lifecycleSentinelCommand("v1")}`);
 	await waitForSentinel({ sessionFile, timeoutMs, token: "v1" });
@@ -218,7 +211,7 @@ async function reloadLifecycle(runtime, openReport) {
 		...common,
 		describe: "post-reload same-page snapshot",
 		prompt: buildPrompt(["snapshot", "-i"]),
-		predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", CODE_URL),
+		predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", NAVIGATED_URL),
 	});
 	assert(
 		reloadSnapshot.result.details?.sessionName === sessionName,
@@ -262,7 +255,7 @@ async function resumeLifecycle(runtime, observed) {
 		...common,
 		describe: "post-relaunch exact-session snapshot",
 		prompt: buildPrompt(["snapshot", "-i"]),
-		predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", CODE_URL),
+		predicate: (result) => matchesSuccessfulPageResult(result, "snapshot", NAVIGATED_URL),
 	});
 	assert(
 		resumeSnapshot.result.details?.sessionName === sessionName,

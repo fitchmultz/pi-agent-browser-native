@@ -224,23 +224,10 @@ console.log(JSON.stringify({ success: true, data }));
 						calls.filter((call) => readNumber(call.launch) > 0).every((call) => call.launch === 1),
 						"live browser never restarted",
 					);
-					const beforeScript = resolutions;
-					const codeTool = harness.getTool("agent_browser_code");
-					assert.ok(codeTool, "code tool must be registered");
-					const script = executeRegisteredTool(codeTool, harness.ctx, {
-						code: 'await browser({args:["screenshot","code/one.png"]}); await browser({args:["screenshot","code/two.png"]}); emit("done");',
-					});
-					selected = a;
-					const scriptResult = await script;
-					assert.equal(scriptResult.isError, false, getMessageText(scriptResult.content));
-					assert.equal(resolutions, beforeScript + 1, "code calls inherit one outer cwd snapshot");
-					assert.ok((await readFile(join(b, "code/one.png"))).length > 0);
-					assert.ok((await readFile(join(b, "code/two.png"))).length > 0);
 					assert.ok(
 						(await readFile(readString(snapshotDetails.fullOutputPath))).length > 0,
 						"cached artifact stays in the original store",
 					);
-					selected = b;
 					const configured = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["--config", "agent-browser.json", "get", "title"],
 					});
@@ -382,12 +369,6 @@ console.log(JSON.stringify({ success: true, data }));
 							args: ["get", "title"],
 							outputPath: "queued.json",
 						});
-						const codeTool = harness.getTool("agent_browser_code");
-						assert.ok(codeTool, "code tool must be registered");
-						const queuedCode = executeRegisteredTool(codeTool, harness.ctx, {
-							code: 'emit((await browser({args:["get","title"]})).data);',
-							outputPath: "queued-code.json",
-						});
 						selected = a;
 						const [fresh, followup] = await Promise.all([first, queued]);
 						assert.equal(fresh.isError, false, getMessageText(fresh.content));
@@ -405,18 +386,6 @@ console.log(JSON.stringify({ success: true, data }));
 						);
 						assert.ok((await readFile(join(b, "queued.json"))).length > 0);
 						await assert.rejects(readFile(join(a, "queued.json")), { code: "ENOENT" });
-						const code = await queuedCode;
-						const codeDetails = readRecord(code.details);
-						assert.equal(code.isError, false, getMessageText(code.content));
-						assert.equal(
-							codeDetails.sessionName,
-							fresh.details.sessionName,
-							"queued code must follow the fresh browser",
-						);
-						assert.equal(
-							readRecord(codeDetails.outputFile).absolutePath,
-							join(b, "queued-code.json"),
-						);
 						assert.equal(
 							readRecord(readRecord(readRecord(harness.appendedEntries.at(-1)?.data).event).state)
 								.managedSessionCwd,

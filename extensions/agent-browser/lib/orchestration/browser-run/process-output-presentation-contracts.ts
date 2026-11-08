@@ -27,7 +27,7 @@ export type RenderNativePresentationInput = Readonly<
 	>
 > & {
 	readonly input: Readonly<
-		Pick<ProcessBrowserOutputInput, "artifactRunStartedAtMs" | "modelVisible" | "processResult">
+		Pick<ProcessBrowserOutputInput, "artifactRunStartedAtMs" | "processResult">
 	> & {
 		readonly prepared: Readonly<
 			Pick<
@@ -115,9 +115,7 @@ export type BuildNativePresentationInput = Readonly<
 		| "textOutput"
 	>
 > & {
-	readonly input: Readonly<
-		Pick<ProcessBrowserOutputInput, "artifactRunStartedAtMs" | "modelVisible">
-	> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "artifactRunStartedAtMs">> & {
 		readonly prepared: Readonly<
 			Pick<
 				PreparedBrowserRun,

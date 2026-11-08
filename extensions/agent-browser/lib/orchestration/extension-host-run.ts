@@ -102,7 +102,7 @@ class ElectronHostTransaction {
 				phase: "begin",
 				operationId: this.operationId,
 				toolCallId: this.call.toolCallId,
-				commandIndex: this.call.commandIndex ?? 0,
+				commandIndex: 0,
 				isError: true,
 				state: {},
 				pages: [...this.keys].map((key) => ({
@@ -275,7 +275,7 @@ class ElectronHostTransaction {
 				phase: this.hostAffecting ? "finish" : "state",
 				operationId: this.operationId,
 				toolCallId: this.call.toolCallId,
-				commandIndex: this.call.commandIndex ?? 0,
+				commandIndex: 0,
 				isError: result.isError === true,
 				state: browserStateEffects(isRecord(result.details) ? result.details : {}),
 				pages: changes.pages,

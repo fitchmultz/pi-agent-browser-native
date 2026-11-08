@@ -670,101 +670,44 @@ process.stdout.write(JSON.stringify({ success: true, data: { title: "Fixture", u
 );
 
 nodeTest(
-	"Pi pipeline captures code-created files before the next inner dispatch using the outer call ID",
+	"Pi Stop cancels a pending beforeExecute without dispatching browser effects",
+	{ timeout: 15_000 },
 	async () => {
-		const capturedIds: string[] = [];
-		const signals: AbortSignal[] = [];
-		let capturedReport: string | undefined;
+		const entered: PromiseWithResolvers<void> = Promise.withResolvers();
+		let hookSignal: AbortSignal | undefined;
 		const pipeline = await runPipelinePrompt({
-			toolName: "agent_browser_code",
-			toolArguments: {
-				code: `emit(await Promise.all([
-  browser({ args: ["download", "#export", "report.txt"] }),
-  browser({ args: ["open", "https://fixture.example.test/effect"] })
-]));`,
-			},
+			toolArguments: { args: ["open", "https://fixture.example.test/effect"] },
 			extensionFactory(pi) {
 				agentBrowserExtension(pi, {
 					async beforeExecute(id, ctx) {
-						capturedIds.push(id);
+						assert.equal(id, "call_agent_browser_pipeline");
 						assert.ok(ctx.signal instanceof AbortSignal);
-						signals.push(ctx.signal);
-						if (capturedIds.length === 2) {
-							capturedReport = await readFile(join(ctx.cwd, "report.txt"), "utf8");
-							await writeFile(join(ctx.cwd, "captured-report.txt"), capturedReport);
-						}
+						hookSignal = ctx.signal;
+						entered.resolve();
+						await delay(60_000, undefined, { signal: ctx.signal });
 					},
 				});
 			},
-			fakeScript: `const fs = require("node:fs");
-const args = process.argv.slice(2);
-if (args.includes("download")) fs.writeFileSync("report.txt", "downloaded report");
-if (args.includes("open") && fs.readFileSync("captured-report.txt", "utf8") !== "downloaded report") throw Error("Effect preceded file capture");
-process.stdout.write(JSON.stringify({ success: true, data: { path: "report.txt", title: "Fixture", url: "https://fixture.example.test/", closed: true } }));`,
+			async runPrompt(session) {
+				const pending = session.prompt("Use agent_browser once.");
+				try {
+					await Promise.race([
+						entered.promise,
+						pending.then(() => assert.fail("Tool completed without entering beforeExecute")),
+					]);
+				} finally {
+					await session.abort();
+				}
+				await pending;
+			},
+			fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
 		});
-		assert.deepEqual(capturedIds, ["call_agent_browser_pipeline", "call_agent_browser_pipeline"]);
-		assert.equal(capturedReport, "downloaded report");
-		assert.notEqual(signals[0], signals[1], "each inner dispatch supplies its own abort signal");
-		assert.equal(
-			pipeline.inMemoryResult.isError,
-			false,
-			JSON.stringify(pipeline.inMemoryResult.content),
-		);
-		const details = readRecord(pipeline.persistedResult.details);
-		assert.deepEqual(
-			readArray(details.data).map((result) => readRecord(result).success),
-			[true, true],
-		);
-		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("download")).length, 1);
-		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 1);
+		assert.equal(hookSignal?.aborted, true);
+		assert.equal(pipeline.persistedResult.isError, true);
+		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 0);
 		assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 0);
 	},
 );
-
-for (const code of [false, true]) {
-	nodeTest(
-		`Pi Stop cancels a pending beforeExecute without dispatching ${code ? "code" : "direct"} browser effects`,
-		{ timeout: 15_000 },
-		async () => {
-			const entered: PromiseWithResolvers<void> = Promise.withResolvers();
-			let hookSignal: AbortSignal | undefined;
-			const pipeline = await runPipelinePrompt({
-				toolName: code ? "agent_browser_code" : "agent_browser",
-				toolArguments: code
-					? { code: `await browser({ args: ["open", "https://fixture.example.test/effect"] });` }
-					: { args: ["open", "https://fixture.example.test/effect"] },
-				extensionFactory(pi) {
-					agentBrowserExtension(pi, {
-						async beforeExecute(id, ctx) {
-							assert.equal(id, "call_agent_browser_pipeline");
-							assert.ok(ctx.signal instanceof AbortSignal);
-							hookSignal = ctx.signal;
-							entered.resolve();
-							await delay(60_000, undefined, { signal: ctx.signal });
-						},
-					});
-				},
-				async runPrompt(session) {
-					const pending = session.prompt("Use agent_browser once.");
-					try {
-						await Promise.race([
-							entered.promise,
-							pending.then(() => assert.fail("Tool completed without entering beforeExecute")),
-						]);
-					} finally {
-						await session.abort();
-					}
-					await pending;
-				},
-				fakeScript: `process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
-			});
-			assert.equal(hookSignal?.aborted, true);
-			assert.equal(pipeline.persistedResult.isError, true);
-			assert.equal(pipeline.invocations.filter(({ args }) => args.includes("open")).length, 0);
-			assert.equal(pipeline.invocations.filter(({ args }) => args.includes("close")).length, 0);
-		},
-	);
-}
 
 nodeTest("Pi pipeline records a rejected beforeExecute without spawning upstream", async () => {
 	const pipeline = await runPipelinePrompt({

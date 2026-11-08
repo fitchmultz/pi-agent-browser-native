@@ -27,7 +27,7 @@ import { convertBrowserSession } from "../extensions/agent-browser/lib/browser-s
 import { SessionPageState } from "../extensions/agent-browser/lib/session-page-state.js";
 import { restoreAttachedSessionKeysFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-attachment-replay.js";
 import { restoreArtifactManifestFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-result-state.js";
-import { getScriptSessionLeasesFromBranch } from "../extensions/agent-browser/lib/orchestration/script-mode.js";
+import { getScriptSessionLeasesFromBranch } from "../extensions/agent-browser/lib/orchestration/extension-script-leases.js";
 import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 import type { SessionArtifactManifestEntry } from "../extensions/agent-browser/lib/results/contracts.js";
 import {
@@ -908,7 +908,7 @@ for (const change of ["replace", "truncate"] as const) {
 }
 
 for (const earlierHandler of [false, true]) {
-	for (const boundary of ["begin", "finish", "observation", "host-finish"] as const) {
+	for (const boundary of ["begin", "finish", "host-finish"] as const) {
 		nodeTest(
 			`branch selection during ${boundary} journal preparation cannot publish old state onto B (${earlierHandler ? "earlier awaited handler" : "immediate event"})`,
 			{ concurrency: false, timeout: 30_000 },
@@ -952,7 +952,7 @@ process.stdout.write(JSON.stringify({success:true,data:args.includes('eval')?{re
 										return;
 									}
 									const phase = readRecord(readRecord(data).event).phase;
-									if (phase === (boundary === "observation" ? "finish" : "begin")) {
+									if (phase === "begin") {
 										armed = true;
 									}
 								},
@@ -991,17 +991,10 @@ process.stdout.write(JSON.stringify({success:true,data:args.includes('eval')?{re
 								},
 							});
 							armed = boundary === "begin";
-							const codeTool = harness.getTool("agent_browser_code");
 							const electronTool = harness.getTool("agent_browser_electron");
-							assert.ok(codeTool, "code tool must be registered");
 							assert.ok(electronTool, "electron tool must be registered");
 							const invokeBoundary = () => {
 								switch (boundary) {
-									case "observation":
-										return executeRegisteredTool(codeTool, harness.ctx, {
-											session: "append-race",
-											code: 'await browser({args:["get","url"]}); emit("x".repeat(24000));',
-										});
 									case "host-finish":
 										return executeRegisteredTool(electronTool, harness.ctx, { action: "probe" });
 									case "begin":
@@ -1066,22 +1059,6 @@ process.stdout.write(JSON.stringify({success:true,data:args.includes('eval')?{re
 										SessionPageState.fromBranch(all).get("append-race").tabTargetUnknown,
 										true,
 										"A keeps its unfinished intent",
-									);
-								});
-							} else if (boundary === "observation") {
-								await t.test("observation remains readable", async () => {
-									assert.equal(result.isError, false, JSON.stringify(result));
-
-									assert.equal(resultDetails.data, "x".repeat(24000));
-									const observation = readRecord(
-										JSON.parse(result.content.find((part) => part.type === "text")?.text ?? "{}"),
-									);
-
-									assert.equal(
-										readRecord(
-											JSON.parse(await readFile(readString(observation.observationPath), "utf8")),
-										).data,
-										"x".repeat(24000),
 									);
 								});
 							} else {
@@ -1235,23 +1212,6 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 									(await readBrowserEntries(harness.ctx.sessionManager)).length,
 									harness.appendedEntries.length,
 									"public in-memory ancestry retains canonical state",
-								);
-								const beforeCode = (await readInvocationLog(log)).length;
-								const codeTool = harness.getTool("agent_browser_code");
-								assert.ok(codeTool, "code tool must be registered");
-								const code = await executeRegisteredTool(codeTool, harness.ctx, {
-									code: 'await browser({args:["eval","--stdin"],stdin:"NEVER_DISPATCH"});',
-								});
-								const codeDetails = readRecord(code.details);
-
-								assert.equal(code.isError, true);
-
-								assert.equal(codeDetails.failureCategory, "validation-error");
-
-								assert.equal(
-									(await readInvocationLog(log)).length,
-									beforeCode,
-									"code requires published intent even in an in-memory session",
 								);
 							});
 						} else {
@@ -1502,11 +1462,9 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 							args: ["--session", "fault", "snapshot", "-i"],
 						});
 						fail = true;
-						const codeTool = harness.getTool("agent_browser_code");
-						assert.ok(codeTool, "code tool must be registered");
-						const result = await executeRegisteredTool(codeTool, harness.ctx, {
-							session: "fault",
-							code: 'await browser({args:["eval","--stdin"],stdin:"MUTATE_FIXTURE"}); await browser({args:["eval","--stdin"],stdin:"MUTATE_FIXTURE"});',
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", "fault", "eval", "--stdin"],
+							stdin: "MUTATE_FIXTURE",
 						});
 						const mutations = (await readInvocationLog(log)).filter(
 							(row) => row.stdin === "MUTATE_FIXTURE",
@@ -1514,7 +1472,7 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 						assert.equal(
 							mutations.length,
 							failPhase === "begin" ? 0 : 1,
-							"begin failure prevents dispatch; finish failure stops dependent calls",
+							"begin failure prevents dispatch; finish failure does not retry the effect",
 						);
 						assert.equal(result.isError, true);
 						fail = false;

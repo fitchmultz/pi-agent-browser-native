@@ -11,7 +11,7 @@ Related docs:
 
 ## Purpose
 
-This guide is the entry point for using `pi-agent-browser-native` against desktop **Electron** applications. The wrapper exposes `agent_browser_electron` with flat action fields that owns the awkward discover → launch → attach → probe → cleanup sequence so agents do not hand-build `--remote-debugging-port` argv, poll `DevToolsActivePort`, and `kill` profile directories. After attach, the rest of the native `agent_browser` surface (`snapshot`, `find`, `click`, `fill`, `get`, `eval --stdin`, `batch`, persistent browser code, and advanced attached QA) works the same way it does against a web page.
+This guide is the entry point for using `pi-agent-browser-native` against desktop **Electron** applications. The wrapper exposes `agent_browser_electron` with flat action fields that owns the awkward discover → launch → attach → probe → cleanup sequence so agents do not hand-build `--remote-debugging-port` argv, poll `DevToolsActivePort`, and `kill` profile directories. After attach, the rest of the native `agent_browser` surface (`snapshot`, `find`, `click`, `fill`, `get`, `eval --stdin`, `batch`, and advanced attached QA) works the same way it does against a web page.
 
 This document is structured for users, not implementers. Field-level rules live in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#agent_browser_electron); this guide focuses on **when** and **how** to use them, and on the safety and ownership boundary the wrapper enforces.
 
@@ -380,11 +380,11 @@ Single-instance Electron behavior is a common cause of `timeout` and `upstream-e
 - A shortened URL ending in `...` is display-only; long URLs alone do not cause mismatch or reattach guidance. Status/probe compare full normalized URLs.
 - `electron.status` may report a live wrapper launch while the managed session has drifted to `about:blank`. Follow `reattach-electron-launch`, then refresh refs before reusing old `@e…` handles. For non-wrapper tab drift where `details.nextActions` names `select-intended-tab-after-drift`, use that stable `t<N>` action plus `snapshot-after-tab-recovery` before continuing.
 
-## Code and shared-session coordination
+## Shared-session coordination
 
-`agent_browser_code` can inspect/interact with the attached browser by selecting its returned `sessionName` (and namespace when present). The browser survives the cell; variables reset. Electron host discovery/launch/cleanup stays on `agent_browser_electron`. Updated cooperating Pi processes order helpers and actions with the shared socket/namespace/session lock; a whole code cell holds that boundary. Multiple named native sessions attached to the same external app are not a universal app lock. Humans and external clients can still change the app.
+Codemode scripts that loop or branch over the attached app call `agent_browser` like any other follow-up, selecting the returned `sessionName` (and namespace when present) when they target it explicitly. Electron host discovery/launch/cleanup stays on `agent_browser_electron`. Updated cooperating Pi processes order each call's helpers and action with the shared socket/namespace/session lock. Multiple named native sessions attached to the same external app are not a universal app lock. Humans and external clients can still change the app.
 
-Recovery actions now name `agent_browser_electron` with flat parameters, or `agent_browser` for native operations. Enable `electron` through the loader if a returned lifecycle action is not active. See [0.7 migration](TOOL_CONTRACT.md#07-migration).
+Recovery actions now name `agent_browser_electron` with flat parameters, or `agent_browser` for native operations. Load `agent_browser_electron` with native `tool_search` if a returned lifecycle action is not active. See [0.7 migration](TOOL_CONTRACT.md#07-migration).
 
 ## Cleanup checklist
 

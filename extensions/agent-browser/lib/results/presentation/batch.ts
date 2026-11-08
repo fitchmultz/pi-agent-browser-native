@@ -59,7 +59,6 @@ async function collectPresentedSteps(options: BuildBatchPresentationOptions): Pr
 	for (const [index, item] of options.data.entries()) {
 		// Each row updates artifact protection/manifest and route state required by the following row.
 		const step = await buildBatchStepPresentation({
-			modelVisible: options.modelVisible,
 			artifactManifest: manifest,
 			artifactMaxUpdatedAtMs: options.artifactMaxUpdatedAtMs,
 			artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,
@@ -105,7 +104,7 @@ export async function buildBatchPresentation(
 	);
 	const artifactVerification = buildArtifactVerificationSummary(artifacts);
 	const paths = collectBatchOutputPaths(steps);
-	const text = formatBatchStatusText(steps, status, options.modelVisible);
+	const text = formatBatchStatusText(steps, status);
 	const artifactRetentionSummary = manifest
 		? formatSessionArtifactRetentionSummary(manifest)
 		: undefined;
@@ -137,13 +136,10 @@ export async function buildBatchPresentation(
 		artifacts: artifacts.length > 0 ? artifacts : undefined,
 		batchFailure: status.failure,
 		batchSteps: steps.map((step) => step.details),
-		content:
-			options.modelVisible === false
-				? []
-				: [
-						{ type: "text", text: contentText },
-						...steps.flatMap((step) => getPresentationImages(step.presentation)),
-					],
+		content: [
+			{ type: "text", text: contentText },
+			...steps.flatMap((step) => getPresentationImages(step.presentation)),
+		],
 		failureCategory: status.failure?.failedStep.failureCategory,
 		data: serializeBatchData(steps),
 		...paths,

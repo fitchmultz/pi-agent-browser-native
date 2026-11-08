@@ -55,9 +55,7 @@ type CollectPublicationWarningsInput = Readonly<
 	>
 > & {
 	readonly presentation: ToolPresentationObservation;
-	readonly input: Readonly<
-		Pick<ProcessBrowserOutputInput, "cwd" | "modelVisible" | "processResult">
-	> & {
+	readonly input: Readonly<Pick<ProcessBrowserOutputInput, "cwd" | "processResult">> & {
 		readonly prepared: Readonly<
 			Pick<
 				PreparedBrowserRun,
@@ -102,10 +100,7 @@ export interface BuildOutputResultInput {
 	readonly input: Readonly<
 		Pick<
 			ProcessBrowserOutputInput,
-			| "electronProfileIsolationDetails"
-			| "modelVisible"
-			| "preserveAttachedBrowserSession"
-			| "processResult"
+			"electronProfileIsolationDetails" | "preserveAttachedBrowserSession" | "processResult"
 		>
 	> & {
 		readonly prepared: Readonly<
@@ -194,18 +189,15 @@ export async function collectPublicationWarnings(
 	const warnings = [sessionWarning(draft), recordingPageWarning(draft)]
 		.filter((part) => part !== undefined && part.length > 0)
 		.join("\n\n");
-	const redactedContent =
-		draft.input.modelVisible === false
-			? []
-			: buildRedactedPresentationContent({
-					exactSensitiveValues: draft.input.prepared.exactSensitiveValues,
-					plainTextInspection: draft.plainTextInspection,
-					presentation: draft.presentation,
-					presentationEnvelope: draft.presentationEnvelope,
-					succeeded: draft.succeeded,
-					userRequestedJson: draft.input.prepared.userRequestedJson,
-					warningText: warnings.length > 0 ? warnings : undefined,
-				});
+	const redactedContent = buildRedactedPresentationContent({
+		exactSensitiveValues: draft.input.prepared.exactSensitiveValues,
+		plainTextInspection: draft.plainTextInspection,
+		presentation: draft.presentation,
+		presentationEnvelope: draft.presentationEnvelope,
+		succeeded: draft.succeeded,
+		userRequestedJson: draft.input.prepared.userRequestedJson,
+		warningText: warnings.length > 0 ? warnings : undefined,
+	});
 	return { artifactCleanup, redactedContent, resultArtifactManifest };
 }
 
@@ -245,7 +237,6 @@ export function buildOutputResult(
 ): BrowserProcessOutputResult {
 	const { input, native, page, lifecycle, publication } = sources;
 	const result = buildFinalAgentBrowserToolResult({
-		modelVisible: input.modelVisible,
 		aboutBlankSessionMismatch: lifecycle.aboutBlankSessionMismatch,
 		artifactCleanup: publication.artifactCleanup,
 		categoryDetails: recovery.categoryDetails,
@@ -255,7 +246,7 @@ export function buildOutputResult(
 		compiledNetworkSourceLookup: input.prepared.compiledNetworkSourceLookup,
 		compiledSemanticAction: input.prepared.compiledSemanticAction,
 		compatibilityWorkaround: input.prepared.compatibilityWorkaround,
-		currentRefSnapshot: input.modelVisible === false ? undefined : publication.currentRefSnapshot,
+		currentRefSnapshot: publication.currentRefSnapshot,
 		currentRefSnapshotInvalidation: publication.currentRefSnapshotInvalidation,
 		currentSessionTabTarget: publication.currentSessionTabTarget,
 		currentSessionTabTargetUnknown: publication.currentSessionTabTargetUnknown,

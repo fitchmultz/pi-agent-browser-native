@@ -105,7 +105,6 @@ export function projectBrowserObservationResult(options: {
 	readonly result: AgentBrowserToolResult;
 	readonly catalog?: Readonly<Record<string, unknown>> | undefined;
 	readonly args: readonly string[];
-	readonly modelVisible?: boolean | undefined;
 	readonly state: BrowserObservationState;
 }): AgentBrowserToolResult {
 	let result = options.result;
@@ -115,8 +114,5 @@ export function projectBrowserObservationResult(options: {
 		result = { ...result, details: { ...details, readConfirmation: confirmation } };
 	}
 	result = addFailureError(addCatalog(result, options.catalog, options.args));
-	if (options.modelVisible === false) {
-		result = { ...result, content: [] };
-	}
 	return addPendingPageState(result, options.state);
 }

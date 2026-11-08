@@ -73,7 +73,6 @@ export interface PublicationOutputPhase {
 			| "artifactRunStartedAtMs"
 			| "cwd"
 			| "electronProfileIsolationDetails"
-			| "modelVisible"
 			| "operationCwd"
 			| "preserveAttachedBrowserSession"
 			| "processResult"

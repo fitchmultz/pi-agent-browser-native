@@ -60,7 +60,6 @@ export async function runAgentBrowserTool(
 	return projectBrowserObservationResult({
 		...observed,
 		args: options.input.toolArgs,
-		modelVisible: options.modelVisible,
 		state: options.state,
 	});
 }
@@ -114,11 +113,10 @@ async function buildHelperConfirmationResult(
 }
 
 function projectEarlyResult(
-	options: { readonly modelVisible?: boolean | undefined; readonly toolArgs: readonly string[] },
+	options: { readonly toolArgs: readonly string[] },
 	result: AgentBrowserToolResult,
 ): AgentBrowserToolResult {
 	if (
-		options.modelVisible === false ||
 		!isBooleanFlagEnabled(options.toolArgs, "--json") ||
 		isPlainTextInspectionArgs(options.toolArgs)
 	) {
@@ -171,10 +169,7 @@ async function runAgentBrowserToolInContext(
 	const preparation = await honorHelperConfirmation(options, prepared);
 	if (preparation.kind === "early-result") {
 		options.state.recordConfirmationPolicy(false);
-		return projectEarlyResult(
-			{ modelVisible: options.modelVisible, toolArgs: options.input.toolArgs },
-			preparation.result,
-		);
+		return projectEarlyResult({ toolArgs: options.input.toolArgs }, preparation.result);
 	}
 	return withOwnedManagedSessionContext(preparation.prepared.ownedManagedSessionContext, () =>
 		executePreparedBrowserRun(options, preparation.prepared),

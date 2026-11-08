@@ -22,20 +22,13 @@ const JSON_TOKEN_PATTERN =
 // Replace C0/C1 display controls so browser text cannot execute terminal controls.
 const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
 const UNSAFE_DISPLAY_DIRECTIONAL_PATTERN = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
-const UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN = /[\u200B-\u200D\u2060\uFEFF]/g;
 
-function sanitizeDisplayText(value: string, markRemovedSequences = false): string {
-	let sanitized = value
+function sanitizeDisplayText(value: string): string {
+	return value
 		.replace(/\r\n?/g, "\n")
-		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, markRemovedSequences ? "�" : "")
+		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "")
 		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�")
 		.replace(UNSAFE_DISPLAY_DIRECTIONAL_PATTERN, "�");
-	if (markRemovedSequences) {
-		sanitized = sanitized
-			.replace(/[\u2028\u2029]/g, "\n")
-			.replace(UNSAFE_DISPLAY_ZERO_WIDTH_PATTERN, "�");
-	}
-	return sanitized;
 }
 
 function replaceTabsForDisplay(value: string): string {
@@ -127,11 +120,7 @@ function compiledArgs(result: {
 function getStructuredModeInvocation(input: Readonly<Record<string, unknown>>): {
 	readonly mode?: string;
 	readonly rawArgs: readonly string[];
-	readonly scriptSource?: string;
 } {
-	if (typeof input.code === "string") {
-		return { mode: "code", rawArgs: [], scriptSource: input.code };
-	}
 	if (Array.isArray(input.args)) {
 		return {
 			rawArgs: input.args.filter((value: unknown): value is string => typeof value === "string"),
@@ -176,27 +165,8 @@ function formatInvocationPreview(rawArgs: readonly string[]): string {
 		: invocation;
 }
 
-function formatScriptSourceForDisplay(source: string, expanded: boolean): string {
-	const sanitizedSource = replaceTabsForDisplay(sanitizeDisplayText(source, true));
-	if (expanded) {
-		return sanitizedSource;
-	}
-	const preview = sanitizedSource.replace(/\n/g, " ↵ ").replace(/\s+/g, " ").trim();
-	return preview.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
-		? `${preview.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
-		: preview;
-}
-
-function formatInvocationDetail(
-	mode: string | undefined,
-	preview: string,
-	expandedCode: boolean,
-	theme: Theme,
-): string {
-	let text = mode !== undefined && mode !== "code" ? ` ${theme.fg("accent", mode)}` : "";
-	if (mode !== undefined && expandedCode) {
-		return text + `\n${theme.fg("dim", "Source:")}\n${theme.fg("accent", preview)}`;
-	}
+function formatInvocationDetail(mode: string | undefined, preview: string, theme: Theme): string {
+	let text = mode === undefined ? "" : ` ${theme.fg("accent", mode)}`;
 	if (preview.length === 0) {
 		return text;
 	}
@@ -206,27 +176,11 @@ function formatInvocationDetail(
 	return text + ` ${theme.fg("accent", preview)}`;
 }
 
-export function formatAgentBrowserRenderCall(
-	args: unknown,
-	theme: Theme,
-	expanded = false,
-): string {
+export function formatAgentBrowserRenderCall(args: unknown, theme: Theme): string {
 	const input = isRecord(args) ? args : {};
-	const { mode, rawArgs, scriptSource } = getStructuredModeInvocation(input);
-	const invocationPreview =
-		scriptSource === undefined
-			? formatInvocationPreview(rawArgs)
-			: formatScriptSourceForDisplay(scriptSource, expanded);
-	let text = theme.fg(
-		"toolTitle",
-		theme.bold(mode === "code" ? "agent_browser_code" : "agent_browser"),
-	);
-	text += formatInvocationDetail(
-		mode,
-		invocationPreview,
-		scriptSource !== undefined && expanded,
-		theme,
-	);
+	const { mode, rawArgs } = getStructuredModeInvocation(input);
+	let text = theme.fg("toolTitle", theme.bold("agent_browser"));
+	text += formatInvocationDetail(mode, formatInvocationPreview(rawArgs), theme);
 	if (input.sessionMode === "fresh") {
 		text += theme.fg("dim", " sessionMode=fresh");
 	}
@@ -343,7 +297,7 @@ export function finalizeAgentBrowserFailure<Details>(
 		result.isError === true ||
 		(isRecord(result.details) && result.details.resultCategory === "failure");
 	const preservesParseableJson =
-		((isRecord(input) && "code" in input) || agentBrowserToolResultRequestedJson(result, input)) &&
+		agentBrowserToolResultRequestedJson(result, input) &&
 		agentBrowserToolResultHasParseableJsonContent(result);
 	const notice = preservesParseableJson
 		? undefined

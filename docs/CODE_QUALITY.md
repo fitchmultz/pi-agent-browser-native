@@ -133,11 +133,11 @@ standalone callers. Its type and implementation retain the compatible five posit
 
 `scripts/quality-exceptions.mjs` enumerates these operations:
 
-| File under `extensions/agent-browser/lib/` | Authorized operation                                                                                                                                                                                                    |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tool-surface.ts`                          | `registerCoreTools` code-tool execute; `registerActionTool`, `registerQaTool`, and `registerElectronTool` execute; `registerSourceTools` source and network execute; `registerAgentBrowserToolSurface` execute variable |
-| `orchestration/extension-tool-boundary.ts` | `registerBrowserTools` execute and executeCode                                                                                                                                                                          |
-| `web-search.ts`                            | `WebSearchTool.execute` type and `createAgentBrowserWebSearchTool` execute                                                                                                                                              |
+| File under `extensions/agent-browser/lib/` | Authorized operation                                                                                                                                                             |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tool-surface.ts`                          | `registerActionTool`, `registerQaTool`, and `registerElectronTool` execute; `registerSourceTools` source and network execute; `registerAgentBrowserToolSurface` execute variable |
+| `orchestration/extension-tool-boundary.ts` | `registerBrowserTools` execute                                                                                                                                                   |
+| `web-search.ts`                            | `WebSearchTool.execute` type and `createAgentBrowserWebSearchTool` execute                                                                                                       |
 
 Each directive suppresses only `max-params` on that operation. The parser checks
 its enclosing declaration, registration schema or property identity, direct
