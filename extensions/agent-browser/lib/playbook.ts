@@ -40,7 +40,7 @@ export function buildBrowserDefaultProfileGuideline(
 	}
 	const flag = `--profile ${JSON.stringify(profile.name)}`;
 	if (profile.policy === "always") {
-		return `agent_browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)} with policy always. It bootstraps only the automatic root Chrome launch; sessionMode:fresh, explicit --session, and non-Chrome engines take ${flag} on their first command. Verify actual app auth after a restart; profile content is model-visible user data.`;
+		return `agent_browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)} with policy always. It bootstraps only the automatic root Chrome launch; sessionMode:fresh and explicit --session Chrome launches take ${flag} on their first command. Lightpanda and Obscura reject Chrome profiles, so never pass it there. Verify actual app auth after a restart; profile content is model-visible user data.`;
 	}
 	return `agent_browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)}; for signed-in tasks, reuse a configured native shared session with bare calls, otherwise start with ${flag} plus sessionMode:fresh unless the user asks for a different profile.`;
 }
