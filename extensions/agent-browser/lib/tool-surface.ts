@@ -221,13 +221,46 @@ function activateToolSearch(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	}
 }
 
+const DEFERRED_TOOL_NAMES: ReadonlySet<string> = new Set(
+	Object.values(AGENT_BROWSER_TOOL_INVENTORY).map(({ name }) => name),
+);
+
+/** Whether the agent can call every registered deferred tool: each is active, or an active tool_search or codemode reaches them. */
+function deferredToolsReachable(pi: ExtensionAPI): boolean {
+	const registered = pi.getAllTools();
+	const active = pi.getActiveTools();
+	return (
+		registered.every((tool) => !DEFERRED_TOOL_NAMES.has(tool.name) || active.includes(tool.name)) ||
+		registered.some(
+			(tool) =>
+				(tool.name === "tool_search" || tool.name === "codemode") &&
+				tool.reachesTools !== undefined &&
+				active.includes(tool.name),
+		)
+	);
+}
+
 /** Register once; advanced tools are deferred, so tool_search and codemode scripts reach them natively. */
 export function registerAgentBrowserToolSurface(
 	pi: ExtensionAPI,
 	options: AgentBrowserToolSurfaceOptions,
 ): void {
+	// Like Pi's own MCP extension, warn once instead of leaving deferred tools silently unreachable.
+	// Check as a run starts: extensions that load later, such as Pi's MCP extension, can still
+	// activate tool_search or codemode in their own session_start handlers.
+	let warnedUnreachable = false;
 	pi.on("session_start", (_event, ctx) => activateToolSearch(pi, ctx));
 	pi.on("session_tree", (_event, ctx) => activateToolSearch(pi, ctx));
+	pi.on("before_agent_start", (_event, ctx) => {
+		if (warnedUnreachable || deferredToolsReachable(pi)) {
+			return;
+		}
+		warnedUnreachable = true;
+		ctx.ui.notify(
+			"Browser tools that are not selected directly are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
+			"warning",
+		);
+	});
 	// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 	const execute: AgentBrowserExecutor = async (id, params, signal, onUpdate, ctx) =>
 		finalizeAgentBrowserNativeResult(

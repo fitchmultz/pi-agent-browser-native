@@ -45,7 +45,7 @@ Describe the task in your conversation. Pi can click controls, fill forms, check
 
 For loops, branches, or aggregation, enable Pi's `codemode` tool (for example, `--tools +codemode`). Its scripts call `tools.agent_browser()` against the same browser.
 
-Action, QA, Electron, source, and network-source tools are deferred: Pi's native `tool_search` loads them when a task needs them, and codemode scripts can call them directly. Like Pi's own MCP extension, the browser extension activates a registered `tool_search` at session start and after tree navigation, unless the branch recorded removing it.
+Action, QA, Electron, source, and network-source tools are deferred: Pi's native `tool_search` loads them when a task needs them, and codemode scripts can call them directly. Like Pi's own MCP extension, the browser extension activates a registered `tool_search` at session start and after tree navigation, unless the branch recorded removing it. When neither `tool_search` nor codemode is active, specialized tools that are not selected directly cannot be called. The extension checks as each run starts, after every extension's session start handling, and warns once.
 
 For example, Pi opens and inspects a page with these calls:
 

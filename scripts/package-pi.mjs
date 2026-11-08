@@ -208,18 +208,52 @@ export async function executePackagedAgentBrowserSmoke(tools) {
 	};
 }
 
-/** @param {string} packageDir
+/** Start of the browser's one-time notice when no active tool_search or codemode reaches its deferred tools. */
+const UNREACHABLE_NOTICE = "Browser tools that are not selected directly are only reachable";
+
+/**
+ * Source of an extension that answers prompts with Pi's faux provider, records the active tools at
+ * session start and when the first run starts, and shuts Pi down after a second run.
+ *
+ * @param {string} marker file that receives the recorded tools
+ */
+function packagedCliObserver(marker) {
+	return `import { writeFileSync } from "node:fs";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+export default function(pi) {
+	const faux = fauxProvider();
+	faux.setResponses([fauxAssistantMessage("ok"), fauxAssistantMessage("ok")]);
+	pi.registerProvider("faux", { api: faux.api, baseUrl: faux.getModel().baseUrl, apiKey: "faux-key", models: faux.models, streamSimple: faux.provider.streamSimple });
+	const tools = {};
+	pi.on("session_start", () => { tools.sessionStart = pi.getActiveTools(); });
+	pi.on("before_agent_start", () => { tools.runStart ??= pi.getActiveTools(); });
+	// A second run shows a warning that repeats on every run.
+	let runs = 0;
+	pi.on("agent_settled", (_event, ctx) => {
+		runs += 1;
+		if (runs === 1) {
+			pi.sendUserMessage("Reply again.");
+			return;
+		}
+		writeFileSync(${JSON.stringify(marker)}, JSON.stringify(tools));
+		ctx.shutdown();
+	});
+}`;
+}
+
+/**
+ * Runs two prompts with the packed package in the real CLI (RPC mode), answered by Pi's faux provider.
+ * Reports the active tools at session start and when the first run starts, and the browser's notices.
+ *
+ * @param {string} packageDir
  * @param {string} tempAgentDir
  * @param {string} hostCli
+ * @param {readonly string[]} hostExtensions additional extension arguments, such as Pi built-ins
  */
-async function verifyPackagedCli(packageDir, tempAgentDir, hostCli) {
+async function runPackagedCli(packageDir, tempAgentDir, hostCli, hostExtensions) {
 	const marker = join(tempAgentDir, "cli.json");
 	const observer = join(tempAgentDir, "observer.ts");
-	await writeFile(
-		observer,
-		`import { writeFileSync } from "node:fs";
-export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFileSync(${JSON.stringify(marker)}, JSON.stringify(pi.getActiveTools())); ctx.shutdown(); }); }`,
-	);
+	await writeFile(observer, packagedCliObserver(marker));
 	const cliProcess = execFile(
 		process.execPath,
 		[
@@ -233,6 +267,9 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
 			"-nc",
 			"--no-themes",
 			"--approve",
+			"--model",
+			"faux/faux-1",
+			...hostExtensions,
 			"-e",
 			packageDir,
 			"-e",
@@ -252,12 +289,76 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
 		},
 	);
 	assert.ok(cliProcess.child.stdin);
-	cliProcess.child.stdin.end();
+	// The observer starts the second run and shuts Pi down once it settles.
+	cliProcess.child.stdin.write(`${JSON.stringify({ type: "prompt", message: "Reply ok." })}\n`);
 	const child = await cliProcess;
 	assert.doesNotMatch(child.stderr, /Failed to load extension|Extension error/);
 	/** @type {unknown} */
-	const activeTools = JSON.parse(await readFile(marker, "utf8"));
-	assert.ok(Array.isArray(activeTools) && activeTools.includes("agent_browser"));
+	const tools = JSON.parse(await readFile(marker, "utf8"));
+	assert.ok(isConfigObject(tools));
+	const { sessionStart, runStart } = tools;
+	assert.ok(Array.isArray(sessionStart) && sessionStart.includes("agent_browser"));
+	assert.ok(Array.isArray(runStart));
+	const notices = child.stdout
+		.split("\n")
+		.filter((line) => line.includes(UNREACHABLE_NOTICE))
+		.map((line) => /** @type {unknown} */ (JSON.parse(line)))
+		.filter(
+			(event) =>
+				isConfigObject(event) &&
+				event.type === "extension_ui_request" &&
+				event.method === "notify" &&
+				typeof event.message === "string" &&
+				event.message.startsWith(UNREACHABLE_NOTICE),
+		);
+	return { sessionStart, runStart, notices: notices.length };
+}
+
+/** @param {string} packageDir
+ * @param {string} tempAgentDir
+ * @param {string} hostCli
+ */
+async function verifyPackagedCli(packageDir, tempAgentDir, hostCli) {
+	// -ne loads neither tool_search nor codemode, so nothing reaches the deferred tools.
+	const isolated = await runPackagedCli(packageDir, tempAgentDir, hostCli, []);
+	assert.equal(
+		isolated.notices,
+		1,
+		"The browser must warn once that its deferred tools are unreachable.",
+	);
+	const withSearch = await runPackagedCli(packageDir, tempAgentDir, hostCli, [
+		"-e",
+		"builtin:tool-search",
+	]);
+	assert.ok(
+		withSearch.sessionStart.includes("tool_search"),
+		"The browser did not activate tool_search.",
+	);
+	assert.equal(
+		withSearch.notices,
+		0,
+		"The browser warned although tool_search reaches its deferred tools.",
+	);
+	// Pi's MCP extension loads after the package and activates codemode for a configured server
+	// in its own session_start handler.
+	await writeFile(
+		join(tempAgentDir, "mcp.json"),
+		JSON.stringify({
+			mcpServers: { probe: { command: process.execPath, args: ["-e", "process.exit(0)"] } },
+		}),
+	);
+	const withMcp = await runPackagedCli(packageDir, tempAgentDir, hostCli, [
+		"-e",
+		"builtin:codemode",
+		"-e",
+		"builtin:mcp",
+	]);
+	assert.ok(withMcp.runStart.includes("codemode"), "Pi's MCP extension did not activate codemode.");
+	assert.equal(
+		withMcp.notices,
+		0,
+		"The browser warned although codemode, activated by a later extension, reaches its deferred tools.",
+	);
 }
 
 /** @param {string} tarballPath */
