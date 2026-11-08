@@ -208,11 +208,18 @@ export async function executePackagedAgentBrowserSmoke(tools) {
 	};
 }
 
-/** @param {string} packageDir
+/** Start of the browser's one-time notice when no active tool_search or codemode reaches its deferred tools. */
+const UNREACHABLE_NOTICE = "Browser tools that are not selected directly are only reachable";
+
+/**
+ * Loads the packed package in the real CLI (RPC mode) and reports its session_start tools and notices.
+ *
+ * @param {string} packageDir
  * @param {string} tempAgentDir
  * @param {string} hostCli
+ * @param {readonly string[]} hostExtensions extension sources loaded before the package
  */
-async function verifyPackagedCli(packageDir, tempAgentDir, hostCli) {
+async function runPackagedCli(packageDir, tempAgentDir, hostCli, hostExtensions) {
 	const marker = join(tempAgentDir, "cli.json");
 	const observer = join(tempAgentDir, "observer.ts");
 	await writeFile(
@@ -233,6 +240,7 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
 			"-nc",
 			"--no-themes",
 			"--approve",
+			...hostExtensions,
 			"-e",
 			packageDir,
 			"-e",
@@ -258,6 +266,46 @@ export default function(pi) { pi.on("session_start", (_event, ctx) => { writeFil
 	/** @type {unknown} */
 	const activeTools = JSON.parse(await readFile(marker, "utf8"));
 	assert.ok(Array.isArray(activeTools) && activeTools.includes("agent_browser"));
+	const notices = child.stdout
+		.split("\n")
+		.filter((line) => line.includes(UNREACHABLE_NOTICE))
+		.map((line) => /** @type {unknown} */ (JSON.parse(line)))
+		.filter(
+			(event) =>
+				isConfigObject(event) &&
+				event.type === "extension_ui_request" &&
+				event.method === "notify" &&
+				typeof event.message === "string" &&
+				event.message.startsWith(UNREACHABLE_NOTICE),
+		);
+	return { activeTools, notices: notices.length };
+}
+
+/** @param {string} packageDir
+ * @param {string} tempAgentDir
+ * @param {string} hostCli
+ */
+async function verifyPackagedCli(packageDir, tempAgentDir, hostCli) {
+	// -ne loads neither tool_search nor codemode, so nothing reaches the deferred tools.
+	const isolated = await runPackagedCli(packageDir, tempAgentDir, hostCli, []);
+	assert.equal(
+		isolated.notices,
+		1,
+		"The browser must warn once that its deferred tools are unreachable.",
+	);
+	const withSearch = await runPackagedCli(packageDir, tempAgentDir, hostCli, [
+		"-e",
+		"builtin:tool-search",
+	]);
+	assert.ok(
+		withSearch.activeTools.includes("tool_search"),
+		"The browser did not activate tool_search.",
+	);
+	assert.equal(
+		withSearch.notices,
+		0,
+		"The browser warned although tool_search reaches its deferred tools.",
+	);
 }
 
 /** @param {string} tarballPath */
