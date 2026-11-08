@@ -14,6 +14,7 @@ import {
 import { stream as streamAnthropic } from "@earendil-works/pi-ai/api/anthropic-messages";
 import {
 	createAgentSession,
+	createToolSearchExtension,
 	DefaultResourceLoader,
 	ModelRuntime,
 	SessionManager,
@@ -55,6 +56,7 @@ async function withSurface(
 		readonly defaultTools?: readonly string[];
 		readonly sessionManager?: SessionManager;
 		readonly result?: AgentToolResult<unknown>;
+		readonly toolSearch?: boolean;
 	} = {},
 ) {
 	const directory = await mkdtemp(join(tmpdir(), "piab-tool-surface-"));
@@ -108,6 +110,7 @@ async function withSurface(
 					},
 				});
 			},
+			...(options.toolSearch === true ? [createToolSearchExtension()] : []),
 		],
 	});
 	try {
@@ -401,6 +404,54 @@ nodeTest(
 				);
 			});
 		}
+	},
+);
+
+nodeTest(
+	"the surface activates tool_search on start and tree navigation unless the branch removed it",
+	async (t) => {
+		const record = (manager: SessionManager, added: readonly string[], removed: string[] = []) => {
+			manager.appendMessage({
+				role: "system",
+				content: "",
+				timestamp: 0,
+				toolsAdded: added.map((name) => ({
+					name,
+					description: name,
+					parameters: JsonSchema.Object({}),
+				})),
+				toolsRemoved: removed.map((name) => ({ name })),
+			});
+			const leaf = manager.getLeafId();
+			assert.ok(leaf !== null);
+			return leaf;
+		};
+		const options = { toolSearch: true, defaultTools: ["agent_browser"] };
+		// A branch recorded before the surface activated tool_search never mentions it.
+		const navigated = SessionManager.inMemory();
+		const unmentioned = record(navigated, baseTools);
+		record(navigated, ["tool_search"]);
+		await withSurface(
+			t,
+			async ({ active, session }) => {
+				assert.ok(active().includes("tool_search"));
+				const navigation = await session.navigateTree(unmentioned, { summarize: false });
+				assert.equal(navigation.cancelled, false);
+				assert.ok(active().includes("tool_search"), "tree navigation activates it again");
+			},
+			{ ...options, sessionManager: navigated },
+		);
+		// A recorded removal stays inactive, like any other tool Pi restores from the branch.
+		const removed = SessionManager.inMemory();
+		record(removed, [...baseTools, "tool_search"]);
+		record(removed, [], ["tool_search"]);
+		await withSurface(
+			t,
+			async ({ active }) => {
+				assert.ok(!active().includes("tool_search"));
+			},
+			{ ...options, sessionManager: removed },
+		);
 	},
 );
 

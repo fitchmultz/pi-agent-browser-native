@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { formatAgentBrowserRenderCall } from "./pi-tool-rendering.js";
 import type { TUnsafe } from "./json-schema.js";
@@ -209,15 +213,37 @@ function registerSourceTools(
 	});
 }
 
+/** Replays the branch's recorded tool loadout (Pi docs/session-format.md) for one tool. */
+function removedOnBranch(ctx: ExtensionContext, name: string): boolean {
+	let removed = false;
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type !== "message" || entry.message.role !== "system") {
+			continue;
+		}
+		if (entry.message.toolsRemoved?.some((tool) => tool.name === name) === true) {
+			removed = true;
+		}
+		if (entry.message.toolsAdded?.some((tool) => tool.name === name) === true) {
+			removed = false;
+		}
+	}
+	return removed;
+}
+
 /**
  * Pi's own MCP extension activates tool_search when it registers deferred tools, since only
  * tool_search declares them. Only a registered tool_search that reaches other tools qualifies.
+ * Pi restores each branch's recorded loadout before session_start and session_tree; a branch
+ * that recorded removing tool_search keeps it off, as Pi keeps any recorded removal.
  */
-function activateToolSearch(pi: ExtensionAPI): void {
+function activateToolSearch(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	const active = pi.getActiveTools();
 	if (
 		!active.includes("tool_search") &&
-		pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined)
+		pi
+			.getAllTools()
+			.some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined) &&
+		!removedOnBranch(ctx, "tool_search")
 	) {
 		pi.setActiveTools([...active, "tool_search"]);
 	}
@@ -228,7 +254,8 @@ export function registerAgentBrowserToolSurface(
 	pi: ExtensionAPI,
 	options: AgentBrowserToolSurfaceOptions,
 ): void {
-	pi.on("session_start", () => activateToolSearch(pi));
+	pi.on("session_start", (_event, ctx) => activateToolSearch(pi, ctx));
+	pi.on("session_tree", (_event, ctx) => activateToolSearch(pi, ctx));
 	// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 	const execute: AgentBrowserExecutor = async (id, params, signal, onUpdate, ctx) =>
 		finalizeAgentBrowserNativeResult(

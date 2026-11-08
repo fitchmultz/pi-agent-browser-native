@@ -190,10 +190,10 @@ Use the agent_browser tool to open https://example.com and then take an interact
 For a one-off trial without adding the package to your Pi settings:
 
 ```bash
-pi --no-extensions -e npm:pi-agent-browser-native
+pi --no-extensions -e builtin:tool-search -e npm:pi-agent-browser-native
 ```
 
-`--no-extensions` disables automatic extension loading, not Pi settings, configured package resolution, skills, prompts, themes, or context files.
+`--no-extensions` disables automatic extension loading, not Pi settings, configured package resolution, skills, prompts, themes, or context files. It also disables Pi's built-in `tool_search` and `codemode`, which reach the five deferred browser tools; `-e builtin:tool-search` loads `tool_search` again.
 
 Pi may ask whether to trust projects with trust-gated settings or resources. This extension follows Pi's trust decision when loading its project-local config. `--no-approve` skips that config and Pi's trust-gated project resources; context files such as `AGENTS.md` still load unless context loading is separately disabled.
 
@@ -206,7 +206,7 @@ pi install https://github.com/fitchmultz/pi-agent-browser-native
 For a source trial without adding the package to your Pi settings:
 
 ```bash
-pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native
+pi --no-extensions -e builtin:tool-search -e https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
 ## First-run health check
@@ -796,7 +796,7 @@ Use the npm version declared in `package.json` `packageManager` when refreshing 
 Checkout-only extension smoke test:
 
 ```bash
-pi --approve --no-extensions -e .
+pi --approve --no-extensions -e builtin:tool-search -e .
 ```
 
 This selects the checkout extension and disables automatic extension loading; Pi settings and configured package resolution remain active. Use temporary `HOME` and `PI_CODING_AGENT_DIR` directories for isolated test settings, and `PI_OFFLINE=1` to disable automatic startup network/update operations. `--approve` trusts this checkout's project-local inputs; omit it when testing the Project Trust prompt. After editing extension code, restart Pi to test the new checkout.
@@ -817,7 +817,7 @@ Installed-package validation after publish:
 
 ```bash
 npm run verify -- package-pi
-pi --no-extensions -e npm:pi-agent-browser-native
+pi --no-extensions -e builtin:tool-search -e npm:pi-agent-browser-native
 ```
 
 ## Native-tool operating notes

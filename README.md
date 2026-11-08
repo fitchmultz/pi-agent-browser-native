@@ -44,7 +44,7 @@ Describe the task in your conversation. Pi can click controls, fill forms, check
 | `agent_browser_code`       | JavaScript loops and branches in the same browser   |
 | `agent_browser_web_search` | Optional Exa or Brave search through provider APIs  |
 
-Action, QA, Electron, source, and network-source tools are deferred: Pi's native `tool_search` loads them when a task needs them, and codemode scripts can call them directly. Like Pi's own MCP extension, the browser extension activates a registered `tool_search` at session start.
+Action, QA, Electron, source, and network-source tools are deferred: Pi's native `tool_search` loads them when a task needs them, and codemode scripts can call them directly. Like Pi's own MCP extension, the browser extension activates a registered `tool_search` at session start and after tree navigation, unless the branch recorded removing it.
 
 For example, Pi opens and inspects a page with these calls:
 
@@ -58,10 +58,10 @@ Snapshots give Pi current `@eN` references for controls. Refresh the snapshot af
 For a trial without a saved package setting, run:
 
 ```bash
-pi --no-extensions -e npm:pi-agent-browser-native
+pi --no-extensions -e builtin:tool-search -e npm:pi-agent-browser-native
 ```
 
-This command loads this extension explicitly and disables automatic extension loading. Other Pi settings and resource types still apply.
+This command loads this extension explicitly and disables automatic extension loading, including Pi's built-in `tool_search`; `-e builtin:tool-search` loads it again so the deferred tools stay reachable. Other Pi settings and resource types still apply.
 
 ## Profiles and privacy
 
