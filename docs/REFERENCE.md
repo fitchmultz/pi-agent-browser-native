@@ -749,7 +749,7 @@ npm run verify -- release
 `pi-agent-browser-native` is intentionally thin:
 
 1. Pi loads the compiled `dist/extensions/agent-browser/index.js` entrypoint from the package manifest; TypeScript under `extensions/` remains the source of truth and `npm run build` regenerates `dist/` before packing.
-2. The extension registers compact direct/code tools, five deferred specialized tools (loaded by native `tool_search`, codemode, or host selection), and the optional credential-backed `agent_browser_web_search` companion.
+2. The extension registers the compact direct `agent_browser` tool, five deferred specialized tools (loaded by native `tool_search`, codemode, or host selection), and the optional credential-backed `agent_browser_web_search` companion.
 3. Tool calls are translated into upstream `agent-browser` CLI invocations with controlled args, stdin, environment, timeout, and session planning.
 4. Upstream JSON/plain-text output is parsed into model-friendly content and structured details.
 5. Screenshots, downloads, recordings, traces, profiles, and spill files are normalized as Pi-visible artifacts where possible.
