@@ -13,6 +13,7 @@
 
 - Refresh agent-browser 0.41.2 baseline (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/380
 - Adopt strict Oxlint and Oxfmt v5.2 (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/379
+- Defer advanced browser tools to native tool_search and shrink prompt guidance (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/382
 
 **Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.16...v0.9.17
 
