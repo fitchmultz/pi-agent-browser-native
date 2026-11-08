@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.18 - 2026-11-08
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Remove agent_browser_code in favor of Pi codemode (2/2) (#383) ([d9a3b14](https://github.com/fitchmultz/pi-agent-browser-native/commit/d9a3b14b29026b57b8bfec3b6c316517809cc678))
+
+### What's Changed
+
+- Remove agent_browser_code in favor of Pi codemode (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/383
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.17...v0.9.18
+
 ## 0.9.17 - 2026-11-06
 
 <!-- npm-release:unreleased:start -->
