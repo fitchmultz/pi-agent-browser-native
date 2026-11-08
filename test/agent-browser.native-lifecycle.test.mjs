@@ -33,7 +33,7 @@ const required = process.env.PI_NATIVE_LIFECYCLE_REQUIRED === "1";
 const extensionPath = resolve(process.env.PI_NATIVE_LIFECYCLE_EXTENSION ?? ".");
 
 nodeTest(
-	"native public SDK lifecycle, ordering, cancellation, and stable root restore",
+	"native public SDK lifecycle, ownership, and stable root restore",
 	{ skip: (sdkPath === undefined || sdkPath === "") && !required, timeout: 240_000 },
 	async (t) => {
 		assert.ok(
