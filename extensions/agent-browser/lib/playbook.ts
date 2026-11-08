@@ -22,13 +22,14 @@ export function buildInstalledDocsGuideline(paths: {
 	return `Details on demand: ${paths.readmePath} (setup), ${paths.commandReferencePath} (commands), ${paths.toolContractPath} (results and details). Read targeted sections, not whole files.`;
 }
 
+/** Config values bootstrap only the inactive automatic root Chrome launch; other launches pass the flag. */
 export function buildBrowserExecutablePathGuideline(
 	executablePath: string | undefined,
 ): string | undefined {
 	if (executablePath === undefined || executablePath.length === 0) {
 		return undefined;
 	}
-	return `agent_browser config sets browser.executablePath to ${JSON.stringify(executablePath)}; bare calls launch it. Use sessionMode:fresh only for an intentionally separate browser.`;
+	return `agent_browser config sets browser.executablePath to ${JSON.stringify(executablePath)}. It bootstraps only the automatic root Chrome launch; sessionMode:fresh, explicit --session, and non-Chrome engines take --executable-path ${JSON.stringify(executablePath)} on their first command.`;
 }
 
 export function buildBrowserDefaultProfileGuideline(
@@ -37,10 +38,11 @@ export function buildBrowserDefaultProfileGuideline(
 	if (!profile || profile.policy === "explicit-only") {
 		return undefined;
 	}
+	const flag = `--profile ${JSON.stringify(profile.name)}`;
 	if (profile.policy === "always") {
-		return `agent_browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)} with policy always: bare calls use that Chrome profile. Verify actual app auth after a restart; profile content is model-visible user data.`;
+		return `agent_browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)} with policy always. It bootstraps only the automatic root Chrome launch; sessionMode:fresh, explicit --session, and non-Chrome engines take ${flag} on their first command. Verify actual app auth after a restart; profile content is model-visible user data.`;
 	}
-	return `agent_browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)}; for signed-in tasks, reuse a configured native shared session with bare calls, otherwise start with --profile ${JSON.stringify(profile.name)} plus sessionMode:fresh unless the user asks for a different profile.`;
+	return `agent_browser config sets browser.defaultProfile.name to ${JSON.stringify(profile.name)}; for signed-in tasks, reuse a configured native shared session with bare calls, otherwise start with ${flag} plus sessionMode:fresh unless the user asks for a different profile.`;
 }
 
 export function buildToolPromptGuidelines(options: {

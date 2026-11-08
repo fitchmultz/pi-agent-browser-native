@@ -16,6 +16,7 @@ import { pathToFileURL } from "node:url";
 import nodeTest from "node:test";
 
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import * as piTui from "@earendil-works/pi-tui";
 import { Text, visibleWidth } from "@earendil-works/pi-tui";
 import { Check } from "typebox/value";
 
@@ -47,6 +48,17 @@ import {
 	isTestPidAlive,
 } from "./helpers/extension-validation-fixtures.js";
 import { mockMonotonicClock } from "./helpers/monotonic-clock.js";
+
+const isTextTransform = (value: unknown): value is (text: string) => string =>
+	typeof value === "function";
+/**
+ * The maintained fork annotates rendered rows with private selection metadata that it strips
+ * before terminal output; official pi-tui renders plain rows. Assertions compare visible text.
+ */
+const stripPrivateRenderMetadata: (text: string) => string = (() => {
+	const candidate: unknown = Reflect.get(piTui, "stripSelectionMetadata");
+	return isTextTransform(candidate) ? candidate : (text) => text;
+})();
 
 nodeTest(
 	"built extension prompt doc pointers resolve to package-root docs",
@@ -3092,6 +3104,7 @@ nodeTest(
 		};
 		const callText = renderCall(params, PLAIN_RENDER_THEME, createRenderContext({ args: params }))
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(callText, /<toolTitle>\*\*agent_browser\*\*<\/toolTitle>/);
 		assert.match(callText, /<accent>eval --stdin<\/accent>/);
@@ -3105,6 +3118,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(qaCallText, /<accent>qa<\/accent>/);
 		assert.match(qaCallText, /<dim>→<\/dim> <accent>batch --bail<\/accent>/);
@@ -3115,6 +3129,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(semanticActionCallText, /<accent>semanticAction<\/accent>/);
 		assert.match(
@@ -3130,6 +3145,7 @@ nodeTest(
 			createRenderContext({ args: scriptParams }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(collapsedScriptCallText, /<toolTitle>\*\*agent_browser_code\*\*<\/toolTitle>/);
 		assert.match(collapsedScriptCallText, /const rows = \[\]/);
@@ -3142,6 +3158,7 @@ nodeTest(
 			createRenderContext({ args: scriptParams, expanded: true }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(expandedScriptCallText, /<dim>Source:<\/dim>/);
 		assert.match(
@@ -3164,6 +3181,7 @@ nodeTest(
 			createRenderContext({ args: maliciousParams }),
 		)
 			.render(200)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		// Model-supplied text must not emit NUL, BEL, or terminal escape controls.
 		assert.doesNotMatch(maliciousCallText, /[\x00\x07\x1B]/);
@@ -3192,14 +3210,17 @@ nodeTest(
 			PLAIN_RENDER_THEME,
 			createRenderContext({ args: params }),
 		);
-		const collapsedLines = collapsedComponent.render(80);
+		const collapsedLines = collapsedComponent.render(80).map(stripPrivateRenderMetadata);
 		const collapsedText = collapsedLines.join("\n");
-		const wideCollapsedText = collapsedComponent.render(200).join("\n");
+		const wideCollapsedText = collapsedComponent
+			.render(200)
+			.map(stripPrivateRenderMetadata)
+			.join("\n");
 		assert.ok(
 			collapsedLines.every((line) => visibleWidth(line) <= 80),
 			"collapsed render lines must fit width",
 		);
-		const narrowCollapsedLines = collapsedComponent.render(24);
+		const narrowCollapsedLines = collapsedComponent.render(24).map(stripPrivateRenderMetadata);
 		assert.ok(
 			narrowCollapsedLines.every((line) => visibleWidth(line) <= 24),
 			"narrow collapsed render lines must fit width",
@@ -3233,6 +3254,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(100)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		assert.match(
 			failedCollapsedText,
@@ -3252,7 +3274,7 @@ nodeTest(
 			PLAIN_RENDER_THEME,
 			createRenderContext({ args: params, expanded: true, lastComponent: collapsedComponent }),
 		);
-		const expandedText = expandedComponent.render(80).join("\n");
+		const expandedText = expandedComponent.render(80).map(stripPrivateRenderMetadata).join("\n");
 		assert.match(expandedText, /item-24/);
 		assert.doesNotMatch(expandedText, /\.\.\. \(\d+ more lines/);
 
@@ -3287,7 +3309,7 @@ nodeTest(
 			renderState(false),
 		);
 		assert.ok(colorCalls > 20, "initial JSON tokens are colorized");
-		const firstCachedLines = cached.render(80);
+		const firstCachedLines = cached.render(80).map(stripPrivateRenderMetadata);
 		colorCalls = 0;
 		const setTextDescriptor = Object.getOwnPropertyDescriptor(Text.prototype, "setText");
 		assert.ok(setTextDescriptor);
@@ -3330,35 +3352,44 @@ nodeTest(
 		} finally {
 			Object.defineProperty(Text.prototype, "setText", setTextDescriptor);
 		}
-		assert.deepEqual(cached.render(80), firstCachedLines);
+		assert.deepEqual(cached.render(80).map(stripPrivateRenderMetadata), firstCachedLines);
 		cached.setResult(
 			longResult,
 			{ expanded: true, isPartial: false },
 			liveTheme,
 			renderState(false),
 		);
-		assert.match(cached.render(24).join("\n"), /item-24/);
+		assert.match(cached.render(24).map(stripPrivateRenderMetadata).join("\n"), /item-24/);
 		cached.setResult(
 			failedResult,
 			{ expanded: false, isPartial: false },
 			liveTheme,
 			renderState(true),
 		);
-		assert.match(cached.render(200).join("\n"), /selector-not-found/);
+		assert.match(
+			cached.render(200).map(stripPrivateRenderMetadata).join("\n"),
+			/selector-not-found/,
+		);
 		cached.setResult(
 			{ ...failedResult, details: { resultCategory: "failure", failureCategory: "timeout" } },
 			{ expanded: false, isPartial: false },
 			liveTheme,
 			renderState(true),
 		);
-		assert.match(cached.render(200).join("\n"), /failureCategory: timeout/);
+		assert.match(
+			cached.render(200).map(stripPrivateRenderMetadata).join("\n"),
+			/failureCategory: timeout/,
+		);
 		cached.setResult(
 			longResult,
 			{ expanded: false, isPartial: true },
 			liveTheme,
 			renderState(false),
 		);
-		assert.match(cached.render(200).join("\n"), /Running agent-browser/);
+		assert.match(
+			cached.render(200).map(stripPrivateRenderMetadata).join("\n"),
+			/Running agent-browser/,
+		);
 		themeVersion = {};
 		themePrefix = "changed-theme:";
 		cached.setResult(
@@ -3367,7 +3398,7 @@ nodeTest(
 			liveTheme,
 			renderState(false),
 		);
-		assert.match(cached.render(200).join("\n"), /changed-theme:/);
+		assert.match(cached.render(200).map(stripPrivateRenderMetadata).join("\n"), /changed-theme:/);
 
 		const scalarResult: AgentToolResult<unknown> = {
 			content: [
@@ -3385,6 +3416,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(120)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		// Scalar output must strip NUL, BEL, and terminal escape controls.
 		assert.doesNotMatch(scalarText, /[\x00\x07\x1B]/);
@@ -3404,6 +3436,7 @@ nodeTest(
 			createRenderContext({ args: params }),
 		)
 			.render(120)
+			.map(stripPrivateRenderMetadata)
 			.join("\n");
 		// Fallback prose must strip NUL, BEL, and terminal escape controls too.
 		assert.doesNotMatch(fallbackText, /[\x00\x07\x1B]/);
