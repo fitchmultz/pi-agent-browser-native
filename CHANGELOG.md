@@ -12,6 +12,7 @@
 ### What's Changed
 
 - Remove agent_browser_code in favor of Pi codemode (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/383
+- Shorten the web search tool and parameter descriptions by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/385
 
 **Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.17...v0.9.18
 
