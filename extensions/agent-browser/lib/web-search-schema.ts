@@ -51,33 +51,35 @@ function createExaFilterProperties(): Record<string, TSchema> {
 			Type.Array(Type.String({ minLength: 1 }), {
 				minItems: 1,
 				maxItems: MAX_EXA_DOMAIN_FILTERS,
-				description: `Exa only. Limit results to 1–${MAX_EXA_DOMAIN_FILTERS} hostnames, path prefixes (exa.ai/docs), or wildcard subdomains (*.substack.com).`,
+				description:
+					"Exa only. Hostnames, path prefixes (exa.ai/docs), or wildcard subdomains (*.substack.com) to search.",
 			}),
 		),
 		excludeDomains: Type.Optional(
 			Type.Array(Type.String({ minLength: 1 }), {
 				minItems: 1,
 				maxItems: MAX_EXA_DOMAIN_FILTERS,
-				description: `Exa only. Exclude 1–${MAX_EXA_DOMAIN_FILTERS} hostnames, path prefixes, or wildcard subdomains. Not compatible with category company or people.`,
+				description:
+					"Exa only. Hostnames, path prefixes, or wildcard subdomains to skip; not with category company or people.",
 			}),
 		),
 		category: Type.Optional(
 			StringEnum(EXA_SEARCH_CATEGORIES, {
 				description:
-					"Exa-only result category. company and people cannot be combined with freshness or excludeDomains.",
+					"Exa only. company and people cannot combine with freshness or excludeDomains.",
 			}),
 		),
 		additionalQueries: Type.Optional(
 			Type.Array(Type.String({ minLength: 1 }), {
 				minItems: 1,
 				maxItems: MAX_EXA_ADDITIONAL_QUERIES,
-				description: `Exa only. Add 1–${MAX_EXA_ADDITIONAL_QUERIES} query variations when the effective searchType is deep-lite, deep, or deep-reasoning.`,
+				description:
+					"Exa only, with searchType deep-lite, deep, or deep-reasoning. Extra query variations.",
 			}),
 		),
 		highlightsDynamic: Type.Optional(
 			Type.Boolean({
-				description:
-					"Exa-only research preview. Allocate one highlight budget across all results; the wrapper sends the required Exa-Beta header. Regular per-page highlights remain the default.",
+				description: "Exa preview: share one highlight budget across results instead of per page.",
 			}),
 		),
 	};
@@ -88,17 +90,17 @@ export function createAgentBrowserWebSearchParamsSchema(): TSchema {
 		{
 			query: Type.String({
 				minLength: 1,
-				description: "Search query to run with the configured Exa or Brave web search provider.",
+				description: "Search query.",
 			}),
 			provider: Type.Optional(
 				StringEnum(WEB_SEARCH_PROVIDER_PARAM_VALUES, {
-					description: `Optional provider override. auto uses configured keys and preferredProvider; when both Exa and Brave are available, the default preferred provider is ${DEFAULT_WEB_SEARCH_PROVIDER}.`,
+					description: `Provider override. auto follows configured keys and preferredProvider (${DEFAULT_WEB_SEARCH_PROVIDER} when both have keys).`,
 				}),
 			),
 			searchType: Type.Optional(
 				StringEnum(EXA_SEARCH_TYPES, {
 					description:
-						"Exa mode; Brave ignores it. Omitted uses webSearch.defaultSearchType, then auto (~1s). instant (~250ms) and fast (~450ms) favor latency. Pass searchType: deep-lite (~4s) for research before implementation; deep (4–15s) for hard multi-source research; deep-reasoning (12–40s) only for the hardest work.",
+						"Exa only. Default: webSearch.defaultSearchType, else auto (~1s). instant and fast favor latency. Pass searchType: deep-lite (~4s) for research before implementation; deep (4–15s) or deep-reasoning (12–40s) only for hard multi-source work.",
 				}),
 			),
 			...createExaFilterProperties(),
@@ -106,39 +108,37 @@ export function createAgentBrowserWebSearchParamsSchema(): TSchema {
 				Type.Integer({
 					minimum: 1,
 					maximum: MAX_SEARCH_RESULT_COUNT,
-					description: `Number of web results to return. Defaults to ${DEFAULT_SEARCH_RESULT_COUNT}; max ${MAX_SEARCH_RESULT_COUNT}.`,
+					description: `Results to return (default ${DEFAULT_SEARCH_RESULT_COUNT}).`,
 				}),
 			),
 			offset: Type.Optional(
 				Type.Integer({
 					minimum: 0,
 					maximum: 9,
-					description: "Zero-based result offset for pagination. Defaults to 0.",
+					description: "Pagination offset (default 0).",
 				}),
 			),
 			country: Type.Optional(
 				Type.String({
 					pattern: "^[A-Za-z]{2}$",
-					description: "Optional 2-letter country code, such as US or GB.",
+					description: "2-letter country code, such as US.",
 				}),
 			),
 			searchLang: Type.Optional(
 				Type.String({
 					minLength: 2,
 					maxLength: 8,
-					description: "Optional Brave search language code, such as en or en-US.",
+					description: "Brave only. Language code, such as en-US.",
 				}),
 			),
 			safesearch: Type.Optional(
 				StringEnum(["off", "moderate", "strict"] as const, {
-					description:
-						"Optional search safety setting. Brave forwards this as safesearch; Exa maps moderate/strict to moderation=true.",
+					description: "Brave safesearch; Exa maps moderate and strict to moderation.",
 				}),
 			),
 			freshness: Type.Optional(
 				StringEnum(["pd", "pw", "pm", "py"] as const, {
-					description:
-						"Optional freshness window: pd=past day, pw=past week, pm=past month, py=past year.",
+					description: "pd, pw, pm, py: past day, week, month, or year.",
 				}),
 			),
 		},

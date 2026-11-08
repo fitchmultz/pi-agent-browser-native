@@ -267,7 +267,7 @@ export function createAgentBrowserWebSearchTool(
 		namespace: AGENT_BROWSER_NAMESPACE,
 		outputSchema: AGENT_BROWSER_OUTPUT_SCHEMA,
 		label: "Agent Browser Web Search",
-		description: `Search the live web with Exa or Brave for current or external information. For Exa research tasks, use searchType deep-lite or deeper. Returns up to ${MAX_SEARCH_RESULT_COUNT} concise web results.`,
+		description: `Search the live web with Exa or Brave for current or external information; returns up to ${MAX_SEARCH_RESULT_COUNT} concise results. For research, use Exa searchType deep-lite or deeper.`,
 		promptSnippet: "Search the live web with Exa or Brave for current or external information.",
 		parameters: AgentBrowserWebSearchParams,
 		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
