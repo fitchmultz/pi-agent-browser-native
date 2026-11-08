@@ -238,10 +238,6 @@ nodeTest("agentBrowserExtension rejects unsupported public schema fields", () =>
 		readString(readRecord(parameterProperties.stdin).description),
 		/batch JSON, eval --stdin.*auth save --password-stdin/,
 	);
-	assert.match(
-		harness.getTool("agent_browser_code")?.description ?? "",
-		/persistent browser.*emitImage/,
-	);
 	const direct = {
 		args: ["open", "https://example.test/"],
 		outputPath: "logs/page.json",
@@ -2289,17 +2285,6 @@ nodeTest(
 					readString(readRecord(reservedAtOutputPath.content.at(0)).text),
 					/@demo\.webm is reserved by an active recording/,
 				);
-				const codeTool = harness.getTool("agent_browser_code");
-				assert.ok(codeTool);
-				const reservedScriptOutputPath = await executeRegisteredTool(codeTool, harness.ctx, {
-					code: "emit({ ok: true });",
-					outputPath: "demo.webm",
-				});
-				assert.equal(reservedScriptOutputPath.isError, true);
-				assert.match(
-					readString(readRecord(reservedScriptOutputPath.content.at(0)).text),
-					/demo\.webm is reserved by an active recording/,
-				);
 				const reservedElectronOutputPath = await executeRegisteredTool(harness.tool, harness.ctx, {
 					electron: { action: "status", all: true },
 					outputPath: "demo.webm",
@@ -3136,40 +3121,6 @@ nodeTest(
 			semanticActionCallText,
 			/<dim>→<\/dim> <accent>find text Definitely Missing Button click<\/accent>/,
 		);
-
-		const scriptSource = `const rows = [];\n${"rows.push('visible source'); ".repeat(12)}\n// osc-hidden line\x1B]0;\rawait browser({ args: ["get", "title"] }); //\x07\n// browser call follows\rawait browser({ args: ["get", "url"] });\u2028emit(rows);\x1B[31m\u202E\u200B`;
-		const scriptParams: AgentBrowserToolParams = { code: scriptSource };
-		const collapsedScriptCallText = renderCall(
-			scriptParams,
-			PLAIN_RENDER_THEME,
-			createRenderContext({ args: scriptParams }),
-		)
-			.render(200)
-			.map(stripPrivateRenderMetadata)
-			.join("\n");
-		assert.match(collapsedScriptCallText, /<toolTitle>\*\*agent_browser_code\*\*<\/toolTitle>/);
-		assert.match(collapsedScriptCallText, /const rows = \[\]/);
-		assert.match(collapsedScriptCallText, /↵/);
-		assert.match(collapsedScriptCallText, /\.\.\.<\/accent>/);
-		assert.doesNotMatch(collapsedScriptCallText, /emit\(rows\)/);
-		const expandedScriptCallText = renderCall(
-			scriptParams,
-			PLAIN_RENDER_THEME,
-			createRenderContext({ args: scriptParams, expanded: true }),
-		)
-			.render(200)
-			.map(stripPrivateRenderMetadata)
-			.join("\n");
-		assert.match(expandedScriptCallText, /<dim>Source:<\/dim>/);
-		assert.match(
-			expandedScriptCallText,
-			/\/\/ osc-hidden line[^\r\n]*\nawait browser\(\{ args: \["get", "title"\][^\S\r\n]*\}\)/,
-		);
-		assert.match(expandedScriptCallText, /\/\/ browser call follows[^\S\r\n]*\nawait browser/);
-		assert.match(expandedScriptCallText, /emit\(rows\)/);
-		// Rendered source must reject terminal escapes and invisible line/direction controls.
-		assert.doesNotMatch(expandedScriptCallText, /[\r\x1B\u2028\u202E\u200B]/);
-		assert.match(expandedScriptCallText, /�/);
 
 		const maliciousParams: AgentBrowserToolParams = {
 			args: ["open", "\x1B]0;pwned\x07https://example.com/\x1B[31m"],

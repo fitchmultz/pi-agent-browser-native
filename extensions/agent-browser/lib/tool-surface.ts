@@ -3,8 +3,6 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import { formatAgentBrowserRenderCall } from "./pi-tool-rendering.js";
 import type { TUnsafe } from "./json-schema.js";
 import {
 	AGENT_BROWSER_NAMESPACE,
@@ -13,23 +11,19 @@ import {
 } from "./native-output.js";
 import {
 	AGENT_BROWSER_PARAMS,
-	AGENT_BROWSER_CODE_PARAMS,
 	AGENT_BROWSER_ACTION_PARAMS,
 	AGENT_BROWSER_QA_PARAMS,
 	AGENT_BROWSER_ELECTRON_PARAMS,
 	AGENT_BROWSER_SOURCE_PARAMS,
 	AGENT_BROWSER_NETWORK_SOURCE_PARAMS,
-	type AgentBrowserCodeParams,
 	type AgentBrowserAdvancedTool,
 } from "./input-modes/params.js";
 import type { AgentBrowserExecuteParams } from "./orchestration/input-plan.js";
 
 export type AgentBrowserExecutor = ToolDefinition<TUnsafe<AgentBrowserExecuteParams>>["execute"];
-export type AgentBrowserCodeExecutor = ToolDefinition<TUnsafe<AgentBrowserCodeParams>>["execute"];
 
 export interface AgentBrowserToolSurfaceOptions {
 	readonly execute: AgentBrowserExecutor;
-	readonly executeCode: AgentBrowserCodeExecutor;
 	readonly executionMode?: ToolDefinition["executionMode"];
 	readonly renderCall?: ToolDefinition<typeof AGENT_BROWSER_PARAMS>["renderCall"];
 	readonly renderResult?: ToolDefinition<TUnsafe>["renderResult"];
@@ -72,7 +66,7 @@ function nativeToolOptions(
 	};
 }
 
-function registerCoreTools(
+function registerBrowserTool(
 	pi: ExtensionAPI,
 	options: AgentBrowserToolSurfaceOptions,
 	execute: AgentBrowserExecutor,
@@ -87,28 +81,6 @@ function registerCoreTools(
 		parameters: AGENT_BROWSER_PARAMS,
 		...(options.renderCall === undefined ? {} : { renderCall: options.renderCall }),
 		execute,
-	});
-	pi.registerTool({
-		name: "agent_browser_code",
-		...nativeToolOptions(options),
-		label: "Agent Browser Code",
-		description:
-			"Run fresh JavaScript against a persistent browser. await browser({args,stdin?,timeoutMs?}) returns success/data/error/nextActions and imageObservations; emit(selected JSON) and emitImage(image handle) explicitly choose output. No host APIs or imports. Use native batch for fixed sequences.",
-		promptSnippet:
-			"Branch, loop, and aggregate browser observations with explicit JSON/image output.",
-		parameters: AGENT_BROWSER_CODE_PARAMS,
-		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
-		execute: async (id, params, signal, onUpdate, ctx) =>
-			finalizeAgentBrowserNativeResult(
-				await options.executeCode(id, params, signal, onUpdate, ctx),
-				params,
-			),
-		renderCall(args, theme, context) {
-			const text =
-				context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
-			text.setText(formatAgentBrowserRenderCall(args, theme, context.expanded));
-			return text;
-		},
 	});
 }
 
@@ -262,7 +234,7 @@ export function registerAgentBrowserToolSurface(
 			await options.execute(id, params, signal, onUpdate, ctx),
 			params,
 		);
-	registerCoreTools(pi, options, execute);
+	registerBrowserTool(pi, options, execute);
 	registerActionTool(pi, options, execute);
 	registerQaTool(pi, options, execute);
 	registerElectronTool(pi, options, execute);

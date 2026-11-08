@@ -1,16 +1,10 @@
 /** Opt-in registered-extension race regression. No mocks or second browser driver.
  * PI_AGENT_BROWSER_REAL_UPSTREAM=1 node --import tsx --test test/agent-browser.execution-order.test.ts
- * PI_AGENT_BROWSER_EXECUTION_TEST_ROOT selects another checkout (with dependencies and built script worker).
+ * PI_AGENT_BROWSER_EXECUTION_TEST_ROOT selects another checkout (with dependencies).
  * PI_AGENT_BROWSER_EXECUTION_TEST_EVIDENCE retains synthetic receipts/logs after private runtime cleanup.
  */
 import assert from "node:assert/strict";
-import {
-	readRecord,
-	readArray,
-	readString,
-	readNumber,
-	hasErrorCode,
-} from "./helpers/assertions.js";
+import { readRecord, readArray, readString, hasErrorCode } from "./helpers/assertions.js";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -111,9 +105,9 @@ function worker(root: string, actor: string, env: Readonly<NodeJS.ProcessEnv>) {
 			assert.ok(ready);
 			return ready;
 		},
-		call(params: unknown, tool = "agent_browser") {
+		call(params: unknown) {
 			const callId = ++id;
-			child.send({ kind: "call", id: callId, tool, params });
+			child.send({ kind: "call", id: callId, tool: "agent_browser", params });
 			return {
 				id: callId,
 				get settled() {
@@ -163,11 +157,10 @@ function worker(root: string, actor: string, env: Readonly<NodeJS.ProcessEnv>) {
 	};
 }
 
-for (const mode of ["direct", "code", "cancel-waiter"] as const) {
+for (const mode of ["direct", "cancel-waiter"] as const) {
 	nodeTest(
 		{
 			direct: "real registered direct helper/action keeps another process off the verified page",
-			code: "real registered code cell holds its browser through read, local branch, and action",
 			"cancel-waiter":
 				"real registered cancellation removes a waiting peer without dispatching its navigation",
 		}[mode],
@@ -341,9 +334,6 @@ for (const mode of ["direct", "code", "cancel-waiter"] as const) {
 							.digest("hex"),
 					})),
 				),
-				compiledWorkerSha256: createHash("sha256")
-					.update(await present(join(sourceRoot, "dist/extensions/agent-browser/script-worker.js")))
-					.digest("hex"),
 			};
 			evidence.version = execFileSync(nativePath, ["--version"], {
 				env,
@@ -372,30 +362,9 @@ for (const mode of ["direct", "code", "cancel-waiter"] as const) {
 				.call({ args: [...args, "session", "info"], timeoutMs: 10_000 })
 				.result();
 			successful(initial); // Warm B without navigating, attaching another controller, or changing launch flags.
-			await writeFile(join(root, "arm"), mode === "code" ? "code" : "direct");
+			await writeFile(join(root, "arm"), "direct");
 			const inspect = "({page:document.body.dataset.page,clicks:window.clicks})";
-			const action =
-				mode === "code"
-					? a.call(
-							{
-								session: "shared",
-								namespace,
-								timeoutMs: 25_000,
-								code: `
-const read = await browser({args:["eval","--stdin"],stdin:${JSON.stringify(inspect)}});
-if (!read.success || read.data.result.page !== "A") throw new Error("Expected page A before branching");
-// B is already waiting. This bounded local work separates browser calls without another browser command.
-const start = Date.now(); while (Date.now() - start < 1000) {}
-const clicked = await browser({args:["click","#count"]});
-if (!clicked.success) throw new Error("Click failed: " + JSON.stringify(clicked));
-await browser({args:["wait","--fn","document.body.dataset.received === 'yes'"]});
-const after = await browser({args:["eval","--stdin"],stdin:${JSON.stringify(inspect)}});
-emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Date.now()-start});
-`,
-							},
-							"agent_browser_code",
-						)
-					: a.call({ args: [...args, "click", "#count"], timeoutMs: 25_000 });
+			const action = a.call({ args: [...args, "click", "#count"], timeoutMs: 25_000 });
 			await until(
 				async () => Boolean(await present(join(root, "held.json"))) || action.settled,
 				"A never reached the real response gate",
@@ -408,24 +377,12 @@ emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Da
 			}
 			const held = readRecord(JSON.parse(heldText));
 			evidence.held = held;
-			if (mode !== "code") {
-				await t.test("direct response held on A", () => {
-					assert.equal(
-						readRecord(readRecord(JSON.parse(readString(held.stdout))).data).url,
-						`${base}/A`,
-					);
-				});
-			} else {
-				await t.test("code response held before click", () => {
-					assert.deepEqual(
-						readRecord(readRecord(JSON.parse(readString(held.stdout))).data).result,
-						{
-							page: "A",
-							clicks: 0,
-						},
-					);
-				});
-			}
+			await t.test("direct response held on A", () => {
+				assert.equal(
+					readRecord(readRecord(JSON.parse(readString(held.stdout))).data).url,
+					`${base}/A`,
+				);
+			});
 			const navigation = b.call({ args: [...args, "open", `${base}/B`], timeoutMs: 20_000 });
 			await until(
 				async () => (await claims()).length === 2 || navigation.settled,
@@ -503,14 +460,6 @@ emit({page:after.data.result.page,clicks:after.data.result.clicks,branchGapMs:Da
 				1,
 				"All helpers/actions must reuse one native launch configuration",
 			);
-			if (mode === "code") {
-				await t.test("cell retains A through its local branch", () => {
-					const data = readRecord(readRecord(readRecord(evidence.action).details).data);
-					assert.equal(data.page, "A");
-					assert.equal(data.clicks, 1);
-					assert.ok(readNumber(data.branchGapMs) >= 1000);
-				});
-			}
 			const dom = readRecord(readRecord(readRecord(evidence.dom).details).data);
 			assert.deepEqual(
 				dom.result,

@@ -61,7 +61,6 @@ interface PreparationRequest {
 }
 
 interface PreparationControls extends PreparationPageFacts {
-	readonly modelVisible?: boolean | undefined;
 	readonly onUpdate?: ((result: AgentToolResult<unknown>) => void) | undefined;
 	readonly promptPolicy: PromptPolicy;
 	readonly artifactStore?: PersistentSessionArtifactStore | undefined;
@@ -269,7 +268,6 @@ function preparationControls(
 			| "cwd"
 			| "signal"
 			| "params"
-			| "modelVisible"
 			| "onUpdate"
 			| "promptPolicy"
 			| "preserveAttachedBrowserSession"
@@ -283,7 +281,6 @@ function preparationControls(
 		cwd: options.cwd,
 		signal: options.signal,
 		timeoutMs: options.params.timeoutMs,
-		modelVisible: options.modelVisible,
 		onUpdate: options.onUpdate,
 		promptPolicy: options.promptPolicy,
 		preserveAttachedBrowserSession: options.preserveAttachedBrowserSession,

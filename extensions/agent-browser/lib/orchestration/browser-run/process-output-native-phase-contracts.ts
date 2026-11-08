@@ -23,7 +23,6 @@ export interface NativeOutputPhase {
 			| "artifactRunStartedAtMs"
 			| "ctx"
 			| "cwd"
-			| "modelVisible"
 			| "processResult"
 			| "sessionPageStateUpdate"
 			| "signal"

@@ -148,7 +148,7 @@ export class LiveSiteRun {
 				"-e",
 				extensionPath,
 				"--tools",
-				"agent_browser,agent_browser_code",
+				"agent_browser",
 				"--model",
 				this.model,
 				"--session-id",

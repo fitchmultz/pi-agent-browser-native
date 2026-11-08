@@ -14,7 +14,6 @@ import { isPlainTextInspectionArgs } from "../runtime.js";
 import { isBooleanFlagEnabled } from "../argv-grammar.js";
 import { isRecord } from "../parsing.js";
 import { mergeBrowserRunArtifactManifest } from "./browser-run/artifact-merge.js";
-import type { AgentBrowserCodeParams } from "../input-modes/params.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
 import { getPersistentSessionArtifactStore } from "./browser-run/session-state.js";
 import type { AgentBrowserExecuteParams } from "./input-plan.js";
@@ -24,7 +23,6 @@ import type { SessionArtifactManifest } from "../results/contracts.js";
 import { invocationArtifactManifest } from "./extension-result-state.js";
 import type { ObservationResources } from "./extension-artifacts.js";
 
-type ObservationParams = AgentBrowserExecuteParams | Readonly<AgentBrowserCodeParams>;
 interface Observation {
 	readonly result: AgentToolResult<unknown>;
 	readonly details: Readonly<Record<string, unknown>>;
@@ -66,7 +64,10 @@ class ObservationPublication {
 		readonly resources: ObservationResources,
 		readonly context: ObservationContext,
 	) {}
-	async render(result: AgentToolResult<unknown>, params: ObservationParams): Promise<Observation> {
+	async render(
+		result: AgentToolResult<unknown>,
+		params: AgentBrowserExecuteParams,
+	): Promise<Observation> {
 		const details = observationDetails(result);
 		const priorManifest = isSessionArtifactManifest(details.artifactManifest)
 			? details.artifactManifest
@@ -74,7 +75,7 @@ class ObservationPublication {
 		const renderOptions = {
 			content: result.content,
 			details,
-			json: "code" in params || isBooleanFlagEnabled([...(params.args ?? [])], "--json"),
+			json: isBooleanFlagEnabled([...(params.args ?? [])], "--json"),
 			succeeded: result.isError !== true,
 			persistentArtifactStore: this.context.branch.isCurrent()
 				? getPersistentSessionArtifactStore(this.context.ctx)
@@ -153,7 +154,7 @@ class ObservationPublication {
 	}
 	async run(
 		result: AgentToolResult<unknown>,
-		params: ObservationParams,
+		params: AgentBrowserExecuteParams,
 	): Promise<AgentBrowserToolResult> {
 		if ("args" in params && isPlainTextInspectionArgs([...params.args])) {
 			return result;
@@ -168,7 +169,7 @@ class ObservationPublication {
 export function finalizeObservation(
 	resources: ObservationResources,
 	result: AgentToolResult<unknown>,
-	params: ObservationParams,
+	params: AgentBrowserExecuteParams,
 	context: ObservationContext,
 ): Promise<AgentBrowserToolResult> {
 	return new ObservationPublication(resources, context).run(result, params);

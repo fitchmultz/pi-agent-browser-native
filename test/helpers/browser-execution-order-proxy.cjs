@@ -51,10 +51,7 @@ const forwardReply = async (code, signal) => {
 	const armed = existsSync(path.join(root, "arm"))
 		? readFileSync(path.join(root, "arm"), "utf8")
 		: "";
-	const matches =
-		armed === "direct"
-			? args.slice(-2).join(" ") === "get url"
-			: armed === "code" && args.slice(-2).join(" ") === "eval --stdin";
+	const matches = armed === "direct" && args.slice(-2).join(" ") === "get url";
 	if (actor === "A" && matches && code === 0 && !existsSync(path.join(root, "held.json"))) {
 		writeFileSync(path.join(root, "held.json"), JSON.stringify(row));
 		const deadline = Date.now() + 12_000;

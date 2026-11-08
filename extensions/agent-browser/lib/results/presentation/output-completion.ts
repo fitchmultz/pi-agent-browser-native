@@ -19,12 +19,7 @@ import type { PresentationSource } from "./source.js";
 
 type OutputOptions = Pick<
 	BuildToolPresentationOptions,
-	| "artifactManifest"
-	| "artifactRequest"
-	| "commandInfo"
-	| "cwd"
-	| "modelVisible"
-	| "persistentArtifactStore"
+	"artifactManifest" | "artifactRequest" | "commandInfo" | "cwd" | "persistentArtifactStore"
 >;
 type ArtifactExtractionOptions = Pick<
 	BuildToolPresentationOptions,
@@ -105,7 +100,7 @@ async function attachPresentationImage(
 ): Promise<Partial<ToolPresentation>> {
 	const imagePath = getAttachableImage(options, source, artifacts);
 	const update: Partial<ToolPresentation> =
-		imagePath === undefined ? {} : await attachInlineImage(draft, imagePath, options.modelVisible);
+		imagePath === undefined ? {} : await attachInlineImage(draft, imagePath);
 	const observations = update.imageObservations ?? draft.imageObservations;
 	if (options.commandInfo.command === "screenshot" && observations) {
 		const capture = getScreenshotCapture(source.commandInfo.commandTokens ?? []).kind;
@@ -127,18 +122,16 @@ export async function completePresentationOutput(
 	update.artifactVerification =
 		draft.artifactVerification ?? buildArtifactVerificationSummary(artifacts);
 	Object.assign(update, await attachPresentationImage(draft, options, source, artifacts));
-	if (options.modelVisible !== false) {
-		Object.assign(
-			update,
-			await compactLargePresentationOutput({
-				artifactManifest: options.artifactManifest,
-				commandInfo: options.commandInfo,
-				data: source.presentationData,
-				persistentArtifactStore: options.persistentArtifactStore,
-				presentation: { ...draft, ...update },
-			}),
-		);
-	}
+	Object.assign(
+		update,
+		await compactLargePresentationOutput({
+			artifactManifest: options.artifactManifest,
+			commandInfo: options.commandInfo,
+			data: source.presentationData,
+			persistentArtifactStore: options.persistentArtifactStore,
+			presentation: { ...draft, ...update },
+		}),
+	);
 	const compacted = { ...draft, ...update };
 	const manifest = applyArtifactManifest(
 		compacted,

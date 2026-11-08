@@ -121,9 +121,6 @@ function buildNativeContent(
 	source: PresentationSource,
 	artifacts: readonly FileArtifactMetadata[],
 ): ToolPresentation["content"] {
-	if (options.modelVisible === false) {
-		return [];
-	}
 	const text =
 		artifacts.length > 0
 			? formatArtifactMetadataLines(artifacts).join("\n")
@@ -151,7 +148,6 @@ export async function buildSourcePresentation(
 			artifactMinUpdatedAtMs: options.artifactMinUpdatedAtMs,
 			artifactRequests: options.batchArtifactRequests,
 			buildNestedToolPresentation,
-			modelVisible: options.modelVisible,
 			cwd: options.cwd,
 			data: source.data,
 			namespace: options.namespace,
@@ -163,7 +159,6 @@ export async function buildSourcePresentation(
 		});
 	}
 	if (
-		options.modelVisible !== false &&
 		source.commandInfo.command === "snapshot" &&
 		isRecord(source.data) &&
 		!source.confirmationRequired

@@ -17,9 +17,9 @@ import {
 } from "./helpers/agent-browser-harness.js";
 
 // The incident repeated a 34,683-ref capture and a 100-row recent artifact view after ordinary reads.
-// This exercises the real code/direct persistence boundary, not a serializer fed synthetic deltas.
+// This exercises the real direct persistence boundary, not a serializer fed synthetic deltas.
 nodeTest(
-	"ordinary code reads retain a large capture without recopying refs or artifact history",
+	"ordinary reads retain a large capture without recopying refs or artifact history",
 	{ concurrency: false, timeout: 120_000 },
 	async () => {
 		const root = await mkdtemp(join(tmpdir(), "piab-growth-"));
@@ -86,23 +86,16 @@ process.stdout.write(JSON.stringify({success:true,data}));`,
 						"explicit structured snapshot exports retain every native ref",
 					);
 					assert.deepEqual(readRecord(nativeData.refs).e34683, { role: "button", name: "Go" });
-					const code = harness.getTool("agent_browser_code");
-					assert.ok(code, "code tool must be registered");
 					let result;
-					for (let cell = 0; cell < 2; cell++) {
-						// The second cell must follow the first in the same journal to measure repeated-read growth.
-						result = await executeRegisteredTool(code, harness.ctx, {
-							session: "growth",
-							code: 'let last; for(let i=0;i<2;i++) last=await browser({args:["get","title"]}); emit(last.data);',
+					for (let read = 0; read < 4; read++) {
+						// Each read follows the previous one in the same journal to measure repeated-read growth.
+						result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--session", "growth", "get", "title"],
 						});
 					}
 					assert.ok(result);
 					assert.equal(result.isError, false, JSON.stringify(result));
-					assert.deepEqual(
-						result.details?.data,
-						{ title: "Fixture" },
-						"explicit native data remains available to code",
-					);
+					assert.deepEqual(result.details?.data, { title: "Fixture" });
 					const transitions = harness.appendedEntries.filter(
 						(entry) => entry.customType === BROWSER_TRANSITION_ENTRY,
 					);

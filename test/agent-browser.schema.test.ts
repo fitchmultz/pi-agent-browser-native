@@ -14,7 +14,6 @@ import { Check } from "typebox/value";
 
 import {
 	createAgentBrowserParamsSchema,
-	createAgentBrowserCodeParamsSchema,
 	createAgentBrowserActionParamsSchema,
 	createAgentBrowserQaParamsSchema,
 	createAgentBrowserElectronParamsSchema,
@@ -324,38 +323,31 @@ nodeTest("advanced schemas keep host timeouts and bounded scanner controls", asy
 	}
 });
 
-nodeTest(
-	"code and web-search schemas enforce source and filter bounds independently",
-	async (t) => {
-		const code = createAgentBrowserCodeParamsSchema();
-		assert.equal(Check(code, { code: "x".repeat(65_536), timeoutMs: 300_000 }), true);
-		assert.equal(Check(code, { code: "x".repeat(65_537) }), false);
-		assert.equal(Check(code, { code: "emit(1)", timeoutMs: 300_001 }), false);
-		const search = createAgentBrowserWebSearchParamsSchema();
-		assert.equal(
-			Check(search, {
-				query: "Pi",
-				country: "US",
-				includeDomains: ["example.com"],
-				count: 10,
-				offset: 9,
-			}),
-			true,
-		);
-		for (const filters of [
-			{ country: "USA" },
-			{ includeDomains: [] },
-			{ includeDomains: [""] },
-			{ includeDomains: Array.from({ length: 21 }, () => "example.com") },
-			{ count: 0 },
-			{ count: 11 },
-			{ offset: -1 },
-			{ offset: 10 },
-			{ searchType: "unknown" },
-		]) {
-			await t.test(JSON.stringify(filters), () => {
-				assert.equal(Check(search, { query: "Pi", ...filters }), false, JSON.stringify(filters));
-			});
-		}
-	},
-);
+nodeTest("web-search schema enforces filter bounds", async (t) => {
+	const search = createAgentBrowserWebSearchParamsSchema();
+	assert.equal(
+		Check(search, {
+			query: "Pi",
+			country: "US",
+			includeDomains: ["example.com"],
+			count: 10,
+			offset: 9,
+		}),
+		true,
+	);
+	for (const filters of [
+		{ country: "USA" },
+		{ includeDomains: [] },
+		{ includeDomains: [""] },
+		{ includeDomains: Array.from({ length: 21 }, () => "example.com") },
+		{ count: 0 },
+		{ count: 11 },
+		{ offset: -1 },
+		{ offset: 10 },
+		{ searchType: "unknown" },
+	]) {
+		await t.test(JSON.stringify(filters), () => {
+			assert.equal(Check(search, { query: "Pi", ...filters }), false, JSON.stringify(filters));
+		});
+	}
+});

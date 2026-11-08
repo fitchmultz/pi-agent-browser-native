@@ -24,7 +24,7 @@ import {
 } from "./helpers/assertions.ts";
 /** @import {AgentSession, SessionManager} from "@earendil-works/pi-coding-agent" */
 /** @import {BrowserToolResult} from "./helpers/tool-result.mjs" */
-/** @typedef {import("../extensions/agent-browser/lib/orchestration/input-plan.js").AgentBrowserExecuteParams | import("../extensions/agent-browser/lib/input-modes/params.js").AgentBrowserCodeParams} NativeInput */
+/** @typedef {import("../extensions/agent-browser/lib/orchestration/input-plan.js").AgentBrowserExecuteParams} NativeInput */
 /** @typedef {{name: string, socketDir: string, namespace: string}} NativeIdentity */
 import { qualifyOffbranchRouting } from "./helpers/lifecycle-offbranch-native.mjs";
 
@@ -33,7 +33,7 @@ const required = process.env.PI_NATIVE_LIFECYCLE_REQUIRED === "1";
 const extensionPath = resolve(process.env.PI_NATIVE_LIFECYCLE_EXTENSION ?? ".");
 
 nodeTest(
-	"native public SDK lifecycle, ordering, cancellation, and stable root restore",
+	"native public SDK lifecycle, ownership, and stable root restore",
 	{ skip: (sdkPath === undefined || sdkPath === "") && !required, timeout: 240_000 },
 	async (t) => {
 		assert.ok(
@@ -64,8 +64,6 @@ nodeTest(
 		let sm;
 		/** @type {BrowserToolResult | undefined} */
 		let result;
-		/** @type {AbortController | undefined} */
-		let callController;
 		/** @type {(() => Promise<void>) | undefined} */
 		let beforeResult;
 		/** @type {string | undefined} */
@@ -87,7 +85,6 @@ nodeTest(
 					});
 				}
 				beforeResult = undefined;
-				callController?.abort();
 				if (rootName !== undefined && rootName !== "") {
 					await call({ args: ["--session", readString(rootName), "close"] }).catch(() => {
 						// Replay failure is tolerated here; every recorded identity is closed natively below.
@@ -222,15 +219,13 @@ nodeTest(
 							description: "Model-free test dispatch",
 							handler: async (args) => {
 								const params = readToolArguments(JSON.parse(args));
-								const toolName = params.code === undefined ? "agent_browser" : "agent_browser_code";
+								const toolName = "agent_browser";
 								const tool = readDefined(session).agent.state.tools.find(
 									(candidate) => candidate.name === toolName,
 								);
 								assert.ok(tool);
 								const id = `lifecycle-call-${++callId}`;
-								result = readBrowserToolResult(
-									await tool.execute(id, params, callController?.signal),
-								);
+								result = readBrowserToolResult(await tool.execute(id, params));
 								if (
 									typeof result.details.sessionName === "string" &&
 									result.details.sessionName !== ""
@@ -362,28 +357,6 @@ nodeTest(
 			await readDefined(session).reload();
 			const reloaded = await ok({ args: ["--version"] });
 			assert.deepEqual(reloaded.content, version.content);
-		});
-		await t.test("detached SDK code cancels and releases its execution lease", async () => {
-			const controller = new AbortController();
-			const tool = readDefined(session).agent.state.tools.find(
-				(candidate) => candidate.name === "agent_browser_code",
-			);
-			assert.ok(tool);
-			const running = tool.execute(
-				"detached-code",
-				{ code: "await new Promise(() => {});", timeoutMs: 10_000 },
-				controller.signal,
-			);
-			let cancelled;
-			try {
-				await delay(200);
-			} finally {
-				controller.abort();
-				cancelled = readBrowserToolResult(await running);
-			}
-			assert.equal(cancelled.isError, true);
-			assert.equal(cancelled.details.failureCategory, "aborted");
-			await ok({ code: 'emit("lease released");' });
 		});
 		await t.test(
 			"root browser survives branch navigation and reload with routes and traces",
@@ -735,66 +708,6 @@ nodeTest(
 				}
 			}
 		});
-		await t.test(
-			"queued browser call waits for code cancellation and preserves its browser",
-			async () => {
-				callController = new AbortController();
-				const before = readDefined(sm).getEntries().length;
-				const running = call({
-					code: `await browser({args:["open",${JSON.stringify(url)}]}); await new Promise(() => {});`,
-					timeoutMs: 30_000,
-				});
-				let queued;
-				let cancelled;
-				try {
-					await waitFor(() =>
-						readDefined(sm)
-							.getEntries()
-							.slice(before)
-							.some((entry) => {
-								if (entry.type !== "custom" || entry.customType !== "agent-browser-transition") {
-									return false;
-								}
-								const event = readRecord(readRecord(entry.data).event);
-								return event.phase === "finish" && event.isError === false;
-							}),
-					);
-					let settled = false;
-					const tool = readDefined(session).agent.state.tools.find(
-						(candidate) => candidate.name === "agent_browser",
-					);
-					assert.ok(tool);
-					queued = tool.execute("queued-during-code", { args: ["get", "title"] }).then((value) => {
-						settled = true;
-						return value;
-					});
-					await delay(100);
-					assert.equal(settled, false, "the code cell must retain its whole-cell browser lock");
-				} finally {
-					callController.abort();
-					cancelled = await running;
-					callController = undefined;
-				}
-				assert.equal(cancelled.details.failureCategory, "aborted", JSON.stringify(cancelled));
-				const codeSessionName = readString(cancelled.details.sessionName);
-				const followed = readBrowserToolResult(await readDefined(queued));
-				assert.notEqual(followed.isError, true, JSON.stringify(followed));
-				assert.equal(readRecord(followed.details.data).title, "Lifecycle fixture");
-				receipts.push({
-					label: "code cancellation releases ordered follow-up",
-					sessionName: codeSessionName,
-					failureCategory: cancelled.details.failureCategory,
-				});
-				await readDefined(session).reload();
-				assert.equal(
-					readRecord(
-						(await ok({ args: ["--session", codeSessionName, "get", "url"] })).details.data,
-					).url,
-					url,
-				);
-				await ok({ args: ["--session", codeSessionName, "close"] });
-			},
-		);
 		await t.test(
 			"native root restore survives fresh checkout and state-directory inodes",
 			async () => {

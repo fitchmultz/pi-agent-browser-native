@@ -58,7 +58,6 @@ export type AgentBrowserFailureCategory =
 	| "qa-failure"
 	| "selector-not-found"
 	| "selector-unsupported"
-	| "script-error"
 	| "stale-ref"
 	| "tab-drift"
 	| "tab-gone"
@@ -88,7 +87,6 @@ export interface AgentBrowserObservation extends AgentBrowserResultCategoryDetai
 	summary?: string;
 	sessionName?: string;
 	namespace?: string;
-	failures?: AgentBrowserObservation[];
 	nextActions?: readonly AgentBrowserNextAction[];
 	artifacts?: readonly FileArtifactMetadata[];
 	artifactVerification?: ArtifactVerificationSummary;
@@ -141,7 +139,6 @@ export interface ScreenshotSample {
 
 export interface ImageObservation {
 	readonly rendering?: "text" | undefined;
-	readonly id?: string;
 	readonly path: string;
 	readonly mimeType: string;
 	readonly pixels?: { readonly width: number; readonly height: number } | undefined;

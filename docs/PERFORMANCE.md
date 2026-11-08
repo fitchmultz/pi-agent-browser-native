@@ -224,18 +224,17 @@ strict checker, compiler, formatting, tests, mutation probes, and document check
 remain required.
 
 The build retains the complete emitted checkout tree. npm selects the bundled
-extension, unchanged permissioned code worker, and standalone helper bundles under
-`dist/packaged/lib/`. Package-only helpers do not overwrite raw checkout modules:
+extension and standalone helper bundles under `dist/packaged/lib/`. Package-only helpers do not overwrite raw checkout modules:
 that would split shared async-local process context and temporary-resource owners.
 Pi peers stay external and host-provided; source installs keep the existing
 `prepare` build. The package consumer checks execute config, offline conversion,
-the permissioned worker, and real Pi SDK/CLI loading without optional host peers
+and real Pi SDK/CLI loading without optional host peers
 installed in the consumer.
 
 ## Preserved boundaries and rejected approaches
 
 No cross-call config/secret/DOM cache, pooled JavaScript worker, new recipe layer,
-or weaker validation gate was introduced. Fresh code globals, ordered secrets,
+or weaker validation gate was introduced. Ordered secrets,
 rate spacing, cancellation, shared locks, live page checks, redaction, and
 branch-visible replay retain their existing owners.
 

@@ -69,13 +69,8 @@ export function summarizeBatchStatus(
 export function formatBatchStatusText(
 	steps: readonly BatchPresentedStepObservation[],
 	status: BatchStatus,
-	modelVisible: boolean | undefined,
 ): string {
-	return [
-		status.header,
-		status.mutationEvidenceText,
-		modelVisible === false ? "" : formatBatchStepsText(steps),
-	]
+	return [status.header, status.mutationEvidenceText, formatBatchStepsText(steps)]
 		.filter((line) => line !== undefined)
 		.join("\n\n");
 }

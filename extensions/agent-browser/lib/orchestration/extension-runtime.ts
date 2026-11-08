@@ -126,17 +126,6 @@ export class BrowserBranchState {
 		return branch;
 	}
 }
-/** In-flight code cells are aborted and settled before branch restoration or shutdown. */
-export class BrowserCodeActivity {
-	readonly controllers = new Set<AbortController>();
-	readonly executions = new Set<Promise<void>>();
-	async settle(): Promise<void> {
-		for (const controller of this.controllers) {
-			controller.abort();
-		}
-		await Promise.allSettled(this.executions);
-	}
-}
 /** Readonly root composition. Mutable resources have focused lifetime owners. */
 export class BrowserRuntime {
 	readonly prompt: BrowserPrompt;
@@ -146,7 +135,6 @@ export class BrowserRuntime {
 	readonly managed: BrowserManagedSessions;
 	readonly sessions = new BrowserSessionResources();
 	readonly branch = new BrowserBranchState();
-	readonly code = new BrowserCodeActivity();
 	readonly pi: ExtensionAPI;
 	readonly beforeExecute:
 		| ((toolCallId: string, ctx: ExtensionContext) => Promise<void>)

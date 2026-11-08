@@ -17,9 +17,6 @@ export interface PreparationObservationOwners {
 	readonly artifactStore?: PersistentSessionArtifactStore | undefined;
 }
 
-export interface PreparationObservationFacts extends PreparationProcessFacts {
-	readonly modelVisible?: boolean | undefined;
-}
 import type { PreparationGuardContext, PreparationGuardEvidence } from "./prepare-guards.js";
 import type { PrepareBrowserRunResult } from "./types.js";
 
@@ -89,7 +86,7 @@ async function bindFilteredSnapshotGeneration(
 
 async function filteredSnapshot(
 	owners: PreparationObservationOwners,
-	process: PreparationObservationFacts,
+	process: PreparationProcessFacts,
 	context: PreparationGuardContext,
 	evidence: PreparationGuardEvidence,
 ): Promise<PrepareBrowserRunResult | undefined> {
@@ -105,7 +102,6 @@ async function filteredSnapshot(
 			context,
 			evidence,
 		),
-		modelVisible: process.modelVisible,
 		artifactManifest: owners.artifactManifest,
 		persistentArtifactStore: owners.artifactStore,
 		previousRefSnapshot: page.priorRefSnapshotState,
@@ -133,7 +129,7 @@ async function filteredSnapshot(
 
 export async function prepareObservations(
 	owners: PreparationObservationOwners,
-	process: PreparationObservationFacts,
+	process: PreparationProcessFacts,
 	context: PreparationGuardContext,
 	evidence: PreparationGuardEvidence,
 ): Promise<PrepareBrowserRunResult | undefined> {

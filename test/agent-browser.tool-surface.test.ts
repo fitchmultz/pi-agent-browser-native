@@ -48,7 +48,6 @@ async function withSurface(
 		readonly active: () => string[];
 		readonly all: () => string[];
 		readonly calls: readonly RecordedBrowserCall[];
-		readonly codeCalls: readonly unknown[];
 		readonly reload: () => Promise<void>;
 	}) => Promise<void>,
 	options: {
@@ -66,7 +65,6 @@ async function withSurface(
 		modelsPath: null,
 	});
 	const calls: AgentBrowserExecuteParams[] = [];
-	const codeCalls: unknown[] = [];
 	let context: ExtensionToolContext;
 	const resourceLoader = new DefaultResourceLoader({
 		agentDir: directory,
@@ -103,10 +101,6 @@ async function withSurface(
 								details: { resolved },
 							}
 						);
-					},
-					async executeCode(_id, params) {
-						codeCalls.push(params);
-						return options.result ?? { content: [], details: {} };
 					},
 				});
 			},
@@ -151,7 +145,6 @@ async function withSurface(
 				active: () => session.getActiveToolNames(),
 				all: () => session.getAllTools().map(({ name }) => name),
 				calls,
-				codeCalls,
 				reload: () => session.reload(),
 			});
 		} finally {
@@ -162,7 +155,7 @@ async function withSurface(
 	}
 }
 
-const baseTools = ["agent_browser", "agent_browser_code", "unrelated"];
+const baseTools = ["agent_browser", "unrelated"];
 const deferredTools = [
 	"agent_browser_action",
 	"agent_browser_electron",
@@ -172,10 +165,10 @@ const deferredTools = [
 ];
 
 nodeTest(
-	"registered browser code serializes for Anthropic while Pi still rejects invalid arguments",
+	"registered browser tool serializes for Anthropic while Pi still rejects invalid arguments",
 	async (t) => {
-		await withSurface(t, async ({ session, call, codeCalls }) => {
-			const tool = session.getToolDefinition("agent_browser_code");
+		await withSurface(t, async ({ session, call, calls }) => {
+			const tool = session.getToolDefinition("agent_browser");
 			assert.ok(tool);
 			let payload: unknown;
 			const result = await streamAnthropic(
@@ -195,7 +188,7 @@ nodeTest(
 				normalizeContext({
 					messages: [
 						{ role: "system", content: "", toolsAdded: [tool], timestamp: 1 },
-						{ role: "user", content: "Use browser code.", timestamp: 2 },
+						{ role: "user", content: "Use the browser.", timestamp: 2 },
 					],
 				}),
 				{
@@ -224,7 +217,7 @@ nodeTest(
 			assert.equal(result.stopReason, "stop", result.errorMessage);
 			assert.ok(payload !== undefined);
 			const wireTool = readDefined(readArray(readRecord(payload).tools).map(readRecord)[0]);
-			assert.equal(wireTool.name, "agent_browser_code");
+			assert.equal(wireTool.name, "agent_browser");
 			assert.equal(
 				Object.hasOwn(wireTool, "discovery"),
 				false,
@@ -234,25 +227,25 @@ nodeTest(
 			assert.equal(wireTool.strict ?? false, false);
 			assert.deepEqual(readRecord(readRecord(wireTool.input_schema).properties).timeoutMs, {
 				type: "integer",
+				description: "Timeout in ms; exceed explicit waits.",
 				minimum: 1,
-				maximum: 300000,
 			});
-			assert.deepEqual(readRecord(wireTool.input_schema).required, ["code"]);
+			assert.deepEqual(readRecord(wireTool.input_schema).required, ["args"]);
 			assert.deepEqual(
 				Object.keys(readRecord(readRecord(wireTool.input_schema).properties)).sort(),
-				["code", "namespace", "outputPath", "session", "timeoutMs"],
+				["args", "outputPath", "sessionMode", "stdin", "timeoutMs"],
 			);
 			assert.ok(Buffer.byteLength(JSON.stringify(tool.parameters)) < 1400);
 			const invalidInputs: JsonObject[] = [
-				{ code: "" },
-				{ code: "emit(1)", session: "" },
-				{ code: "emit(1)", timeoutMs: 0 },
-				{ code: "emit(1)", timeoutMs: 300001 },
-				{ code: "emit(1)", args: [] },
-				{ script: "emit(1)" },
+				{ args: [] },
+				{ args: ["get", "url"], outputPath: "" },
+				{ args: ["get", "url"], timeoutMs: 0 },
+				{ args: ["get", "url"], sessionMode: "never" },
+				{ args: ["get", "url"], code: "emit(1)" },
+				{ code: "emit(1)" },
 			];
 			for (const input of invalidInputs) {
-				await t.test(`invalid code ${JSON.stringify(input)}`, async () => {
+				await t.test(`invalid input ${JSON.stringify(input)}`, async () => {
 					const rejection = assert.rejects(
 						call(tool.name, input),
 						/Validation failed/,
@@ -262,21 +255,17 @@ nodeTest(
 					await rejection;
 				});
 			}
-			assert.deepEqual(codeCalls, []);
+			assert.deepEqual(calls, []);
 			await call(tool.name, {
-				code: "emit(1)",
-				session: null,
-				namespace: "",
+				args: ["get", "url"],
+				stdin: null,
 				timeoutMs: null,
 				outputPath: null,
 			});
-			assert.deepEqual(codeCalls, [{ code: "emit(1)", namespace: "" }]);
+			assert.deepEqual(calls, [{ args: ["get", "url"] }]);
 			// Pi 1.5 validation truncates a fractional number for an integer field instead of rejecting it.
-			await call(tool.name, { code: "emit(1)", timeoutMs: 1.5 });
-			assert.deepEqual(codeCalls, [
-				{ code: "emit(1)", namespace: "" },
-				{ code: "emit(1)", timeoutMs: 1 },
-			]);
+			await call(tool.name, { args: ["get", "url"], timeoutMs: 1.5 });
+			assert.deepEqual(calls, [{ args: ["get", "url"] }, { args: ["get", "url"], timeoutMs: 1 }]);
 		});
 	},
 );
@@ -480,7 +469,6 @@ nodeTest(
 		const cases: { name: string; input: JsonObject; json: boolean }[] = [
 			{ name: "agent_browser", input: { args: ["get", "url"] }, json: false },
 			{ name: "agent_browser", input: { args: ["get", "url", "--json"] }, json: true },
-			{ name: "agent_browser_code", input: { code: "emit(42)" }, json: true },
 			{ name: "agent_browser_qa", input: { attached: true }, json: false },
 		];
 		const upstreamText = { type: "text" as const, text: "QA failed." };
@@ -574,93 +562,81 @@ nodeTest("export failures cannot retain a stale successful structured result", a
 	);
 });
 
-nodeTest(
-	"advanced wrappers normalize into one executor while code keeps explicit identity",
-	async (t) => {
-		await withSurface(t, async ({ call, calls, codeCalls }) => {
-			await call("agent_browser", { args: ["get", "url"], timeoutMs: 500 });
-			await call("agent_browser_action", {
-				action: "fill",
-				locator: "label",
-				value: "Email",
-				text: "user@example.com",
-				session: "chosen",
-				outputPath: "action.json",
-				timeoutMs: 1000,
-			});
-			await call("agent_browser_qa", {
-				attached: true,
-				expectedText: "Ready",
-				checkNetwork: true,
-				outputPath: "qa.json",
-				timeoutMs: 2000,
-			});
-			await call("agent_browser_electron", {
-				action: "launch",
-				appName: "Editor",
-				timeoutMs: 3000,
-				outputPath: "electron.json",
-			});
-			await call("agent_browser_source", {
-				componentName: "Editor",
-				maxWorkspaceFiles: 42,
-				outputPath: "source.json",
-				timeoutMs: 4000,
-			});
-			await call("agent_browser_network_source", {
-				requestId: "req1",
-				session: "chosen",
-				namespace: "",
-				outputPath: "network.json",
-				timeoutMs: 5000,
-			});
-			const normalized = calls.map((params) =>
-				resolveAgentBrowserInput({
-					params,
-					getBatchPreflightValidationError: (): undefined => {
-						// This surface fixture has no batch preflight failure.
-					},
-				}),
-			);
-			assert.deepEqual(
-				normalized.map(({ status }) => status),
-				Array(6).fill("valid"),
-			);
-			assert.deepEqual(
-				normalized.map(({ kind }) => kind),
-				["args", "semanticAction", "qa", "electron", "sourceLookup", "networkSourceLookup"],
-			);
-			assert.deepEqual(readDefined(calls[1]).semanticAction, {
-				action: "fill",
-				locator: "label",
-				value: "Email",
-				text: "user@example.com",
-				session: "chosen",
-			});
-			assert.equal(readDefined(calls[2]).timeoutMs, 2000);
-			assert.deepEqual(calls[3], {
-				electron: { action: "launch", appName: "Editor", timeoutMs: 3000 },
-				outputPath: "electron.json",
-			});
-			assert.equal(readDefined(calls[4]).timeoutMs, 4000);
-			assert.deepEqual(readDefined(calls[5]).networkSourceLookup, {
-				requestId: "req1",
-				session: "chosen",
-				namespace: "",
-			});
-			await call("agent_browser_code", {
-				code: "emit(1)",
-				session: "chosen",
-				namespace: "",
-				timeoutMs: 300000,
-			});
-			assert.deepEqual(codeCalls, [
-				{ code: "emit(1)", session: "chosen", namespace: "", timeoutMs: 300000 },
-			]);
-			assert.equal(calls.length, 6);
+nodeTest("advanced wrappers normalize into one executor", async (t) => {
+	await withSurface(t, async ({ call, calls }) => {
+		await call("agent_browser", { args: ["get", "url"], timeoutMs: 500 });
+		await call("agent_browser_action", {
+			action: "fill",
+			locator: "label",
+			value: "Email",
+			text: "user@example.com",
+			session: "chosen",
+			outputPath: "action.json",
+			timeoutMs: 1000,
 		});
-	},
-);
+		await call("agent_browser_qa", {
+			attached: true,
+			expectedText: "Ready",
+			checkNetwork: true,
+			outputPath: "qa.json",
+			timeoutMs: 2000,
+		});
+		await call("agent_browser_electron", {
+			action: "launch",
+			appName: "Editor",
+			timeoutMs: 3000,
+			outputPath: "electron.json",
+		});
+		await call("agent_browser_source", {
+			componentName: "Editor",
+			maxWorkspaceFiles: 42,
+			outputPath: "source.json",
+			timeoutMs: 4000,
+		});
+		await call("agent_browser_network_source", {
+			requestId: "req1",
+			session: "chosen",
+			namespace: "",
+			outputPath: "network.json",
+			timeoutMs: 5000,
+		});
+		const normalized = calls.map((params) =>
+			resolveAgentBrowserInput({
+				params,
+				getBatchPreflightValidationError: (): undefined => {
+					// This surface fixture has no batch preflight failure.
+				},
+			}),
+		);
+		assert.deepEqual(
+			normalized.map(({ status }) => status),
+			Array(6).fill("valid"),
+		);
+		assert.deepEqual(
+			normalized.map(({ kind }) => kind),
+			["args", "semanticAction", "qa", "electron", "sourceLookup", "networkSourceLookup"],
+		);
+		assert.deepEqual(readDefined(calls[1]).semanticAction, {
+			action: "fill",
+			locator: "label",
+			value: "Email",
+			text: "user@example.com",
+			session: "chosen",
+		});
+		assert.equal(readDefined(calls[2]).timeoutMs, 2000);
+		assert.deepEqual(calls[3], {
+			electron: { action: "launch", appName: "Editor", timeoutMs: 3000 },
+			outputPath: "electron.json",
+		});
+		assert.equal(readDefined(calls[4]).timeoutMs, 4000);
+		assert.deepEqual(readDefined(calls[5]).networkSourceLookup, {
+			requestId: "req1",
+			session: "chosen",
+			namespace: "",
+		});
+		assert.equal(calls.length, 6);
+	});
+});
 
 nodeTest("explicit native CLI tool selection activates deferred tools by name", async (t) => {
 	await withSurface(

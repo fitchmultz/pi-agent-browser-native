@@ -21,8 +21,6 @@ const OBSERVATION_DETAIL_FIELDS = [
 	"warnings",
 	"sessionName",
 	"namespace",
-	"codeRun",
-	"failures",
 	"artifacts",
 	"artifactVerification",
 	"outputFile",

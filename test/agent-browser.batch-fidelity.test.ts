@@ -351,33 +351,6 @@ nodeTest(
 								assert.equal(readRecord(details.sessionTabTarget).url, url);
 							});
 						}
-						await t.test("code", async () => {
-							const codeTool = h.getTool("agent_browser_code");
-							assert.ok(codeTool);
-							const request = {
-								args: ["batch", "--bail", "--omit-command"],
-								stdin: JSON.stringify([[], ...rows]),
-							};
-							const outputPath = join(dir, "code.json");
-							const result = await executeRegisteredTool(codeTool, h.ctx, {
-								session,
-								code: `const r=await browser(${JSON.stringify(request)}); emit({success:r.success,data:r.data});`,
-								outputPath,
-							});
-							assert.equal(result.isError, false, JSON.stringify(result));
-							assert.doesNotMatch(
-								JSON.stringify(result),
-								/indexed-cookie-secret|indexed-storage-secret/,
-							);
-							assert.doesNotMatch(
-								await readFile(outputPath, "utf8"),
-								/indexed-cookie-secret|indexed-storage-secret/,
-							);
-							assert.doesNotMatch(
-								JSON.stringify(h.appendedEntries),
-								/indexed-cookie-secret|indexed-storage-secret/,
-							);
-						});
 						await t.test(
 							"indexed recording recovery retains unrelated screenshot evidence",
 							async () => {

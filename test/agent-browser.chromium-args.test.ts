@@ -7,7 +7,6 @@ import nodeTest from "node:test";
 
 import { TARGET_AGENT_BROWSER_VERSION_LABEL } from "../scripts/agent-browser-target.mjs";
 
-import { validateAgentBrowserScriptBrowserParams } from "../extensions/agent-browser/lib/input-modes/script.js";
 import { validateToolArgs } from "../extensions/agent-browser/lib/runtime.js";
 import {
 	createExtensionHarness,
@@ -120,14 +119,6 @@ nodeTest("Chromium diagnostic uses native top-level globals but raw batch tokens
 	assert.match(
 		validateToolArgs(["open", url, "--args=--no-sandbox"], { batchStep: true }) ?? "",
 		/Move `--args` and its value before `batch`/,
-	);
-	assert.equal(
-		validateAgentBrowserScriptBrowserParams({ args: ["fill", "#field", "--no-sandbox"] }).error,
-		undefined,
-	);
-	assert.match(
-		validateAgentBrowserScriptBrowserParams({ args: ["open", url, "--no-sandbox"] }).error ?? "",
-		/Chromium launch argument/,
 	);
 
 	await withFixture(async (_root, harness, log) => {

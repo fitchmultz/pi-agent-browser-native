@@ -107,7 +107,7 @@ function affectsBrowser(
 	);
 }
 function createBeginRecord(
-	call: Pick<BrowserCommandCall, "toolArgs" | "ctx" | "toolCallId" | "commandIndex" | "browserCwd">,
+	call: Pick<BrowserCommandCall, "toolArgs" | "ctx" | "toolCallId" | "browserCwd">,
 	identity: Readonly<{
 		plan: ReturnType<typeof buildExecutionPlan>;
 		operationId: string;
@@ -123,7 +123,7 @@ function createBeginRecord(
 			phase: "begin",
 			operationId: identity.operationId,
 			toolCallId: call.toolCallId,
-			commandIndex: call.commandIndex ?? 0,
+			commandIndex: 0,
 			isError: true,
 			state: {
 				args: redactInvocationArgs(call.toolArgs),
@@ -277,7 +277,6 @@ async function dispatchBrowserCommand(
 			implicitSessionCloseTimeoutMs: timeouts.close,
 			implicitSessionIdleTimeoutMs: timeouts.idle,
 			input: call.resolvedInput,
-			modelVisible: call.modelVisible,
 			onUpdate: call.onUpdate,
 			params: call.params,
 			establishAttachedBrowserSession:

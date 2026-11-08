@@ -41,8 +41,9 @@ Describe the task in your conversation. Pi can click controls, fill forms, check
 | Tool                       | Use                                                 |
 | -------------------------- | --------------------------------------------------- |
 | `agent_browser`            | Browser commands and fixed `batch --bail` sequences |
-| `agent_browser_code`       | JavaScript loops and branches in the same browser   |
 | `agent_browser_web_search` | Optional Exa or Brave search through provider APIs  |
+
+For loops, branches, or aggregation, enable Pi's `codemode` tool (for example, `--tools +codemode`). Its scripts call `tools.agent_browser()` against the same browser.
 
 Action, QA, Electron, source, and network-source tools are deferred: Pi's native `tool_search` loads them when a task needs them, and codemode scripts can call them directly. Like Pi's own MCP extension, the browser extension activates a registered `tool_search` at session start and after tree navigation, unless the branch recorded removing it.
 
@@ -116,7 +117,7 @@ For stale references or unexpected tabs, follow the returned recovery actions. T
 ## More documentation
 
 - [Detailed reference](docs/REFERENCE.md): platform setup, browser examples, compatibility notes, and development checks.
-- [Tool contract](docs/TOOL_CONTRACT.md): exact inputs, results, code limits, and image geometry.
+- [Tool contract](docs/TOOL_CONTRACT.md): exact inputs, results, and image geometry.
 - [Electron guide](docs/ELECTRON.md): desktop discovery, isolated launch, and cleanup.
 - [Session storage](docs/SESSION_STORAGE.md): replay, large histories, and session conversion.
 - [Architecture](docs/ARCHITECTURE.md): extension design.

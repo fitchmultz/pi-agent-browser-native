@@ -46,7 +46,7 @@ export function agentBrowserResults(entries) {
 			row?.type !== "message" ||
 			message?.role !== "toolResult" ||
 			typeof message.toolName !== "string" ||
-			!["agent_browser", "agent_browser_code", "agent_browser_qa"].includes(message.toolName)
+			!["agent_browser", "agent_browser_qa"].includes(message.toolName)
 		) {
 			return [];
 		}

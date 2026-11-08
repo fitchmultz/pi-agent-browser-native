@@ -135,7 +135,6 @@ export interface BrowserRunStatePatch {
 }
 
 export type BrowserRunOptions = Readonly<{
-	modelVisible?: boolean;
 	operationCwd?: string;
 	initialDaemonObservation?: PreparationDaemonObservation | undefined;
 	ctx: BrowserRunContext;
@@ -312,7 +311,6 @@ export type FinalRecoveryState = Readonly<{
 }>;
 
 export type FinalResultInput = Readonly<{
-	modelVisible?: boolean | undefined;
 	aboutBlankSessionMismatch?: AboutBlankSessionMismatch | undefined;
 	artifactCleanup?: ArtifactCleanupGuidance | undefined;
 	categoryDetails: AgentBrowserResultCategoryDetails;

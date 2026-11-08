@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 
 const lib = "extensions/agent-browser/lib/";
 const toolSites = [
-	["registerCoreTools", "AGENT_BROWSER_CODE_PARAMS"],
 	["registerActionTool", "AGENT_BROWSER_ACTION_PARAMS"],
 	["registerQaTool", "AGENT_BROWSER_QA_PARAMS"],
 	["registerElectronTool", "AGENT_BROWSER_ELECTRON_PARAMS"],
@@ -147,9 +146,7 @@ function boundarySites(program) {
 	)[0];
 	const object = call?.arguments[1];
 	assert.ok(object?.type === "ObjectExpression");
-	return ["execute", "executeCode"].map((name) =>
-		callbackSite(object, name, `registerBrowserTools/${name}`),
-	);
+	return [callbackSite(object, "execute", "registerBrowserTools/execute")];
 }
 
 /** @param {Program} program */

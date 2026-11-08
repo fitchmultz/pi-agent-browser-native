@@ -33,7 +33,6 @@
 	},
 	"files": [
 		"dist/extensions/agent-browser/index.js",
-		"dist/extensions/agent-browser/script-worker.js",
 		"dist/packaged/lib/config-policy.js",
 		"dist/packaged/lib/browser-session-conversion.js",
 		"dist/packaged/lib/parsing.js",

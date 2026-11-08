@@ -16,7 +16,7 @@ import {
 } from "./helpers/agent-browser-harness.js";
 
 nodeTest(
-	"Lightpanda captures stay attached as text-rendered images without coordinate claims across direct, batch and code output",
+	"Lightpanda captures stay attached as text-rendered images without coordinate claims across direct and batch output",
 	async () => {
 		const dir = await mkdtemp(join(tmpdir(), "piab-text-image-"));
 		const path = join(dir, "image.png");
@@ -88,13 +88,6 @@ console.log(JSON.stringify({success:true,data}));`,
 							readString(readDefined(batch.content[0]).text),
 							/Lightpanda.*text-rendered/i,
 						);
-						const codeTool = h.getTool("agent_browser_code");
-						assert.ok(codeTool, "code tool must be registered");
-						const code = await executeRegisteredTool(codeTool, h.ctx, {
-							code: `const r = await browser({args:["screenshot",${JSON.stringify(path)}]}); emitImage(r.imageObservations[0]);`,
-						});
-						assert.equal(code.isError, false, getMessageText(code.content));
-						checkImage(code);
 						for (const engine of ["chrome", "absent"]) {
 							// Engine variants share the browser and screenshot path; capture before changing its environment.
 							await withPatchedEnv(

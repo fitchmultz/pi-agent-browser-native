@@ -261,10 +261,6 @@ nodeTest("publish contract derives required packed files from package.json", asy
 		true,
 	);
 	assert.equal(
-		publishContract.requiredPackedFiles.includes("dist/extensions/agent-browser/script-worker.js"),
-		true,
-	);
-	assert.equal(
 		publishContract.requiredPackedFiles.includes("dist/packaged/lib/config-policy.js"),
 		true,
 	);

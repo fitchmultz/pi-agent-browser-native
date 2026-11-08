@@ -79,10 +79,10 @@ export function buildFinalAgentBrowserToolResult(
 		buildAgentBrowserResultDetails(options, nextActions, lifecycle, browserWindow),
 		options.exactSensitiveValues,
 	);
-	const rendered =
-		options.modelVisible === false
-			? { content: [] }
-			: buildFinalResultContent(options, details, nextActions, { lifecycle, browserWindow });
+	const rendered = buildFinalResultContent(options, details, nextActions, {
+		lifecycle,
+		browserWindow,
+	});
 	const result = {
 		content: rendered.content,
 		details:

@@ -4,7 +4,6 @@ import {
 	extractRefSnapshotFromData,
 	type SessionRefSnapshot,
 } from "../../../session-page-state.js";
-import { redactSensitiveValue } from "../../../runtime-redaction.js";
 import type { CompatibilityWorkaround } from "../../../runtime-contracts.js";
 import { collectScrollPositionSnapshot } from "../interaction-diagnostics.js";
 import { buildSessionDetailFields, runSessionCommandData } from "../session-state.js";
@@ -43,7 +42,6 @@ interface SnapshotReadOptions {
 }
 
 interface SnapshotFilterOptions extends SnapshotReadOptions {
-	readonly modelVisible?: boolean | undefined;
 	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly commandTokens: readonly string[];
 	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
@@ -182,21 +180,15 @@ function snapshotPrefix(
 }
 
 async function presentSnapshotFilter(
-	options: Pick<
-		SnapshotFilterOptions,
-		"modelVisible" | "persistentArtifactStore" | "artifactManifest"
-	>,
+	options: Pick<SnapshotFilterOptions, "persistentArtifactStore" | "artifactManifest">,
 	evidence: SnapshotFilterEvidence,
 	prefix: string,
 ): Promise<ToolPresentation> {
-	const presentation: ToolPresentation =
-		options.modelVisible === false
-			? { content: [], data: redactSensitiveValue(evidence.filtered.data), summary: "Snapshot" }
-			: await buildSnapshotPresentation(
-					evidence.filtered.data,
-					options.persistentArtifactStore,
-					options.artifactManifest,
-				);
+	const presentation: ToolPresentation = await buildSnapshotPresentation(
+		evidence.filtered.data,
+		options.persistentArtifactStore,
+		options.artifactManifest,
+	);
 	const first = presentation.content.at(0);
 	const content = [...presentation.content];
 	if (first?.type === "text") {

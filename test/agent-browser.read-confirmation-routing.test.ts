@@ -836,12 +836,12 @@ nodeTest(
 	},
 );
 
-for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
+for (const mode of ["direct", "batch"] as const) {
 	for (const failedClose of [false, true]) {
 		nodeTest(
 			`confirmed close retires attachment on live and replay paths (${mode}, failed=${failedClose})`,
 			{ concurrency: false },
-			async (t) => {
+			async () => {
 				const expectedAttachment = failedClose ? true : undefined;
 				await withConfirmations(async ({ root, state, harness }) => {
 					const prefix = ["--session", SHARED_SESSION];
@@ -863,35 +863,22 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 							}),
 						);
 					}
-					const decision = mode.endsWith("batch")
-						? { args: ["batch", "--bail"], stdin: JSON.stringify([["confirm", "dom-id"]]) }
-						: { args: ["confirm", "dom-id"] };
-					const code = mode.startsWith("code");
-					const codeTool = harness.getTool("agent_browser_code");
-					assert.ok(codeTool);
-					const result = await executeRegisteredTool(
-						code ? codeTool : harness.tool,
-						harness.ctx,
-						code
-							? {
-									session: SHARED_SESSION,
-									code: `emit((await browser(${JSON.stringify(decision)})).success);`,
-								}
-							: { ...decision, args: [...prefix, ...decision.args] },
-					);
-					assert.equal(result.isError, code ? false : failedClose, getMessageText(result.content));
-					if (code) {
-						await t.test("code emits the native close outcome", () => {
-							assert.equal(result.details?.data, !failedClose);
-						});
-					}
+					const decision =
+						mode === "batch"
+							? { args: ["batch", "--bail"], stdin: JSON.stringify([["confirm", "dom-id"]]) }
+							: { args: ["confirm", "dom-id"] };
+					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+						...decision,
+						args: [...prefix, ...decision.args],
+					});
+					assert.equal(result.isError, failedClose, getMessageText(result.content));
 					const page = SessionPageState.fromBranch(
 						convertBrowserEntries(harness.ctx.sessionManager.getBranch()),
 					).get(SHARED_SESSION);
 					assert.equal(
 						page.tabTargetUnknown,
 						undefined,
-						"a completed close must retire the code intent's unknown target",
+						"a completed close must retire the unknown target",
 					);
 					assert.equal(page.pinningReason, failedClose ? "restore" : undefined);
 					assert.equal(page.tabTarget?.url, failedClose ? "https://current.test/" : undefined);
@@ -918,7 +905,7 @@ for (const mode of ["direct", "batch", "code", "code-batch"] as const) {
 					assert.equal(
 						restored.details?.attachedBrowserSession,
 						expectedAttachment,
-						"confirmed-close retirement must survive compact direct/code/batch replay; failed close must retain attachment",
+						"confirmed-close retirement must survive compact direct/batch replay; failed close must retain attachment",
 					);
 				});
 			},

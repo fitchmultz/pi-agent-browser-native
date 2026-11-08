@@ -23,7 +23,7 @@ type ParseNativeOutputInput = Readonly<Pick<NativeOutputPhase, "artifactManifest
 	readonly input: Readonly<
 		Pick<
 			ProcessBrowserOutputInput,
-			"artifactRunStartedAtMs" | "ctx" | "cwd" | "modelVisible" | "processResult" | "signal"
+			"artifactRunStartedAtMs" | "ctx" | "cwd" | "processResult" | "signal"
 		>
 	> & {
 		readonly prepared: Readonly<
@@ -84,7 +84,6 @@ export async function parseNativeOutput(
 	};
 	observeNativeWebMcp(parsed.envelope?.data);
 	const recordingStopRecovery = await recoverRecordingStop({
-		modelVisible: draft.input.modelVisible,
 		artifactManifest: draft.artifactManifest,
 		artifactRunStartedAtMs: draft.input.artifactRunStartedAtMs,
 		commandTokens: draft.input.prepared.commandTokens,

@@ -11,7 +11,6 @@ import type {
 } from "../../results/evidence-contracts.js";
 
 export interface RecordingRecoveryOptions {
-	readonly modelVisible?: boolean | undefined;
 	readonly artifactManifest?: SessionArtifactManifest | undefined;
 	readonly artifactRunStartedAtMs: number;
 	readonly commandTokens: readonly string[];
