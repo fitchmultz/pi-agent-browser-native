@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.9.17 - 2026-11-06
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Merge pull request #380 from fitchmultz/refresh-agent-browser-0412 ([dbd4c2d](https://github.com/fitchmultz/pi-agent-browser-native/commit/dbd4c2d84e54b04869faf181f24f3e11d60c4813))
+
+### What's Changed
+
+- Refresh agent-browser 0.41.2 baseline (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/380
+- Adopt strict Oxlint and Oxfmt v5.2 (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/379
+- Defer advanced browser tools to native tool_search and shrink prompt guidance (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/382
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.16...v0.9.17
+
 ## 0.9.16 - 2026-11-03
 
 <!-- npm-release:unreleased:start -->
