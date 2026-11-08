@@ -98,7 +98,7 @@ export function createAgentBrowserWebSearchParamsSchema(): TSchema {
 			searchType: Type.Optional(
 				StringEnum(EXA_SEARCH_TYPES, {
 					description:
-						"Exa mode; omitted uses webSearch.defaultSearchType, then auto. instant (~250ms) is only for trivial lookups; fast (~450ms) favors latency; auto (~1s) is balanced. Pass searchType: deep-lite (~4s) for research before implementation unless config already defaults it; do not assume auto is deep enough. deep (4–15s) handles hard multi-source research; deep-reasoning (12–40s) is only for the hardest work. Brave ignores this field.",
+						"Exa mode; Brave ignores it. Omitted uses webSearch.defaultSearchType, then auto (~1s). instant (~250ms) and fast (~450ms) favor latency. Pass searchType: deep-lite (~4s) for research before implementation; deep (4–15s) for hard multi-source research; deep-reasoning (12–40s) only for the hardest work.",
 				}),
 			),
 			...createExaFilterProperties(),

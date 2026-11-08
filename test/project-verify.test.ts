@@ -34,7 +34,6 @@ const DEFAULT_STEPS = [
 	"--noEmit -p tsconfig.declarations.json",
 	`${TSX_CLI} --test test/**/!(*.serial).test.ts`,
 	`${TSX_CLI} --test --test-concurrency=1 test/**/*.serial.test.ts`,
-	"./scripts/check-playbook-drift.ts --check",
 	"./scripts/check-command-reference-baseline.mjs --check",
 	"./scripts/verify-command-reference.mjs",
 ];
@@ -147,7 +146,6 @@ nodeTest(
 			"--noEmit",
 			"--noEmit -p tsconfig.declarations.json",
 			"--test --test-concurrency=1 test/code-quality*.test.ts test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts test/agent-browser.windows-argv.test.ts",
-			"./scripts/check-playbook-drift.ts --check",
 			"./scripts/check-command-reference-baseline.mjs --check",
 		]);
 
@@ -192,15 +190,11 @@ nodeTest(
 	},
 );
 
-nodeTest(
-	"verify facade docs mode checks both generated playbook and command-reference blocks",
-	() => {
-		assert.deepEqual(labels(docsSteps({ mode: "check", target: "all" })), [
-			"./scripts/check-playbook-drift.ts --check",
-			"./scripts/check-command-reference-baseline.mjs --check",
-		]);
-	},
-);
+nodeTest("verify facade docs mode checks generated command-reference blocks", () => {
+	assert.deepEqual(labels(docsSteps({ mode: "check", target: "all" })), [
+		"./scripts/check-command-reference-baseline.mjs --check",
+	]);
+});
 
 nodeTest("verify facade rejects unsupported options before running a partial gate", () => {
 	assert.throws(

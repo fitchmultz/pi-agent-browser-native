@@ -15,11 +15,11 @@ Requires Pi 1.5.0 or newer; official and fork hosts are qualified independently.
 
 Provide a local, repo-readable command reference for the native `agent_browser` tool.
 
-This project intentionally blocks normal `agent-browser` bash usage in most agent sessions, so the agent still needs an accessible local equivalent of the upstream command surface. This document is the durable reference the agent can read inside the repository without calling the binary directly.
+The native `agent_browser` tool passes the upstream command surface through, so the agent needs an accessible local equivalent of that surface. This document is the durable reference the agent can read inside the repository without calling the binary directly.
 
 After updating `pi-agent-browser-native`, fully quit and restart Pi before using the updated tools. `/reload` can retain previously loaded compiled JavaScript even after `dist/` is rebuilt, so it is not a reliable way to pick up package updates.
 
-Tool declarations use the native `browser` namespace and output schemas. Native `structuredContent` carries the same bounded redacted observation as direct/code output; loader inventory and optional search retain their existing data shapes. It does not expose internal replay details or turn image paths/handles into native `image()` input. The five advanced direct tools default inactive; enable them through `agent_browser_tools` unless already selected by the host. See [canonical observations](TOOL_CONTRACT.md#canonical-observation).
+Tool declarations use the native `browser` namespace and output schemas. Native `structuredContent` carries the same bounded redacted observation as direct/code output; optional search retains its existing data shape. It does not expose internal replay details or turn image paths/handles into native `image()` input. The five specialized tools are deferred: load them with native `tool_search` or call them from codemode unless the host already selected them. See [canonical observations](TOOL_CONTRACT.md#canonical-observation).
 
 SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host-execution-hook) to save host state before ordinary or code-inner browser dispatch. This is a factory option, not a tool argument; normal installations do not need it.
 
@@ -266,15 +266,13 @@ Handled failures remain in visible `failures` and `codeRun` counts. A completed 
 
 ### Advanced tools
 
-Call `agent_browser_tools {}` for inventory, then enable required capabilities:
+The five specialized tools register deferred. Load one for the next model call with Pi's native `tool_search` (active through `--tools`, `defaultTools` `+tool_search`, or `setActiveTools`):
 
 ```json
-{ "enable": ["action", "qa", "electron", "source", "network"] }
+{ "query": "agent_browser_qa" }
 ```
 
-On hosts supporting instruction groups, first enable `browser` with `discover_tools` to receive full browser and advanced guidance and reveal selected declarations. The extension registers its own group through `pi:instruction-groups`; this step changes neither callable permissions nor advanced-tool selection. Official Pi receives the same full guidance eagerly without this discovery step. The separate advanced loader below retains its activation semantics.
-
-Activation is additive and uses native Pi selected-tool history. Omit CLI `--tools` for normal lazy activation, or include desired advanced tools in that explicit selection; excluded tools remain unavailable. The tools take flat input:
+Codemode scripts call deferred tools directly (`await tools.agent_browser_qa({ ... })`) without loading them. Loading is additive and uses native Pi selected-tool history. An explicit CLI `--tools` allowlist must include every deferred tool it wants available. The tools take flat input:
 
 | Tool                           | Example                                                                                                 |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------- |
@@ -796,16 +794,12 @@ A canceled cold-session reopen returns an aborted result with its exact session 
 
 An incomparable saved process-start format does not prove a daemon restarted. When its PID and socket still match, the wrapper invalidates old refs and requires a fresh snapshot without reopening the live page or discarding unsaved input. Restored daemon provenance still requires a positive identity match. A restore-disabled session, such as a fresh profile/state launch, can therefore refuse reuse after an update when its saved identity is incomparable; it requires owner-side close and a fresh launch rather than inferring ownership from PID/socket alone.
 
-<!-- agent-browser-playbook:start inspection -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
-
 Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
 
 - { "args": ["--help"] }
 - { "args": ["--version"] }
 
 These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, auto-connect, or provider-backed launches.
-<!-- agent-browser-playbook:end inspection -->
 
 ### Page state, finding, mouse, settings, network, and storage
 
@@ -1196,17 +1190,12 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 - If launch-scoped flags like `--engine`, `--profile`, `--args`, `--user-agent`, `--executable-path`, `--ca-cert`, `--no-ca-cert`, `--webgpu`, `--no-webmcp`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would replace or be ignored by an already-active managed session, retry with `sessionMode: "fresh"`. When the call explicitly names the current managed session, the structured recovery payload removes that `--session` so the fresh rotation can succeed.
 - If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 
-<!-- agent-browser-playbook:start wrapper-tab-recovery -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
-
 - After open/goto/navigate calls with --profile, --restore, --session-name, or --state, agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch or reconnect.
 - After confirmed shutdown of an automatically restored managed session, the wrapper retains its complete recorded URL, including the fragment, until the first current-page operation (including get url and reload). Non-page calls such as tab list may start a daemon without fulfilling that reopen; explicit URL reads leave the managed browser and pending reopen untouched. The wrapper uses native open once, verifies the observed tab, and discards old refs/frame scope; it does not restore unsaved forms, JavaScript memory, or history. Explicit navigation, caller-owned/attached sessions, and restore-disabled sessions are not auto-reopened.
 - For a still-live browser after tab drift or resume, the wrapper verifies/selects the intended tab before ref/semantic helpers and page commands; failed selection stops the call without navigating. Local commands, read <url>, URL a11y/vitals, diff url, window new, and explicit tab/navigation/connection/state recovery do not require the prior tab. Batch checks follow effective rows past non-page prefixes and stop at explicit context changes, preserving caller argv/stdin and continue-on-error behavior. Same-tab reselection is avoided because it clears refs. Use exact batch --bail for fail-fast, not --bail=<value>. Routine same-session calls skip tab-list preflights.
 - For sessions with observed tab-drift risk, after a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes. Routine same-session commands skip focus correction; observed pages without a native targetId use tab list to establish their identity.
 - If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.
 - If upstream reports tab_gone, the pinned bound tab is gone; use details.nextActions (tab list / tab new) instead of assuming another tab is yours.
-
-<!-- agent-browser-playbook:end wrapper-tab-recovery -->
 
 - Wrapper-spawned commands clamp `AGENT_BROWSER_DEFAULT_TIMEOUT` to the upstream documented 25-second default and use a 35-second child-process watchdog (`PI_AGENT_BROWSER_PROCESS_TIMEOUT_MS` overrides the default 35s budget; top-level `timeoutMs` overrides it per browser CLI call). Explicit `wait <ms>`, `wait --timeout <ms>`, and WebMCP `invoke` / `result --timeout <ms>` calls can exceed that default; when top-level `timeoutMs` is omitted, the wrapper derives a subprocess watchdog from the requested command duration plus a small grace window. Batch budgeting and timeout recovery read the same effective source as upstream: raw command strings when present, otherwise stdin rows. Dialog commands are additionally bounded to 5 seconds (`PI_AGENT_BROWSER_DIALOG_PROCESS_TIMEOUT_MS`), and click/tap/find refs or tokens plus `eval --stdin` snippets that look like alert/confirm/prompt/dialog triggers are bounded to 8 seconds (`PI_AGENT_BROWSER_DIALOG_TRIGGER_PROCESS_TIMEOUT_MS`). A `session info` timeout returns only an exact-session `retry-session-info` status action, without page probes, liveness claims, or changes to existing page/ref state. When a browser-operation watchdog fires, `details.timeoutPartialProgress` may include a planned step list with `status: "unknown"` (including `generatedFrom` labels for generated QA rows). Current URLs and existing files do not establish which steps ran, failed, or remained pending. Multi-step timeouts offer `inspect-current-page-after-timeout` when the target is already verified, rather than guessing a retry position. A single read-only or idempotent step may offer a `retry-timeout-step` candidate with a one-row native batch (`args: ["batch"]` plus `stdin`); inspect the current state before retrying because its outcome is still unknown. If the target is unknown, standalone snapshots are removed and visible failure text plus `details.nextActions` show `verify-page-target-after-timeout`, including its session-scoped `batch --bail` args and short stdin for fail-fast `get url` then `snapshot -i`; dialog status/accept/dismiss actions remain allowed for blocking-dialog recovery. It also includes current page URL from best-effort session `get url`, followed by `get title` only after a URL is recovered (or a planned URL inferred from the step list when the session cannot answer), and declared artifact paths such as `screenshot`, `pdf`, `download`, or `wait --download` outputs with existence/state checks. Independent artifact retry windows overlap (up to three checks per path, 25 ms apart), preserve plan order, and settle before page inspection; files finishing after their own window may remain missing. The same evidence is appended under `Timeout partial progress` in visible text with URL/path redaction.
 - Oversized snapshots and oversized generic outputs may be compacted in tool content, with the full redacted output written to a spill file path shown directly in the tool result. Recent artifact metadata is bounded by `PI_AGENT_BROWSER_SESSION_ARTIFACT_MANIFEST_MAX_ENTRIES` (default 100); persisted spill files have a separate `PI_AGENT_BROWSER_SESSION_ARTIFACT_MAX_BYTES` budget (default 32 MiB; `0` disables automatic eviction).

@@ -25,7 +25,7 @@ It is **not** an upstream `agent-browser` reference and it does **not** replace 
 
 ## Mental model
 
-Enable the tools with `agent_browser_tools { "enable": ["electron", "qa"] }`. Below, `electron.launch` and similar labels mean `agent_browser_electron { "action": "launch", ... }`; `qa.attached` means `agent_browser_qa { "attached": true, ... }`. These are separate tools, not nested inputs on `agent_browser`.
+Load the tools with native `tool_search` (`{ "query": "agent_browser_electron" }`, then `agent_browser_qa`) or call them from codemode. Below, `electron.launch` and similar labels mean `agent_browser_electron { "action": "launch", ... }`; `qa.attached` means `agent_browser_qa { "attached": true, ... }`. These are separate tools, not nested inputs on `agent_browser`.
 
 ```
 electron.list       → discover Electron apps (host-only; no upstream spawn)

@@ -36,6 +36,7 @@ import {
 } from "@earendil-works/pi-ai/compat";
 import {
 	createAgentSession,
+	createToolSearchExtension,
 	DefaultResourceLoader,
 	ModelRuntime,
 	SessionManager,
@@ -43,16 +44,10 @@ import {
 	type AgentSession,
 	type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
-import * as Pi from "@earendil-works/pi-coding-agent";
 
 import agentBrowserExtension from "../extensions/agent-browser/index.js";
 import { finalizeAgentBrowserFailure } from "../extensions/agent-browser/lib/pi-tool-rendering.js";
-import {
-	PROJECT_RULE_PROMPT,
-	QUICK_START_GUIDELINES,
-	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-	ADVANCED_TOOL_PROMPT_GUIDELINES,
-} from "../extensions/agent-browser/lib/playbook.js";
+import { BROWSER_GUIDANCE } from "../extensions/agent-browser/lib/playbook.js";
 import {
 	readInvocationLog,
 	withPatchedEnv,
@@ -86,10 +81,6 @@ nodeTest("failure finalization adds the Pi failure notice to prose despite --jso
 
 const PIPELINE_PROVIDER = "piab-pipeline";
 const PIPELINE_MODEL_ID = "tool-pipeline";
-const nativeInstructionGroups: unknown = readRecord(Pi).instructionGroupsExtension;
-const NATIVE_DISCOVERY_ENABLED =
-	process.env.PI_AGENT_BROWSER_NATIVE_DISCOVERY === "1" ||
-	("instructionGroupsExtension" in Pi && typeof nativeInstructionGroups === "function");
 
 type PipelineToolResult = {
 	readonly content: readonly { readonly type: string; readonly text: string | undefined }[];
@@ -313,8 +304,10 @@ async function runPipelinePrompt(options: {
 	readonly toolArguments: Readonly<ToolCall["arguments"]>;
 	readonly toolName?: string;
 	readonly extensionFactory?: ExtensionFactory;
+	readonly extensionFactories?: readonly ExtensionFactory[];
 	readonly priorCalls?: readonly ToolCall[];
 	readonly runPrompt?: (session: AgentSession) => Promise<void>;
+	readonly defaultTools?: readonly string[];
 }): Promise<PipelinePromptResult> {
 	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-pipeline-"));
 	// Keep real Pi transcripts outside the disposable executable/workspace fixture.
@@ -345,21 +338,12 @@ async function runPipelinePrompt(options: {
 					options.toolName,
 					options.discoveryStream,
 				);
-				const instructionGroups: ExtensionFactory[] = [];
-				if (
-					options.discoveryStream &&
-					"instructionGroupsExtension" in Pi &&
-					typeof nativeInstructionGroups === "function"
-				) {
-					instructionGroups.push(async (api) => {
-						await Reflect.apply(nativeInstructionGroups, undefined, [api]);
-					});
-				}
+				const extensionFactories = options.extensionFactories ?? [];
 				const resourceLoader = new DefaultResourceLoader({
 					agentDir: tempDir,
 					cwd: tempDir,
 					extensionFactories: options.extensionFactory
-						? [...instructionGroups, options.extensionFactory]
+						? [...extensionFactories, options.extensionFactory]
 						: [],
 					additionalExtensionPaths: options.extensionFactory ? [] : [resolve(".")],
 					noContextFiles: true,
@@ -372,7 +356,7 @@ async function runPipelinePrompt(options: {
 				assert.deepEqual(resourceLoader.getExtensions().errors, []);
 				assert.equal(
 					resourceLoader.getExtensions().extensions.length,
-					1 + instructionGroups.length,
+					1 + extensionFactories.length,
 				);
 				if (!options.extensionFactory) {
 					assert.equal(
@@ -384,8 +368,10 @@ async function runPipelinePrompt(options: {
 					cwd: tempDir,
 					model,
 					modelRuntime,
-					noTools: "builtin",
-					settingsManager: SettingsManager.inMemory(),
+					...(options.defaultTools === undefined ? { noTools: "builtin" } : {}),
+					settingsManager: SettingsManager.inMemory(
+						options.defaultTools ? { defaultTools: [...options.defaultTools] } : {},
+					),
 					resourceLoader,
 					sessionManager: SessionManager.create(tempDir, sessionDir, {
 						id: randomUUID(),
@@ -442,15 +428,10 @@ async function runPipelinePrompt(options: {
 	}
 }
 
-for (const webSearch of ["absent", "startup", "late"] as const) {
+for (const webSearch of ["absent", "env", "config"] as const) {
 	nodeTest(
-		`Pi pipeline reveals complete browser instructions after discovery on a generic prompt before execution (web search: ${webSearch})`,
-		{ skip: !NATIVE_DISCOVERY_ENABLED },
+		`Pi pipeline declares the browser guidance up front and loads deferred tools through native tool_search (web search: ${webSearch})`,
 		async () => {
-			assert.ok(
-				"instructionGroupsExtension" in Pi && typeof nativeInstructionGroups === "function",
-				"candidate must export its public instruction groups factory",
-			);
 			let hookCalls = 0;
 			let executionCalls = 0;
 			let requests = 0;
@@ -458,14 +439,16 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 			const pipeline = await withPatchedEnv(
 				{
 					EXA_API_KEY: undefined,
-					BRAVE_API_KEY: webSearch === "startup" ? "test-only-key" : undefined,
+					BRAVE_API_KEY: webSearch === "env" ? "test-only-key" : undefined,
 					PI_AGENT_BROWSER_CONFIG: undefined,
 				},
 				() =>
 					runPipelinePrompt({
 						toolArguments: { args: ["--help"] },
+						defaultTools: ["agent_browser"],
+						extensionFactories: [createToolSearchExtension()],
 						extensionFactory(pi) {
-							if (webSearch === "late") {
+							if (webSearch === "config") {
 								pi.on("session_start", async (_event, ctx) => {
 									const directory = join(ctx.cwd, ".pi/config/pi-agent-browser-native");
 									await mkdir(directory, { recursive: true });
@@ -491,48 +474,12 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 							requestObservations.push({ names, prompt, executionCalls });
 							if (requests === 1) {
 								return createToolCallingStream(
-									{ enable: ["browser"] },
+									{ query: "agent_browser_qa", limit: 1 },
 									[],
-									"discover_tools",
-									"call_discovery_pipeline",
+									"tool_search",
+									"call_tool_search_pipeline",
 								)(model, context, options);
 							}
-							const instructions = context.messages
-								.filter(
-									(message) =>
-										message.role === "toolResult" && message.toolName === "discover_tools",
-								)
-								.flatMap((message) =>
-									message.role === "toolResult"
-										? message.content
-												.filter((part) => part.type === "text")
-												.map((part) => part.text)
-										: [],
-								)
-								.join("\n");
-							assert.ok(
-								instructions.includes(PROJECT_RULE_PROMPT),
-								"complete instructions must reach the model before execution",
-							);
-							const guidelines = [
-								...QUICK_START_GUIDELINES,
-								...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-								...Object.values(ADVANCED_TOOL_PROMPT_GUIDELINES).flat(),
-							];
-							assert.deepEqual(
-								guidelines.filter((guideline) => !instructions.includes(guideline)),
-								[],
-							);
-							assert.ok(names.includes("agent_browser"));
-							assert.ok(names.includes("agent_browser_code"));
-							assert.ok(names.includes("agent_browser_tools"));
-							assert.equal(names.includes("agent_browser_web_search"), webSearch !== "absent");
-							assert.ok(
-								!names.includes("agent_browser_qa"),
-								"discovery must not enable advanced tools",
-							);
-							assert.equal(hookCalls, 1, "activation must not rerun before_agent_start");
-
 							return createToolCallingStream({ args: ["--help"] })(model, context, options);
 						},
 						async runPrompt(session) {
@@ -543,13 +490,36 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 			);
 			assert.equal(requests, 3);
 			const firstRequest = readDefined(requestObservations[0]);
-			assert.deepEqual(firstRequest.names, ["discover_tools"]);
-			assert.equal(firstRequest.prompt.includes(PROJECT_RULE_PROMPT), false);
-			assert.equal(
-				readDefined(requestObservations[1]).executionCalls,
-				0,
-				"instructions precede first execution",
+			assert.deepEqual(
+				BROWSER_GUIDANCE.filter((line) => !firstRequest.prompt.includes(line)),
+				[],
+				"guidance reaches the model on the first request without discovery",
 			);
+			assert.ok(firstRequest.names.includes("agent_browser"));
+			assert.ok(
+				firstRequest.names.includes("tool_search"),
+				"the browser extension activates tool_search for its deferred tools",
+			);
+			assert.ok(
+				!firstRequest.names.includes("agent_browser_qa"),
+				"deferred tools are not declared until loaded",
+			);
+			assert.equal(
+				firstRequest.names.includes("agent_browser_web_search"),
+				webSearch !== "absent",
+				"env and config credentials both declare web search before the first request",
+			);
+			const secondRequest = readDefined(requestObservations[1]);
+			assert.ok(
+				secondRequest.names.includes("agent_browser_qa"),
+				"tool_search loads the deferred tool",
+			);
+			assert.equal(
+				secondRequest.names.includes("agent_browser_web_search"),
+				webSearch !== "absent",
+			);
+			assert.equal(secondRequest.executionCalls, 0, "loading precedes browser execution");
+			assert.equal(hookCalls, 1, "loading must not rerun before_agent_start");
 			assert.equal(executionCalls, 1);
 			assert.equal(pipeline.persistedResult.isError, false);
 			assert.deepEqual(
@@ -559,68 +529,6 @@ for (const webSearch of ["absent", "startup", "late"] as const) {
 		},
 	);
 }
-
-nodeTest(
-	"Pi pipeline refuses same-batch browser execution before discovery instructions are read",
-	{ skip: !NATIVE_DISCOVERY_ENABLED },
-	async () => {
-		assert.ok(
-			"instructionGroupsExtension" in Pi && typeof nativeInstructionGroups === "function",
-			"candidate must export its public instruction groups factory",
-		);
-		let requests = 0;
-		let executionCalls = 0;
-		const pipeline = await runPipelinePrompt({
-			toolArguments: { args: ["--help"] },
-			extensionFactory(pi) {
-				agentBrowserExtension(pi, {
-					async beforeExecute() {
-						executionCalls++;
-					},
-				});
-				// Make the premature call callable after suppression so it reaches the read gate,
-				// rather than Pi's independent unknown-tool preflight.
-				pi.on("before_agent_start", (event) => {
-					pi.setActiveTools([...pi.getActiveTools(), "agent_browser"]);
-					Object.assign(event.systemPromptOptions, { selectedTools: pi.getActiveTools() });
-				});
-			},
-			discoveryStream(model, context, options) {
-				requests++;
-				if (requests === 1) {
-					return createToolCallingStream({ args: ["--help"] }, [
-						{
-							type: "toolCall",
-							id: "samebatch-discover",
-							name: "discover_tools",
-							arguments: { enable: ["browser"] },
-						},
-					])(model, context, options);
-				}
-				return streamTextResponse(model, "Stopped after guarded refusal.");
-			},
-			async runPrompt(session) {
-				const before = session.getActiveToolNames().sort();
-				await session.prompt("Discover and try a premature browser call.");
-				const terminal = session.messages.at(-1);
-				if (terminal?.role !== "assistant") {
-					throw new Error("Expected a terminal assistant response");
-				}
-				assert.equal(terminal.stopReason, "stop", terminal.errorMessage);
-				assert.equal(terminal.errorMessage, undefined);
-				assert.deepEqual(session.getActiveToolNames().sort(), before);
-				assert.ok(!before.includes("agent_browser_qa"));
-			},
-			fakeScript: `throw Error("browser must not dispatch before discovery");`,
-		});
-		assert.equal(requests, 2);
-		assert.equal(pipeline.inMemoryResult.isError, true);
-		assert.match(JSON.stringify(pipeline.inMemoryResult), /prior turn/);
-		assert.equal(executionCalls, 0);
-		assert.equal(pipeline.persistedResult.isError, true);
-		assert.deepEqual(pipeline.invocations, []);
-	},
-);
 
 nodeTest(
 	"Pi pipeline captures the owner cwd before an awaited browser policy without moving native ctx",

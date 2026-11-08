@@ -48,7 +48,7 @@ The agent gets a native tool, not a bash workaround:
 { "args": ["find", "text", "Learn React", "click"] }
 ```
 
-Use native commands for individual actions, `batch --bail` for fixed sequences, and `agent_browser_code` for loops or branches. Specialized tools are available through `agent_browser_tools`; see [common calls](#common-agent-calls). On hosts supporting instruction groups, enable `browser` through `discover_tools` first to receive the complete browser guidance and reveal selected declarations. This does not grant callable permissions or activate advanced tools. The extension owns group membership and one full instruction source; official Pi receives that same guidance eagerly and keeps the ordinary direct/code/loader surface.
+Use native commands for individual actions, `batch --bail` for fixed sequences, and `agent_browser_code` for loops or branches. Specialized tools are deferred; load them with native `tool_search` or call them from codemode, see [advanced browser tools](#advanced-browser-tools). A short always-on prompt section carries the orientation; these docs hold the details for targeted reads.
 
 The result is optimized for agent work:
 
@@ -190,10 +190,10 @@ Use the agent_browser tool to open https://example.com and then take an interact
 For a one-off trial without adding the package to your Pi settings:
 
 ```bash
-pi --no-extensions -e npm:pi-agent-browser-native
+pi --no-extensions -e builtin:tool-search -e npm:pi-agent-browser-native
 ```
 
-`--no-extensions` disables automatic extension loading, not Pi settings, configured package resolution, skills, prompts, themes, or context files.
+`--no-extensions` disables automatic extension loading, not Pi settings, configured package resolution, skills, prompts, themes, or context files. It also disables Pi's built-in `tool_search` and `codemode`, which reach the five deferred browser tools; `-e builtin:tool-search` loads `tool_search` again.
 
 Pi may ask whether to trust projects with trust-gated settings or resources. This extension follows Pi's trust decision when loading its project-local config. `--no-approve` skips that config and Pi's trust-gated project resources; context files such as `AGENTS.md` still load unless context loading is separately disabled.
 
@@ -206,7 +206,7 @@ pi install https://github.com/fitchmultz/pi-agent-browser-native
 For a source trial without adding the package to your Pi settings:
 
 ```bash
-pi --no-extensions -e https://github.com/fitchmultz/pi-agent-browser-native
+pi --no-extensions -e builtin:tool-search -e https://github.com/fitchmultz/pi-agent-browser-native
 ```
 
 ## First-run health check
@@ -516,13 +516,13 @@ A handled browser failure remains visible in `failures` and `codeRun.failedCallC
 
 ### Advanced browser tools
 
-List specialized capabilities with `agent_browser_tools {}`. Enable only what the task needs:
+The specialized tools register deferred, so Pi declares one only after it is loaded. Load what the task needs with native `tool_search`:
 
 ```json
-{ "enable": ["action", "qa", "electron", "source", "network"] }
+{ "query": "agent_browser_qa" }
 ```
 
-Activation adds tools without removing other active tools; Pi owns the selected-tool history. Omit CLI `--tools` for normal lazy activation, or include each desired advanced tool in that explicit selection. The loader cannot enable tools excluded by the host. Each specialized tool takes **flat fields**, not a nested object on `agent_browser`:
+Codemode scripts call deferred tools directly without loading them. Loading adds tools without removing other active tools; Pi owns the selected-tool history. An explicit CLI `--tools` allowlist must include each deferred tool it wants available. Each specialized tool takes **flat fields**, not a nested object on `agent_browser`:
 
 | Tool                           | Example input                                                                            | Preserved capability                                                                                         |
 | ------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -680,7 +680,7 @@ For setup that must happen before first navigation, open a blank fresh page, sta
 
 ## Proof and verification
 
-`npm run docs` checks that generated playbook fragments and command-reference baseline blocks match their canonical sources (`extensions/agent-browser/lib/playbook.ts` and `scripts/agent-browser-capability-baseline.mjs`) without invoking upstream `agent-browser`.
+`npm run docs` checks that the generated command-reference baseline blocks match their canonical source (`scripts/agent-browser-capability-baseline.mjs`) without invoking upstream `agent-browser`.
 
 The local verification gate is:
 
@@ -696,7 +696,6 @@ npm run typecheck
 
 The full `npm run verify` gate runs:
 
-- generated playbook/documentation drift checks
 - a clean build of generated `dist/` runtime files
 - `tsc --noEmit`
 - the test suite
@@ -757,11 +756,11 @@ npm run verify -- release
 `pi-agent-browser-native` is intentionally thin:
 
 1. Pi loads the compiled `dist/extensions/agent-browser/index.js` entrypoint from the package manifest; TypeScript under `extensions/` remains the source of truth and `npm run build` regenerates `dist/` before packing.
-2. The extension registers compact direct/code tools, an advanced-tool loader with five native default-inactive specialized tools (unless selected by the host), and the optional credential-backed `agent_browser_web_search` companion.
+2. The extension registers compact direct/code tools, five deferred specialized tools (loaded by native `tool_search`, codemode, or host selection), and the optional credential-backed `agent_browser_web_search` companion.
 3. Tool calls are translated into upstream `agent-browser` CLI invocations with controlled args, stdin, environment, timeout, and session planning.
 4. Upstream JSON/plain-text output is parsed into model-friendly content and structured details.
 5. Screenshots, downloads, recordings, traces, profiles, and spill files are normalized as Pi-visible artifacts where possible.
-6. Generated playbook text in docs and browser instructions stays aligned with `extensions/agent-browser/lib/playbook.ts`.
+6. Always-on browser guidance in `extensions/agent-browser/lib/playbook.ts` stays short and names every deferred tool (`test/agent-browser.tool-surface.test.ts`).
 
 The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/). This package does not bundle it. The recommended baseline is 0.41.2 and the stable runtime floor is 0.35.0; newer stable versions are accepted without version-specific compatibility shims.
 
@@ -797,7 +796,7 @@ Use the npm version declared in `package.json` `packageManager` when refreshing 
 Checkout-only extension smoke test:
 
 ```bash
-pi --approve --no-extensions -e .
+pi --approve --no-extensions -e builtin:tool-search -e .
 ```
 
 This selects the checkout extension and disables automatic extension loading; Pi settings and configured package resolution remain active. Use temporary `HOME` and `PI_CODING_AGENT_DIR` directories for isolated test settings, and `PI_OFFLINE=1` to disable automatic startup network/update operations. `--approve` trusts this checkout's project-local inputs; omit it when testing the Project Trust prompt. After editing extension code, restart Pi to test the new checkout.
@@ -818,15 +817,10 @@ Installed-package validation after publish:
 
 ```bash
 npm run verify -- package-pi
-pi --no-extensions -e npm:pi-agent-browser-native
+pi --no-extensions -e builtin:tool-search -e npm:pi-agent-browser-native
 ```
 
-## Generated native-tool playbook notes
-
-These sections are generated from `extensions/agent-browser/lib/playbook.ts`. Run `npm run docs -- playbook write` after changing the canonical playbook source.
-
-<!-- agent-browser-playbook:start inspection -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
+## Native-tool operating notes
 
 Native inspection calls use the `agent_browser` tool shape, not shell-like direct-binary commands:
 
@@ -834,10 +828,6 @@ Native inspection calls use the `agent_browser` tool shape, not shell-like direc
 - { "args": ["--version"] }
 
 These calls return plain text and stay stateless: the extension does not inject its implicit session and does not let inspection consume the managed-session slot needed for later profile, session, CDP, state, auto-connect, or provider-backed launches.
-<!-- agent-browser-playbook:end inspection -->
-
-<!-- agent-browser-playbook:start wrapper-tab-recovery -->
-<!-- Generated from extensions/agent-browser/lib/playbook.ts. Run `npm run docs -- playbook write` to update. -->
 
 - After open/goto/navigate calls with --profile, --restore, --session-name, or --state, agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch or reconnect.
 - After confirmed shutdown of an automatically restored managed session, the wrapper retains its complete recorded URL, including the fragment, until the first current-page operation (including get url and reload). Non-page calls such as tab list may start a daemon without fulfilling that reopen; explicit URL reads leave the managed browser and pending reopen untouched. The wrapper uses native open once, verifies the observed tab, and discards old refs/frame scope; it does not restore unsaved forms, JavaScript memory, or history. Explicit navigation, caller-owned/attached sessions, and restore-disabled sessions are not auto-reopened.
@@ -845,8 +835,6 @@ These calls return plain text and stay stateless: the extension does not inject 
 - For sessions with observed tab-drift risk, after a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes. Routine same-session commands skip focus correction; observed pages without a native targetId use tab list to establish their identity.
 - If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.
 - If upstream reports tab_gone, the pinned bound tab is gone; use details.nextActions (tab list / tab new) instead of assuming another tab is yours.
-
-<!-- agent-browser-playbook:end wrapper-tab-recovery -->
 
 ## Project map
 
@@ -856,7 +844,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `extensions/agent-browser/lib/runtime.ts`       | Stable public exports for pure planning, session identity/replay, timeout, and redaction helpers                                |
 | `extensions/agent-browser/lib/orchestration/`   | Direct/code admission, lifecycle, browser preparation/output, and Electron host ownership                                       |
 | `extensions/agent-browser/lib/results/`         | Model-facing result rendering and error guidance                                                                                |
-| `extensions/agent-browser/lib/playbook.ts`      | Canonical generated agent/browser guidance                                                                                      |
+| `extensions/agent-browser/lib/playbook.ts`      | Always-on agent/browser guidance and config guideline builders                                                                  |
 | `scripts/agent-browser-target.mjs`              | Canonical recommended target and minimum supported stable version shared by runtime and build-time checks                       |
 | `scripts/agent-browser-capability-baseline.mjs` | Help samples and doc/token inventory for drift checks; imports the canonical target version                                     |
 | `scripts/check-command-reference-baseline.mjs`  | Regenerates or verifies HTML-bounded baseline blocks in `docs/COMMAND_REFERENCE.md` (via `npm run docs -- command-reference …`) |

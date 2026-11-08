@@ -59,7 +59,6 @@ case "$mode" in
     ;;
   verify)
     status=0
-    npm run docs -- playbook check || status=1
     npm run verify -- command-reference || status=1
     # Only fresh downloaded binary resources: the test makes its own empty profiles.
     browsers=("$HOME"/.agent-browser/browsers/chrome-*)

@@ -202,7 +202,7 @@ export async function checkPiSources({ cwd, agentDir, settingsPaths, readText, p
 				...sources.map((source) => `- ${source.source} from ${source.location}`),
 				"Keep exactly one active source:",
 				"- for normal use: keep `pi install npm:pi-agent-browser-native` and remove/disable checkout paths from Pi settings",
-				"- for temporary package or checkout trials: use `pi --approve --no-extensions -e <source>` when you intentionally trust the current project, or omit `--approve` to let Pi prompt in interactive mode",
+				"- for temporary package or checkout trials: use `pi --approve --no-extensions -e builtin:tool-search -e <source>` when you intentionally trust the current project, or omit `--approve` to let Pi prompt in interactive mode",
 				"- for configured-source lifecycle validation: keep exactly one checkout or package source, then launch plain `pi`",
 			],
 			warnings,
@@ -221,7 +221,7 @@ export async function checkPiSources({ cwd, agentDir, settingsPaths, readText, p
 		status: "warn",
 		title: "No configured pi-agent-browser-native source was found in inspected Pi settings.",
 		lines: [
-			"This is OK for isolated runs such as `pi --no-extensions -e npm:pi-agent-browser-native`, but normal package use should install exactly one source with `pi install npm:pi-agent-browser-native`.",
+			"This is OK for isolated runs such as `pi --no-extensions -e builtin:tool-search -e npm:pi-agent-browser-native`, but normal package use should install exactly one source with `pi install npm:pi-agent-browser-native`.",
 		],
 		warnings,
 	};
