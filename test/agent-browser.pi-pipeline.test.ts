@@ -445,7 +445,7 @@ for (const webSearch of ["absent", "env", "config"] as const) {
 				() =>
 					runPipelinePrompt({
 						toolArguments: { args: ["--help"] },
-						defaultTools: ["tool_search", "agent_browser"],
+						defaultTools: ["agent_browser"],
 						extensionFactories: [createToolSearchExtension()],
 						extensionFactory(pi) {
 							if (webSearch === "config") {
@@ -496,7 +496,10 @@ for (const webSearch of ["absent", "env", "config"] as const) {
 				"guidance reaches the model on the first request without discovery",
 			);
 			assert.ok(firstRequest.names.includes("agent_browser"));
-			assert.ok(firstRequest.names.includes("tool_search"));
+			assert.ok(
+				firstRequest.names.includes("tool_search"),
+				"the browser extension activates tool_search for its deferred tools",
+			);
 			assert.ok(
 				!firstRequest.names.includes("agent_browser_qa"),
 				"deferred tools are not declared until loaded",

@@ -209,11 +209,26 @@ function registerSourceTools(
 	});
 }
 
+/**
+ * Pi's own MCP extension activates tool_search when it registers deferred tools, since only
+ * tool_search declares them. Only a registered tool_search that reaches other tools qualifies.
+ */
+function activateToolSearch(pi: ExtensionAPI): void {
+	const active = pi.getActiveTools();
+	if (
+		!active.includes("tool_search") &&
+		pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined)
+	) {
+		pi.setActiveTools([...active, "tool_search"]);
+	}
+}
+
 /** Register once; advanced tools are deferred, so tool_search and codemode scripts reach them natively. */
 export function registerAgentBrowserToolSurface(
 	pi: ExtensionAPI,
 	options: AgentBrowserToolSurfaceOptions,
 ): void {
+	pi.on("session_start", () => activateToolSearch(pi));
 	// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 	const execute: AgentBrowserExecutor = async (id, params, signal, onUpdate, ctx) =>
 		finalizeAgentBrowserNativeResult(

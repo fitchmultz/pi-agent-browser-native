@@ -33,8 +33,11 @@ const BARE_ENV = {
 
 nodeTest(
 	"browser guidance is one bounded native prompt section that activates nothing",
-	async () => {
-		await withPatchedEnv(BARE_ENV, async () => {
+	async (t) => {
+		// A private HOME keeps the developer's global browser config out of the measured guidance.
+		const home = await mkdtemp(join(tmpdir(), "piab-guidance-home-"));
+		t.after(() => rm(home, { force: true, recursive: true }));
+		await withPatchedEnv({ HOME: home, USERPROFILE: home, ...BARE_ENV }, async () => {
 			const harness = createExtensionHarness({ cwd: process.cwd() });
 			await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 			const active = harness.getActiveTools();

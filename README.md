@@ -44,7 +44,7 @@ Describe the task in your conversation. Pi can click controls, fill forms, check
 | `agent_browser_code`       | JavaScript loops and branches in the same browser   |
 | `agent_browser_web_search` | Optional Exa or Brave search through provider APIs  |
 
-Action, QA, Electron, source, and network-source tools are deferred: Pi's native `tool_search` loads them when a task needs them (activate it with `defaultTools: ["+tool_search"]`), and codemode scripts can call them directly.
+Action, QA, Electron, source, and network-source tools are deferred: Pi's native `tool_search` loads them when a task needs them, and codemode scripts can call them directly. Like Pi's own MCP extension, the browser extension activates a registered `tool_search` at session start.
 
 For example, Pi opens and inspects a page with these calls:
 
