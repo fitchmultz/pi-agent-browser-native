@@ -87,11 +87,7 @@ export interface AgentBrowserNetworkSourceParams extends AgentBrowserOutputParam
 	sessionMode?: "auto" | "fresh";
 }
 
-const AGENT_BROWSER_ADVANCED_TOOLS = ["action", "qa", "electron", "source", "network"] as const;
-export type AgentBrowserAdvancedTool = (typeof AGENT_BROWSER_ADVANCED_TOOLS)[number];
-export interface AgentBrowserToolsParams {
-	enable?: AgentBrowserAdvancedTool[];
-}
+export type AgentBrowserAdvancedTool = "action" | "qa" | "electron" | "source" | "network";
 
 function outputProperties(): { outputPath: TSchema; timeoutMs: TSchema } {
 	return {
@@ -375,21 +371,6 @@ export function createAgentBrowserNetworkSourceParamsSchema(): TUnsafe<AgentBrow
 	);
 }
 
-export function createAgentBrowserToolsParamsSchema(): TUnsafe<AgentBrowserToolsParams> {
-	return Type.Unsafe<AgentBrowserToolsParams>(
-		Type.Object(
-			{
-				enable: Type.Optional(
-					Type.Array(StringEnum(AGENT_BROWSER_ADVANCED_TOOLS), {
-						description: "Add capabilities to active tools; omit to list inventory.",
-					}),
-				),
-			},
-			{ additionalProperties: false },
-		),
-	);
-}
-
 export const AGENT_BROWSER_PARAMS = createAgentBrowserParamsSchema();
 export const AGENT_BROWSER_CODE_PARAMS = createAgentBrowserCodeParamsSchema();
 export const AGENT_BROWSER_ACTION_PARAMS = createAgentBrowserActionParamsSchema();
@@ -397,4 +378,3 @@ export const AGENT_BROWSER_QA_PARAMS = createAgentBrowserQaParamsSchema();
 export const AGENT_BROWSER_ELECTRON_PARAMS = createAgentBrowserElectronParamsSchema();
 export const AGENT_BROWSER_SOURCE_PARAMS = createAgentBrowserSourceParamsSchema();
 export const AGENT_BROWSER_NETWORK_SOURCE_PARAMS = createAgentBrowserNetworkSourceParamsSchema();
-export const AGENT_BROWSER_TOOLS_PARAMS = createAgentBrowserToolsParamsSchema();

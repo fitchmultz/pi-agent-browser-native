@@ -9,21 +9,11 @@ import { isRecord } from "./parsing.js";
 export type { PromptRequestedArtifact };
 
 export interface PromptPolicy {
-	readonly allowLegacyAgentBrowserBash: boolean;
 	readonly requestedArtifacts: readonly PromptRequestedArtifact[];
 }
 
-const LEGACY_BASH_ALLOW_PATTERNS = [
-	/\b(?:bash-oriented workflow|bash workflow)\b/i,
-	/\b(?:use|via|through|with)\s+bash\b/i,
-	/\bnpx\s+agent-browser\b/i,
-	/\bagent-browser\s+--(?:help|version)\b/i,
-	/\bdebug(?:ging)?\b.*\b(?:agent[_ -]?browser|agent_browser|browser integration)\b/i,
-];
-
 export function buildPromptPolicy(prompt: string): PromptPolicy {
 	return {
-		allowLegacyAgentBrowserBash: LEGACY_BASH_ALLOW_PATTERNS.some((pattern) => pattern.test(prompt)),
 		requestedArtifacts: extractPromptRequestedArtifacts(prompt),
 	};
 }

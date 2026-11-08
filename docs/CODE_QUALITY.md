@@ -148,9 +148,8 @@ retain their profile's parameter limit.
 ### QX-003: Pi's additive prompt section
 
 Pi explicitly exposes mutable `before_agent_start.systemPromptOptions`. The browser
-sets only `sections.agent_browser` when an instruction-group collector does not own
-those instructions. Later handlers and Pi's prompt-delta machinery observe the same
-options object.
+sets only `sections.agent_browser`. Later handlers and Pi's prompt-delta machinery
+observe the same options object.
 
 Official [runner.ts, lines 1427–1476](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/src/core/extensions/runner.ts#L1427-L1476)
 and fork [runner.ts, lines 1684–1733](https://github.com/fitchmultz/pi/blob/e6c04cb27845611fb0be62652b7e03e2fc4caf74/packages/coding-agent/src/core/extensions/runner.ts#L1684-L1733)

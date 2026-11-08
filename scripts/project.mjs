@@ -156,7 +156,7 @@ export function parseDocsArgs(argv) {
 	let mode = "check";
 	for (const rawArg of argv) {
 		const arg = rawArg.startsWith("--") ? rawArg.slice(2) : rawArg;
-		if (["all", "playbook", "command-reference"].includes(arg)) {
+		if (["all", "command-reference"].includes(arg)) {
 			target = arg;
 			continue;
 		}
@@ -173,9 +173,6 @@ export function parseDocsArgs(argv) {
 export function docsSteps(options) {
 	const modeFlag = `--${options.mode}`;
 	const steps = [];
-	if (options.target === "all" || options.target === "playbook") {
-		steps.push(localToolStep("tsx", ["./scripts/check-playbook-drift.ts", modeFlag]));
-	}
 	if (options.target === "all" || options.target === "command-reference") {
 		steps.push(scriptStep(["./scripts/check-command-reference-baseline.mjs", modeFlag]));
 	}
@@ -415,7 +412,6 @@ export function verifySteps(options, platform = process.platform) {
 				...qualitySteps(),
 				...typecheckSteps(),
 				...contractTestSteps(platform),
-				...docsSteps({ mode: "check", target: "playbook" }),
 				...commandReferenceSteps(),
 			];
 		case "typecheck":

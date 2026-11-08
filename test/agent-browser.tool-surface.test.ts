@@ -31,12 +31,7 @@ import {
 	resolveAgentBrowserInput,
 	type AgentBrowserExecuteParams,
 } from "../extensions/agent-browser/lib/orchestration/input-plan.js";
-import {
-	ADVANCED_TOOL_PROMPT_GUIDELINES,
-	QUICK_START_GUIDELINES,
-	RUNTIME_PROMPT_GUIDELINES,
-	SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-} from "../extensions/agent-browser/lib/playbook.js";
+import { BROWSER_GUIDANCE } from "../extensions/agent-browser/lib/playbook.js";
 import { registerAgentBrowserToolSurface } from "../extensions/agent-browser/lib/tool-surface.js";
 import { readToolArguments } from "./helpers/tool-result.mjs";
 
@@ -164,7 +159,14 @@ async function withSurface(
 	}
 }
 
-const baseTools = ["agent_browser", "agent_browser_code", "agent_browser_tools", "unrelated"];
+const baseTools = ["agent_browser", "agent_browser_code", "unrelated"];
+const deferredTools = [
+	"agent_browser_action",
+	"agent_browser_electron",
+	"agent_browser_network_source",
+	"agent_browser_qa",
+	"agent_browser_source",
+];
 
 nodeTest(
 	"registered browser code serializes for Anthropic while Pi still rejects invalid arguments",
@@ -277,23 +279,14 @@ nodeTest(
 );
 
 nodeTest(
-	"native Pi registration keeps advanced tools discoverable and activation additive",
+	"native Pi registration defers advanced tools: callable from scripts, declared only when loaded",
 	async (t) => {
-		await withSurface(t, async ({ call, active, all, session }) => {
+		await withSurface(t, async ({ active, all, session }) => {
 			assert.deepEqual(
 				all()
 					.filter((name) => name.startsWith("agent_browser"))
 					.sort(),
-				[
-					"agent_browser",
-					"agent_browser_action",
-					"agent_browser_code",
-					"agent_browser_electron",
-					"agent_browser_network_source",
-					"agent_browser_qa",
-					"agent_browser_source",
-					"agent_browser_tools",
-				],
+				[...baseTools.filter((name) => name !== "unrelated"), ...deferredTools].sort(),
 			);
 			const browserNames = all().filter((name) => name.startsWith("agent_browser"));
 			assert.deepEqual(
@@ -303,31 +296,28 @@ nodeTest(
 				})),
 				browserNames.map((name) => ({ name, type: "object" })),
 			);
-			assert.deepEqual(active().sort(), [...baseTools].sort());
-			assert.equal(session.getCallableToolNames().includes("agent_browser_qa"), false);
-			const inventory = await call("agent_browser_tools", {});
-			assert.match(JSON.stringify(inventory.content), /agent_browser_network_source.*inactive/);
-			assert.deepEqual(active().sort(), [...baseTools].sort());
-			const loaded = await call("agent_browser_tools", { enable: ["qa", "action", "qa"] });
-			assert.deepEqual(readRecord(loaded.details).added, [
-				"agent_browser_qa",
-				"agent_browser_action",
-			]);
-			assert.deepEqual(loaded.structuredContent, loaded.details);
-			assert.equal(session.getCallableToolNames().includes("agent_browser_qa"), true);
 			assert.deepEqual(
-				active().sort(),
-				[...baseTools, "agent_browser_action", "agent_browser_qa"].sort(),
+				session
+					.getAllTools()
+					.filter((tool) => deferredTools.includes(tool.name))
+					.map((tool) => tool.exposure),
+				deferredTools.map(() => "deferred"),
 			);
-			await call("agent_browser_tools", { enable: ["electron"] });
-			assert.ok(active().includes("agent_browser_qa"));
+			assert.deepEqual(active().sort(), [...baseTools].sort());
+			assert.deepEqual(
+				deferredTools.filter((name) => !session.getCallableToolNames().includes(name)),
+				[],
+				"deferred tools stay callable from codemode scripts while inactive",
+			);
+			session.setActiveToolsByName([...active(), "agent_browser_qa"]);
+			assert.deepEqual(active().sort(), [...baseTools, "agent_browser_qa"].sort());
 			assert.ok(active().includes("unrelated"));
 		});
 	},
 );
 
 nodeTest(
-	"native defaultTools survives startup and initial resume restoration is additive",
+	"native defaultTools activates deferred tools and transcript restoration stays native",
 	async (t) => {
 		const managerWithRestored = (...tools: readonly ("action" | "qa")[]): SessionManager => {
 			const manager = SessionManager.inMemory();
@@ -383,14 +373,11 @@ nodeTest(
 				options: { defaultTools: ["agent_browser", "agent_browser_qa"] },
 			},
 			{
-				label: "transcript-restored qa without default tools",
-				options: { sessionManager: managerWithRestored("qa") },
-				restoredTool: "agent_browser_qa",
-			},
-			{
-				label: "transcript removal overrides addition without default tools",
-				options: { sessionManager: removed },
-				restoredTool: "agent_browser_qa",
+				label: "default tools with a transcript removal overriding an addition",
+				options: {
+					defaultTools: ["agent_browser", "agent_browser_qa"],
+					sessionManager: removed,
+				},
 			},
 			{ label: "plain registration without default tools or restoration", options: {} },
 		];
@@ -624,39 +611,17 @@ nodeTest(
 	},
 );
 
-nodeTest(
-	"explicit native CLI tool selection stays active and the loader cannot override unavailable tools",
-	async (t) => {
-		const original = process.argv;
-		try {
-			process.argv = [
-				readDefined(original[0]),
-				"pi",
-				"--tools",
-				"agent_browser_action,agent_browser_tools,unrelated",
-			];
-			await withSurface(
-				t,
-				async ({ call, active }) => {
-					assert.deepEqual(active().sort(), [
-						"agent_browser_action",
-						"agent_browser_tools",
-						"unrelated",
-					]);
-					const result = await call("agent_browser_tools", { enable: ["qa"] });
-					assert.match(JSON.stringify(result.content), /agent_browser_qa.*unavailable/);
-					assert.equal(active().includes("agent_browser_qa"), false);
-					assert.equal(active().includes("agent_browser_action"), true);
-				},
-				{ tools: ["agent_browser_action", "agent_browser_tools", "unrelated"] },
-			);
-		} finally {
-			process.argv = original;
-		}
-	},
-);
+nodeTest("explicit native CLI tool selection activates deferred tools by name", async (t) => {
+	await withSurface(
+		t,
+		async ({ active }) => {
+			assert.deepEqual(active().sort(), ["agent_browser_action", "unrelated"]);
+		},
+		{ tools: ["agent_browser_action", "unrelated"] },
+	);
+});
 
-for (const tools of [["agent_browser_qa"], ["agent_browser_qa", "agent_browser_tools"]]) {
+for (const tools of [["agent_browser_qa"], ["agent_browser_qa", "agent_browser"]]) {
 	nodeTest(
 		`SDK-selected advanced tools stay active with selection ${tools.join(",")}`,
 		async (t) => {
@@ -684,47 +649,26 @@ nodeTest("internal input normalization rejects retired job/script routes", () =>
 	assert.deepEqual(statuses, ["invalid", "invalid"]);
 });
 
-nodeTest(
-	"prompt routing is compact and preserves browser authority, recovery, and image geometry",
-	() => {
-		const runtime = RUNTIME_PROMPT_GUIDELINES.join("\n");
-		assert.ok(Buffer.byteLength(runtime) < 3500);
-		const required = [
-			"batch --bail",
-			"result.success",
-			"emitImage(result.imageObservations[0])",
-			"persistent browser",
-			"globals do not persist",
-			"nextActions",
-			"CSS coordinates",
-			"profiles",
-			"explicit stops",
-		];
-		assert.deepEqual(
-			required.filter((token) => !runtime.includes(token)),
-			[],
-		);
-		const playbook = [
-			...QUICK_START_GUIDELINES,
-			...SHARED_BROWSER_PLAYBOOK_GUIDELINES,
-			...Object.values(ADVANCED_TOOL_PROMPT_GUIDELINES).flat(),
-		].join("\n");
-		assert.doesNotMatch(
-			playbook,
-			/top-level script|\{\s*(?:script|job):|semanticAction\/job|result\.ok/,
-		);
-		const advancedGuidelines = Object.entries(ADVANCED_TOOL_PROMPT_GUIDELINES);
-		assert.ok(advancedGuidelines.length > 0, "advanced tool guidance must not be empty");
-		assert.deepEqual(
-			advancedGuidelines.flatMap(([key, guidelines]) => {
-				const toolName =
-					key === "network" ? "agent_browser_network_source" : `agent_browser_${key}`;
-				return guidelines.filter((line) => !line.includes(toolName)).map((line) => ({ key, line }));
-			}),
-			[],
-		);
-	},
-);
+nodeTest("always-on guidance is compact and names every deferred tool", () => {
+	const guidance = BROWSER_GUIDANCE.join("\n");
+	assert.ok(Buffer.byteLength(guidance) < 2500, `guidance is ${Buffer.byteLength(guidance)} bytes`);
+	const required = [
+		"batch --bail",
+		"codemode scripts",
+		"tool_search",
+		"nextActions",
+		"artifactVerification",
+		"CSS coordinates",
+		"sessionMode:fresh",
+		"explicit authorization",
+		...deferredTools,
+	];
+	assert.deepEqual(
+		required.filter((token) => !guidance.includes(token)),
+		[],
+	);
+	assert.doesNotMatch(guidance, /agent_browser_tools|agent_browser_code|emitImage|result\.ok/);
+});
 
 nodeTest(
 	"Electron action schemas preserve field boundaries through native Pi validation",

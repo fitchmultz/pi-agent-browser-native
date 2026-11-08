@@ -30,7 +30,6 @@ import {
 	executeRegisteredTool,
 	readInvocationLog,
 	runExtensionEvent,
-	runExtensionEventResults,
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 	type AgentBrowserToolParams,
@@ -148,8 +147,7 @@ nodeTest(
 					/\/Applications\/Global Browser\.app\/Contents\/MacOS\/Global Browser/,
 				);
 				assert.match(globalGuidance, /browser\.executablePath/);
-				assert.match(globalGuidance, /--executable-path/);
-				assert.match(globalGuidance, /profiles lists Chrome profiles only/);
+				assert.match(globalGuidance, /--profile "Global Profile"/);
 			});
 			await writeFile(
 				projectConfigPath,
@@ -214,7 +212,7 @@ nodeTest("agentBrowserExtension rejects unsupported public schema fields", () =>
 	assert.equal(harness.tool.name, "agent_browser");
 	assert.match(harness.tool.description, /native agent-browser commands/);
 	assert.match(harness.tool.promptSnippet, /native command batches/);
-	assert.match(harness.tool.description, /agent_browser_tools for advanced capabilities/);
+	assert.match(harness.tool.description, /codemode scripts/);
 	const parameterProperties = readRecord(readRecord(schema).properties);
 	assert.deepEqual(Object.keys(parameterProperties).sort(), [
 		"args",
@@ -231,10 +229,6 @@ nodeTest("agentBrowserExtension rejects unsupported public schema fields", () =>
 	assert.match(
 		harness.getTool("agent_browser_code")?.description ?? "",
 		/persistent browser.*emitImage/,
-	);
-	assert.match(
-		harness.getTool("agent_browser_tools")?.description ?? "",
-		/adds tools.*preserves other active tools/,
 	);
 	const direct = {
 		args: ["open", "https://example.test/"],
@@ -3417,191 +3411,13 @@ nodeTest(
 	},
 );
 
-nodeTest(
-	"agentBrowserExtension blocks direct and wrapped agent-browser bash unless the prompt, env, or package dev cwd explicitly allows it",
-	async (t) => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-bash-policy-"));
-		t.after(async () => await rm(tempDir, { force: true, recursive: true }));
-		const defaultHarness = createExtensionHarness({
-			cwd: tempDir,
-			prompt: "Open a page and summarize it.",
-		});
-		const noHistoryCtx = {
-			...defaultHarness.ctx,
-			sessionManager: {
-				...defaultHarness.ctx.sessionManager,
-				getBranch() {
-					throw new Error("Unrelated tool calls must not copy the branch");
-				},
-				getEntry() {
-					throw new Error("Unrelated tool calls must not query history");
-				},
-			},
-		};
-		for (const event of [
-			{ toolName: "read", input: { path: "README.md" } },
-			{ toolName: "agent_browser_tools", input: {} },
-			{ toolName: "bash", input: { command: "printf audit" } },
-			{ toolName: "bash", input: { command: "which agent-browser" } },
-		]) {
-			await t.test(JSON.stringify(event), async () => {
-				assert.deepEqual(
-					// Preserve event order against the shared branch-history guard fixture.
-					await runExtensionEventResults(defaultHarness.handlers, "tool_call", event, noHistoryCtx),
-					[],
-				);
-			});
-		}
-		for (const command of [
-			"agent-browser open https://example.com",
-			"FOO=bar agent-browser --version",
-			'FOO="bar baz" agent-browser --version',
-			"PATH=/tmp:$PATH agent-browser open https://example.com",
-			"echo ready\nagent-browser open https://example.com",
-			"which agent-browser && agent-browser open https://example.com",
-			"cat <<'EOF'\nwhich agent-browser\nEOF\nagent-browser open https://example.com",
-			"env agent-browser --version",
-			"npx --yes agent-browser open https://example.com",
-			"pnpm dlx agent-browser open https://example.com",
-			"/opt/homebrew/bin/agent-browser open https://example.com",
-		]) {
-			await t.test(`blocked: ${command}`, async () => {
-				// Shell probes share mutable user-intent and branch state.
-				const [blocked] = await runExtensionEventResults(
-					defaultHarness.handlers,
-					"tool_call",
-					{ toolName: "bash", input: { command } },
-					defaultHarness.ctx,
-				);
-				assert.equal(readRecord(blocked).block, true, command);
-				assert.match(
-					readString(readRecord(blocked).reason),
-					/Use the native agent_browser tool instead of bash/i,
-				);
-			});
-		}
-
-		const userMessage = {
-			role: "user",
-			content: "Please debug the browser integration via bash.",
-			timestamp: 0,
-		};
-		await runExtensionEvent(
-			defaultHarness.handlers,
-			"message_end",
-			{ message: userMessage },
-			defaultHarness.ctx,
-		);
-		const directEvent = {
-			toolName: "bash",
-			input: { command: "agent-browser open https://example.com" },
-		};
-		assert.deepEqual(
-			await runExtensionEventResults(
-				defaultHarness.handlers,
-				"tool_call",
-				directEvent,
-				noHistoryCtx,
-			),
-			[],
-		);
-		// Pi applies later message_end replacements to this same message before persistence.
-		userMessage.content = "Open a page and summarize it.";
-		const [blockedAfterReplacement] = await runExtensionEventResults(
-			defaultHarness.handlers,
-			"tool_call",
-			directEvent,
-			noHistoryCtx,
-		);
-		assert.equal(readRecord(blockedAfterReplacement).block, true);
-		userMessage.content = "Please debug the browser integration via bash.";
-		await runExtensionEvent(
-			defaultHarness.handlers,
-			"session_tree",
-			{ newLeafId: "original", oldLeafId: "steered" },
-			defaultHarness.ctx,
-		);
-		const [blockedAfterTree] = await runExtensionEventResults(
-			defaultHarness.handlers,
-			"tool_call",
-			directEvent,
-			noHistoryCtx,
-		);
-		assert.equal(
-			readRecord(blockedAfterTree).block,
-			true,
-			"branch navigation restores raw user intent instead of retaining steered text",
-		);
-
-		const inspectionAllowed = await runExtensionEventResults(
-			defaultHarness.handlers,
-			"tool_call",
-			{ toolName: "bash", input: { command: "which agent-browser" } },
-			defaultHarness.ctx,
-		);
-		assert.deepEqual(inspectionAllowed, []);
-
-		for (const command of [
-			"echo agent-browser",
-			"grep agent-browser README.md",
-			"printf '%s\\n' agent-browser",
-			"echo ok && grep agent-browser README.md",
-			"cat <<'EOF'\nagent-browser open https://example.com\nEOF",
-		]) {
-			await t.test(`allowed: ${command}`, async () => {
-				// Preserve shell-probe order against the shared user-intent/branch fixture.
-				const innocuousResults = await runExtensionEventResults(
-					defaultHarness.handlers,
-					"tool_call",
-					{ toolName: "bash", input: { command } },
-					defaultHarness.ctx,
-				);
-				assert.deepEqual(innocuousResults, [], command);
-			});
-		}
-
-		const debugHarness = createExtensionHarness({
-			cwd: tempDir,
-			prompt: "Please debug the browser integration via bash.",
-		});
-		const debugAllowed = await runExtensionEventResults(
-			debugHarness.handlers,
-			"tool_call",
-			{ toolName: "bash", input: { command: "npx --yes agent-browser open https://example.com" } },
-			debugHarness.ctx,
-		);
-		assert.deepEqual(debugAllowed, []);
-
-		await withPatchedEnv({ PI_AGENT_BROWSER_ALLOW_DIRECT_BASH: "1" }, async () => {
-			const envAllowed = await runExtensionEventResults(
-				defaultHarness.handlers,
-				"tool_call",
-				{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
-				defaultHarness.ctx,
-			);
-			assert.deepEqual(envAllowed, []);
-		});
-
-		const packageDevDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-package-dev-"));
-		t.after(async () => await rm(packageDevDir, { force: true, recursive: true }));
-		await writeFile(
-			join(packageDevDir, "package.json"),
-			JSON.stringify({ name: "pi-agent-browser-native" }),
-			"utf8",
-		);
-		const packageDevHarness = createExtensionHarness({
-			cwd: packageDevDir,
-			prompt: "Open a page and summarize it.",
-		});
-		const packageDevAllowed = await runExtensionEventResults(
-			packageDevHarness.handlers,
-			"tool_call",
-			{ toolName: "bash", input: { command: "agent-browser open https://example.com" } },
-			packageDevHarness.ctx,
-		);
-		assert.deepEqual(packageDevAllowed, []);
-	},
-);
+nodeTest("agentBrowserExtension registers no bash interception", () => {
+	const harness = createExtensionHarness({
+		cwd: process.cwd(),
+		prompt: "Open a page and summarize it.",
+	});
+	assert.equal(harness.handlers.has("tool_call"), false);
+});
 
 nodeTest(
 	"agentBrowserExtension keeps the page verified after a failed eval by probing the live URL",

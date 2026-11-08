@@ -83,7 +83,7 @@ npm run verify -- pre-pr
 
 `npm run verify -- release` runs:
 
-1. `npm run verify` for generated playbook drift, TypeScript, unit/fake coverage, command-reference generated-block drift, and live command-reference verification against the targeted upstream on `PATH`
+1. `npm run verify` for TypeScript, unit/fake coverage, command-reference generated-block drift, and live command-reference verification against the targeted upstream on `PATH`
 2. `npm run verify -- lifecycle`, which launches the configured-source lifecycle harness for `/reload`, exact `--session-id` relaunch, managed-session continuity, persisted spill reachability, and native returned-failure behavior
 3. `npm run verify -- package-pi`, which first validates package contents via `npm pack --json --dry-run` and then smoke-loads the packed package in Pi isolation
 4. `npm run smoke:platform:doctor` and the required Crabbox matrix from [`platform-smoke.md`](platform-smoke.md): macOS SSH and Ubuntu local-container targets running fast target-local `platform-build` plus `browser-dogfood-smoke`
@@ -179,7 +179,7 @@ Use this validation prompt after changing click enrichment, tab pinning, ref pre
 Run it in an isolated checkout session with skills disabled so the run validates the extension browser workflow instead of external dogfood/QA skill routing. It is fine to restrict active tools at launch so the checkout extension is the only browser surface, but keep those launch details out of the user prompt:
 
 ```bash
-pi --approve --no-extensions --no-skills -e . --model openai-codex/gpt-6-astra:low --tools agent_browser,agent_browser_code,agent_browser_tools --session-dir "$SESSION_DIR"
+pi --approve --no-extensions --no-skills -e . --model openai-codex/gpt-6-astra:low --tools agent_browser,agent_browser_code,tool_search --session-dir "$SESSION_DIR"
 ```
 
 Repeat with the task's chosen Astra reasoning level when validating instruction-following robustness. Use unique temp paths for each run and delete them afterward. Run separate skill-enabled dogfood sessions only when the thing under test is skill integration, not this bounded release smoke.
