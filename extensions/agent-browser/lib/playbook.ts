@@ -29,7 +29,7 @@ export function buildBrowserExecutablePathGuideline(
 	if (executablePath === undefined || executablePath.length === 0) {
 		return undefined;
 	}
-	return `agent_browser config sets browser.executablePath to ${JSON.stringify(executablePath)}. It bootstraps only the automatic root Chrome launch; sessionMode:fresh, explicit --session, and non-Chrome engines take --executable-path ${JSON.stringify(executablePath)} on their first command.`;
+	return `agent_browser config sets browser.executablePath to ${JSON.stringify(executablePath)}. It bootstraps only the automatic root Chrome launch; sessionMode:fresh and explicit --session Chrome launches take --executable-path ${JSON.stringify(executablePath)} on their first command. Lightpanda and Obscura use their own engine binary, never this Chromium path.`;
 }
 
 export function buildBrowserDefaultProfileGuideline(
