@@ -91,10 +91,6 @@ export function isRecordPageTransitionCommand(tokens: readonly string[]): boolea
 	);
 }
 
-export function isWebMcpPageMutationCommand(tokens: readonly string[]): boolean {
-	return isWebMcpPageMutation(tokens[0], tokens[1]);
-}
-
 export function isWindowOrDiffPageTransitionCommand(
 	command: string | undefined,
 	subcommand?: string,
@@ -109,13 +105,29 @@ function isFlowRunCommand(command: string | undefined, subcommand?: string): boo
 	return command === "flow" && subcommand === "run";
 }
 
+/** A command whose run retires every earlier ref: later rows of its batch and the session's saved snapshot. */
+export type RefRetiringTransition = "flow-run" | "record" | "webmcp" | "window-or-diff";
+
+export function getRefRetiringTransition(
+	tokens: readonly string[],
+): RefRetiringTransition | undefined {
+	const [command, subcommand] = tokens;
+	if (isRecordPageTransitionCommand(tokens)) {
+		return "record";
+	}
+	if (isWindowOrDiffPageTransitionCommand(command, subcommand)) {
+		return "window-or-diff";
+	}
+	if (isWebMcpPageMutation(command, subcommand)) {
+		return "webmcp";
+	}
+	return isFlowRunCommand(command, subcommand) ? "flow-run" : undefined;
+}
+
 export function isRefInvalidatingBatchCommand(step: readonly string[]): boolean {
 	return (
 		hasCommandCapability(step[0], "invalidatesBatchRefs") ||
-		isRecordPageTransitionCommand(step) ||
-		isWebMcpPageMutationCommand(step) ||
-		isFlowRunCommand(step[0], step[1]) ||
-		isWindowOrDiffPageTransitionCommand(step[0], step[1])
+		getRefRetiringTransition(step) !== undefined
 	);
 }
 

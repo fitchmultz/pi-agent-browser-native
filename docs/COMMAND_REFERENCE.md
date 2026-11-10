@@ -996,7 +996,7 @@ Flows live in `~/.agent-browser/flows/<origin>/<name>.json`; `AGENT_BROWSER_FLOW
 Wrapper behavior:
 
 - The recording includes the wrapper's own helper reads, such as `get url` and `tab list`. Check `flow steps` and pass `--from` / `--to` when saving.
-- `flow run` can navigate the page when it falls back to replay. After it, the page target is unknown: run `get url` before page-content commands, and take a new `snapshot -i` before using refs. In a batch, use `batch --bail` and put `get url` after `flow run`.
+- `flow run` can navigate the page when it falls back to replay. After it, the page target is unknown: run `get url` before page-content commands, and take a new `snapshot -i` before using refs. In a batch, use `batch --bail` and put `get url` after `flow run`. Refs from before a direct or batched `flow run` stay blocked as stale, even when `get url` reports the same URL, until a new `snapshot -i`.
 - `flow steps`, `flow save`, `flow list`, and `flow run` do not need a verified page target.
 - Flow results pass through with the normal redaction. The wrapper adds no flow storage, naming, or retry layer.
 

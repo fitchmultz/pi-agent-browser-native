@@ -2,13 +2,12 @@ import { browserStringArray } from "./browser-value-parsing.js";
 import { extractUpstreamCommandTokens } from "./argv-descriptor.js";
 import { getAgentBrowserSessionIdentityKey } from "./argv-grammar.js";
 import {
+	getRefRetiringTransition,
 	isCloseCommand,
 	isOpenNavigationCommand,
 	isReadOnlyDiagnosticSessionTargetCommand,
-	isRecordPageTransitionCommand,
 	isUnverifiedPageTransitionCommand,
-	isWebMcpPageMutationCommand,
-	isWindowOrDiffPageTransitionCommand,
+	type RefRetiringTransition,
 } from "./command-taxonomy.js";
 import { isRecord } from "./parsing.js";
 import { detectConfirmationRequired } from "./results/confirmation.js";
@@ -378,23 +377,26 @@ export function buildPageTransitionRefSnapshotInvalidation(
 	};
 }
 
+/** `record` keeps the builder's default summary. */
+const REF_RETIRING_TRANSITION_SUMMARIES: Readonly<
+	Record<RefRetiringTransition, string | undefined>
+> = {
+	"flow-run":
+		"A saved-flow run can replay recorded commands that navigate or change the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.",
+	record: undefined,
+	webmcp:
+		"A WebMCP invoke, result, or cancel command can mutate, rerender, or navigate the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.",
+	"window-or-diff":
+		"A window new or diff url command replaced or navigated the active page and invalidated prior refs. Run snapshot -i before using page-scoped refs.",
+};
+
 export function getCommandRefSnapshotInvalidation(
 	commandTokens: readonly string[],
 ): SessionRefSnapshotInvalidation | undefined {
-	if (isRecordPageTransitionCommand(commandTokens)) {
-		return buildPageTransitionRefSnapshotInvalidation();
-	}
-	if (isWindowOrDiffPageTransitionCommand(commandTokens[0], commandTokens[1])) {
-		return buildPageTransitionRefSnapshotInvalidation(
-			"A window new or diff url command replaced or navigated the active page and invalidated prior refs. Run snapshot -i before using page-scoped refs.",
-		);
-	}
-	if (isWebMcpPageMutationCommand(commandTokens)) {
-		return buildPageTransitionRefSnapshotInvalidation(
-			"A WebMCP invoke, result, or cancel command can mutate, rerender, or navigate the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.",
-		);
-	}
-	return undefined;
+	const transition = getRefRetiringTransition(commandTokens);
+	return transition === undefined
+		? undefined
+		: buildPageTransitionRefSnapshotInvalidation(REF_RETIRING_TRANSITION_SUMMARIES[transition]);
 }
 
 export function isNoActivePageSnapshotFailure(
