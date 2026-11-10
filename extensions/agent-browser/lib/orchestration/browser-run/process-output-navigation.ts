@@ -479,7 +479,7 @@ function batchHasFailedWebMcpSettlement(data: unknown): boolean {
 	});
 }
 
-function processCannotVerifyPage(draft: ProcessCannotVerifyPageInput): boolean {
+export function processCannotVerifyPage(draft: ProcessCannotVerifyPageInput): boolean {
 	const { processResult } = draft.input;
 	return (
 		!processResult.agentBrowserStarted ||

@@ -13,6 +13,7 @@ import {
 import {
 	type PageTargetState,
 	commandMayChangePageTarget,
+	commandReportsResultingPage,
 	commandVerifiesPageTarget,
 	getResultingPageState,
 } from "./page-target-navigation.js";
@@ -138,7 +139,11 @@ function advancePossibleStates(
 				mayChangePageTarget || verifiesPageTarget ? false : state.retainedAfterFailedNavigation,
 		});
 		if (!bail && (mayChangePageTarget || (verifiesPageTarget && state.pageUrlUnknown))) {
-			nextStates.push({ ...state, retainedAfterFailedNavigation: true });
+			// A failed eval or reload reports no page and may still have changed it.
+			nextStates.push({
+				...(commandReportsResultingPage(step) ? { pageUrlUnknown: true } : state),
+				retainedAfterFailedNavigation: true,
+			});
 		}
 	}
 	return { states: deduplicatePossibleBatchPageStates(nextStates) };

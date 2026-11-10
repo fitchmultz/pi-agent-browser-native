@@ -107,6 +107,68 @@ nodeTest("unverified page transitions still require a live URL before content ac
 	);
 });
 
+nodeTest("a batch may read content after its own eval or reload only under --bail", async (t) => {
+	const currentPageUrl = "https://example.com/start";
+	for (const ownStep of [["eval", "document.title"], ["reload"]]) {
+		const stdin = JSON.stringify([ownStep, ["get", "text", "#h"]]);
+		await t.test(ownStep.join(" "), () => {
+			// The row reports the resulting URL, as a get url row would.
+			assert.equal(
+				getPageTargetValidationError({ args: ["batch", "--bail"], currentPageUrl, stdin }),
+				undefined,
+			);
+			// Without --bail a failed row reports no page and the content row would still run.
+			assert.match(
+				getPageTargetValidationError({ args: ["batch"], currentPageUrl, stdin }) ?? "",
+				/must use exact batch --bail/,
+			);
+			assert.deepEqual(
+				getResultingPageTargetState({
+					args: ownStep,
+					executedBatchSteps: [ownStep],
+					currentPageUrl,
+				}),
+				{ pageTargetMayHaveChanged: true, pageUrlUnknown: false },
+			);
+		});
+	}
+	for (const transition of [
+		["back"],
+		["forward"],
+		["tab", "t2"],
+		["state", "load", "state.json"],
+	]) {
+		await t.test(`${transition.join(" ")} keeps the get url rule`, () => {
+			assert.match(
+				getPageTargetValidationError({
+					args: ["batch", "--bail"],
+					currentPageUrl,
+					stdin: JSON.stringify([transition, ["get", "text", "#h"]]),
+				}) ?? "",
+				/put get url after the transition/,
+			);
+		});
+	}
+	await t.test("an unverified page still refuses eval and its batch", () => {
+		assert.match(
+			getPageTargetValidationError({ args: ["eval", "document.title"], pageUrlUnknown: true }) ??
+				"",
+			/active page became unverified/,
+		);
+		assert.match(
+			getPageTargetValidationError({
+				args: ["batch", "--bail"],
+				pageUrlUnknown: true,
+				stdin: JSON.stringify([
+					["eval", "document.title"],
+					["get", "text", "#h"],
+				]),
+			}) ?? "",
+			/active page became unverified/,
+		);
+	});
+});
+
 nodeTest("WebMCP page tools require a verified target and may change it", () => {
 	assert.match(
 		readString(

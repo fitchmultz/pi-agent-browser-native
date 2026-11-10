@@ -13,6 +13,7 @@ import {
 	buildConnectedSessionNextActions,
 	buildNoActivePageNextActions,
 	buildPendingWebMcpNextActions,
+	buildUnverifiedPageNextActions,
 	buildSessionAwareStaleRefNextActions,
 	buildSessionTabRecoveryNextActions,
 } from "../../results/recovery-next-actions.js";
@@ -22,6 +23,7 @@ import {
 } from "../../results/selector-recovery.js";
 import { redactInvocationArgs } from "../../runtime-redaction.js";
 import type { PublicationInput as FinalResultInput } from "./final-result-contracts.js";
+import { leavesPageUnverified } from "./own-step-page-check.js";
 
 type PageRecoveryInput = Pick<
 	FinalResultInput,
@@ -37,6 +39,7 @@ type PageRecoveryInput = Pick<
 	| "openResultTabCorrection"
 	| "currentSessionTabTarget"
 	| "priorSessionTabTarget"
+	| "ownStepPageCheck"
 >;
 
 function tabRecovery(
@@ -111,6 +114,13 @@ export function buildPageRecoveryActions(options: PageRecoveryInput): AgentBrows
 		appendUniqueAgentBrowserNextActions(
 			actions,
 			buildPendingWebMcpNextActions(options.executionPlan.sessionName),
+		);
+	}
+	if (leavesPageUnverified(options.ownStepPageCheck)) {
+		actions = actions.filter((action) => !isStandaloneSnapshotNextAction(action));
+		appendUniqueAgentBrowserNextActions(
+			actions,
+			buildUnverifiedPageNextActions(options.executionPlan.sessionName),
 		);
 	}
 	appendUniqueAgentBrowserNextActions(actions, connectionRecovery(options));

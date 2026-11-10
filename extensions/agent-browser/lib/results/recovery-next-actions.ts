@@ -58,6 +58,20 @@ export function buildPendingWebMcpNextActions(
 	];
 }
 
+export function buildUnverifiedPageNextActions(
+	sessionName: string | undefined,
+): readonly AgentBrowserNextAction[] {
+	return [
+		{
+			id: "verify-page-target-after-own-step",
+			params: { args: withOptionalSessionArgs(sessionName, ["get", "url"]) },
+			reason: "Read the current URL before page-content commands; they are refused until then.",
+			safety: "Read-only URL inspection.",
+			tool: "agent_browser",
+		},
+	];
+}
+
 interface SessionTabRecoveryOptions {
 	readonly kind: "about-blank" | "tab-drift";
 	readonly recoveryApplied?: boolean;

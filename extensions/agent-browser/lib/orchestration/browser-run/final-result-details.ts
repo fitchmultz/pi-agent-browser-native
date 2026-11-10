@@ -122,6 +122,7 @@ function sessionEvidenceDetails(
 		| "aboutBlankSessionMismatch"
 		| "openResultTabCorrection"
 		| "navigationSummary"
+		| "ownStepPageCheck"
 	>,
 ): Record<string, unknown> {
 	return {
@@ -146,6 +147,7 @@ function sessionEvidenceDetails(
 		aboutBlankSessionMismatch: options.aboutBlankSessionMismatch,
 		openResultTabCorrection: options.openResultTabCorrection,
 		navigationSummary: options.navigationSummary,
+		pageVerification: options.ownStepPageCheck,
 	};
 }
 

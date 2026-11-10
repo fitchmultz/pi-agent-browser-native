@@ -18,6 +18,7 @@ import {
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -2095,6 +2096,135 @@ nodeTest(
 			);
 		} finally {
 			await fixture.close();
+			await rm(dir, { recursive: true, force: true });
+			await rm(socketDir, { recursive: true, force: true });
+		}
+	},
+);
+
+nodeTest(
+	"real upstream agent-browser contract suite verifies the page after its own eval and reload",
+	{ skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON, timeout: 90_000 },
+	async (t) => {
+		await assertInstalledAgentBrowserVersion();
+		const dir = await mkdtemp(join(tmpdir(), "os-"));
+		const socketDir = await mkdtemp(
+			join(dirname(getAgentBrowserSocketDir() ?? join(tmpdir(), "piab")), "os-"),
+		);
+		const fixture = await startAgentBrowserContractFixtureServer();
+		// Stopping this server while the browser holds its page makes the next reload fail.
+		const transient = createServer((_request, response) => {
+			response.setHeader("content-type", "text/html; charset=utf-8");
+			response.end("<!doctype html><title>Transient</title><h1>Transient</h1>");
+		});
+		await new Promise<void>((resolve) => {
+			transient.listen(0, "127.0.0.1", resolve);
+		});
+		const transientAddress = transient.address();
+		assert.ok(transientAddress !== null && typeof transientAddress === "object");
+		const stopTransient = async () => {
+			transient.closeAllConnections();
+			await new Promise<void>((resolve) => {
+				transient.close(() => {
+					resolve();
+				});
+			});
+		};
+		const contractUrl = `${fixture.baseUrl}/contract`;
+		const heading = ["get", "text", "h1"];
+		const unverified = /active page became unverified/;
+		try {
+			await withPatchedEnv(
+				{
+					...Object.fromEntries(
+						Object.keys(process.env)
+							.filter((name) => /^(?:PI_)?AGENT_BROWSER_/.test(name))
+							.map((name) => [name, undefined]),
+					),
+					HOME: dir,
+					USERPROFILE: dir,
+					PI_CODING_AGENT_DIR: join(dir, "pi"),
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+					AGENT_BROWSER_SOCKET_DIR: socketDir,
+					PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0",
+				},
+				async () => {
+					const h = createExtensionHarness({ cwd: dir });
+					const call = (args: readonly string[], stdin?: string) =>
+						executeRegisteredTool(h.tool, h.ctx, { args: [...args], stdin });
+					try {
+						const opened = await executeRegisteredTool(h.tool, h.ctx, {
+							args: ["open", contractUrl],
+							sessionMode: "fresh",
+						});
+						assert.equal(opened.isError, false, resultText(opened));
+						await t.test("content follows an eval that stays on the page", async () => {
+							const evaluated = await call(["eval", "--stdin"], "document.title");
+							assert.equal(evaluated.isError, false, resultText(evaluated));
+							assert.equal(readRecord(evaluated.details).pageVerification, undefined);
+							const content = await call(heading);
+							assert.equal(content.isError, false, resultText(content));
+							assert.match(resultText(content), /Agent Browser Contract Fixture/);
+						});
+						await t.test("content follows a reload that reports its own URL", async () => {
+							const reloaded = await call(["reload"]);
+							assert.equal(reloaded.isError, false, resultText(reloaded));
+							assert.ok(resultText(reloaded).startsWith(contractUrl), resultText(reloaded));
+							assert.equal(readRecord(reloaded.details).sessionTabTargetUnknown, undefined);
+							const content = await call(heading);
+							assert.equal(content.isError, false, resultText(content));
+						});
+						await t.test("a --bail batch reads content after its own reload and eval", async () => {
+							const batch = await call(
+								["batch", "--bail"],
+								JSON.stringify([["reload"], ["eval", "document.title"], heading]),
+							);
+							assert.equal(batch.isError, false, resultText(batch));
+							assert.doesNotMatch(resultText(batch), /Page URL changed|Page not verified/);
+						});
+						await t.test("an eval that navigates reports the new URL first", async () => {
+							const evaluated = await call(["eval", "--stdin"], "location.href = '/next'; 1");
+							assert.equal(evaluated.isError, false, resultText(evaluated));
+							assert.ok(
+								resultText(evaluated).startsWith(
+									`Page URL changed during this call: ${contractUrl} -> ${fixture.baseUrl}/next. Later page commands act on the new page.`,
+								),
+								resultText(evaluated),
+							);
+							const content = await call(heading);
+							assert.equal(content.isError, false, resultText(content));
+							assert.match(resultText(content), /Next Contract Fixture/);
+						});
+						await t.test("a reload that ends on an error page stays unverified", async () => {
+							const live = await call(["open", `http://127.0.0.1:${transientAddress.port}/`]);
+							assert.equal(live.isError, false, resultText(live));
+							await stopTransient();
+							const reloaded = await call(["reload"]);
+							assert.ok(
+								resultText(reloaded).startsWith(
+									"Page not verified: the browser shows an error page (chrome-error://chromewebdata/) after reload.",
+								),
+								resultText(reloaded),
+							);
+							assert.equal(readRecord(reloaded.details).sessionTabTargetUnknown, true);
+							const refused = await call(["get", "text", "body"]);
+							assert.equal(refused.isError, true);
+							assert.match(resultText(refused), unverified);
+							const url = await call(["get", "url"]);
+							assert.equal(url.isError, false, resultText(url));
+							assert.match(resultText(url), /^chrome-error:\/\/chromewebdata\//);
+						});
+					} finally {
+						await call(["close"]);
+						await runExtensionEvent(h.handlers, "session_shutdown", { reason: "quit" }, h.ctx);
+					}
+				},
+			);
+		} finally {
+			await fixture.close();
+			if (transient.listening) {
+				await stopTransient();
+			}
 			await rm(dir, { recursive: true, force: true });
 			await rm(socketDir, { recursive: true, force: true });
 		}

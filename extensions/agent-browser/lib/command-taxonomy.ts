@@ -149,6 +149,16 @@ export function isUnverifiedPageTransitionCommand(
 	);
 }
 
+/**
+ * Native eval and reload return the URL they read after the step with the same call as get url
+ * (eval as `origin`, reload as `url`), so their own successful result is page-target evidence.
+ */
+export function isPageReportingTransitionCommand(
+	command: string | undefined,
+): command is "eval" | "reload" {
+	return command === "eval" || command === "reload";
+}
+
 export function isPageMutationCommand(command: string | undefined, subcommand?: string): boolean {
 	return (
 		hasCommandCapability(command, "triggersPostMutationSnapshot") ||

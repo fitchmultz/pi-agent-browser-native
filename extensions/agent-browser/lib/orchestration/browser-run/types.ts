@@ -157,6 +157,7 @@ export type BrowserRunOptions = Readonly<{
 export type {
 	SemanticActionVisibleRefResolution,
 	NavigationSummary,
+	OwnStepPageCheck,
 	OverlayBlockerCandidate,
 	OverlayBlockerDiagnostic,
 	ClickDispatchProbeTarget,
@@ -211,6 +212,7 @@ import type {
 	ManagedSessionOutcome,
 	NavigationSummary,
 	OverlayBlockerDiagnostic,
+	OwnStepPageCheck,
 	PreparedAgentBrowserArgs,
 	QaAttachedTarget,
 	RecordingDependencyWarning,
@@ -353,6 +355,7 @@ export type FinalResultInput = Readonly<{
 	noActivePageSnapshotFailure: boolean;
 	openResultTabCorrection?: OpenResultTabCorrection | undefined;
 	overlayBlockerDiagnostic?: OverlayBlockerDiagnostic | undefined;
+	ownStepPageCheck?: OwnStepPageCheck | undefined;
 	parseError?: string | undefined;
 	parseFailureOutput: ParseFailureOutput;
 	parseSucceeded: boolean;

@@ -389,6 +389,11 @@ export function getCommandRefSnapshotInvalidation(
 			"A window new or diff url command replaced or navigated the active page and invalidated prior refs. Run snapshot -i before using page-scoped refs.",
 		);
 	}
+	if (commandTokens[0] === "reload") {
+		return buildPageTransitionRefSnapshotInvalidation(
+			"A reload replaced the document and native cleared its refs. Run snapshot -i before using page-scoped refs.",
+		);
+	}
 	if (isWebMcpPageMutationCommand(commandTokens)) {
 		return buildPageTransitionRefSnapshotInvalidation(
 			"A WebMCP invoke, result, or cancel command can mutate, rerender, or navigate the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.",
