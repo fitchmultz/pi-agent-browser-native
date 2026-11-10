@@ -1,5 +1,8 @@
 import { parseArgvDescriptor } from "../../argv-descriptor.js";
-import { isPageReportingTransitionCommand } from "../../command-taxonomy.js";
+import {
+	isNavigationObservableCommandName,
+	isPageReportingTransitionCommand,
+} from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
 import {
 	commandMayChangePageTarget,
@@ -53,9 +56,18 @@ function ownStepCommand(step: readonly string[]): OwnStepPageCheck["command"] | 
 	return isPageReportingTransitionCommand(command) ? command : undefined;
 }
 
+/** A step that can leave the browser on another page: a transition, or a click that navigates. */
+function mayMovePage(step: readonly string[]): boolean {
+	const { command, subcommand } = parseArgvDescriptor(step).commandInfo;
+	return (
+		commandMayChangePageTarget(step, false) ||
+		isNavigationObservableCommandName(command, subcommand)
+	);
+}
+
 /**
  * Finds the eval or reload run whose result is the last page-target evidence of the call. A later
- * get url row or another transition takes over, so the caller's own evidence keeps its rule.
+ * get url row or another step that can move the page takes over, so that evidence keeps its rule.
  * The run starts at `index`; `command` is its last step, the one that left the observed page.
  */
 function findTrailingOwnStep(steps: readonly (readonly string[])[]): TrailingOwnStep | undefined {
@@ -63,7 +75,7 @@ function findTrailingOwnStep(steps: readonly (readonly string[])[]): TrailingOwn
 	for (const [stepIndex, step] of steps.entries()) {
 		if (ownStepCommand(step) !== undefined) {
 			index ??= stepIndex;
-		} else if (commandMayChangePageTarget(step, false) || commandVerifiesPageTarget(step)) {
+		} else if (mayMovePage(step) || commandVerifiesPageTarget(step)) {
 			index = undefined;
 		}
 	}
@@ -86,7 +98,7 @@ function urlBeforeOwnStep(draft: CheckPageAfterOwnStepInput, index: number): str
 		return reported.url;
 	}
 	const earlierSteps = draft.dispatchedCommands.slice(0, index);
-	return earlierSteps.some((step) => commandMayChangePageTarget(step, false))
+	return earlierSteps.some(mayMovePage)
 		? undefined
 		: draft.input.prepared.priorSessionTabTarget?.url;
 }

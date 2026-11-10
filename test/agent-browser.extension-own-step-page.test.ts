@@ -28,8 +28,9 @@ const OTHER_URL = "https://example.test/b";
 const ERROR_URL = "chrome-error://chromewebdata/";
 const UNVERIFIED = /active page became unverified/;
 
-/** What the next eval or reload does to the fake page, and whether get url still answers after eval. */
+/** What the next click, eval or reload does to the fake page, and whether get url still answers after eval. */
 interface FakePageScenario {
+	readonly clickUrl?: string;
 	readonly evalUrl?: string;
 	readonly getUrlFailsAfterEval?: boolean;
 	readonly reloadUrl?: string;
@@ -68,6 +69,7 @@ function run([command, sub, ...rest]) {
   if (command === "open") { state.url = sub; return { data: { title: "Fixture", url: state.url } }; }
   if (command === "reload") { state.url = scenario.reloadUrl ?? state.url; return { data: { url: state.url } }; }
   if (command === "back") return { data: { url: state.url } };
+  if (command === "click") { state.url = scenario.clickUrl ?? state.url; return { data: { clicked: sub } }; }
   if (command === "eval") { state.url = scenario.evalUrl ?? state.url; state.evaluated = true; return { data: { result: "done", origin: state.url } }; }
   if (command === "get" && sub === "url") return scenario.getUrlFailsAfterEval && state.evaluated ? { error: "CDP error: target closed" } : { data: { url: state.url } };
   if (command === "get" && sub === "title") return { data: { title: "Fixture" } };
@@ -361,6 +363,41 @@ nodeTest(
 						status: "error-page",
 						url: ERROR_URL,
 					});
+				});
+			});
+		}
+	},
+);
+
+nodeTest(
+	"agentBrowserExtension leaves a page that a click in the same batch may have reached to the click",
+	async (t) => {
+		// A click can navigate too, so the page seen after the batch is not evidence about the eval.
+		for (const mixed of [
+			{
+				name: "click after eval",
+				scenario: { clickUrl: ERROR_URL },
+				steps: [
+					["eval", "document.title"],
+					["click", "#go"],
+				],
+			},
+			{
+				name: "click before eval",
+				scenario: { clickUrl: OTHER_URL },
+				steps: [
+					["click", "#go"],
+					["eval", "document.title"],
+				],
+			},
+		] as const) {
+			await t.test(mixed.name, async () => {
+				await withOwnStepFixture(async ({ call, setScenario }) => {
+					await setScenario(mixed.scenario);
+					const batch = await call(["batch", "--bail"], JSON.stringify(mixed.steps));
+					assert.equal(batch.isError, false, batch.text);
+					assert.equal(batch.details.pageVerification, undefined, batch.text);
+					assert.doesNotMatch(batch.text, /after eval|Page URL changed during this call/);
 				});
 			});
 		}
