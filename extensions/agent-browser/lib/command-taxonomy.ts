@@ -91,10 +91,6 @@ export function isRecordPageTransitionCommand(tokens: readonly string[]): boolea
 	);
 }
 
-export function isWebMcpPageMutationCommand(tokens: readonly string[]): boolean {
-	return isWebMcpPageMutation(tokens[0], tokens[1]);
-}
-
 export function isWindowOrDiffPageTransitionCommand(
 	command: string | undefined,
 	subcommand?: string,
@@ -104,12 +100,37 @@ export function isWindowOrDiffPageTransitionCommand(
 	);
 }
 
+/** A saved-flow run can fall back to replaying its recorded commands, which navigates the session's page. */
+function isFlowRunCommand(command: string | undefined, subcommand?: string): boolean {
+	return command === "flow" && subcommand === "run";
+}
+
+/** A command whose run retires every earlier ref: later rows of its batch and the session's saved snapshot. */
+export type RefRetiringTransition = "flow-run" | "record" | "reload" | "webmcp" | "window-or-diff";
+
+export function getRefRetiringTransition(
+	tokens: readonly string[],
+): RefRetiringTransition | undefined {
+	const [command, subcommand] = tokens;
+	if (isRecordPageTransitionCommand(tokens)) {
+		return "record";
+	}
+	if (isWindowOrDiffPageTransitionCommand(command, subcommand)) {
+		return "window-or-diff";
+	}
+	if (command === "reload") {
+		return "reload";
+	}
+	if (isWebMcpPageMutation(command, subcommand)) {
+		return "webmcp";
+	}
+	return isFlowRunCommand(command, subcommand) ? "flow-run" : undefined;
+}
+
 export function isRefInvalidatingBatchCommand(step: readonly string[]): boolean {
 	return (
 		hasCommandCapability(step[0], "invalidatesBatchRefs") ||
-		isRecordPageTransitionCommand(step) ||
-		isWebMcpPageMutationCommand(step) ||
-		isWindowOrDiffPageTransitionCommand(step[0], step[1])
+		getRefRetiringTransition(step) !== undefined
 	);
 }
 
@@ -145,7 +166,8 @@ export function isUnverifiedPageTransitionCommand(
 		(command === "state" && subcommand === "load") ||
 		(command === "tab" && subcommand !== undefined && !["list", "new"].includes(subcommand)) ||
 		isWindowOrDiffPageTransitionCommand(command, subcommand) ||
-		isWebMcpPageMutation(command, subcommand)
+		isWebMcpPageMutation(command, subcommand) ||
+		isFlowRunCommand(command, subcommand)
 	);
 }
 

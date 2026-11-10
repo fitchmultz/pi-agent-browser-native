@@ -50,13 +50,16 @@ import {
 	createToolBranchEntry,
 	DOWNLOAD_FIXTURE_CONTENT,
 	executeRegisteredTool,
-	nativeWaitDownloadMovesFile,
 	readFileIfPresent,
 	runExtensionEvent,
 	startAgentBrowserContractFixtureServer,
 	withPatchedEnv,
 	type FixtureServer,
 } from "./helpers/agent-browser-harness.js";
+import {
+	nativeAppliesLaunchSettingsPerCommand,
+	nativeWaitDownloadMovesFile,
+} from "./helpers/native-version.js";
 import { waitForTestPidExit } from "./helpers/extension-validation-fixtures.js";
 
 function resultText(value: unknown): string {
@@ -2571,6 +2574,110 @@ nodeTest(
 					}
 				},
 			);
+		}
+	},
+);
+
+nodeTest(
+	"real upstream agent-browser contract suite matches running-session launch settings",
+	{
+		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
+		timeout: 90_000,
+	},
+	async (t) => {
+		const installedVersion = await assertInstalledAgentBrowserVersion();
+		const tempDir = await mkdtemp(join(tmpdir(), "rl-"));
+		const home = join(tempDir, "h");
+		const socketDir = createShortPrivateSocketDir(tempDir);
+		const profile = join(tempDir, "p");
+		const fixture = await startAgentBrowserContractFixtureServer();
+		const session = ["--session", "relaunch-contract"];
+		const launch = [...session, "--profile", profile];
+		try {
+			await Promise.all(
+				[home, socketDir].map((path) => mkdir(path, { mode: 0o700, recursive: true })),
+			);
+			await withPatchedEnv(
+				{
+					HOME: home,
+					USERPROFILE: home,
+					AGENT_BROWSER_ARGS: undefined,
+					AGENT_BROWSER_CONFIG: undefined,
+					AGENT_BROWSER_SOCKET_DIR: socketDir,
+					PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+				},
+				async () => {
+					const harness = createExtensionHarness({ cwd: tempDir });
+					const call = (args: readonly string[]) =>
+						executeRegisteredTool(harness.tool, harness.ctx, { args: [...args] });
+					const browserEndpoint = async () => {
+						const result = await call([...session, "get", "cdp-url"]);
+						assert.equal(result.isError, false, resultText(result));
+						return readString(readRecord(readRecord(result.details).data).cdpUrl);
+					};
+					const url = `${fixture.baseUrl}/contract`;
+					try {
+						// The wrapper resends its own startup arguments with the caller's, so an exact repeat is no change.
+						// The last launch has no caller `--args`, so the relaunch case below changes one setting only.
+						for (const [label, flags] of [
+							["--profile and --args", [...launch, "--args", "--disable-gpu"]],
+							["--profile", launch],
+						] as const) {
+							await t.test(`repeating ${label} keeps the running browser`, async () => {
+								await call([...session, "close"]);
+								const opened = await call([...flags, "open", url]);
+								assert.equal(opened.isError, false, resultText(opened));
+								const endpoint = await browserEndpoint();
+								const result = await call([...flags, "get", "url"]);
+								assert.equal(result.isError, false, resultText(result));
+								assert.equal(readRecord(readRecord(result.details).data).url, url);
+								assert.doesNotMatch(resultText(result), /relaunched/);
+								assert.equal(await browserEndpoint(), endpoint);
+							});
+						}
+						await t.test(
+							"a changed launch setting reports the native relaunch",
+							// Supported 0.35.0–0.41.2 natives never report a relaunch.
+							{ skip: !nativeAppliesLaunchSettingsPerCommand(installedVersion) },
+							async () => {
+								const endpoint = await browserEndpoint();
+								const snapshot = await call([...session, "snapshot", "-i"]);
+								assert.equal(snapshot.isError, false, resultText(snapshot));
+								const result = await call([
+									...session,
+									"--user-agent",
+									"relaunch-contract/1",
+									"get",
+									"url",
+								]);
+								const details = readRecord(result.details);
+								assert.equal(readRecord(details.data).url, "about:blank");
+								assert.match(
+									resultText(result),
+									/upstream agent-browser relaunched this session's browser because launch settings changed \(user-agent\)/,
+								);
+								assert.deepEqual(
+									readArray(details.nextActions)
+										.map(readRecord)
+										.filter((action) => action.id === "reopen-page-after-browser-relaunch")
+										.map((action) => readRecord(action.params).args),
+									[[...session, "open", url]],
+								);
+								assert.notEqual(await browserEndpoint(), endpoint);
+								const stale = await call([...session, "click", "@e1"]);
+								assert.equal(stale.isError, true, resultText(stale));
+								assert.equal(readRecord(stale.details).agentBrowserStarted, undefined);
+							},
+						);
+					} finally {
+						await call([...session, "close"]);
+					}
+				},
+			);
+		} finally {
+			await fixture.close();
+			await rm(socketDir, { recursive: true, force: true });
+			await rm(tempDir, { recursive: true, force: true });
 		}
 	},
 );

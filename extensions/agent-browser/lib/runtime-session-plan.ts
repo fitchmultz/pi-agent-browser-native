@@ -143,7 +143,7 @@ function implicitSessionSelection(
 			sessionName: extractExplicitSessionName(args),
 			recoveryHint: freshSessionRecoveryHint(args, launchFlagsRecoveryReason()),
 			validationError: [
-				`The current extension-managed agent-browser session is already running, so launch-scoped flags ${command.startupScopedFlags.join(", ")} would be ignored by upstream agent-browser.`,
+				`The current extension-managed agent-browser session is already running, so launch-scoped flags ${command.startupScopedFlags.join(", ")} would replace or be ignored by upstream agent-browser.`,
 				'Retry this call with `sessionMode: "fresh"` to force a fresh upstream launch, or pass an explicit `--session ...` if you want to name the new session yourself.',
 			].join(" "),
 		};

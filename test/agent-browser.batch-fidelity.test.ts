@@ -28,7 +28,19 @@ import {
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	GLOBAL_VALUE_FLAGS,
 	VALUE_FLAGS,
+	beforeEndOfOptions,
+	extractExplicitSessionName,
+	extractRequestedRestoreKey,
+	getAutoConnectFlagValue,
+	getBooleanFlagValue,
+	isUpstreamGlobalFlagToken,
+	stripUpstreamGlobalFlags,
 } from "../extensions/agent-browser/lib/argv-grammar.js";
+import { parseArgvDescriptor } from "../extensions/agent-browser/lib/argv-descriptor.js";
+import {
+	isPlainTextInspectionArgs,
+	validateToolArgs,
+} from "../extensions/agent-browser/lib/runtime.js";
 import { TARGET_AGENT_BROWSER_VERSION } from "../scripts/agent-browser-target.mjs";
 import { BROWSER_TRANSITION_ENTRY } from "../extensions/agent-browser/lib/browser-transcript.js";
 import {
@@ -47,7 +59,6 @@ import {
 	createShortPrivateSocketDir,
 	createToolBranchEntry,
 	executeRegisteredTool,
-	nativeWaitDownloadMovesFile,
 	readFileIfPresent,
 	readInvocationLog,
 	runExtensionEvent,
@@ -55,6 +66,10 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
+import {
+	nativeRejectsBatchItemGlobalFlags,
+	nativeWaitDownloadMovesFile,
+} from "./helpers/native-version.js";
 
 nodeTest("global argv flags match the audited upstream grammar baseline", async () => {
 	const grammar = readRecord(
@@ -80,6 +95,68 @@ nodeTest("global argv flags match the audited upstream grammar baseline", async 
 			.map(readString)
 			.filter((flag) => !VALUE_FLAGS.has(flag)),
 		[],
+	);
+});
+
+// Mirrors upstream flags.rs test_end_of_options_stops_global_and_config_parsing (0.42.0).
+nodeTest("end-of-options marker keeps later tokens literal like upstream", () => {
+	const literal = [
+		"fill",
+		"#field",
+		"--",
+		"--config",
+		"/missing",
+		"--json",
+		"--session",
+		"literal",
+	];
+	assert.deepEqual(stripUpstreamGlobalFlags(literal), literal);
+	assert.equal(extractExplicitSessionName(literal), undefined);
+	assert.equal(getBooleanFlagValue(literal, "--json"), undefined);
+	assert.equal(extractRequestedRestoreKey(["fill", "#f", "--", "--restore", "key"], "s"), null);
+	assert.equal(validateToolArgs(["fill", "#field", "--", "--session=x", "--profile"]), undefined);
+	assert.deepEqual(parseArgvDescriptor(literal).commandInfo, {
+		command: "fill",
+		subcommand: "#field",
+	});
+	// Globals before the marker still apply and are removed.
+	assert.deepEqual(
+		stripUpstreamGlobalFlags(["--session", "s", "fill", "#f", "--json", "--", "--json"]),
+		["fill", "#f", "--", "--json"],
+	);
+	// A marker consumed as a global flag's value is not the marker.
+	assert.deepEqual(beforeEndOfOptions(["--session", "--", "fill", "#f", "--", "--help"]), [
+		"--session",
+		"--",
+		"fill",
+		"#f",
+	]);
+	// Help and version requests count only before the marker.
+	assert.equal(isPlainTextInspectionArgs(["fill", "#field", "--help", "--", "--version"]), true);
+	assert.equal(isPlainTextInspectionArgs(["fill", "#field", "--", "--help", "-V"]), false);
+	// A leading marker is the command text itself, as upstream's clean_args returns it.
+	assert.equal(
+		parseArgvDescriptor(["--", "open", "https://example.com"]).commandInfo.command,
+		"--",
+	);
+});
+
+nodeTest("auto-connect pair and global-flag tokens match upstream", () => {
+	assert.equal(getAutoConnectFlagValue(["open", "https://example.com"]), undefined);
+	assert.equal(getAutoConnectFlagValue(["--auto-connect", "open"]), true);
+	assert.equal(getAutoConnectFlagValue(["--auto-connect", "false", "open"]), false);
+	assert.equal(getAutoConnectFlagValue(["--no-auto-connect", "open"]), false);
+	assert.equal(getAutoConnectFlagValue(["--no-auto-connect", "false", "open"]), undefined);
+	assert.equal(getAutoConnectFlagValue(["--auto-connect", "--no-auto-connect", "false"]), true);
+	assert.equal(getAutoConnectFlagValue(["--args", "--auto-connect", "open"]), undefined);
+	assert.equal(getAutoConnectFlagValue(["fill", "#f", "--", "--auto-connect"]), undefined);
+	const globals = ["--json", "--session", "--capture", "--relaunch", "--restore", "--help", "-V"];
+	assert.deepEqual(globals.filter(isUpstreamGlobalFlagToken), globals);
+	assert.deepEqual(
+		["--", "--full", "--annotate=1", "shot.png", "--restore=key-x"].filter(
+			isUpstreamGlobalFlagToken,
+		),
+		["--restore=key-x"],
 	);
 });
 
@@ -665,9 +742,10 @@ nodeTest(
 					AGENT_BROWSER_AUTO_CONNECT: undefined,
 				},
 				async () => {
-					const nativeSavesDownload = nativeWaitDownloadMovesFile(
-						(await runAgentBrowserProcess({ args: ["--version"], cwd: dir })).stdout,
-					);
+					const nativeVersion = (await runAgentBrowserProcess({ args: ["--version"], cwd: dir }))
+						.stdout;
+					const nativeSavesDownload = nativeWaitDownloadMovesFile(nativeVersion);
+					const nativeRejectsRowGlobals = nativeRejectsBatchItemGlobalFlags(nativeVersion);
 					const session = `av-${randomUUID().slice(0, 8)}`;
 					const prefix = ["--session", session];
 					const h = createExtensionHarness({ cwd: dir, sessionId: randomUUID() });
@@ -707,6 +785,28 @@ nodeTest(
 							],
 						] as const) {
 							for (const raw of [false, true]) {
+								// Native 0.42.0+ rejects a global flag in a batch screenshot row. The wrapper
+								// leaves that operand untouched in both input modes so native's rejection shows.
+								if (step[0] === "screenshot" && nativeRejectsRowGlobals) {
+									await t.test(
+										`screenshot ${raw ? "raw" : "stdin"} batch row leaves a global flag to native rejection`,
+										async () => {
+											await rm(join(dir, path), { force: true });
+											const result = await call(
+												raw ? ["batch", step.join(" ")] : ["batch"],
+												raw ? undefined : JSON.stringify([step]),
+											);
+											assert.equal(result.isError, true, getMessageText(result.content));
+											assert.match(
+												getMessageText(result.content),
+												/Pass global flags on the outer batch invocation/,
+											);
+											await assert.rejects(stat(join(dir, path)), { code: "ENOENT" });
+											await assert.rejects(stat(join(dir, "ignored")), { code: "ENOENT" });
+										},
+									);
+									continue;
+								}
 								await t.test(
 									`${step[0]} ${raw ? "raw" : "stdin"} batch keeps its literal destination`,
 									async () => {
@@ -887,6 +987,21 @@ nodeTest(
 												.map((artifact) => artifact.path),
 										}),
 									);
+									if (command === "screenshot" && nativeRejectsRowGlobals) {
+										await retryTest.test(
+											"explicitly rerunning the original row surfaces native's global-flag rejection",
+											async () => {
+												assert.equal(retried.isError, true, getMessageText(retried.content));
+												assert.match(
+													getMessageText(retried.content),
+													/Pass global flags on the outer batch invocation/,
+												);
+												await assert.rejects(stat(path), { code: "ENOENT" });
+												await assert.rejects(stat(join(dir, ignored)), { code: "ENOENT" });
+											},
+										);
+										return;
+									}
 									await retryTest.test(
 										"explicitly rerunning the original row preserves its native destination",
 										async () => {

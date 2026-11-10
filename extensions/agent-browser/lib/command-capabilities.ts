@@ -32,6 +32,7 @@ const ADDITIONAL_COMMAND_TOKENS = [
 	"errors",
 	"eval",
 	"find",
+	"flow",
 	"frame",
 	"get",
 	"highlight",

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	extractExplicitSessionName,
+	getAutoConnectFlagValue,
 	getBooleanFlagValue,
 	isUpstreamEnvFlagEnabled,
 	scanUpstreamGlobalFlagOccurrences,
@@ -137,7 +138,7 @@ class NativeSessionCall {
 
 	private attachment(): boolean {
 		const autoConnect =
-			getBooleanFlagValue([...this.input.toolArgs], "--auto-connect") ??
+			getAutoConnectFlagValue([...this.input.toolArgs]) ??
 			(isUpstreamEnvFlagEnabled(this.env.AGENT_BROWSER_AUTO_CONNECT) ||
 				this.identity.autoConnect === true);
 		return (

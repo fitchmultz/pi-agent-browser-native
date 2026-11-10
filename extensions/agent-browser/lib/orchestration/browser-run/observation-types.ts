@@ -221,8 +221,16 @@ export interface StaleRefPreflight {
 	readonly snapshotInvalidation?: SessionRefSnapshotInvalidation;
 }
 
+/** Upstream-reported relaunch of the session's browser; `settings` lists the changed launch options. */
+export interface NativeBrowserRelaunch {
+	readonly forced: boolean;
+	readonly settings: readonly string[];
+}
+
 export interface AboutBlankSessionMismatch {
 	readonly activeUrl: "about:blank";
+	/** Present when upstream relaunched the browser, so the blank page is not tab drift. */
+	readonly nativeBrowserRelaunch?: NativeBrowserRelaunch | undefined;
 	readonly recoveryApplied: boolean;
 	readonly recoveryHint: string;
 	readonly targetTitle?: string | undefined;

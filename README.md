@@ -110,7 +110,7 @@ Recent agent-browser releases support finite `mcp call` invocations, but this ex
 
 For remote browsers, use a URL that the browser host can reach. `localhost` refers to the browser host.
 
-Preparatory tab/page checks do not launch a stopped caller-owned explicit `--session` ahead of its launch-flagged command, including after resume. After dispatch, the old browser's tab identity and refs are retired. A successful command observes the replacement page before follow-ups; if it cannot be observed, the target stays unknown. Put launch flags on the launch command; an already-running browser may ignore them.
+Preparatory tab/page checks do not launch a stopped caller-owned explicit `--session` ahead of its launch-flagged command, including after resume. After dispatch, the old browser's tab identity and refs are retired. A successful command observes the replacement page before follow-ups; if it cannot be observed, the target stays unknown. Put launch flags on the launch command. On a running browser, agent-browser 0.42.0 relaunches it when a launch setting changes, and older supported versions ignore the flag or restart the browser without reporting it; after a relaunch the result warns that the prior page is gone and offers `reopen-page-after-browser-relaunch`.
 
 After its own `eval` or `reload`, the tool checks the page itself. A result that starts with `Page URL changed during this call:` names the new page; one that starts with `Page not verified:` means page-content commands are refused until `get url` or a navigation.
 

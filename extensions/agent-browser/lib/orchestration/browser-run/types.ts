@@ -185,6 +185,7 @@ export type {
 	ScreenshotArtifactRequest,
 	StaleRefPreflight,
 	AboutBlankSessionMismatch,
+	NativeBrowserRelaunch,
 	ElectronHandoffSummary,
 	ElectronManagedSessionTarget,
 	ElectronSessionMismatchReason,

@@ -1811,6 +1811,98 @@ if (args.includes("batch")) {
 );
 
 nodeTest(
+	"agentBrowserExtension retires saved refs after a saved-flow run, direct or inside a batch",
+	{ concurrency: false },
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-flow-run-refs-"));
+		const logPath = join(tempDir, "invocations.log");
+		const basePath = process.env.PATH ?? "";
+		// The saved flow ends on the URL it started from, so URL comparison alone cannot retire the refs.
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
+const url = "https://flow.example/cart";
+const snapshot = { origin: url, title: "Cart", url, refs: { e1: { role: "button", name: "Pay" } }, snapshot: '- button "Pay" [ref=e1]' };
+if (args.includes("batch")) {
+  process.stdout.write(JSON.stringify({ success: true, data: [
+    { command: ["snapshot", "-i"], success: true, result: snapshot },
+    { command: ["flow", "run", "checkout"], success: true, result: { name: "checkout", tier: "replay" } },
+    { command: ["get", "url"], success: true, result: { result: url, url } }
+  ] }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({ success: true, data: snapshot }));
+} else if (args.includes("flow")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { name: "checkout", tier: "replay" } }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Cart", url } }));
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: url, url } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { result: "Cart", title: "Cart" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: true } }));
+}`,
+		);
+
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const call = (args: readonly string[], stdin?: string) =>
+					executeRegisteredTool(harness.tool, harness.ctx, { args: [...args], stdin });
+				const assertStaleClickWithoutSpawn = async (label: string) => {
+					const spawned = (await readInvocationLog(logPath)).length;
+					const click = await call(["click", "@e1"]);
+					assert.equal(click.isError, true, `${label}: ${JSON.stringify(click)}`);
+					assert.equal(readRecord(click.details).failureCategory, "stale-ref", label);
+					assert.match(readString(readRecord(click.content[0]).text), /saved-flow run/, label);
+					assert.equal((await readInvocationLog(logPath)).length, spawned, label);
+				};
+
+				await t.test("direct flow run", async () => {
+					assert.equal((await call(["open", "https://flow.example/cart"])).isError, false);
+					const snapshot = await call(["snapshot", "-i"]);
+					assert.deepEqual(readRecord(readRecord(snapshot.details).refSnapshot).refIds, ["e1"]);
+					const direct = await call(["flow", "run", "checkout"]);
+					assert.equal(direct.isError, false, JSON.stringify(direct));
+					assert.equal(
+						readRecord(readRecord(direct.details).refSnapshotInvalidation).reason,
+						"page-transition",
+					);
+					assert.equal((await call(["get", "url"])).isError, false);
+					await assertStaleClickWithoutSpawn("direct flow run");
+				});
+
+				await t.test("batch snapshot, flow run, get url on the same URL", async () => {
+					assert.equal((await call(["open", "https://flow.example/cart"])).isError, false);
+					const batch = await call(
+						["batch", "--bail"],
+						JSON.stringify([
+							["snapshot", "-i"],
+							["flow", "run", "checkout"],
+							["get", "url"],
+						]),
+					);
+					const batchDetails = readRecord(batch.details);
+					assert.equal(batch.isError, false, JSON.stringify(batch));
+					assert.equal(readRecord(batchDetails.sessionTabTarget).url, "https://flow.example/cart");
+					assert.equal(batchDetails.refSnapshot, undefined);
+					assert.equal(readRecord(batchDetails.refSnapshotInvalidation).reason, "page-transition");
+					await assertStaleClickWithoutSpawn("batch flow run");
+
+					assert.equal((await call(["snapshot", "-i"])).isError, false);
+					assert.equal((await call(["click", "@e1"])).isError, false);
+				});
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
 	"agentBrowserExtension conservatively invalidates direct and batched refs on recording starts and URL restarts",
 	{ concurrency: false },
 	async () => {

@@ -7,8 +7,11 @@ import type { CompiledAgentBrowserSemanticAction } from "../../input-modes/types
 import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import {
 	appendUniqueAgentBrowserNextActions,
+	buildNextToolAction,
 	isStandaloneSnapshotNextAction,
+	withOptionalSessionArgs,
 } from "../../results/next-actions.js";
+import { AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS } from "../../results/recovery-actions.js";
 import {
 	buildConnectedSessionNextActions,
 	buildNoActivePageNextActions,
@@ -54,6 +57,21 @@ function tabRecovery(
 		| "priorSessionTabTarget"
 	>,
 ): AgentBrowserNextAction[] {
+	if (options.aboutBlankSessionMismatch?.nativeBrowserRelaunch) {
+		return [
+			buildNextToolAction({
+				args: withOptionalSessionArgs(options.executionPlan.sessionName, [
+					"open",
+					options.aboutBlankSessionMismatch.targetUrl,
+				]),
+				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.reopenPageAfterBrowserRelaunch,
+				reason:
+					"Upstream relaunched this session's browser, so the prior page is gone; open it again.",
+				safety:
+					"Navigates the relaunched browser. In-page state from before the relaunch is not restored.",
+			}),
+		];
+	}
 	if (options.aboutBlankSessionMismatch) {
 		return [
 			...buildSessionTabRecoveryNextActions({

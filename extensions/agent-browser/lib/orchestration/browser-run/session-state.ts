@@ -14,6 +14,8 @@ export {
 	mergeNavigationSummaryIntoData,
 	buildAboutBlankRecoveryHint,
 	buildAboutBlankWarning,
+	buildNativeBrowserRelaunchRecoveryHint,
+	extractNativeBrowserRelaunch,
 } from "./session-state-observations.js";
 export {
 	getStaleRefArgs,
