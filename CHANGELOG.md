@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.19 - 2026-11-10
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Move the agent-browser baseline to 0.42.0 (#388) ([13a277e](https://github.com/fitchmultz/pi-agent-browser-native/commit/13a277ea5b44b7c3f5e4a8d795ce8f3b6b467c63))
+
+### What's Changed
+
+- Move the agent-browser baseline to 0.42.0 by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/388
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.18...v0.9.19
+
 ## 0.9.18 - 2026-11-08
 
 <!-- npm-release:unreleased:start -->
