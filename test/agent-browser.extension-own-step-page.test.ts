@@ -331,6 +331,43 @@ nodeTest(
 );
 
 nodeTest(
+	"agentBrowserExtension names the last own step when a batch runs eval and reload",
+	async (t) => {
+		// Only the last step reaches the error page, so the notice must name that step.
+		for (const mixed of [
+			{
+				last: "reload",
+				scenario: { reloadUrl: ERROR_URL },
+				steps: [["eval", "document.title"], ["reload"]],
+			},
+			{
+				last: "eval",
+				scenario: { evalUrl: ERROR_URL },
+				steps: [["reload"], ["eval", "location.reload()"]],
+			},
+		] as const) {
+			await t.test(`${mixed.last} last`, async () => {
+				await withOwnStepFixture(async ({ call, setScenario }) => {
+					await setScenario(mixed.scenario);
+					const batch = await call(["batch", "--bail"], JSON.stringify(mixed.steps));
+					assert.ok(
+						batch.text.startsWith(
+							`Page not verified: the browser shows an error page (${ERROR_URL}) after ${mixed.last}.`,
+						),
+						batch.text,
+					);
+					assert.deepEqual(batch.details.pageVerification, {
+						command: mixed.last,
+						status: "error-page",
+						url: ERROR_URL,
+					});
+				});
+			});
+		}
+	},
+);
+
+nodeTest(
 	"agentBrowserExtension leaves a batch with the agent's own get url row to that row",
 	async () => {
 		await withOwnStepFixture(async ({ call, setScenario }) => {

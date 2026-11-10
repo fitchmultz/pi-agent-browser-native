@@ -56,6 +56,7 @@ function ownStepCommand(step: readonly string[]): OwnStepPageCheck["command"] | 
 /**
  * Finds the eval or reload run whose result is the last page-target evidence of the call. A later
  * get url row or another transition takes over, so the caller's own evidence keeps its rule.
+ * The run starts at `index`; `command` is its last step, the one that left the observed page.
  */
 function findTrailingOwnStep(steps: readonly (readonly string[])[]): TrailingOwnStep | undefined {
 	let index: number | undefined;
@@ -69,8 +70,8 @@ function findTrailingOwnStep(steps: readonly (readonly string[])[]): TrailingOwn
 	if (index === undefined) {
 		return undefined;
 	}
-	const commands = steps.slice(index).map(ownStepCommand);
-	const command = commands[0];
+	const commands = steps.slice(index).flatMap((step) => ownStepCommand(step) ?? []);
+	const command = commands.at(-1);
 	return command === undefined
 		? undefined
 		: { command, index, needsLiveRead: commands.includes("eval") };
