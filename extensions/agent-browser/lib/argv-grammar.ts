@@ -41,6 +41,7 @@ export const GLOBAL_VALUE_FLAGS = [
 	"--args",
 	"--user-agent",
 	"--allowed-domains",
+	"--capture",
 	"--action-policy",
 	"--confirm-actions",
 	"--max-output",
@@ -92,6 +93,9 @@ const COMMAND_VALUE_FLAGS = [
 ] as const;
 
 const OPTIONAL_GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(["--restore"]);
+/** Upstream stops global-flag and help parsing at this marker; later tokens are literal command text. */
+export const END_OF_OPTIONS = "--";
+export const INSPECTION_FLAGS: ReadonlySet<string> = new Set(["--help", "-h", "--version", "-V"]);
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
 	...GLOBAL_VALUE_FLAGS,
 	...COMMAND_VALUE_FLAGS,
@@ -112,6 +116,7 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"--hide-scrollbars",
 	"--ignore-https-errors",
 	"--json",
+	"--no-auto-connect",
 	"--no-auto-dialog",
 	"--no-ca-cert",
 	"--no-pin-tab",
@@ -120,6 +125,7 @@ export const GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES: ReadonlySet<string> = ne
 	"--pin-tab",
 	"--quick",
 	"--fix",
+	"--relaunch",
 	"--quiet",
 	"-q",
 	"--verbose",
@@ -138,6 +144,9 @@ export function getBooleanFlagValue(args: readonly string[], flag: string): bool
 	let enabled: boolean | undefined;
 	const entries = args.entries();
 	for (const [index, token] of entries) {
+		if (token === END_OF_OPTIONS) {
+			break;
+		}
 		if (token === flag) {
 			enabled = args[index + 1] !== "false";
 			if (["true", "false"].includes(args[index + 1] ?? "")) {
@@ -163,12 +172,46 @@ export function isBooleanFlagEnabled(args: readonly string[], flag: string): boo
 	return getBooleanFlagValue(args, flag) ?? false;
 }
 
+function booleanFlagArgument(next: string | undefined): { enabled: boolean; width: 1 | 2 } {
+	return { enabled: next !== "false", width: next === "true" || next === "false" ? 2 : 1 };
+}
+
+/**
+ * Mirror upstream's auto-connect pair: `--auto-connect [true|false]` sets the mode and an enabled
+ * `--no-auto-connect` returns the session to a local launch; `--no-auto-connect false` changes nothing.
+ */
+export function getAutoConnectFlagValue(args: readonly string[]): boolean | undefined {
+	let autoConnect: boolean | undefined;
+	const entries = args.entries();
+	for (const [index, token] of entries) {
+		if (token === END_OF_OPTIONS) {
+			break;
+		}
+		if (token === "--auto-connect" || token === "--no-auto-connect") {
+			const { enabled, width } = booleanFlagArgument(args[index + 1]);
+			if (token === "--auto-connect") {
+				autoConnect = enabled;
+			} else if (enabled) {
+				autoConnect = false;
+			}
+			if (width === 2) {
+				entries.next();
+			}
+			continue;
+		}
+		if (globalFlagWidth(token, args[index + 1], false) === 2) {
+			entries.next();
+		}
+	}
+	return autoConnect;
+}
+
 /** Match upstream env_var_is_truthy exactly: lowercase only, without trimming or accepting "off". */
 export function isUpstreamEnvFlagEnabled(value: string | undefined): boolean {
 	return value !== undefined && !["", "0", "false", "no"].includes(value.toLowerCase());
 }
 
-/** Mirror upstream global parsing: full argv, no `--` sentinel, and only global value payloads are skipped. */
+/** Mirror upstream global parsing: full argv up to the end-of-options marker; only global value payloads are skipped. */
 export function scanUpstreamGlobalFlagOccurrences(
 	args: readonly string[],
 	targetFlag: string,
@@ -176,6 +219,9 @@ export function scanUpstreamGlobalFlagOccurrences(
 	const occurrences: UpstreamGlobalFlagOccurrence[] = [];
 	const entries = args.entries();
 	for (const [index, token] of entries) {
+		if (token === END_OF_OPTIONS) {
+			break;
+		}
 		if (token === targetFlag) {
 			occurrences.push({ index, value: args[index + 1] });
 			entries.next();
@@ -245,6 +291,9 @@ export function extractRequestedRestoreKey(
 	let seenCommand = false;
 	const entries = args.entries();
 	for (const [index, token] of entries) {
+		if (token === END_OF_OPTIONS) {
+			break;
+		}
 		const restore = getRestoreFlag(token, args[index + 1], seenCommand, sessionName);
 		if (restore !== undefined) {
 			restoreKey = restore.key;
@@ -348,6 +397,13 @@ export function projectUpstreamGlobalFlags(args: readonly string[]): IndexedArgv
 	let seenCommand = false;
 	const entries = args.entries();
 	for (const [index, token] of entries) {
+		if (token === END_OF_OPTIONS) {
+			// Upstream keeps the marker and every later token as literal command text.
+			tokens.push(
+				...args.slice(index).map((literal, offset) => ({ index: index + offset, token: literal })),
+			);
+			break;
+		}
 		const width = globalFlagWidth(token, args[index + 1], seenCommand);
 		if (width > 0) {
 			if (width === 2) {
@@ -363,9 +419,34 @@ export function projectUpstreamGlobalFlags(args: readonly string[]): IndexedArgv
 	return tokens;
 }
 
-/** Mirror upstream clean_args: remove global flags wherever they appear before command parsing. */
+/** Mirror upstream clean_args: remove global flags wherever they appear before the end-of-options marker. */
 export function stripUpstreamGlobalFlags(args: readonly string[]): string[] {
 	return projectUpstreamGlobalFlags(args).map(({ token }) => token);
+}
+
+/**
+ * Tokens upstream still reads as options: everything before its end-of-options marker.
+ * A `--` consumed as a global flag's value is not the marker, so this follows upstream's own scan.
+ */
+export function beforeEndOfOptions(args: readonly string[]): readonly string[] {
+	const entries = args.entries();
+	for (const [index, token] of entries) {
+		if (token === END_OF_OPTIONS) {
+			return args.slice(0, index);
+		}
+		if (globalFlagWidth(token, args[index + 1], false) === 2) {
+			entries.next();
+		}
+	}
+	return args;
+}
+
+/** Mirror upstream is_global_flag: a batch item token that belongs on the outer invocation. */
+export function isUpstreamGlobalFlagToken(token: string): boolean {
+	return (
+		INSPECTION_FLAGS.has(token) ||
+		(token !== END_OF_OPTIONS && globalFlagWidth(token, undefined, false) > 0)
+	);
 }
 
 export function stripSessionlessShapeGlobalFlags(commandTokens: readonly string[]): string[] {

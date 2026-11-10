@@ -1,5 +1,9 @@
 import { findCommandStartIndex } from "./argv-descriptor.js";
-import { isBooleanFlagEnabled } from "./argv-grammar.js";
+import {
+	beforeEndOfOptions,
+	getAutoConnectFlagValue,
+	isBooleanFlagEnabled,
+} from "./argv-grammar.js";
 
 export interface LaunchScopedFlagDefinition {
 	readonly flag: string;
@@ -11,6 +15,10 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		flag: "--auto-connect",
 		reason:
 			"attaches to an already-running browser at launch time instead of reusing an existing named session",
+	},
+	{
+		flag: "--no-auto-connect",
+		reason: "returns a session attached with --auto-connect to a local browser launch",
 	},
 	{
 		flag: "--allowed-domains",
@@ -26,12 +34,33 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "selects the browser/CDP endpoint used when an upstream session is launched",
 	},
 	{
+		flag: "--cdp-headers",
+		reason: "selects the headers used for CDP discovery and handshake when the browser is attached",
+	},
+	{
 		flag: "--ca-cert",
 		reason: "selects isolated Chromium CA trust and may relaunch the browser",
 	},
 	{
 		flag: "--no-ca-cert",
 		reason: "clears retained isolated Chromium CA trust and may relaunch the browser",
+	},
+	{
+		flag: "--allow-file-access",
+		reason: "selects file:// access for the launched browser",
+	},
+	{
+		flag: "--capture",
+		reason:
+			"turns on session capture, which upstream starts by launching or relaunching the browser",
+	},
+	{
+		flag: "--color-scheme",
+		reason: "selects the color scheme the browser is launched with",
+	},
+	{
+		flag: "--download-path",
+		reason: "selects the download directory the browser is launched with",
 	},
 	{
 		flag: "--enable",
@@ -44,6 +73,18 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 	{
 		flag: "--executable-path",
 		reason: "selects the browser executable used for the upstream launch",
+	},
+	{
+		flag: "--extension",
+		reason: "loads browser extensions at launch",
+	},
+	{
+		flag: "--hide-scrollbars",
+		reason: "selects scrollbar visibility for the launched headless browser",
+	},
+	{
+		flag: "--ignore-https-errors",
+		reason: "selects certificate-error handling for the launched browser",
 	},
 	{
 		flag: "--webgpu",
@@ -82,12 +123,24 @@ export const LAUNCH_SCOPED_FLAG_DEFINITIONS = [
 		reason: "selects Chrome profile state for the upstream launch",
 	},
 	{
+		flag: "--proxy",
+		reason: "selects the proxy server and credentials for the launched browser",
+	},
+	{
+		flag: "--proxy-bypass",
+		reason: "selects the proxy bypass list for the launched browser",
+	},
+	{
 		flag: "--provider",
 		reason: "selects the upstream browser provider for the launch",
 	},
 	{
 		flag: "-p",
 		reason: "selects the upstream browser provider for the launch",
+	},
+	{
+		flag: "--relaunch",
+		reason: "relaunches the session's browser even when no setting changed",
 	},
 	{
 		flag: "--session-name",
@@ -204,7 +257,9 @@ export const MANAGED_RESTORE_INCOMPATIBLE_BOOLEAN_ENVS = [
 	"AGENT_BROWSER_WEBGPU",
 ] as const;
 
-export function hasLaunchScopedFlagToken(args: readonly string[], flag: string): boolean {
+export function hasLaunchScopedFlagToken(inputArgs: readonly string[], flag: string): boolean {
+	// Tokens after upstream's end-of-options marker are literal command text, never launch flags.
+	const args = beforeEndOfOptions(inputArgs);
 	if (flag === "--restore" && args.some((token) => token.startsWith("--restore="))) {
 		return true;
 	}
@@ -212,6 +267,12 @@ export function hasLaunchScopedFlagToken(args: readonly string[], flag: string):
 		return false;
 	}
 	if (flag === "--auto-connect") {
+		return getAutoConnectFlagValue(args) === true;
+	}
+	if (flag === "--no-auto-connect") {
+		return getAutoConnectFlagValue(args) === false;
+	}
+	if (flag === "--relaunch") {
 		return isBooleanFlagEnabled(args, flag);
 	}
 	if (flag !== "--state") {

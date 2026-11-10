@@ -13,6 +13,7 @@ export const AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS = {
 	connectedSessionListTabs: "list-connected-session-tabs",
 	genericTabDriftListTabs: "list-tabs-for-recovery",
 	noActivePageListTabs: "list-tabs-after-no-active-page",
+	reopenPageAfterBrowserRelaunch: "reopen-page-after-browser-relaunch",
 	selectIntendedTabAfterDrift: "select-intended-tab-after-drift",
 	snapshotAfterTabRecovery: "snapshot-after-tab-recovery",
 	tabDriftListTabs: "list-tabs-for-tab-drift-recovery",

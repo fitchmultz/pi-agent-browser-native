@@ -1,19 +1,22 @@
 import { parseArgvDescriptor } from "./argv-descriptor.js";
 import {
+	END_OF_OPTIONS,
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	GLOBAL_VALUE_FLAGS_ALLOWING_DASH_VALUE,
+	INSPECTION_FLAGS,
 	PREVALIDATED_VALUE_FLAGS,
+	beforeEndOfOptions,
 	stripUpstreamGlobalFlags,
 } from "./argv-grammar.js";
 import { isOpenNavigationCommand } from "./command-taxonomy.js";
 import type { InvalidValueFlagDetails } from "./runtime-contracts.js";
 import { TARGET_AGENT_BROWSER_VERSION } from "./upstream-version.js";
 
-const INSPECTION_FLAGS = new Set(["--help", "-h", "--version", "-V"]);
 const SHELL_OPERATOR_TOKENS = new Set(["&&", "||", "|", ";", ">", ">>", "<"]);
 
+/** Upstream reads help and version requests only before its end-of-options marker. */
 export function isPlainTextInspectionArgs(args: readonly string[]): boolean {
-	return args.some((token) => INSPECTION_FLAGS.has(token));
+	return beforeEndOfOptions(args).some((token) => INSPECTION_FLAGS.has(token));
 }
 
 function getSingleKeyCommandValidationError(args: readonly string[]): string | undefined {
@@ -139,6 +142,9 @@ export function getInvalidValueFlagDetails(
 ): InvalidValueFlagDetails | undefined {
 	const entries = args.entries();
 	for (const [index, token] of entries) {
+		if (token === END_OF_OPTIONS) {
+			break;
+		}
 		if (!token.startsWith("-")) {
 			continue;
 		}

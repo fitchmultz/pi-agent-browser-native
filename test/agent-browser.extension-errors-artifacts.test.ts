@@ -1058,19 +1058,14 @@ if (args.includes("session") && args.includes("info")) {
 						{ reason: "new" },
 						restoredHarness.ctx,
 					);
-					const restoredDaemonReuse = await executeRegisteredTool(
-						restoredHarness.tool,
-						restoredHarness.ctx,
-						{
-							args: [
-								"--namespace",
-								"TEAM",
-								"--proxy",
-								"http://127.0.0.1:8080",
-								"open",
-								"https://example.com",
-							],
-						},
+					// A proxy flag is launch-scoped and rejected earlier; the environment default reaches
+					// the daemon-policy comparison.
+					const restoredDaemonReuse = await withPatchedEnv(
+						{ AGENT_BROWSER_PROXY: "http://127.0.0.1:8080" },
+						() =>
+							executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, {
+								args: ["--namespace", "TEAM", "open", "https://example.com"],
+							}),
 					);
 					assert.ok(restoredDaemonReuse.details);
 					assert.equal(restoredDaemonReuse.isError, true);

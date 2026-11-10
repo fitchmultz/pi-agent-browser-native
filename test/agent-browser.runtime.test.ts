@@ -45,6 +45,7 @@ import {
 	createImplicitSessionName,
 	getImplicitSessionCloseTimeoutMs,
 	getImplicitSessionIdleTimeoutMs,
+	getStartupScopedFlags,
 	parseArgvDescriptor,
 	parseWaitCommandTokens,
 	redactInvocationArgs,
@@ -78,11 +79,19 @@ nodeTest(
 			options,
 		);
 		assert.match(duplicateNamespace.validationError ?? "", /Multiple --namespace flags/);
-		const afterSentinel = buildExecutionPlan(
+		// Upstream stops global parsing at `--`, so the second flag is literal fill text.
+		const afterEndOfOptions = buildExecutionPlan(
 			["--session", "piab-managed", "fill", "#field", "--", "--session", "caller-owned"],
 			options,
 		);
-		assert.match(afterSentinel.validationError ?? "", /Multiple --session flags/);
+		assert.equal(afterEndOfOptions.validationError, undefined);
+		assert.equal(afterEndOfOptions.sessionName, "piab-managed");
+		assert.deepEqual(afterEndOfOptions.startupScopedFlags, []);
+		assert.equal(
+			buildExecutionPlan(["fill", "#field", "--", "--profile", "--session"], options)
+				.validationError,
+			undefined,
+		);
 		const launchArgValue = buildExecutionPlan(
 			[
 				"--session",
@@ -2140,6 +2149,23 @@ nodeTest(
 				args: ["--auto-connect", "true", "open", "https://example.com"],
 				flags: ["--auto-connect"],
 			},
+			{ args: ["--no-auto-connect", "get", "url"], flags: ["--no-auto-connect"] },
+			{ args: ["--relaunch", "get", "url"], flags: ["--relaunch"] },
+			{ args: ["--capture", "flow", "get", "url"], flags: ["--capture"] },
+			{ args: ["--color-scheme", "dark", "get", "url"], flags: ["--color-scheme"] },
+			{ args: ["--download-path", "/tmp/dl", "get", "url"], flags: ["--download-path"] },
+			{ args: ["--hide-scrollbars", "false", "screenshot"], flags: ["--hide-scrollbars"] },
+			{ args: ["--ignore-https-errors", "get", "url"], flags: ["--ignore-https-errors"] },
+			{ args: ["--allow-file-access", "get", "url"], flags: ["--allow-file-access"] },
+			{ args: ["--extension", "/tmp/ext", "get", "url"], flags: ["--extension"] },
+			{
+				args: ["--proxy", "http://127.0.0.1:1", "--proxy-bypass", "localhost", "get", "url"],
+				flags: ["--proxy", "--proxy-bypass"],
+			},
+			{
+				args: ["--cdp-headers", '{"X-Probe":"1"}', "get", "url"],
+				flags: ["--cdp-headers"],
+			},
 			{ args: ["--webgpu", "open", "https://example.com"], flags: ["--webgpu"] },
 			{ args: ["--webgpu", "false", "open", "https://example.com"], flags: ["--webgpu"] },
 			{ args: ["--no-webmcp", "open", "https://example.com"], flags: ["--no-webmcp"] },
@@ -2303,6 +2329,24 @@ nodeTest(
 		);
 		assert.equal(lastDisabled.validationError, undefined);
 		assert.deepEqual(lastDisabled.startupScopedFlags, []);
+	},
+);
+
+nodeTest(
+	"launch-scoped detection follows upstream's auto-connect reset and relaunch values",
+	() => {
+		const flags = (args: readonly string[]) => getStartupScopedFlags(args);
+		// Upstream: an enabled --no-auto-connect wins over an earlier --auto-connect; `false` is a no-op.
+		assert.deepEqual(flags(["--auto-connect", "--no-auto-connect", "get", "url"]), [
+			"--no-auto-connect",
+		]);
+		assert.deepEqual(flags(["--no-auto-connect", "false", "get", "url"]), []);
+		assert.deepEqual(flags(["--auto-connect", "--no-auto-connect", "false", "get", "url"]), [
+			"--auto-connect",
+		]);
+		assert.deepEqual(flags(["--relaunch", "false", "get", "url"]), []);
+		// Tokens after the end-of-options marker are literal text, not launch settings.
+		assert.deepEqual(flags(["fill", "#field", "--", "--relaunch", "--profile", "Default"]), []);
 	},
 );
 

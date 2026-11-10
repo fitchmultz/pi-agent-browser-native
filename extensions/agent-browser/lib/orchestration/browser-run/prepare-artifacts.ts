@@ -1,6 +1,10 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { projectUpstreamGlobalFlags, type IndexedArgvToken } from "../../argv-grammar.js";
+import {
+	isUpstreamGlobalFlagToken,
+	projectUpstreamGlobalFlags,
+	type IndexedArgvToken,
+} from "../../argv-grammar.js";
 import { pathExists } from "../../fs-utils.js";
 import {
 	extractCommandTokens,
@@ -64,7 +68,8 @@ async function normalizeScreenshotPathInTokens(
 	batchStep = false,
 ): Promise<{ request?: ScreenshotPathRequest; tokens: string[] }> {
 	const operand = screenshotPathOperand(commandTokens, batchStep);
-	if (operand === undefined) {
+	// Upstream rejects a global flag inside a batch item; rewriting it into a path would hide that.
+	if (operand === undefined || (batchStep && isUpstreamGlobalFlagToken(operand.token))) {
 		return { tokens: [...commandTokens] };
 	}
 	const { index: pathIndex, token: requestedPath } = operand;

@@ -107,6 +107,44 @@ nodeTest("unverified page transitions still require a live URL before content ac
 	);
 });
 
+nodeTest("saved-flow commands run without a verified page and flow run leaves it unknown", () => {
+	assert.deepEqual(
+		[
+			["flow", "steps"],
+			["flow", "list"],
+			["flow", "save", "checkout"],
+			["flow", "run", "checkout"],
+		].map((args) => getPageTargetValidationError({ args, pageUrlUnknown: true })),
+		[undefined, undefined, undefined, undefined],
+	);
+	const known = { currentPageUrl: "https://example.com/start", pageUrlUnknown: false };
+	assert.deepEqual(
+		getResultingPageTargetState({
+			...known,
+			args: ["flow", "run", "checkout"],
+			executedBatchSteps: [],
+		}),
+		{ pageTargetMayHaveChanged: true, pageUrlUnknown: true },
+	);
+	assert.deepEqual(
+		getResultingPageTargetState({ ...known, args: ["flow", "steps"], executedBatchSteps: [] }),
+		{ ...known, pageTargetMayHaveChanged: false },
+	);
+	assert.match(
+		readString(
+			getPageTargetValidationError({
+				...known,
+				args: ["batch", "--bail"],
+				stdin: JSON.stringify([
+					["flow", "run", "checkout"],
+					["snapshot", "-i"],
+				]),
+			}) ?? "",
+		),
+		/saved-flow.*get url/,
+	);
+});
+
 nodeTest("WebMCP page tools require a verified target and may change it", () => {
 	assert.match(
 		readString(

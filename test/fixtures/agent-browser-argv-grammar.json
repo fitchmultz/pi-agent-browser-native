@@ -1,6 +1,6 @@
 {
-	"version": "0.41.2",
-	"source": "https://github.com/vercel-labs/agent-browser/blob/d52a5e90c372ec4710c69adc3837ac14bbd852aa/cli/src/flags.rs#L1293-L1421",
+	"version": "0.42.0",
+	"source": "https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/flags.rs#L1384-L1516",
 	"globalValueFlags": [
 		"--session",
 		"--restore-save",
@@ -29,6 +29,7 @@
 		"--download-path",
 		"--max-output",
 		"--allowed-domains",
+		"--capture",
 		"--action-policy",
 		"--confirm-actions",
 		"--config",
@@ -51,6 +52,7 @@
 		"--allow-file-access",
 		"--hide-scrollbars",
 		"--auto-connect",
+		"--no-auto-connect",
 		"--pin-tab",
 		"--no-pin-tab",
 		"--no-ca-cert",
@@ -59,6 +61,7 @@
 		"--content-boundaries",
 		"--confirm-interactive",
 		"--no-auto-dialog",
+		"--relaunch",
 		"-v",
 		"--verbose",
 		"-q",

@@ -1124,9 +1124,10 @@ nodeTest(
 					restoreState: managedSessionRestoreState,
 					parentEnv: restoreHomeEnv(home),
 				}),
-				{},
+				// Upstream stops reading global flags at `--`, so this is literal text, not a config override.
+				expectedRestoreEnv(cwd),
 			);
-			assert.equal(isManagedSessionRestoreDisabled(managed), true);
+			assert.equal(isManagedSessionRestoreDisabled(managed), false);
 
 			clearManagedSessionRestoreDisabled();
 			mkdirSync(join(home, ".agent-browser"), { recursive: true });

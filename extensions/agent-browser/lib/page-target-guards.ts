@@ -4,7 +4,7 @@ import { isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
 import { getExplicitNavigationTarget } from "./page-target-navigation.js";
 
 export const UNVERIFIED_PAGE_MESSAGE =
-	"The active page became unverified after a tab, attachment, history, script, or state-load transition. Run get url or navigate explicitly before page-content inspection.";
+	"The active page became unverified after a tab, attachment, history, script, saved-flow, or state-load transition. Run get url or navigate explicitly before page-content inspection.";
 export const BATCH_UNVERIFIED_PAGE_MESSAGE = `${UNVERIFIED_PAGE_MESSAGE} In a batch, put get url after the transition before later content steps, or split the batch at that boundary.`;
 export const NON_BAIL_BATCH_NAVIGATION_MESSAGE =
 	"Batches that change or re-verify the page target before page-content access must use exact batch --bail so a failed step cannot act on an unverified or prior page.";
@@ -36,6 +36,9 @@ function canOperateWithoutVerifiedPage(command: string | undefined, subcommand?:
 			return subcommand === undefined;
 		case "webmcp":
 			return ["result", "cancel"].includes(subcommand ?? "");
+		case "flow":
+			// Saved-flow commands read the recorder or send the flow's own requests; native checks the tab's site itself.
+			return true;
 		case "record":
 			return subcommand === "stop";
 		case "dialog":

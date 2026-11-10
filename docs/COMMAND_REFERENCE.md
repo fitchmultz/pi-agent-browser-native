@@ -28,15 +28,30 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.41.2` command/help surface, audited against vercel-labs/agent-browser@d52a5e90c372ec4710c69adc3837ac14bbd852aa. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.42.0` command/help surface, audited against vercel-labs/agent-browser@e7519957b9067c541825afa21a792fbe1f483047. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.42.0 rebaseline
+
+The recommended upstream is 0.42.0, audited at upstream commit `e7519957b9067c541825afa21a792fbe1f483047`. The stable runtime floor remains 0.35.0, with no version-specific shim. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.42.0).
+
+- **Launch settings follow each command.** Native 0.42.0 compares the settings a command carries with the running session. An omitted or equal setting changes nothing; a changed launch setting such as `--profile`, `--args`, `--headed`, `--user-agent`, `--proxy`, `--state`, or `--allowed-domains` relaunches the browser while the daemon keeps running. `--relaunch` forces a relaunch when nothing changed. Older supported natives never report a relaunch: 0.41.2 keeps the browser for some changed settings and silently restarts it for others. See [native session settings](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/docs/content/docs/sessions.mdx#L42-L55) and the [launch-setting table](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/session_settings/spec.rs#L357-L765).
+- **The wrapper reports a native relaunch.** A relaunch discards the page and its refs. When native returns `lifecycle.relaunchedBrowser: true`, the result warns that upstream relaunched the browser, names the changed settings, records `about:blank` as the current page, and offers `reopen-page-after-browser-relaunch` with the prior URL. Wrapper-owned managed sessions still reject launch-scoped flags while running; use `sessionMode: "fresh"`. The automatic root browser and explicit `--session` browsers are caller-owned, so their launch flags pass through and native decides. See [running-session launch settings](#wrapper-specific-behavior-worth-knowing).
+- **A command that needs no browser no longer launches one.** `read <url>`, `session info`, `stream status`, `get cdp-url`, and `flow list` start the daemon but not the browser, even with `--profile`. Their launch settings are not applied and not kept; the next command that launches must carry them. See [native launch selection](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/native/actions.rs#L2715-L2762).
+- **`--no-auto-connect`** returns a session attached with `--auto-connect` to a local launch and overrides `AGENT_BROWSER_AUTO_CONNECT`. See [the flag pair](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/flags.rs#L1141-L1162).
+- **Security settings survive a daemon restart.** Native keeps `--allowed-domains`, `--action-policy`, and `--confirm-actions` in an owner-only `<session>.settings` file beside the session socket until `close`. A value you pass replaces the stored one; `--allowed-domains ""` clears it.
+- **`--` ends option parsing.** Native stops reading global flags at the first `--`; later tokens are literal command text. `fill <selector> [--] <text>` and `type <selector> [--clear] [--delay <ms>] [--] <text>` use it for text that looks like a flag, for example `fill "#search" -- --json`. `type` now reads `--clear` and `--delay <ms>` as options; older supported natives typed them as text. The wrapper applies the same boundary to session, restore, launch-flag, help, and version detection. See [native parsing](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/flags.rs#L1377-L1382) and [fill/type](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/commands.rs#L507-L563).
+- **Batch items reject misplaced global flags.** Put global flags before `batch`. Native 0.42.0 fails an item whose command, navigation, `screenshot`, `snapshot`, or `vitals` slot holds a global flag with `Pass global flags on the outer batch invocation, not inside a batch item.` The wrapper leaves such a row unchanged so the native error is visible. See [the batch check](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/commands.rs#L373-L382).
+- **Saved flows are experimental.** `--capture <list>` (only `flow`; environment `AGENT_BROWSER_CAPTURE`) records a session's commands and requests. `flow steps [--json]`, `flow save <name>`, `flow run <name>`, and `flow list [--origin <host>]` inspect, save, run, and list flows stored under `~/.agent-browser/flows` or `AGENT_BROWSER_FLOWS_DIR`. See [saved flows](#saved-flows-experimental).
+- **Stricter command handling.** Unknown commands exit with status 1 even with `--help`. Unknown `cookies` operations return an error. `download <sel> <path>` is rejected over `--cdp`, `--auto-connect`, or a provider because the remote endpoint names the saved file. Mouse coordinates and wheel deltas accept finite decimals and reject invalid values. Proxy credentials are percent-decoded, so encode reserved characters (`p@ss` as `p%40ss`).
+- On macOS, native also searches `~/Applications` for installed browsers. Native MCP tool calls return parsed CLI JSON in `structuredContent.response`; the [MCP boundary](TOOL_CONTRACT.md#native-mcp-boundary) is unchanged.
+
 ### Upstream 0.41.2 qualification
 
-The recommended upstream is 0.41.2. Native owns timeout-setting continuity, bare `open` launch settings, and browserless-command behavior. `skills get <name> --ref <ref>` loads only the requested reference or template; repeat `--ref` for several files from one skill. It cannot combine with `--all` or `--full`. The core overview routes to references rather than requiring the full guide for every task.
+Native 0.41.2 owns timeout-setting continuity, bare `open` launch settings, and browserless-command behavior. `skills get <name> --ref <ref>` loads only the requested reference or template; repeat `--ref` for several files from one skill. It cannot combine with `--all` or `--full`. The core overview routes to references rather than requiring the full guide for every task.
 
 Native checks for newer stable Chrome releases with CVE fixes and reports advisory warnings without blocking browser commands. `AGENT_BROWSER_NO_VERSION_CHECK=1` skips that check and its request to the Chrome Releases blog. The wrapper adds no version-checking or session-restart layer. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.2).
 
@@ -44,7 +59,7 @@ Published npm help includes `--cdp-headers <json>` and `AGENT_BROWSER_CDP_HEADER
 
 ### Upstream 0.41.0 rebaseline
 
-The recommended stock npm `agent-browser@0.41.2` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
+The recommended stock npm `agent-browser@0.42.0` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
 
 - Native 0.39.4+ `wait --download <path>` handles downloads that completed before the wait and moves a locally launched browser's downloaded bytes to the requested destination. Native refuses to move files reported by an attached/remote CDP browser. The wrapper still requires on-disk artifact verification; a reported path alone is not success, so supported 0.35.0–0.39.3 natives, which report the path without moving the file, fail as `artifact-missing`. See [native download handling](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L11403-L11508).
 - Native daemon shutdown removes its own `<session>.config` along with other daemon files, while retaining `.target` and `.log`. This prevents new configuration-file accumulation; it does not sweep all historical orphans or optimize the wrapper's socket-directory scan. Updating this metadata cannot speed an installation already running 0.41.0. See [file ownership](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/session_files.rs#L75-L104) and [shutdown cleanup](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/daemon.rs#L147-L151).
@@ -727,8 +742,8 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 - `click <sel>` — Click an element or `@ref`.
 - `click <sel> --new-tab` — Click a link/control while requesting a new tab.
 - `dblclick <sel>` — Double-click an element.
-- `type <sel> <text>` — Type into an element; both selector and text are required. For the focused element without a selector, use `keyboard type <text>`.
-- `fill <sel> <text>` — Clear and fill an element.
+- `type <sel> <text>` — Type into an element; both selector and text are required. Full form: `type <selector> [--clear] [--delay <ms>] [--] <text>`. Native 0.42.0 reads `--clear` and `--delay <ms>` as options; put `--` before text that looks like a flag. For the focused element without a selector, use `keyboard type <text>`.
+- `fill <sel> <text>` — Clear and fill an element. Full form: `fill <selector> [--] <text>`; text after `--` is literal on native 0.42.0, including values such as `--json`. Older supported natives type the marker too.
 - `press <key>` — Press a key such as `Enter`, `Tab`, or `Control+a`. `key <key>` is the upstream alias.
 - `key <key>` — Alias for `press <key>`.
 - `keydown <key>` — Hold a key down without releasing it, useful for modifiers.
@@ -742,7 +757,7 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 - `select <sel> <val...>` — Select one or more dropdown options.
 - `drag <src> <dst>` — Drag and drop.
 - `upload <sel> <files...>` — Upload one or more files.
-- `download <sel> <path>` — Download a file by clicking an element.
+- `download <sel> <path>` — Download a file by clicking an element. Native 0.42.0 rejects it on a browser attached with `--cdp`, `--auto-connect`, or a provider.
 - `scroll <dir> [px]` — Scroll `up`, `down`, `left`, or `right`.
 - `scroll <dir> [px] --selector <sel>` — Scroll a specific scrollable element/container instead of the page.
 - `scrollintoview <sel>` — Scroll an element into view; `scrollinto <sel>` is the upstream alias.
@@ -934,7 +949,7 @@ browser profiles, or `state save/load` to separate cookies and storage.
 
 | Command                                            | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `batch [--bail] ["cmd" ...]`                       | Execute multiple commands sequentially from args or stdin.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `batch [--bail] ["cmd" ...]`                       | Execute multiple commands sequentially from args or stdin. Put global flags before `batch`; native 0.42.0 rejects them inside an item.                                                                                                                                                                                                                                                                                                            |
 | `auth save <name> [opts]`                          | Save an auth profile. Full credential form: `auth save <name> --url <url> --username <user> --password <pass>`; selector override form: `auth save <name> --username-selector <s> --password-selector <s> --submit-selector <s>`. Prefer `auth save <name> --password-stdin` with the tool `stdin` field; avoid putting passwords in `args`.                                                                                                      |
 | `auth login <name>`                                | Login using saved credentials; add `--no-navigate` for a prepared, same-origin login page.                                                                                                                                                                                                                                                                                                                                                        |
 | `auth list`                                        | List saved auth profiles.                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -965,6 +980,25 @@ browser profiles, or `state save/load` to separate cookies and storage.
 | `profiles`                                         | List available Chrome profiles.                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 When these commands are invoked through the native `agent_browser` tool, structured diagnostic/status outputs are rendered as compact summaries. `session list` and `state list` keep every upstream row and restore identifier visible. Explicit sessions, state/restore paths, broad state lifecycle commands, config, local files, and launch environment pass through unchanged. Local inspection/setup calls remain sessionless unless you explicitly pass `--session`; browser-backed or context-dependent calls keep normal managed-session behavior when no explicit session is supplied. List-like outputs such as sessions, Chrome profiles, auth profiles, network requests, console messages, and page errors include counts and key fields; large outputs are previewed with a `Full output path:` spill file instead of dumping the entire payload into context. For `network requests`, the wrapper shows a failed-request summary split into actionable versus benign low-impact rows, then status, method, URL, resource/mime type, request id, and, when the installed upstream output includes body-like fields, bounded redacted payload, response, and failure/error snippets. Safe request IDs also produce `details.nextActions` for exact request details, actionable failed-request source lookup candidates, filtered request lists, or starting HAR capture before a repro. If the same session has active wrapper-observed network routes, failed/pending/CORS-looking matched request rows add `details.networkRouteDiagnostics` and executable route-mock next actions before the generic request actions. `data:image` artifact rows are omitted from compact request previews but remain in raw `details.data.requests`. `network request <requestId>` can expose upstream full-detail body fields such as response bodies using the same bounded model-facing preview; its request URL stays diagnostic-only and does not overwrite `details.sessionTabTarget` for later ref guards. Clipboard failures that mention `NotAllowedError` or permission denial are usually browser/OS capability limits, not proof that a read, paste, or page mutation happened; prefer page-native reads (`snapshot -i`, `get text`, `eval --stdin`) or direct typing (`keyboard inserttext` / `keyboard type`) when the workflow allows it, and retry true clipboard flows only from an allowed profile/session on a normal `http(s)` page. Header, cookie, auth, token, and other secret-like fields are not expanded in model-facing text or `details.data`; low-risk primitive storage values may remain visible, while command echoes still redact `--body`, `--headers`, `--password`, proxy credentials, auth-bearing URLs, `clipboard write` text, cookie/storage set values, and bearer/basic credential text in positional arguments. Raw batch row strings receive the same command-aware redaction in visible output and ordered transition journals without changing execution argv. Use upstream HAR or full raw details only when complete data is required.
+
+### Saved flows (experimental)
+
+Native 0.42.0 can record a session and save part of it as a flow that later runs over direct HTTP, then from the page, then by replaying the recorded commands. Upstream marks this experimental: a run can fail on a page that changed.
+
+- `--capture <list>` — Record the session; only `flow` is supported. Environment: `AGENT_BROWSER_CAPTURE`. It is a launch setting, so use it on the first command of a session or with `sessionMode: "fresh"`.
+- `flow steps [--json]` — List the recorded steps: number, command, URL, request count, and ok or failed.
+- `flow save <name>` — Save steps as a flow. Options: `--from <seq>`, `--to <seq>`, `--param k=v`, `--output <id>`, `--description <text>`, and `--timeout <ms>`.
+- `flow run <name>` — Run a saved flow. Options: `--param k=v`, `--where f=v`, `--fields a,b`, `--limit n`, `--origin <host>`, `--allow-write <all|id,...>`, and `--timeout <ms>`.
+- `flow list [--origin <host>]` — List saved flows with params and verified state.
+
+Flows live in `~/.agent-browser/flows/<origin>/<name>.json`; `AGENT_BROWSER_FLOWS_DIR` overrides the directory. Native never saves cookies, `authorization`, or token and CSRF headers.
+
+Wrapper behavior:
+
+- The recording includes the wrapper's own helper reads, such as `get url` and `tab list`. Check `flow steps` and pass `--from` / `--to` when saving.
+- `flow run` can navigate the page when it falls back to replay. After it, the page target is unknown: run `get url` before page-content commands, and take a new `snapshot -i` before using refs. In a batch, use `batch --bail` and put `get url` after `flow run`.
+- `flow steps`, `flow save`, `flow list`, and `flow run` do not need a verified page target.
+- Flow results pass through with the normal redaction. The wrapper adds no flow storage, naming, or retry layer.
 
 ## Optional package config and companion web search
 
@@ -1055,7 +1089,7 @@ Browser defaults are scoped: global/override `defaultProfile` with `policy: "alw
 
 ### Authentication and session flags
 
-`agent-browser` 0.35.0 and newer require separate argv tokens for global flag values (for example, `--args <args>` and `--user-agent <ua>`). The explicit exception is `--restore=<key>`, which is supported when an optional restore key could otherwise be confused with a command word. The wrapper rejects other global `--flag=value` forms before normal command dispatch, including when they trail the command. Plain `--help`, `-h`, `--version`, and `-V` inspection preserves exact caller argv because upstream accepts those top-level inspection shapes. Global flags for `batch` belong before `batch` in top-level `args`; row-local equals forms are rejected without the help/version or `--restore=<key>` exceptions.
+`agent-browser` 0.35.0 and newer require separate argv tokens for global flag values (for example, `--args <args>` and `--user-agent <ua>`). The explicit exception is `--restore=<key>`, which is supported when an optional restore key could otherwise be confused with a command word. The wrapper rejects other global `--flag=value` forms before normal command dispatch, including when they trail the command. Plain `--help`, `-h`, `--version`, and `-V` inspection preserves exact caller argv because upstream accepts those top-level inspection shapes. Global flags for `batch` belong before `batch` in top-level `args`; row-local equals forms are rejected without the help/version or `--restore=<key>` exceptions. A `--` token ends global-flag parsing as it does upstream: later tokens are literal command text, so the wrapper does not read them as session, restore, launch, help, or version flags.
 
 - `--profile <name|path>`: reuse Chrome profile login state by directory name from `profiles`, or use a persistent custom profile/profile-directory path when upstream accepts it. Environment: `AGENT_BROWSER_PROFILE`.
 - `--session <name>`: use an isolated session. Environment: `AGENT_BROWSER_SESSION`. Native session names may begin with a hyphen; they remain values, not extra flags, including when selected through config or environment.
@@ -1066,6 +1100,9 @@ Browser defaults are scoped: global/override `defaultProfile` with `policy: "alw
 - `--session-name <name>`: legacy alias for restore persistence key. Environment: `AGENT_BROWSER_SESSION_NAME`.
 - `--state <path>`: load saved auth state from JSON. Environment: `AGENT_BROWSER_STATE`.
 - `--auto-connect`: connect to a running Chrome to reuse auth state. Environment: `AGENT_BROWSER_AUTO_CONNECT`. Optional booleans use separated tokens (`--auto-connect false`); the wrapper rejects `--auto-connect=false` before dispatch.
+- `--no-auto-connect`: return a session attached with `--auto-connect` to a local launch; it overrides the environment and an earlier `--auto-connect`. `--no-auto-connect false` is a no-op.
+- `--relaunch`: relaunch the session's browser even when no setting changed. The page and refs are discarded; open the page again.
+- `--capture <list>`: record the session as it runs; only `flow` is supported. Environment: `AGENT_BROWSER_CAPTURE`. On a running session without capture it relaunches the browser. See [saved flows](#saved-flows-experimental).
 - `--pin-tab`: pin the session to its bound tab. Environment: `AGENT_BROWSER_PIN_TAB`. Sticky per session and not launch-scoped. Commands fail with `tab_gone` instead of falling back when that tab is closed. `--no-pin-tab` disables a previously enabled pin. Optional booleans use separated tokens (`--pin-tab false`).
 - `--headers <json>`: apply HTTP headers scoped to the opened URL's origin.
 - `--init-script <path>`: register a script before first navigation; repeatable. Environment: `AGENT_BROWSER_INIT_SCRIPTS`.
@@ -1073,13 +1110,13 @@ Browser defaults are scoped: global/override `defaultProfile` with `policy: "alw
 
 ### Browser launch and runtime flags
 
-The extension composes stock `--args --no-startup-window` for local Chrome startup only when native environment/config does not already supply local launch defaults. Otherwise no automatic Chrome startup arguments are injected; include `--no-startup-window` in native `args` if a single headed window is required. Headless remains the default, external engines/attachments stay native-owned, and caller settings retain native precedence. Plain active follow-ups do not repeat wrapper bootstrap settings; changes to launch settings can trigger native's normal restart. URL-less `open` runs native `get url` to lazily launch or preserve the active page, including batch rows; the result exposes the actual command and URL, not a fabricated launch receipt. See [the startup contract](TOOL_CONTRACT.md#headed-and-local-fixture-limits).
+The extension composes stock `--args --no-startup-window` for local Chrome startup only when native environment/config does not already supply local launch defaults. Otherwise no automatic Chrome startup arguments are injected; include `--no-startup-window` in native `args` if a single headed window is required. Headless remains the default, external engines/attachments stay native-owned, and caller settings retain native precedence. Plain active follow-ups do not repeat wrapper bootstrap settings. A follow-up that carries a launch flag gets the stock startup argument again, joined with that call's `--args`, so an exact repeat of the launch flags keeps the browser. A changed launch setting makes native 0.42.0 relaunch the browser; the result reports that relaunch. This includes a follow-up that carries a launch flag but drops the `--args` value used at launch: repeat the same `--args`, or pass no launch flag. URL-less `open` runs native `get url` to lazily launch or preserve the active page, including batch rows; the result exposes the actual command and URL, not a fabricated launch receipt. See [the startup contract](TOOL_CONTRACT.md#headed-and-local-fixture-limits).
 
 - `--executable-path <path>`: custom Chromium-compatible browser executable, such as Brave/Edge/Arc/Vivaldi when upstream can launch that binary. Environment: `AGENT_BROWSER_EXECUTABLE_PATH`.
 - `--extension <path>`: load browser extensions; repeatable. Environment: `AGENT_BROWSER_EXTENSIONS`.
 - `--args <args>`: browser launch args, newline separated or comma separated before another flag; commas and negative coordinates inside values stay intact. Chromium switches belong in this value, for example `{ "args": ["--args", "--no-sandbox", "open", "https://example.com"], "sessionMode": "fresh" }`. A bare `--no-sandbox` is diagnosed when it occupies the command slot (unknown command) or an `open` / `goto` / `navigate` option position (ignored by upstream); literal operands in other commands are left alone. For batches, put `--args` before `batch` in top-level `args`, not inside a row. Environment: `AGENT_BROWSER_ARGS`.
 - `--user-agent <ua>`: custom user agent. Environment: `AGENT_BROWSER_USER_AGENT`.
-- `--proxy <server>`: proxy server URL. Environments: `AGENT_BROWSER_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`.
+- `--proxy <server>`: proxy server URL. Credentials are percent-decoded on native 0.42.0. Environments: `AGENT_BROWSER_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`.
 - `--proxy-bypass <hosts>`: proxy bypass hosts. Environments: `AGENT_BROWSER_PROXY_BYPASS`, `NO_PROXY`.
 - `--ignore-https-errors`: ignore HTTPS certificate errors. Environment: `AGENT_BROWSER_IGNORE_HTTPS_ERRORS`.
 - `--ca-cert <path>`: add a PEM bundle or DER certificate to CLI HTTPS trust on every platform. Environment: `AGENT_BROWSER_CA_CERT`. For `read`, explicit CLI trust is retained per native session through daemon restarts until close; `--no-ca-cert` / `AGENT_BROWSER_CLEAR_CA_CERT` clears it. An unusable explicit file fails; an unusable ambient `SSL_CERT_FILE` fallback is ignored with a warning. CLI trust does not launch a browser or configure remote CDP/provider TLS.
@@ -1091,7 +1128,7 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 - `--webgpu`: enable upstream's platform-specific WebGPU launch preset. Environment: `AGENT_BROWSER_WEBGPU`; config: `"webgpu": true`. Use it on a fresh local launch. It is incompatible while enabled with `--cdp`, `--auto-connect`, and provider launches. `AGENT_BROWSER_NO_XVFB=1` disables upstream's automatic Xvfb for displayless headed Linux sessions.
 - `--no-webmcp`: disable experimental WebMCP support, which upstream 0.36.0 enables by default for locally managed Chrome. Environment: `AGENT_BROWSER_NO_WEBMCP`; config: `noWebmcp`. Use it on a fresh launch; `--no-webmcp false` explicitly enables the launch feature when config or environment disabled it.
 - `--cdp <port|url>`: connect through Chrome DevTools Protocol. Use it, `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
-- `--cdp-headers <json>`: send a JSON object of string-valued headers for native CDP HTTP discovery and WebSocket authentication. Environment: `AGENT_BROWSER_CDP_HEADERS`. Supply it with the initial `--cdp` call or an explicit `connect`; these are transport credentials, not page/origin `--headers`. Values pass through unchanged and are redacted from invocation presentation. Published stock 0.41.2 help advertises this flag.
+- `--cdp-headers <json>`: send a JSON object of string-valued headers for native CDP HTTP discovery and WebSocket authentication. Environment: `AGENT_BROWSER_CDP_HEADERS`. Supply it with the initial `--cdp` call or an explicit `connect`; these are transport credentials, not page/origin `--headers`. Values pass through unchanged and are redacted from invocation presentation. Published stock help advertises this flag.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
 - `--engine <name>`: `chrome` by default, `lightpanda`, or experimental `obscura`. Environment: `AGENT_BROWSER_ENGINE`. Launch-scoped; use `sessionMode: "fresh"` when changing a managed browser. See [Lightpanda](#lightpanda-engine) and [Obscura](#obscura-engine-experimental).
@@ -1188,13 +1225,14 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 ## Wrapper-specific behavior worth knowing
 
 - The extension may keep following one implicit managed session across later tool calls.
-- If launch-scoped flags like `--engine`, `--profile`, `--args`, `--user-agent`, `--executable-path`, `--ca-cert`, `--no-ca-cert`, `--webgpu`, `--no-webmcp`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--state`, `--auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would replace or be ignored by an already-active managed session, retry with `sessionMode: "fresh"`. When the call explicitly names the current managed session, the structured recovery payload removes that `--session` so the fresh rotation can succeed.
+- If launch-scoped flags like `--engine`, `--profile`, `--args`, `--user-agent`, `--executable-path`, `--extension`, `--proxy`, `--proxy-bypass`, `--ignore-https-errors`, `--allow-file-access`, `--hide-scrollbars`, `--color-scheme`, `--download-path`, `--capture`, `--relaunch`, `--ca-cert`, `--no-ca-cert`, `--webgpu`, `--no-webmcp`, `--restore`, `--restore-save`, restore check flags, `--namespace`, `--session-name`, `--cdp`, `--cdp-headers`, `--state`, `--auto-connect`, `--no-auto-connect`, `--init-script`, `--enable`, `--provider` / `-p`, or provider device flags like `--device` would replace or be ignored by an already-active managed session, retry with `sessionMode: "fresh"`. Native 0.42.0 would relaunch that browser and drop its page; older supported natives ignore the flag or restart the browser without reporting it. When the call explicitly names the current managed session, the structured recovery payload removes that `--session` so the fresh rotation can succeed.
 - If a `sessionMode: "fresh"` call fails (including upstream failure, timeout, missing binary, or **`qa`** reclassification after a nominally successful batch), read `details.managedSessionOutcome` before assuming where the next default call will go: `preserved` means the prior managed session remains current, while `abandoned` means no managed session became current. When the failure reason is not the fresh launch itself—for example `failureCategory: "qa-failure"`—`status`/`summary` may still describe the managed-session transition while `succeeded` on this object matches the final tool outcome.
 
 - After open/goto/navigate calls with --profile, --restore, --session-name, or --state, agent_browser best-effort re-selects the tab whose URL matches the returned page when restored tabs steal focus during launch or reconnect.
 - After confirmed shutdown of an automatically restored managed session, the wrapper retains its complete recorded URL, including the fragment, until the first current-page operation (including get url and reload). Non-page calls such as tab list may start a daemon without fulfilling that reopen; explicit URL reads leave the managed browser and pending reopen untouched. The wrapper uses native open once, verifies the observed tab, and discards old refs/frame scope; it does not restore unsaved forms, JavaScript memory, or history. Explicit navigation, caller-owned/attached sessions, and restore-disabled sessions are not auto-reopened.
 - For a still-live browser after tab drift or resume, the wrapper verifies/selects the intended tab before ref/semantic helpers and page commands; failed selection stops the call without navigating. Local commands, read <url>, URL a11y/vitals, diff url, window new, and explicit tab/navigation/connection/state recovery do not require the prior tab. Batch checks follow effective rows past non-page prefixes and stop at explicit context changes, preserving caller argv/stdin and continue-on-error behavior. Same-tab reselection is avoided because it clears refs. Use exact batch --bail for fail-fast, not --bail=<value>. Routine same-session calls skip tab-list preflights.
 - For sessions with observed tab-drift risk, after a successful command on a known target tab, agent_browser also best-effort restores that intended tab if a restored/background tab steals focus after the command completes. Routine same-session commands skip focus correction; observed pages without a native targetId use tab list to establish their identity.
+- On the automatic root browser or an explicit `--session`, launch flags pass through. When native relaunches the browser for a changed setting or `--relaunch`, the result leads with a warning that names the changed settings, records about:blank as the current page, discards prior refs, and offers `reopen-page-after-browser-relaunch` (`open <prior url>`) in details.nextActions. It does not try to re-select the prior tab, because the relaunched browser has none.
 - If a known session target unexpectedly reports about:blank, agent_browser best-effort re-selects the prior intended target when it still exists; if recovery fails, it records the observed about:blank target and reports exact recovery guidance instead of treating the prior page as active.
 - If upstream reports tab_gone, the pinned bound tab is gone; use details.nextActions (tab list / tab new) instead of assuming another tab is yours.
 
@@ -1207,17 +1245,17 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.41.2</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.42.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `d52a5e90c372ec4710c69adc3837ac14bbd852aa`
-- upstream package version: `0.41.2`
-- inspected: `stock npm agent-browser@0.41.2 package and official release binary`
-- inspected: `v0.41.1...v0.41.2 release notes and interface source diff`
+- upstream HEAD: `e7519957b9067c541825afa21a792fbe1f483047`
+- upstream package version: `0.42.0`
+- inspected: `stock npm agent-browser@0.42.0 package and official release binary`
+- inspected: `v0.41.2...v0.42.0 release notes and interface source diff`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1230,6 +1268,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/skills.rs`
 - inspected: `cli/src/browser_security.rs`
 - inspected: `cli/src/session_settings/running.rs`
+- inspected: `cli/src/session_settings/plan.rs`
+- inspected: `cli/src/session_settings/spec.rs`
+- inspected: `cli/src/native/flow/replay.rs`
 - inspected: `agent-browser skills get derive-client --full`
 - inspected: `agent-browser skills get webmcp-gen --full`
 - inspected: `README.md`
@@ -1274,6 +1315,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `docs/content/docs/network.mdx`
 - inspected: `docs/content/docs/proxy.mdx`
 - inspected: `docs/content/docs/selectors.mdx`
+- inspected: `docs/content/docs/sessions.mdx`
 - inspected: `docs/content/docs/skills.mdx`
 - inspected: `docs/content/docs/commands.mdx`
 - inspected: `docs/content/docs/engines/obscura.mdx`
@@ -1306,6 +1348,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - open help: `agent-browser open --help`
 - read help: `agent-browser read --help`
 - click help: `agent-browser click --help`
+- fill help: `agent-browser fill --help`
+- type help: `agent-browser type --help`
+- download help: `agent-browser download --help`
 - key help: `agent-browser key --help`
 - scroll help: `agent-browser scroll --help`
 - scrollinto help: `agent-browser scrollinto --help`
@@ -1359,11 +1404,11 @@ This generated block is review data for maintainers. The human-authored referenc
 #### Inventory sections
 
 - Built-in skills: 20 human-doc token(s), 26 upstream token(s)
-- Core page, element, navigation, and extraction commands: 89 human-doc token(s), 94 upstream token(s)
+- Core page, element, navigation, and extraction commands: 91 human-doc token(s), 100 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 30 human-doc token(s), 27 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 63 human-doc token(s), 72 upstream token(s)
-- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 40 human-doc token(s), 47 upstream token(s)
-- Global flags, config, providers, policy, and environment: 166 human-doc token(s), 133 upstream token(s)
+- Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 45 human-doc token(s), 55 upstream token(s)
+- Global flags, config, providers, policy, and environment: 170 human-doc token(s), 138 upstream token(s)
 
 #### Human-authored doc tokens required
 
@@ -1407,7 +1452,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `click <sel> --new-tab`
 - `dblclick <sel>`
 - `type <sel> <text>`
+- `type <selector> [--clear] [--delay <ms>] [--] <text>`
 - `fill <sel> <text>`
+- `fill <selector> [--] <text>`
 - `press <key>`
 - `key <key>`
 - `keydown <key>`
@@ -1585,6 +1632,11 @@ This generated block is review data for maintainers. The human-authored referenc
 
 - `batch [--bail]`
 - `batch --bail --omit-command`
+- `flow steps [--json]`
+- `flow save <name>`
+- `flow run <name>`
+- `flow list [--origin <host>]`
+- `AGENT_BROWSER_FLOWS_DIR`
 - `auth save <name>`
 - `auth save <name> --url <url> --username <user> --password <pass>`
 - `auth save <name> --username-selector <s> --password-selector <s> --submit-selector <s>`
@@ -1647,7 +1699,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - `--state <path>`
 - `AGENT_BROWSER_STATE`
 - `--auto-connect`
+- `--no-auto-connect`
 - `AGENT_BROWSER_AUTO_CONNECT`
+- `--relaunch`
+- `--capture <list>`
+- `AGENT_BROWSER_CAPTURE`
 - `--pin-tab`
 - `--no-pin-tab`
 - `AGENT_BROWSER_PIN_TAB`
@@ -1842,7 +1898,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - click help: `--new-tab`
 - root help: `dblclick <sel>`
 - root help: `type <sel> <text>`
+- type help: `type <selector> [--clear] [--delay <ms>] [--] <text>`
 - root help: `fill <sel> <text>`
+- fill help: `fill <selector> [--] <text>`
+- fill help: `Text after -- is literal`
 - root help: `press <key>`
 - key help: `Aliases: key`
 - keydown help: `keydown <key>`
@@ -1857,6 +1916,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `drag <src> <dst>`
 - root help: `upload <sel> <files...>`
 - root help: `download <sel> <path>`
+- download help: `Only works with a browser agent-browser launched`
+- root help: `Unknown commands exit with status 1`
+- mouse help: `Coordinates and wheel deltas accept finite numbers`
 - root help: `scroll <dir> [px]`
 - scroll help: `--selector <sel>`
 - root help: `scrollintoview <sel>`
@@ -2047,6 +2109,14 @@ This generated block is review data for maintainers. The human-authored referenc
 - batch help: `--bail`
 - batch help: `--omit-command`
 - batch help: `does not make output safe for secrets`
+- batch help: `Keep command-specific options and literal command arguments inside`
+- root help: `flow steps [--json]`
+- root help: `flow save <name>`
+- root help: `flow run <name>`
+- root help: `flow list [--origin <host>]`
+- core command reference: `AGENT_BROWSER_FLOWS_DIR`
+- cookies help: `Unknown operations return an error.`
+- mcp help: `structuredContent.response`
 - auth help: `--url <url>`
 - auth help: `--username <user>`
 - auth help: `--password <pass>`
@@ -2099,7 +2169,12 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--state <path>`
 - root help: `AGENT_BROWSER_STATE`
 - root help: `--auto-connect`
+- root help: `--no-auto-connect`
 - root help: `AGENT_BROWSER_AUTO_CONNECT`
+- root help: `--relaunch`
+- root help: `--capture <list>`
+- root help: `AGENT_BROWSER_CAPTURE`
+- root help: `Credentials are percent-decoded`
 - root help: `--pin-tab`
 - root help: `--no-pin-tab`
 - root help: `AGENT_BROWSER_PIN_TAB`

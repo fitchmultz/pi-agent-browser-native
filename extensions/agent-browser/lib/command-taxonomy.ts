@@ -104,11 +104,17 @@ export function isWindowOrDiffPageTransitionCommand(
 	);
 }
 
+/** A saved-flow run can fall back to replaying its recorded commands, which navigates the session's page. */
+function isFlowRunCommand(command: string | undefined, subcommand?: string): boolean {
+	return command === "flow" && subcommand === "run";
+}
+
 export function isRefInvalidatingBatchCommand(step: readonly string[]): boolean {
 	return (
 		hasCommandCapability(step[0], "invalidatesBatchRefs") ||
 		isRecordPageTransitionCommand(step) ||
 		isWebMcpPageMutationCommand(step) ||
+		isFlowRunCommand(step[0], step[1]) ||
 		isWindowOrDiffPageTransitionCommand(step[0], step[1])
 	);
 }
@@ -145,7 +151,8 @@ export function isUnverifiedPageTransitionCommand(
 		(command === "state" && subcommand === "load") ||
 		(command === "tab" && subcommand !== undefined && !["list", "new"].includes(subcommand)) ||
 		isWindowOrDiffPageTransitionCommand(command, subcommand) ||
-		isWebMcpPageMutation(command, subcommand)
+		isWebMcpPageMutation(command, subcommand) ||
+		isFlowRunCommand(command, subcommand)
 	);
 }
 

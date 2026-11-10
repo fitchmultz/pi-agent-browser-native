@@ -11,9 +11,11 @@ import { extractUpstreamCommandTokens } from "../../argv-descriptor.js";
 import {
 	applyOpenResultTabCorrection,
 	buildAboutBlankRecoveryHint,
+	buildNativeBrowserRelaunchRecoveryHint,
 	buildElectronPostCommandHealthDiagnostic,
 	buildElectronSessionMismatch,
 	collectSessionTabSelection,
+	extractNativeBrowserRelaunch,
 	findElectronLaunchRecordForSession,
 	shouldCorrectSessionTabAfterCommand,
 	shouldInspectElectronPostCommandHealth,
@@ -50,6 +52,7 @@ type RecoverUnexpectedBlankTargetInput = Readonly<
 		| "dispatchedCommands"
 		| "nestedBatchClose"
 		| "observedSessionTabTarget"
+		| "presentationEnvelope"
 		| "succeeded"
 		| "tabTransition"
 	>
@@ -166,6 +169,23 @@ export async function recoverUnexpectedBlankTarget(
 		return { sessionTabCorrection: prepared.sessionTabCorrection };
 	}
 	const observed = draft.observedSessionTabTarget ?? draft.currentSessionTabTarget;
+	const blankTarget = observed ?? normalizeSessionTabTarget({ url: "about:blank" });
+	const nativeBrowserRelaunch = extractNativeBrowserRelaunch(draft.presentationEnvelope?.data);
+	if (nativeBrowserRelaunch) {
+		// The relaunched browser has no prior tab to re-select, so this is not tab drift.
+		return {
+			sessionTabCorrection: prepared.sessionTabCorrection,
+			currentSessionTabTarget: blankTarget,
+			aboutBlankSessionMismatch: {
+				activeUrl: "about:blank",
+				nativeBrowserRelaunch,
+				recoveryApplied: false,
+				recoveryHint: buildNativeBrowserRelaunchRecoveryHint(nativeBrowserRelaunch),
+				targetTitle: prior.title,
+				targetUrl: prior.url,
+			},
+		};
+	}
 	const correction = await collectSessionTabSelection({
 		cwd,
 		namespace: prepared.executionPlan.namespace,
@@ -182,9 +202,7 @@ export async function recoverUnexpectedBlankTarget(
 				signal,
 			})
 		: undefined;
-	const currentSessionTabTarget = applied
-		? prior
-		: (observed ?? normalizeSessionTabTarget({ url: "about:blank" }));
+	const currentSessionTabTarget = applied ? prior : blankTarget;
 	return {
 		sessionTabCorrection: applied ?? prepared.sessionTabCorrection,
 		currentSessionTabTarget,
