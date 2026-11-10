@@ -25,10 +25,11 @@ import {
 
 const START_URL = "https://example.test/a";
 const OTHER_URL = "https://example.test/b";
+const THIRD_URL = "https://example.test/c";
 const ERROR_URL = "chrome-error://chromewebdata/";
 const UNVERIFIED = /active page became unverified/;
 
-/** What the next click, eval or reload does to the fake page, and whether get url still answers after eval. */
+/** What the next click-like step, eval or reload does to the fake page, and whether get url still answers after eval. */
 interface FakePageScenario {
 	readonly clickUrl?: string;
 	readonly evalUrl?: string;
@@ -69,7 +70,7 @@ function run([command, sub, ...rest]) {
   if (command === "open") { state.url = sub; return { data: { title: "Fixture", url: state.url } }; }
   if (command === "reload") { state.url = scenario.reloadUrl ?? state.url; return { data: { url: state.url } }; }
   if (command === "back") return { data: { url: state.url } };
-  if (command === "click") { state.url = scenario.clickUrl ?? state.url; return { data: { clicked: sub } }; }
+  if (["click", "tap", "find"].includes(command)) { state.url = scenario.clickUrl ?? state.url; return { data: { clicked: sub } }; }
   if (command === "eval") { state.url = scenario.evalUrl ?? state.url; state.evaluated = true; return { data: { result: "done", origin: state.url } }; }
   if (command === "get" && sub === "url") return scenario.getUrlFailsAfterEval && state.evaluated ? { error: "CDP error: target closed" } : { data: { url: state.url } };
   if (command === "get" && sub === "title") return { data: { title: "Fixture" } };
@@ -370,9 +371,9 @@ nodeTest(
 );
 
 nodeTest(
-	"agentBrowserExtension leaves a page that a click in the same batch may have reached to the click",
+	"agentBrowserExtension leaves a page that another acting step in the batch may have reached to that step",
 	async (t) => {
-		// A click can navigate too, so the page seen after the batch is not evidence about the eval.
+		// A click-like step can navigate too, so the page seen after the batch is not evidence about the eval.
 		for (const mixed of [
 			{
 				name: "click after eval",
@@ -383,9 +384,34 @@ nodeTest(
 				],
 			},
 			{
+				name: "find click after eval",
+				scenario: { clickUrl: ERROR_URL },
+				steps: [
+					["eval", "document.title"],
+					["find", "role", "link", "click", "--name", "Go"],
+				],
+			},
+			{
 				name: "click before eval",
 				scenario: { clickUrl: OTHER_URL },
 				steps: [
+					["click", "#go"],
+					["eval", "document.title"],
+				],
+			},
+			{
+				name: "tap before eval",
+				scenario: { clickUrl: OTHER_URL },
+				steps: [
+					["tap", "#go"],
+					["eval", "document.title"],
+				],
+			},
+			{
+				name: "click between a get url row and eval",
+				scenario: { clickUrl: OTHER_URL },
+				steps: [
+					["get", "url"],
 					["click", "#go"],
 					["eval", "document.title"],
 				],
@@ -401,6 +427,33 @@ nodeTest(
 				});
 			});
 		}
+	},
+);
+
+nodeTest(
+	"agentBrowserExtension reports a change by its own eval from the URL read after an earlier click",
+	async () => {
+		await withOwnStepFixture(async ({ call, setScenario }) => {
+			await setScenario({ clickUrl: OTHER_URL, evalUrl: THIRD_URL });
+			const batch = await call(
+				["batch", "--bail"],
+				JSON.stringify([
+					["click", "#go"],
+					["get", "url"],
+					["eval", "location.assign('/c')"],
+				]),
+			);
+			assert.ok(
+				batch.text.startsWith(`Page URL changed during this call: ${OTHER_URL} -> ${THIRD_URL}.`),
+				batch.text,
+			);
+			assert.deepEqual(batch.details.pageVerification, {
+				command: "eval",
+				priorUrl: OTHER_URL,
+				status: "changed",
+				url: THIRD_URL,
+			});
+		});
 	},
 );
 

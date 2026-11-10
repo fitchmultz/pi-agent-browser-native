@@ -1,8 +1,5 @@
 import { parseArgvDescriptor } from "../../argv-descriptor.js";
-import {
-	isNavigationObservableCommandName,
-	isPageReportingTransitionCommand,
-} from "../../command-taxonomy.js";
+import { isPageMutationStep, isPageReportingTransitionCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
 import {
 	commandMayChangePageTarget,
@@ -56,13 +53,9 @@ function ownStepCommand(step: readonly string[]): OwnStepPageCheck["command"] | 
 	return isPageReportingTransitionCommand(command) ? command : undefined;
 }
 
-/** A step that can leave the browser on another page: a transition, or a click that navigates. */
+/** A step that can leave the browser on another page: a transition, or any step that acts on the page. */
 function mayMovePage(step: readonly string[]): boolean {
-	const { command, subcommand } = parseArgvDescriptor(step).commandInfo;
-	return (
-		commandMayChangePageTarget(step, false) ||
-		isNavigationObservableCommandName(command, subcommand)
-	);
+	return commandMayChangePageTarget(step, false) || isPageMutationStep(step);
 }
 
 /**
@@ -89,18 +82,21 @@ function findTrailingOwnStep(steps: readonly (readonly string[])[]): TrailingOwn
 		: { command, index, needsLiveRead: commands.includes("eval") };
 }
 
-/** The URL the own step started from: an earlier row's report, else the page known before the call. */
+/**
+ * The URL the own step started from: the page known before the call, or the one that a row reported
+ * at or after the last earlier step that can move the page. Unknown when that step reported none.
+ */
 function urlBeforeOwnStep(draft: CheckPageAfterOwnStepInput, index: number): string | undefined {
 	const data: unknown = draft.presentationEnvelope?.data;
 	const earlierRows = Array.isArray(data) ? data.filter(isRecord).slice(0, index) : [];
-	const reported = extractSessionTabTargetFromBatchResults(earlierRows);
+	const lastMove = draft.dispatchedCommands.slice(0, index).findLastIndex(mayMovePage);
+	const reported = extractSessionTabTargetFromBatchResults(
+		earlierRows.slice(Math.max(lastMove, 0)),
+	);
 	if (reported) {
 		return reported.url;
 	}
-	const earlierSteps = draft.dispatchedCommands.slice(0, index);
-	return earlierSteps.some(mayMovePage)
-		? undefined
-		: draft.input.prepared.priorSessionTabTarget?.url;
+	return lastMove === -1 ? draft.input.prepared.priorSessionTabTarget?.url : undefined;
 }
 
 function canCheckPage(draft: CheckPageAfterOwnStepInput): boolean {

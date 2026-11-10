@@ -188,6 +188,12 @@ export function isPageMutationCommand(command: string | undefined, subcommand?: 
 	);
 }
 
+/** Whether a batch step acts on the page: a mutation command, or `find` with a mutating action. */
+export function isPageMutationStep(step: readonly string[]): boolean {
+	const action = step[0] === "find" ? (step[step[1] === "nth" ? 4 : 3] ?? "click") : step[0];
+	return isPageMutationCommand(action, step[1]);
+}
+
 export function isPageChangeSummaryCommand(
 	command: string | undefined,
 	subcommand?: string,
