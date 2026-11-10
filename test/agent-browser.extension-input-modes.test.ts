@@ -872,6 +872,12 @@ if (command === "open") {
 							.map(readRecord)
 							.some((action) => action.id === "verify-filled-value"),
 					);
+					// Upstream drops the end-of-options marker, so it is not part of the expected text.
+					const literal = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["fill", "@e1", "--", "contenteditable replacededit me"],
+					});
+					assert.equal(literal.isError, false, JSON.stringify(literal));
+					assert.equal(readRecord(literal.details).fillVerification, undefined);
 					const invocations = await readInvocationLog(logPath);
 					assert.ok(
 						invocations.some(

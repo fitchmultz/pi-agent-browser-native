@@ -1,4 +1,5 @@
 import {
+	END_OF_OPTIONS,
 	GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES,
 	VALUE_FLAGS,
 	optionalGlobalValueFlagConsumesNext,
@@ -52,6 +53,10 @@ export function findCommandStartIndex(args: readonly string[]): number | undefin
 			token.startsWith("--restore=")
 		) {
 			continue;
+		}
+		if (token === END_OF_OPTIONS) {
+			// Upstream keeps the marker and everything after it as the command text.
+			return index;
 		}
 		if (token.startsWith("-")) {
 			if (flagConsumesFollowingToken(token, args[index + 1])) {

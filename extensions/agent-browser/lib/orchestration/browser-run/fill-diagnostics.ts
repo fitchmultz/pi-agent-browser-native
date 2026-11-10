@@ -19,7 +19,8 @@ function getTopLevelFillInvocation(commandTokens: readonly string[]): FillInvoca
 		return undefined;
 	}
 	const selector = commandTokens.at(1);
-	const expected = commandTokens.slice(2).join(" ");
+	// Upstream drops one end-of-options marker between the selector and the literal text.
+	const expected = commandTokens.slice(commandTokens[2] === "--" ? 3 : 2).join(" ");
 	if (selector === undefined || selector === "" || expected.length === 0) {
 		return undefined;
 	}

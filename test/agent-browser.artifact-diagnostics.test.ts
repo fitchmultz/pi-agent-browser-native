@@ -378,11 +378,8 @@ for (const [command, path] of [
 			try {
 				const stdin = JSON.stringify([command]);
 				const prepared = await prepareAgentBrowserArgs(["batch"], stdin, root);
-				const expected =
-					command[0] === "screenshot"
-						? ["screenshot", "body", join(root, path), command[3]]
-						: [...command];
-				assert.deepEqual(JSON.parse(prepared.stdin ?? stdin), [expected]);
+				// A global-flag operand stays as written: native 0.42.0 rejects it inside a batch item.
+				assert.deepEqual(JSON.parse(prepared.stdin ?? stdin), [[...command]]);
 				await assert.rejects(stat(join(root, "ignored")), { code: "ENOENT" });
 				const raw = ["batch", command.join(" ")];
 				assert.deepEqual((await prepareAgentBrowserArgs(raw, stdin, root)).args, raw);

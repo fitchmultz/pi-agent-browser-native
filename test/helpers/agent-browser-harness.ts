@@ -50,20 +50,6 @@ export const TEST_SESSION_ID = randomUUID();
 export const DOWNLOAD_FIXTURE_CONTENT = "download contract fixture report\n";
 export const DOWNLOAD_FIXTURE_FILENAME = "pi-agent-browser-wait-download-contract.txt";
 
-/**
- * Native `wait --download <path>` moves a locally launched browser's completed download to the
- * requested path starting with 0.39.4 (vercel-labs/agent-browser#2027). Supported 0.35.0–0.39.3
- * natives report the requested path without moving the file, so the wrapper must fail closed there.
- */
-export function nativeWaitDownloadMovesFile(versionOutput: string): boolean {
-	const match = /(\d+)\.(\d+)\.(\d+)/.exec(versionOutput);
-	assert.ok(match, `Unrecognized agent-browser version output: ${versionOutput}`);
-	const major = Number(match[1]);
-	const minor = Number(match[2]);
-	const patch = Number(match[3]);
-	return major > 0 || minor > 39 || (minor === 39 && patch >= 4);
-}
-
 const journalFixtures = mkdtempSync(join(tmpdir(), "piab-journal-fixtures-"));
 process.once("exit", () => rmSync(journalFixtures, { recursive: true, force: true }));
 

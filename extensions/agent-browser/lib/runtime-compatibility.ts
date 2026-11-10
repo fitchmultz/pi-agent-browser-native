@@ -1,5 +1,7 @@
 import type { CommandInfo } from "./argv-descriptor.js";
 import {
+	beforeEndOfOptions,
+	getAutoConnectFlagValue,
 	getBooleanFlagValue,
 	isUpstreamEnvFlagEnabled,
 	scanUpstreamGlobalFlagOccurrences,
@@ -28,8 +30,9 @@ export function getDefaultHeadlessCompatUserAgent(
 
 function hasLaunchOverride(args: readonly string[], env: Readonly<NodeJS.ProcessEnv>): boolean {
 	const flags = ["--user-agent", "--args", "--cdp", "--provider", "-p"];
+	const options = beforeEndOfOptions(args);
 	return (
-		flags.some((flag) => args.some((token) => token === flag || token.startsWith(`${flag}=`))) ||
+		flags.some((flag) => options.some((token) => token === flag || token.startsWith(`${flag}=`))) ||
 		[
 			env.AGENT_BROWSER_SESSION,
 			env.AGENT_BROWSER_USER_AGENT,
@@ -44,12 +47,9 @@ function hasInteractiveLaunchMode(
 	args: readonly string[],
 	env: Readonly<NodeJS.ProcessEnv>,
 ): boolean {
-	const modes: readonly (readonly [string, string | undefined])[] = [
-		["--headed", env.AGENT_BROWSER_HEADED],
-		["--auto-connect", env.AGENT_BROWSER_AUTO_CONNECT],
-	];
-	return modes.some(
-		([flag, value]) => getBooleanFlagValue(args, flag) ?? isUpstreamEnvFlagEnabled(value),
+	return (
+		(getBooleanFlagValue(args, "--headed") ?? isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_HEADED)) ||
+		(getAutoConnectFlagValue(args) ?? isUpstreamEnvFlagEnabled(env.AGENT_BROWSER_AUTO_CONNECT))
 	);
 }
 
