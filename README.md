@@ -56,6 +56,8 @@ For example, Pi opens and inspects a page with these calls:
 
 Snapshots give Pi current `@eN` references for controls. Refresh the snapshot after navigation or page changes. Check the resulting page after a click; command success alone does not prove the app changed.
 
+Tab management uses singular `tab` (`tab list`, `tab new [url]`, `tab <id>`, `tab close [id]`). If a call uses plural `tabs`, the error result explains the `tab` commands and includes a read-only `use-tab-list` recovery action when listing tabs.
+
 For a trial without a saved package setting, run:
 
 ```bash

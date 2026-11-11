@@ -173,104 +173,152 @@ export function redactClipboardPermissionErrorValue(
 	);
 }
 
-interface CommandSuggestion {
-	readonly args?: readonly string[];
-	readonly description: string;
-	readonly id?: string;
+interface UnknownCommandAction {
+	readonly args: readonly string[];
+	readonly id: string;
+	readonly matchesCommandTail?: (tail: readonly string[]) => boolean;
+	readonly reason: string;
+	readonly safety: string;
 }
 
-const UNKNOWN_COMMAND_SUGGESTIONS: Readonly<Partial<Record<string, readonly CommandSuggestion[]>>> =
-	{
-		attr: [
-			{
-				description:
-					"Use `get attr <selector> <name>` to read an attribute from a selector or current `@ref`.",
-			},
-		],
-		count: [{ description: "Use `get count <selector>` to count matching elements." }],
-		html: [
-			{
-				description:
-					"Use `get html <selector>` to read element HTML from a selector or current `@ref`; use `get html body` when you need whole-page body HTML.",
-			},
-		],
-		text: [
-			{
-				description:
-					"Use `get text <selector>` to read text from a selector or current `@ref`; run `snapshot -i` first when you need a safe `@ref`.",
-			},
-		],
-		title: [
-			{
-				args: ["get", "title"],
-				description: "Use `get title` to read the current page title.",
-				id: "use-get-title",
-			},
-		],
-		url: [
-			{
-				args: ["get", "url"],
-				description: "Use `get url` to read the current page URL.",
-				id: "use-get-url",
-			},
-		],
-		value: [
-			{
-				description:
-					"Use `get value <selector>` to read form control value from a selector or current `@ref`.",
-			},
-		],
-	};
+interface UnknownCommandSuggestion {
+	readonly action?: UnknownCommandAction;
+	readonly description: string;
+	readonly lead: string;
+}
 
-function getUnknownCommandSuggestions(
+const GETTER_SHORTCUT_LEAD =
+	"Agent-browser hint: This looks like a getter shortcut, but upstream getter commands are grouped under `get`.";
+const GETTER_SHORTCUT_SAFETY =
+	"Read-only getter command; safe to retry when you intended to inspect page state.";
+const TAB_LIST_SAFETY =
+	"Read-only tab inspection; safe to retry when you intended to list open tabs.";
+
+function isTabListCommandTail(tail: readonly string[]): boolean {
+	if (tail.length === 0) {
+		return true;
+	}
+	return tail.length === 1 && tail[0]?.trim().toLowerCase() === "list";
+}
+
+const UNKNOWN_COMMAND_SUGGESTIONS: Readonly<Partial<Record<string, UnknownCommandSuggestion>>> = {
+	attr: {
+		description:
+			"Use `get attr <selector> <name>` to read an attribute from a selector or current `@ref`.",
+		lead: GETTER_SHORTCUT_LEAD,
+	},
+	count: {
+		description: "Use `get count <selector>` to count matching elements.",
+		lead: GETTER_SHORTCUT_LEAD,
+	},
+	html: {
+		description:
+			"Use `get html <selector>` to read element HTML from a selector or current `@ref`; use `get html body` when you need whole-page body HTML.",
+		lead: GETTER_SHORTCUT_LEAD,
+	},
+	tabs: {
+		action: {
+			args: ["tab", "list"],
+			id: "use-tab-list",
+			matchesCommandTail: isTabListCommandTail,
+			reason: "Use `tab list` to list open tabs with their stable ids and labels.",
+			safety: TAB_LIST_SAFETY,
+		},
+		description:
+			"Use `tab` or `tab list` to list open tabs, `tab new [url]` to open a tab, `tab <id>` to switch tabs (such as `t1`, a label, or a CDP `targetId`), or `tab close [id]` to close one.",
+		lead: "Agent-browser hint: Tab commands use singular `tab`, not `tabs`.",
+	},
+	text: {
+		description:
+			"Use `get text <selector>` to read text from a selector or current `@ref`; run `snapshot -i` first when you need a safe `@ref`.",
+		lead: GETTER_SHORTCUT_LEAD,
+	},
+	title: {
+		action: {
+			args: ["get", "title"],
+			id: "use-get-title",
+			reason: "Use `get title` to read the current page title.",
+			safety: GETTER_SHORTCUT_SAFETY,
+		},
+		description: "Use `get title` to read the current page title.",
+		lead: GETTER_SHORTCUT_LEAD,
+	},
+	url: {
+		action: {
+			args: ["get", "url"],
+			id: "use-get-url",
+			reason: "Use `get url` to read the current page URL.",
+			safety: GETTER_SHORTCUT_SAFETY,
+		},
+		description: "Use `get url` to read the current page URL.",
+		lead: GETTER_SHORTCUT_LEAD,
+	},
+	value: {
+		description:
+			"Use `get value <selector>` to read form control value from a selector or current `@ref`.",
+		lead: GETTER_SHORTCUT_LEAD,
+	},
+};
+
+function getUnknownCommandTail(
+	args: readonly string[] | undefined,
+	commandInfo: CommandInfo,
+): readonly string[] {
+	if (args !== undefined && args.length > 0) {
+		return extractUpstreamCommandTokens(args).slice(1);
+	}
+	if (commandInfo.commandTokens !== undefined && commandInfo.commandTokens.length > 0) {
+		return extractUpstreamCommandTokens(commandInfo.commandTokens).slice(1);
+	}
+	return commandInfo.subcommand !== undefined ? [commandInfo.subcommand] : [];
+}
+
+function getUnknownCommandSuggestion(
 	command: string | undefined,
 	errorText: string,
-): readonly CommandSuggestion[] {
+): UnknownCommandSuggestion | undefined {
 	if (command === undefined || command.length === 0) {
-		return [];
+		return undefined;
 	}
 	const normalizedCommand = command.trim().toLowerCase();
 	if (
 		!/\bunknown\s+command\b|\bunknown\s+subcommand\b|\bunrecognized\s+command\b/i.test(errorText)
 	) {
-		return [];
+		return undefined;
 	}
-	return UNKNOWN_COMMAND_SUGGESTIONS[normalizedCommand] ?? [];
+	return UNKNOWN_COMMAND_SUGGESTIONS[normalizedCommand];
 }
 
 function formatUnknownCommandSuggestionText(
-	suggestions: readonly CommandSuggestion[],
+	suggestion: UnknownCommandSuggestion | undefined,
 ): string | undefined {
-	if (suggestions.length === 0) {
+	if (suggestion === undefined) {
 		return undefined;
 	}
-	return [
-		"Agent-browser hint: This looks like a getter shortcut, but upstream getter commands are grouped under `get`.",
-		...suggestions.map((suggestion) => suggestion.description),
-	].join(" ");
+	return [suggestion.lead, suggestion.description].join(" ");
 }
 
 function buildUnknownCommandSuggestionActions(
-	suggestions: readonly CommandSuggestion[],
+	suggestion: UnknownCommandSuggestion | undefined,
+	commandTail: readonly string[],
 	sessionName: string | undefined,
 ): AgentBrowserNextAction[] | undefined {
-	const actions = suggestions
-		.filter(
-			(
-				suggestion,
-			): suggestion is CommandSuggestion & {
-				readonly args: readonly string[];
-				readonly id: string;
-			} => suggestion.args !== undefined && suggestion.id !== undefined,
-		)
-		.map((suggestion) => ({
-			id: suggestion.id,
-			params: { args: withOptionalSessionArgs(sessionName, suggestion.args) },
-			reason: suggestion.description,
-			safety: "Read-only getter command; safe to retry when you intended to inspect page state.",
-			tool: "agent_browser" as const,
-		}));
-	return actions.length > 0 ? actions : undefined;
+	const action = suggestion?.action;
+	if (
+		action === undefined ||
+		(action.matchesCommandTail !== undefined && !action.matchesCommandTail(commandTail))
+	) {
+		return undefined;
+	}
+	return [
+		{
+			id: action.id,
+			params: { args: withOptionalSessionArgs(sessionName, action.args) },
+			reason: action.reason,
+			safety: action.safety,
+			tool: "agent_browser",
+		},
+	];
 }
 
 function getLocalhostNavigationHint(
@@ -352,12 +400,9 @@ export function buildErrorPresentation(options: {
 	const safeErrorText = redactModelFacingText(
 		redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
 	);
-	const unknownCommandSuggestions = getUnknownCommandSuggestions(
-		commandInfo.command,
-		safeErrorText,
-	);
-	const unknownCommandSuggestionText =
-		formatUnknownCommandSuggestionText(unknownCommandSuggestions);
+	const commandTail = getUnknownCommandTail(args, commandInfo);
+	const unknownCommandSuggestion = getUnknownCommandSuggestion(commandInfo.command, safeErrorText);
+	const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestion);
 	const browserProfileConfigRecovery = buildBrowserProfileConfigRecovery({
 		args,
 		commandInfo,
@@ -378,7 +423,8 @@ export function buildErrorPresentation(options: {
 		succeeded: false,
 	});
 	const nextActions = [
-		...(buildUnknownCommandSuggestionActions(unknownCommandSuggestions, sessionName) ?? []),
+		...(buildUnknownCommandSuggestionActions(unknownCommandSuggestion, commandTail, sessionName) ??
+			[]),
 		...(browserProfileConfigRecovery?.actions ?? []),
 		...(browserProfileConfigRecovery
 			? []

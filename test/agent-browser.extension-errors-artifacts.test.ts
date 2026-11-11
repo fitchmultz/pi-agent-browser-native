@@ -4690,3 +4690,74 @@ if (args.includes("tab") && args.includes("list")) {
 		}
 	},
 );
+
+nodeTest(
+	"agentBrowserExtension guides hallucinated tabs calls toward singular tab commands",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-tabs-recovery-"));
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("agent-browser 0.42.0\\n");
+} else if (args.includes("tabs")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "Unknown command: tabs", type: "unknown_command" }));
+  process.exit(1);
+} else if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://example.com/" } }));
+} else if (args.includes("get") && args.includes("title")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { title: "Example Domain" } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { tabs: [{ id: "t1", title: "Example Domain", url: "https://example.com/", active: true }] } }));
+}`,
+		);
+
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}${delimiter}${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+				const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "team", "--session", "work", "open", "https://example.com"],
+				});
+				assert.equal(opened.isError, false);
+
+				const bareTabs = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "team", "--session", "work", "tabs"],
+				});
+				assert.equal(bareTabs.isError, true);
+				assert.ok(bareTabs.details);
+				assert.equal(bareTabs.details.failureCategory, "upstream-error");
+				const bareTabsText = readString(readRecord(bareTabs.content[0]).text);
+				assert.match(
+					bareTabsText,
+					/Agent-browser hint: Tab commands use singular `tab`, not `tabs`\./,
+				);
+				assert.deepEqual(readArray(bareTabs.details.nextActions).map(readRecord), [
+					{
+						id: "use-tab-list",
+						params: { args: ["--namespace", "team", "--session", "work", "tab", "list"] },
+						reason: "Use `tab list` to list open tabs with their stable ids and labels.",
+						safety: "Read-only tab inspection; safe to retry when you intended to list open tabs.",
+						tool: "agent_browser",
+					},
+				]);
+
+				const tabsNew = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "team", "--session", "work", "tabs", "new", "https://example.com"],
+				});
+				assert.equal(tabsNew.isError, true);
+				assert.ok(tabsNew.details);
+				assert.match(
+					readString(readRecord(tabsNew.content[0]).text),
+					/Agent-browser hint: Tab commands use singular `tab`, not `tabs`\./,
+				);
+				assert.equal(tabsNew.details.nextActions, undefined);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Mention singular `tab` commands (`tab list/new/<id>/close`) in the always-on browser guidance and add unknown-command `tabs` recovery (`Agent-browser hint:` plus read-only `use-tab-list` `nextActions` for bare `tabs` and `tabs list`) so models stop getting stuck on `Unknown command: tabs` (#392).
+
 ## 0.9.19 - 2026-11-10
 
 <!-- npm-release:unreleased:start -->

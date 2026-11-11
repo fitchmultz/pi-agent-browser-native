@@ -373,6 +373,69 @@ nodeTest(
 	},
 );
 
+nodeTest(
+	"buildToolPresentation suggests singular tab commands and use-tab-list for unknown tabs invocations",
+	async () => {
+		const bareTabsFailure = await buildToolPresentation({
+			args: ["--session", "work", "tabs"],
+			commandInfo: { command: "tabs" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: tabs",
+			sessionName: "work",
+		});
+
+		assert.equal(bareTabsFailure.content[0]?.type, "text");
+		const bareTabsText = readString(readRecord(bareTabsFailure.content[0]).text);
+		assert.match(bareTabsText, /Agent-browser hint: Tab commands use singular `tab`, not `tabs`\./);
+		assert.match(bareTabsText, /`tab list`/);
+		assert.match(bareTabsText, /`tab new \[url\]`/);
+		assert.match(bareTabsText, /`tab <id>`/);
+		assert.match(bareTabsText, /`tab close \[id\]`/);
+		assert.doesNotMatch(bareTabsText, /getter shortcut/i);
+		assert.deepEqual(bareTabsFailure.nextActions, [
+			{
+				id: "use-tab-list",
+				params: { args: ["--session", "work", "tab", "list"] },
+				reason: "Use `tab list` to list open tabs with their stable ids and labels.",
+				safety: "Read-only tab inspection; safe to retry when you intended to list open tabs.",
+				tool: "agent_browser",
+			},
+		]);
+
+		const tabsListFailure = await buildToolPresentation({
+			args: ["tabs", "list"],
+			commandInfo: { command: "tabs", subcommand: "list" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: tabs",
+		});
+		assert.deepEqual(tabsListFailure.nextActions?.[0]?.params?.args, ["tab", "list"]);
+
+		const tabsNewFailure = await buildToolPresentation({
+			args: ["--session", "work", "tabs", "new", "https://example.com"],
+			commandInfo: { command: "tabs", subcommand: "new" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: tabs",
+			sessionName: "work",
+		});
+		const tabsNewText = readString(readRecord(tabsNewFailure.content[0]).text);
+		assert.match(tabsNewText, /Agent-browser hint: Tab commands use singular `tab`, not `tabs`\./);
+		assert.match(tabsNewText, /`tab new \[url\]`/);
+		assert.equal(tabsNewFailure.nextActions, undefined);
+
+		const tabsCloseFailure = await buildToolPresentation({
+			args: ["tabs", "close", "t1"],
+			commandInfo: { command: "tabs", subcommand: "close" },
+			cwd: process.cwd(),
+			errorText: "Unknown command: tabs",
+		});
+		assert.match(
+			readString(readRecord(tabsCloseFailure.content[0]).text),
+			/Agent-browser hint: Tab commands use singular `tab`, not `tabs`\./,
+		);
+		assert.equal(tabsCloseFailure.nextActions, undefined);
+	},
+);
+
 nodeTest("buildToolPresentation explains unsupported keyboard press commands", async () => {
 	const presentation = await buildToolPresentation({
 		args: ["keyboard", "press", "Enter"],
