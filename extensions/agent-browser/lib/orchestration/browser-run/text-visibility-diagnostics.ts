@@ -168,7 +168,13 @@ function getGetTextSelector(tokens: readonly string[]): string | undefined {
 }
 
 /** Local `auth` subcommands that never touch the page; other `auth` rows fail closed. */
-const AUTH_LOCAL_SUBCOMMANDS: ReadonlySet<string> = new Set(["list", "show", "save", "delete"]);
+const AUTH_LOCAL_SUBCOMMANDS: ReadonlySet<string> = new Set([
+	"list",
+	"show",
+	"save",
+	"delete",
+	"remove",
+]);
 
 /** Click-shaped commands without the post-mutation capability that can still navigate. */
 function isClickShapedCommand(command: string | undefined): boolean {
@@ -191,7 +197,7 @@ function batchStepMovesProbeDocument(step: readonly string[]): boolean {
 		command === "frame" ||
 		// `auth login` navigates to the credential URL and submits the form (even
 		// `--no-navigate` allows submit-triggered navigation); the local auth subcommands
-		// (list/show/save/delete) never touch the page.
+		// (list/show/save/delete/remove) never touch the page.
 		(command === "auth" && !AUTH_LOCAL_SUBCOMMANDS.has(subcommand ?? "")) ||
 		// `confirm` executes a pending guarded action, which can navigate or change the page;
 		// `deny` only cancels it and does not execute the pending action.

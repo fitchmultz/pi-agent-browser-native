@@ -4601,7 +4601,7 @@ if (args.includes("eval")) {
 					args: ["batch"],
 					stdin: JSON.stringify([
 						["get", "text", ".tabs"],
-						["auth", "list"],
+						["auth", "remove", "demo"],
 					]),
 				});
 				assert.ok(localAuthTailBatch.details);
