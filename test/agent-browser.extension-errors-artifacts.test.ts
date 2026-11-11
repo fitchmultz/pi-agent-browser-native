@@ -4763,6 +4763,7 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args }) + "\\n");
 if (args.includes("open")) {
   process.stdout.write(JSON.stringify({ success: true, data: { title: "Blocked Search", url: "https://blocked.example/" } }));
 } else if (args.includes("click")) {
+  fs.writeFileSync(${JSON.stringify(join(tempDir, "clicked"))}, "yes");
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: "@e9" } }));
 } else if (args.includes("get") && args.includes("url")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: "https://blocked.example/", url: "https://blocked.example/" } }));
@@ -4771,6 +4772,14 @@ if (args.includes("open")) {
 } else if (args.includes("eval")) {
   process.stdout.write(JSON.stringify({ success: true, data: { result: { title: "Blocked Search", url: "https://blocked.example/" } } }));
 } else if (args.includes("snapshot")) {
+  if (!fs.existsSync(${JSON.stringify(join(tempDir, "clicked"))})) {
+    process.stdout.write(JSON.stringify({ success: true, data: {
+      origin: "https://blocked.example/",
+      refs: { e9: { role: "button", name: "Search" } },
+      snapshot: '- button "Search" [ref=e9]'
+    } }));
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://blocked.example/",
     refs: {
@@ -4844,6 +4853,33 @@ if (args.includes("open")) {
 				assert.ok(closeCandidate.details);
 				assert.equal(closeCandidate.isError, false);
 				assert.notEqual(closeCandidate.details.failureCategory, "stale-ref");
+				await rm(join(tempDir, "clicked"), { force: true });
+				const beforeClick = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["snapshot", "-i"],
+				});
+				assert.equal(beforeClick.isError, false);
+				const semanticClick = await executeRegisteredTool(harness.tool, harness.ctx, {
+					semanticAction: { action: "click", locator: "role", role: "button", name: "Search" },
+				});
+				assert.ok(semanticClick.details);
+				assert.equal(semanticClick.isError, false);
+				assert.ok(readArray(semanticClick.details.effectiveArgs).includes("@e9"));
+				assert.deepEqual(
+					SessionPageState.fromBranch(harness.ctx.sessionManager.getBranch()).get(
+						readString(semanticClick.details.sessionName),
+					).refSnapshot?.refIds,
+					["e5", "e6", "e7"],
+				);
+				const closeAction = readArray(semanticClick.details.nextActions)
+					.map(readRecord)
+					.find((action) => action.id === "try-overlay-blocker-candidate-1");
+				assert.ok(closeAction);
+				const closeResult = await executeRegisteredTool(
+					harness.tool,
+					harness.ctx,
+					readRecord(closeAction.params),
+				);
+				assert.equal(closeResult.isError, false);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
