@@ -122,7 +122,7 @@ nodeTest(
 		// A new index restoring against an old cached runtime can receive an absent identity list.
 		staleState.replace(undefined, { preserveDaemonRestoreKeys: true });
 		assert.equal(staleState.isDisabled("piab-stale", "team"), false);
-		assert.equal(staleState.hasDaemonRestoreKey("piab-stale", "team"), false);
+		assert.equal(staleState.hasUnrestoredDaemonRestoreKey("piab-stale", "team"), false);
 		const state = new ManagedSessionRestoreState();
 		state.recordDaemonRestoreKey("piab-current", "team", null);
 		state.recordDaemonRestoreKey("piab-off-branch", undefined, "caller-key");
@@ -130,13 +130,13 @@ nodeTest(
 			preserveDaemonRestoreKeys: true,
 		});
 		assert.equal(state.isDisabled("piab-current", "team"), true);
-		assert.equal(state.hasDaemonRestoreKey("piab-current", "team"), true);
+		assert.equal(state.hasUnrestoredDaemonRestoreKey("piab-current", "team"), true);
 		assert.equal(state.getDaemonRestoreKey("piab-current", "team"), null);
 		assert.equal(state.getDaemonRestoreKey("piab-off-branch"), "caller-key");
 
 		state.replace([{ namespace: "team", sessionName: "piab-current" }]);
-		assert.equal(state.hasDaemonRestoreKey("piab-current", "team"), false);
-		assert.equal(state.hasDaemonRestoreKey("piab-off-branch"), false);
+		assert.equal(state.hasUnrestoredDaemonRestoreKey("piab-current", "team"), false);
+		assert.equal(state.hasUnrestoredDaemonRestoreKey("piab-off-branch"), false);
 	},
 );
 
@@ -888,10 +888,10 @@ nodeTest(
 		await withOwnedManagedSessionContext(named, async () => {
 			assert.deepEqual(getManagedSessionRestoreEnv(options), expectedRestoreEnv(cwd));
 			assert.equal(validateManagedSessionRestoreContextForSpawn(options), true);
-			assert.equal(restoreState.hasDaemonRestoreKey(managed, "team-name"), false);
+			assert.equal(restoreState.hasUnrestoredDaemonRestoreKey(managed, "team-name"), false);
 			commitManagedSessionRestoreSuppression({ ...options, ownedManagedSession: true });
 			assert.equal(restoreState.getDaemonRestoreKey(managed, "team-name"), named.restoreKey);
-			assert.equal(restoreState.hasDaemonRestoreKey(managed), false);
+			assert.equal(restoreState.hasUnrestoredDaemonRestoreKey(managed), false);
 			assert.deepEqual(
 				["", "other"].map((namespace) =>
 					getManagedSessionRestoreEnv({
@@ -916,7 +916,7 @@ nodeTest(
 			commitManagedSessionRestoreSuppression({ ...options, ownedManagedSession: true });
 			assert.equal(restoreState.getDaemonRestoreKey(managed, "team-name"), null);
 			assert.equal(restoreState.isDisabled(managed, "team-name"), true);
-			assert.equal(restoreState.hasDaemonRestoreKey(managed), false);
+			assert.equal(restoreState.hasUnrestoredDaemonRestoreKey(managed), false);
 			assert.equal(restoreState.isDisabled(managed), false);
 		});
 	},
