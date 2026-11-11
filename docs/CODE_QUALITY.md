@@ -303,7 +303,11 @@ sorting and JSDoc rewriting remain off. Generated docs converge through their
 producer rather than through ignored files or hand edits to generated blocks.
 
 `.github/workflows/code-quality.yml` installs locked dependencies and the separately
-installed upstream browser target, then runs real acceptance and mutation controls.
+installed upstream browser target, runs `npm run quality` on ordinary source and
+documentation pull requests, and runs `npm run quality:mutations` when lint,
+formatter, or compiler configs, `package.json`, `package-lock.json`, `scripts/`,
+`.github/workflows/`, or quality-probe tests change, on default manual dispatch,
+and during release qualification.
 It checks that verification leaves maintained artifacts unchanged. The release workflow
 requires quality alongside the separate host and platform checks.
 
