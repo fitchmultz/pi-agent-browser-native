@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
  * Purpose: Diagnose first-run pi-agent-browser-native setup without mutating Pi or agent-browser state.
- * Responsibilities: Check upstream agent-browser PATH/version, inspect Pi settings for duplicate package/checkout sources, and print actionable remediation.
+ * Responsibilities: Check the doctor's Node runtime floor, upstream agent-browser PATH/version, Pi runtime floor, and duplicate package/checkout sources, then print actionable remediation.
  * Scope: Read-only package diagnostics only; upstream browser runtime health remains the responsibility of upstream `agent-browser doctor`.
  * Usage: Run via `pi-agent-browser-doctor`, `npm exec --package pi-agent-browser-native -- pi-agent-browser-doctor`, or `npm run doctor` from this repository.
  * Invariants/Assumptions: The wrapper recommends TARGET_AGENT_BROWSER_VERSION, enforces the configured stable version floor, does not bundle agent-browser, and must not edit Pi settings or run fixing commands.
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -26,12 +26,36 @@ import {
 
 const execFile = promisify(execFileCallback);
 const RECOMMENDED_VERSION = TARGET_AGENT_BROWSER_VERSION;
+
+/**
+ * @param {unknown} value
+ * @returns {value is Readonly<Record<string, unknown>>}
+ */
+function isRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** @returns {string} */
+function readMinimumNodeVersion() {
+	// Keep the doctor runnable on older Node versions so it can diagnose the engine floor.
+	/** @type {unknown} */
+	const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+	const engines = isRecord(manifest) ? manifest.engines : undefined;
+	const nodeRange = isRecord(engines) ? engines.node : undefined;
+	if (typeof nodeRange !== "string" || nodeRange.length === 0) {
+		throw new Error("package.json is missing a valid engines.node range.");
+	}
+	return nodeRange.replace(/^>=/, "");
+}
+
+export const MINIMUM_NODE_VERSION = readMinimumNodeVersion();
 export const MINIMUM_PI_VERSION = "1.5.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 
 /** @typedef {import("./doctor-sources.mjs").DoctorCheck} DoctorCheck */
 /** @typedef {{readonly checks: readonly DoctorCheck[], readonly failures: readonly DoctorCheck[], readonly warnings: readonly string[]}} DoctorReport */
-/** @typedef {{readonly cwd?: string | undefined, readonly agentDir?: string | undefined, readonly settingsPaths?: readonly string[], readonly skipSourceCheck?: boolean, readonly readText?: (path: string) => Promise<string | undefined>, readonly pathExists?: (path: string) => Promise<boolean>, readonly runAgentBrowser?: (args: readonly string[]) => Promise<string>, readonly runPi?: (args: readonly string[]) => Promise<string>}} DoctorOptions */
+/** @typedef {{readonly node?: string | undefined, readonly bun?: string | undefined, readonly deno?: string | undefined, readonly releaseName?: string | undefined}} DoctorRuntime */
+/** @typedef {{readonly cwd?: string | undefined, readonly agentDir?: string | undefined, readonly settingsPaths?: readonly string[], readonly skipSourceCheck?: boolean, readonly runtime?: DoctorRuntime | undefined, readonly readText?: (path: string) => Promise<string | undefined>, readonly pathExists?: (path: string) => Promise<boolean>, readonly runAgentBrowser?: (args: readonly string[]) => Promise<string>, readonly runPi?: (args: readonly string[]) => Promise<string>}} DoctorOptions */
 
 /** @param {string} output */
 function normalizeAgentBrowserVersion(output) {
@@ -82,14 +106,15 @@ Options:
   --cwd <path>              Project directory used for project Pi settings and local source detection. Defaults to process.cwd().
   --agent-dir <path>        Pi global agent directory. Defaults to ~/.pi/agent.
   --settings <path>         Additional Pi settings JSON/JSONC file to inspect. Repeatable.
-  --skip-source-check       Only check upstream agent-browser PATH/version.
+  --skip-source-check       Skip Pi source inspection; version checks still run.
   -h, --help                Show help.
 
 Checks:
-  1. agent-browser is installed on PATH.
-  2. agent-browser --version is supported by this package.
-  3. pi --version is at least the minimum Pi runtime version for this release.
-  4. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
+  1. The Node.js runtime running this doctor meets the package minimum, when identifiable (Pi may use a different runtime).
+  2. agent-browser is installed on PATH.
+  3. agent-browser --version is supported by this package.
+  4. pi --version is at least the minimum Pi runtime version for this release.
+  5. Pi settings and repo-local autoload locations do not point at multiple active pi-agent-browser-native sources.
 
 Examples:
   pi-agent-browser-doctor
@@ -98,7 +123,7 @@ Examples:
   pi-agent-browser-doctor --cwd /path/to/project --settings /tmp/pi-settings.json
 
 Exit codes:
-  0  Doctor passed.
+  0  No setup failures (warnings may remain).
   1  Doctor found setup failures.
   2  Usage error.
 `);
@@ -185,6 +210,50 @@ function spawnErrorLines(error) {
 	const label = String(code);
 	const showCode = Boolean(code) && code !== "ENOENT";
 	return showCode ? [`Spawn error: ${label}`] : [];
+}
+
+/** @param {DoctorRuntime} runtime @returns {DoctorCheck} */
+function checkNodeVersion(runtime) {
+	const piRuntimeNote = "Pi may use a different runtime or Node executable; verify it separately.";
+	if (runtime.bun !== undefined || runtime.deno !== undefined || runtime.releaseName !== "node") {
+		return {
+			status: "warn",
+			title: "Cannot verify a Node.js runtime for this doctor.",
+			lines: [
+				"This doctor is running under a non-Node or unidentified runtime.",
+				`The package requires Node.js >=${MINIMUM_NODE_VERSION}.`,
+				piRuntimeNote,
+			],
+		};
+	}
+	const version = runtime.node ?? "";
+	const match = /^\d+\.\d+\.\d+(?:-([A-Za-z0-9.-]+))?(?:\+[A-Za-z0-9.-]+)?$/.exec(version);
+	if (match === null) {
+		return {
+			status: "warn",
+			title: `Could not parse the Node.js version running this doctor: ${version.length > 0 ? version : "<empty>"}.`,
+			lines: [`The package requires Node.js >=${MINIMUM_NODE_VERSION}.`, piRuntimeNote],
+		};
+	}
+	// A prerelease does not satisfy the package's stable >= engine range.
+	const supported =
+		match[1] === undefined && versionAtLeast(version, MINIMUM_NODE_VERSION) === true;
+	if (!supported) {
+		return {
+			status: "fail",
+			title: `Node running this doctor is unsupported: ${version} (requires >=${MINIMUM_NODE_VERSION}).`,
+			lines: [
+				"Run this doctor using a supported stable Node.js version.",
+				piRuntimeNote,
+				"If Pi uses an unsupported Node.js, update it and fully restart Pi.",
+			],
+		};
+	}
+	return {
+		status: "pass",
+		title: `Node running this doctor meets the package minimum: ${version}`,
+		lines: [piRuntimeNote],
+	};
 }
 
 /** @param {Pick<ReturnType<typeof doctorIo>, "runPi">} options
@@ -291,7 +360,13 @@ export async function evaluateDoctor(options = {}) {
 	const agentDir = resolve(options.agentDir ?? DEFAULT_AGENT_DIR);
 	const settingsPaths = Array.from(options.settingsPaths ?? [], (path) => resolve(cwd, path));
 	const { readText, pathExists, runAgentBrowser, runPi } = doctorIo(options);
-	const checks = [];
+	const runtime = options.runtime ?? {
+		node: process.versions.node,
+		bun: process.versions.bun,
+		deno: process.versions.deno,
+		releaseName: process.release.name,
+	};
+	const checks = [checkNodeVersion(runtime)];
 
 	const warnings = [];
 
@@ -318,6 +393,17 @@ export async function evaluateDoctor(options = {}) {
 }
 
 /** @param {DoctorReport} report @returns {string} */
+function doctorSummary(report) {
+	if (report.failures.length > 0) {
+		return "Doctor found setup failures.";
+	}
+	if (report.checks.some((check) => check.status === "warn") || report.warnings.length > 0) {
+		return "Doctor completed with warnings.";
+	}
+	return "Doctor passed.";
+}
+
+/** @param {DoctorReport} report @returns {string} */
 export function formatDoctorReport(report) {
 	const lines = ["pi-agent-browser-native doctor", ""];
 	for (const check of report.checks) {
@@ -334,7 +420,7 @@ export function formatDoctorReport(report) {
 	if (report.warnings.length > 0) {
 		lines.push("");
 	}
-	lines.push(report.failures.length > 0 ? "Doctor found setup failures." : "Doctor passed.");
+	lines.push(doctorSummary(report));
 	return lines.join("\n");
 }
 
