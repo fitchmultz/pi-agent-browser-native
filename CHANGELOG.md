@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.21 - 2026-11-11
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- refactor: own trace/profiler state in TraceOwnership (#398) ([54eb9c2](https://github.com/fitchmultz/pi-agent-browser-native/commit/54eb9c2c4f269a161dd64ba7c9cc0c6a168ffa2a))
+
+### What's Changed
+
+- refactor: own trace/profiler state in TraceOwnership by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/398
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.20...v0.9.21
+
 ## 0.9.20 - 2026-11-11
 
 <!-- npm-release:unreleased:start -->
