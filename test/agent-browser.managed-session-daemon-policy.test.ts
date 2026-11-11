@@ -85,14 +85,19 @@ async function waitForDispatch(path: string): Promise<void> {
 		}
 	}
 }
+/**
+ * A fake upstream that answers once the test writes `release`. It looks for the file on a timer:
+ * on macOS `fs.watch` can miss a file created right after the watch starts, and the child then
+ * never answers.
+ */
 function heldChild(tempDir: string, data: Readonly<Record<string, unknown>>): string {
 	return `const fs = require("node:fs");
 fs.readFileSync(0, "utf8");
-const watcher = fs.watch(${JSON.stringify(tempDir)}, () => {
+const timer = setInterval(() => {
   if (!fs.existsSync(${JSON.stringify(join(tempDir, "release"))})) return;
-  watcher.close();
+  clearInterval(timer);
   process.stdout.write(JSON.stringify({ success: true, data: ${JSON.stringify(data)} }));
-});
+}, 5);
 fs.writeFileSync(${JSON.stringify(join(tempDir, "ready"))}, String(process.pid));`;
 }
 

@@ -1326,11 +1326,12 @@ if (args.includes("get") && args.includes("url")) {
     process.stdout.write(JSON.stringify({ success: true, data: { path: outputPath } }));
   };
   if (session === "slow") {
-    const watcher = fs.watch(${JSON.stringify(tempDir)}, () => {
+    // A timer, not fs.watch: on macOS a watch can miss a file created right after it starts.
+    const timer = setInterval(() => {
       if (!fs.existsSync(${JSON.stringify(releasePath)})) return;
-      watcher.close();
+      clearInterval(timer);
       capture();
-    });
+    }, 5);
     fs.writeFileSync(${JSON.stringify(startedPath)}, "started");
   } else capture();
 } else {
@@ -2231,11 +2232,12 @@ nodeTest(
 			tempDir,
 			`const fs = require("node:fs");
 const stdin = fs.readFileSync(0, "utf8");
-const watcher = fs.watch(${JSON.stringify(tempDir)}, () => {
+// A timer, not fs.watch: on macOS a watch can miss a file created right after it starts.
+const timer = setInterval(() => {
   if (!fs.existsSync(${JSON.stringify(releasePath)})) return;
-  watcher.close();
+  clearInterval(timer);
   process.stdout.write(JSON.stringify({ success: true, data: { ok: true } }));
-});
+}, 5);
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin, defaultTimeout: process.env.AGENT_BROWSER_DEFAULT_TIMEOUT }) + "\\n");`,
 		);
 
