@@ -4492,6 +4492,23 @@ if (args.includes("eval")) {
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
 
+				const navigationOperandTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["a11y", "https://other.example/two"],
+					]),
+				});
+				assert.ok(navigationOperandTailBatch.details);
+				assert.equal(navigationOperandTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(navigationOperandTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(navigationOperandTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
 				const readOnlyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([
@@ -4511,6 +4528,19 @@ if (args.includes("eval")) {
 				);
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+
+				const bareA11yTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([["get", "text", ".tabs"], ["a11y"]]),
+				});
+				assert.ok(bareA11yTailBatch.details);
+				assert.equal(bareA11yTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(bareA11yTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 2);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });

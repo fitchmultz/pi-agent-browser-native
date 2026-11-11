@@ -11,6 +11,7 @@ import {
 	isUnverifiedPageTransitionCommand,
 } from "../../command-taxonomy.js";
 import { extractBatchResultCommand, extractStringResultField } from "../../session-page-state.js";
+import { getExplicitNavigationTarget } from "../../page-target-navigation.js";
 import { runSessionCommandData } from "./session-state.js";
 import { rawNumberField, rawStringField } from "./diagnostic-values.js";
 import type {
@@ -182,6 +183,9 @@ function batchStepInvalidatesGetTextProbe(step: readonly string[]): boolean {
 		// `tab new` and tab switches move the active target even though their own result
 		// reports it; `tab list` only reads. Bare `tab` conservatively ends the window.
 		(command === "tab" && subcommand !== "list") ||
+		// Optional-URL commands (a11y, vitals, web-vitals) navigate before measuring when a
+		// URL operand is present; the bare forms stay on the current page.
+		getExplicitNavigationTarget(step) !== undefined ||
 		isUnverifiedPageTransitionCommand(command, subcommand) ||
 		isPageMutationStep(step) ||
 		getRefRetiringTransition(step) !== undefined
