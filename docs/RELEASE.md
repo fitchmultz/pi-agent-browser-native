@@ -79,7 +79,7 @@ For PR-ready local confidence before release-only lifecycle and platform cost, r
 npm run verify -- pre-pr
 ```
 
-`pre-pr` composes the default gate with `npm run verify -- package`: clean `dist/` build, maintained-code scope and operation-bound directive policy, strict native lint, Oxfmt, both compiler projects, the full unit/fake suite with exception-isolation probes, generated docs, live command-reference sampling, and package-content verification. CI additionally runs `npm run quality:mutations` to prove real acceptance-failure propagation; see [`CODE_QUALITY.md`](CODE_QUALITY.md). It intentionally does not run lifecycle, packaged Pi smoke, Crabbox platform smoke, startup-profile, real-upstream or dogfood modes.
+`pre-pr` composes the default gate with `npm run verify -- package`: clean `dist/` build, maintained-code scope and operation-bound directive policy, strict native lint, Oxfmt, both compiler projects, the full unit/fake suite with exception-isolation probes, generated docs, live command-reference sampling, and package-content verification. CI runs `npm run quality` on ordinary pull requests and `npm run quality:mutations` when quality/compiler/formatter configs, package manifests, `scripts/`, `.github/workflows/`, or quality-probe tests change and during release qualification; see [`CODE_QUALITY.md`](CODE_QUALITY.md). It intentionally does not run lifecycle, packaged Pi smoke, Crabbox platform smoke, startup-profile, real-upstream or dogfood modes.
 
 `npm run verify -- release` runs:
 

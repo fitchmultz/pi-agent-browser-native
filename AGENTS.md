@@ -42,8 +42,10 @@ the adopted v5.2 guide, and exception contracts.
 - Additional relaxations require concrete diagnostic/contract evidence and explicit
   approval. Existing authorized exception classes still require their demonstrated
   conditions; substantial work or diagnostic counts are not grounds to relax them.
-- Run `npm run quality` on the integrated revision; CI also proves real
-  failure propagation with `npm run quality:mutations`.
+- Run `npm run quality` on the integrated revision; CI runs `npm run quality` on
+  ordinary source and doc pull requests and `npm run quality:mutations` when
+  lint/format/compiler configs, package manifests, `scripts/`, `.github/workflows/`,
+  or quality-probe tests change, as well as during release qualification.
 - Use `npm run lint`, `lint:agent`, and reviewed `lint:fix` for identical coverage;
   Oxfmt owns `format` and non-modifying `format:check`.
 - All maintained TypeScript and JavaScript retain syntactic lint, semantic lint,
