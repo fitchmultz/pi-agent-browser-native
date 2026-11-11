@@ -4,6 +4,7 @@ import type {
 	ProcessBrowserOutputInput,
 	ScreenshotArtifactRequest,
 	NavigationSummary,
+	OwnStepPageCheck,
 	ElectronPostCommandHealthDiagnostic,
 	ElectronSessionMismatch,
 	ManagedSessionOutcome,
@@ -146,6 +147,7 @@ export interface PublicationOutputPhase {
 	readonly inspectionText: string | undefined;
 	managedSessionOutcome: ManagedSessionOutcome | undefined;
 	readonly navigationSummary: NavigationSummary | undefined;
+	readonly ownStepPageCheck: OwnStepPageCheck | undefined;
 	readonly diagnostics: PageDiagnostics;
 	networkRoutesBySession: ReadonlyMap<string, readonly NetworkRouteRecord[]>;
 	networkSourceLookup: AgentBrowserNetworkSourceLookupAnalysis | undefined;

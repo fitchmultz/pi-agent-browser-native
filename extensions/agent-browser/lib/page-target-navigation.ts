@@ -1,6 +1,9 @@
 import { parseArgvDescriptor } from "./argv-descriptor.js";
 import { GLOBAL_BOOLEAN_FLAGS_WITH_OPTIONAL_VALUES, VALUE_FLAGS } from "./argv-grammar.js";
-import { isUnverifiedPageTransitionCommand } from "./command-taxonomy.js";
+import {
+	isPageReportingTransitionCommand,
+	isUnverifiedPageTransitionCommand,
+} from "./command-taxonomy.js";
 
 const EXPLICIT_NAVIGATION_COMMANDS = new Set([
 	"a11y",
@@ -105,6 +108,11 @@ export function commandVerifiesPageTarget(args: readonly string[]): boolean {
 	return command === "get" && subcommand === "url";
 }
 
+/** A successful eval or reload reports its resulting page; a failed one leaves the page unknown. */
+export function commandReportsResultingPage(args: readonly string[]): boolean {
+	return isPageReportingTransitionCommand(parseArgvDescriptor(args).commandInfo.command);
+}
+
 export function getResultingPageState(
 	options: PageTargetState & {
 		readonly args: readonly string[];
@@ -122,6 +130,10 @@ export function getResultingPageState(
 	}
 	if (rawExplicitTarget !== undefined) {
 		return { pageUrlUnknown: true };
+	}
+	if (isPageReportingTransitionCommand(command)) {
+		// The step may navigate, so only its own result can name the resulting URL.
+		return { pageUrlUnknown: false };
 	}
 	if (
 		isUnverifiedPageTransitionCommand(command, subcommand) &&

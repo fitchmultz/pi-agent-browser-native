@@ -18,6 +18,13 @@ export interface NavigationSummary {
 	readonly urlChanged?: boolean | undefined;
 }
 
+/** What the wrapper found when its own eval or reload was the last page evidence of a call. */
+export type OwnStepPageCheck = { readonly command: "eval" | "reload" } & (
+	| { readonly status: "changed"; readonly priorUrl: string; readonly url: string }
+	| { readonly status: "error-page"; readonly url: string }
+	| { readonly status: "unreadable" }
+);
+
 export interface OverlayBlockerCandidate {
 	readonly args: readonly string[];
 	readonly name?: string;

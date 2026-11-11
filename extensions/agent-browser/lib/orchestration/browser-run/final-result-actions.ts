@@ -49,6 +49,7 @@ export type ResultActionsInput = Pick<
 	| "openResultTabCorrection"
 	| "currentSessionTabTarget"
 	| "priorSessionTabTarget"
+	| "ownStepPageCheck"
 	| "visibleRefFallbackDiagnostic"
 	| "visibleRefFallbackSessionName"
 	| "richInputRecoveryDiagnostic"

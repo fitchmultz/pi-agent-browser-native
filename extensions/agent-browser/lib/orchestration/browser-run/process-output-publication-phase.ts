@@ -45,6 +45,7 @@ function createPublicationOutputPhase(
 		inspectionText: native.inspectionText,
 		managedSessionOutcome: lifecycle.managedSessionOutcome,
 		navigationSummary: page.navigationSummary,
+		ownStepPageCheck: page.ownStepPageCheck,
 		diagnostics: page.diagnostics,
 		networkRoutesBySession: lifecycle.networkRoutesBySession,
 		networkSourceLookup: undefined,

@@ -2,6 +2,7 @@ import type {
 	AboutBlankSessionMismatch,
 	ProcessBrowserOutputInput,
 	NavigationSummary,
+	OwnStepPageCheck,
 	ClickDispatchDiagnostic,
 	ElectronPostCommandHealthDiagnostic,
 	ElectronSessionMismatch,
@@ -92,6 +93,7 @@ export interface PageOutputPhase {
 	networkRoutesBySession: ReadonlyMap<string, readonly NetworkRouteRecord[]>;
 	observedSessionTabTarget: SessionTabTarget | undefined;
 	openResultTabCorrection: OpenResultTabCorrection | undefined;
+	ownStepPageCheck: OwnStepPageCheck | undefined;
 	presentationEnvelope: AgentBrowserEnvelope | undefined;
 	readonly processSucceeded: boolean;
 	readConfirmation: ReadConfirmation | undefined;
@@ -133,6 +135,7 @@ export type PageOutputEvidence = Readonly<
 		| "networkRoutesBySession"
 		| "observedSessionTabTarget"
 		| "openResultTabCorrection"
+		| "ownStepPageCheck"
 		| "presentationEnvelope"
 		| "processSucceeded"
 		| "readConfirmationEvent"

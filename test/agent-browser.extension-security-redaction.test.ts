@@ -335,7 +335,8 @@ nodeTest(
 			tempDir,
 			`const fs = require("node:fs");
 fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2), stdin: fs.readFileSync(0, "utf8") }) + "\\n");
-process.stdout.write(JSON.stringify({ success: true, data: { result: ${JSON.stringify(JSON.stringify(payload, null, 2))} } }));`,
+const data = process.argv.includes("eval") ? { result: ${JSON.stringify(JSON.stringify(payload, null, 2))} } : { url: "https://example.test/" };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
 		);
 
 		try {

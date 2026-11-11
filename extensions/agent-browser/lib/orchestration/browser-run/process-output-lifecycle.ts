@@ -27,7 +27,7 @@ import {
 } from "../../batch-lifecycle.js";
 import {
 	isCloseAllCommand,
-	isPageMutationCommand,
+	isPageMutationStep,
 	isWindowOrDiffPageTransitionCommand,
 } from "../../command-taxonomy.js";
 import { detectConfirmationRequired } from "../../results/confirmation.js";
@@ -129,10 +129,7 @@ export function observeInterruptedMutation(
 		(draft.input.prepared.executionPlan.commandInfo.command === "batch"
 			? draft.batchCommandSteps
 			: [draft.input.prepared.commandTokens]
-		).some((step) => {
-			const action = step[0] === "find" ? (step[step[1] === "nth" ? 4 : 3] ?? "click") : step[0];
-			return isPageMutationCommand(action, step[1]);
-		});
+		).some(isPageMutationStep);
 	const sessionStateKey = getSessionContextKey(
 		draft.input.prepared.executionPlan.sessionName,
 		draft.input.prepared.executionPlan.namespace,

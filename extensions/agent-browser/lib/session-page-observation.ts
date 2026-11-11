@@ -384,6 +384,8 @@ const REF_RETIRING_TRANSITION_SUMMARIES: Readonly<
 	"flow-run":
 		"A saved-flow run can replay recorded commands that navigate or change the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.",
 	record: undefined,
+	reload:
+		"A reload replaced the document and native cleared its refs. Run snapshot -i before using page-scoped refs.",
 	webmcp:
 		"A WebMCP invoke, result, or cancel command can mutate, rerender, or navigate the page, so the prior snapshot refs were invalidated. Run snapshot -i before using page-scoped refs.",
 	"window-or-diff":

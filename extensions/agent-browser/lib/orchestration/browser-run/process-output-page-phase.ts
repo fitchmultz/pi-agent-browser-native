@@ -18,6 +18,7 @@ import { collectPageDiagnostics } from "./process-output-diagnostics.js";
 import { collectTimeoutPartialProgress } from "./diagnostics.js";
 import { normalizeSessionTabTarget } from "../../session-page-state.js";
 import { observeBatchRefSnapshot, reconcileOutputRefs } from "./process-output-refs.js";
+import { checkPageAfterOwnStep } from "./own-step-page-check.js";
 async function recoverTimeoutPageTarget(
 	view: Readonly<
 		Pick<PageOutputPhase, "input" | "recordingStopRecovery" | "currentSessionTabTarget">
@@ -82,6 +83,7 @@ function createPageOutputPhase(
 		networkRoutesBySession: native.networkRoutesBySession,
 		observedSessionTabTarget: undefined,
 		openResultTabCorrection: undefined,
+		ownStepPageCheck: undefined,
 		presentationEnvelope: native.presentationEnvelope,
 		processSucceeded: native.processSucceeded,
 		readConfirmation: native.readConfirmation,
@@ -117,6 +119,7 @@ export async function observePageEffects(
 	const timeoutRecovery = await recoverTimeoutPageTarget(draft);
 	draft.timeoutPartialProgress = timeoutRecovery.timeoutPartialProgress;
 	draft.currentSessionTabTarget = timeoutRecovery.currentSessionTabTarget;
+	Object.assign(draft, checkPageAfterOwnStep(draft));
 	const collected = await collectPageDiagnostics({
 		input,
 		aboutBlankSessionMismatch: draft.aboutBlankSessionMismatch,
@@ -154,6 +157,7 @@ export async function observePageEffects(
 		networkRoutesBySession: draft.networkRoutesBySession,
 		observedSessionTabTarget: draft.observedSessionTabTarget,
 		openResultTabCorrection: draft.openResultTabCorrection,
+		ownStepPageCheck: draft.ownStepPageCheck,
 		presentationEnvelope: draft.presentationEnvelope,
 		processSucceeded: draft.processSucceeded,
 		readConfirmationEvent: draft.readConfirmationEvent,

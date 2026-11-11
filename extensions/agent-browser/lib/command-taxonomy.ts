@@ -106,7 +106,7 @@ function isFlowRunCommand(command: string | undefined, subcommand?: string): boo
 }
 
 /** A command whose run retires every earlier ref: later rows of its batch and the session's saved snapshot. */
-export type RefRetiringTransition = "flow-run" | "record" | "webmcp" | "window-or-diff";
+export type RefRetiringTransition = "flow-run" | "record" | "reload" | "webmcp" | "window-or-diff";
 
 export function getRefRetiringTransition(
 	tokens: readonly string[],
@@ -117,6 +117,9 @@ export function getRefRetiringTransition(
 	}
 	if (isWindowOrDiffPageTransitionCommand(command, subcommand)) {
 		return "window-or-diff";
+	}
+	if (command === "reload") {
+		return "reload";
 	}
 	if (isWebMcpPageMutation(command, subcommand)) {
 		return "webmcp";
@@ -168,11 +171,27 @@ export function isUnverifiedPageTransitionCommand(
 	);
 }
 
+/**
+ * Native eval and reload return the URL they read after the step with the same call as get url
+ * (eval as `origin`, reload as `url`), so their own successful result is page-target evidence.
+ */
+export function isPageReportingTransitionCommand(
+	command: string | undefined,
+): command is "eval" | "reload" {
+	return command === "eval" || command === "reload";
+}
+
 export function isPageMutationCommand(command: string | undefined, subcommand?: string): boolean {
 	return (
 		hasCommandCapability(command, "triggersPostMutationSnapshot") ||
 		isWebMcpPageMutation(command, subcommand)
 	);
+}
+
+/** Whether a batch step acts on the page: a mutation command, or `find` with a mutating action. */
+export function isPageMutationStep(step: readonly string[]): boolean {
+	const action = step[0] === "find" ? (step[step[1] === "nth" ? 4 : 3] ?? "click") : step[0];
+	return isPageMutationCommand(action, step[1]);
 }
 
 export function isPageChangeSummaryCommand(

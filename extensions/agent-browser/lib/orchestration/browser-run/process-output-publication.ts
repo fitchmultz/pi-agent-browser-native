@@ -16,6 +16,7 @@ import {
 	formatElectronSessionMismatchText,
 } from "./session-state.js";
 import { getArtifactCleanupGuidance } from "./diagnostics.js";
+import { formatOwnStepPageCheckText } from "./own-step-page-check.js";
 import {
 	buildFinalAgentBrowserToolResult,
 	buildRedactedPresentationContent,
@@ -49,6 +50,7 @@ type CollectPublicationWarningsInput = Readonly<
 		| "artifactManifest"
 		| "electronPostCommandHealth"
 		| "electronSessionMismatch"
+		| "ownStepPageCheck"
 		| "plainTextInspection"
 		| "presentationEnvelope"
 		| "succeeded"
@@ -186,7 +188,12 @@ export async function collectPublicationWarnings(
 		manifest: resultArtifactManifest,
 		succeeded: draft.succeeded,
 	});
-	const warnings = [sessionWarning(draft), recordingPageWarning(draft)]
+	// The own-step page notice leads so a changed or unverified page cannot be overlooked.
+	const warnings = [
+		draft.ownStepPageCheck ? formatOwnStepPageCheckText(draft.ownStepPageCheck) : undefined,
+		sessionWarning(draft),
+		recordingPageWarning(draft),
+	]
 		.filter((part) => part !== undefined && part.length > 0)
 		.join("\n\n");
 	const redactedContent = buildRedactedPresentationContent({
@@ -265,6 +272,7 @@ export function buildOutputResult(
 		noActivePageSnapshotFailure: recovery.noActivePageSnapshotFailure,
 		openResultTabCorrection: lifecycle.openResultTabCorrection,
 		overlayBlockerDiagnostic: page.diagnostics.overlayBlockerDiagnostic,
+		ownStepPageCheck: page.ownStepPageCheck,
 		parseError: lifecycle.parseError,
 		parseFailureOutput: native.parseFailureOutput,
 		parseSucceeded: lifecycle.parseSucceeded,
