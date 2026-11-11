@@ -1,3 +1,4 @@
+import { rm } from "node:fs/promises";
 import { redactSensitiveText } from "../runtime.js";
 import { runAgentBrowserProcess } from "../process.js";
 import { getAgentBrowserProcessEnvironment } from "../process-environment.js";
@@ -50,27 +51,35 @@ export async function validateUpstreamVersion(
 		return undefined;
 	}
 	const probe = await runAgentBrowserProcess({ args: ["--version"], cwd, signal, timeoutMs: 5000 });
-	if (unavailableProbe(probe)) {
-		return undefined;
-	}
-	const { error, observedVersion } = probeVersion(probe);
-	if (error === undefined || error === "") {
-		cache.add(key);
-		return undefined;
-	}
-	return {
-		content: [{ type: "text", text: error }],
-		details: {
-			expectedVersion: TARGET_AGENT_BROWSER_VERSION,
-			failureCategory: "validation-error",
-			observedVersion,
-			resultCategory: "failure",
-			minimumSupportedVersion: MINIMUM_AGENT_BROWSER_VERSION,
-			versionValidation: {
-				expected: SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
-				observed: observedVersion,
+	try {
+		if (unavailableProbe(probe)) {
+			return undefined;
+		}
+		const { error, observedVersion } = probeVersion(probe);
+		if (error === undefined || error === "") {
+			cache.add(key);
+			return undefined;
+		}
+		return {
+			content: [{ type: "text", text: error }],
+			details: {
+				expectedVersion: TARGET_AGENT_BROWSER_VERSION,
+				failureCategory: "validation-error",
+				observedVersion,
+				resultCategory: "failure",
+				minimumSupportedVersion: MINIMUM_AGENT_BROWSER_VERSION,
+				versionValidation: {
+					expected: SUPPORTED_AGENT_BROWSER_VERSION_LABEL,
+					observed: observedVersion,
+				},
 			},
-		},
-		isError: true,
-	};
+			isError: true,
+		};
+	} finally {
+		if (probe.stdoutSpillPath !== undefined) {
+			await rm(probe.stdoutSpillPath, { force: true }).catch(() => {
+				// Temp-root cleanup owns leftovers; unlink failure must not mask validation.
+			});
+		}
+	}
 }

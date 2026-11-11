@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { readRecord } from "./helpers/assertions.js";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import nodeTest from "node:test";
+import { validateUpstreamVersion } from "../extensions/agent-browser/lib/orchestration/extension-version-check.js";
+import { runAgentBrowserProcess } from "../extensions/agent-browser/lib/process.js";
+import { getSessionTempRoot } from "../extensions/agent-browser/lib/temp-root.js";
 
 import {
 	MINIMUM_AGENT_BROWSER_VERSION,
@@ -49,6 +52,66 @@ nodeTest("upstream version output accepts stable versions at or above the suppor
 	);
 	assert.match(getAgentBrowserVersionValidationError("v0.35.1\n") ?? "", /unrecognized value/);
 });
+
+nodeTest(
+	"version validation removes actual stdout spills on valid, invalid, and unavailable probes",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "piab-version-spill-"));
+		try {
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`
+process.stdout.write(" ".repeat(600_000) + "agent-browser " + process.env.PIAB_PROBE_VERSION + "\\n", () => {
+  process.exit(Number(process.env.PIAB_PROBE_EXIT));
+});
+`,
+			);
+			await withPatchedEnv(
+				{
+					PATH: `${tempDir}${delimiter}${process.env.PATH ?? ""}`,
+					PI_AGENT_BROWSER_TEST_CUSTOM_VERSION: "1",
+					PIAB_PROBE_VERSION: TARGET_AGENT_BROWSER_VERSION,
+					PIAB_PROBE_EXIT: "0",
+				},
+				async () => {
+					const control = await runAgentBrowserProcess({
+						args: ["--version"],
+						cwd: tempDir,
+						timeoutMs: 5000,
+					});
+					assert.ok(control.stdoutSpillPath !== undefined);
+					assert.match(await readFile(control.stdoutSpillPath, "utf8"), /agent-browser/);
+					await rm(control.stdoutSpillPath);
+					const root = await getSessionTempRoot();
+					const before = (await readdir(root)).sort();
+					const observations = [];
+					for (const [version, exitCode] of [
+						[TARGET_AGENT_BROWSER_VERSION, "0"],
+						["0.33.20", "0"],
+						[TARGET_AGENT_BROWSER_VERSION, "127"],
+					] as const) {
+						const observation = await withPatchedEnv(
+							{ PIAB_PROBE_VERSION: version, PIAB_PROBE_EXIT: exitCode },
+							async () => {
+								const result = await validateUpstreamVersion(new Set(), tempDir);
+								return { invalid: result?.isError === true, files: (await readdir(root)).sort() };
+							},
+						);
+						observations.push(observation);
+					}
+					assert.deepEqual(observations, [
+						{ invalid: false, files: before },
+						{ invalid: true, files: before },
+						{ invalid: false, files: before },
+					]);
+				},
+			);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
 
 nodeTest(
 	"browser-backed calls fail before launch on upstream version mismatch while inspection stays available",
