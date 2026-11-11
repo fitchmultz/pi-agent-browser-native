@@ -5,6 +5,7 @@
 ### Fixed
 
 - Mention singular `tab` commands (`tab list/new/<id>/close`) in the always-on browser guidance and add unknown-command `tabs` recovery (`Agent-browser hint:` plus read-only `use-tab-list` `nextActions` for bare `tabs` and `tabs list`) so models stop getting stuck on `Unknown command: tabs` (#392).
+- Report an unsupported Node.js runtime in the package doctor instead of passing the setup check. The doctor checks its own process, not the potentially different runtime or executable running Pi; non-Node and unknown runtimes stay unverified (#253).
 
 ## 0.9.19 - 2026-11-10
 
