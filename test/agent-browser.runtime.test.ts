@@ -373,6 +373,39 @@ nodeTest(
 			{ active: true, namespace: "review", sessionName: "piab-demo-123-fresh" },
 		);
 		assert.deepEqual(
+			[false, true].flatMap((priorActive) =>
+				[false, true].map((succeeded) =>
+					resolveManagedSessionState({
+						command: "close",
+						managedSessionName: "piab-demo-123-fresh",
+						managedSessionNamespace: "attempt",
+						priorActive,
+						priorNamespace: "review",
+						priorSessionName: "piab-demo-123",
+						succeeded,
+					}),
+				),
+			),
+			[
+				{ active: false, namespace: "review", sessionName: "piab-demo-123" },
+				{ active: false, namespace: "review", sessionName: "piab-demo-123" },
+				{ active: true, namespace: "review", sessionName: "piab-demo-123" },
+				{ active: true, namespace: "review", sessionName: "piab-demo-123" },
+			],
+		);
+		assert.deepEqual(
+			resolveManagedSessionState({
+				command: "close",
+				managedSessionName: "piab-demo-123",
+				managedSessionNamespace: "review",
+				priorActive: true,
+				priorNamespace: "review",
+				priorSessionName: "piab-demo-123",
+				succeeded: false,
+			}),
+			{ active: true, namespace: "review", sessionName: "piab-demo-123" },
+		);
+		assert.deepEqual(
 			resolveManagedSessionState({
 				command: "open",
 				managedSessionName: "piab-demo-123-fresh",

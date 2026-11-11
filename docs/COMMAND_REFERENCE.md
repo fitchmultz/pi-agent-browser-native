@@ -308,6 +308,8 @@ Upstream also exposes non-core families (`network`, `diff`, `trace` / `profiler`
 
 Keep routine browser work simple: open a page, inspect it with `snapshot -i`, interact with current `@ref` values from that snapshot, then inspect again. Re-run `snapshot -i` after navigation, scrolling, rerendering, or other major DOM changes because refs can become stale.
 
+A `sessionMode: "fresh"` batch ending in `close` closes only its attempted browser. A different prior managed browser remains current with its namespace and launch settings; otherwise `managedSessionOutcome.activeAfter` is false. A successful close never makes the closed browser current or replaces the prior browser.
+
 ### Normal browse flow
 
 ```json

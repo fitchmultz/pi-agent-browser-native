@@ -182,8 +182,14 @@ export function formatManagedSessionOutcomeText(
 				);
 	}
 	if (outcome.status === "closed" && outcome.succeeded) {
+		if (outcome.activeAfter) {
+			return [
+				"Managed session outcome: The attempted wrapper-managed browser session was closed; the previous wrapper-managed browser session remains current.",
+				"Continue with sessionMode auto on the preserved browser. Full session names and transition details remain in details.managedSessionOutcome.",
+			].join("\n");
+		}
 		return [
-			"Managed session outcome: The current wrapper-managed browser session was closed.",
+			"Managed session outcome: The wrapper-managed browser session was closed; no managed browser session is current.",
 			"Next sessionMode auto call will start or attach a managed session as needed. If upstream session list still shows rows, they are separate saved/upstream sessions; use close --all only when full cleanup is intended.",
 			"Full session names and transition details remain in details.managedSessionOutcome.",
 		].join("\n");

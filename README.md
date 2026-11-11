@@ -72,6 +72,8 @@ Ordinary calls use one named browser per root Pi session. A parent and its subag
 
 Shared root browsers survive Pi exit. Ask Pi to close your group's browser when finished.
 
+A `sessionMode: "fresh"` batch that ends by closing its browser leaves any prior managed browser current, including its namespace and launch settings. Without a prior browser, no managed browser is current. Check `details.managedSessionOutcome.activeAfter` and `currentSessionName` rather than treating a successful batch as an active browser.
+
 Profile access exposes private page content to the model. That content can persist in transcripts and saved files. Use temporary profiles for tests.
 
 Credential-like values, including CDP transport headers on the [pinned Android build](docs/REFERENCE.md#android--termux), are redacted, but ordinary page text stays visible. Verify the signed-in page after you select a profile or restore browser state.

@@ -30,8 +30,12 @@ export function resolveManagedSessionState(options: {
 	if (managedSessionName === undefined || managedSessionName.length === 0) {
 		return priorState;
 	}
-	if (isCloseCommand(command) && managedSessionName === priorSessionName) {
-		if (managedNamespace !== priorNamespace || !succeeded) {
+	if (isCloseCommand(command)) {
+		if (
+			managedSessionName !== priorSessionName ||
+			managedNamespace !== priorNamespace ||
+			!succeeded
+		) {
 			return priorState;
 		}
 		return { active: false, sessionName: priorSessionName };

@@ -289,7 +289,8 @@ function resolveManagedLaunchDirectory(
 		sessionName === undefined ||
 		sessionName.length === 0 ||
 		!draft.managedTransitionSucceeded ||
-		!next.active
+		!next.active ||
+		!executionTargetsManagedSession(draft.input.prepared.executionPlan, next)
 	) {
 		return undefined;
 	}

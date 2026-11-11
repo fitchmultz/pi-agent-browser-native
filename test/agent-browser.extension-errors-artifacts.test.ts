@@ -4414,7 +4414,7 @@ nodeTest(
 	"agentBrowserExtension skips the get text visibility probe after close or page-changing batch rows",
 	{ concurrency: false },
 	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-get-text-probe-window-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "v-"));
 		const logPath = join(tempDir, "invocations.log");
 		const basePath = process.env.PATH ?? "";
 		await writeFakeAgentBrowserBinary(
@@ -4443,11 +4443,16 @@ if (args.includes("eval")) {
 				const closedBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					sessionMode: "fresh",
-					stdin: JSON.stringify([["get", "text", ".tabs"], ["close"]]),
+					stdin: JSON.stringify([
+						["open", "https://example.com/"],
+						["get", "text", ".tabs"],
+						["close"],
+					]),
 				});
 				assert.ok(closedBatch.details);
 				assert.equal(closedBatch.isError, false);
 				assert.equal(readRecord(closedBatch.details.managedSessionOutcome).status, "closed");
+				assert.equal(readRecord(closedBatch.details.managedSessionOutcome).activeAfter, false);
 				assert.doesNotMatch(
 					readString(readRecord(closedBatch.content[0]).text),
 					/Selector text visibility warning/,
@@ -4456,6 +4461,43 @@ if (args.includes("eval")) {
 				assert.equal(closedBatch.details.selectorTextVisibilityAll, undefined);
 				let invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const priorBrowser = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "prior", "get", "title"],
+					sessionMode: "fresh",
+				});
+				assert.equal(priorBrowser.isError, false);
+				const priorOutcome = readRecord(priorBrowser.details?.managedSessionOutcome);
+				assert.equal(priorOutcome.status, "created");
+				assert.equal(priorOutcome.replacedSessionName, undefined);
+				assert.equal(
+					(await readInvocationLog(logPath)).filter((entry) => entry.args.includes("close")).length,
+					0,
+				);
+				const selfClosingAttempt = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "attempt", "batch"],
+					sessionMode: "fresh",
+					stdin: JSON.stringify([
+						["open", "https://example.com/"],
+						["get", "text", ".tabs"],
+						["close"],
+					]),
+				});
+				assert.equal(selfClosingAttempt.isError, false, JSON.stringify(selfClosingAttempt));
+				const preservedOutcome = readRecord(selfClosingAttempt.details?.managedSessionOutcome);
+				assert.equal(preservedOutcome.status, "closed");
+				assert.equal(preservedOutcome.activeAfter, true);
+				assert.equal(preservedOutcome.currentSessionName, priorOutcome.currentSessionName);
+				assert.equal(preservedOutcome.currentSessionNamespace, "prior");
+				assert.equal(preservedOutcome.replacedSessionName, undefined);
+				assert.match(
+					readString(readRecord(selfClosingAttempt.content[0]).text),
+					/previous wrapper-managed browser session remains current/,
+				);
+				assert.doesNotMatch(
+					readString(readRecord(selfClosingAttempt.content[0]).text),
+					/The current wrapper-managed browser session was closed/,
+				);
 
 				const mutatedTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
@@ -4466,6 +4508,12 @@ if (args.includes("eval")) {
 				});
 				assert.ok(mutatedTailBatch.details);
 				assert.equal(mutatedTailBatch.isError, false);
+				assert.equal(mutatedTailBatch.details.sessionName, priorOutcome.currentSessionName);
+				assert.equal(mutatedTailBatch.details.namespace, "prior");
+				assert.equal(
+					(await readInvocationLog(logPath)).filter((entry) => entry.args.includes("close")).length,
+					0,
+				);
 				assert.doesNotMatch(
 					readString(readRecord(mutatedTailBatch.content[0]).text),
 					/Selector text visibility warning/,
