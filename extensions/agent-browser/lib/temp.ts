@@ -89,7 +89,7 @@ export async function createSecureTempDirectory(prefix: string): Promise<string>
 	await chmod(directory, 0o700).catch(() => {
 		/* mkdtemp supplies the private directory when chmod is unavailable. */
 	});
-	await refreshSecureTempRootLease(tempRoot).catch(() => {
+	await enqueueTempMutation(() => refreshSecureTempRootLease(tempRoot)).catch(() => {
 		/* Renewal is best-effort after private creation. */
 	});
 	return directory;

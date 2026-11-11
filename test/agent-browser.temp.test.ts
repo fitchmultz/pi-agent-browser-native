@@ -22,15 +22,17 @@ import fs, {
 import type { PathLike, RmOptions } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { setTimeout as delay, setImmediate as nextTurn } from "node:timers/promises";
 import nodeTest from "node:test";
 import { readRecord, readArray, readString, readNumber } from "./helpers/assertions.js";
 
 import {
 	cleanupSecureTempArtifacts,
+	createSecureTempDirectory,
 	getPersistentSessionArtifactMaxBytes,
 	getSecureTempRootMaxBytes,
 	openSecureTempFile,
+	preserveSecureTempDirectory,
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 	writeSecureTempRootOwnershipMarker,
@@ -41,6 +43,7 @@ import {
 	getMarkerOwnerLiveness,
 	readTempRootOwnershipMarker,
 } from "../extensions/agent-browser/lib/temp-root-ownership.js";
+import { getSessionTempRoot } from "../extensions/agent-browser/lib/temp-root.js";
 import {
 	readChildStdoutJsonLine,
 	stopChildProcess,
@@ -287,6 +290,89 @@ nodeTest(
 		await assert.rejects(stat(secondRoot), { code: "ENOENT" });
 	},
 );
+
+for (const renewal of ["root lookup", "directory creation"]) {
+	nodeTest(`temp lease renewal during ${renewal} waits for preservation`, async (t) => {
+		await cleanupSecureTempArtifacts();
+		const profile = await createSecureTempDirectory("electron-profile-");
+		const tempRoot = dirname(profile);
+		const markerPath = join(tempRoot, ".pi-agent-browser-owner.json");
+		const preservationStarted = Promise.withResolvers<null>();
+		const releasePreservation = Promise.withResolvers<null>();
+		const directoryCreated = Promise.withResolvers<null>();
+		const releaseDirectory = Promise.withResolvers<null>();
+		const nativeWriteFile = fs.writeFile;
+		const nativeReadFile = fs.readFile;
+		const nativeChmod = fs.chmod;
+		let pauseMarkerWrites = false;
+		let preservationPending = false;
+		let overlappingReads = 0;
+		t.mock.method(fs, "writeFile", async (...args: Parameters<typeof fs.writeFile>) => {
+			if (args[0] === markerPath && pauseMarkerWrites) {
+				preservationPending = true;
+				preservationStarted.resolve(null);
+				await releasePreservation.promise;
+				try {
+					await nativeWriteFile(...args);
+				} finally {
+					preservationPending = false;
+				}
+				return;
+			}
+			await nativeWriteFile(...args);
+		});
+		t.mock.method(fs, "readFile", (...args: Parameters<typeof fs.readFile>) => {
+			if (args[0] === markerPath && preservationPending) {
+				overlappingReads++;
+			}
+			return nativeReadFile(...args);
+		});
+		t.mock.method(fs, "chmod", async (...args: Parameters<typeof fs.chmod>) => {
+			if (String(args[0]).startsWith(join(tempRoot, "concurrent-"))) {
+				directoryCreated.resolve(null);
+				await releaseDirectory.promise;
+			}
+			await nativeChmod(...args);
+		});
+		syncBuiltinESMExports();
+		let directory: Promise<string> | undefined;
+		let preservation: Promise<void> | undefined;
+		let lookup: Promise<string> | undefined;
+		try {
+			if (renewal === "directory creation") {
+				directory = createSecureTempDirectory("concurrent-");
+				await directoryCreated.promise;
+			}
+			pauseMarkerWrites = true;
+			preservation = preserveSecureTempDirectory(profile);
+			await preservationStarted.promise;
+			if (renewal === "root lookup") {
+				lookup = getSessionTempRoot();
+			}
+			releaseDirectory.resolve(null);
+			// Cached-root lookup and the paused chmod resume through microtasks.
+			// Drain them before releasing preservation; no filesystem timing assumption is needed.
+			await nextTurn();
+		} finally {
+			releaseDirectory.resolve(null);
+			releasePreservation.resolve(null);
+			try {
+				await Promise.all([directory, preservation, lookup]);
+			} finally {
+				t.mock.restoreAll();
+				syncBuiltinESMExports();
+			}
+		}
+		assert.equal(overlappingReads, 0, "lease renewal must not read an in-flight marker update");
+		assert.deepEqual((await readTempRootOwnershipMarker(tempRoot))?.protectedChildNames, [
+			profile.slice(tempRoot.length + 1),
+		]);
+		await cleanupSecureTempArtifacts();
+		assert.equal((await stat(profile)).isDirectory(), true);
+		await rm(profile, { recursive: true, force: true });
+		await cleanupSecureTempArtifacts();
+	});
+}
 
 nodeTest(
 	"temp allocation removes a failed ownership root and retries after marker failure",
