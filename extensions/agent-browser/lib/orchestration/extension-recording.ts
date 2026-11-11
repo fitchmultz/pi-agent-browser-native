@@ -38,8 +38,9 @@ export class BrowserRecordingRegistry {
 	active = new Map<string, ActiveRecordingReservation>();
 	private readonly terminal = new Map<string, ActiveRecordingReservation>();
 	private persistenceDirty = false;
+	/** The registry persists through the journal, so it takes that one capability, not the whole extension API. */
 	constructor(
-		private readonly pi: ExtensionAPI,
+		private readonly pi: Pick<ExtensionAPI, "appendEntry">,
 		private readonly artifacts: RecordingArtifactAccess,
 		private readonly getCwd: () => string,
 	) {}
