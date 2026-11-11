@@ -193,14 +193,17 @@ function batchStepMovesProbeDocument(step: readonly string[]): boolean {
 		// `--no-navigate` allows submit-triggered navigation); the local auth subcommands
 		// (list/show/save/delete) never touch the page.
 		(command === "auth" && !AUTH_LOCAL_SUBCOMMANDS.has(subcommand ?? "")) ||
+		// `confirm` executes a pending guarded action, which can navigate or change the page;
+		// `deny` only cancels it and does not execute the pending action.
+		command === "confirm" ||
 		isClickShapedCommand(command)
 	);
 }
 
 /**
- * A later batch row that can navigate, mutate the DOM, switch the active target, or close the
- * session ends the probe window: the probe must evaluate the same document the `get text` row
- * read. A later row whose command cannot be read proves nothing either way, so it also ends it.
+ * A later batch row ends the probe window when it can navigate, mutate the DOM, switch the
+ * active target, or close the session: the probe must evaluate the same document the
+ * `get text` row read. A row whose command cannot be read also ends it.
  */
 function batchStepInvalidatesGetTextProbe(step: readonly string[]): boolean {
 	if (step.length === 0) {

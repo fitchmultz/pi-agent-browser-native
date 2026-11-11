@@ -4560,6 +4560,23 @@ if (args.includes("eval")) {
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
 
+				const confirmTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["confirm", "c_1"],
+					]),
+				});
+				assert.ok(confirmTailBatch.details);
+				assert.equal(confirmTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(confirmTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(confirmTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
 				const readOnlyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([
@@ -4608,6 +4625,22 @@ if (args.includes("eval")) {
 				);
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 3);
+
+				const denyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["deny", "c_1"],
+					]),
+				});
+				assert.ok(denyTailBatch.details);
+				assert.equal(denyTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(denyTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 4);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
