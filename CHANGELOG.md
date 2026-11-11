@@ -2,10 +2,34 @@
 
 ## Unreleased
 
+## 0.9.20 - 2026-11-11
+
+<!-- npm-release:unreleased:start -->
+
 ### Fixed
 
 - Mention singular `tab` commands (`tab list/new/<id>/close`) in the always-on browser guidance and add unknown-command `tabs` recovery (`Agent-browser hint:` plus read-only `use-tab-list` `nextActions` for bare `tabs` and `tabs list`) so models stop getting stuck on `Unknown command: tabs` (#392).
 - Report an unsupported Node.js runtime in the package doctor instead of passing the setup check. The doctor checks its own process, not the potentially different runtime or executable running Pi; non-Node and unknown runtimes stay unverified (#253).
+
+<!-- npm-release:unreleased:end -->
+
+- Supersedes unpublished 0.9.19 from 6346982c0fec9e00b9f3ef6997cfb2d6f6893c6d. Includes all changes since v0.9.18; the original release records remain unchanged.
+
+- ci: align shared automation pins and wire release supersession inputs (#395) ([1eae59d](https://github.com/fitchmultz/pi-agent-browser-native/commit/1eae59d2c1b5ca26bcca137e5b91872f431d7532))
+
+### What's Changed
+
+- Move the agent-browser baseline to 0.42.0 by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/388
+- chore(release): 0.9.19 by @pi-durable[bot] in https://github.com/fitchmultz/pi-agent-browser-native/pull/389
+- Verify the page after the wrapper's own eval and reload by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/387
+- test: release held fake children on a timer, not on fs.watch by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/390
+- Wake the version workflow only for release events by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/391
+- Guide singular tab commands and recover unknown tabs calls by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/393
+- Diagnose unsupported Node in the package doctor by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/394
+- ci: gate quality:mutations to config, script, workflow, and release runs by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/396
+- ci: align shared automation pins and wire release supersession inputs by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/395
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.18...v0.9.20
 
 ## 0.9.19 - 2026-11-10
 
