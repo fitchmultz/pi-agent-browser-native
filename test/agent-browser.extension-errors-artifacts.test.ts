@@ -4509,6 +4509,23 @@ if (args.includes("eval")) {
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
 
+				const frameTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["frame", "#embed"],
+					]),
+				});
+				assert.ok(frameTailBatch.details);
+				assert.equal(frameTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(frameTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(frameTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
 				const readOnlyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([

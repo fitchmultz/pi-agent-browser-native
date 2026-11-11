@@ -186,6 +186,9 @@ function batchStepInvalidatesGetTextProbe(step: readonly string[]): boolean {
 		// Optional-URL commands (a11y, vitals, web-vitals) navigate before measuring when a
 		// URL operand is present; the bare forms stay on the current page.
 		getExplicitNavigationTarget(step) !== undefined ||
+		// `frame <selector|main>` switches the active document for later commands, so the
+		// probe would evaluate a different document than the `get text` row read.
+		command === "frame" ||
 		isUnverifiedPageTransitionCommand(command, subcommand) ||
 		isPageMutationStep(step) ||
 		getRefRetiringTransition(step) !== undefined
