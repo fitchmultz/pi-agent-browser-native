@@ -257,7 +257,11 @@ async function missingBinaryResult(
 		readonly state: Readonly<
 			Pick<
 				BrowserRunState,
-				"managedSessionActive" | "managedSessionName" | "managedSessionNamespace"
+				| "electronChildProcesses"
+				| "electronLaunchRecords"
+				| "managedSessionActive"
+				| "managedSessionName"
+				| "managedSessionNamespace"
 			>
 		>;
 	},
@@ -275,7 +279,9 @@ async function missingBinaryResult(
 ): Promise<AgentBrowserToolResult | undefined> {
 	return buildMissingBinaryFailureResult({
 		compatibilityWorkaround: prepared.compatibilityWorkaround,
+		electronChildProcesses: options.state.electronChildProcesses,
 		electronLaunch: prepared.electronLaunch,
+		electronLaunchRecords: options.state.electronLaunchRecords,
 		executionPlan: prepared.executionPlan,
 		implicitSessionCloseTimeoutMs: options.implicitSessionCloseTimeoutMs,
 		managedSessionActive: options.state.managedSessionActive,

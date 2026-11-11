@@ -352,6 +352,11 @@ export async function reconcileElectronHandoff(
 			record: launch.record,
 			timeoutMs: implicitSessionCloseTimeoutMs,
 		});
+		if (electronFailedConnectCleanup.partial) {
+			// The command failed after a successful launch; the surviving process and profile
+			// stay registered so later cleanup owns them instead of orphaning them.
+			recordElectronOwnership(draft, launch, electronFailedConnectCleanup.record);
+		}
 		return {
 			...initial,
 			electronFailedConnectCleanup,
