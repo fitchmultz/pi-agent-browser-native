@@ -63,15 +63,14 @@ function consumeConfirmedCapture(
 	update: ReturnType<SessionPageState["beginUpdate"]>,
 	key?: string,
 ): boolean {
-	const confirmed =
-		key !== undefined && key !== "" ? state.sessionPageState.getReadConfirmation(key) : undefined;
-	if (confirmed?.refSnapshotFresh !== true) {
+	// ponytail: reuse the approved capture for one call; DOM-only renames after that sample are not resampled on this use.
+	const consumed =
+		key !== undefined && key !== ""
+			? state.sessionPageState.takeFreshConfirmationCapture(key, update)
+			: undefined;
+	if (consumed === undefined) {
 		return false;
 	}
-	// ponytail: reuse the approved capture for one call; DOM-only renames after that sample are not resampled on this use.
-	const consumed = { ...confirmed };
-	delete consumed.refSnapshotFresh;
-	state.sessionPageState.applyReadConfirmation(consumed, update);
 	state.recordReadConfirmation(consumed);
 	return true;
 }

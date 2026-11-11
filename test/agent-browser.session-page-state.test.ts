@@ -497,6 +497,33 @@ nodeTest("SessionPageState clears tab targets, refs, invalidations, and pinning 
 	});
 });
 
+nodeTest("SessionPageState takes the one-use fresh capture exactly once", () => {
+	const state = new SessionPageState();
+	const key = "s1";
+	const update = state.beginUpdate();
+	state.applyReadConfirmation(
+		{
+			id: "confirm-1",
+			refSnapshotFresh: true,
+			sessionName: key,
+			source: "native-guarded-action",
+			state: "pending",
+		},
+		update,
+	);
+
+	const consumed = state.takeFreshConfirmationCapture(key, state.beginUpdate());
+	assert.ok(consumed, "the fresh capture is taken once");
+	assert.equal(consumed.id, "confirm-1");
+	assert.equal(
+		"refSnapshotFresh" in consumed,
+		false,
+		"the returned confirmation must no longer carry the one-use flag",
+	);
+	assert.equal(state.takeFreshConfirmationCapture(key, state.beginUpdate()), undefined);
+	assert.equal(state.getReadConfirmation(key)?.state, "pending", "only the fresh flag is consumed");
+});
+
 nodeTest("SessionPageState rejects stale tab and ref updates after a newer token", () => {
 	const state = new SessionPageState();
 	const older = state.beginUpdate();
