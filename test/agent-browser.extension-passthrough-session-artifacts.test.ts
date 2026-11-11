@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readArray, readDefined, readRecord, readString } from "./helpers/assertions.js";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import nodeTest from "node:test";
 import {
 	createExtensionHarness,
@@ -846,12 +846,14 @@ if (args.includes("get") && args.includes("url")) {
 				const harness = createExtensionHarness({ cwd: tempDir, prompt: "Take a screenshot." });
 				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
 
+				const expectedPath = join(tempDir, ".dogfood/run/foo.png");
+				await mkdir(dirname(expectedPath), { recursive: true });
+				await writeFile(expectedPath, "stale-png");
 				const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["--session", "warden-vfr", "screenshot", ".dogfood/run/foo.png"],
 				});
 				assert.ok(result.details);
 
-				const expectedPath = join(tempDir, ".dogfood/run/foo.png");
 				assert.equal(result.isError, false);
 				assert.equal(await readFile(expectedPath, "utf8"), "fake-png");
 				const text = result.content[0]?.type === "text" ? result.content[0].text : "";
@@ -937,13 +939,15 @@ process.stdin.on("end", () => {
 					assert.equal(rejected.isError, true);
 					assert.match(rejected.content[0]?.text ?? "", /put --annotate in top-level args/i);
 
+					const expectedPath = join(tempDir, ".dogfood/run/good-batch.png");
+					await mkdir(dirname(expectedPath), { recursive: true });
+					await writeFile(expectedPath, "stale-batch-png");
 					const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["--annotate", "batch"],
 						stdin: '[["screenshot",".dogfood/run/good-batch.png"]]',
 					});
 					assert.ok(result.details);
 
-					const expectedPath = join(tempDir, ".dogfood/run/good-batch.png");
 					assert.equal(result.isError, false);
 					assert.equal(await readFile(expectedPath, "utf8"), "fake-batch-png");
 					const text = result.content[0]?.type === "text" ? result.content[0].text : "";
@@ -970,6 +974,68 @@ process.stdin.on("end", () => {
 			);
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
+	"agentBrowserExtension rejects missing reported captures despite an existing destination",
+	{ concurrency: false },
+	async (t) => {
+		for (const batch of [false, true]) {
+			await t.test(batch ? "batch" : "direct", async () => {
+				const tempDir = await mkdtemp(join(tmpdir(), "piab-missing-capture-"));
+				const destination = join(tempDir, "capture.png");
+				const reportedPath = join(tempDir, "missing.png");
+				const oldImage = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+				await writeFile(destination, oldImage);
+				await writeFakeAgentBrowserBinary(
+					tempDir,
+					`const args = process.argv.slice(2);
+const capture = { path: ${JSON.stringify(reportedPath)} };
+const data = args.includes("batch")
+  ? [{ command: ["screenshot", ${JSON.stringify(destination)}], success: true, result: capture }]
+  : args.includes("screenshot") ? capture : { url: "https://safe.example/" };
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+				);
+				try {
+					await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+						const harness = createExtensionHarness({ cwd: tempDir });
+						await runExtensionEvent(
+							harness.handlers,
+							"session_start",
+							{ reason: "new" },
+							harness.ctx,
+						);
+						const result = await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: [
+								"--session",
+								"capture-test",
+								...(batch ? ["batch"] : ["screenshot", destination]),
+							],
+							...(batch ? { stdin: JSON.stringify([["screenshot", destination]]) } : {}),
+						});
+						assert.ok(result.details);
+						assert.equal(result.isError, true, JSON.stringify(result));
+						assert.equal(result.details.failureCategory, "artifact-missing");
+						const artifact = readRecord(readArray(result.details.artifacts)[0]);
+						assert.equal(artifact.status, "missing");
+						assert.equal(artifact.exists, true);
+						assert.equal(artifact.tempPath, reportedPath);
+						const verification = readRecord(result.details.artifactVerification);
+						assert.equal(verification.verified, false);
+						assert.equal(verification.missingCount, 1);
+						assert.equal(
+							result.content.some((item) => item.type === "image"),
+							false,
+						);
+						assert.doesNotMatch(JSON.stringify(result.content), /Saved image:/);
+						assert.deepEqual(await readFile(destination), oldImage);
+					});
+				} finally {
+					await rm(tempDir, { recursive: true, force: true });
+				}
+			});
 		}
 	},
 );

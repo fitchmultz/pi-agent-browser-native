@@ -206,7 +206,10 @@ export function buildManifestEntriesForFileArtifacts(
 		recordingState: artifact.recordingState,
 		status: artifact.status,
 		requestedPath: artifact.requestedPath,
-		retentionState: artifact.exists === false || artifact.status === "stale" ? "missing" : "live",
+		retentionState:
+			artifact.exists === false || artifact.status === "missing" || artifact.status === "stale"
+				? "missing"
+				: "live",
 		session: artifact.session,
 		sizeBytes: artifact.sizeBytes,
 		storageScope: "explicit-path",

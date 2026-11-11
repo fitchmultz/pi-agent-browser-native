@@ -266,6 +266,9 @@ function getArtifactStatus(
 	if (evidence.exists !== true) {
 		return "unverified";
 	}
+	if (options.artifactRequest?.status === "missing") {
+		return "missing";
+	}
 	if (state.stale) {
 		return "stale";
 	}

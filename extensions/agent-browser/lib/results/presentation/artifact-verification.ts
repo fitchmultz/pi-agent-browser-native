@@ -12,6 +12,9 @@ import type {
 } from "../contracts.js";
 
 function artifactState(artifact: FileArtifactMetadata): ArtifactVerificationState {
+	if (artifact.status === "missing") {
+		return "missing";
+	}
 	if (["failed", "stale", "unverified"].includes(artifact.status ?? "")) {
 		return "unverified";
 	}
@@ -32,7 +35,9 @@ function artifactLimitation(
 		return "The reported path's modification time fell outside this command's bounded artifact window. Treat the artifact as stale until regenerated.";
 	}
 	if (state === "missing") {
-		return "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated.";
+		return artifact.exists === true
+			? "The reported capture was missing. Destination existence alone does not prove this capture was saved. Recover or regenerate it."
+			: "The wrapper did not find the reported artifact at absolutePath. Treat the path as unverified until recovered or regenerated.";
 	}
 	return state === "unverified"
 		? "The wrapper could not prove local filesystem existence for this artifact."
@@ -68,7 +73,7 @@ function getArtifactVerificationEntry(artifact: FileArtifactMetadata): ArtifactV
 	return {
 		...common,
 		limitation: artifactLimitation(artifact, state),
-		retentionState: artifact.exists === false ? "missing" : "live",
+		retentionState: state === "missing" ? "missing" : "live",
 		state,
 		status: artifact.status,
 		storageScope: "explicit-path",
@@ -148,7 +153,7 @@ export function buildArtifactVerificationSummary(
 function isMissingFileArtifact(artifact: FileArtifactMetadata): boolean {
 	return (
 		!isPendingRecordingArtifact(artifact) &&
-		(artifact.exists === false || artifact.status === "stale")
+		(artifact.exists === false || artifact.status === "missing" || artifact.status === "stale")
 	);
 }
 
@@ -167,6 +172,9 @@ export function formatMissingArtifactFailureText(
 		return undefined;
 	}
 	if (failedArtifacts.length === 1) {
+		if (artifact.status === "missing" && artifact.exists === true) {
+			return `Artifact verification failed: the reported capture was missing; the existing destination ${artifact.absolutePath} does not prove this capture was saved.`;
+		}
 		return artifact.status === "stale"
 			? `Artifact verification failed: requested ${artifact.kind} path ${artifact.absolutePath} has a modification time outside the current command window.`
 			: `Artifact verification failed: requested ${artifact.kind} was not found at ${artifact.absolutePath}.`;

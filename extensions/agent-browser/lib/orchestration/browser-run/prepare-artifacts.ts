@@ -197,7 +197,9 @@ export async function repairScreenshotData(options: {
 	let tempPath: string | undefined;
 	if (reportedAbsolutePath !== undefined && reportedAbsolutePath !== request.absolutePath) {
 		tempPath = reportedAbsolutePath;
-		if (status === "missing" && (await pathExists(reportedAbsolutePath))) {
+		// The reported capture owns the bytes, not a pre-existing destination.
+		status = "missing";
+		if (await pathExists(reportedAbsolutePath)) {
 			await mkdir(dirname(request.absolutePath), { recursive: true });
 			await copyFile(reportedAbsolutePath, request.absolutePath);
 			status = "repaired-from-temp";

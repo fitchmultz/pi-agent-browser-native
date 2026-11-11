@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readRecord, readString, readArray } from "./helpers/assertions.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import nodeTest from "node:test";
@@ -358,6 +358,37 @@ nodeTest("unchanged screenshots never invent a saved path or attach an old image
 		await rm(cwd, { recursive: true, force: true });
 	}
 });
+
+nodeTest(
+	"screenshot repair preserves bytes when reported paths alias the destination",
+	async (t) => {
+		const cwd = await mkdtemp(join(tmpdir(), "piab-capture-alias-"));
+		const destination = join(cwd, "capture.png");
+		try {
+			await writeFile(destination, "current-capture");
+			await link(destination, join(cwd, "hardlink.png"));
+			await symlink(destination, join(cwd, "symlink.png"));
+			for (const [reportedPath, status] of [
+				["./capture.png", "saved"],
+				["hardlink.png", "repaired-from-temp"],
+				["symlink.png", "repaired-from-temp"],
+			]) {
+				await t.test(reportedPath, async () => {
+					const result = await repairScreenshotData({
+						cwd,
+						data: { path: reportedPath },
+						request: { path: "capture.png", absolutePath: destination },
+					});
+					assert.equal(result.request?.status, status);
+					assert.equal(result.data.path, destination);
+					assert.equal(await readFile(destination, "utf8"), "current-capture");
+				});
+			}
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	},
+);
 
 nodeTest(
 	"native delta full snapshots expose refs and tree without discarding the native payload",
