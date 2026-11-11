@@ -53,7 +53,7 @@ function captureBrowserRunState(runtime: BrowserRuntime): BrowserRunState {
 		networkRoutesBySession: runtime.sessions.routes,
 		ownedManagedSessions: runtime.managed.owned,
 		sessionPageState: runtime.sessions.pages.fork(),
-		traceOwners: runtime.sessions.traces,
+		traceOwnership: runtime.sessions.traces,
 	});
 }
 function selectCommandPlan(

@@ -10,7 +10,6 @@ import {
 	restoreManagedSessionStateFromBranch,
 } from "../runtime.js";
 import { getAgentBrowserSessionIdentityKey } from "../argv-grammar.js";
-import type { TraceOwner } from "./browser-run/types.js";
 import { getActiveElectronRecords, getSessionContextKey } from "./browser-run/session-state.js";
 import {
 	restoreElectronLaunchRecordsFromBranch,
@@ -197,7 +196,7 @@ class BrowserBranchRestoration {
 	}
 	restoreRecordingState(): void {
 		this.runtime.sessions.pages = SessionPageState.fromBranch([...this.input.branch]);
-		this.runtime.sessions.traces = new Map<string, TraceOwner>();
+		this.runtime.sessions.traces.reset();
 		this.runtime.artifacts.manifest = restoreArtifactManifestFromBranch(this.input.branch);
 		this.runtime.recordings.restore(this.input.branch);
 	}

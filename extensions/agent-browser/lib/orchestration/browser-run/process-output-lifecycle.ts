@@ -38,7 +38,6 @@ import { extractUpstreamCommandTokens } from "../../argv-descriptor.js";
 import {
 	commandChoosesSessionTabTarget,
 	getSessionContextKey,
-	updateTraceOwnerState,
 	nativePolicyDefinitelyUnestablished,
 } from "./session-state.js";
 import { redactExactSensitiveValue } from "./final-result.js";
@@ -327,10 +326,7 @@ function applyOutputCloseScope(
 			draft.input.state.attachedSessionKeys,
 			draft.input.prepared.executionPlan.namespace,
 		);
-		deleteIdentityKeysInNamespace(
-			draft.input.state.traceOwners,
-			draft.input.prepared.executionPlan.namespace,
-		);
+		draft.input.state.traceOwnership.clearNamespace(draft.input.prepared.executionPlan.namespace);
 		draft.input.state.sessionPageState.clearNamespace(draft.input.prepared.executionPlan.namespace);
 		const retainedSessionKey = draft.nestedBatchRemainsActive ? draft.sessionStateKey : undefined;
 		for (const [key, owner] of draft.input.state.ownedManagedSessions) {
@@ -382,12 +378,11 @@ function foldTraceOwnership(draft: FoldTraceOwnershipInput): void {
 			foldBatchTraceRow(draft, row, index);
 		}
 	} else {
-		updateTraceOwnerState({
+		draft.input.state.traceOwnership.applyTransition({
 			command: draft.directClose ? "close" : draft.input.prepared.executionPlan.commandInfo.command,
-			sessionName: draft.sessionStateKey,
+			sessionKey: draft.sessionStateKey,
 			subcommand: draft.input.prepared.executionPlan.commandInfo.subcommand,
 			succeeded: draft.succeeded,
-			traceOwners: draft.input.state.traceOwners,
 		});
 	}
 }
@@ -401,12 +396,11 @@ function foldBatchTraceRow(draft: FoldBatchTraceRowInput, row: unknown, index: n
 		return;
 	}
 	const [command, subcommand] = extractUpstreamCommandTokens(rowCommand);
-	updateTraceOwnerState({
+	draft.input.state.traceOwnership.applyTransition({
 		command,
-		sessionName: draft.sessionStateKey,
+		sessionKey: draft.sessionStateKey,
 		subcommand,
 		succeeded: row.success === true && !detectConfirmationRequired(row.result),
-		traceOwners: draft.input.state.traceOwners,
 	});
 }
 

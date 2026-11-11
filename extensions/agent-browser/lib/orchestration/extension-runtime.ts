@@ -10,10 +10,10 @@ import {
 	type CompatibilityWorkaround,
 } from "../runtime.js";
 import { ManagedSessionRestoreState } from "../managed-session-restore.js";
+import { TraceOwnership } from "../trace-ownership.js";
 import { AsyncExecutionQueue, KeyedAsyncExecutionQueue } from "./execution-queue.js";
 import { BrowserPrompt } from "./extension-prompt.js";
 import { BrowserArtifacts } from "./extension-artifacts.js";
-import type { TraceOwner } from "./browser-run/types.js";
 import { BrowserElectronResources } from "./extension-electron-ownership.js";
 import type { NetworkRouteRecord } from "../results/contracts.js";
 import { BrowserRecordingRegistry } from "./extension-recording.js";
@@ -55,7 +55,7 @@ export class BrowserManagedSessions {
 /** Live page-scoped state; clear and reset preserve the existing replacement semantics. */
 export class BrowserSessionResources {
 	pages = new SessionPageState();
-	traces = new Map<string, TraceOwner>();
+	traces = new TraceOwnership();
 	attached = new Set<string>();
 	routes: ReadonlyMap<string, readonly NetworkRouteRecord[]> = new Map();
 	getConfirmActions(key: string): string | undefined {
@@ -70,12 +70,12 @@ export class BrowserSessionResources {
 		const routes = new Map(this.routes);
 		routes.delete(key);
 		this.routes = routes;
-		this.traces.delete(key);
+		this.traces.clearSession(key);
 		this.pages.clearSession(key);
 	}
 	reset(): void {
 		this.pages.reset();
-		this.traces = new Map();
+		this.traces.reset();
 		this.attached = new Set();
 		this.routes = new Map();
 	}
