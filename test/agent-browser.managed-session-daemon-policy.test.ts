@@ -195,7 +195,7 @@ if (inspection === ${JSON.stringify(stalledPhase === "daemon inspection")}) {
 							// Mocked timers fire the deadline early, so real phase time stays below it.
 							assert.ok(phaseMs >= 0 && phaseMs < 1500, error);
 							assert.equal(restoreState.isDisabled(sessionName, ""), true);
-							assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), true);
+							assert.equal(restoreState.hasUnrestoredDaemonRestoreKey(sessionName, ""), true);
 							const calls = (await readFile(logPath, "utf8"))
 								.trim()
 								.split("\n")
@@ -261,7 +261,7 @@ nodeTest(
 				},
 			);
 			assert.equal(error, undefined);
-			assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), false);
+			assert.equal(restoreState.hasUnrestoredDaemonRestoreKey(sessionName, ""), false);
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -303,7 +303,7 @@ console.log(JSON.stringify({ success: true, data }));
 			);
 			assert.match(error ?? "", /requires confirmation \(close-decision\)/);
 			assert.equal(restoreState.isDisabled(sessionName, ""), true);
-			assert.equal(restoreState.hasDaemonRestoreKey(sessionName, ""), true);
+			assert.equal(restoreState.hasUnrestoredDaemonRestoreKey(sessionName, ""), true);
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}

@@ -291,7 +291,7 @@ function recordEnabledDaemonKey(
 	const disabled = restoreState.isDisabled(sessionName, namespace);
 	if (!disabled && context.restoreKey !== undefined && context.restoreKey.length > 0) {
 		restoreState.recordDaemonRestoreKey(sessionName, namespace, context.restoreKey);
-	} else if (disabled && !restoreState.hasDaemonRestoreKey(sessionName, namespace)) {
+	} else if (disabled && !restoreState.hasUnrestoredDaemonRestoreKey(sessionName, namespace)) {
 		restoreState.recordDaemonRestoreKey(sessionName, namespace, null);
 	}
 }

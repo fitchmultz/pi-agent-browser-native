@@ -351,7 +351,7 @@ class BrowserBranchRestoration {
 		const key = getAgentBrowserSessionIdentityKey(state.sessionName, namespace);
 		if (
 			this.runtime.managed.owned.has(key) &&
-			!this.runtime.managed.restore.hasDaemonRestoreKey(state.sessionName, namespace)
+			!this.runtime.managed.restore.hasUnrestoredDaemonRestoreKey(state.sessionName, namespace)
 		) {
 			this.runtime.managed.restore.restoreDaemonReceipt(
 				state.sessionName,

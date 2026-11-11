@@ -140,7 +140,7 @@ function reconcileDaemonReceipt(
 	if (
 		daemon.status !== "active" ||
 		receipt === undefined ||
-		context.restoreState.hasDaemonRestoreKey(context.sessionName, context.namespace)
+		context.restoreState.hasUnrestoredDaemonRestoreKey(context.sessionName, context.namespace)
 	) {
 		return;
 	}
@@ -185,7 +185,7 @@ async function validateReusableDaemonPolicy(
 ): Promise<DaemonPolicyResult> {
 	const { context } = options;
 	const stickyDisabled = context.restoreState.isDisabled(context.sessionName, context.namespace);
-	let hasKnownDaemonRestoreKey = context.restoreState.hasDaemonRestoreKey(
+	let hasKnownDaemonRestoreKey = context.restoreState.hasUnrestoredDaemonRestoreKey(
 		context.sessionName,
 		context.namespace,
 	);
@@ -270,7 +270,7 @@ function daemonGenerationRequired(
 	return (
 		includeGeneration === true ||
 		(receipt !== undefined &&
-			!context.restoreState.hasDaemonRestoreKey(context.sessionName, context.namespace))
+			!context.restoreState.hasUnrestoredDaemonRestoreKey(context.sessionName, context.namespace))
 	);
 }
 
