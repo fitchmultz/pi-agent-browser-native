@@ -1702,7 +1702,7 @@ if (args.includes("connect")) {
 				);
 				const receipt = await readLaunchReceiptEntry(launchLogPath);
 				profileDir = receipt.userDataDir;
-				await assert.ok(
+				assert.ok(
 					await stat(profileDir).then(
 						() => true,
 						() => false,
@@ -1724,8 +1724,10 @@ if (args.includes("connect")) {
 				await assert.rejects(stat(profileDir), { code: "ENOENT" });
 			});
 		} finally {
-			if (profileDir) {
-				await chmod(join(profileDir, "locked"), 0o700).catch(() => undefined);
+			if (profileDir !== "") {
+				await chmod(join(profileDir, "locked"), 0o700).catch(() => {
+					// Successful cleanup has already removed this directory.
+				});
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -1769,11 +1771,11 @@ nodeTest(
 					getMessageText(missingUpstream.content),
 					/Electron cleanup after failed attach/,
 				);
-				const cleanup = readRecord(readRecord(missingUpstream.details?.electron).cleanup);
+				const cleanup = readRecord(readRecord(missingUpstream.details.electron).cleanup);
 				assert.equal(readBoolean(cleanup.partial), true);
 				const receipt = await readLaunchReceiptEntry(launchLogPath);
 				profileDir = receipt.userDataDir;
-				await assert.ok(
+				assert.ok(
 					await stat(profileDir).then(
 						() => true,
 						() => false,
@@ -1794,8 +1796,10 @@ nodeTest(
 				await assert.rejects(stat(profileDir), { code: "ENOENT" });
 			});
 		} finally {
-			if (profileDir) {
-				await chmod(join(profileDir, "locked"), 0o700).catch(() => undefined);
+			if (profileDir !== "") {
+				await chmod(join(profileDir, "locked"), 0o700).catch(() => {
+					// Successful cleanup has already removed this directory.
+				});
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
