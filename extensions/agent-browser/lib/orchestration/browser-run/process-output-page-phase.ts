@@ -129,6 +129,7 @@ export async function observePageEffects(
 		navigationSummary: draft.navigationSummary,
 		networkRoutesBySession: draft.networkRoutesBySession,
 		presentationEnvelope: draft.presentationEnvelope,
+		sessionClosedByCommand: draft.nestedBatchClosed || draft.directClose,
 		sessionStateKey: draft.sessionStateKey,
 		sessionTabCorrection: draft.sessionTabCorrection,
 		succeeded: draft.succeeded,

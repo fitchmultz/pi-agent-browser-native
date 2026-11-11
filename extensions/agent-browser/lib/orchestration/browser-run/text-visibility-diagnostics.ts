@@ -3,6 +3,13 @@ import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { withOptionalSessionArgs } from "../../results/next-actions.js";
 import { redactSensitiveText } from "../../runtime-redaction.js";
 import type { CommandInfo } from "../../argv-descriptor.js";
+import {
+	getRefRetiringTransition,
+	isCloseCommand,
+	isOpenNavigationCommand,
+	isPageMutationStep,
+	isUnverifiedPageTransitionCommand,
+} from "../../command-taxonomy.js";
 import { extractBatchResultCommand, extractStringResultField } from "../../session-page-state.js";
 import { runSessionCommandData } from "./session-state.js";
 import { rawNumberField, rawStringField } from "./diagnostic-values.js";
@@ -152,6 +159,62 @@ function getBatchGetTextSelectors(data: unknown): string[] {
 	});
 }
 
+function getGetTextSelector(tokens: readonly string[]): string | undefined {
+	const selector = tokens.at(2);
+	return tokens[0] === "get" && tokens[1] === "text" && selector !== undefined && selector !== ""
+		? selector
+		: undefined;
+}
+
+/**
+ * A later batch row that can navigate, mutate the DOM, switch the active target, or close the
+ * session ends the probe window: the probe must evaluate the same document the `get text` row
+ * read. A later row whose command cannot be read proves nothing either way, so it also ends it.
+ */
+function batchStepInvalidatesGetTextProbe(step: readonly string[]): boolean {
+	if (step.length === 0) {
+		return true;
+	}
+	const [command, subcommand] = step;
+	return (
+		isCloseCommand(command) ||
+		isOpenNavigationCommand(command) ||
+		isUnverifiedPageTransitionCommand(command, subcommand) ||
+		isPageMutationStep(step) ||
+		getRefRetiringTransition(step) !== undefined
+	);
+}
+
+function getProbeableGetTextSelectors(options: {
+	readonly commandInfo: CommandInfo;
+	readonly commandTokens: readonly string[];
+	readonly data: unknown;
+}): string[] {
+	if (options.commandInfo.command === "get" && options.commandInfo.subcommand === "text") {
+		// A direct read probes the page it just read; no later step can intervene.
+		return getSuccessfulGetTextSelectors(options);
+	}
+	if (options.commandInfo.command !== "batch" || !Array.isArray(options.data)) {
+		return [];
+	}
+	const rows: readonly unknown[] = options.data;
+	return rows.flatMap((item: unknown, index: number) => {
+		if (!isRecord(item) || item.success === false) {
+			return [];
+		}
+		const selector = getGetTextSelector(extractBatchResultCommand(item));
+		if (selector === undefined) {
+			return [];
+		}
+		const invalidatedByLaterRow = rows
+			.slice(index + 1)
+			.some((later: unknown) =>
+				isRecord(later) ? batchStepInvalidatesGetTextProbe(extractBatchResultCommand(later)) : true,
+			);
+		return invalidatedByLaterRow ? [] : [selector];
+	});
+}
+
 export function getSuccessfulGetTextSelectors(options: {
 	readonly commandInfo: CommandInfo;
 	readonly commandTokens: readonly string[];
@@ -171,10 +234,15 @@ export async function collectSelectorTextVisibilityDiagnostics(options: {
 	readonly cwd: string;
 	readonly data: unknown;
 	readonly namespace?: string | undefined;
+	readonly sessionClosedByCommand: boolean;
 	readonly sessionName?: string | undefined;
 	readonly signal?: AbortSignal | undefined;
 }): Promise<SelectorTextVisibilityDiagnostic[]> {
-	const selectors = getSuccessfulGetTextSelectors(options);
+	if (options.sessionClosedByCommand) {
+		// The command already closed the session; a helper would relaunch the browser.
+		return [];
+	}
+	const selectors = getProbeableGetTextSelectors(options);
 	const diagnostics: SelectorTextVisibilityDiagnostic[] = [];
 	for (const selector of selectors) {
 		// Native helper decisions and selector observations must remain in session order.

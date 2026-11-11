@@ -4411,6 +4411,97 @@ if (args.includes("get") && args.includes("text")) {
 );
 
 nodeTest(
+	"agentBrowserExtension skips the get text visibility probe after close or page-changing batch rows",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-get-text-probe-window-"));
+		const logPath = join(tempDir, "invocations.log");
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("eval")) {
+  const hazard = { selector: ".tabs", matchCount: 2, visibleCount: 1, firstMatchVisible: false, firstTextPreview: "hidden tab text", firstVisibleTextPreview: "visible tab text", visibleCandidates: [{ index: 1, tagName: "code", textPreview: "visible tab text" }] };
+  process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.stringify(hazard) } }));
+} else if (args.includes("batch")) {
+  const steps = JSON.parse(stdin);
+  const data = steps.map((step) => ({ command: step, success: true, result: { result: step[0] === "get" && step[1] === "text" ? "tab text" : "ok" } }));
+  process.stdout.write(JSON.stringify({ success: true, data }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+		);
+
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+				const closedBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					sessionMode: "fresh",
+					stdin: JSON.stringify([["get", "text", ".tabs"], ["close"]]),
+				});
+				assert.ok(closedBatch.details);
+				assert.equal(closedBatch.isError, false);
+				assert.equal(readRecord(closedBatch.details.managedSessionOutcome).status, "closed");
+				assert.doesNotMatch(
+					readString(readRecord(closedBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(closedBatch.details.selectorTextVisibility, undefined);
+				assert.equal(closedBatch.details.selectorTextVisibilityAll, undefined);
+				let invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const mutatedTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["fill", "#field", "typed"],
+					]),
+				});
+				assert.ok(mutatedTailBatch.details);
+				assert.equal(mutatedTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(mutatedTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(mutatedTailBatch.details.selectorTextVisibility, undefined);
+				assert.equal(mutatedTailBatch.details.selectorTextVisibilityAll, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const readOnlyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["get", "url"],
+					]),
+				});
+				assert.ok(readOnlyTailBatch.details);
+				assert.equal(readOnlyTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(readOnlyTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				assert.equal(
+					readRecord(readOnlyTailBatch.details.selectorTextVisibility).selector,
+					".tabs",
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
 	"agentBrowserExtension surfaces overlay blockers in snapshot actionability metadata",
 	{ concurrency: false },
 	async () => {
