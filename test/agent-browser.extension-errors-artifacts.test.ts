@@ -4475,6 +4475,23 @@ if (args.includes("eval")) {
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
 
+				const newTabTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["tab", "new", "https://other.example/two"],
+					]),
+				});
+				assert.ok(newTabTailBatch.details);
+				assert.equal(newTabTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(newTabTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(newTabTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
 				const readOnlyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([

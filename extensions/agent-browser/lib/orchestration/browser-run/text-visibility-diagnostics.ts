@@ -179,6 +179,9 @@ function batchStepInvalidatesGetTextProbe(step: readonly string[]): boolean {
 	return (
 		isCloseCommand(command) ||
 		isOpenNavigationCommand(command) ||
+		// `tab new` and tab switches move the active target even though their own result
+		// reports it; `tab list` only reads. Bare `tab` conservatively ends the window.
+		(command === "tab" && subcommand !== "list") ||
 		isUnverifiedPageTransitionCommand(command, subcommand) ||
 		isPageMutationStep(step) ||
 		getRefRetiringTransition(step) !== undefined
