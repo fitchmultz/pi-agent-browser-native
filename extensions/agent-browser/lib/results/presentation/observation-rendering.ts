@@ -1,6 +1,10 @@
 import type { JsonValue } from "@earendil-works/pi-ai";
 import { isJsonValue } from "../../json-value.js";
-import type { PersistentSessionArtifactStore } from "../../temp.js";
+import {
+	PersistentSessionArtifactWriteError,
+	type PersistentSessionArtifactStore,
+} from "../../temp.js";
+import { buildEvictedSessionArtifactEntries } from "../artifact-manifest.js";
 import { isSessionArtifactManifest } from "../artifact-manifest-validation.js";
 import type {
 	ProjectedAgentBrowserObservation,
@@ -132,7 +136,18 @@ async function persistObservation(
 			).artifactManifest,
 		};
 	} catch (error) {
-		return { manifest, error: error instanceof Error ? error.message : stringifyUnknown(error) };
+		return {
+			manifest:
+				applyArtifactManifest(
+					{ content: [], summary: "" },
+					manifest,
+					buildEvictedSessionArtifactEntries(
+						error instanceof PersistentSessionArtifactWriteError ? error.evictedArtifacts : [],
+						Date.now(),
+					),
+				).artifactManifest ?? manifest,
+			error: error instanceof Error ? error.message : stringifyUnknown(error),
+		};
 	}
 }
 

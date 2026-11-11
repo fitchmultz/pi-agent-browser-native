@@ -1,6 +1,14 @@
 import type { CommandInfo } from "../../argv-descriptor.js";
-import type { PersistentSessionArtifactStore } from "../../temp.js";
-import type { SessionArtifactManifest, ToolPresentation } from "../contracts.js";
+import {
+	PersistentSessionArtifactWriteError,
+	type PersistentSessionArtifactStore,
+} from "../../temp.js";
+import { buildEvictedSessionArtifactEntries } from "../artifact-manifest.js";
+import type {
+	SessionArtifactManifest,
+	SessionArtifactManifestEntry,
+	ToolPresentation,
+} from "../contracts.js";
 import { countLines, stringifyUnknown, truncateText } from "../text.js";
 import { applyArtifactManifest } from "./artifacts.js";
 import { getPresentationText } from "./content.js";
@@ -78,6 +86,7 @@ function buildLargeOutputFailureContext(
 interface PresentationSpill {
 	readonly spill?: LargeOutputSpillWriteResult;
 	readonly error?: string;
+	readonly evictionEntries?: readonly SessionArtifactManifestEntry[];
 }
 
 async function tryWritePresentationSpill(options: {
@@ -88,7 +97,13 @@ async function tryWritePresentationSpill(options: {
 	try {
 		return { spill: await writeLargeOutputSpillFile(options) };
 	} catch (error) {
-		return { error: error instanceof Error ? error.message : stringifyUnknown(error) };
+		return {
+			error: error instanceof Error ? error.message : stringifyUnknown(error),
+			evictionEntries: buildEvictedSessionArtifactEntries(
+				error instanceof PersistentSessionArtifactWriteError ? error.evictedArtifacts : [],
+				Date.now(),
+			),
+		};
 	}
 }
 
@@ -176,14 +191,14 @@ export async function compactLargePresentationOutput(options: {
 		persisted,
 	);
 	const update = applyCompactedPresentation(options.presentation, text, rendered, persisted);
-	return persisted.spill
-		? {
-				...update,
-				...applyArtifactManifest(
-					{ ...options.presentation, ...update },
-					options.presentation.artifactManifest ?? options.artifactManifest,
-					buildSpillArtifactEntries({ ...persisted.spill, commandInfo: options.commandInfo }),
-				),
-			}
-		: update;
+	return {
+		...update,
+		...applyArtifactManifest(
+			{ ...options.presentation, ...update },
+			options.presentation.artifactManifest ?? options.artifactManifest,
+			persisted.spill
+				? buildSpillArtifactEntries({ ...persisted.spill, commandInfo: options.commandInfo })
+				: (persisted.evictionEntries ?? []),
+		),
+	};
 }

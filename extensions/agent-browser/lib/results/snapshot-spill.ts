@@ -48,26 +48,26 @@ export function applySnapshotArtifactManifest(options: {
 	readonly command?: string;
 	readonly fullOutputPath?: string | undefined;
 	readonly spill?: SnapshotSpillWriteResult | undefined;
+	readonly evictedArtifacts?: readonly PersistentSessionArtifactEviction[] | undefined;
 }): { artifactManifest?: SessionArtifactManifest; artifactRetentionSummary?: string } {
-	if (
-		options.fullOutputPath === undefined ||
-		options.fullOutputPath.length === 0 ||
-		!options.spill
-	) {
-		return {};
-	}
 	const nowMs = Date.now();
-	const entries: SessionArtifactManifestEntry[] = [
-		{
+	const entries: SessionArtifactManifestEntry[] = buildEvictedSessionArtifactEntries(
+		options.evictedArtifacts ?? options.spill?.evictedArtifacts ?? [],
+		nowMs,
+	);
+	if (options.fullOutputPath !== undefined && options.fullOutputPath.length > 0 && options.spill) {
+		entries.push({
 			command: options.command,
 			createdAtMs: nowMs,
 			kind: "spill",
 			path: options.fullOutputPath,
 			retentionState: options.spill.storageScope === "persistent-session" ? "live" : "ephemeral",
 			storageScope: options.spill.storageScope,
-		},
-		...buildEvictedSessionArtifactEntries(options.spill.evictedArtifacts, nowMs),
-	];
+		});
+	}
+	if (entries.length === 0) {
+		return {};
+	}
 	const artifactManifest = mergeSessionArtifactManifest({
 		base: options.baseManifest,
 		entries,

@@ -33,6 +33,7 @@ import {
 	getSecureTempRootMaxBytes,
 	openSecureTempFile,
 	preserveSecureTempDirectory,
+	PersistentSessionArtifactWriteError,
 	writePersistentSessionArtifactFile,
 	writeSecureTempFile,
 	writeSecureTempRootOwnershipMarker,
@@ -211,7 +212,15 @@ nodeTest(
 							suffix: ".txt",
 							store,
 						}),
-						/persisted spill budget exceeded \(13 bytes > 10 byte limit\)/,
+						(error: unknown) => {
+							assert.ok(error instanceof PersistentSessionArtifactWriteError);
+							assert.match(
+								error.message,
+								/persisted spill budget exceeded \(13 bytes > 10 byte limit\)/,
+							);
+							assert.deepEqual(error.evictedArtifacts, []);
+							return true;
+						},
 					);
 					assert.equal(await readFile(earlier.path, "utf8"), "12345678");
 					assert.deepEqual(await readdir(dirname(earlier.path)), [
