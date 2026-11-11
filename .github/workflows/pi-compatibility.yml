@@ -40,13 +40,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PI_AUTOMATION_REF: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+  PI_AUTOMATION_REF: 508d2e23c75cab8fdd28bc62fc7fed2a9a0d1cca # main
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@508d2e23c75cab8fdd28bc62fc7fed2a9a0d1cca # main
     with:
-      automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+      automation-ref: 508d2e23c75cab8fdd28bc62fc7fed2a9a0d1cca # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
@@ -55,9 +55,9 @@ jobs:
     if: >-
       !cancelled() && needs.resolve.result == 'success' &&
       github.event_name == 'workflow_dispatch' && inputs.native-qualification
-    uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+    uses: fitchmultz/.github/.github/workflows/pi-compatibility.yml@508d2e23c75cab8fdd28bc62fc7fed2a9a0d1cca # main
     with:
-      automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+      automation-ref: 508d2e23c75cab8fdd28bc62fc7fed2a9a0d1cca # main
       source-ref: ${{ github.sha }}
       # Windows is explicit best-effort below; shared platform diagnostics stay disabled.
       waived-platforms: false
