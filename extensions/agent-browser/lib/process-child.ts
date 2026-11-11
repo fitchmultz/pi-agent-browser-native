@@ -140,7 +140,7 @@ class ChildCompletion {
 }
 
 class BrowserChild {
-	private aborted = false;
+	private termination: "abort" | "timeout" | undefined;
 	private agentBrowserStarted = false;
 	private settled = false;
 	private spawnError: Error | undefined;
@@ -151,7 +151,6 @@ class BrowserChild {
 	private killTimer: NodeJS.Timeout | undefined;
 	private timeoutTimer: NodeJS.Timeout | undefined;
 	private abortListener: (() => void) | undefined;
-	private timedOut = false;
 	private completion: ChildCompletion | undefined;
 	private readonly child: ChildProcessWithoutNullStreams;
 	constructor(
@@ -194,7 +193,7 @@ class BrowserChild {
 			this.finish(
 				resolveSpawnedChildExitCode({
 					useExitFallback: false,
-					timedOut: this.timedOut,
+					timedOut: this.termination === "timeout",
 					spawnError: this.spawnError,
 				}),
 			);
@@ -204,7 +203,7 @@ class BrowserChild {
 			(code, signal) => {
 				this.finish(code, signal);
 			},
-			() => ({ timedOut: this.timedOut, spawnError: this.spawnError }),
+			() => ({ timedOut: this.termination === "timeout", spawnError: this.spawnError }),
 		);
 		child.stdout.on("data", (chunk: Buffer | string) => {
 			this.stdout.queue(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -239,11 +238,7 @@ class BrowserChild {
 		if (this.settled) {
 			return;
 		}
-		if (reason === "abort") {
-			this.aborted = true;
-		} else {
-			this.timedOut = true;
-		}
+		this.termination ??= reason;
 		if (this.pendingTermination) {
 			return;
 		}
@@ -264,7 +259,7 @@ class BrowserChild {
 		this.spawnError ??= stdinError;
 	}
 	private writeStdin(): void {
-		if (this.aborted || this.options.signal?.aborted === true) {
+		if (this.termination === "abort" || this.options.signal?.aborted === true) {
 			this.child.stdin.destroy();
 			return;
 		}
@@ -317,7 +312,7 @@ class BrowserChild {
 	}
 	private result(exitCode: number, stdout: string, stdoutSpillPath?: string): ProcessRunResult {
 		return {
-			aborted: this.aborted,
+			aborted: this.termination === "abort",
 			agentBrowserStarted: this.agentBrowserStarted,
 			exitCode,
 			exitSignal: this.exitSignal,
@@ -325,8 +320,8 @@ class BrowserChild {
 			stderr: this.stderr,
 			stdout,
 			stdoutSpillPath,
-			timedOut: this.timedOut,
-			timeoutMs: this.timedOut ? this.options.timeoutMs : undefined,
+			timedOut: this.termination === "timeout",
+			timeoutMs: this.termination === "timeout" ? this.options.timeoutMs : undefined,
 		};
 	}
 }
