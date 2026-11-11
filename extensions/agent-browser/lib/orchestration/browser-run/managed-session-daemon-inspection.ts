@@ -43,7 +43,11 @@ export type ManagedSessionDaemonInspection =
 export interface PreparationDaemonObservation {
 	readonly identity: string;
 	readonly daemon: ManagedSessionDaemonInspection;
-	readonly generationInspected: boolean;
+	/**
+	 * `inspected` means the sample included generation metadata, so an absent `daemon.generation` is
+	 * evidence that the daemon reported none. `unrequested` means the sample never asked.
+	 */
+	readonly generation: "inspected" | "unrequested";
 }
 
 export interface ManagedSessionDaemonInspectionOptions {
