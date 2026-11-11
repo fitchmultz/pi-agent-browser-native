@@ -171,7 +171,7 @@ nodeTest(
 		const windows = job("windows");
 		assertBoundedPolicyExtraction(windows);
 		assert.doesNotMatch(windows, /NODE_DEBUG|NODE_OPTIONS/);
-		assert.match(workflow, /PI_AUTOMATION_REF: f407404914bf6d048e4d952c62711df5103cc7ef/);
+		assert.match(workflow, /PI_AUTOMATION_REF: 508d2e23c75cab8fdd28bc62fc7fed2a9a0d1cca/);
 		assert.ok(
 			windows.indexOf("Failed TAP diagnostics") < windows.indexOf("Native policy diagnostics"),
 		);
