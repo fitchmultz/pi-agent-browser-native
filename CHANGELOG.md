@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.9.22 - 2026-11-11
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- refactor: keep one page-state entry per session (#400) ([838091e](https://github.com/fitchmultz/pi-agent-browser-native/commit/838091ef7b9157ea292637767b24104e7158fbc1))
+
+### What's Changed
+
+- refactor: keep one page-state entry per session (1/7) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/400
+- refactor: name the daemon restore provenance states (2/7) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/401
+- test: cover the recording reservation registry (3/7) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/402
+- refactor: take the one-use capture in its owner and type close phases (4/7) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/403
+- refactor: describe a terminated child with one reason (5/7) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/404
+- refactor: name the daemon generation sample and the cleanup states (6/7) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/405
+- docs: record state ownership for the wrapper's state machines (7/7) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/406
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.21...v0.9.22
+
 ## 0.9.21 - 2026-11-11
 
 <!-- npm-release:unreleased:start -->
