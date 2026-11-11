@@ -106,7 +106,7 @@ async function prepareCommandPhases(
 		{
 			pageState: state.sessionPageState,
 			update: context.update,
-			traceOwners: state.traceOwners,
+			traceOwnership: state.traceOwnership,
 			artifactManifest: state.artifactManifest,
 		},
 		{ ...controls, isRestoreDisabled },

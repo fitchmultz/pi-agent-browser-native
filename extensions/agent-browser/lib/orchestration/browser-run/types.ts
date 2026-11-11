@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { ElectronCleanupResult } from "../../electron/cleanup.js";
 import type { ElectronLaunchRecord, ElectronLaunchSuccess } from "../../electron/launch.js";
+import type { TraceOwnership } from "../../trace-ownership.js";
 import type {
 	AgentBrowserNetworkSourceLookupAnalysis,
 	AgentBrowserQaPresetAnalysis,
@@ -55,7 +56,7 @@ export type AgentBrowserExecutionPlan = ExecutionPlan;
 export type AgentBrowserToolPresentation = ToolPresentation;
 export type { AgentBrowserResultCategoryDetails };
 
-export type TraceOwner = "profiler" | "trace";
+export type { TraceOwner } from "../../trace-ownership.js";
 export type { BatchCommandStep } from "../batch-stdin.js";
 
 export type BrowserRunContext = Readonly<{
@@ -111,7 +112,7 @@ export interface BrowserRunStateSnapshot {
 	networkRoutesBySession: ReadonlyMap<string, readonly NetworkRouteRecord[]>;
 	ownedManagedSessions: ReadonlyMap<string, OwnedManagedSessionReference>;
 	sessionPageState: SessionPageState;
-	traceOwners: Map<string, TraceOwner>;
+	traceOwnership: TraceOwnership;
 }
 
 export interface BrowserRunState extends BrowserRunStateSnapshot {

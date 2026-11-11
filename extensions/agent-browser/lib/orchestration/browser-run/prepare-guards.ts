@@ -6,7 +6,8 @@ import {
 	buildSessionAwareStaleRefNextActions,
 	buildSessionTabRecoveryNextActions,
 } from "../../results/recovery-next-actions.js";
-import { buildStaleRefPreflight, getTraceOwnerGuardMessage } from "./session-state.js";
+import { buildStaleRefPreflight } from "./session-state.js";
+import type { TraceOwnership } from "../../trace-ownership.js";
 import { formatAgentBrowserNextActionsText, redactRecoveryHint } from "./final-result.js";
 import { validateQaAttachedPrecondition } from "./diagnostics.js";
 import { findRequestedArtifactCloseViolation } from "./prompt-guards.js";
@@ -35,15 +36,10 @@ export interface PreparationGuardFacts extends PreparationProcessFacts {
 export interface PreparationGuardOwners {
 	readonly pageState: SessionPageState;
 	readonly update: ReturnType<SessionPageState["beginUpdate"]>;
-	readonly traceOwners: ReadonlyMap<string, TraceOwner>;
+	readonly traceOwnership: TraceOwnership;
 	readonly artifactManifest?: SessionArtifactManifest | undefined;
 }
-import type {
-	TraceOwner,
-	BrowserRunInputFields,
-	PrepareBrowserRunResult,
-	StaleRefPreflight,
-} from "./types.js";
+import type { BrowserRunInputFields, PrepareBrowserRunResult, StaleRefPreflight } from "./types.js";
 
 export interface PreparationGuardContext {
 	readonly input: BrowserRunInputFields;
@@ -190,17 +186,16 @@ function planFailure(
 }
 
 function synchronousGuards(
-	traceOwners: ReadonlyMap<string, TraceOwner>,
+	traceOwnership: TraceOwnership,
 	restoreDisabled: boolean,
 	context: Pick<PreparationGuardContext, "input" | "semantic" | "sessionMode" | "stdin">,
 	evidence: PreparationGuardEvidence,
 ): PrepareBrowserRunResult | undefined {
 	const plan = context.semantic.selection.executionPlan;
-	const traceError = getTraceOwnerGuardMessage({
+	const traceError = traceOwnership.transitionError({
 		command: plan.commandInfo.command,
-		sessionName: context.semantic.selection.page.sessionStateKey,
+		sessionKey: context.semantic.selection.page.sessionStateKey,
 		subcommand: plan.commandInfo.subcommand,
-		traceOwners,
 	});
 	const error =
 		traceError !== undefined && traceError !== ""
@@ -356,7 +351,7 @@ export async function validatePreparationGuards(
 		return invalidPlan;
 	}
 	const synchronous = synchronousGuards(
-		owners.traceOwners,
+		owners.traceOwnership,
 		facts.isRestoreDisabled(),
 		context,
 		evidence,
