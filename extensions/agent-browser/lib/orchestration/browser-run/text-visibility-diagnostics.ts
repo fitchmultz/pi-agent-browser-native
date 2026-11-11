@@ -167,6 +167,36 @@ function getGetTextSelector(tokens: readonly string[]): string | undefined {
 		: undefined;
 }
 
+/** Local `auth` subcommands that never touch the page; other `auth` rows fail closed. */
+const AUTH_LOCAL_SUBCOMMANDS: ReadonlySet<string> = new Set(["list", "show", "save", "delete"]);
+
+/** Click-shaped commands without the post-mutation capability that can still navigate. */
+function isClickShapedCommand(command: string | undefined): boolean {
+	// `download` clicks its element and `mouse` down/up click at coordinates.
+	return command === "download" || command === "mouse";
+}
+
+/** A later batch row that moves the document the visibility probe would evaluate. */
+function batchStepMovesProbeDocument(step: readonly string[]): boolean {
+	const [command, subcommand] = step;
+	return (
+		// `tab new` and tab switches move the active target even though their own result
+		// reports it; `tab list` only reads. Bare `tab` conservatively ends the window.
+		(command === "tab" && subcommand !== "list") ||
+		// Optional-URL commands (a11y, vitals, web-vitals) navigate before measuring when a
+		// URL operand is present; the bare forms stay on the current page.
+		getExplicitNavigationTarget(step) !== undefined ||
+		// `frame <selector|main>` switches the active document for later commands, so the
+		// probe would evaluate a different document than the `get text` row read.
+		command === "frame" ||
+		// `auth login` navigates to the credential URL and submits the form (even
+		// `--no-navigate` allows submit-triggered navigation); the local auth subcommands
+		// (list/show/save/delete) never touch the page.
+		(command === "auth" && !AUTH_LOCAL_SUBCOMMANDS.has(subcommand ?? "")) ||
+		isClickShapedCommand(command)
+	);
+}
+
 /**
  * A later batch row that can navigate, mutate the DOM, switch the active target, or close the
  * session ends the probe window: the probe must evaluate the same document the `get text` row
@@ -180,15 +210,7 @@ function batchStepInvalidatesGetTextProbe(step: readonly string[]): boolean {
 	return (
 		isCloseCommand(command) ||
 		isOpenNavigationCommand(command) ||
-		// `tab new` and tab switches move the active target even though their own result
-		// reports it; `tab list` only reads. Bare `tab` conservatively ends the window.
-		(command === "tab" && subcommand !== "list") ||
-		// Optional-URL commands (a11y, vitals, web-vitals) navigate before measuring when a
-		// URL operand is present; the bare forms stay on the current page.
-		getExplicitNavigationTarget(step) !== undefined ||
-		// `frame <selector|main>` switches the active document for later commands, so the
-		// probe would evaluate a different document than the `get text` row read.
-		command === "frame" ||
+		batchStepMovesProbeDocument(step) ||
 		isUnverifiedPageTransitionCommand(command, subcommand) ||
 		isPageMutationStep(step) ||
 		getRefRetiringTransition(step) !== undefined

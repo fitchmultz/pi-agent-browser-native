@@ -4526,6 +4526,40 @@ if (args.includes("eval")) {
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
 
+				const authLoginTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["auth", "login", "github"],
+					]),
+				});
+				assert.ok(authLoginTailBatch.details);
+				assert.equal(authLoginTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(authLoginTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(authLoginTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const downloadTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["download", "#file", "out.zip"],
+					]),
+				});
+				assert.ok(downloadTailBatch.details);
+				assert.equal(downloadTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(downloadTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(downloadTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
 				const readOnlyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([
@@ -4546,6 +4580,22 @@ if (args.includes("eval")) {
 				invocations = await readInvocationLog(logPath);
 				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
 
+				const localAuthTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["auth", "list"],
+					]),
+				});
+				assert.ok(localAuthTailBatch.details);
+				assert.equal(localAuthTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(localAuthTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 2);
+
 				const bareA11yTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([["get", "text", ".tabs"], ["a11y"]]),
@@ -4557,7 +4607,7 @@ if (args.includes("eval")) {
 					/Selector text visibility warning:/,
 				);
 				invocations = await readInvocationLog(logPath);
-				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 2);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 3);
 			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
