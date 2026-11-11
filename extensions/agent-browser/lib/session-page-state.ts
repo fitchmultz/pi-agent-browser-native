@@ -19,11 +19,8 @@ import {
 	buildPageTransitionRefSnapshotInvalidation,
 	stripRefSnapshotOrder,
 	stripRefSnapshotInvalidationOrder,
-	shouldApplyTabTargetUpdate,
-	shouldApplyRefStateUpdate,
-	type OrderedSessionTabTarget,
+	shouldApplyOrderedUpdate,
 	type OrderedSessionRefSnapshot,
-	type OrderedSessionRefSnapshotInvalidation,
 	type SessionTabTarget,
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
@@ -32,16 +29,43 @@ import {
 	type SessionPageStateView,
 	type SessionPageStateUpdateResult,
 } from "./session-page-observation.js";
+import type {
+	SessionRefSnapshotState,
+	SessionRefState,
+	SessionTabTargetState,
+} from "./session-page-types.js";
 export * from "./session-page-observation.js";
+
+type RefView = Pick<SessionPageStateView, "refSnapshot" | "refSnapshotInvalidation">;
+type TabView = Pick<SessionPageStateView, "tabReopenPending" | "tabTarget" | "tabTargetUnknown">;
+
+// refSnapshot, refSnapshotInvalidation, and tabTarget stay named even when empty; the state suite pins that shape.
+
+function refView(state: SessionRefState | undefined): RefView {
+	if (state?.kind === "snapshot") {
+		return { refSnapshot: stripRefSnapshotOrder(state), refSnapshotInvalidation: undefined };
+	}
+	return state?.kind === "invalidated"
+		? { refSnapshot: undefined, refSnapshotInvalidation: stripRefSnapshotInvalidationOrder(state) }
+		: { refSnapshot: undefined, refSnapshotInvalidation: undefined };
+}
+
+function tabView(state: SessionTabTargetState | undefined): TabView {
+	if (state?.kind === "target") {
+		return {
+			...(state.reopenPending !== undefined ? { tabReopenPending: state.reopenPending } : {}),
+			tabTarget: state.target,
+		};
+	}
+	return { tabTarget: undefined, ...(state?.kind === "unknown" ? { tabTargetUnknown: true } : {}) };
+}
 
 export class SessionPageState {
 	private confirmActions = new Map<string, string>();
 	private readConfirmations = new Map<string, { order: number; value: ReadConfirmation }>();
-	private refSnapshotInvalidations = new Map<string, OrderedSessionRefSnapshotInvalidation>();
-	private refSnapshots = new Map<string, OrderedSessionRefSnapshot>();
+	private refStates = new Map<string, SessionRefState>();
 	private tabPinningReasons = new Map<string, SessionTabPinningReason>();
-	private tabTargetUnknownOrders = new Map<string, number>();
-	private tabTargets = new Map<string, OrderedSessionTabTarget>();
+	private tabStates = new Map<string, SessionTabTargetState>();
 	private updateOrder = 0;
 	private nativeGenerations = new Map<string, string>();
 	private pending = new Map<
@@ -57,8 +81,10 @@ export class SessionPageState {
 				state.applyBrowserRecord(record);
 			}
 		}
-		for (const key of state.tabTargets.keys()) {
-			state.tabPinningReasons.set(key, "restore");
+		for (const [key, value] of state.tabStates) {
+			if (value.kind === "target") {
+				state.tabPinningReasons.set(key, "restore");
+			}
 		}
 		return state;
 	}
@@ -68,11 +94,9 @@ export class SessionPageState {
 		const state = new SessionPageState();
 		state.confirmActions = new Map(this.confirmActions);
 		state.readConfirmations = new Map(this.readConfirmations);
-		state.refSnapshotInvalidations = new Map(this.refSnapshotInvalidations);
-		state.refSnapshots = new Map(this.refSnapshots);
+		state.refStates = new Map(this.refStates);
 		state.tabPinningReasons = new Map(this.tabPinningReasons);
-		state.tabTargetUnknownOrders = new Map(this.tabTargetUnknownOrders);
-		state.tabTargets = new Map([...this.tabTargets].map(([key, value]) => [key, { ...value }]));
+		state.tabStates = new Map([...this.tabStates].map(([key, value]) => [key, { ...value }]));
 		state.pending = new Map(this.pending);
 		state.nativeGenerations = new Map(this.nativeGenerations);
 		state.updateOrder = this.updateOrder;
@@ -84,10 +108,8 @@ export class SessionPageState {
 			[
 				...new Set([
 					...this.confirmActions.keys(),
-					...this.tabTargets.keys(),
-					...this.tabTargetUnknownOrders.keys(),
-					...this.refSnapshots.keys(),
-					...this.refSnapshotInvalidations.keys(),
+					...this.refStates.keys(),
+					...this.tabStates.keys(),
 				]),
 			].map((key) => [key, this.get(key)]),
 		);
@@ -131,7 +153,7 @@ export class SessionPageState {
 		this.applyPageRefsRecord({
 			page,
 			snapshot,
-			candidate: pending?.snapshot ?? this.refSnapshots.get(key),
+			candidate: pending?.snapshot ?? this.currentSnapshot(key),
 			update,
 		});
 		this.pending.delete(key);
@@ -146,7 +168,7 @@ export class SessionPageState {
 		if (event.phase === "begin") {
 			this.pending.set(key, {
 				operationId: event.operationId,
-				snapshot: this.refSnapshots.get(key) ?? this.pending.get(key)?.snapshot,
+				snapshot: this.currentSnapshot(key) ?? this.pending.get(key)?.snapshot,
 			});
 			this.invalidateUnknownPage(
 				key,
@@ -188,8 +210,7 @@ export class SessionPageState {
 		if (page.target) {
 			this.applyTabTarget({ sessionName: page.key, target: page.target, update });
 		} else {
-			this.tabTargets.delete(page.key);
-			this.tabTargetUnknownOrders.delete(page.key);
+			this.tabStates.delete(page.key);
 		}
 		if (page.reopenPending !== undefined) {
 			this.setTabReopenPending({ pending: page.reopenPending, sessionName: page.key, update });
@@ -238,17 +259,21 @@ export class SessionPageState {
 				});
 			}
 		} else {
-			this.refSnapshots.delete(key);
+			this.refStates.delete(key);
 			if (page.refs.invalidation) {
 				this.applyRefSnapshotInvalidation({
 					sessionName: key,
 					invalidation: page.refs.invalidation,
 					update,
 				});
-			} else {
-				this.refSnapshotInvalidations.delete(key);
 			}
 		}
+	}
+
+	/** The session's usable snapshot; undefined when its refs are invalidated, absent, or unknown. */
+	private currentSnapshot(sessionKey: string): SessionRefSnapshotState | undefined {
+		const state = this.refStates.get(sessionKey);
+		return state?.kind === "snapshot" ? state : undefined;
 	}
 
 	beginUpdate(): SessionPageStateUpdateToken {
@@ -261,11 +286,9 @@ export class SessionPageState {
 		this.readConfirmations.clear();
 		this.pending.clear();
 		this.nativeGenerations.clear();
-		this.refSnapshotInvalidations = new Map();
-		this.refSnapshots = new Map();
+		this.refStates = new Map();
 		this.tabPinningReasons = new Map();
-		this.tabTargetUnknownOrders = new Map();
-		this.tabTargets = new Map();
+		this.tabStates = new Map();
 		this.updateOrder = 0;
 	}
 
@@ -273,20 +296,14 @@ export class SessionPageState {
 		if (sessionName === undefined || sessionName.length === 0) {
 			return {};
 		}
+		const refState = this.refStates.get(sessionName);
+		const tabState = this.tabStates.get(sessionName);
+		const confirmActions = this.confirmActions.get(sessionName);
 		return {
-			...(this.confirmActions.has(sessionName)
-				? { confirmActions: this.confirmActions.get(sessionName) }
-				: {}),
+			...(confirmActions !== undefined ? { confirmActions } : {}),
 			pinningReason: this.tabPinningReasons.get(sessionName),
-			...(this.tabTargets.get(sessionName)?.reopenPending !== undefined
-				? { tabReopenPending: this.tabTargets.get(sessionName)?.reopenPending }
-				: {}),
-			refSnapshot: stripRefSnapshotOrder(this.refSnapshots.get(sessionName)),
-			refSnapshotInvalidation: stripRefSnapshotInvalidationOrder(
-				this.refSnapshotInvalidations.get(sessionName),
-			),
-			...(this.tabTargetUnknownOrders.has(sessionName) ? { tabTargetUnknown: true as const } : {}),
-			tabTarget: this.tabTargets.get(sessionName)?.target,
+			...refView(refState),
+			...tabView(tabState),
 		};
 	}
 
@@ -323,20 +340,14 @@ export class SessionPageState {
 		readonly target: SessionTabTarget;
 		readonly update: SessionPageStateUpdateToken;
 	}): SessionPageStateUpdateResult {
-		const current = this.tabTargets.get(options.sessionName);
-		if (
-			!shouldApplyTabTargetUpdate(
-				current,
-				this.tabTargetUnknownOrders.get(options.sessionName),
-				options.update.sessionPageStateUpdateOrder,
-			)
-		) {
+		const current = this.tabStates.get(options.sessionName);
+		if (!shouldApplyOrderedUpdate(current, options.update.sessionPageStateUpdateOrder)) {
 			return { ...this.get(options.sessionName), applied: false, stale: true };
 		}
-		this.tabTargetUnknownOrders.delete(options.sessionName);
-		this.tabTargets.set(options.sessionName, {
+		this.tabStates.set(options.sessionName, {
+			kind: "target",
 			order: options.update.sessionPageStateUpdateOrder,
-			reopenPending: current?.reopenPending,
+			reopenPending: current?.kind === "target" ? current.reopenPending : undefined,
 			target: options.target,
 		});
 		return { ...this.get(options.sessionName), applied: true };
@@ -346,18 +357,14 @@ export class SessionPageState {
 		readonly sessionName: string;
 		readonly update: SessionPageStateUpdateToken;
 	}): void {
-		const current = this.tabTargets.get(options.sessionName);
+		const current = this.tabStates.get(options.sessionName);
 		if (
-			!current ||
-			!shouldApplyTabTargetUpdate(
-				current,
-				this.tabTargetUnknownOrders.get(options.sessionName),
-				options.update.sessionPageStateUpdateOrder,
-			)
+			current?.kind !== "target" ||
+			!shouldApplyOrderedUpdate(current, options.update.sessionPageStateUpdateOrder)
 		) {
 			return;
 		}
-		this.tabTargets.set(options.sessionName, {
+		this.tabStates.set(options.sessionName, {
 			...current,
 			order: options.update.sessionPageStateUpdateOrder,
 			reopenPending: options.pending,
@@ -370,11 +377,10 @@ export class SessionPageState {
 		readonly update: SessionPageStateUpdateToken;
 	}): SessionPageStateUpdateResult {
 		if (
-			!shouldApplyRefStateUpdate({
-				currentInvalidation: this.refSnapshotInvalidations.get(options.sessionName),
-				currentSnapshot: this.refSnapshots.get(options.sessionName),
-				updateOrder: options.update.sessionPageStateUpdateOrder,
-			})
+			!shouldApplyOrderedUpdate(
+				this.refStates.get(options.sessionName),
+				options.update.sessionPageStateUpdateOrder,
+			)
 		) {
 			return { ...this.get(options.sessionName), applied: false, stale: true };
 		}
@@ -384,9 +390,9 @@ export class SessionPageState {
 			snapshotId: options.snapshot.snapshotId ?? randomUUID(),
 			target: options.snapshot.target ?? options.fallbackTarget,
 		};
-		this.refSnapshotInvalidations.delete(options.sessionName);
-		this.refSnapshots.set(options.sessionName, {
+		this.refStates.set(options.sessionName, {
 			...snapshot,
+			kind: "snapshot",
 			order: options.update.sessionPageStateUpdateOrder,
 		});
 		return { ...this.get(options.sessionName), applied: true };
@@ -397,9 +403,9 @@ export class SessionPageState {
 		} else {
 			this.nativeGenerations.delete(sessionName);
 		}
-		const snapshot = this.refSnapshots.get(sessionName);
+		const snapshot = this.currentSnapshot(sessionName);
 		if (snapshot) {
-			this.refSnapshots.set(sessionName, { ...snapshot, generation });
+			this.refStates.set(sessionName, { ...snapshot, generation });
 		}
 	}
 	applyRefSnapshotInvalidation(options: {
@@ -408,17 +414,16 @@ export class SessionPageState {
 		readonly update: SessionPageStateUpdateToken;
 	}): SessionPageStateUpdateResult {
 		if (
-			!shouldApplyRefStateUpdate({
-				currentInvalidation: this.refSnapshotInvalidations.get(options.sessionName),
-				currentSnapshot: this.refSnapshots.get(options.sessionName),
-				updateOrder: options.update.sessionPageStateUpdateOrder,
-			})
+			!shouldApplyOrderedUpdate(
+				this.refStates.get(options.sessionName),
+				options.update.sessionPageStateUpdateOrder,
+			)
 		) {
 			return { ...this.get(options.sessionName), applied: false, stale: true };
 		}
-		this.refSnapshots.delete(options.sessionName);
-		this.refSnapshotInvalidations.set(options.sessionName, {
+		this.refStates.set(options.sessionName, {
 			...options.invalidation,
+			kind: "invalidated",
 			order: options.update.sessionPageStateUpdateOrder,
 		});
 		return { ...this.get(options.sessionName), applied: true };
@@ -427,24 +432,20 @@ export class SessionPageState {
 		readonly sessionName: string;
 		readonly update: SessionPageStateUpdateToken;
 	}): SessionPageStateUpdateResult {
-		const current = this.tabTargets.get(options.sessionName);
 		if (
-			!shouldApplyTabTargetUpdate(
-				current,
-				this.tabTargetUnknownOrders.get(options.sessionName),
+			!shouldApplyOrderedUpdate(
+				this.tabStates.get(options.sessionName),
 				options.update.sessionPageStateUpdateOrder,
 			)
 		) {
 			return { ...this.get(options.sessionName), applied: false, stale: true };
 		}
-		this.refSnapshotInvalidations.delete(options.sessionName);
-		this.refSnapshots.delete(options.sessionName);
+		this.refStates.delete(options.sessionName);
 		this.tabPinningReasons.delete(options.sessionName);
-		this.tabTargets.delete(options.sessionName);
-		this.tabTargetUnknownOrders.set(
-			options.sessionName,
-			options.update.sessionPageStateUpdateOrder,
-		);
+		this.tabStates.set(options.sessionName, {
+			kind: "unknown",
+			order: options.update.sessionPageStateUpdateOrder,
+		});
 		return { ...this.get(options.sessionName), applied: true };
 	}
 	clearSession(sessionName: string): void {
@@ -452,21 +453,17 @@ export class SessionPageState {
 		this.pending.delete(sessionName);
 		this.nativeGenerations.delete(sessionName);
 		this.readConfirmations.delete(sessionName);
-		this.refSnapshotInvalidations.delete(sessionName);
-		this.refSnapshots.delete(sessionName);
+		this.refStates.delete(sessionName);
 		this.tabPinningReasons.delete(sessionName);
-		this.tabTargetUnknownOrders.delete(sessionName);
-		this.tabTargets.delete(sessionName);
+		this.tabStates.delete(sessionName);
 	}
 	clearNamespace(namespace?: string): void {
 		const sessionKeys = new Set([
 			...this.confirmActions.keys(),
 			...this.readConfirmations.keys(),
-			...this.refSnapshotInvalidations.keys(),
-			...this.refSnapshots.keys(),
+			...this.refStates.keys(),
 			...this.tabPinningReasons.keys(),
-			...this.tabTargetUnknownOrders.keys(),
-			...this.tabTargets.keys(),
+			...this.tabStates.keys(),
 		]);
 		for (const sessionKey of sessionKeys) {
 			if (isAgentBrowserSessionIdentityKeyInNamespace(sessionKey, namespace)) {

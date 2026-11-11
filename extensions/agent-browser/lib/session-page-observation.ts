@@ -464,24 +464,11 @@ export function extractLatestRefSnapshotStateFromBatchResults(
 	return latest;
 }
 
-export function shouldApplyTabTargetUpdate(
+export function shouldApplyOrderedUpdate(
 	current: { readonly order: number } | undefined,
-	unknownOrder: number | undefined,
 	updateOrder: number,
 ): boolean {
-	return updateOrder >= Math.max(current?.order ?? 0, unknownOrder ?? 0);
-}
-
-export function shouldApplyRefStateUpdate(options: {
-	readonly currentInvalidation?: { readonly order: number } | undefined;
-	readonly currentSnapshot?: { readonly order: number } | undefined;
-	readonly updateOrder: number;
-}): boolean {
-	const currentOrder = Math.max(
-		options.currentSnapshot?.order ?? 0,
-		options.currentInvalidation?.order ?? 0,
-	);
-	return options.updateOrder >= currentOrder;
+	return updateOrder >= (current?.order ?? 0);
 }
 
 export function stripRefSnapshotOrder(
