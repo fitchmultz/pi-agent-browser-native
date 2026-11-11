@@ -35,9 +35,11 @@ interface ManagedSessionCloseOptions {
 	readonly timeoutMs: number;
 }
 
+type ClosePhase = "daemon inspection" | "native close" | "policy coordination";
+
 interface CloseLifecycle {
 	readonly signal: AbortSignal;
-	readonly enterPhase: (phase: string) => void;
+	readonly enterPhase: (phase: ClosePhase) => void;
 	readonly clearTimer: () => void;
 }
 
@@ -165,7 +167,7 @@ async function closeUnderPolicy(
 
 async function closeWithDeadline(options: ManagedSessionCloseOptions): Promise<string | undefined> {
 	const controller = new AbortController();
-	let phase = "policy coordination";
+	let phase: ClosePhase = "policy coordination";
 	// Phase time is diagnostic elapsed time, so it uses the monotonic clock like the timer itself.
 	let phaseStartedAt = performance.now();
 	let timeoutError: string | undefined;

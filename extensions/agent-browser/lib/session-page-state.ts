@@ -329,6 +329,23 @@ export class SessionPageState {
 	getReadConfirmation(sessionKey: string): ReadConfirmation | undefined {
 		return this.readConfirmations.get(sessionKey)?.value;
 	}
+	/**
+	 * Takes the one-use fresh capture for a session. The flag is cleared on the stored value and the
+	 * cleared confirmation is returned for persistence, so a caller cannot read the flag and leave it set.
+	 */
+	takeFreshConfirmationCapture(
+		sessionKey: string,
+		update: SessionPageStateUpdateToken,
+	): ReadConfirmation | undefined {
+		const current = this.readConfirmations.get(sessionKey)?.value;
+		if (current?.refSnapshotFresh !== true) {
+			return undefined;
+		}
+		const consumed = { ...current };
+		delete consumed.refSnapshotFresh;
+		this.applyReadConfirmation(consumed, update);
+		return consumed;
+	}
 	applyReadConfirmation(value: ReadConfirmation, update: SessionPageStateUpdateToken): void {
 		const key = getAgentBrowserSessionIdentityKey(value.sessionName, value.namespace);
 		if (update.sessionPageStateUpdateOrder >= (this.readConfirmations.get(key)?.order ?? 0)) {
