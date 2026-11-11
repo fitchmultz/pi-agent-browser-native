@@ -32,6 +32,8 @@ After a package update, quit Pi fully. Start Pi again to load the new tools. `/r
 
 Existing browser-bearing conversations resume automatically at their original journal path, without rewriting history or running a converter. See [session storage](docs/SESSION_STORAGE.md#resuming-a-retained-legacy-journal) for replay and recovery limits.
 
+If shutdown cleanup fails, Pi warns with the exact browser session or Electron launch to retry. Resume the same conversation with this extension to retry unfinished cleanup automatically, including off-branch resources. Partial Electron profiles remain protected. See [cleanup recovery](docs/SESSION_STORAGE.md#shutdown-cleanup-recovery).
+
 Read the [command reference](docs/COMMAND_REFERENCE.md) for your next browser task.
 
 ## Browser tools

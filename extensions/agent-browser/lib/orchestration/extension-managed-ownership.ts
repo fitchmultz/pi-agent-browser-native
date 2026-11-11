@@ -164,7 +164,9 @@ export async function closeOwnedManagedSessionsExcept(
 	settings: Readonly<{ restore: ManagedSessionRestoreState; timeoutMs: number }>,
 	options: {
 		readonly keepKeys: ReadonlySet<string>;
-		readonly onClosed?: (owner: OwnedManagedSession) => void;
+		readonly onClosing?: (owner: OwnedManagedSession) => Promise<void>;
+		readonly onClosed?: (owner: OwnedManagedSession) => void | Promise<void>;
+		readonly onFailed?: (owner: OwnedManagedSession, error: string) => void;
 	},
 ): Promise<void> {
 	// Snapshot ownership before awaiting: callbacks may add owners during shutdown cleanup.
@@ -173,6 +175,7 @@ export async function closeOwnedManagedSessionsExcept(
 		if (options.keepKeys.has(key)) {
 			continue;
 		}
+		await options.onClosing?.(owner);
 		// Session close and its durable cleanup callback must finish before the next owner is retired.
 		const error = await closeManagedSession({
 			confirmActions: pages.getConfirmActions(key) ?? process.env.AGENT_BROWSER_CONFIRM_ACTIONS,
@@ -186,8 +189,10 @@ export async function closeOwnedManagedSessionsExcept(
 			timeoutMs: settings.timeoutMs,
 		});
 		if (error === undefined || error === "") {
+			await options.onClosed?.(owner);
 			sessions.delete(key);
-			options.onClosed?.(owner);
+		} else {
+			options.onFailed?.(owner, error);
 		}
 	}
 }

@@ -180,6 +180,10 @@ A failed native JSON envelope with `code: "outcome_unknown"` means bytes from a 
 
 Native 0.39.4+ `wait --download <path>` can claim an already-completed download and move its bytes for a locally launched browser; attached/remote CDP paths cannot be moved by this operation. `savedFilePath` remains metadata until `artifactVerification` verifies it, and missing requested output still fails as `artifact-missing`, including on supported 0.35.0–0.39.3 natives that report the requested path without moving the file. Native 0.40+ `state load` and `session info` expose `skippedOrigins` and `restoreSkippedOrigins` respectively when origin storage could not be restored. Default text adds `Skipped storage for origins (page did not stay on that origin): …` after a nonempty `state load` result and includes `restoreSkippedOrigins` in the `session info` runtime metadata; `details.data` and explicit `--json` keep the native fields. The wrapper does not replay skipped values into another origin.
 
+### Shutdown cleanup recovery
+
+A failed automatic cleanup emits a warning with the exact `agent_browser` namespace/session close arguments or `agent_browser_electron` cleanup launch ID. Ownership and close policy survive reload in the canonical conversation journal, including resources no longer on the active branch. Resume that conversation with the extension to retry unfinished cleanup automatically. Active resources deliberately transferred during reload/restart remain open. Partial Electron cleanup keeps its temporary profile protected until verified removal. Journal write failure retains live ownership and reports that recovery in a new instance is unconfirmed.
+
 ### Native MCP boundary
 
 Native 0.41 `mcp call <tool> '<json>'` is a finite one-shot command, including JSON-stdin input and versioned `_meta.agentBrowserVersion` output. Native MCP stdio can also process a finite input stream. Those upstream capabilities are distinct from this extension's direct browser tools.

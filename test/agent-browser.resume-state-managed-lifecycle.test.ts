@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nodeTest from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
+import { readBrowserEntries } from "../extensions/agent-browser/lib/browser-journal.js";
+import { getAgentBrowserSessionIdentityKey } from "../extensions/agent-browser/lib/argv-grammar.js";
 import {
 	TEST_SESSION_ID,
 	createExtensionHarness,
@@ -21,6 +23,214 @@ import {
 	waitForInvocation,
 	ownedSessionDetails,
 } from "./helpers/resume-state-fixture.js";
+
+for (const reason of ["reload", "quit"] as const) {
+	nodeTest(
+		`agentBrowserExtension recovers failed off-branch managed shutdown in a new instance (${reason})`,
+		{ concurrency: false },
+		async () => {
+			const tempDir = await mkdtemp(join(tmpdir(), "piab-shutdown-retry-"));
+			const logPath = join(tempDir, "invocations.log");
+			const failurePath = join(tempDir, "fail");
+			const socketDir = join(tempDir, "socket");
+			await mkdir(socketDir, { mode: 0o700 });
+			await writeFile(failurePath, "");
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, cwd: process.cwd(), confirm: process.env.AGENT_BROWSER_CONFIRM_ACTIONS, socket: process.env.AGENT_BROWSER_SOCKET_DIR, autosave: process.env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS }) + "\\n");
+const failed = args.includes("close") && fs.existsSync(${JSON.stringify(failurePath)});
+process.stdout.write(JSON.stringify(failed ? { success: false, error: "close refused" } : { success: true, data: { closed: true } }));
+process.exitCode = failed ? 1 : 0;`,
+			);
+			try {
+				await withPatchedEnv(
+					{
+						PATH: `${tempDir}:${process.env.PATH ?? ""}`,
+						AGENT_BROWSER_NAMESPACE: "unrelated",
+						AGENT_BROWSER_CONFIRM_ACTIONS: "none",
+					},
+					async () => {
+						const sessionName = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+						const namespace = "cleanup-owner";
+						const key = getAgentBrowserSessionIdentityKey(sessionName, namespace);
+						const branch = [
+							{
+								type: "custom",
+								customType: "agent-browser-transition",
+								data: {
+									event: {
+										version: 1,
+										phase: "state",
+										operationId: "owned",
+										toolCallId: "owned",
+										commandIndex: 0,
+										isError: false,
+										state: {
+											...ownedSessionDetails(sessionName),
+											namespace,
+											attachedBrowserSession: true,
+											managedSessionSocketDir: socketDir,
+											managedSessionCwd: tempDir,
+											managedSessionHeadedAutosaveInterval: "0",
+										},
+										pages: [
+											{ key, confirmActions: "all", refs: { kind: "unknown" }, unknown: true },
+										],
+									},
+								},
+							},
+						];
+						const harness = createExtensionHarness({ branch, cwd: tempDir });
+						await runExtensionEvent(
+							harness.handlers,
+							"session_start",
+							{ reason: "resume" },
+							harness.ctx,
+						);
+						harness.setBranch([]);
+						await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
+						const notifications: string[] = [];
+						const ctx = {
+							...harness.ctx,
+							hasUI: true,
+							ui: { notify: (message: string) => notifications.push(message) },
+						};
+						await runExtensionEvent(harness.handlers, "session_shutdown", { reason }, ctx);
+						const persisted = await readBrowserEntries(harness.ctx.sessionManager);
+						await rm(failurePath);
+						const recovered = createExtensionHarness({ branch: [...persisted], cwd: tempDir });
+						await runExtensionEvent(
+							recovered.handlers,
+							"session_start",
+							{ reason: "reload" },
+							recovered.ctx,
+						);
+						const closes = (await readInvocationLog(logPath)).filter((row) =>
+							row.args.includes("close"),
+						);
+						assert.equal(closes.length, 2, "new runtime retries the failed off-branch close once");
+						assert.ok(
+							notifications.some(
+								(message) =>
+									message.includes(sessionName) &&
+									message.includes(namespace) &&
+									message.includes("close refused"),
+							),
+						);
+						assert.deepEqual(
+							closes.map((row) => row.args),
+							Array.from({ length: 2 }, () => [
+								"--namespace",
+								namespace,
+								"--session",
+								sessionName,
+								"close",
+							]),
+						);
+						const expectedCwd = await realpath(tempDir);
+						assert.deepEqual(
+							closes.map((close) => ({
+								confirm: readRecord(close).confirm,
+								socket: readRecord(close).socket,
+								autosave: close.autosave,
+								cwd: readRecord(close).cwd,
+							})),
+							Array.from({ length: 2 }, () => ({
+								confirm: "all",
+								socket: socketDir,
+								autosave: "0",
+								cwd: expectedCwd,
+							})),
+						);
+						await runExtensionEvent(
+							recovered.handlers,
+							"session_shutdown",
+							{ reason: "quit" },
+							recovered.ctx,
+						);
+						const again = createExtensionHarness({
+							branch: [...(await readBrowserEntries(recovered.ctx.sessionManager))],
+							cwd: tempDir,
+						});
+						await runExtensionEvent(
+							again.handlers,
+							"session_start",
+							{ reason: "reload" },
+							again.ctx,
+						);
+						assert.equal(
+							(await readInvocationLog(logPath)).filter((row) => row.args.includes("close")).length,
+							2,
+							"terminal cleanup survives another reload",
+						);
+					},
+				);
+			} finally {
+				await rm(tempDir, { recursive: true, force: true });
+			}
+		},
+	);
+}
+
+nodeTest(
+	"agentBrowserExtension reports shutdown journal failure before dispatch without losing live ownership",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "piab-shutdown-append-"));
+		const logPath = join(tempDir, "invocations.log");
+		const appendError = new Error("shutdown append fault");
+		let rejectAppend = true;
+		const notifications: string[] = [];
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`require("node:fs").appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n"); process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
+		);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+				const name = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+				const harness = createExtensionHarness({
+					cwd: tempDir,
+					branch: [createToolBranchEntry({ details: ownedSessionDetails(name), isError: false })],
+					onAppendEntry: () => {
+						if (rejectAppend) {
+							throw appendError;
+						}
+					},
+				});
+				await runExtensionEvent(harness.handlers, "session_start", {}, harness.ctx);
+				harness.setBranch([]);
+				await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
+				const ctx = {
+					...harness.ctx,
+					hasUI: true,
+					ui: { notify: (message: string) => notifications.push(message) },
+				};
+				await assert.rejects(
+					runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, ctx),
+					(error: unknown) => error === appendError,
+				);
+				assert.equal((await readInvocationLog(logPath)).length, 0);
+				assert.ok(
+					notifications.some(
+						(message) => message.includes(name) && message.includes("not confirmed"),
+					),
+				);
+				rejectAppend = false;
+				// Discard the failed native in-memory append; the published journal still has an empty branch.
+				harness.setBranch([]);
+				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, ctx);
+				assert.deepEqual(
+					(await readInvocationLog(logPath)).map((row) => row.args),
+					[["--session", name, "close"]],
+				);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
 
 function closedSessionDetails(sessionName: string) {
 	return {
@@ -312,7 +522,10 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					);
 					assert.deepEqual(
 						(await closedNames()).toSorted(),
-						[names.current, names.leftover].toSorted(),
+						[
+							names.current,
+							...(shutdownCloses.some((name) => name === "leftover") ? [] : [names.leftover]),
+						].toSorted(),
 					);
 				});
 			} finally {
@@ -632,7 +845,12 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					"tab",
 					"list",
 				]);
-				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" });
+				await runExtensionEvent(
+					harness.handlers,
+					"session_shutdown",
+					{ reason: "quit" },
+					harness.ctx,
+				);
 				assert.deepEqual(
 					(await readInvocationLog(logPath))
 						.filter((entry) => entry.args.includes("close"))

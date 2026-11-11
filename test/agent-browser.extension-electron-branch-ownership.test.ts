@@ -17,6 +17,7 @@ import { join } from "node:path";
 import nodeTest from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { readBrowserEntries } from "../extensions/agent-browser/lib/browser-journal.js";
 import { readProcessStartIdentity } from "../extensions/agent-browser/lib/process-identity.js";
 import { createImplicitSessionName } from "../extensions/agent-browser/lib/runtime.js";
 import { createSecureTempDirectory } from "../extensions/agent-browser/lib/temp.js";
@@ -1633,7 +1634,9 @@ for (const shutdownReason of ["reload", "quit"] as const) {
 	nodeTest(
 		`agentBrowserExtension preserves off-branch Electron profile when ${shutdownReason} cleanup is partial`,
 		{ concurrency: false },
-		async () => {
+		async (t) => {
+			const notifications: string[] = [];
+			t.mock.method(console, "warn", (message: string) => notifications.push(message));
 			const tempDir = await mkdtemp(
 				join(tmpdir(), `pi-agent-browser-electron-${shutdownReason}-partial-`),
 			);
@@ -1732,6 +1735,38 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 						harness.ctx,
 					);
 					assert.equal((await stat(userDataDir)).isDirectory(), true);
+					await new Promise<void>((resolve) => {
+						server.close(() => resolve());
+					});
+					const recovered = createExtensionHarness({
+						branch: [...(await readBrowserEntries(harness.ctx.sessionManager))],
+						cwd: tempDir,
+					});
+					await runExtensionEvent(
+						recovered.handlers,
+						"session_start",
+						{ reason: "reload" },
+						recovered.ctx,
+					);
+					await assert.rejects(stat(userDataDir), { code: "ENOENT" });
+					assert.ok(
+						notifications.some(
+							(message) =>
+								message.includes(electronRecord.launchId) && message.includes('action "cleanup"'),
+						),
+					);
+					const before = (await readInvocationLog(logPath)).length;
+					await runExtensionEvent(
+						recovered.handlers,
+						"session_shutdown",
+						{ reason: "quit" },
+						recovered.ctx,
+					);
+					assert.equal(
+						(await readInvocationLog(logPath)).length,
+						before,
+						"successful retry retires connection ownership",
+					);
 				});
 			} finally {
 				await new Promise<void>((resolve) => {
