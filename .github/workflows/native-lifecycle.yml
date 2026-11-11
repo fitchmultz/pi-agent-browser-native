@@ -24,9 +24,9 @@ concurrency:
 
 jobs:
   resolve:
-    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+    uses: fitchmultz/.github/.github/workflows/resolve-hosts.yml@f407404914bf6d048e4d952c62711df5103cc7ef # main
     with:
-      automation-ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+      automation-ref: f407404914bf6d048e4d952c62711df5103cc7ef # main
       official-version: ${{ inputs.official-version }}
       fork-ref: ${{ inputs.fork-ref }}
 
@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: fitchmultz/.github
-          ref: 3d1b323fd602274c55e5f44692f24c8605e52b60 # main
+          ref: f407404914bf6d048e4d952c62711df5103cc7ef # main
           path: automation
           persist-credentials: false
       - name: Configure backup DNS resolvers
