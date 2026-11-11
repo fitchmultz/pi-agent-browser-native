@@ -371,6 +371,38 @@ nodeTest(
 );
 
 nodeTest(
+	"agentBrowserExtension takes the URL a trailing reload reports when the later URL read fails after an earlier eval",
+	async () => {
+		// The reload replaced the document the eval ran in, so its own row is the read, as in a reload-only call.
+		await withOwnStepFixture(async ({ call, setScenario }) => {
+			await setScenario({ getUrlFailsAfterEval: true, reloadUrl: OTHER_URL });
+			const batch = await call(
+				["batch", "--bail"],
+				JSON.stringify([["eval", "document.title"], ["reload"]]),
+			);
+			assert.equal(batch.isError, false, batch.text);
+			assert.ok(
+				batch.text.startsWith(`Page URL changed during this call: ${START_URL} -> ${OTHER_URL}.`),
+				batch.text,
+			);
+			assert.deepEqual(batch.details.pageVerification, {
+				command: "reload",
+				priorUrl: START_URL,
+				status: "changed",
+				url: OTHER_URL,
+			});
+			assert.equal(batch.details.sessionTabTargetUnknown, undefined);
+
+			// The read failed once; the next command's own URL read answers again.
+			await setScenario({});
+			const content = await call(["get", "text", "#h"]);
+			assert.equal(content.isError, false, content.text);
+			assert.match(content.text, /content of https:\/\/example\.test\/b/);
+		});
+	},
+);
+
+nodeTest(
 	"agentBrowserExtension leaves a page that another acting step in the batch may have reached to that step",
 	async (t) => {
 		// A click-like step can navigate too, so the page seen after the batch is not evidence about the eval.

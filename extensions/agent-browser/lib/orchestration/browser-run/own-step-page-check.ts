@@ -39,7 +39,10 @@ type CheckPageAfterOwnStepInput = Readonly<
 interface TrailingOwnStep {
 	readonly command: OwnStepPageCheck["command"];
 	readonly index: number;
-	/** A script can start a navigation that commits after it returns, so eval needs the later live read. */
+	/**
+	 * A script can start a navigation that commits after it returns, so a run that ends with eval
+	 * needs the later live read. A reload replaces that document and reports the URL it ended on.
+	 */
 	readonly needsLiveRead: boolean;
 }
 
@@ -77,9 +80,7 @@ function findTrailingOwnStep(steps: readonly (readonly string[])[]): TrailingOwn
 	}
 	const commands = steps.slice(index).flatMap((step) => ownStepCommand(step) ?? []);
 	const command = commands.at(-1);
-	return command === undefined
-		? undefined
-		: { command, index, needsLiveRead: commands.includes("eval") };
+	return command === undefined ? undefined : { command, index, needsLiveRead: command === "eval" };
 }
 
 /**
