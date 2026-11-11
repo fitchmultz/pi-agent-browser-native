@@ -168,7 +168,7 @@ async function preparePagePhases(
 		generationInspection:
 			policy.generationInspection ??
 			(!session.ownedManagedSession &&
-			initial?.generationInspected === true &&
+			initial?.generation === "inspected" &&
 			initial.identity === getAgentBrowserSessionIdentityKey(plan.sessionName ?? "", plan.namespace)
 				? initial.daemon
 				: undefined),

@@ -146,7 +146,7 @@ export async function withRootBrowserLaunch(
 				browserRun({
 					identity: getAgentBrowserSessionIdentityKey(policy.rootName, namespace),
 					daemon,
-					generationInspected: includeGeneration,
+					generation: includeGeneration ? "inspected" : "unrequested",
 				}),
 		),
 	);

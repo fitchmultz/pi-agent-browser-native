@@ -32,6 +32,15 @@ export interface ElectronLaunchFailureDiagnostics {
 	readonly userDataDir?: string;
 }
 
+/**
+ * Lifecycle of one wrapper-tracked Electron launch.
+ *
+ * Current code writes three values: the launch record starts `active`
+ * (`electron/launch.ts`), and cleanup writes `cleaned` or `partial` (`electron/cleanup.ts`
+ * and `orchestration/electron-host/cleanup.ts`). `dead` and `failed` are accepted when reading
+ * persisted records but have no producing code path, so readers must tolerate them without
+ * assuming a fresh run can reach them.
+ */
 export type ElectronLaunchCleanupState = "active" | "cleaned" | "dead" | "failed" | "partial";
 export type ElectronLaunchFailureReason =
 	| "aborted"
