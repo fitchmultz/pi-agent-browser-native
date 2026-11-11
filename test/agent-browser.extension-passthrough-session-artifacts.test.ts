@@ -1101,3 +1101,70 @@ if (args.includes("batch")) {
 		}
 	},
 );
+
+nodeTest(
+	"agentBrowserExtension clears trace ownership when a replacement closes the old session",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-trace-replaced-"));
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://safe.example/" } }));
+} else if (args.includes("open")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://safe.example/", title: "Safe", lifecycle: { effectiveLaunch: { browserLaunched: true } } } }));
+} else if (args.includes("trace") || args.includes("profiler")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { started: true } }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+}`,
+		);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const firstFresh = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["open", "https://safe.example/"],
+					sessionMode: "fresh",
+				});
+				assert.ok(firstFresh.details);
+				assert.equal(firstFresh.isError, false);
+				const replacedSessionName = readString(firstFresh.details.sessionName);
+				const traceStart = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", replacedSessionName, "trace", "start"],
+				});
+				assert.equal(traceStart.isError, false);
+				const secondFresh = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["open", "https://safe.example/"],
+					sessionMode: "fresh",
+				});
+				assert.ok(secondFresh.details);
+				assert.equal(secondFresh.isError, false);
+				const outcome = readRecord(secondFresh.details.managedSessionOutcome);
+				assert.equal(outcome.status, "replaced");
+				assert.equal(outcome.replacedSessionClosed, true);
+				// The replacement cleared the old session's page state, so verify its page
+				// explicitly before the profiler start the trace-ownership assertion needs.
+				const verifiedOldPage = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", replacedSessionName, "get", "url"],
+				});
+				assert.equal(verifiedOldPage.isError, false);
+				const profilerAfterReplacement = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--session", replacedSessionName, "profiler", "start"],
+				});
+				assert.equal(
+					profilerAfterReplacement.isError,
+					false,
+					profilerAfterReplacement.content[0]?.type === "text"
+						? profilerAfterReplacement.content[0].text
+						: "",
+				);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);

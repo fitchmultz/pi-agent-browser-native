@@ -170,6 +170,10 @@ function retireFailedElectronSession(
 	draft.input.state.closedManagedSessionNames.add(sessionKey);
 	const networkRoutesBySession = new Map(draft.networkRoutesBySession);
 	networkRoutesBySession.delete(sessionKey);
+	// The failed-handoff close is automatic, so the lifecycle fold never sees a close
+	// command for this session. The session is freshly minted, so no prior trace owner
+	// can exist today; the close still owns the cleanup, so clear it like every close.
+	draft.input.state.traceOwnership.clearSession(sessionKey);
 	draft.input.state.sessionPageState.clearSession(sessionKey);
 	let { managedSessionActive, freshSessionOrdinal, managedSessionName, managedSessionNamespace } =
 		draft;
