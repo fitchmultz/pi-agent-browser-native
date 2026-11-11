@@ -57,3 +57,16 @@ export interface SessionPageStateUpdateResult extends SessionPageStateView {
 	readonly applied: boolean;
 	readonly stale?: boolean;
 }
+
+/** One session's usable ref snapshot. */
+export type SessionRefSnapshotState = OrderedSessionRefSnapshot & { readonly kind: "snapshot" };
+
+/** One session's ref state. A usable snapshot and an invalidation are alternatives, never both. */
+export type SessionRefState =
+	| SessionRefSnapshotState
+	| (OrderedSessionRefSnapshotInvalidation & { readonly kind: "invalidated" });
+
+/** One session's tab target: the ordered target, or the order at which it became unknown. */
+export type SessionTabTargetState =
+	| (OrderedSessionTabTarget & { readonly kind: "target" })
+	| { readonly kind: "unknown"; readonly order: number };
