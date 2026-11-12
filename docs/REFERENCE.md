@@ -135,7 +135,7 @@ Published precompiled npm packages do not require a compiler at runtime.
 
 Android support uses an Android-native `agent-browser` source build with Termux's system Chromium, not Chrome for Testing. The packaged Linux-musl executable can launch Chromium but fail hostname resolution for CLI HTTP requests such as `read` and `doctor`'s CDN probe. Building for Android fixes those requests without changing TLS verification or the wrapper's HTTP behavior.
 
-The verified source revision is [`agent-browser` 0.41.1 with the native Android repair](https://github.com/fitchmultz/agent-browser/pull/2), commit `500be1a391ea3e870dff0893e310011ba634468c`. There is no published Android binary; [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks that packaging. The [native Android build guide](https://github.com/fitchmultz/agent-browser/blob/500be1a391ea3e870dff0893e310011ba634468c/docs/content/docs/installation.mdx#androidtermux) explains the build requirements and dashboard assets. Use Node.js 24+, native pnpm 11+, and Termux's build tools:
+The verified source revision is [`agent-browser` 0.41.1 with the native Android repair](https://github.com/fitchmultz/agent-browser/pull/2), commit `500be1a391ea3e870dff0893e310011ba634468c`. There is no published Android binary; [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks that packaging. The [native Android build guide](https://github.com/fitchmultz/agent-browser/blob/500be1a391ea3e870dff0893e310011ba634468c/docs/content/docs/installation.mdx#androidtermux) explains the build requirements and dashboard assets. Use Node.js 24.22.3 or newer in 24.x, native pnpm 11+, and Termux's build tools:
 
 ```bash
 pkg install x11-repo
