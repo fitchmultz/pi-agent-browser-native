@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.24 - 2026-11-12
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: require patched Node security releases (#420) ([900697d](https://github.com/fitchmultz/pi-agent-browser-native/commit/900697d91932e63d8255cc24e4bcecb9adf83dfc))
+
+### What's Changed
+
+- fix: require patched Node security releases by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/420
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.23...v0.9.24
+
 ## 0.9.23 - 2026-11-12
 
 <!-- npm-release:unreleased:start -->
