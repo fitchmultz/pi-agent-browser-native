@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.9.23 - 2026-11-12
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: keep the get text visibility probe off closed sessions and moved pages (1/9) (#409) ([9b5fe11](https://github.com/fitchmultz/pi-agent-browser-native/commit/9b5fe115ca5f26ef6de685e4022d6156db1df9c3))
+
+### What's Changed
+
+- fix: keep the get text visibility probe off closed sessions and moved pages (1/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/409
+- fix: clear trace ownership when the wrapper closes a session itself (2/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/410
+- fix: retain partially cleaned Electron launches for later cleanup (3/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/412
+- fix: serialize temp root lease renewal with preservation (4/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/413
+- fix: retain eviction receipts after failed spill writes (5/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/414
+- fix: verify screenshot capture identity before repair (6/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/415
+- fix: retain newer post-click overlay refs (7/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/416
+- fix: recover failed shutdown cleanup across reload (8/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/417
+- docs: specify ownership and lifetime contracts (9/9) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/418
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.22...v0.9.23
+
 ## 0.9.22 - 2026-11-11
 
 <!-- npm-release:unreleased:start -->
