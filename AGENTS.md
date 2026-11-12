@@ -230,7 +230,7 @@ Before calling the first implementation usable, verify at minimum:
 
 ## Cursor Cloud
 
-- Node 24.21.0 and npm 12.2.0 are installed in `/usr/local/bin`. Login shells prepend that directory so it is preferred over the agent runtime Node and nvm.
+- Use Node 24.22.3 or newer within 24.x and the npm version in `package.json`. Check `command -v node` and `node --version` in the actual login shell before validation: `/usr/local/bin` can override the agent runtime Node or nvm. If it selects an older runtime, select a patched Node before running the gates; do not assume the cloud image already has it.
 - Upstream `agent-browser` is global, at the version in `scripts/agent-browser-target.mjs` (currently 0.42.0). Chrome for Testing is installed with `agent-browser install`. It is not an npm dependency of this package.
 - There is no dev server. `npm run verify` is the local gate. `npm run doctor` checks its own Node floor, the Pi floor, and the agent-browser baseline.
 
