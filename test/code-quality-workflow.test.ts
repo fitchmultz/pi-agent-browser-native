@@ -152,7 +152,7 @@ nodeTest(
 		);
 		assert.ok(
 			qualityJob.indexOf("Select quality gate") <
-				qualityJob.indexOf("Install older Node for the diagnostic-only smoke"),
+				qualityJob.indexOf("Install patched Node 22 for the unsupported-major diagnostic"),
 		);
 		assert.ok(
 			qualityJob.indexOf("npm run quality:mutations") < qualityJob.indexOf("git diff --exit-code"),
