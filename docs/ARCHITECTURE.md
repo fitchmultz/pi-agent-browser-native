@@ -278,7 +278,7 @@ When a managed implicit or fresh `--session` plan reaches process execution, `de
 
 ## State ownership
 
-Each state machine below has one owner and one representation. The table records where it lives so a reader does not have to infer ownership from usage, and so a future change has a place to start. A state that is not listed here has no owner, and that is usually a bug.
+The table identifies the owner, lifetime, and replacement rules for shared state. Paths beginning with `lib/` are relative to `extensions/agent-browser/`. A borrowed object stays owned by its provider. Readonly types restrict writes through that reference; they do not freeze other aliases. Where a contract depends on callers awaiting work or leaving borrowed data unchanged, the table names that responsibility rather than implying runtime enforcement.
 
 | State                                               | Owner                                                                                                                                                                                                        | Representation                                                                                                                                                                                                                                                                                                                                                           |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -304,6 +304,164 @@ Each state machine below has one owner and one representation. The table records
 | Headless user-agent workaround                      | `lib/orchestration/extension-runtime.ts` (`BrowserManagedSessions.compatibilityWorkaround`), mirrored in `BrowserRunState.managedSessionCompatibilityWorkaround`; `lib/runtime.ts` holds the resolution rule | One optional workaround per wrapper-owned session; `runtime.ts` decides when a requested user agent is retained and injects `--user-agent` for that call                                                                                                                                                                                                                 |
 | Managed-session close phase                         | `lib/orchestration/browser-run/managed-session-close.ts`                                                                                                                                                     | Closed union naming the step that failed, not a lifecycle that gates behaviour                                                                                                                                                                                                                                                                                           |
 | Browser run state                                   | `lib/orchestration/browser-run/types.ts`                                                                                                                                                                     | Flat snapshot plus partial `applyPatch`; the flattened shape is what patch merging needs, and nested groups would move every patch site for no behavioural gain                                                                                                                                                                                                          |
+
+### Detailed ownership and lifetime contracts
+
+#### Caller-owned close arguments
+
+Owner: `lib/runtime.ts`, `lib/orchestration/browser-run/managed-session-daemon-policy.ts`.
+
+Explicit caller argv remains caller-owned, including close operands and flags. Internal managed cleanup constructs its own close command. Cleanup ownership does not authorize rewriting a caller's close request.
+
+#### Lifecycle transfer and cold-start state
+
+Owner: `lib/orchestration/extension-lifecycle.ts`, `lib/orchestration/extension-branch-restore.ts`, `lib/orchestration/browser-run/process-output.ts`.
+
+Quit requests cleanup of all owned managed identities. Replacement transfers the current managed identity; restart attempts journal-backed transfer and falls back to replacement retention if replay fails. Failed cleanup retains ownership and close context, with canonical journal markers for retry by a new runtime. Start restores branch state, retries unfinished cleanup, and retains only still-owned native child handles. Full restore (`resetRuntimeOwnership: true`) is a cold-start operation: previous live resources must no longer need those registries. Tree restore preserves process cleanup ownership. Retained resources depend on the replacement restoring their journal-backed ownership; this path has no replacement-owner acknowledgment. A dispatched caller cold launch clears prior page target, refs, and resolved semantic snapshot from output reconciliation, without changing the facts used to validate dispatch.
+
+#### Fresh-name ordinal
+
+Owner: `lib/orchestration/extension-branch-restore.ts` (`reserveSession`), `lib/orchestration/extension-command-run.ts`.
+
+Planning proposes ordinal + 1. Cold restore uses the transcript ordinal; tree restore takes the maximum of live and restored ordinals. A closed current session reserves a new name once, with an explicit check that avoids reserving it again on repeated tree restore. The counter is naming state, not evidence that a browser launched.
+
+#### Electron records and child handles
+
+Owner: `lib/orchestration/extension-electron-ownership.ts` (`BrowserElectronResources`).
+
+`records` is branch-visible. `ownedRecords` retains active cleanup obligations, including off-branch launches; `branchOwnedIds` distinguishes replay-acquired ownership from launches touched by this runtime. `childProcesses` contains live native handles, not serializable ownership proof. Cleanup/status inputs merge the appropriate record maps; branch visibility alone does not release a process or profile.
+
+#### Electron probe ordering
+
+Owner: `lib/orchestration/electron-host/probe-collection.ts` (`collectElectronProbe`).
+
+URL, title, focused element, tab list, and snapshot reads are awaited in that order. They share the native pending slot. The final snapshot supplies this probe's published refs; parallelizing those browser reads would change that contract.
+
+#### Borrowed execution locks
+
+Owner: `lib/managed-session-policy-lock.ts` (`withBrowserExecutionLocks`, `acquireManagedSessionPolicyLock`).
+
+The outer scope acquires all identities before work, drains started nested callbacks, and releases claims in `finally`. Nested work may borrow covered claims, not upgrade the identity set. A borrowed `release()` does not release the outer claim. Callbacks own awaiting their subprocess termination, including after cancellation.
+
+#### Shutdown queue boundary
+
+Owner: `lib/orchestration/extension-lifecycle.ts`, `lib/orchestration/execution-queue.ts`.
+
+Shutdown invalidates the branch and queues cleanup behind managed work and then artifact work. Cleanup publishes intent and terminal receipts before resetting presentation state and cleaning temporary artifacts. Failed owners and their close context survive reset; partial Electron cleanup keeps its profile protected. A new runtime retries unfinished cleanup from the canonical journal. Journal publication failure does not block cleanup: successfully cleaned resources retire from in-process ownership, failed resources remain owned for retry, and a warning marks new-instance recovery unconfirmed. Caller-owned commands use separate keyed queues; this managed queue alone does not drain all concurrent caller-owned work. Reset and temp cleanup therefore rely on the host ending concurrent borrowers before shutdown.
+
+#### Run-state aliases and page drafts
+
+Owner: `lib/orchestration/extension-command-run.ts` (`captureBrowserRunState`), `lib/orchestration/browser-run/run-state.ts`.
+
+A run captures scalar values and borrows recording, attachment, Electron, managed-ownership, restore, and trace objects. Page state is a `SessionPageState.fork()` draft with its own update token, not the live page owner. Borrowed resource changes can outlive presentation failure; a scalar snapshot is not a transaction over those resources.
+
+#### Route and artifact replacement
+
+Owner: `lib/orchestration/browser-run/run-state.ts`, `lib/orchestration/browser-run/artifact-merge.ts`, `lib/results/artifact-manifest.ts`.
+
+Writers replace route maps and changed artifact rows rather than mutate published history. Artifact three-way merge compares the captured and updated references to retain concurrent changes. Mutating an older manifest or row through another alias breaks that comparison.
+
+#### Borrowed caller arrays and native data
+
+Owner: `lib/orchestration/browser-run/types.ts`, `lib/results/presentation/input-contracts.ts`, `lib/results/presentation.ts`.
+
+Readonly argv, observation data, and protection arrays are borrowed for the awaited operation. Their providers leave them unchanged until consumers finish. Mutable next-action accumulators belong to their caller; `appendUniqueAgentBrowserNextActions` deliberately appends in place. These are aliasing contracts, not runtime freezes.
+
+#### Process temporary root
+
+Owner: `lib/temp-root.ts` (`getSessionTempRoot`, `cleanupSecureTempArtifacts`).
+
+One module-local promise shares the current root across calls in the process. Cleanup removes unprotected children; retained Electron profile children keep the root alive. Full cleanup clears the promise, so later work allocates another root. Temporary result paths expire at that cleanup boundary, not when the tool returns.
+
+#### Process stdout receiver
+
+Owner: `lib/process-stdout.ts`, `lib/orchestration/browser-run/process-output.ts`, `lib/orchestration/browser-run/session-state-commands.ts`, `lib/orchestration/extension-version-check.ts`.
+
+`ProcessStdout.finish()` settles writes and closes the handle before returning a spill path. The receiving output processor, helper, or version validator consumes the result and removes its raw spill in `finally`, including failed validation and unavailable version probes. Temp-root cleanup is the fallback for failed removal, not the normal receiver lifetime.
+
+#### Saved spill directory and eviction
+
+Owner: `lib/temp.ts`, `lib/temp-artifact-budget.ts`, `lib/results/presentation/batch.ts`.
+
+`.pi-agent-browser-artifacts/<sessionId>` is wrapper spill storage, not a directory for caller files. Eviction enumerates its regular files without per-file ownership markers. Writers serialize through the module-local temp mutation queue; there is no cross-process writer lock here. Eviction assumes no competing process writes the same store. `protectedPaths` excludes exact same-directory paths from that write's eviction. Batch presentation awaits each row before extending its shared protection list and passing the resulting manifest and routes to the next row.
+
+#### Isolated temporary configuration
+
+Owner: `lib/process-environment.ts` (`withIsolatedAgentBrowserEnvironment`).
+
+The outer callback owns the temporary `{}` config until its awaited completion; nested calls reuse it. `finally` deletes the file. The callback must await every descendant operation that uses this async-local path rather than return while that work is still running.
+
+#### Snapshot ownership-record staging
+
+Owner: `lib/managed-session-snapshot-records.ts` (`removeExpiredTemporary`).
+
+Snapshot ownership-record scans reclaim temporary record files older than 30 seconds. This is a staging-file reclamation threshold, not a lifetime for saved browser snapshots. Publishers must complete temporary record publication before that age makes the staging file eligible for reclamation.
+
+#### Project generation identity
+
+Owner: `lib/managed-session-project-identity.ts`.
+
+The published `pi-agent-browser-project-generation-v1.json` UUID marker in the checkout's Git directory supplies generation identity alongside Git/worktree filesystem identity. The module cache revalidates those identities and the marker on lookup. The marker is durable checkout metadata, not a process-temp file. Removing or replacing it changes the automatic restore identity.
+
+#### Offline conversion source
+
+Owner: `lib/browser-session-conversion.ts` (`convertBrowserSession`).
+
+The operator stops the exact source writer before confirming it is stopped. Conversion does not stop or lock that writer. It reads the source without rewriting it, verifies file identity, size, timestamp, and checksum before publishing an exclusive separate copy, and owns staging cleanup in `finally`. The stopped-source precondition remains the operator's responsibility.
+
+#### Call-local daemon and page observations
+
+Owner: `lib/orchestration/browser-run/prepare-daemon.ts`, `lib/orchestration/browser-run/prepare-page-state.ts`, `lib/orchestration/browser-run/process-output-tabs.ts`.
+
+Caller-daemon inactivity is sampled at most once per preparation, optionally from a matching initial identity sample. Prior page/ref state and tab-correction observations belong to that call and selected identity. They are evidence at their observation point, not a cache valid across browser replacement, navigation, or another call.
+
+#### Click and scroll observations
+
+Owner: `lib/orchestration/browser-run/prepare-command.ts`, `lib/orchestration/browser-run/click-dispatch.ts`, `lib/orchestration/browser-run/index.ts`, `lib/orchestration/browser-run/prepare/scroll-shims.ts`.
+
+Click markers/listeners belong to the prepared call and original namespace/session. Execution cleans them before releasing its managed policy lock. Scroll before/after samples describe the same call's document and sampled containers, not later page state. The page-scroll shim borrows inline `scrollBehavior`, restores its previous value after measuring movement, and publishes no persistent scroll cache.
+
+#### Successful version validation cache
+
+Owner: `lib/orchestration/extension-runtime.ts`, `lib/orchestration/extension-version-check.ts`.
+
+The runtime set caches successful validation by cwd and PATH text. Invalid or unavailable results are not cached. Replacing the executable at the same cwd/PATH does not invalidate a successful entry; the cache assumes that executable stays stable for the runtime's lifetime.
+
+#### Recovery suggestions
+
+Owner: `lib/orchestration/browser-run/final-result-actions.ts`, `lib/results/action-recommendations.ts`.
+
+Suggestions describe the result's observed session, page, refs, and artifacts. They are instructions for a follow-up call, not resource leases or proof that the target is unchanged. The follow-up passes ordinary planning, current-page/ref validation, and artifact checks.
+
+#### Branch-local traces and routes
+
+Owner: `lib/orchestration/extension-branch-restore.ts` (`restoreRecordingState`, `restoreAttachments`).
+
+Branch replay rebuilds pages, artifacts, recording reservations, and attachments, but resets trace ownership and route maps rather than reconstructing them. Those empty maps are not proof that upstream has no active trace or routes.
+
+#### Append-only journal and borrowed records
+
+Owner: `lib/browser-journal-replay.ts`, `lib/browser-journal-branch.ts`, `lib/browser-transcript.ts`.
+
+Replay reuses a structural index per native manager when path, header, file identity, and append-compatible metadata match. Existing ancestry and bytes remain immutable during append and multi-pass replay. Same-size edits, truncation, or rotation force a rescan when detected; growth alone cannot prove an old prefix was untouched. Record producers leave nested published values unchanged. Branch-current checks guard publication, not the immutability of external file edits.
+
+#### Mutable Pi prompt message
+
+Owner: `lib/orchestration/extension-prompt.ts` (`BrowserPrompt`).
+
+Prompt state retains Pi's native latest-message object so later content transforms remain visible. `policy()` rereads its text and rebuilds policy when text changes. A session ID or message reference alone is not a valid policy cache key.
+
+#### Output finish phases
+
+Owner: `lib/orchestration/browser-run/process-output.ts`, `lib/orchestration/browser-run/process-output-lifecycle-phase.ts`, `lib/results/presentation.ts`.
+
+Native observation precedes page observation, lifecycle commit, and publication. `commitObservedLifecycle` updates run-state ownership before presentation can fail. Each phase owns its draft. Presentation extracts artifacts, assembles content, completes output, applies outcome classification, then sanitizes. Final tool rendering is not the owner of already-observed browser effects.
+
+#### Command ref publication
+
+Owner: `lib/orchestration/browser-run/process-output-refs.ts`, `lib/orchestration/browser-run/process-output-receipts.ts`, `lib/session-page-state.ts`.
+
+One selected current snapshot represents a command's final ref state, not an accumulation of helper snapshots. Batch folding selects a reached snapshot subject to later invalidation. A complete refresh may replace partial native data. Snapshot publication and one-use confirmation capture share the command's update token; helper snapshots do not create independent cross-call ref owners.
 
 ## Preferring the native tool
 
