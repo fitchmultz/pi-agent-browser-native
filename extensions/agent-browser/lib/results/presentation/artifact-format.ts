@@ -60,7 +60,7 @@ function formatDownloadLabel(artifact: FileArtifactMetadata): string {
 
 function formatImageLabel(artifact: FileArtifactMetadata): string {
 	const diff = artifact.command === "diff" && artifact.subcommand === "screenshot";
-	if (artifact.exists !== true) {
+	if (artifact.exists !== true || artifact.status === "missing") {
 		return diff ? "Diff image reported; file not verified" : "Image reported; file not verified";
 	}
 	return diff ? "Saved diff image" : "Saved image";
