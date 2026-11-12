@@ -62,10 +62,10 @@ jobs:
       - name: Strict quality acceptance and real failure controls
         if: steps.gate.outputs.script != 'quality'
         run: npm run quality:mutations
-      - name: Install older Node for the diagnostic-only smoke
+      - name: Install patched Node 22 for the unsupported-major diagnostic
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "18.19.0"
+          node-version: "22.23.5"
           package-manager-cache: false
       - name: Check doctor startup and unsupported-runtime diagnostic
         shell: bash
@@ -85,7 +85,7 @@ jobs:
           set -e
           cat "$tmp/report"
           test "$status" -eq 1
-          grep -F '✗ Node running this doctor is unsupported: 18.19.0 (requires ^' "$tmp/report"
+          grep -F '✗ Node running this doctor is unsupported: 22.23.5 (requires ^' "$tmp/report"
           grep -F '✓ agent-browser version ' "$tmp/report"
           grep -F "✓ Pi version satisfies the minimum runtime floor: $pi_version" "$tmp/report"
           test "$(grep -c '^✗ ' "$tmp/report")" -eq 1
