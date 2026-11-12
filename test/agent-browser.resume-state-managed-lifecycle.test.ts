@@ -174,63 +174,80 @@ process.exitCode = failed ? 1 : 0;`,
 	);
 }
 
-nodeTest(
-	"agentBrowserExtension reports shutdown journal failure before dispatch without losing live ownership",
-	{ concurrency: false },
-	async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "piab-shutdown-append-"));
-		const logPath = join(tempDir, "invocations.log");
-		const appendError = new Error("shutdown append fault");
-		let rejectAppend = true;
-		const notifications: string[] = [];
-		await writeFakeAgentBrowserBinary(
-			tempDir,
-			`require("node:fs").appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n"); process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
-		);
-		try {
-			await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
-				const name = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
-				const harness = createExtensionHarness({
-					cwd: tempDir,
-					branch: [createToolBranchEntry({ details: ownedSessionDetails(name), isError: false })],
-					onAppendEntry: () => {
-						if (rejectAppend) {
-							throw appendError;
-						}
-					},
+for (const closeFails of [false, true]) {
+	nodeTest(
+		`agentBrowserExtension keeps cleanup best effort when journal publication fails (closeFails=${String(closeFails)})`,
+		{ concurrency: false },
+		async () => {
+			const tempDir = await mkdtemp(join(tmpdir(), "piab-shutdown-append-"));
+			const logPath = join(tempDir, "invocations.log");
+			const appendError = new Error("shutdown append fault");
+			const failurePath = join(tempDir, "fail-close");
+			await writeFile(failurePath, String(closeFails));
+			let rejectAppend = true;
+			const notifications: string[] = [];
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const fs = require("node:fs"); fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n"); const failed = fs.existsSync(${JSON.stringify(failurePath)}) && fs.readFileSync(${JSON.stringify(failurePath)}, "utf8") === "true"; process.stdout.write(JSON.stringify(failed ? { success: false, error: "native close refused" } : { success: true, data: { closed: true } })); process.exitCode = failed ? 1 : 0;`,
+			);
+			try {
+				await withPatchedEnv({ PATH: `${tempDir}:${process.env.PATH ?? ""}` }, async () => {
+					const name = createImplicitSessionName(TEST_SESSION_ID, tempDir, "test-seed");
+					const harness = createExtensionHarness({
+						cwd: tempDir,
+						branch: [createToolBranchEntry({ details: ownedSessionDetails(name), isError: false })],
+						onAppendEntry: () => {
+							if (rejectAppend) {
+								throw appendError;
+							}
+						},
+					});
+					await runExtensionEvent(harness.handlers, "session_start", {}, harness.ctx);
+					harness.setBranch([]);
+					await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
+					const ctx = {
+						...harness.ctx,
+						hasUI: true,
+						ui: { notify: (message: string) => notifications.push(message) },
+					};
+					await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, ctx);
+					assert.equal(
+						(await readInvocationLog(logPath)).length,
+						1,
+						"journal faults never gate cleanup of a proven live owner",
+					);
+					assert.ok(
+						notifications.some(
+							(message) =>
+								message.includes(name) &&
+								message.includes(appendError.message) &&
+								message.includes("not confirmed"),
+						),
+					);
+					await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, ctx);
+					assert.equal((await readInvocationLog(logPath)).length, closeFails ? 2 : 1);
+					assert.equal(
+						notifications.some((message) => message.includes("could not read the journal")),
+						closeFails,
+						"unreadable journals use live owners; no owners need no journal read",
+					);
+					rejectAppend = false;
+					await rm(failurePath);
+					// Discard the failed native in-memory append; the published journal still has an empty branch.
+					harness.setBranch([]);
+					await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, ctx);
+					assert.deepEqual(
+						(await readInvocationLog(logPath)).map((row) => row.args),
+						Array.from({ length: closeFails ? 3 : 1 }, () => ["--session", name, "close"]),
+						"failed native cleanup retains live ownership for retry; successful cleanup retires it",
+					);
 				});
-				await runExtensionEvent(harness.handlers, "session_start", {}, harness.ctx);
-				harness.setBranch([]);
-				await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
-				const ctx = {
-					...harness.ctx,
-					hasUI: true,
-					ui: { notify: (message: string) => notifications.push(message) },
-				};
-				await assert.rejects(
-					runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, ctx),
-					(error: unknown) => error === appendError,
-				);
-				assert.equal((await readInvocationLog(logPath)).length, 0);
-				assert.ok(
-					notifications.some(
-						(message) => message.includes(name) && message.includes("not confirmed"),
-					),
-				);
-				rejectAppend = false;
-				// Discard the failed native in-memory append; the published journal still has an empty branch.
-				harness.setBranch([]);
-				await runExtensionEvent(harness.handlers, "session_shutdown", { reason: "quit" }, ctx);
-				assert.deepEqual(
-					(await readInvocationLog(logPath)).map((row) => row.args),
-					[["--session", name, "close"]],
-				);
-			});
-		} finally {
-			await rm(tempDir, { force: true, recursive: true });
-		}
-	},
-);
+			} finally {
+				await rm(tempDir, { force: true, recursive: true });
+			}
+		},
+	);
+}
 
 function closedSessionDetails(sessionName: string) {
 	return {

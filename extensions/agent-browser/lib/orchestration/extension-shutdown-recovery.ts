@@ -77,17 +77,26 @@ export async function readShutdownResumeKeys(
 	if (!ctx) {
 		return new Set();
 	}
-	const keys = await readTransferableManagedSessionKeys(runtime, ctx);
-	const pending =
-		recovery ??
-		readShutdownRecovery(
-			await readBrowserEntries(ctx.sessionManager),
-			runtime.branch.ownerSessionId,
-		);
-	for (const key of pending.managed) {
-		if (!pending.preserveResume.has(key)) {
-			keys.delete(key);
+	let keys: Set<string>;
+	try {
+		keys = await readTransferableManagedSessionKeys(runtime, ctx);
+		const pending =
+			recovery ??
+			readShutdownRecovery(
+				await readBrowserEntries(ctx.sessionManager),
+				runtime.branch.ownerSessionId,
+			);
+		for (const key of pending.managed) {
+			if (!pending.preserveResume.has(key)) {
+				keys.delete(key);
+			}
 		}
+	} catch {
+		notifyShutdownRecoveryWarning(
+			ctx,
+			"Browser shutdown cleanup could not read the journal. Continuing best-effort cleanup from live ownership; recovery in another instance is not confirmed.",
+		);
+		keys = new Set(recovery?.preserveResume ?? runtime.managed.owned.keys());
 	}
 	// Electron cleanup destroys the owned app, not just its native connection daemon.
 	for (const record of records.values()) {
@@ -99,7 +108,19 @@ export async function readShutdownResumeKeys(
 	return keys;
 }
 
+export function notifyShutdownRecoveryWarning(
+	ctx: ExtensionContext | undefined,
+	warning: string,
+): void {
+	if (ctx?.hasUI === true) {
+		ctx.ui.notify(warning, "warning");
+	} else {
+		console.warn(warning);
+	}
+}
+
 export class ShutdownRecoveryJournal {
+	private publicationFailed = false;
 	readonly pending = {
 		managed: new Set<string>(),
 		electron: new Set<string>(),
@@ -126,6 +147,7 @@ export class ShutdownRecoveryJournal {
 				...(pages ? { pages } : {}),
 			},
 		};
+		applyCleanupMarker(this.pending, state);
 		try {
 			if (
 				!this.ctx ||
@@ -141,12 +163,12 @@ export class ShutdownRecoveryJournal {
 				);
 			}
 		} catch (error) {
-			this.warn(
-				`Browser shutdown cleanup journal publication failed for ${JSON.stringify(state.shutdownLaunchId ?? { sessionName: state.sessionName, namespace: state.namespace })}. Ownership remains in this instance. Keep Pi open and retry cleanup after journal writes recover; recovery in another instance is not confirmed.`,
+			this.publicationFailed = true;
+			notifyShutdownRecoveryWarning(
+				this.ctx,
+				`Browser shutdown cleanup journal publication failed for ${JSON.stringify(state.shutdownLaunchId ?? { sessionName: state.sessionName, namespace: state.namespace })}: ${String(error)}. Continuing best-effort cleanup; failed resources remain owned in this instance. Recovery in another instance is not confirmed.`,
 			);
-			throw error;
 		}
-		applyCleanupMarker(this.pending, state);
 	}
 	managedPages(owner: OwnedManagedSession, closed: boolean): BrowserRecord["event"]["pages"] {
 		const key = getSessionContextKey(owner.sessionName, owner.namespace) ?? owner.sessionName;
@@ -215,15 +237,12 @@ export class ShutdownRecoveryJournal {
 		});
 	}
 	notify(message: string): void {
-		this.warn(
-			`Browser shutdown cleanup incomplete. ${message} Ownership is retained; resuming this Pi conversation with the extension retries cleanup.`,
+		const recovery = this.publicationFailed
+			? "Recovery in another instance is not confirmed; keep Pi open and retry cleanup."
+			: "Resuming this Pi conversation with the extension retries cleanup.";
+		notifyShutdownRecoveryWarning(
+			this.ctx,
+			`Browser shutdown cleanup incomplete. ${message} Ownership is retained. ${recovery}`,
 		);
-	}
-	warn(warning: string): void {
-		if (this.ctx?.hasUI === true) {
-			this.ctx.ui.notify(warning, "warning");
-		} else {
-			console.warn(warning);
-		}
 	}
 }

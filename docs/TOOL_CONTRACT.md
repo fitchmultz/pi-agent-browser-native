@@ -182,7 +182,7 @@ Native 0.39.4+ `wait --download <path>` can claim an already-completed download 
 
 ### Shutdown cleanup recovery
 
-A failed automatic cleanup emits a warning with the exact `agent_browser` namespace/session close arguments or `agent_browser_electron` cleanup launch ID. Ownership and close policy survive reload in the canonical conversation journal, including resources no longer on the active branch. Resume that conversation with the extension to retry unfinished cleanup automatically. Active resources deliberately transferred during reload/restart remain open. Partial Electron cleanup keeps its temporary profile protected until verified removal. Journal write failure retains live ownership and reports that recovery in a new instance is unconfirmed.
+A failed automatic cleanup emits a warning with the exact `agent_browser` namespace/session close arguments or `agent_browser_electron` cleanup launch ID. Ownership and close policy survive reload in the canonical conversation journal, including resources no longer on the active branch. Resume that conversation with the extension to retry unfinished cleanup automatically. Active resources deliberately transferred during reload/restart remain open. Partial Electron cleanup keeps its temporary profile protected until verified removal. Journal read or write failure does not block best-effort cleanup of proven live owners. It reports that recovery in a new instance is unconfirmed; failed resources remain owned for retry in the current instance.
 
 ### Native MCP boundary
 

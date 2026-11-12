@@ -73,7 +73,7 @@ class BrowserLifecycle {
 		scope: ShutdownScope,
 	): Promise<ReadonlySet<string>> {
 		const { managed } = this.runtime;
-		if (scope === "quit") {
+		if (scope === "quit" || managed.owned.size === 0) {
 			return new Set();
 		}
 		if (scope === "restart" && ctx) {
@@ -113,7 +113,11 @@ class BrowserLifecycle {
 		const keepKeys = recovery
 			? new Set([...runtime.managed.owned.keys()].filter((key) => !recovery.managed.has(key)))
 			: new Set(await this.retainedManagedSessionKeys(ctx, scope));
-		const resumeKeys = await readShutdownResumeKeys(runtime, ctx, recovery, records);
+		const hasCleanupOwners =
+			records.size > 0 || [...runtime.managed.owned.keys()].some((key) => !keepKeys.has(key));
+		const resumeKeys = hasCleanupOwners
+			? await readShutdownResumeKeys(runtime, ctx, recovery, records)
+			: new Set<string>();
 		const result = await new BrowserShutdownCleanup(runtime, ctx, resumeKeys).run(
 			records,
 			keepKeys,
