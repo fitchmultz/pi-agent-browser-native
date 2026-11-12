@@ -8,7 +8,6 @@ import { DEFAULT_UBUNTU_IMAGE } from "../../platform-smoke.config.mjs";
 /** @typedef {{readonly code: number | null; readonly signal: NodeJS.Signals | null; readonly stdout: string; readonly stderr: string}} ProcessResult */
 /** @typedef {{readonly provider: "ssh"; readonly crabboxTarget: "macos"; readonly shell: "posix"; readonly workRoot: string; readonly args: readonly string[]}} MacTarget */
 /** @typedef {{readonly provider: "local-container"; readonly crabboxTarget: "linux"; readonly shell: "posix"; readonly image: string; readonly workRoot: string; readonly args: readonly string[]}} UbuntuTarget */
-/** @typedef {{readonly provider: "parallels"; readonly crabboxTarget: "windows"; readonly shell: "powershell"; readonly workRoot: string; readonly windowsMode: "normal"; readonly sourceVm: string; readonly snapshot: string; readonly args: readonly string[]}} WindowsTarget */
 
 /** @param {string} name */
 export function env(name) {
@@ -108,58 +107,6 @@ function describeUbuntuTarget(config) {
 	};
 }
 
-/** @param {Partial<PlatformSmokeConfig>} config
- * @returns {WindowsTarget}
- */
-function describeWindowsTarget(config) {
-	const slug = packageSlug(config);
-	const vm = targetSetting(
-		"PLATFORM_SMOKE_WINDOWS_VM",
-		config.windowsParallels?.sourceVm,
-		"pi-extension-windows-template",
-	);
-	const snapshot = targetSetting(
-		"PLATFORM_SMOKE_WINDOWS_SNAPSHOT",
-		config.windowsParallels?.snapshot,
-		"crabbox-ready",
-	);
-	const user = targetSetting(
-		"PLATFORM_SMOKE_WINDOWS_USER",
-		config.windowsParallels?.user,
-		env("USER"),
-	);
-	const workRoot = targetSetting(
-		"PLATFORM_SMOKE_WINDOWS_WORK_ROOT",
-		config.windowsParallels?.workRoot,
-		`C:\\crabbox\\${slug}`,
-	);
-	return {
-		provider: "parallels",
-		crabboxTarget: "windows",
-		shell: "powershell",
-		workRoot,
-		windowsMode: "normal",
-		sourceVm: vm,
-		snapshot,
-		args: [
-			"--provider",
-			"parallels",
-			"--target",
-			"windows",
-			"--windows-mode",
-			"normal",
-			"--parallels-source",
-			vm,
-			"--parallels-source-snapshot",
-			snapshot,
-			"--parallels-user",
-			user,
-			"--parallels-work-root",
-			workRoot,
-		],
-	};
-}
-
 /** @param {string} targetName
  * @param {Partial<PlatformSmokeConfig>} [config]
  */
@@ -169,8 +116,6 @@ export function describeTarget(targetName, config = {}) {
 			return describeMacTarget(config);
 		case "ubuntu":
 			return describeUbuntuTarget(config);
-		case "windows-native":
-			return describeWindowsTarget(config);
 		default:
 			throw new Error(`unknown platform smoke target: ${targetName}`);
 	}
@@ -273,36 +218,13 @@ export function execCrabbox(args, options = {}) {
 }
 
 /** @param {string} targetName
- * @param {ProcessResult} result
- */
-function isRetryableWarmupFailure(targetName, result) {
-	if (targetName !== "windows-native" || result.code === 0) {
-		return false;
-	}
-	return /Could not create a linked clone of the virtual hard disk|due to an internal error|context canceled|timed out after 300000ms/i.test(
-		`${result.stdout}\n${result.stderr}`,
-	);
-}
-
-/** @param {string} targetName
  * @param {string} slug
  * @param {Partial<PlatformSmokeConfig>} [config]
  */
 export async function warmupLease(targetName, slug, config = {}) {
 	const args = ["warmup", ...buildTargetBaseArgs(targetName, config), "--slug", slug, "--keep"];
-	let result;
-	let attempt = 1;
-	do {
-		console.log(`  [crabbox] ${args.join(" ")}${attempt > 1 ? ` (retry ${attempt})` : ""}`);
-		// The retry depends on the prior warmup receipt and its completed stale-lease cleanup.
-		result = await execCrabbox(args, { timeout: 300_000 });
-		if (!isRetryableWarmupFailure(targetName, result)) {
-			break;
-		}
-		// Stop stale target resources before a retry can acquire another lease.
-		await cleanupStaleTargetState(targetName, config);
-		attempt += 1;
-	} while (attempt <= 2);
+	console.log(`  [crabbox] ${args.join(" ")}`);
+	const result = await execCrabbox(args, { timeout: 300_000 });
 	return {
 		...result,
 		ok: result.code === 0,

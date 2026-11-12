@@ -1,5 +1,5 @@
 /** Platform and browser evidence predicates; no success is inferred from process exit alone. */
-import { marker, platformFor, section } from "./suite-evidence.mjs";
+import { marker, section } from "./suite-evidence.mjs";
 
 /** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
 /** @import { ProcessResult } from "./crabbox-runner.mjs" */
@@ -91,13 +91,11 @@ export function platformBuildChecks(config, result, candidate) {
 	];
 }
 
-/** @param {string} targetName
- * @param {ProcessResult} result
+/** @param {ProcessResult} result
  * @param {unknown} dogfoodReport
  * @returns {SuiteCheck[]}
  */
-export function browserDogfoodChecks(targetName, result, dogfoodReport) {
-	const platform = platformFor(targetName);
+export function browserDogfoodChecks(result, dogfoodReport) {
 	const reports =
 		typeof dogfoodReport === "object" && dogfoodReport !== null && "reports" in dogfoodReport
 			? dogfoodReport.reports
@@ -117,17 +115,6 @@ export function browserDogfoodChecks(targetName, result, dogfoodReport) {
 		{
 			id: "agent-browser-baseline",
 			fn: () => /PLATFORM_AGENT_BROWSER_READY_EXIT=0/.test(result.stdout),
-		},
-		{
-			id: "agent-browser-browser-cache",
-			fn: () =>
-				platform !== "powershell" ||
-				/PLATFORM_AGENT_BROWSER_BROWSER_CACHE_EXIT=0/.test(result.stdout),
-		},
-		{
-			id: "agent-browser-prewarm",
-			fn: () =>
-				platform !== "powershell" || /PLATFORM_AGENT_BROWSER_PREWARM_EXIT=0/.test(result.stdout),
 		},
 		{ id: "dogfood-exit-zero", fn: () => /PLATFORM_DOGFOOD_EXIT=0/.test(result.stdout) },
 		{

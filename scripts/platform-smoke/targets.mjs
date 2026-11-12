@@ -23,7 +23,6 @@ import {
 export { buildBrowserDogfoodCommand, buildPlatformBuildCommand } from "./commands.mjs";
 export { createLeaseCleanupResult, createLeaseWarmupFailureResult } from "./lease-evidence.mjs";
 export { nodeVersionAtLeast } from "./suite-checks.mjs";
-export { platformFor } from "./suite-evidence.mjs";
 
 /** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
 /** @import { ProcessResult } from "./crabbox-runner.mjs" */
@@ -36,11 +35,10 @@ export { platformFor } from "./suite-evidence.mjs";
 /** @param {SuiteOptions} options
  * @returns {SuiteDefinition}
  */
-function suiteDefinition({ config, targetName, suiteName, leaseSession }) {
+function suiteDefinition({ config, suiteName, leaseSession }) {
 	if (suiteName === "platform-build") {
 		return {
 			command: buildPlatformBuildCommand(
-				targetName,
 				config.packageName,
 				config.nodeValidationVersion,
 				leaseSession?.candidate,
@@ -66,7 +64,6 @@ function suiteDefinition({ config, targetName, suiteName, leaseSession }) {
 	if (suiteName === "browser-dogfood-smoke") {
 		return {
 			command: buildBrowserDogfoodCommand(
-				targetName,
 				config.agentBrowserVersion,
 				leaseSession?.dependenciesReady === true,
 			),
@@ -81,7 +78,7 @@ function suiteDefinition({ config, targetName, suiteName, leaseSession }) {
 			],
 			extract: (suiteDir, result, secretValues) =>
 				writeDogfoodExtracts(suiteDir, result.stdout, secretValues),
-			checks: (result, report) => browserDogfoodChecks(targetName, result, report),
+			checks: (result, report) => browserDogfoodChecks(result, report),
 		};
 	}
 	throw new Error(`unknown suite: ${suiteName}`);

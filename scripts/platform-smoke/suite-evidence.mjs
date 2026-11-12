@@ -36,11 +36,6 @@ export const STOP_EVIDENCE_FILES = [
 	"crabbox.stop.exit-code.txt",
 ];
 
-/** @param {string} targetName */
-export function platformFor(targetName) {
-	return targetName === "windows-native" ? "powershell" : "posix";
-}
-
 export function makeRunId() {
 	return `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -89,7 +84,7 @@ export function writeTargetEvidence(suiteDir, { config, targetName, runId, slug 
 	const target = describeTarget(targetName, config);
 	const evidence = {
 		targetName,
-		platform: platformFor(targetName),
+		platform: "posix",
 		runId,
 		slug,
 		packageName: config.packageName,
@@ -101,9 +96,6 @@ export function writeTargetEvidence(suiteDir, { config, targetName, runId, slug 
 			target: target.crabboxTarget,
 			workRoot: target.workRoot,
 			image: target.provider === "local-container" ? target.image : undefined,
-			windowsMode: target.provider === "parallels" ? target.windowsMode : undefined,
-			sourceVm: target.provider === "parallels" ? target.sourceVm : undefined,
-			snapshot: target.provider === "parallels" ? target.snapshot : undefined,
 		},
 	};
 	writeFileSync(resolve(suiteDir, "target.json"), JSON.stringify(evidence, null, 2));
