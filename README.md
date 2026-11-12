@@ -78,6 +78,8 @@ Profile access exposes private page content to the model. That content can persi
 
 Credential-like values, including CDP transport headers on the [pinned Android build](docs/REFERENCE.md#android--termux), are redacted, but ordinary page text stays visible. Verify the signed-in page after you select a profile or restore browser state.
 
+Post-click overlay diagnostics keep their newer refs for follow-up actions, including when a semantic action used an earlier snapshot to find its target.
+
 Screenshot captures reported at a different path replace the requested file, even when it already exists. If the reported capture is missing, the result fails verification and never attaches the old destination image.
 
 Native `batch --omit-command` keeps indexed results without echoed commands. Cookie/storage redaction, ordered close/reopen effects, snapshot refs, and artifact verification still apply, including when empty stdin rows are skipped.

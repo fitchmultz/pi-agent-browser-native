@@ -436,8 +436,9 @@ function directOutputSnapshot(draft: DirectOutputSnapshotInput): SessionRefSnaps
 	) {
 		return extractRefSnapshotFromData(draft.confirmedData ?? draft.presentationEnvelope?.data);
 	}
+	// The overlay probe runs after the click; semantic resolution captured refs before it.
 	return (
-		prepared.resolvedSemanticActionRefSnapshot ??
-		draft.diagnostics.overlayBlockerDiagnostic?.snapshot
+		draft.diagnostics.overlayBlockerDiagnostic?.snapshot ??
+		prepared.resolvedSemanticActionRefSnapshot
 	);
 }
