@@ -283,8 +283,6 @@ nodeTest("publish contract derives required packed files from package.json", asy
 		"scripts/platform-smoke/crabbox-runner.mjs",
 		"scripts/platform-smoke/doctor.mjs",
 		"scripts/platform-smoke/targets.mjs",
-		"scripts/platform-smoke/platform-build-windows.ps1",
-		"scripts/platform-smoke/browser-dogfood-windows.ps1",
 		"scripts/platform-smoke/linux-image/Dockerfile",
 	];
 	assert.deepEqual(
