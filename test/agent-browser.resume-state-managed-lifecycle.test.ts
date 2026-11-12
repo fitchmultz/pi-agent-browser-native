@@ -537,7 +537,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 				assert.equal(readRecord(close.details?.managedSessionOutcome).status, "closed");
 				assert.match(
 					readDefined(close.content[0]).text ?? "",
-					/Managed session outcome: The current wrapper-managed browser session was closed\./,
+					/Managed session outcome: The wrapper-managed browser session was closed; no managed browser session is current\./,
 				);
 				const rotatedSessionName = readString(
 					readRecord(close.details?.managedSessionOutcome).currentSessionName,

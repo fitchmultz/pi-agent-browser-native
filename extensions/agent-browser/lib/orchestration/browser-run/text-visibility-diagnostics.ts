@@ -3,7 +3,15 @@ import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { withOptionalSessionArgs } from "../../results/next-actions.js";
 import { redactSensitiveText } from "../../runtime-redaction.js";
 import type { CommandInfo } from "../../argv-descriptor.js";
+import {
+	getRefRetiringTransition,
+	isCloseCommand,
+	isOpenNavigationCommand,
+	isPageMutationStep,
+	isUnverifiedPageTransitionCommand,
+} from "../../command-taxonomy.js";
 import { extractBatchResultCommand, extractStringResultField } from "../../session-page-state.js";
+import { getExplicitNavigationTarget } from "../../page-target-navigation.js";
 import { runSessionCommandData } from "./session-state.js";
 import { rawNumberField, rawStringField } from "./diagnostic-values.js";
 import type {
@@ -152,6 +160,102 @@ function getBatchGetTextSelectors(data: unknown): string[] {
 	});
 }
 
+function getGetTextSelector(tokens: readonly string[]): string | undefined {
+	const selector = tokens.at(2);
+	return tokens[0] === "get" && tokens[1] === "text" && selector !== undefined && selector !== ""
+		? selector
+		: undefined;
+}
+
+/** Local `auth` subcommands that never touch the page; other `auth` rows fail closed. */
+const AUTH_LOCAL_SUBCOMMANDS: ReadonlySet<string> = new Set([
+	"list",
+	"show",
+	"save",
+	"delete",
+	"remove",
+]);
+
+/** Click-shaped commands without the post-mutation capability that can still navigate. */
+function isClickShapedCommand(command: string | undefined): boolean {
+	// `download` clicks its element and `mouse` down/up click at coordinates.
+	return command === "download" || command === "mouse";
+}
+
+/** A later batch row that moves the document the visibility probe would evaluate. */
+function batchStepMovesProbeDocument(step: readonly string[]): boolean {
+	const [command, subcommand] = step;
+	return (
+		// `tab new` and tab switches move the active target even though their own result
+		// reports it; `tab list` only reads. Bare `tab` conservatively ends the window.
+		(command === "tab" && subcommand !== "list") ||
+		// Optional-URL commands (a11y, vitals, web-vitals) navigate before measuring when a
+		// URL operand is present; the bare forms stay on the current page.
+		getExplicitNavigationTarget(step) !== undefined ||
+		// `frame <selector|main>` switches the active document for later commands, so the
+		// probe would evaluate a different document than the `get text` row read.
+		command === "frame" ||
+		// `auth login` navigates to the credential URL and submits the form (even
+		// `--no-navigate` allows submit-triggered navigation); the local auth subcommands
+		// (list/show/save/delete/remove) never touch the page.
+		(command === "auth" && !AUTH_LOCAL_SUBCOMMANDS.has(subcommand ?? "")) ||
+		// `confirm` executes a pending guarded action, which can navigate or change the page;
+		// `deny` only cancels it and does not execute the pending action.
+		command === "confirm" ||
+		isClickShapedCommand(command)
+	);
+}
+
+/**
+ * A later batch row ends the probe window when it can navigate, mutate the DOM, switch the
+ * active target, or close the session: the probe must evaluate the same document the
+ * `get text` row read. A row whose command cannot be read also ends it.
+ */
+function batchStepInvalidatesGetTextProbe(step: readonly string[]): boolean {
+	if (step.length === 0) {
+		return true;
+	}
+	const [command, subcommand] = step;
+	return (
+		isCloseCommand(command) ||
+		isOpenNavigationCommand(command) ||
+		batchStepMovesProbeDocument(step) ||
+		isUnverifiedPageTransitionCommand(command, subcommand) ||
+		isPageMutationStep(step) ||
+		getRefRetiringTransition(step) !== undefined
+	);
+}
+
+function getProbeableGetTextSelectors(options: {
+	readonly commandInfo: CommandInfo;
+	readonly commandTokens: readonly string[];
+	readonly data: unknown;
+}): string[] {
+	if (options.commandInfo.command === "get" && options.commandInfo.subcommand === "text") {
+		// A direct read probes the page it just read; no later step can intervene.
+		return getSuccessfulGetTextSelectors(options);
+	}
+	if (options.commandInfo.command !== "batch" || !Array.isArray(options.data)) {
+		return [];
+	}
+	const rows: readonly unknown[] = options.data;
+	return rows.flatMap((item: unknown, index: number) => {
+		if (!isRecord(item) || item.success === false) {
+			return [];
+		}
+		const selector = getGetTextSelector(extractBatchResultCommand(item));
+		if (selector === undefined) {
+			return [];
+		}
+		const invalidatedByLaterRow = rows
+			.slice(index + 1)
+			.some((later: unknown) =>
+				isRecord(later) ? batchStepInvalidatesGetTextProbe(extractBatchResultCommand(later)) : true,
+			);
+		return invalidatedByLaterRow ? [] : [selector];
+	});
+}
+
 export function getSuccessfulGetTextSelectors(options: {
 	readonly commandInfo: CommandInfo;
 	readonly commandTokens: readonly string[];
@@ -171,10 +275,15 @@ export async function collectSelectorTextVisibilityDiagnostics(options: {
 	readonly cwd: string;
 	readonly data: unknown;
 	readonly namespace?: string | undefined;
+	readonly sessionClosedByCommand: boolean;
 	readonly sessionName?: string | undefined;
 	readonly signal?: AbortSignal | undefined;
 }): Promise<SelectorTextVisibilityDiagnostic[]> {
-	const selectors = getSuccessfulGetTextSelectors(options);
+	if (options.sessionClosedByCommand) {
+		// The command already closed the session; a helper would relaunch the browser.
+		return [];
+	}
+	const selectors = getProbeableGetTextSelectors(options);
 	const diagnostics: SelectorTextVisibilityDiagnostic[] = [];
 	for (const selector of selectors) {
 		// Native helper decisions and selector observations must remain in session order.

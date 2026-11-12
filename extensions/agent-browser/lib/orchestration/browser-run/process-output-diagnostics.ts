@@ -76,6 +76,7 @@ interface DiagnosticInputs {
 	readonly navigationSummary: NavigationSummary | undefined;
 	readonly networkRoutesBySession: ReadonlyMap<string, readonly NetworkRouteRecord[]>;
 	readonly presentationEnvelope: AgentBrowserEnvelope | undefined;
+	readonly sessionClosedByCommand: boolean;
 	readonly sessionStateKey: string | undefined;
 	readonly sessionTabCorrection: OpenResultTabCorrection | undefined;
 	readonly succeeded: boolean;
@@ -207,6 +208,7 @@ async function observeExtractedTextScope(
 		| "input"
 		| "succeeded"
 		| "presentationEnvelope"
+		| "sessionClosedByCommand"
 		| "currentSessionTabTarget"
 		| "electronRecordForCommand"
 	>,
@@ -225,6 +227,7 @@ async function observeExtractedTextScope(
 		cwd: options.input.cwd,
 		data: options.presentationEnvelope?.data,
 		namespace: options.input.prepared.executionPlan.namespace,
+		sessionClosedByCommand: options.sessionClosedByCommand,
 		sessionName: options.input.prepared.executionPlan.sessionName,
 		signal: options.input.signal,
 	});

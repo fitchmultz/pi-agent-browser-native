@@ -4411,6 +4411,292 @@ if (args.includes("get") && args.includes("text")) {
 );
 
 nodeTest(
+	"agentBrowserExtension skips the get text visibility probe after close or page-changing batch rows",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "v-"));
+		const logPath = join(tempDir, "invocations.log");
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ args, stdin }) + "\\n");
+if (args.includes("eval")) {
+  const hazard = { selector: ".tabs", matchCount: 2, visibleCount: 1, firstMatchVisible: false, firstTextPreview: "hidden tab text", firstVisibleTextPreview: "visible tab text", visibleCandidates: [{ index: 1, tagName: "code", textPreview: "visible tab text" }] };
+  process.stdout.write(JSON.stringify({ success: true, data: { result: JSON.stringify(hazard) } }));
+} else if (args.includes("batch")) {
+  const steps = JSON.parse(stdin);
+  const data = steps.map((step) => ({ command: step, success: true, result: { result: step[0] === "get" && step[1] === "text" ? "tab text" : "ok" } }));
+  process.stdout.write(JSON.stringify({ success: true, data }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
+}`,
+		);
+
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+				const closedBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					sessionMode: "fresh",
+					stdin: JSON.stringify([
+						["open", "https://example.com/"],
+						["get", "text", ".tabs"],
+						["close"],
+					]),
+				});
+				assert.ok(closedBatch.details);
+				assert.equal(closedBatch.isError, false);
+				assert.equal(readRecord(closedBatch.details.managedSessionOutcome).status, "closed");
+				assert.equal(readRecord(closedBatch.details.managedSessionOutcome).activeAfter, false);
+				assert.doesNotMatch(
+					readString(readRecord(closedBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(closedBatch.details.selectorTextVisibility, undefined);
+				assert.equal(closedBatch.details.selectorTextVisibilityAll, undefined);
+				let invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const priorBrowser = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "prior", "get", "title"],
+					sessionMode: "fresh",
+				});
+				assert.equal(priorBrowser.isError, false);
+				const priorOutcome = readRecord(priorBrowser.details?.managedSessionOutcome);
+				assert.equal(priorOutcome.status, "created");
+				assert.equal(priorOutcome.replacedSessionName, undefined);
+				assert.equal(
+					(await readInvocationLog(logPath)).filter((entry) => entry.args.includes("close")).length,
+					0,
+				);
+				const selfClosingAttempt = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["--namespace", "attempt", "batch"],
+					sessionMode: "fresh",
+					stdin: JSON.stringify([
+						["open", "https://example.com/"],
+						["get", "text", ".tabs"],
+						["close"],
+					]),
+				});
+				assert.equal(selfClosingAttempt.isError, false, JSON.stringify(selfClosingAttempt));
+				const preservedOutcome = readRecord(selfClosingAttempt.details?.managedSessionOutcome);
+				assert.equal(preservedOutcome.status, "closed");
+				assert.equal(preservedOutcome.activeAfter, true);
+				assert.equal(preservedOutcome.currentSessionName, priorOutcome.currentSessionName);
+				assert.equal(preservedOutcome.currentSessionNamespace, "prior");
+				assert.equal(preservedOutcome.replacedSessionName, undefined);
+				assert.match(
+					readString(readRecord(selfClosingAttempt.content[0]).text),
+					/previous wrapper-managed browser session remains current/,
+				);
+				assert.doesNotMatch(
+					readString(readRecord(selfClosingAttempt.content[0]).text),
+					/The current wrapper-managed browser session was closed/,
+				);
+
+				const mutatedTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["fill", "#field", "typed"],
+					]),
+				});
+				assert.ok(mutatedTailBatch.details);
+				assert.equal(mutatedTailBatch.isError, false);
+				assert.equal(mutatedTailBatch.details.sessionName, priorOutcome.currentSessionName);
+				assert.equal(mutatedTailBatch.details.namespace, "prior");
+				assert.equal(
+					(await readInvocationLog(logPath)).filter((entry) => entry.args.includes("close")).length,
+					0,
+				);
+				assert.doesNotMatch(
+					readString(readRecord(mutatedTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(mutatedTailBatch.details.selectorTextVisibility, undefined);
+				assert.equal(mutatedTailBatch.details.selectorTextVisibilityAll, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const newTabTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["tab", "new", "https://other.example/two"],
+					]),
+				});
+				assert.ok(newTabTailBatch.details);
+				assert.equal(newTabTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(newTabTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(newTabTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const navigationOperandTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["a11y", "https://other.example/two"],
+					]),
+				});
+				assert.ok(navigationOperandTailBatch.details);
+				assert.equal(navigationOperandTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(navigationOperandTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(navigationOperandTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const frameTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["frame", "#embed"],
+					]),
+				});
+				assert.ok(frameTailBatch.details);
+				assert.equal(frameTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(frameTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(frameTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const authLoginTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["auth", "login", "github"],
+					]),
+				});
+				assert.ok(authLoginTailBatch.details);
+				assert.equal(authLoginTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(authLoginTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(authLoginTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const downloadTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["download", "#file", "out.zip"],
+					]),
+				});
+				assert.ok(downloadTailBatch.details);
+				assert.equal(downloadTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(downloadTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(downloadTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const confirmTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["confirm", "c_1"],
+					]),
+				});
+				assert.ok(confirmTailBatch.details);
+				assert.equal(confirmTailBatch.isError, false);
+				assert.doesNotMatch(
+					readString(readRecord(confirmTailBatch.content[0]).text),
+					/Selector text visibility warning/,
+				);
+				assert.equal(confirmTailBatch.details.selectorTextVisibility, undefined);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 0);
+
+				const readOnlyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["get", "url"],
+					]),
+				});
+				assert.ok(readOnlyTailBatch.details);
+				assert.equal(readOnlyTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(readOnlyTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				assert.equal(
+					readRecord(readOnlyTailBatch.details.selectorTextVisibility).selector,
+					".tabs",
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 1);
+
+				const localAuthTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["auth", "remove", "demo"],
+					]),
+				});
+				assert.ok(localAuthTailBatch.details);
+				assert.equal(localAuthTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(localAuthTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 2);
+
+				const bareA11yTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([["get", "text", ".tabs"], ["a11y"]]),
+				});
+				assert.ok(bareA11yTailBatch.details);
+				assert.equal(bareA11yTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(bareA11yTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 3);
+
+				const denyTailBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["get", "text", ".tabs"],
+						["deny", "c_1"],
+					]),
+				});
+				assert.ok(denyTailBatch.details);
+				assert.equal(denyTailBatch.isError, false);
+				assert.match(
+					readString(readRecord(denyTailBatch.content[0]).text),
+					/Selector text visibility warning:/,
+				);
+				invocations = await readInvocationLog(logPath);
+				assert.equal(invocations.filter((entry) => entry.args.includes("eval")).length, 4);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
 	"agentBrowserExtension surfaces overlay blockers in snapshot actionability metadata",
 	{ concurrency: false },
 	async () => {
