@@ -317,7 +317,7 @@ Explicit caller argv remains caller-owned, including close operands and flags. I
 
 Owner: `lib/orchestration/extension-lifecycle.ts`, `lib/orchestration/extension-branch-restore.ts`, `lib/orchestration/browser-run/process-output.ts`.
 
-Quit has no retained managed identities. Replacement retains the current managed identity; restart attempts journal-backed transfer and falls back to replacement retention if replay fails. Start restores branch state and replaces native child handles. Full restore (`resetRuntimeOwnership: true`) is a cold-start operation: previous live resources must no longer need those registries. Tree restore preserves process cleanup ownership. Retained resources depend on the replacement restoring their journal-backed ownership; this path has no replacement-owner acknowledgment. A dispatched caller cold launch clears prior page target, refs, and resolved semantic snapshot from output reconciliation, without changing the facts used to validate dispatch.
+Quit requests cleanup of all owned managed identities. Replacement transfers the current managed identity; restart attempts journal-backed transfer and falls back to replacement retention if replay fails. Failed cleanup retains ownership and close context, with canonical journal markers for retry by a new runtime. Start restores branch state, retries unfinished cleanup, and retains only still-owned native child handles. Full restore (`resetRuntimeOwnership: true`) is a cold-start operation: previous live resources must no longer need those registries. Tree restore preserves process cleanup ownership. Retained resources depend on the replacement restoring their journal-backed ownership; this path has no replacement-owner acknowledgment. A dispatched caller cold launch clears prior page target, refs, and resolved semantic snapshot from output reconciliation, without changing the facts used to validate dispatch.
 
 #### Fresh-name ordinal
 
@@ -347,7 +347,7 @@ The outer scope acquires all identities before work, drains started nested callb
 
 Owner: `lib/orchestration/extension-lifecycle.ts`, `lib/orchestration/execution-queue.ts`.
 
-Shutdown invalidates the branch, queues cleanup behind managed work and then artifact work, resets runtime state, and cleans temporary artifacts. Caller-owned commands use separate keyed queues; this managed queue alone does not drain all concurrent caller-owned work. Reset and temp cleanup therefore rely on the host ending concurrent borrowers before shutdown.
+Shutdown invalidates the branch and queues cleanup behind managed work and then artifact work. Cleanup publishes intent and terminal receipts before resetting presentation state and cleaning temporary artifacts. Failed owners and their close context survive reset; partial Electron cleanup keeps its profile protected. A new runtime retries unfinished cleanup from the canonical journal. Publication failure leaves live owners intact and warns that new-instance recovery is unconfirmed. Caller-owned commands use separate keyed queues; this managed queue alone does not drain all concurrent caller-owned work. Reset and temp cleanup therefore rely on the host ending concurrent borrowers before shutdown.
 
 #### Run-state aliases and page drafts
 

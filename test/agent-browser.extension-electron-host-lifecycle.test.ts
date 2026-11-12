@@ -1728,6 +1728,7 @@ if (args.includes("connect")) {
 				await chmod(join(profileDir, "locked"), 0o700).catch(() => {
 					// Successful cleanup has already removed this directory.
 				});
+				await rm(profileDir, { force: true, recursive: true });
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -1800,6 +1801,7 @@ nodeTest(
 				await chmod(join(profileDir, "locked"), 0o700).catch(() => {
 					// Successful cleanup has already removed this directory.
 				});
+				await rm(profileDir, { force: true, recursive: true });
 			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
