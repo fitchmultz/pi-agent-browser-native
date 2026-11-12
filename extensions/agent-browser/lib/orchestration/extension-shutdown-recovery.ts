@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { appendBrowserRecord } from "../browser-journal.js";
+import { appendBrowserRecord, readBrowserEntries } from "../browser-journal.js";
+import { readTransferableManagedSessionKeys } from "./extension-branch-restore.js";
 import {
 	appendBrowserTransition,
 	getBrowserRecord,
@@ -15,6 +16,7 @@ import { getSessionContextKey } from "./browser-run/session-state.js";
 export interface ShutdownRecovery {
 	readonly managed: ReadonlySet<string>;
 	readonly electron: ReadonlySet<string>;
+	readonly preserveResume: ReadonlySet<string>;
 }
 
 /** Only unfinished shutdown attempts are retried; transferred branch resources have no marker. */
@@ -24,18 +26,19 @@ export function readShutdownRecovery(
 ): ShutdownRecovery {
 	const managed = new Set<string>();
 	const electron = new Set<string>();
+	const preserveResume = new Set<string>();
 	for (const entry of branch) {
 		const state = getBrowserRecord(entry)?.event.state;
 		if (state?.ownerSessionId !== ownerSessionId || typeof state.shutdownCleanup !== "boolean") {
 			continue;
 		}
-		applyCleanupMarker({ managed, electron }, state);
+		applyCleanupMarker({ managed, electron, preserveResume }, state);
 	}
-	return { managed, electron };
+	return { managed, electron, preserveResume };
 }
 
 function applyCleanupMarker(
-	pending: { managed: Set<string>; electron: Set<string> },
+	pending: { managed: Set<string>; electron: Set<string>; preserveResume: Set<string> },
 	state: BrowserRecord["event"]["state"],
 ): void {
 	const key =
@@ -52,17 +55,60 @@ function applyCleanupMarker(
 		return;
 	}
 	if (state.shutdownCleanup === true) {
+		pending.preserveResume.delete(identity);
 		set.delete(identity);
 	} else {
 		set.add(identity);
+		if (state.shutdownPreserveResume === true) {
+			pending.preserveResume.add(identity);
+		} else {
+			pending.preserveResume.delete(identity);
+		}
 	}
 }
 
+/** Native daemon shutdown does not retire branch-visible cold-resume ownership or page state. */
+export async function readShutdownResumeKeys(
+	runtime: BrowserRuntime,
+	ctx: ExtensionContext | undefined,
+	recovery: ShutdownRecovery | undefined,
+	records: ReadonlyMap<string, ElectronLaunchRecord>,
+): Promise<Set<string>> {
+	if (!ctx) {
+		return new Set();
+	}
+	const keys = await readTransferableManagedSessionKeys(runtime, ctx);
+	const pending =
+		recovery ??
+		readShutdownRecovery(
+			await readBrowserEntries(ctx.sessionManager),
+			runtime.branch.ownerSessionId,
+		);
+	for (const key of pending.managed) {
+		if (!pending.preserveResume.has(key)) {
+			keys.delete(key);
+		}
+	}
+	// Electron cleanup destroys the owned app, not just its native connection daemon.
+	for (const record of records.values()) {
+		const key = getSessionContextKey(record.sessionName, record.namespace);
+		if (key !== undefined) {
+			keys.delete(key);
+		}
+	}
+	return keys;
+}
+
 export class ShutdownRecoveryJournal {
-	readonly pending = { managed: new Set<string>(), electron: new Set<string>() };
+	readonly pending = {
+		managed: new Set<string>(),
+		electron: new Set<string>(),
+		preserveResume: new Set<string>(),
+	};
 	constructor(
 		readonly runtime: BrowserRuntime,
 		readonly ctx: ExtensionContext | undefined,
+		readonly preserveResume: ReadonlySet<string>,
 	) {}
 	async append(
 		state: BrowserRecord["event"]["state"],
@@ -102,13 +148,32 @@ export class ShutdownRecoveryJournal {
 		}
 		applyCleanupMarker(this.pending, state);
 	}
+	managedPages(owner: OwnedManagedSession, closed: boolean): BrowserRecord["event"]["pages"] {
+		const key = getSessionContextKey(owner.sessionName, owner.namespace) ?? owner.sessionName;
+		if (this.preserveResume.has(key)) {
+			return undefined;
+		}
+		return [
+			closed
+				? { key, clear: true, refs: { kind: "invalidate" } }
+				: {
+						key,
+						confirmActions: this.runtime.sessions.getConfirmActions(key) ?? null,
+						unknown: true,
+						refs: { kind: "unknown" },
+					},
+		];
+	}
 	async managed(owner: OwnedManagedSession, closed: boolean): Promise<void> {
 		const key = getSessionContextKey(owner.sessionName, owner.namespace) ?? owner.sessionName;
+		const preserveResume = this.preserveResume.has(key);
+		const retire = closed && !preserveResume;
 		await this.append(
 			{
 				shutdownCleanup: closed,
-				command: closed ? "close" : "shutdown-cleanup",
-				args: ["--session", owner.sessionName, ...(closed ? ["close"] : [])],
+				shutdownPreserveResume: preserveResume,
+				command: retire ? "close" : "shutdown-cleanup",
+				args: ["--session", owner.sessionName, ...(retire ? ["close"] : [])],
 				sessionName: owner.sessionName,
 				namespace: owner.namespace,
 				managedSessionCwd: owner.cwd,
@@ -125,25 +190,19 @@ export class ShutdownRecoveryJournal {
 					owner.namespace,
 				),
 				attachedBrowserSession: this.runtime.sessions.hasAttachment(key),
-				managedSessionOutcome: {
-					status: closed ? "closed" : "unchanged",
-					succeeded: closed,
-					activeAfter: !closed,
-					currentSessionName: owner.sessionName,
-					currentSessionNamespace: owner.namespace,
-					attemptedSessionName: owner.sessionName,
-				},
+				managedSessionOutcome:
+					preserveResume && closed
+						? undefined
+						: {
+								status: closed ? "closed" : "unchanged",
+								succeeded: closed,
+								activeAfter: !closed,
+								currentSessionName: owner.sessionName,
+								currentSessionNamespace: owner.namespace,
+								attemptedSessionName: owner.sessionName,
+							},
 			},
-			[
-				closed
-					? { key, clear: true, refs: { kind: "invalidate" } }
-					: {
-							key,
-							confirmActions: this.runtime.sessions.getConfirmActions(key) ?? null,
-							unknown: true,
-							refs: { kind: "unknown" },
-						},
-			],
+			this.managedPages(owner, closed),
 		);
 	}
 	async electron(record: ElectronLaunchRecord, result?: ElectronCleanupResult): Promise<void> {

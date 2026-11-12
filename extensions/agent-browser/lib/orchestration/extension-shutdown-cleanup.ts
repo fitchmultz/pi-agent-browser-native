@@ -18,8 +18,9 @@ export class BrowserShutdownCleanup {
 	constructor(
 		readonly runtime: BrowserRuntime,
 		readonly ctx: ExtensionContext | undefined,
+		preserveResume: ReadonlySet<string>,
 	) {
-		this.journal = new ShutdownRecoveryJournal(runtime, ctx);
+		this.journal = new ShutdownRecoveryJournal(runtime, ctx, preserveResume);
 	}
 	async prepareElectron(
 		records: ReadonlyMap<string, ElectronLaunchRecord>,

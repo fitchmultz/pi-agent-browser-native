@@ -522,10 +522,7 @@ process.stdout.write(JSON.stringify({ success: true, data: { closed: args.includ
 					);
 					assert.deepEqual(
 						(await closedNames()).toSorted(),
-						[
-							names.current,
-							...(shutdownCloses.some((name) => name === "leftover") ? [] : [names.leftover]),
-						].toSorted(),
+						[names.current, names.leftover].toSorted(),
 					);
 				});
 			} finally {

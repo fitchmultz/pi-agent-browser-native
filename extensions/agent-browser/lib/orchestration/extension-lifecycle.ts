@@ -11,7 +11,11 @@ import {
 	restoreBranchBackedState,
 } from "./extension-branch-restore.js";
 import type { BrowserRuntime } from "./extension-runtime.js";
-import { readShutdownRecovery, type ShutdownRecovery } from "./extension-shutdown-recovery.js";
+import {
+	readShutdownRecovery,
+	readShutdownResumeKeys,
+	type ShutdownRecovery,
+} from "./extension-shutdown-recovery.js";
 import { BrowserShutdownCleanup, resetAfterShutdown } from "./extension-shutdown-cleanup.js";
 
 /**
@@ -109,7 +113,12 @@ class BrowserLifecycle {
 		const keepKeys = recovery
 			? new Set([...runtime.managed.owned.keys()].filter((key) => !recovery.managed.has(key)))
 			: new Set(await this.retainedManagedSessionKeys(ctx, scope));
-		const result = await new BrowserShutdownCleanup(runtime, ctx).run(records, keepKeys, preserved);
+		const resumeKeys = await readShutdownResumeKeys(runtime, ctx, recovery, records);
+		const result = await new BrowserShutdownCleanup(runtime, ctx, resumeKeys).run(
+			records,
+			keepKeys,
+			preserved,
+		);
 		runtime.recordings.flush();
 		notifyRecordingPersistence(runtime.recordings.dirty, ctx);
 		return result;
