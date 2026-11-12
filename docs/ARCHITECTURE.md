@@ -347,7 +347,7 @@ The outer scope acquires all identities before work, drains started nested callb
 
 Owner: `lib/orchestration/extension-lifecycle.ts`, `lib/orchestration/execution-queue.ts`.
 
-Shutdown invalidates the branch and queues cleanup behind managed work and then artifact work. Cleanup publishes intent and terminal receipts before resetting presentation state and cleaning temporary artifacts. Failed owners and their close context survive reset; partial Electron cleanup keeps its profile protected. A new runtime retries unfinished cleanup from the canonical journal. Publication failure leaves live owners intact and warns that new-instance recovery is unconfirmed. Caller-owned commands use separate keyed queues; this managed queue alone does not drain all concurrent caller-owned work. Reset and temp cleanup therefore rely on the host ending concurrent borrowers before shutdown.
+Shutdown invalidates the branch and queues cleanup behind managed work and then artifact work. Cleanup publishes intent and terminal receipts before resetting presentation state and cleaning temporary artifacts. Failed owners and their close context survive reset; partial Electron cleanup keeps its profile protected. A new runtime retries unfinished cleanup from the canonical journal. Journal publication failure does not block cleanup: successfully cleaned resources retire from in-process ownership, failed resources remain owned for retry, and a warning marks new-instance recovery unconfirmed. Caller-owned commands use separate keyed queues; this managed queue alone does not drain all concurrent caller-owned work. Reset and temp cleanup therefore rely on the host ending concurrent borrowers before shutdown.
 
 #### Run-state aliases and page drafts
 
