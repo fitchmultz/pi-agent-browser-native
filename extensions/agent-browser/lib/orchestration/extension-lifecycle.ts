@@ -1,16 +1,8 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ChildProcess } from "node:child_process";
 import { cleanupSecureTempArtifacts } from "../temp.js";
 import { getActiveElectronRecords, getSessionContextKey } from "./browser-run/session-state.js";
-import { cleanupActiveElectronHostLaunches } from "./electron-host/index.js";
 import { loadAgentBrowserConfigSync } from "../config.js";
-import { closeOwnedManagedSessionsExcept } from "./extension-managed-ownership.js";
-import {
-	getCleanupResultsClosedManagedSessionIdentities,
-	getCleanupResultsPreservedUserDataDirs,
-	getOffBranchOwnedElectronLaunchRecords,
-	syncElectronCleanupManagedSessions,
-} from "./extension-electron-ownership.js";
+import { getOffBranchOwnedElectronLaunchRecords } from "./extension-electron-ownership.js";
 import { shouldIncludeProjectConfig } from "./extension-prompt.js";
 import { notifyRecordingPersistence } from "./extension-recording.js";
 import { recoverScriptSessionLeasesWithinQueue } from "./extension-script-leases.js";
@@ -19,6 +11,12 @@ import {
 	restoreBranchBackedState,
 } from "./extension-branch-restore.js";
 import type { BrowserRuntime } from "./extension-runtime.js";
+import {
+	readShutdownRecovery,
+	readShutdownResumeKeys,
+	type ShutdownRecovery,
+} from "./extension-shutdown-recovery.js";
+import { BrowserShutdownCleanup, resetAfterShutdown } from "./extension-shutdown-cleanup.js";
 
 /**
  * `quit` ends process-lifetime ownership. `restart` is a managed worker replacement: the fork
@@ -33,9 +31,18 @@ class BrowserLifecycle {
 
 	async restore(ctx: ExtensionContext, resetRuntimeOwnership: boolean): Promise<void> {
 		const { runtime } = this;
-		const branch = await restoreBranchBackedState(runtime, ctx, { resetRuntimeOwnership });
+		let branch = await restoreBranchBackedState(runtime, ctx, { resetRuntimeOwnership });
+		const recovery = readShutdownRecovery(branch, runtime.branch.ownerSessionId);
+		if (recovery.managed.size > 0 || recovery.electron.size > 0) {
+			await this.cleanup(ctx, "quit", recovery);
+			branch = await restoreBranchBackedState(runtime, ctx, { resetRuntimeOwnership: false });
+		}
 		if (resetRuntimeOwnership) {
-			runtime.electron.childProcesses = new Map<string, ChildProcess>();
+			runtime.electron.childProcesses = new Map(
+				[...runtime.electron.childProcesses].filter(([id]) =>
+					runtime.electron.ownedRecords.has(id),
+				),
+			);
 			runtime.prompt.registerWebSearch(
 				loadAgentBrowserConfigSync({
 					cwd: ctx.cwd,
@@ -66,7 +73,7 @@ class BrowserLifecycle {
 		scope: ShutdownScope,
 	): Promise<ReadonlySet<string>> {
 		const { managed } = this.runtime;
-		if (scope === "quit") {
+		if (scope === "quit" || managed.owned.size === 0) {
 			return new Set();
 		}
 		if (scope === "restart" && ctx) {
@@ -81,7 +88,11 @@ class BrowserLifecycle {
 			: new Set();
 	}
 
-	async cleanup(ctx: ExtensionContext | undefined, scope: ShutdownScope): Promise<string[]> {
+	async cleanup(
+		ctx: ExtensionContext | undefined,
+		scope: ShutdownScope,
+		recovery?: ShutdownRecovery,
+	): ReturnType<BrowserShutdownCleanup["run"]> {
 		const { runtime } = this;
 		const quitting = scope === "quit";
 		const active = getActiveElectronRecords(runtime.electron.records);
@@ -90,61 +101,39 @@ class BrowserLifecycle {
 					.filter((record) => !runtime.electron.ownedRecords.has(record.launchId))
 					.map((record) => record.userDataDir)
 			: active.map((record) => record.userDataDir);
-		const records = quitting
+		const selected = quitting
 			? runtime.electron.ownedRecords
 			: getOffBranchOwnedElectronLaunchRecords(
 					runtime.electron.ownedRecords,
 					runtime.electron.records,
 				);
-		const results = await cleanupActiveElectronHostLaunches({
-			attachedSessionKeys: runtime.sessions.attached,
-			cwd: ctx?.cwd ?? runtime.managed.cwd,
-			electronChildProcesses: runtime.electron.childProcesses,
-			electronLaunchRecords: records,
-			managedSessionRestoreState: runtime.managed.restore,
-			ownedManagedSessions: runtime.managed.owned,
-			sessionPageState: runtime.sessions.pages,
-			timeoutMs: runtime.implicitSessionCloseTimeoutMs,
-		});
-		const preservePaths = [
-			...new Set([...preserved, ...getCleanupResultsPreservedUserDataDirs(results)]),
-		];
-		syncElectronCleanupManagedSessions(runtime.managed.owned, results);
-		for (const identity of getCleanupResultsClosedManagedSessionIdentities(results)) {
-			runtime.recordings.retire(identity.sessionName, identity.namespace);
-		}
-		await closeOwnedManagedSessionsExcept(
-			runtime.managed.owned,
-			runtime.sessions,
-			{
-				restore: runtime.managed.restore,
-				timeoutMs: runtime.implicitSessionCloseTimeoutMs,
-			},
-			{
-				keepKeys: await this.retainedManagedSessionKeys(ctx, scope),
-				onClosed: (owner) => runtime.recordings.retire(owner.sessionName, owner.namespace),
-			},
+		const records = recovery
+			? new Map([...selected].filter(([id]) => recovery.electron.has(id)))
+			: selected;
+		const keepKeys = recovery
+			? new Set([...runtime.managed.owned.keys()].filter((key) => !recovery.managed.has(key)))
+			: new Set(await this.retainedManagedSessionKeys(ctx, scope));
+		const hasCleanupOwners =
+			records.size > 0 || [...runtime.managed.owned.keys()].some((key) => !keepKeys.has(key));
+		const resumeKeys = hasCleanupOwners
+			? await readShutdownResumeKeys(runtime, ctx, recovery, records)
+			: new Set<string>();
+		const result = await new BrowserShutdownCleanup(runtime, ctx, resumeKeys).run(
+			records,
+			keepKeys,
+			preserved,
 		);
 		runtime.recordings.flush();
 		notifyRecordingPersistence(runtime.recordings.dirty, ctx);
-		return preservePaths;
-	}
-
-	reset(): void {
-		const { runtime } = this;
-		runtime.managed.reset();
-		runtime.sessions.reset();
-		runtime.artifacts.manifest = undefined;
-		runtime.recordings.resetIfClean();
-		runtime.electron.reset();
+		return result;
 	}
 
 	async shutdown(ctx: ExtensionContext | undefined, scope: ShutdownScope): Promise<void> {
 		this.runtime.branch.invalidate();
-		const preservePaths = await this.runtime.managedSessionExecutionQueue.run(() =>
+		const { preservePaths, pending } = await this.runtime.managedSessionExecutionQueue.run(() =>
 			this.runtime.artifacts.queue.run(() => this.cleanup(ctx, scope)),
 		);
-		this.reset();
+		resetAfterShutdown(this.runtime, pending);
 		await cleanupSecureTempArtifacts({ preservePaths });
 	}
 }
