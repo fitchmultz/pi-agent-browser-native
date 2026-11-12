@@ -18,6 +18,17 @@ export interface PersistentSessionArtifactWriteResult {
 	path: string;
 }
 
+/** A failed replacement still owns receipts for files already deleted. */
+export class PersistentSessionArtifactWriteError extends Error {
+	readonly evictedArtifacts: readonly PersistentSessionArtifactEviction[];
+
+	constructor(cause: unknown, evictedArtifacts: readonly PersistentSessionArtifactEviction[]) {
+		super(cause instanceof Error ? cause.message : String(cause), { cause });
+		this.name = "PersistentSessionArtifactWriteError";
+		this.evictedArtifacts = [...evictedArtifacts];
+	}
+}
+
 export function getTempArtifactByteLength(content: string | Uint8Array): number {
 	return typeof content === "string" ? Buffer.byteLength(content) : content.byteLength;
 }
@@ -115,7 +126,10 @@ export async function prunePersistentSessionArtifactsToBudget(
 			return evictedArtifacts;
 		}
 	}
-	throw new Error(
-		`pi-agent-browser persisted spill budget exceeded (${totalBytes + additionalBytes} bytes > ${maxBytes} byte limit).`,
+	throw new PersistentSessionArtifactWriteError(
+		new Error(
+			`pi-agent-browser persisted spill budget exceeded (${totalBytes + additionalBytes} bytes > ${maxBytes} byte limit).`,
+		),
+		evictedArtifacts,
 	);
 }

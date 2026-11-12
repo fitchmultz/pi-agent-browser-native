@@ -1,5 +1,9 @@
 import { isRecord } from "../parsing.js";
-import type { PersistentSessionArtifactStore } from "../temp.js";
+import {
+	PersistentSessionArtifactWriteError,
+	type PersistentSessionArtifactEviction,
+	type PersistentSessionArtifactStore,
+} from "../temp.js";
 import type { SessionArtifactManifest, ToolPresentation } from "./contracts.js";
 import { buildCompactSnapshotView } from "./snapshot-compact.js";
 import {
@@ -32,12 +36,17 @@ async function getSnapshotSpill(
 	readonly spill?: SnapshotSpillWriteResult;
 	readonly fullOutputPath?: string;
 	readonly spillErrorText?: string;
+	readonly evictedArtifacts?: readonly PersistentSessionArtifactEviction[];
 }> {
 	try {
 		const spill = await writeSnapshotSpillFile(data, store);
 		return { spill, fullOutputPath: spill.path };
 	} catch (error) {
-		return { spillErrorText: error instanceof Error ? error.message : stringifyUnknown(error) };
+		return {
+			spillErrorText: error instanceof Error ? error.message : stringifyUnknown(error),
+			evictedArtifacts:
+				error instanceof PersistentSessionArtifactWriteError ? error.evictedArtifacts : [],
+		};
 	}
 }
 
@@ -55,7 +64,7 @@ export async function buildSnapshotPresentation(
 	) {
 		return { content: [{ type: "text", text: rawText }], data, summary };
 	}
-	const { spill, fullOutputPath, spillErrorText } = await getSnapshotSpill(
+	const { spill, fullOutputPath, spillErrorText, evictedArtifacts } = await getSnapshotSpill(
 		data,
 		persistentArtifactStore,
 	);
@@ -65,6 +74,7 @@ export async function buildSnapshotPresentation(
 		command: "snapshot",
 		fullOutputPath,
 		spill,
+		evictedArtifacts,
 	});
 	const notice = manifestFields.artifactRetentionSummary;
 	const text = compact.content.at(0);

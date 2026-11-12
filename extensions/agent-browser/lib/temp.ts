@@ -6,6 +6,7 @@ import { getSessionTempRoot, refreshSecureTempRootLease } from "./temp-root.js";
 import {
 	assertSecureTempRootBudget,
 	getTempArtifactByteLength,
+	PersistentSessionArtifactWriteError,
 	prunePersistentSessionArtifactsToBudget,
 	type PersistentSessionArtifactStore,
 	type PersistentSessionArtifactWriteResult,
@@ -19,6 +20,7 @@ export {
 export {
 	getPersistentSessionArtifactMaxBytes,
 	getSecureTempRootMaxBytes,
+	PersistentSessionArtifactWriteError,
 	type PersistentSessionArtifactStore,
 	type PersistentSessionArtifactEviction,
 	type PersistentSessionArtifactWriteResult,
@@ -108,20 +110,24 @@ export async function writePersistentSessionArtifactFile(options: {
 			getTempArtifactByteLength(content),
 			new Set((store.protectedPaths ?? []).filter((path) => dirname(path) === artifactDir)),
 		);
-		const path = join(artifactDir, `${prefix}-${randomBytes(8).toString("hex")}${suffix}`);
-		const fileHandle = await open(path, "wx", 0o600);
 		try {
-			await fileHandle.writeFile(content);
+			const path = join(artifactDir, `${prefix}-${randomBytes(8).toString("hex")}${suffix}`);
+			const fileHandle = await open(path, "wx", 0o600);
+			try {
+				await fileHandle.writeFile(content);
+			} catch (error) {
+				await rm(path, { force: true }).catch(() => {
+					/* Preserve write failure identity. */
+				});
+				throw error;
+			} finally {
+				await fileHandle.close().catch(() => {
+					/* A completed artifact write retains its receipt even if close fails. */
+				});
+			}
+			return { evictedArtifacts, path };
 		} catch (error) {
-			await rm(path, { force: true }).catch(() => {
-				/* Preserve write failure identity. */
-			});
-			throw error;
-		} finally {
-			await fileHandle.close().catch(() => {
-				/* A completed artifact write retains its receipt even if close fails. */
-			});
+			throw new PersistentSessionArtifactWriteError(error, evictedArtifacts);
 		}
-		return { evictedArtifacts, path };
 	});
 }
