@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { appendBrowserRecord, readBrowserEntries } from "../browser-journal.js";
-import { readTransferableManagedSessionKeys } from "./extension-branch-restore.js";
+import { collectTransferableManagedSessionKeys } from "./extension-branch-restore.js";
+import { convertBrowserEntries, legacyCleanupOwner } from "../browser-legacy-projection.js";
 import {
 	appendBrowserTransition,
 	getBrowserRecord,
@@ -67,6 +68,25 @@ function applyCleanupMarker(
 	}
 }
 
+/** Live ancestry classifies cleanup only; it cannot authorize normal browser dispatch or prove durability. */
+async function readShutdownClassificationBranch(
+	ctx: ExtensionContext,
+): Promise<readonly unknown[]> {
+	try {
+		return await readBrowserEntries(ctx.sessionManager);
+	} catch {
+		notifyShutdownRecoveryWarning(
+			ctx,
+			"Browser shutdown cleanup could not read the journal. Classifying the selected native in-memory branch for best-effort cleanup; recovery in another instance is not confirmed.",
+		);
+		const manager = ctx.sessionManager;
+		return convertBrowserEntries(
+			manager.getBranch(),
+			legacyCleanupOwner(manager.getHeader() ?? { id: manager.getSessionId() }),
+		);
+	}
+}
+
 /** Native daemon shutdown does not retire branch-visible cold-resume ownership or page state. */
 export async function readShutdownResumeKeys(
 	runtime: BrowserRuntime,
@@ -79,13 +99,12 @@ export async function readShutdownResumeKeys(
 	}
 	let keys: Set<string>;
 	try {
-		keys = await readTransferableManagedSessionKeys(runtime, ctx);
-		const pending =
-			recovery ??
-			readShutdownRecovery(
-				await readBrowserEntries(ctx.sessionManager),
-				runtime.branch.ownerSessionId,
-			);
+		const branch = await readShutdownClassificationBranch(ctx);
+		keys = collectTransferableManagedSessionKeys(branch, {
+			baseName: runtime.managed.baseName,
+			ownerSessionId: runtime.branch.ownerSessionId,
+		});
+		const pending = recovery ?? readShutdownRecovery(branch, runtime.branch.ownerSessionId);
 		for (const key of pending.managed) {
 			if (!pending.preserveResume.has(key)) {
 				keys.delete(key);
@@ -94,9 +113,9 @@ export async function readShutdownResumeKeys(
 	} catch {
 		notifyShutdownRecoveryWarning(
 			ctx,
-			"Browser shutdown cleanup could not read the journal. Continuing best-effort cleanup from live ownership; recovery in another instance is not confirmed.",
+			"Browser shutdown cleanup could not classify the selected branch. Continuing best-effort cleanup without assuming any additional cold-resume owners; recovery in another instance is not confirmed.",
 		);
-		keys = new Set(recovery?.preserveResume ?? runtime.managed.owned.keys());
+		keys = new Set(recovery?.preserveResume);
 	}
 	// Electron cleanup destroys the owned app, not just its native connection daemon.
 	for (const record of records.values()) {

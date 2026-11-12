@@ -421,8 +421,18 @@ export async function readTransferableManagedSessionKeys(
 	runtime: BrowserRuntime,
 	ctx: ExtensionContext,
 ): Promise<Set<string>> {
-	const branch = await readBrowserEntries(ctx.sessionManager);
-	const { baseName } = runtime.managed;
+	return collectTransferableManagedSessionKeys(await readBrowserEntries(ctx.sessionManager), {
+		baseName: runtime.managed.baseName,
+		ownerSessionId: runtime.branch.ownerSessionId,
+	});
+}
+
+/** The same selected-branch ownership fold for published replay and native live classification. */
+export function collectTransferableManagedSessionKeys(
+	branch: readonly unknown[],
+	options: Readonly<{ baseName: string; ownerSessionId: string }>,
+): Set<string> {
+	const { baseName } = options;
 	const keys = new Set<string>();
 	for (const [key] of restorableBranchManagedIdentities(
 		collectBranchManagedResourceEvents(branch),
@@ -434,7 +444,7 @@ export async function readTransferableManagedSessionKeys(
 	if (current.active) {
 		keys.add(getOwnerKey(current.sessionName, current.namespace));
 	}
-	for (const begin of collectPendingOwnedBrowserIntents(branch, runtime.branch.ownerSessionId)) {
+	for (const begin of collectPendingOwnedBrowserIntents(branch, options.ownerSessionId)) {
 		if (typeof begin.state.sessionName === "string") {
 			keys.add(getOwnerKey(begin.state.sessionName, begin.state.namespace));
 		}

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nodeTest from "node:test";
@@ -244,6 +244,90 @@ for (const closeFails of [false, true]) {
 				});
 			} finally {
 				await rm(tempDir, { force: true, recursive: true });
+			}
+		},
+	);
+}
+
+for (const branchVisible of [false, true]) {
+	nodeTest(
+		`agentBrowserExtension classifies selected live branch after journal read failure (branchVisible=${String(branchVisible)})`,
+		{ concurrency: false },
+		async (t) => {
+			const root = await mkdtemp(join(tmpdir(), "piab-shutdown-read-repair-"));
+			const log = join(root, "calls.jsonl");
+			let failNextAppend = true;
+			const warnings: string[] = [];
+			t.mock.method(console, "warn", (message: string) => warnings.push(message));
+			await writeFakeAgentBrowserBinary(
+				root,
+				`require("node:fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n"); process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));`,
+			);
+			try {
+				await withPatchedEnv({ PATH: `${root}:${process.env.PATH ?? ""}` }, async () => {
+					const name = createImplicitSessionName(TEST_SESSION_ID, root, "test-seed");
+					const harness = createExtensionHarness({
+						cwd: root,
+						branch: [createToolBranchEntry({ details: ownedSessionDetails(name), isError: false })],
+						onAppendEntry: () => {
+							if (failNextAppend) {
+								failNextAppend = false;
+								throw new Error("one append fault");
+							}
+						},
+					});
+					await runExtensionEvent(harness.handlers, "session_start", {}, harness.ctx);
+					if (!branchVisible) {
+						harness.setBranch([]);
+						await runExtensionEvent(harness.handlers, "session_tree", {}, harness.ctx);
+					}
+					const fault = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", "fault-probe", "open", "https://example.com/unused"],
+					});
+					assert.equal(fault.isError, true);
+					const missing = harness.ctx.sessionManager.getEntry(
+						readString(harness.ctx.sessionManager.getLeafId()),
+					);
+					await assert.rejects(readBrowserEntries(harness.ctx.sessionManager), /not persisted/);
+					await runExtensionEvent(
+						harness.handlers,
+						"session_shutdown",
+						{ reason: branchVisible ? "quit" : "reload" },
+						harness.ctx,
+					);
+					assert.equal(
+						(await readInvocationLog(log)).filter((row) => row.args.includes("close")).length,
+						1,
+					);
+					assert.ok(warnings.some((message) => message.includes("could not read the journal")));
+					await appendFile(
+						readString(harness.ctx.sessionManager.getSessionFile()),
+						`${JSON.stringify(missing)}\n`,
+					);
+					const recovered = createExtensionHarness({
+						cwd: root,
+						branch: [...(await readBrowserEntries(harness.ctx.sessionManager))],
+					});
+					await runExtensionEvent(
+						recovered.handlers,
+						"session_start",
+						{ reason: "resume" },
+						recovered.ctx,
+					);
+					await runExtensionEvent(
+						recovered.handlers,
+						"session_shutdown",
+						{ reason: "quit" },
+						recovered.ctx,
+					);
+					assert.equal(
+						(await readInvocationLog(log)).filter((row) => row.args.includes("close")).length,
+						branchVisible ? 2 : 1,
+						"only selected-branch owners remain cold-resumable after repairing the journal",
+					);
+				});
+			} finally {
+				await rm(root, { force: true, recursive: true });
 			}
 		},
 	);
