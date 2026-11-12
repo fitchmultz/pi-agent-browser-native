@@ -410,6 +410,9 @@ export async function retireReplacedSession(
 	}
 	const routes = new Map(draft.networkRoutesBySession);
 	routes.delete(sessionKey);
+	// An automatic close owns the same trace/profiler cleanup as a close command;
+	// the lifecycle fold only observes command-driven closes.
+	state.traceOwnership.clearSession(sessionKey);
 	state.sessionPageState.clearSession(sessionKey);
 	state.attachedSessionKeys.delete(sessionKey);
 	state.closedManagedSessionNames.add(sessionKey);
