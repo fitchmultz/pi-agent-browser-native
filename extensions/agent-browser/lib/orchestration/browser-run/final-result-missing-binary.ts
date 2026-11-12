@@ -2,6 +2,8 @@ import {
 	cleanupElectronLaunchResources,
 	type ElectronCleanupResult,
 } from "../../electron/cleanup.js";
+import type { ChildProcess } from "node:child_process";
+import type { ElectronLaunchRecord } from "../../electron/launch-types.js";
 import { buildAgentBrowserResultCategoryDetails } from "../../results/categories.js";
 import { applyNamespaceToNextActions } from "../../results/next-actions.js";
 import {
@@ -33,7 +35,9 @@ export function isMissingAgentBrowserBinary(
 
 type MissingBinaryInput = Readonly<{
 	compatibilityWorkaround?: FinalResultInput["compatibilityWorkaround"];
+	electronChildProcesses?: Map<string, ChildProcess> | undefined;
 	electronLaunch?: FinalResultInput["electronLaunch"];
+	electronLaunchRecords?: Map<string, ElectronLaunchRecord> | undefined;
 	executionPlan: AgentBrowserExecutionPlan;
 	implicitSessionCloseTimeoutMs: number;
 	managedSessionActive: boolean;
@@ -45,6 +49,21 @@ type MissingBinaryInput = Readonly<{
 	sessionMode: "auto" | "fresh";
 	sessionTabCorrection?: FinalResultInput["sessionTabCorrection"];
 }>;
+
+function retainPartialCleanupLaunch(options: {
+	readonly child: ChildProcess;
+	readonly cleanup: ElectronCleanupResult;
+	readonly electronChildProcesses: Map<string, ChildProcess> | undefined;
+	readonly electronLaunchRecords: Map<string, ElectronLaunchRecord> | undefined;
+}): void {
+	if (!options.cleanup.partial) {
+		return;
+	}
+	// The missing binary prevents closing the managed session, so surviving resources can only
+	// be cleaned once the binary returns; keep them registered instead of orphaning them.
+	options.electronLaunchRecords?.set(options.cleanup.launchId, options.cleanup.record);
+	options.electronChildProcesses?.set(options.cleanup.launchId, options.child);
+}
 
 function missingBinaryOutcome(
 	options: Pick<
@@ -138,6 +157,14 @@ export async function buildMissingBinaryFailureResult(
 				timeoutMs: options.implicitSessionCloseTimeoutMs,
 			})
 		: undefined;
+	if (options.electronLaunch && cleanup) {
+		retainPartialCleanupLaunch({
+			child: options.electronLaunch.child,
+			cleanup,
+			electronChildProcesses: options.electronChildProcesses,
+			electronLaunchRecords: options.electronLaunchRecords,
+		});
+	}
 	const text = [
 		buildMissingBinaryMessage(),
 		formatManagedSessionOutcomeText(outcome),

@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { getMessageText } from "../extensions/agent-browser/lib/prompt-policy.js";
 import {
+	readBoolean,
 	readRecord,
 	readString,
 	readNumber,
@@ -19,6 +20,7 @@ import childProcess, { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import fsPromises, {
+	chmod,
 	lstat,
 	mkdir,
 	mkdtemp,
@@ -1586,6 +1588,219 @@ nodeTest(
 				assert.equal(isTestPidAlive(launchLog.pid), false);
 			});
 		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+/** Fake launchable Electron app whose profile keeps a non-empty read-only subdirectory alive. */
+async function writeLockedProfileElectronApp(options: {
+	readonly applicationsDir: string;
+	readonly bundleId: string;
+	readonly launchLogPath: string;
+	readonly name: string;
+}): Promise<Awaited<ReturnType<typeof writeFakeLaunchableElectronApp>>> {
+	const app = await writeFakeLaunchableElectronApp(options);
+	// The default fake app plus a subdirectory containing a file and denied write access:
+	// empty directories unlink through parent permissions, but removing the file needs write
+	// access inside `locked`, so the wrapper's recursive profile cleanup fails with EACCES.
+	// The launch therefore ends in the partial-cleanup state with the profile still on disk.
+	await writeFile(
+		app.scriptPath,
+		`#!/usr/bin/env node
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const userDataArg = args.find((arg) => arg.startsWith("--user-data-dir="));
+const userDataDir = userDataArg && userDataArg.slice("--user-data-dir=".length);
+if (!userDataDir) throw new Error("missing --user-data-dir");
+const server = http.createServer((request, response) => {
+	if (request.url === "/json/version") {
+		response.writeHead(200, { "content-type": "application/json" });
+		response.end(JSON.stringify({ Browser: "Electron/Fake", "Protocol-Version": "1.3", webSocketDebuggerUrl: "ws://127.0.0.1:" + server.address().port + "/devtools/browser/fake" }));
+		return;
+	}
+	if (request.url === "/json/list") {
+		response.writeHead(200, { "content-type": "application/json" });
+		response.end(JSON.stringify([{ id: "page-1", type: "page", title: "Demo Electron", url: "app://demo", webSocketDebuggerUrl: "ws://127.0.0.1:" + server.address().port + "/devtools/page/page-1" }]));
+		return;
+	}
+	response.writeHead(404);
+	response.end("not found");
+});
+server.listen(0, "127.0.0.1", () => {
+	const port = server.address().port;
+	fs.writeFileSync(path.join(userDataDir, "DevToolsActivePort"), String(port) + "\\n/devtools/browser/fake\\n");
+	fs.appendFileSync(${JSON.stringify(options.launchLogPath)}, JSON.stringify({ pid: process.pid, port, userDataDir }) + "\\n");
+	fs.mkdirSync(path.join(userDataDir, "locked"));
+	fs.writeFileSync(path.join(userDataDir, "locked", "keep.txt"), "kept");
+	fs.chmodSync(path.join(userDataDir, "locked"), 0o500);
+});
+const shutdown = () => server.close(() => process.exit(0));
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+`,
+		"utf8",
+	);
+	return app;
+}
+
+async function readLaunchReceiptEntry(launchLogPath: string): Promise<{
+	pid: number;
+	userDataDir: string;
+}> {
+	const record = readRecord(JSON.parse((await readFile(launchLogPath, "utf8")).trim()));
+	return { pid: readNumber(record.pid), userDataDir: readString(record.userDataDir) };
+}
+
+nodeTest(
+	"agentBrowserExtension retains a partially cleaned Electron launch after a failed attach command",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-partial-attach-"));
+		const applicationsDir = join(tempDir, "Applications");
+		const launchLogPath = join(tempDir, "electron-launch.log");
+		const basePath = process.env.PATH ?? "";
+		let profileDir = "";
+		try {
+			await mkdir(applicationsDir, { recursive: true });
+			const app = await writeLockedProfileElectronApp({
+				applicationsDir,
+				bundleId: "com.example.PartialAttachElectron",
+				launchLogPath,
+				name: "Partial Attach Electron",
+			});
+			await writeFakeAgentBrowserBinary(
+				tempDir,
+				`const args = process.argv.slice(2);
+if (args.includes("connect")) {
+  process.stdout.write(JSON.stringify({ success: false, error: "fixture: connect refused" }));
+} else {
+  process.stdout.write(JSON.stringify({ success: true, data: { closed: true } }));
+}`,
+			);
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const failedAttach = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
+				});
+				assert.equal(failedAttach.isError, true);
+				const cleanup = readRecord(readRecord(failedAttach.details?.electron).cleanup);
+				assert.equal(readBoolean(cleanup.partial), true);
+				const steps = readArray(cleanup.steps).map(readRecord);
+				assert.deepEqual(
+					steps.map((step) => `${readString(step.resource)}:${readString(step.state)}`),
+					["process:removed", "debug-port:already-gone", "user-data-dir:failed"],
+				);
+				// No managed-session step: this is the failed-attach path, not the
+				// failed-handoff path that already registered partial launches.
+				assert.equal(
+					steps.some((step) => readString(step.resource) === "managed-session"),
+					false,
+				);
+				const receipt = await readLaunchReceiptEntry(launchLogPath);
+				profileDir = receipt.userDataDir;
+				assert.ok(
+					await stat(profileDir).then(
+						() => true,
+						() => false,
+					),
+				);
+				// The surviving profile stays owned instead of leaking: later cleanup must see it.
+				const status = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "status" },
+				});
+				assert.equal(status.isError, false);
+				assert.match(getMessageText(status.content), /1 wrapper-tracked launch\(es\)/);
+				assert.doesNotMatch(getMessageText(status.content), /no active wrapper-tracked launches/);
+				await chmod(join(profileDir, "locked"), 0o700);
+				const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "cleanup" },
+				});
+				assert.equal(cleaned.isError, false, getMessageText(cleaned.content));
+				assert.match(getMessageText(cleaned.content), /1\/1 launch\(es\) fully cleaned/);
+				await assert.rejects(stat(profileDir), { code: "ENOENT" });
+			});
+		} finally {
+			if (profileDir !== "") {
+				await chmod(join(profileDir, "locked"), 0o700).catch(() => {
+					// Successful cleanup has already removed this directory.
+				});
+			}
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
+	"agentBrowserExtension retains a partially cleaned Electron launch when upstream is missing",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-electron-partial-missing-"));
+		const applicationsDir = join(tempDir, "Applications");
+		const emptyBinDir = join(tempDir, "empty-bin");
+		const nodeOnlyBinDir = join(tempDir, "node-only-bin");
+		const launchLogPath = join(tempDir, "electron-launch.log");
+		let profileDir = "";
+		try {
+			await mkdir(applicationsDir, { recursive: true });
+			await mkdir(emptyBinDir, { recursive: true });
+			await mkdir(nodeOnlyBinDir, { recursive: true });
+			await symlink(process.execPath, join(nodeOnlyBinDir, "node"), "file");
+			const app = await writeLockedProfileElectronApp({
+				applicationsDir,
+				bundleId: "com.example.PartialMissingElectron",
+				launchLogPath,
+				name: "Partial Missing Electron",
+			});
+			// `node` stays reachable for the fake Electron launcher; `agent-browser` is absent so
+			// the attach command fails with ENOENT and cleanup runs on the missing-binary path.
+			const pathSeparator = process.platform === "win32" ? ";" : ":";
+			const isolatedPath = `${nodeOnlyBinDir}${pathSeparator}${emptyBinDir}`;
+			await withPatchedEnv({ PATH: isolatedPath }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				const missingUpstream = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "launch", appPath: app.appPath, appArgs: app.appArgs },
+				});
+				assert.equal(missingUpstream.isError, true);
+				assert.equal(missingUpstream.details?.failureCategory, "missing-binary");
+				assert.match(
+					getMessageText(missingUpstream.content),
+					/Electron cleanup after failed attach/,
+				);
+				const cleanup = readRecord(readRecord(missingUpstream.details.electron).cleanup);
+				assert.equal(readBoolean(cleanup.partial), true);
+				const receipt = await readLaunchReceiptEntry(launchLogPath);
+				profileDir = receipt.userDataDir;
+				assert.ok(
+					await stat(profileDir).then(
+						() => true,
+						() => false,
+					),
+				);
+				// Retention is local state, so the launch must still be owned without the binary.
+				const status = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "status" },
+				});
+				assert.equal(status.isError, false);
+				assert.match(getMessageText(status.content), /1 wrapper-tracked launch\(es\)/);
+				await chmod(join(profileDir, "locked"), 0o700);
+				const cleaned = await executeRegisteredTool(harness.tool, harness.ctx, {
+					electron: { action: "cleanup" },
+				});
+				assert.equal(cleaned.isError, false, getMessageText(cleaned.content));
+				assert.match(getMessageText(cleaned.content), /1\/1 launch\(es\) fully cleaned/);
+				await assert.rejects(stat(profileDir), { code: "ENOENT" });
+			});
+		} finally {
+			if (profileDir !== "") {
+				await chmod(join(profileDir, "locked"), 0o700).catch(() => {
+					// Successful cleanup has already removed this directory.
+				});
+			}
 			await rm(tempDir, { force: true, recursive: true });
 		}
 	},
