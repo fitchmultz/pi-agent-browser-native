@@ -1,6 +1,9 @@
 let tempMutationQueue = Promise.resolve();
 
-/** One queue owns all root cleanup, preservation, spill writes and persistent eviction. */
+/**
+ * One queue owns root cleanup, preservation, lease renewal, spill writes and persistent eviction.
+ * Already-queued work calls mutation helpers directly; enqueueing from it would deadlock.
+ */
 export function enqueueTempMutation<T>(task: () => Promise<T>): Promise<T> {
 	const nextTask = tempMutationQueue.then(task, task);
 	tempMutationQueue = nextTask.then(

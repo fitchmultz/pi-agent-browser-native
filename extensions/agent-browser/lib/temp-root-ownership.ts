@@ -251,6 +251,7 @@ export async function writeSecureTempRootOwnershipMarker(
 	return await writeTempRootOwnershipMarkerRecord(tempRoot, markerRecord, { flag: "wx" });
 }
 
+/** The caller holds the temp mutation queue across this marker read/modify/write. */
 export async function refreshSecureTempRootLease(tempRoot: string): Promise<void> {
 	const ownershipMarker = await readTempRootOwnershipMarker(tempRoot);
 	if (!ownershipMarker) {

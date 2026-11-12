@@ -242,7 +242,7 @@ export async function getSessionTempRoot(): Promise<string> {
 		throw error;
 	});
 	const tempRoot = await sessionTempRootPromise;
-	await refreshSecureTempRootLease(tempRoot).catch(() => {
+	await enqueueTempMutation(() => refreshSecureTempRootLease(tempRoot)).catch(() => {
 		/* A failed refresh leaves the existing marker. */
 	});
 	await pruneStaleTempRoots(tempRoot).catch(() => {
