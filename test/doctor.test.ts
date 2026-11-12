@@ -23,6 +23,7 @@ import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baselin
 
 import {
 	MINIMUM_NODE_VERSION,
+	NODE_VERSION_RANGE,
 	buildNpmShimExecOptions,
 	evaluateDoctor,
 	formatDoctorReport,
@@ -48,7 +49,7 @@ nodeTest("doctor's Node floor stays aligned with the package engine", async () =
 	);
 
 	assert.match(MINIMUM_NODE_VERSION, /^\d+\.\d+\.\d+$/);
-	assert.equal(readRecord(packageJson.engines).node, `>=${MINIMUM_NODE_VERSION}`);
+	assert.equal(readRecord(packageJson.engines).node, NODE_VERSION_RANGE);
 });
 
 nodeTest("doctor rejects the reported Node 24.18.0 even when other checks pass", async () => {
@@ -61,13 +62,13 @@ nodeTest("doctor rejects the reported Node 24.18.0 even when other checks pass",
 
 	assert.equal(report.failures.length, 1);
 	assert.match(text, /Node running this doctor is unsupported: 24\.18\.0/);
-	assert.match(text, /requires >=24\.21\.0/);
+	assert.match(text, /requires \^24\.22\.3 \|\| >=26\.13\.1/);
 	assert.match(text, /Pi may use a different runtime or Node executable/);
 	assert.match(text, /Doctor found setup failures/);
 });
 
 nodeTest("doctor accepts the Node floor and newer stable versions", async () => {
-	const versions = ["24.21.0", "24.21.0+custom.1", "24.100.0", "25.0.0"];
+	const versions = ["24.22.3", "24.22.3+custom.1", "24.100.0", "26.13.1"];
 	const reports = await Promise.all(
 		versions.map((nodeVersion) =>
 			evaluateDoctorWithPi({
@@ -95,7 +96,7 @@ nodeTest("doctor accepts the Node floor and newer stable versions", async () => 
 });
 
 nodeTest("doctor does not pass a below-floor or prerelease Node version", async () => {
-	const versions = ["24.20.9", "24.21.0-rc.1", "25.0.0-rc.1"];
+	const versions = ["24.22.2", "25.0.0", "26.13.0", "24.22.3-rc.1"];
 	const reports = await Promise.all(
 		versions.map((nodeVersion) =>
 			evaluateDoctorWithPi({
@@ -108,13 +109,13 @@ nodeTest("doctor does not pass a below-floor or prerelease Node version", async 
 
 	assert.deepEqual(
 		reports.map((report) => report.failures.length),
-		[1, 1, 1],
+		[1, 1, 1, 1],
 	);
 	assert.deepEqual(
 		reports.map((report) => report.checks[0]?.title),
 		versions.map(
 			(version) =>
-				`Node running this doctor is unsupported: ${version} (requires >=${MINIMUM_NODE_VERSION}).`,
+				`Node running this doctor is unsupported: ${version} (requires ${NODE_VERSION_RANGE}).`,
 		),
 	);
 });

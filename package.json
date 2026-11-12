@@ -24,7 +24,7 @@
 		"url": "https://github.com/fitchmultz/pi-agent-browser-native/issues"
 	},
 	"engines": {
-		"node": ">=24.21.0"
+		"node": "^24.22.3 || >=26.13.1"
 	},
 	"bin": {
 		"pi-agent-browser-config": "scripts/config.mjs",
@@ -89,6 +89,7 @@
 		"@earendil-works/pi-tui": "1.5.0",
 		"@types/cross-spawn": "6.0.6",
 		"@types/node": "24.19.1",
+		"@types/semver": "7.8.0",
 		"@types/which": "2.0.2",
 		"esbuild": "0.28.2",
 		"eslint-node-test": "1.0.1",
@@ -149,6 +150,7 @@
 	"dependencies": {
 		"cross-spawn": "7.0.6",
 		"path-key": "3.1.1",
+		"semver": "7.8.6",
 		"stream-chain": "4.2.6",
 		"stream-json": "3.7.0",
 		"strip-json-comments": "5.0.3",

@@ -105,7 +105,7 @@ Artifact results show known requested paths separately from reported/resolved lo
 
 ## Fastest way to try it
 
-Use Node 24.21.0 or newer and Pi 1.5.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes unsupported doctor Node versions and Pi hosts below 1.5.0 setup failures through `pi-agent-browser-doctor`. The Node check covers the doctor process; Pi may use a different runtime or executable. There are no compatibility shims for older Pi releases.
+Use Node `^24.22.3 || >=26.13.1` and Pi 1.5.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes unsupported doctor Node versions and Pi hosts below 1.5.0 setup failures through `pi-agent-browser-doctor`. The Node check covers the doctor process; Pi may use a different runtime or executable. There are no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -223,7 +223,7 @@ npm run doctor
 
 The doctor checks:
 
-- the stable Node.js version running the doctor meets the package engine floor (24.21.0)
+- the stable Node.js version running the doctor meets the package engine range (`^24.22.3 || >=26.13.1`)
 - upstream `agent-browser` exists on `PATH`
 - the installed upstream is a stable version at or above the supported 0.35.0 floor; 0.42.0 is the recommended baseline
 - `pi --version` meets the minimum Pi runtime floor for this release; older Pi versions are setup failures
@@ -785,7 +785,7 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
-Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.5.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` so optional-platform lockfile metadata does not drift. Use Node 24.22.3 and Pi 1.5.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
 
 Checkout-only extension smoke test:
 

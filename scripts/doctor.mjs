@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { minVersion, satisfies } from "semver";
 
 import { CAPABILITY_BASELINE_SOURCE } from "./agent-browser-capability-baseline.mjs";
 import { checkPiSources } from "./doctor-sources.mjs";
@@ -36,7 +37,7 @@ function isRecord(value) {
 }
 
 /** @returns {string} */
-function readMinimumNodeVersion() {
+function readNodeVersionRange() {
 	// Keep the doctor runnable on older Node versions so it can diagnose the engine floor.
 	/** @type {unknown} */
 	const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -45,10 +46,11 @@ function readMinimumNodeVersion() {
 	if (typeof nodeRange !== "string" || nodeRange.length === 0) {
 		throw new Error("package.json is missing a valid engines.node range.");
 	}
-	return nodeRange.replace(/^>=/, "");
+	return nodeRange;
 }
 
-export const MINIMUM_NODE_VERSION = readMinimumNodeVersion();
+export const NODE_VERSION_RANGE = readNodeVersionRange();
+export const MINIMUM_NODE_VERSION = minVersion(NODE_VERSION_RANGE)?.version ?? "";
 export const MINIMUM_PI_VERSION = "1.5.0";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 
@@ -221,7 +223,7 @@ function checkNodeVersion(runtime) {
 			title: "Cannot verify a Node.js runtime for this doctor.",
 			lines: [
 				"This doctor is running under a non-Node or unidentified runtime.",
-				`The package requires Node.js >=${MINIMUM_NODE_VERSION}.`,
+				`The package requires Node.js ${NODE_VERSION_RANGE}.`,
 				piRuntimeNote,
 			],
 		};
@@ -232,16 +234,14 @@ function checkNodeVersion(runtime) {
 		return {
 			status: "warn",
 			title: `Could not parse the Node.js version running this doctor: ${version.length > 0 ? version : "<empty>"}.`,
-			lines: [`The package requires Node.js >=${MINIMUM_NODE_VERSION}.`, piRuntimeNote],
+			lines: [`The package requires Node.js ${NODE_VERSION_RANGE}.`, piRuntimeNote],
 		};
 	}
-	// A prerelease does not satisfy the package's stable >= engine range.
-	const supported =
-		match[1] === undefined && versionAtLeast(version, MINIMUM_NODE_VERSION) === true;
+	const supported = satisfies(version, NODE_VERSION_RANGE);
 	if (!supported) {
 		return {
 			status: "fail",
-			title: `Node running this doctor is unsupported: ${version} (requires >=${MINIMUM_NODE_VERSION}).`,
+			title: `Node running this doctor is unsupported: ${version} (requires ${NODE_VERSION_RANGE}).`,
 			lines: [
 				"Run this doctor using a supported stable Node.js version.",
 				piRuntimeNote,

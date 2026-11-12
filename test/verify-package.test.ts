@@ -203,7 +203,7 @@ nodeTest(
 		assert.equal(typeof dependencies["cross-spawn"], "string");
 		assert.equal(typeof dependencies["path-key"], "string");
 		assert.equal(typeof dependencies.which, "string");
-		assert.equal(readRecord(packageJson.engines).node, ">=24.21.0");
+		assert.equal(readRecord(packageJson.engines).node, "^24.22.3 || >=26.13.1");
 		assert.equal(packageJson.packageManager, "npm@12.2.0");
 		const peers = [
 			"@earendil-works/pi-ai",

@@ -15,7 +15,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 
 ## Runtime requirements
 
-- Node.js 24.21.0 or newer.
+- Node.js `^24.22.3 || >=26.13.1`.
 - Pi 1.5.0 or newer.
 - A separate stable `agent-browser` installation, version 0.35.0 or newer, available on `PATH`.
 
