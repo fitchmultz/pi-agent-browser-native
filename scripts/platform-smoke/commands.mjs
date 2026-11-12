@@ -1,6 +1,5 @@
-/** Native POSIX/PowerShell platform command rendering; every required gate contributes to the final exit. */
+/** Native POSIX platform command rendering; every required gate contributes to the final exit. */
 import { CAPABILITY_BASELINE } from "../agent-browser-capability-baseline.mjs";
-import { platformFor } from "./suite-evidence.mjs";
 
 /** @typedef {{readonly path: string; readonly sha256: string}} ReleaseCandidate */
 
@@ -9,28 +8,11 @@ function shellQuote(value) {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/** @param {string} value */
-function psSingleQuote(value) {
-	return `'${value.replace(/'/g, "''")}'`;
-}
-
-/** @param {string} targetName
- * @param {string} packageName
+/** @param {string} packageName
  * @param {string} nodeValidationVersion
  * @param {ReleaseCandidate} [candidate]
  */
-export function buildPlatformBuildCommand(
-	targetName,
-	packageName,
-	nodeValidationVersion,
-	candidate,
-) {
-	if (platformFor(targetName) === "powershell") {
-		const candidateArgs = candidate
-			? ` -CandidatePath ${psSingleQuote(candidate.path)} -CandidateSha256 ${psSingleQuote(candidate.sha256)}`
-			: "";
-		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\platform-build-windows.ps1 -PackageName ${psSingleQuote(packageName)} -NodeValidationVersion ${psSingleQuote(nodeValidationVersion)}${candidateArgs}`;
-	}
+export function buildPlatformBuildCommand(packageName, nodeValidationVersion, candidate) {
 	const candidateHash = `node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(process.argv[1])).digest("hex"))' "$PACK_FILE"`;
 	return [
 		`echo "Starting platform-build in $(pwd) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"`,
@@ -94,18 +76,13 @@ export function buildPlatformBuildCommand(
 	].join("\n");
 }
 
-/** @param {string} targetName
- * @param {string} [agentBrowserVersion]
+/** @param {string} [agentBrowserVersion]
  * @param {boolean} [dependenciesReady]
  */
 export function buildBrowserDogfoodCommand(
-	targetName,
 	agentBrowserVersion = CAPABILITY_BASELINE.targetVersion,
 	dependenciesReady = false,
 ) {
-	if (platformFor(targetName) === "powershell") {
-		return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\platform-smoke\\browser-dogfood-windows.ps1 -AgentBrowserVersion ${psSingleQuote(agentBrowserVersion)}${dependenciesReady ? " -SkipNpmCi" : ""}`;
-	}
 	return [
 		`echo "Starting browser-dogfood-smoke in $(pwd) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"`,
 		`RUN_ROOT=".platform-smoke-runs/browser-dogfood-$(date -u +%Y%m%dT%H%M%SZ)-$$"`,

@@ -34,10 +34,10 @@ Commands:
 Package scripts:
   check:platform-smoke       Syntax-check harness scripts and run cheap harness invariant tests
   smoke:platform:ubuntu-image Build the local Ubuntu image used by default
-  smoke:platform:all         Runs doctor first, then required macOS/Ubuntu targets (not optional Windows)
+  smoke:platform:all         Runs doctor first, then required macOS/Ubuntu targets
 
 Targets:
-  macos, ubuntu (required); windows-native (explicit best-effort)
+  macos (Apple Silicon), ubuntu (required)
 
 Suites:
   platform-build             npm ci, npm run verify -- platform-target, npm pack, packed pi install --approve, pi list --approve
@@ -55,7 +55,7 @@ Examples:
   node scripts/platform-smoke.mjs doctor
   node scripts/platform-smoke.mjs run --target macos
   node scripts/platform-smoke.mjs run --target ubuntu --suite platform-build
-  node scripts/platform-smoke.mjs run --target macos,ubuntu,windows-native
+  node scripts/platform-smoke.mjs run --target macos,ubuntu
 
 Environment:
   PLATFORM_SMOKE_CRABBOX              Optional Crabbox binary override; defaults to crabbox on PATH
@@ -64,10 +64,6 @@ Environment:
   PLATFORM_SMOKE_MAC_WORK_ROOT        macOS Crabbox work root
   PLATFORM_SMOKE_MAC_PORT             macOS SSH port; default 22
   PLATFORM_SMOKE_UBUNTU_IMAGE         Ubuntu local-container image; default ${loadedConfig?.ubuntuContainerImage ?? "pi-agent-browser-native-platform:node24-agent-browser<target>"}
-  PLATFORM_SMOKE_WINDOWS_VM           Parallels Windows template VM
-  PLATFORM_SMOKE_WINDOWS_SNAPSHOT     Parallels snapshot name
-  PLATFORM_SMOKE_WINDOWS_USER         Windows SSH user
-  PLATFORM_SMOKE_WINDOWS_WORK_ROOT    Windows work root, for example C:\\crabbox\\pi-agent-browser-native
   PLATFORM_SMOKE_AUTH_ENV             Optional comma-separated secret env names to redact/forward for future live suites
 `);
 }
@@ -128,7 +124,7 @@ function selectedTargets(config, args) {
 					.map((name) => name.trim())
 					.filter(Boolean)
 			: config.requiredTargets;
-	validateNames("target", targets, [...config.requiredTargets, ...(config.optionalTargets ?? [])]);
+	validateNames("target", targets, config.requiredTargets);
 	if (targets.length === 0) {
 		throw new Error("Select at least one target");
 	}

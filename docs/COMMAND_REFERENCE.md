@@ -1162,7 +1162,7 @@ On Android/Termux, follow the [native Android setup](REFERENCE.md#android--termu
 - Lightpanda currently permits one target per browser context; `tab new` can fail. Use separate native sessions for independent pages, or Chrome when the task needs multiple tabs. Do not infer broad authentication/restore parity from a single-origin storage result.
 - Native Lightpanda launch rejects Chrome profiles/extensions, headed mode, launch `--state`, WebGPU, file-access switches, Chromium `--args`, and private CA trust. Native WebMCP currently rejects this engine even though Lightpanda advertises its own WebMCP support. There is no wrapper workaround or automatic Chrome fallback; choose a fresh Chrome launch explicitly when those capabilities are needed.
 - Lightpanda 1.0 enforces CORS by default, so cross-origin page `fetch`/XHR can fail where earlier Lightpanda did not. Preserve that protection; navigation is a separate capability.
-- The 1.0 release provides macOS/Linux x86_64/ARM64 binaries (Linux glibc), not native Windows/Android. Remote CDP or WSL is a separate setup, not native-platform qualification. Telemetry is upstream-owned; `LIGHTPANDA_DISABLE_TELEMETRY=true` opts out.
+- On supported hosts, use the macOS ARM64 or Linux x86_64/ARM64 binaries (Linux glibc). Remote CDP is a separate setup, not native-platform qualification. Telemetry is upstream-owned; `LIGHTPANDA_DISABLE_TELEMETRY=true` opts out.
 
 ### Obscura engine (experimental)
 

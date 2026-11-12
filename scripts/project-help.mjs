@@ -58,7 +58,7 @@ Modes:
   package-pi          Verify package contents plus isolated Pi package smoke.
   lifecycle           Run the tmux-driven configured-source lifecycle harness.
   platform-target     Fast platform-local gate used inside Crabbox smoke targets.
-  platform-smoke      Run required macOS/Ubuntu platform smoke; native Windows is explicit best-effort.
+  platform-smoke      Run required Apple Silicon macOS/Ubuntu platform smoke.
   release             Run default verification, lifecycle, package-pi, and required macOS/Ubuntu platform smoke;
                       lifecycle options reach only its lifecycle step.
 

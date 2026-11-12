@@ -12,7 +12,7 @@ CI qualifies the latest stable official Pi and latest maintained fork `main`, re
 
 Run in an empty HOME with a **short** TMPDIR outside your real home. Long temporary paths can exceed macOS's 103-byte Unix socket limit; keep the fixture's socket safety checks intact. Native lifecycle controls, live upstream help sampling, lifecycle dogfood, and platform qualification remain the separate gates documented below. A Pi-only compatibility run uses no live browser profiles, credentials, or agent-browser fork, and does not certify those external integrations.
 
-For the 0.6.16 compatibility rollout, the owner explicitly waived Windows qualification on 2026-09-21. Windows diagnostics and failures remain visible but nonblocking; this is **not** a Windows full-suite pass. Linux/macOS, declared Node floors, official/fork host and consumer-artifact checks remain required. Known Windows failures and follow-up are tracked in [#191](https://github.com/fitchmultz/pi-agent-browser-native/issues/191); see the [current support evidence](SUPPORT_MATRIX.md#current-0616-rollout).
+Supported platforms are Apple Silicon macOS and Linux. Historical rollout evidence is retained in the [support matrix](SUPPORT_MATRIX.md#current-0616-rollout).
 
 ## Source-of-truth map
 
@@ -733,7 +733,7 @@ npm run verify -- dogfood
 
 That mode clean-builds the package, then drives advanced QA/actions, native batch, screenshot artifact verification, and session close against a deterministic local fixture. It complements, but does not replace, the interactive Pi/tmux release dogfood in [`docs/RELEASE.md`](RELEASE.md#pre-release-checks).
 
-Cross-platform release coverage uses Crabbox to run macOS, Ubuntu Linux, and native Windows target suites; see [`docs/platform-smoke.md`](platform-smoke.md) for the required matrix, standalone coverage (`npm run smoke:platform:all` and per-target `smoke:platform:macos` / `:ubuntu` / `:windows-native`), and artifact/lease inspection. The release gate is:
+Cross-platform release coverage uses Crabbox to run Apple Silicon macOS and Ubuntu Linux target suites; see [`docs/platform-smoke.md`](platform-smoke.md) for the required matrix, standalone coverage (`npm run smoke:platform:all` and per-target `smoke:platform:macos` / `:ubuntu`), and artifact/lease inspection. The release gate is:
 
 ```bash
 npm run doctor
@@ -773,7 +773,7 @@ The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/
 
 The [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) creates a reviewed patch-version PR after changes merge to `main`, then publishes the same version on npm and GitHub using the exact qualified candidate tarball. A version PR opens when a merge changes the package users install; a merge that changes only CI, tests or development tooling ships with the next release.
 
-Check the final source and candidate against [the existing release gates](RELEASE.md#pre-release-checks), including required lifecycle/live-site evidence and artifact checks. Complete enabled reviews and resolve their findings. Apply the documented Windows waiver without claiming a Windows or full composed-gate pass. Workflow validation is not evidence that publication completed on either service.
+Check the final source and candidate against [the existing release gates](RELEASE.md#pre-release-checks), including required lifecycle/live-site evidence and artifact checks. Complete enabled reviews and resolve their findings. Workflow validation is not evidence that publication completed on either service.
 
 Set repository variable `NPM_RELEASE_ENABLED` to anything other than `true` to stop new version and release plans; cancel pending runs separately when needed. Follow the shared procedure to retry an unpublished candidate.
 
@@ -849,7 +849,7 @@ These calls return plain text and stay stateless: the extension does not inject 
 | `docs/CODE_QUALITY.md`                          | Strict lint/formatting policy, checker corrections, scope, and semantic exceptions                                              |
 | `docs/REQUIREMENTS.md`                          | Product requirements and constraints                                                                                            |
 | `docs/RELEASE.md`                               | Release, package, and lifecycle verification workflow                                                                           |
-| `docs/platform-smoke.md`                        | Crabbox macOS, Ubuntu, and native Windows release gate                                                                          |
+| `docs/platform-smoke.md`                        | Crabbox Apple Silicon macOS and Ubuntu release gate                                                                             |
 | `docs/SUPPORT_MATRIX.md`                        | Current upstream support audit and release-readiness matrix                                                                     |
 | `test/`                                         | Wrapper, runtime, presentation, lifecycle, and package tests                                                                    |
 

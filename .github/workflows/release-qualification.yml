@@ -134,7 +134,7 @@ jobs:
       matrix:
         include:
           - target: macos
-            os: macos-15-intel
+            os: macos-latest
           - target: ubuntu
             os: ubuntu-latest
     steps:

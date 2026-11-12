@@ -15,8 +15,6 @@ import {
 	silent,
 	versionAtLeast,
 } from "./doctor-support.mjs";
-import { checkWindows } from "./doctor-windows.mjs";
-export { disposableWindowsAgentBrowserProbe } from "./doctor-windows.mjs";
 
 /** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
 /** @import { DoctorReport } from "./doctor-support.mjs" */
@@ -78,7 +76,6 @@ function checkRequiredProviders(cbox, config, report) {
 	const providersByTarget = new Map([
 		["macos", "ssh"],
 		["ubuntu", "local-container"],
-		["windows-native", "parallels"],
 	]);
 	for (const target of config.requiredTargets) {
 		const provider = providersByTarget.get(target);
@@ -314,13 +311,6 @@ export async function runDoctor(config) {
 	if (config.requiredTargets.includes("macos")) {
 		checkMacSsh(config, packageName, report);
 	}
-	checkWindows({
-		cbox,
-		config,
-		packageName,
-		agentBrowserVersion: settings.agentBrowserVersion,
-		report,
-	});
 	checkArtifactRoot(artifactRoot, report);
 	console.log("\n── Repository hygiene ──");
 	const status = shell("git status --short");

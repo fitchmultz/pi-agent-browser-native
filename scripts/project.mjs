@@ -312,27 +312,18 @@ function commandReferenceSteps() {
 	];
 }
 
-/** @param {NodeJS.Platform} platform
- * @param {boolean} [tap] */
-function contractTestSteps(platform, tap = false) {
-	// The pinned qualifier strips NODE_DEBUG before invoking the repository. Enable
-	// exactly this opt-in channel at the owned child boundary, never a wildcard.
-	const env = platform === "win32" ? { NODE_DEBUG: "pi-agent-browser-policy" } : undefined;
-	// Public CLI export plus native Node avoids CMD interpreting the extglob's
-	// parentheses or splitting an installed package path containing spaces.
+/** @param {boolean} [tap] */
+function contractTestSteps(tap = false) {
 	const cli = fileURLToPath(import.meta.resolve("tsx/cli"));
 	const args = [cli, "--test", ...(tap ? ["--test-reporter=tap"] : [])];
 	return [
-		scriptStep([...args, "test/**/!(*.serial).test.ts"], env, "built"),
-		scriptStep([...args, "--test-concurrency=1", "test/**/*.serial.test.ts"], env, "built"),
+		scriptStep([...args, "test/**/!(*.serial).test.ts"], undefined, "built"),
+		scriptStep([...args, "--test-concurrency=1", "test/**/*.serial.test.ts"], undefined, "built"),
 	];
 }
 
-// Platform selects only the diagnostic policy; executable paths stay host-native.
-// Tests can exercise the Windows policy on Linux without spoofing the native host.
-/** @param {NodeJS.Platform} [platform] */
-export function testSteps(platform = process.platform) {
-	return [buildStep(), ...contractTestSteps(platform, true)];
+export function testSteps() {
+	return [buildStep(), ...contractTestSteps(true)];
 }
 
 function qualitySteps() {
@@ -391,7 +382,6 @@ function platformTargetSteps() {
 				"test/platform-smoke.test.ts",
 				"test/verify-package.test.ts",
 				"test/agent-browser.runtime.test.ts",
-				"test/agent-browser.windows-argv.test.ts",
 			],
 			undefined,
 			"built",
@@ -401,9 +391,8 @@ function platformTargetSteps() {
 }
 
 /** @param {VerifyOptions} options
- * @param {NodeJS.Platform} [platform]
  * @returns {ProjectStep[]} */
-export function verifySteps(options, platform = process.platform) {
+export function verifySteps(options) {
 	validatePassthrough(options.mode, options.passthrough);
 	switch (options.mode) {
 		case "default":
@@ -411,7 +400,7 @@ export function verifySteps(options, platform = process.platform) {
 			return [
 				...qualitySteps(),
 				...typecheckSteps(),
-				...contractTestSteps(platform),
+				...contractTestSteps(),
 				...commandReferenceSteps(),
 			];
 		case "typecheck":
@@ -420,7 +409,7 @@ export function verifySteps(options, platform = process.platform) {
 			return commandReferenceSteps();
 		case "pre-pr":
 			return [
-				...verifySteps({ mode: "default", passthrough: [], showHelp: false }, platform),
+				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
 				...verifySteps({ mode: "package", passthrough: [], showHelp: false }),
 			];
 		case "startup-profile":
@@ -453,7 +442,7 @@ export function verifySteps(options, platform = process.platform) {
 			return [scriptStep(["./scripts/platform-smoke.mjs", ...options.passthrough])];
 		case "release":
 			return [
-				...verifySteps({ mode: "default", passthrough: [], showHelp: false }, platform),
+				...verifySteps({ mode: "default", passthrough: [], showHelp: false }),
 				...verifySteps({ mode: "lifecycle", passthrough: options.passthrough, showHelp: false }),
 				...verifySteps({ mode: "package-pi", passthrough: [], showHelp: false }),
 				scriptStep(["./scripts/platform-smoke.mjs", "doctor"]),

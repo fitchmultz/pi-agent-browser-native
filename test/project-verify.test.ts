@@ -12,7 +12,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import nodeTest, { type TestContext } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
 	docsSteps,
@@ -41,15 +41,6 @@ const DEFAULT_STEPS = [
 function labels(steps: unknown): string[] {
 	return readArray(steps).map((step) => readArray(readRecord(step).args).map(readString).join(" "));
 }
-
-nodeTest(
-	"facade labels retain native CLI paths, including Windows spaces and parenthesized extglobs",
-	() => {
-		const cli = "C:\\Program Files\\tsx (fixture)\\cli.mjs";
-		const glob = "test/**/!(*.serial).test.ts";
-		assert.deepEqual(labels([{ args: [cli, "--test", glob] }]), [`${cli} --test ${glob}`]);
-	},
-);
 
 nodeTest("package lock excludes WorkOS URLs", () => {
 	assert.doesNotMatch(
@@ -145,7 +136,7 @@ nodeTest(
 			"--check .",
 			"--noEmit",
 			"--noEmit -p tsconfig.declarations.json",
-			"--test --test-concurrency=1 test/code-quality*.test.ts test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts test/agent-browser.windows-argv.test.ts",
+			"--test --test-concurrency=1 test/code-quality*.test.ts test/project-verify.test.ts test/platform-smoke.test.ts test/verify-package.test.ts test/agent-browser.runtime.test.ts",
 			"./scripts/check-command-reference-baseline.mjs --check",
 		]);
 
@@ -284,7 +275,6 @@ const TAP_CONTRACT_STEPS = [
 	"--test --test-reporter=tap test/**/!(*.serial).test.ts",
 	"--test --test-reporter=tap --test-concurrency=1 test/**/*.serial.test.ts",
 ];
-const POLICY_DEBUG = { NODE_DEBUG: "pi-agent-browser-policy" };
 
 nodeTest("npm test keeps build, complete parallel TAP and complete serial TAP stages", () => {
 	const pkg = readRecord(JSON.parse(readFileSync("package.json", "utf8")));
@@ -316,37 +306,6 @@ nodeTest("npm test keeps build, complete parallel TAP and complete serial TAP st
 		],
 	);
 });
-
-nodeTest(
-	"Windows test children receive only the exact policy debug override in every composed verification gate",
-	() => {
-		const windows = readArray(testSteps("win32")).map(readRecord);
-		assert.deepEqual(
-			windows.map((step) => step.env),
-			[undefined, POLICY_DEBUG, POLICY_DEBUG],
-		);
-		assert.equal(
-			(["linux", "darwin", "android"] as const).every((platform) =>
-				testSteps(platform).every((step) => step.env === undefined),
-			),
-			true,
-		);
-		const modes = ["default", "quality", "pre-pr", "release"];
-		const contracts = modes.map((mode) =>
-			verifySteps({ mode, passthrough: [], showHelp: false }, "win32").filter((step) =>
-				step.args.includes("--test"),
-			),
-		);
-		assert.deepEqual(
-			contracts.map(labels),
-			modes.map(() => DEFAULT_STEPS.slice(5, 7)),
-		);
-		assert.deepEqual(
-			contracts.map((steps) => steps.map((step) => step.env)),
-			modes.map(() => [POLICY_DEBUG, POLICY_DEBUG]),
-		);
-	},
-);
 
 nodeTest(
 	"the complete test facade rejects filtered paths and options before launching a partial gate",
@@ -429,31 +388,17 @@ assert.equal(process.env.FIXTURE_FAIL_STAGE === "parallel" && ${JSON.stringify(i
 `,
 		);
 	}
-	const facade = pathToFileURL(join(directory, "scripts", "project.mjs")).href;
-	writeFileSync(
-		join(directory, "windows-policy.mjs"),
-		`import {appendFileSync} from "node:fs";
-import {runSteps, testSteps} from ${JSON.stringify(facade)};
-${receipt}
-record("isolated-parent");
-// Exercise only the Windows environment policy on the real host; no native-platform spoof.
-await runSteps(testSteps("win32"));
-`,
-	);
 	return directory;
 }
 
-function runFixture(directory: string, windowsPolicy: boolean, failStage?: string) {
+function runFixture(directory: string, failStage?: string) {
 	// Model the pinned qualifier's loss of outer NODE_DEBUG/NODE_OPTIONS before the owned launcher.
 	const isolatedEnv = Object.fromEntries(
 		Object.entries(process.env).filter(
 			([name]) => !["NODE_DEBUG", "NODE_OPTIONS", "NODE_TEST_CONTEXT"].includes(name.toUpperCase()),
 		),
 	);
-	const entry = windowsPolicy
-		? join(directory, "windows-policy.mjs")
-		: join(directory, "scripts", "project.mjs");
-	const result = spawnSync(process.execPath, [entry, ...(windowsPolicy ? [] : ["test"])], {
+	const result = spawnSync(process.execPath, [join(directory, "scripts", "project.mjs"), "test"], {
 		cwd: directory,
 		env: { ...isolatedEnv, FIXTURE_FAIL_STAGE: failStage },
 		encoding: "utf8",
@@ -511,48 +456,25 @@ function assertCompleteFixtureCalls(
 	);
 }
 
-nodeTest(
-	"real facade subprocess restores exact Windows policy debug after isolation and runs all TAP contracts",
-	(t) => {
-		const { result, calls } = runFixture(facadeFixture(t), true);
-		assert.equal(result.status, 0, result.stdout + result.stderr);
-		assert.deepEqual(calls[0], {
-			stage: "isolated-parent",
-			args: [],
-			debug: null,
-			nodeOptions: null,
-		});
-		assert.match(result.stdout, /# Subtest: fixture-parallel-flat/, result.stdout + result.stderr);
-		assertCompleteFixtureCalls(calls.slice(1), "pi-agent-browser-policy");
-		assert.match(result.stdout, /# PI-AGENT-BROWSER-POLICY [0-9]+: parallel-flat/);
-		assert.match(result.stdout, /# PI-AGENT-BROWSER-POLICY [0-9]+: serial-nested/);
-		assert.doesNotMatch(result.stdout + result.stderr, /UNEXPECTED_BROAD_DEBUG/);
-		assert.equal((result.stdout.match(/TAP version 13/g) ?? []).length, 2);
-	},
-);
-
 nodeTest("npm test's actual facade command runs the same complete ordered contract gate", (t) => {
-	const { result, calls } = runFixture(facadeFixture(t), false);
+	const { result, calls } = runFixture(facadeFixture(t));
 	assert.equal(result.status, 0, result.stdout + result.stderr);
-	assertCompleteFixtureCalls(
-		calls,
-		process.platform === "win32" ? "pi-agent-browser-policy" : null,
-	);
+	assertCompleteFixtureCalls(calls, null);
 });
 
 nodeTest(
 	"a real failed parallel TAP child propagates failure while serial contracts still run",
 	(t) => {
-		const { result, calls } = runFixture(facadeFixture(t), true, "parallel");
+		const { result, calls } = runFixture(facadeFixture(t), "parallel");
 		assert.equal(result.status, 1);
 		assert.match(result.stdout, /not ok .*fixture-parallel/);
 		assert.match(result.stderr, /exited with code 1/);
-		assertCompleteFixtureCalls(calls.slice(1), "pi-agent-browser-policy");
+		assertCompleteFixtureCalls(calls, null);
 	},
 );
 
 nodeTest("a real failed build preserves its exit status and blocks dependent tests", (t) => {
-	const { result, calls } = runFixture(facadeFixture(t), false, "build");
+	const { result, calls } = runFixture(facadeFixture(t), "build");
 	assert.equal(result.status, 23);
 	assert.match(result.stderr, /exited with code 23/);
 	assert.match(result.stderr, /Blocked by failed build/);
