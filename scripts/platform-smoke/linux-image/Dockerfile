@@ -2,7 +2,7 @@
 # Build with npm run smoke:platform:ubuntu-image to check the latest stock
 # agent-browser against the audited capability baseline.
 
-FROM node:24-bookworm
+FROM node:24.22.3-bookworm
 
 ARG AGENT_BROWSER_VERSION
 

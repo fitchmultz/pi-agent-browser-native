@@ -13,7 +13,7 @@ Native `pi` integration of `agent-browser` as a `pi` tool.
 - The primary UX is the agent invoking the native tool directly, not a slash-command-heavy manual workflow.
 - Do **not** overengineer or solve hypothetical problems that do not exist in observed behavior.
 - Do **not** add a reusable named "browser recipe" runtime layer on top of codemode scripts, advanced tools, or native batch without new dogfood evidence and an explicit design pass; the current no-adopt decision and revisit criteria live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#no-reusable-recipe-layer-yet) and [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md).
-- Require Node 24.21.0+ and Pi 1.5.0+ for this contract; retain locked development dependencies as reproducible snapshots, keep optional runtime peers wildcard, and qualify the latest stable official Pi and latest maintained fork main independently. Resolve version/commit once per workflow run and retain exact SDK/CLI evidence; never use the support floor or locked snapshot as a validation target. Do not activate the Pi-1.5 package on pre-1.5 sessions before the coordinated runtime cutover.
+- Require Node `^24.22.3 || >=26.13.1` and Pi 1.5.0+ for this contract; retain locked development dependencies as reproducible snapshots, keep optional runtime peers wildcard, and qualify the latest stable official Pi and latest maintained fork main independently. Resolve version/commit once per workflow run and retain exact SDK/CLI evidence; never use the support floor or locked snapshot as a validation target. Do not activate the Pi-1.5 package on pre-1.5 sessions before the coordinated runtime cutover.
 - Thoroughly check official `pi` docs/examples/source behavior before inventing bespoke integration patterns. Prefer an official `pi` mechanism whenever one exists.
 - Prioritize the global install path first. Most users will install this extension globally, not as a project-local extension.
 - Keep the local extension-side documentation good enough that an agent can use the tool without relying on direct `agent-browser` binary help; when upstream `agent-browser` changes, update the repo-readable command reference, prompt guidance, README/docs, and any relevant tests in the same work.
@@ -230,7 +230,7 @@ Before calling the first implementation usable, verify at minimum:
 
 ## Cursor Cloud
 
-- Node 24.21.0 and npm 12.2.0 are installed in `/usr/local/bin`. Login shells prepend that directory so it is preferred over the agent runtime Node and nvm.
+- Use Node 24.22.3 or newer within 24.x and the npm version in `package.json`. Check `command -v node` and `node --version` in the actual login shell before validation: `/usr/local/bin` can override the agent runtime Node or nvm. If it selects an older runtime, select a patched Node before running the gates; do not assume the cloud image already has it.
 - Upstream `agent-browser` is global, at the version in `scripts/agent-browser-target.mjs` (currently 0.42.0). Chrome for Testing is installed with `agent-browser install`. It is not an npm dependency of this package.
 - There is no dev server. `npm run verify` is the local gate. `npm run doctor` checks its own Node floor, the Pi floor, and the agent-browser baseline.
 

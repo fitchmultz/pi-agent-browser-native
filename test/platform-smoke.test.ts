@@ -132,10 +132,7 @@ nodeTest(
 		);
 		assert.deepEqual(missingGraphicsDependencies, []);
 		assert.equal(config.packageName, "pi-agent-browser-native");
-		assert.equal(
-			config.nodeValidationVersion,
-			readString(readRecord(packageJson.engines).node).replace(/^>=/, ""),
-		);
+		assert.equal(config.nodeValidationVersion, "24.22.3");
 		assert.ok(config.ubuntuContainerImage.includes(`agent-browser${config.agentBrowserVersion}`));
 		assert.match(config.agentBrowserVersion, /^\d+\.\d+\.\d+$/);
 		assert.deepEqual(config.requiredSuites, ["platform-build", "browser-dogfood-smoke"]);
@@ -564,7 +561,7 @@ nodeTest(
 				throw new Error("controlled SSH unavailable");
 			}
 			if (text.startsWith("ssh ")) {
-				return Buffer.from(`v24.21.0 agent-browser ${CAPABILITY_BASELINE.targetVersion}`);
+				return Buffer.from(`v24.22.3 agent-browser ${CAPABILITY_BASELINE.targetVersion}`);
 			}
 			if (text.startsWith("docker info")) {
 				if (missingDocker) {
@@ -574,7 +571,7 @@ nodeTest(
 			}
 			const versions = new Map<string, string>(
 				Object.entries({
-					"node --version": "v24.21.0",
+					"node --version": "v24.22.3",
 					"npm --version": "12.2.0",
 					"git --version": "2.50.0",
 					"tar --version": "1.0",

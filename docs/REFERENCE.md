@@ -105,7 +105,7 @@ Artifact results show known requested paths separately from reported/resolved lo
 
 ## Fastest way to try it
 
-Use Node 24.21.0 or newer and Pi 1.5.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes unsupported doctor Node versions and Pi hosts below 1.5.0 setup failures through `pi-agent-browser-doctor`. The Node check covers the doctor process; Pi may use a different runtime or executable. There are no compatibility shims for older Pi releases.
+Use Node `^24.22.3 || >=26.13.1` and Pi 1.5.0 or newer. This package keeps optional Pi core imports as wildcard `peerDependencies` because Pi package docs require the host Pi install to provide those packages, retains a locked Pi development snapshot while qualifying the latest official/fork graphs, and makes unsupported doctor Node versions and Pi hosts below 1.5.0 setup failures through `pi-agent-browser-doctor`. The Node check covers the doctor process; Pi may use a different runtime or executable. There are no compatibility shims for older Pi releases.
 
 Install upstream `agent-browser` first and make sure it is on `PATH`:
 
@@ -135,7 +135,7 @@ Published precompiled npm packages do not require a compiler at runtime.
 
 Android support uses an Android-native `agent-browser` source build with Termux's system Chromium, not Chrome for Testing. The packaged Linux-musl executable can launch Chromium but fail hostname resolution for CLI HTTP requests such as `read` and `doctor`'s CDN probe. Building for Android fixes those requests without changing TLS verification or the wrapper's HTTP behavior.
 
-The verified source revision is [`agent-browser` 0.41.1 with the native Android repair](https://github.com/fitchmultz/agent-browser/pull/2), commit `500be1a391ea3e870dff0893e310011ba634468c`. There is no published Android binary; [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks that packaging. The [native Android build guide](https://github.com/fitchmultz/agent-browser/blob/500be1a391ea3e870dff0893e310011ba634468c/docs/content/docs/installation.mdx#androidtermux) explains the build requirements and dashboard assets. Use Node.js 24+, native pnpm 11+, and Termux's build tools:
+The verified source revision is [`agent-browser` 0.41.1 with the native Android repair](https://github.com/fitchmultz/agent-browser/pull/2), commit `500be1a391ea3e870dff0893e310011ba634468c`. There is no published Android binary; [vercel-labs/agent-browser#1587](https://github.com/vercel-labs/agent-browser/issues/1587) tracks that packaging. The [native Android build guide](https://github.com/fitchmultz/agent-browser/blob/500be1a391ea3e870dff0893e310011ba634468c/docs/content/docs/installation.mdx#androidtermux) explains the build requirements and dashboard assets. Use Node.js 24.22.3 or newer in 24.x, native pnpm 11+, and Termux's build tools:
 
 ```bash
 pkg install x11-repo
@@ -223,7 +223,7 @@ npm run doctor
 
 The doctor checks:
 
-- the stable Node.js version running the doctor meets the package engine floor (24.21.0)
+- the stable Node.js version running the doctor meets the package engine range (`^24.22.3 || >=26.13.1`)
 - upstream `agent-browser` exists on `PATH`
 - the installed upstream is a stable version at or above the supported 0.35.0 floor; 0.42.0 is the recommended baseline
 - `pi --version` meets the minimum Pi runtime floor for this release; older Pi versions are setup failures
@@ -785,7 +785,7 @@ Install upstream `agent-browser`, then install dependencies:
 npm install
 ```
 
-Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` so optional-platform lockfile metadata does not drift. Use Node 24.21.0 and Pi 1.5.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
+Use the npm version declared in `package.json` `packageManager` when refreshing `package-lock.json` so optional-platform lockfile metadata does not drift. Use Node 24.22.3 and Pi 1.5.0 or newer for lifecycle and interactive browser smokes; locked Pi devDependencies are reproducible build snapshots, not qualification targets. CI selects the once-resolved latest official graph for native lifecycle and package smoke, and independently qualifies the latest maintained fork. See [Environment and automation pitfalls](RELEASE.md#environment-and-automation-pitfalls) in `docs/RELEASE.md`.
 
 Checkout-only extension smoke test:
 

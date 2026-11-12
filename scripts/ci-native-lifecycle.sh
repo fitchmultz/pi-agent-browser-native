@@ -6,7 +6,7 @@ if [[ ${1:-} == -h || ${1:-} == --help ]]; then
     'Usage: ci-native-lifecycle.sh setup|verify ABSOLUTE_ROOT' \
     'Run model-free, real-browser public Pi lifecycle checks against the' \
     'latest stable official Pi graph selected in ROOT/extension.' \
-    'Requires Node 24.21.0, a non-root user, private HOME=ROOT/home, and a' \
+    'Requires Node 24.22.3, a non-root user, private HOME=ROOT/home, and a' \
     'ROOT/extension source checkout and ROOT/automation pinned helpers.' \
     'OFFICIAL_VERSION freezes the version resolved once by CI; blank resolves latest.' \
     'Example: env -i HOME=/tmp/ci/home PATH="$PATH" bash scripts/ci-native-lifecycle.sh setup /tmp/ci' \
@@ -22,7 +22,7 @@ mode=$1
 root=$2
 cd "$root/extension"
 [[ $(id -u) != 0 ]]
-[[ $(node --version) == v24.21.0 ]]
+[[ $(node --version) == v24.22.3 ]]
 [[ $HOME == "$root/home" && $PWD != "$HOME"/* ]]
 mkdir -p "$root/logs"
 export PATH="$root/browser/bin:$PATH"

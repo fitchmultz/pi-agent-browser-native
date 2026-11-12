@@ -987,7 +987,7 @@ Maintain these records in the repository's adopted copy. Supporting tests and re
 ### Adoption record
 
 Repository: `fitchmultz/pi-agent-browser-native`. Adopted standard: v5.2.
-The runtime floor is Node 24.21.0 and Pi 1.5.0. `package.json` selects npm 12.2.0.
+The runtime range is Node `^24.22.3 || >=26.13.1` and Pi 1.5.0 or newer. `package.json` selects npm 12.2.0.
 The qualification host uses Node 24.22.1 and npm 12.2.1 on macOS arm64.
 Android can run Oxfmt, but does not supply the locked native TypeScript and
 Oxlint checker binaries used for this qualification.
