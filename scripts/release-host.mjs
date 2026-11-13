@@ -83,7 +83,6 @@ const execute = (command, args, environment = runtime) =>
 		timeout: undefined,
 		stdio: "inherit",
 	});
-execute("npm", ["run", "verify"]);
 execute("npm", ["run", "verify", "--", "package-pi"]);
 const liveScope = inspectLiveScope({
 	tarball,

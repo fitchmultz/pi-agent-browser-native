@@ -157,11 +157,10 @@ nodeTest(
 		assert.ok(
 			qualityJob.indexOf("npm run quality:mutations") < qualityJob.indexOf("git diff --exit-code"),
 		);
-		const releaseQualityJob = readString(
-			readString(npmReleaseWorkflow.split("\n  quality:\n")[1]).split("\n  prepare:\n")[0],
-		);
-		assert.match(releaseQualityJob, /uses: \.\/\.github\/workflows\/code-quality\.yml/u);
-		assert.doesNotMatch(releaseQualityJob, /mutations:\s*false/u);
+		assert.doesNotMatch(npmReleaseWorkflow, /\n  quality:\n/u);
+		assert.doesNotMatch(npmReleaseWorkflow, /\n  checks:\n/u);
+		assert.doesNotMatch(npmReleaseWorkflow, /\n  native-lifecycle:\n/u);
+		assert.match(npmReleaseWorkflow, /\n    needs: \[plan, prepare, candidate\]\n/u);
 	},
 );
 
