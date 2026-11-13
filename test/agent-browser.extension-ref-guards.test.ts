@@ -2655,13 +2655,14 @@ if (args.includes("snapshot")) {
   count += 1;
   fs.writeFileSync(statePath, JSON.stringify({ snapshots: count }));
   const name = count === 1 ? "Old target before rerender" : "New target after rerender";
+  const row = count === 1 ? "Blue mug" : "Red mug";
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://same.example/fixture",
-    refs: { e1: { role: "button", name } },
-    snapshot: '- button "' + name + '" [ref=e1]'
+    refs: { e1: { role: "button", name }, e2: { role: "button", name: "" } },
+    snapshot: '- button "' + name + '" [ref=e1]\\n- button [ref=e2] hint="icon:icon-trash; in:' + row + '"'
   } }));
 } else if (args.includes("click")) {
-  process.stdout.write(JSON.stringify({ success: true, data: { clicked: "unexpected" } }));
+  process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
 } else {
   process.stdout.write(JSON.stringify({ success: true, data: "ok" }));
 }`,
@@ -2687,6 +2688,22 @@ if (args.includes("snapshot")) {
 						args: ["snapshot", "-i"],
 					});
 					assert.equal(snapshot.isError, false);
+					assert.equal(
+						readRecord(readRecord(readRecord(snapshot.details).refSnapshot).refs).e2 === undefined
+							? undefined
+							: readRecord(readRecord(readRecord(readRecord(snapshot.details).refSnapshot).refs).e2)
+									.name,
+						"",
+					);
+
+					const hintedValue = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "text", "@e2"],
+					});
+					assert.equal(
+						hintedValue.isError,
+						false,
+						readString(readRecord(hintedValue.content[0]).text),
+					);
 
 					const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["batch"],
@@ -2713,10 +2730,15 @@ if (args.includes("snapshot")) {
 
 					const invocations = await readInvocationLog(logPath);
 					assert.equal(invocations.filter((entry) => entry.args.includes("batch")).length, 0);
-					assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 2);
-					assert.deepEqual(
-						invocations.map((entry) => entry.idleTimeout),
-						["1234", "1234", "1234"],
+					assert.equal(
+						invocations.filter((entry) => entry.args.includes("get") && entry.args.includes("@e2"))
+							.length,
+						1,
+					);
+					assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 3);
+					assert.equal(
+						invocations.every((entry) => entry.idleTimeout === "1234"),
+						true,
 					);
 				},
 			);
