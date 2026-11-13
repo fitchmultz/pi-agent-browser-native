@@ -55,7 +55,6 @@ jobs:
     with:
       automation-ref: e007829ba45938fbb3bdab83e5152771369bb656 # main
       source-ref: ${{ github.sha }}
-      waived-platforms: false
       official-version: ${{ needs.resolve.outputs.official-version }}
       fork-ref: ${{ needs.resolve.outputs.fork-ref }}
 
