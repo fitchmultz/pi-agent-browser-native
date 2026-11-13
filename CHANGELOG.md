@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.9.28 - 2026-11-13
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Supersedes unpublished 0.9.27 from 8340b006b8fd1a46eb407fb7b26f23cd7ae4735d. Includes all changes since v0.9.26; the original release records remain unchanged.
+
+- fix(release): build source dist before release-host package and lifecycle checks (#430) ([6b10356](https://github.com/fitchmultz/pi-agent-browser-native/commit/6b10356ec47e028a91418af4cfff29da90939f14))
+
+### What's Changed
+
+- feat: parallelize quality mutation controls and adopt single-pass release by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/429
+- fix(release): build source dist before release-host package and lifecycle checks by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/430
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.26...v0.9.28
+
 ## 0.9.27 - 2026-11-13
 
 <!-- npm-release:unreleased:start -->
