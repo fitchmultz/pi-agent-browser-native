@@ -107,27 +107,21 @@ class BrowserInputCompiler {
 	}
 
 	private projectModes(): ResolvedAgentBrowserInputModeFields {
-		const compiledJob = this.qa.compiled;
-		const redactedCompiledJob = redactCompiledBatch(compiledJob);
+		const compiledQaPreset = this.qa.compiled;
 		const compiledSemanticAction = this.semanticAction.compiled;
 		return {
 			compiledElectron: this.electron.compiled,
 			compiledGeneratedBatch:
-				this.networkSourceLookup.compiled ?? this.sourceLookup.compiled ?? compiledJob,
-			compiledJob,
+				this.networkSourceLookup.compiled ?? this.sourceLookup.compiled ?? compiledQaPreset,
 			compiledNetworkSourceLookup: this.networkSourceLookup.compiled,
-			compiledQaPreset: this.qa.compiled,
+			compiledQaPreset,
 			compiledSemanticAction,
 			compiledSourceLookup: this.sourceLookup.compiled,
 			redactedCompiledElectron: redactCompiledElectron(this.electron.compiled),
-			redactedCompiledJob,
 			redactedCompiledNetworkSourceLookup: redactCompiledNetworkSourceLookup(
 				this.networkSourceLookup.compiled,
 			),
-			redactedCompiledQaPreset:
-				compiledJob !== undefined && redactedCompiledJob !== undefined
-					? { ...redactedCompiledJob, checks: compiledJob.checks }
-					: undefined,
+			redactedCompiledQaPreset: redactCompiledBatch(compiledQaPreset),
 			redactedCompiledSemanticAction:
 				compiledSemanticAction === undefined
 					? undefined
@@ -276,7 +270,6 @@ class BrowserInputCompiler {
 			redactedCompiledNetworkSourceLookup,
 			redactedCompiledSourceLookup,
 			redactedCompiledQaPreset,
-			redactedCompiledJob,
 		} = this.modes;
 		if (
 			compiledNetworkSourceLookup !== undefined &&
@@ -301,18 +294,12 @@ class BrowserInputCompiler {
 				status: "valid",
 			};
 		}
-		if (
-			compiledQaPreset !== undefined &&
-			redactedCompiledJob !== undefined &&
-			redactedCompiledQaPreset !== undefined
-		) {
+		if (compiledQaPreset !== undefined && redactedCompiledQaPreset !== undefined) {
 			return {
 				...base,
 				compiledGeneratedBatch: compiledQaPreset,
-				compiledJob: compiledQaPreset,
 				compiledQaPreset,
 				kind: "qa",
-				redactedCompiledJob,
 				redactedCompiledQaPreset,
 				status: "valid",
 			};
@@ -387,7 +374,7 @@ export function buildValidationFailureResult(input: ResolvedAgentBrowserInvalidI
 		details: {
 			args: input.redactedArgs,
 			compiledElectron: input.redactedCompiledElectron,
-			compiledJob: input.redactedCompiledJob,
+			compiledJob: input.redactedCompiledQaPreset,
 			compiledQaPreset: input.redactedCompiledQaPreset,
 			compiledSourceLookup: input.redactedCompiledSourceLookup,
 			compiledNetworkSourceLookup: input.redactedCompiledNetworkSourceLookup,

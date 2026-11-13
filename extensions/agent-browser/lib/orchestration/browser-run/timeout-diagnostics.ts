@@ -4,7 +4,7 @@ import { setTimeout as sleepMs } from "node:timers/promises";
 
 import { isOpenNavigationCommand } from "../../command-taxonomy.js";
 import { isBrowserIndependentRead } from "../../command-policy.js";
-import type { CompiledAgentBrowserJob } from "../../input-modes/types.js";
+import type { CompiledAgentBrowserQaPreset } from "../../input-modes/types.js";
 import { redactInvocationArgs, redactSensitiveText } from "../../runtime-redaction.js";
 import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
 import { getExplicitArtifactDestination } from "./artifact-paths.js";
@@ -26,7 +26,7 @@ interface PlannedTimeoutStep {
 
 interface TimeoutDiagnosticOptions {
 	readonly commandTokens: readonly string[];
-	readonly compiledJob?: CompiledAgentBrowserJob | undefined;
+	readonly compiledQaPreset?: CompiledAgentBrowserQaPreset | undefined;
 	readonly cwd: string;
 	readonly operationCwd?: string | undefined;
 	readonly namespace?: string | undefined;
@@ -35,8 +35,8 @@ interface TimeoutDiagnosticOptions {
 }
 
 function getTimeoutProgressSteps(options: TimeoutDiagnosticOptions): TimeoutProgressStep[] {
-	if (options.compiledJob) {
-		return options.compiledJob.steps.map((step, index): TimeoutProgressStep => ({
+	if (options.compiledQaPreset) {
+		return options.compiledQaPreset.steps.map((step, index): TimeoutProgressStep => ({
 			args: step.args,
 			generatedFrom: step.generatedFrom,
 			index: index + 1,

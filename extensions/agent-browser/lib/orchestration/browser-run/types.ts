@@ -9,7 +9,6 @@ import type {
 	AgentBrowserQaPresetAnalysis,
 	AgentBrowserSourceLookupAnalysis,
 	CompiledAgentBrowserElectron,
-	CompiledAgentBrowserJob,
 	CompiledAgentBrowserNetworkSourceLookup,
 	CompiledAgentBrowserQaPreset,
 	CompiledAgentBrowserSemanticAction,
@@ -70,14 +69,12 @@ export type BrowserRunContext = Readonly<{
 
 export type BrowserRunInputFields = Readonly<{
 	compiledElectron?: CompiledAgentBrowserElectron;
-	compiledJob?: CompiledAgentBrowserJob;
 	compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
 	compiledQaPreset?: CompiledAgentBrowserQaPreset;
 	compiledSemanticAction?: CompiledAgentBrowserSemanticAction;
 	compiledSourceLookup?: CompiledAgentBrowserSourceLookup;
 	redactedArgs: readonly string[];
 	redactedCompiledElectron?: CompiledAgentBrowserElectron;
-	redactedCompiledJob?: CompiledAgentBrowserJob;
 	redactedCompiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup;
 	redactedCompiledQaPreset?: CompiledAgentBrowserQaPreset;
 	redactedCompiledSemanticAction?: CompiledAgentBrowserSemanticAction;
@@ -234,7 +231,6 @@ export type PreparedBrowserRun = Readonly<{
 	providerLaunch: boolean;
 	commandTokens: readonly string[];
 	compiledElectron?: CompiledAgentBrowserElectron | undefined;
-	compiledJob?: CompiledAgentBrowserJob | undefined;
 	compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup | undefined;
 	compiledQaPreset?: CompiledAgentBrowserQaPreset | undefined;
 	compiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
@@ -257,7 +253,6 @@ export type PreparedBrowserRun = Readonly<{
 	processTimeoutMs?: number | undefined;
 	redactedArgs: readonly string[];
 	redactedCompiledElectron?: CompiledAgentBrowserElectron | undefined;
-	redactedCompiledJob?: CompiledAgentBrowserJob | undefined;
 	redactedCompiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup | undefined;
 	redactedCompiledQaPreset?: CompiledAgentBrowserQaPreset | undefined;
 	redactedCompiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
@@ -371,7 +366,6 @@ export type FinalResultInput = Readonly<{
 	recordingDependencyWarning?: RecordingDependencyWarning | undefined;
 	redactedArgs: readonly string[];
 	redactedCompiledElectron?: CompiledAgentBrowserElectron | undefined;
-	redactedCompiledJob?: CompiledAgentBrowserJob | undefined;
 	redactedCompiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup | undefined;
 	redactedCompiledQaPreset?: CompiledAgentBrowserQaPreset | undefined;
 	redactedCompiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
