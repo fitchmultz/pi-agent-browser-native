@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recommend agent-browser 0.43.0 and document native control hints, Modern Web Guidance, and high-density recording.
+
 ## 0.9.24 - 2026-11-12
 
 <!-- npm-release:unreleased:start -->

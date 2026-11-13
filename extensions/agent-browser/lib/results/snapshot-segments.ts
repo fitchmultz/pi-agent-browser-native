@@ -111,6 +111,18 @@ function parseSnapshotHeadingLevel(text: string): number | undefined {
 	return level !== undefined && level.length > 0 ? Number(level) : undefined;
 }
 
+function parseSnapshotLineName(trimmed: string): string {
+	const nameMatch = /^[-*]\s+[^\s"]+\s+"((?:\\.|[^"\\])*)"/.exec(trimmed);
+	if (!nameMatch) {
+		return "";
+	}
+	try {
+		return normalizeWhitespace(String(JSON.parse(`"${nameMatch[1] ?? ""}"`)));
+	} catch {
+		return normalizeWhitespace(nameMatch[1] ?? "");
+	}
+}
+
 export function parseSnapshotLines(snapshot: string): SnapshotLine[] {
 	return snapshot
 		.split("\n")
@@ -119,7 +131,7 @@ export function parseSnapshotLines(snapshot: string): SnapshotLine[] {
 			const trimmed = raw.trimStart();
 			const depth = Math.floor((raw.match(/^\s*/)?.[0].length ?? 0) / 2);
 			const role = trimmed.match(/^[-*]\s+([^\s"]+)/)?.[1] ?? "unknown";
-			const name = normalizeWhitespace(trimmed.match(/"([^"]*)"/)?.[1] ?? "");
+			const name = parseSnapshotLineName(trimmed);
 			const ref = trimmed.match(/\bref=([^,\]\s]+)/)?.[1];
 			return {
 				depth,
