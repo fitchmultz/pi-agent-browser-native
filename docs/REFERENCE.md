@@ -771,7 +771,7 @@ The upstream browser engine remains [`agent-browser`](https://agent-browser.dev/
 
 ## Automatic npm releases (maintainers)
 
-The [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) creates a reviewed patch-version PR after changes merge to `main`, then publishes the same version on npm and GitHub using the exact qualified candidate tarball. A version PR opens when a merge changes the package users install; a merge that changes only CI, tests or development tooling ships with the next release.
+The [shared release procedure](https://github.com/fitchmultz/.github#automatic-npm-releases) commits a GitHub-signed patch-version update directly onto `main` when a merge changes the package users install, then qualifies and publishes that exact candidate tarball to npm and GitHub. A merge that changes only CI, tests, or development tooling ships with the next release.
 
 Check the final source and candidate against [the existing release gates](RELEASE.md#pre-release-checks), including required lifecycle/live-site evidence and artifact checks. Complete enabled reviews and resolve their findings. Workflow validation is not evidence that publication completed on either service.
 

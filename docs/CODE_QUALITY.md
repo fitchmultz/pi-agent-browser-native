@@ -307,9 +307,8 @@ installed upstream browser target, runs `npm run quality` on ordinary source and
 documentation pull requests, and runs `npm run quality:mutations` when lint,
 formatter, or compiler configs, `package.json`, `package-lock.json`, `scripts/`,
 `.github/workflows/`, or quality-probe tests change, on default manual dispatch,
-and during release qualification.
-It checks that verification leaves maintained artifacts unchanged. The release workflow
-requires quality alongside the separate host and platform checks.
+and on workflow-call invocations.
+It checks that verification leaves maintained artifacts unchanged.
 
 A clean lint result is one result, not delivery. Acceptance also requires scope,
 compiler projects, formatting, tests, build, generated docs, required runtime checks,

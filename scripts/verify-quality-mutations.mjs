@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
 	closeSync,
 	cpSync,
@@ -11,15 +11,20 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
 /** @typedef {{name: string, file: string, text?: string, stage: (label: string) => boolean, diagnostic: RegExp, evidencePath?: string}} QualityMutation */
+/** @typedef {{status: number, output: string}} ChildResult */
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const excluded = new Set([".git", "node_modules", "dist", ".artifacts", ".crabbox", ".cueloop"]);
+const retainedMutationTests = new Set([
+	"test/code-quality.test.ts",
+	"test/agent-browser.prompt-policy.serial.test.ts",
+]);
 /** @param {string} label */
 const lintStage = (label) => label.endsWith("scripts/code-quality.mjs lint");
 const testCommand =
@@ -85,28 +90,71 @@ function forLog(text) {
 	);
 }
 
-/** @param {string} directory @param {readonly string[]} args */
+/** @param {string} file */
+function includeInMutationCopy(file) {
+	const rel = path.relative(root, file).replaceAll("\\", "/");
+	if (rel === "") {
+		return true;
+	}
+	const [top] = rel.split("/");
+	if (top !== undefined && excluded.has(top)) {
+		return false;
+	}
+	if (rel.startsWith("test/") && rel.endsWith(".test.ts")) {
+		return retainedMutationTests.has(rel);
+	}
+	return true;
+}
+
+/** @param {string} directory @param {readonly string[]} args @returns {Promise<ChildResult>} */
 function runNode(directory, args) {
-	const logs = mkdtempSync(path.join(tmpdir(), "piab-quality-output-"));
-	const log = path.join(logs, "output.txt");
-	const fd = openSync(log, "w");
-	try {
+	return new Promise((resolve, reject) => {
+		const logs = mkdtempSync(path.join(tmpdir(), "piab-quality-output-"));
+		const log = path.join(logs, "output.txt");
+		const fd = openSync(log, "w");
+		/** @type {string | undefined} */
+		let cachedOutput;
+		let settled = false;
+		const cleanup = () => {
+			if (cachedOutput === undefined) {
+				closeSync(fd);
+				cachedOutput = stripVTControlCharacters(readFileSync(log, "utf8"));
+				rmSync(logs, { recursive: true, force: true });
+			}
+			return cachedOutput;
+		};
 		// One native descriptor preserves stage boundaries across stdout and stderr.
-		const result = spawnSync(process.execPath, args, {
+		const child = spawn(process.execPath, args, {
 			cwd: directory,
-			timeout: 1_200_000,
 			stdio: ["ignore", fd, fd],
 		});
-		const output = stripVTControlCharacters(readFileSync(log, "utf8"));
-		if (result.error !== undefined || result.signal !== null || result.status === null) {
-			console.error(forLog(output));
-			throw result.error ?? new Error(`Quality child did not complete: ${String(result.signal)}`);
-		}
-		return { status: result.status, output };
-	} finally {
-		closeSync(fd);
-		rmSync(logs, { recursive: true, force: true });
-	}
+		const timer = setTimeout(() => {
+			child.kill("SIGTERM");
+		}, 1_200_000);
+		child.on("error", (error) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			clearTimeout(timer);
+			console.error(forLog(cleanup()));
+			reject(error);
+		});
+		child.on("close", (status, signal) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			clearTimeout(timer);
+			const output = cleanup();
+			if (signal !== null || status === null) {
+				console.error(forLog(output));
+				reject(new Error(`Quality child did not complete: ${String(signal)}`));
+				return;
+			}
+			resolve({ status, output });
+		});
+	});
 }
 
 /** @param {string} directory */
@@ -115,7 +163,7 @@ function acceptance(directory) {
 }
 
 /** @param {string} directory @param {QualityMutation} mutation */
-function applyMutation(directory, mutation) {
+async function applyMutation(directory, mutation) {
 	const file = path.join(directory, mutation.file);
 	if (mutation.text !== undefined) {
 		writeFileSync(file, mutation.text);
@@ -129,7 +177,7 @@ function applyMutation(directory, mutation) {
 		);
 	}
 	if (mutation.name !== "format") {
-		const formatter = runNode(directory, [
+		const formatter = await runNode(directory, [
 			path.join(directory, "node_modules", "oxfmt", "bin", "oxfmt"),
 			"--write",
 			mutation.file,
@@ -140,7 +188,7 @@ function applyMutation(directory, mutation) {
 	}
 }
 
-/** @param {ReturnType<typeof runNode>} result @param {QualityMutation} mutation */
+/** @param {ChildResult} result @param {QualityMutation} mutation */
 function verifyRejection(result, mutation) {
 	const stages = [...result.output.matchAll(/^> (.+)$/gmu)];
 	const stageIndex = stages.findIndex((stage) =>
@@ -163,19 +211,19 @@ function verifyRejection(result, mutation) {
 }
 
 /** @param {QualityMutation} mutation */
-function verifyMutation(mutation) {
+async function verifyMutation(mutation) {
 	const directory = mkdtempSync(path.join(tmpdir(), "piab-quality-mutation-"));
 	try {
 		cpSync(root, directory, {
 			recursive: true,
-			filter: (file) => !excluded.has(path.relative(root, file).split(path.sep)[0] ?? ""),
+			filter: includeInMutationCopy,
 		});
 		symlinkSync(path.join(root, "node_modules"), path.join(directory, "node_modules"), "junction");
 		const initialized = spawnSync("git", ["init", "--quiet"], { cwd: directory, encoding: "utf8" });
 		assert.equal(initialized.error, undefined);
 		assert.equal(initialized.status, 0, initialized.stderr);
-		applyMutation(directory, mutation);
-		const result = acceptance(directory);
+		await applyMutation(directory, mutation);
+		const result = await acceptance(directory);
 		verifyRejection(result, mutation);
 		if (mutation.name === "allowance-isolation") {
 			verifyRejection(result, {
@@ -192,8 +240,26 @@ function verifyMutation(mutation) {
 	}
 }
 
+async function verifyAllMutations() {
+	const concurrency = Math.min(
+		mutations.length,
+		Math.max(2, Math.floor(availableParallelism() / 2)),
+	);
+	let nextIndex = 0;
+	const worker = async () => {
+		while (nextIndex < mutations.length) {
+			const current = mutations[nextIndex];
+			nextIndex += 1;
+			if (current !== undefined) {
+				await verifyMutation(current);
+			}
+		}
+	};
+	await Promise.all(Array.from({ length: concurrency }, () => worker()));
+}
+
 /** @param {readonly string[]} args */
-function main(args) {
+async function main(args) {
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(`Usage: node scripts/verify-quality-mutations.mjs
 
@@ -206,21 +272,17 @@ Exit codes: 0 all controls verified/help; 1 baseline or mutation failure.`);
 	if (args.length !== 0) {
 		throw new Error("Unexpected mutation arguments; use --help");
 	}
-	const baseline = acceptance(root);
+	const baseline = await acceptance(root);
 	if (baseline.status !== 0) {
 		throw new Error(
 			`Clean acceptance must pass before mutation proof:\n${forLog(baseline.output)}`,
 		);
 	}
 	console.log(forLog(baseline.output));
-	for (const mutation of mutations) {
-		verifyMutation(mutation);
-	}
+	await verifyAllMutations();
 }
 
-try {
-	main(process.argv.slice(2));
-} catch (error) {
+main(process.argv.slice(2)).catch((/** @type {unknown} */ error) => {
 	console.error(error);
 	process.exitCode = 1;
-}
+});
