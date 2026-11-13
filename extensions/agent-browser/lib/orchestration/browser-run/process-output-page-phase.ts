@@ -30,7 +30,7 @@ async function recoverTimeoutPageTarget(
 		!view.input.prepared.readConfirmation
 			? await collectTimeoutPartialProgress({
 					commandTokens: view.input.prepared.commandTokens,
-					compiledJob: view.input.prepared.compiledJob,
+					compiledQaPreset: view.input.prepared.compiledQaPreset,
 					cwd: view.input.cwd,
 					operationCwd: view.input.operationCwd,
 					namespace: view.input.prepared.executionPlan.namespace,

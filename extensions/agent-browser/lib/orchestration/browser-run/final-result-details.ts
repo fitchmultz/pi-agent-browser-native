@@ -15,7 +15,6 @@ function compiledRequestDetails(
 		FinalResultInput,
 		| "redactedArgs"
 		| "redactedCompiledElectron"
-		| "redactedCompiledJob"
 		| "redactedCompiledQaPreset"
 		| "redactedCompiledSourceLookup"
 		| "redactedCompiledNetworkSourceLookup"
@@ -27,7 +26,7 @@ function compiledRequestDetails(
 	return {
 		args: options.redactedArgs,
 		compiledElectron: options.redactedCompiledElectron,
-		compiledJob: options.redactedCompiledJob,
+		compiledJob: options.redactedCompiledQaPreset,
 		compiledQaPreset: options.redactedCompiledQaPreset,
 		compiledSourceLookup: options.redactedCompiledSourceLookup,
 		compiledNetworkSourceLookup: options.redactedCompiledNetworkSourceLookup,

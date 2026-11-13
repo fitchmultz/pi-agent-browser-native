@@ -64,7 +64,9 @@ export async function loadRecordingModules({ sdkRoot, browserEntry, streamPath }
 		]);
 		return {
 			sdk,
-			createAssistantMessageEventStream: ai.createAssistantMessageEventStream,
+			fauxAssistantMessage: ai.fauxAssistantMessage,
+			fauxProvider: ai.fauxProvider,
+			fauxToolCall: ai.fauxToolCall,
 			browserExtension: browser.default,
 			restoreRecordingReservationStateFromBranch:
 				reservations.restoreRecordingReservationStateFromBranch,

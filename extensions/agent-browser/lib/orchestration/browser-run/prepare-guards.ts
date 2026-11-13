@@ -151,7 +151,7 @@ function planFailure(
 		details: {
 			args: input.redactedArgs,
 			compiledElectron: input.redactedCompiledElectron,
-			compiledJob: input.redactedCompiledJob,
+			compiledJob: input.redactedCompiledQaPreset,
 			compiledQaPreset: input.redactedCompiledQaPreset,
 			compiledSourceLookup: input.redactedCompiledSourceLookup,
 			compiledNetworkSourceLookup: input.redactedCompiledNetworkSourceLookup,

@@ -35,13 +35,11 @@ export interface ResolvedAgentBrowserInputModeFields {
 		| CompiledAgentBrowserNetworkSourceLookup
 		| CompiledAgentBrowserSourceLookup
 		| undefined;
-	readonly compiledJob?: CompiledAgentBrowserJob | undefined;
 	readonly compiledNetworkSourceLookup?: CompiledAgentBrowserNetworkSourceLookup | undefined;
 	readonly compiledQaPreset?: CompiledAgentBrowserQaPreset | undefined;
 	readonly compiledSemanticAction?: CompiledAgentBrowserSemanticAction | undefined;
 	readonly compiledSourceLookup?: CompiledAgentBrowserSourceLookup | undefined;
 	readonly redactedCompiledElectron?: CompiledAgentBrowserElectron | undefined;
-	readonly redactedCompiledJob?: CompiledAgentBrowserJob | undefined;
 	readonly redactedCompiledNetworkSourceLookup?:
 		| CompiledAgentBrowserNetworkSourceLookup
 		| undefined;
@@ -88,9 +86,7 @@ export type ResolvedAgentBrowserValidInput =
 	| (ResolvedAgentBrowserValidInputBase & {
 			readonly kind: "qa";
 			readonly compiledGeneratedBatch: CompiledAgentBrowserQaPreset;
-			readonly compiledJob: CompiledAgentBrowserQaPreset;
 			readonly compiledQaPreset: CompiledAgentBrowserQaPreset;
-			readonly redactedCompiledJob: CompiledAgentBrowserJob;
 			readonly redactedCompiledQaPreset: CompiledAgentBrowserQaPreset;
 	  })
 	| (ResolvedAgentBrowserValidInputBase & {
