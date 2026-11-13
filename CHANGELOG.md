@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.26 - 2026-11-13
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix(prepare): prune temporary build devDependencies on source installs (#427) ([30a0314](https://github.com/fitchmultz/pi-agent-browser-native/commit/30a03148d94e418d625a91b41050010e0d512022))
+
+### What's Changed
+
+- fix(prepare): prune temporary build devDependencies on source installs by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/427
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.25...v0.9.26
+
 ## 0.9.25 - 2026-11-12
 
 <!-- npm-release:unreleased:start -->
