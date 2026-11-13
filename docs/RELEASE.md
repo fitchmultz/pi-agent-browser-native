@@ -217,7 +217,7 @@ Evaluator expectations after the queued Sauce Demo fixes: the agent should indep
 - `LICENSE` exists in the repo and the packed tarball
 - canonical published docs are present
 - `npm pack --json --dry-run` runs the package `prepare` build once and packs the compiled `dist/extensions/agent-browser/index.js` entrypoint
-- GitHub/source installs use the same `prepare` build; when Pi installs with `npm install --omit=dev`, `scripts/prepare.mjs` installs source-build dev dependencies with lifecycle scripts disabled before building so Pi can load the ignored compiled entrypoint from a fresh clone
+- GitHub/source installs use the same `prepare` build; when Pi installs with `npm install --omit=dev`, `scripts/prepare.mjs` temporarily installs source-build dev dependencies with lifecycle scripts disabled, builds the ignored compiled entrypoint, and prunes those temporary dev dependencies afterward
 - the package-level doctor command and capability baseline are present
 - the bundled extension entrypoint and emitted runtime files are present, including modules retained for command-line consumers and the publish contract
 - source-only, agent-only, and superseded docs are absent from the tarball
