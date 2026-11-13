@@ -28,15 +28,24 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.42.0` command/help surface, audited against vercel-labs/agent-browser@e7519957b9067c541825afa21a792fbe1f483047. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.43.0` command/help surface, audited against vercel-labs/agent-browser@1cc19526f3641c8543d55aa6700e7c55b37ac356. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.43.0 rebaseline
+
+The recommended upstream is 0.43.0, audited at upstream commit `1cc19526f3641c8543d55aa6700e7c55b37ac356`. The stable runtime floor remains 0.35.0, with no version-specific shim. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.43.0).
+
+- **Control hints keep refs usable.** Snapshots add `hint="..."` after the ref when a control has an empty or duplicated accessible name. Hints come from icons, image filenames, stable `data-testid` / `name` / `id` attributes, and nearby row/list/article text. They are DOM context, not accessible names: the JSON `refs` map keeps the original name, and `find role ... --name` does not match the hint. Act by ref. See [native snapshots](https://github.com/vercel-labs/agent-browser/blob/1cc19526f3641c8543d55aa6700e7c55b37ac356/docs/content/docs/snapshots.mdx#control-hints).
+- **Modern Web Guidance is a bundled skill.** `skills get modern-web-guidance --full` explains how to retrieve Chrome web-platform guidance, apply it, and verify layout shift, reduced motion, color schemes, and modal dialogs in the browser. It remains a sessionless skill read, not a new wrapper tool.
+- **Emulated high-density recordings use native capture fallback.** When screencast frames are below the page's device scale, native recording switches to full-density screenshots. `record stop` reports `capture: "screenshots"` and `deviceScaleFactor`. This is native capture behavior, not proof of smoothness or a wrapper screenshot loop. See [native recording](https://github.com/vercel-labs/agent-browser/blob/1cc19526f3641c8543d55aa6700e7c55b37ac356/docs/content/docs/recording.mdx#high-density-video).
+- **Closed-target failures and package layout stay upstream-owned.** Native commands whose CDP target detaches now fail promptly instead of waiting for the timeout. npm resolves the native binary through separate platform packages; this extension still invokes the separately installed `agent-browser` on `PATH`.
+
 ### Upstream 0.42.0 rebaseline
 
-The recommended upstream is 0.42.0, audited at upstream commit `e7519957b9067c541825afa21a792fbe1f483047`. The stable runtime floor remains 0.35.0, with no version-specific shim. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.42.0).
+Native 0.42.0 introduced the following behavior, audited at upstream commit `e7519957b9067c541825afa21a792fbe1f483047`. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.42.0).
 
 - **Launch settings follow each command.** Native 0.42.0 compares the settings a command carries with the running session. An omitted or equal setting changes nothing; a changed launch setting such as `--profile`, `--args`, `--headed`, `--user-agent`, `--proxy`, `--state`, or `--allowed-domains` relaunches the browser while the daemon keeps running. `--relaunch` forces a relaunch when nothing changed. Older supported natives never report a relaunch: 0.41.2 keeps the browser for some changed settings and silently restarts it for others. See [native session settings](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/docs/content/docs/sessions.mdx#L42-L55) and the [launch-setting table](https://github.com/vercel-labs/agent-browser/blob/e7519957b9067c541825afa21a792fbe1f483047/cli/src/session_settings/spec.rs#L357-L765).
 - **The wrapper reports a native relaunch.** A relaunch discards the page and its refs. When native returns `lifecycle.relaunchedBrowser: true`, the result warns that upstream relaunched the browser, names the changed settings, records `about:blank` as the current page, and offers `reopen-page-after-browser-relaunch` with the prior URL. Wrapper-owned managed sessions still reject launch-scoped flags while running; use `sessionMode: "fresh"`. The automatic root browser and explicit `--session` browsers are caller-owned, so their launch flags pass through and native decides. See [running-session launch settings](#wrapper-specific-behavior-worth-knowing).
@@ -59,7 +68,7 @@ Published npm help includes `--cdp-headers <json>` and `AGENT_BROWSER_CDP_HEADER
 
 ### Upstream 0.41.0 rebaseline
 
-The recommended stock npm `agent-browser@0.42.0` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
+The recommended stock npm `agent-browser@0.43.0` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support still starts at stable 0.35.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
 
 - Native 0.39.4+ `wait --download <path>` handles downloads that completed before the wait and moves a locally launched browser's downloaded bytes to the requested destination. Native refuses to move files reported by an attached/remote CDP browser. The wrapper still requires on-disk artifact verification; a reported path alone is not success, so supported 0.35.0–0.39.3 natives, which report the path without moving the file, fail as `artifact-missing`. See [native download handling](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L11403-L11508).
 - Native daemon shutdown removes its own `<session>.config` along with other daemon files, while retaining `.target` and `.log`. This prevents new configuration-file accumulation; it does not sweep all historical orphans or optimize the wrapper's socket-directory scan. Updating this metadata cannot speed an installation already running 0.41.0. See [file ownership](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/session_files.rs#L75-L104) and [shutdown cleanup](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/daemon.rs#L147-L151).
@@ -727,16 +736,16 @@ Native-tool note: upstream skills are written for the standalone `agent-browser`
 
 Session note: `skills list`, `skills get …`, and `skills path …` are **stateless** in this wrapper. Even with default `sessionMode: "auto"`, the extension does not prepend the implicit managed `--session` for those commands, so reading bundled skills does not attach to or rotate the active browser session (same intent as plain-text `--help` / `--version` inspection). Other `skills` subcommands follow normal session rules until explicitly allowlisted in `extensions/agent-browser/lib/runtime.ts` alongside regression coverage in `test/agent-browser.runtime.test.ts`.
 
-| Command                         | Purpose                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `skills list`                   | List available CLI-bundled skills.                                                                                                                                                                                                                                                                                                    |
-| `skills get core`               | Print the core usage guide.                                                                                                                                                                                                                                                                                                           |
-| `skills get core --full`        | Print the full version-matched core command reference and templates.                                                                                                                                                                                                                                                                  |
-| `skills get <name>`             | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, `skills get derive-client` (HAR-to-API-client workflow), and `skills get webmcp-gen` (create and validate page tools). |
-| `skills get <name> --full`      | Include a skill's supplementary references/templates when present.                                                                                                                                                                                                                                                                    |
-| `skills get <name> --ref <ref>` | Load only the named reference or template by relative path, file name, or stem. Repeat `--ref` for several files from one skill.                                                                                                                                                                                                      |
-| `skills get --all`              | Print all visible bundled skills for broad audit/debug work.                                                                                                                                                                                                                                                                          |
-| `skills path [name]`            | Print a skill directory path.                                                                                                                                                                                                                                                                                                         |
+| Command                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skills list`                   | List available CLI-bundled skills.                                                                                                                                                                                                                                                                                                                                                                                           |
+| `skills get core`               | Print the core usage guide.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `skills get core --full`        | Print the full version-matched core command reference and templates.                                                                                                                                                                                                                                                                                                                                                         |
+| `skills get <name>`             | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, `skills get derive-client` (HAR-to-API-client workflow), `skills get webmcp-gen` (create and validate page tools), and `skills get modern-web-guidance` (apply Chrome guidance and verify it in the browser). |
+| `skills get <name> --full`      | Include a skill's supplementary references/templates when present.                                                                                                                                                                                                                                                                                                                                                           |
+| `skills get <name> --ref <ref>` | Load only the named reference or template by relative path, file name, or stem. Repeat `--ref` for several files from one skill.                                                                                                                                                                                                                                                                                             |
+| `skills get --all`              | Print all visible bundled skills for broad audit/debug work.                                                                                                                                                                                                                                                                                                                                                                 |
+| `skills path [name]`            | Print a skill directory path.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an override for bundled skill discovery. Normal agents should not need it, but it is useful when validating package layout or upstream skill packaging.
 
@@ -772,7 +781,7 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 - `screenshot [selector] [path]` — Take a full-page or element-scoped screenshot; a single selector-like argument scopes, while a path-like argument saves to that path.
 - `screenshot [path]` — Take a screenshot and optionally save it to a path.
 - `pdf <path>` — Save the page as a PDF.
-- `snapshot` — Print an accessibility tree with refs for AI interaction. Common options include `snapshot --interactive`, `snapshot --urls`, `snapshot --compact`, `snapshot --depth <n>`, `snapshot --selector <sel>`, and native `snapshot --delta` / `snapshot --delta --full`. Cursor-interactive elements are included by default; `snapshot --cursor` / `snapshot -C` are deprecated no-ops.
+- `snapshot` — Print an accessibility tree with refs for AI interaction. Native 0.43.0 adds `hint="..."` for unnamed or duplicate-name controls; hints are context, not names for role locators. Common options include `snapshot --interactive`, `snapshot --urls`, `snapshot --compact`, `snapshot --depth <n>`, `snapshot --selector <sel>`, and native `snapshot --delta` / `snapshot --delta --full`. Cursor-interactive elements are included by default; `snapshot --cursor` / `snapshot -C` are deprecated no-ops.
 - `eval <js>` — Run JavaScript. Use `eval --stdin` through this wrapper for larger snippets, or `eval -b <base64>` for shell-escaping-safe one-liners.
 - `connect <port|url>` — Connect to a browser through CDP.
 - `close [--all]` — Close the current browser or all sessions; `quit` and `exit` are upstream close aliases.
@@ -1251,17 +1260,17 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.42.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.43.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `e7519957b9067c541825afa21a792fbe1f483047`
-- upstream package version: `0.42.0`
-- inspected: `stock npm agent-browser@0.42.0 package and official release binary`
-- inspected: `v0.41.2...v0.42.0 release notes and interface source diff`
+- upstream HEAD: `1cc19526f3641c8543d55aa6700e7c55b37ac356`
+- upstream package version: `0.43.0`
+- inspected: `stock npm agent-browser@0.43.0 package and official release binary`
+- inspected: `v0.42.0...v0.43.0 release notes and interface source diff`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1279,6 +1288,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `cli/src/native/flow/replay.rs`
 - inspected: `agent-browser skills get derive-client --full`
 - inspected: `agent-browser skills get webmcp-gen --full`
+- inspected: `agent-browser skills get modern-web-guidance --full`
+- inspected: `skill-data/modern-web-guidance/SKILL.md`
+- inspected: `docs/content/docs/snapshots.mdx`
+- inspected: `docs/content/docs/recording.mdx`
+- inspected: `cli/src/native/cdp/client.rs`
 - inspected: `README.md`
 - inspected: `CHANGELOG.md`
 - inspected: `agent-browser.schema.json`
@@ -1351,6 +1365,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - vercel sandbox skill full: `agent-browser skills get vercel-sandbox --full`
 - protected Vercel deployments skill full: `agent-browser skills get protected-vercel-deployments --full`
 - WebMCP generation skill full: `agent-browser skills get webmcp-gen --full`
+- Modern Web Guidance skill full: `agent-browser skills get modern-web-guidance --full`
 - open help: `agent-browser open --help`
 - read help: `agent-browser read --help`
 - click help: `agent-browser click --help`
@@ -1409,8 +1424,8 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Inventory sections
 
-- Built-in skills: 20 human-doc token(s), 26 upstream token(s)
-- Core page, element, navigation, and extraction commands: 91 human-doc token(s), 100 upstream token(s)
+- Built-in skills: 21 human-doc token(s), 29 upstream token(s)
+- Core page, element, navigation, and extraction commands: 92 human-doc token(s), 101 upstream token(s)
 - Sessions, state, tabs, frames, dialogs, and windows: 30 human-doc token(s), 27 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 63 human-doc token(s), 72 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 45 human-doc token(s), 55 upstream token(s)
@@ -1435,6 +1450,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get agentcore`
 - `skills get derive-client`
 - `skills get webmcp-gen`
+- `skills get modern-web-guidance`
 - `webmcp.init.js`
 - `@agent-browser/sandbox`
 - `installSystemDependencies: false`
@@ -1495,6 +1511,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `screenshot --threshold <0-1>`
 - `snapshot --delta`
 - `snapshot --delta --full`
+- `hint="..."`
 - `click <sel> --human`
 - `drag <src> <dst> --human`
 - `mouse move <x> <y> --duration <ms> --steps <n> --human --seed <n>`
@@ -1874,6 +1891,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills list: `agentcore`
 - skills list: `derive-client`
 - skills list: `webmcp-gen`
+- skills list: `modern-web-guidance`
+- Modern Web Guidance skill full: `npx modern-web-guidance@latest search`
+- Modern Web Guidance skill full: `Dialog focus and inertness`
 - WebMCP generation skill full: `webmcp.init.js`
 - WebMCP generation skill full: `agent-browser webmcp invoke <tool> --params @fixture.json`
 - vercel sandbox skill full: `@agent-browser/sandbox`
@@ -1945,6 +1965,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - snapshot help: `--compact`
 - snapshot help: `--depth <n>`
 - snapshot help: `--selector <sel>`
+- snapshot help: `print hint="..." after`
 - root help: `eval <js>`
 - eval help: `--stdin`
 - eval help: `-b, --base64`
