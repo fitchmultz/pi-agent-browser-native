@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.27 - 2026-11-13
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- feat: parallelize quality mutation controls and adopt single-pass release (#429) ([e5e32d2](https://github.com/fitchmultz/pi-agent-browser-native/commit/e5e32d287a2d2cb46fb3244657f5f3636b9b766a))
+
+### What's Changed
+
+- feat: parallelize quality mutation controls and adopt single-pass release by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/429
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.26...v0.9.27
+
 ## 0.9.26 - 2026-11-13
 
 <!-- npm-release:unreleased:start -->
