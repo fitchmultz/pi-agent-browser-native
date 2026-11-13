@@ -2656,10 +2656,11 @@ if (args.includes("snapshot")) {
   fs.writeFileSync(statePath, JSON.stringify({ snapshots: count }));
   const name = count === 1 ? "Old target before rerender" : "New target after rerender";
   const row = count === 1 ? "Blue mug" : "Red mug";
+  const tools = count === 1 ? "Editable settings" : "Settings";
   process.stdout.write(JSON.stringify({ success: true, data: {
     origin: "https://same.example/fixture",
-    refs: { e1: { role: "button", name }, e2: { role: "button", name: "" } },
-    snapshot: '- button "' + name + '" [ref=e1]\\n- button [ref=e2] hint="icon:icon-trash; in:' + row + '"'
+    refs: { e1: { role: "button", name }, e2: { role: "button", name: "" }, e3: { role: "generic", name: "" } },
+    snapshot: '- button "' + name + '" [ref=e1]\\n- button [ref=e2] hint="icon:icon-trash; in:' + row + '"\\n- generic [ref=e3] hint="id:row-tools; in:' + tools + '"'
   } }));
 } else if (args.includes("click")) {
   process.stdout.write(JSON.stringify({ success: true, data: { clicked: args.at(-1) } }));
@@ -2688,13 +2689,12 @@ if (args.includes("snapshot")) {
 						args: ["snapshot", "-i"],
 					});
 					assert.equal(snapshot.isError, false);
-					assert.equal(
-						readRecord(readRecord(readRecord(snapshot.details).refSnapshot).refs).e2 === undefined
-							? undefined
-							: readRecord(readRecord(readRecord(readRecord(snapshot.details).refSnapshot).refs).e2)
-									.name,
-						"",
+					const snapshotRefs = readRecord(
+						readRecord(readRecord(snapshot.details).refSnapshot).refs,
 					);
+					assert.equal(readRecord(snapshotRefs.e2).name, "");
+					assert.equal(readRecord(snapshotRefs.e3).role, "generic");
+					assert.notEqual(readRecord(snapshotRefs.e3).isEditable, true);
 
 					const hintedValue = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["get", "text", "@e2"],
@@ -2703,6 +2703,15 @@ if (args.includes("snapshot")) {
 						hintedValue.isError,
 						false,
 						readString(readRecord(hintedValue.content[0]).text),
+					);
+
+					const editableHintedValue = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["get", "text", "@e3"],
+					});
+					assert.equal(
+						editableHintedValue.isError,
+						false,
+						readString(readRecord(editableHintedValue.content[0]).text),
 					);
 
 					const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2735,7 +2744,12 @@ if (args.includes("snapshot")) {
 							.length,
 						1,
 					);
-					assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 3);
+					assert.equal(
+						invocations.filter((entry) => entry.args.includes("get") && entry.args.includes("@e3"))
+							.length,
+						1,
+					);
+					assert.equal(invocations.filter((entry) => entry.args.includes("snapshot")).length, 4);
 					assert.equal(
 						invocations.every((entry) => entry.idleTimeout === "1234"),
 						true,

@@ -848,6 +848,9 @@ nodeTest(
 				if (id === "e107") {
 					return [id, { contentEditable: false, name: "Read-only combo", role: "combobox" }];
 				}
+				if (id === "e108") {
+					return [id, { name: "", role: "generic" }];
+				}
 				return [id, { name: `Result ${index + 1}`, role: "link" }];
 			}),
 		);
@@ -865,9 +868,10 @@ nodeTest(
 			'  - searchbox "Read-only search" [ref=e105] editable=false',
 			'  - textbox "Read-only textbox" [ref=e106] contenteditable=false',
 			'  - combobox "Read-only combo" [ref=e107] contenteditable=false',
+			'  - generic [ref=e108] hint="id:editable-row; in:Editable settings" clickable [onclick]',
 			...Array.from(
-				{ length: 5 },
-				(_, index) => `  - link "Result ${index + 108}" [ref=e${index + 108}]`,
+				{ length: 4 },
+				(_, index) => `  - link "Result ${index + 109}" [ref=e${index + 109}]`,
 			),
 		].join("\n");
 
@@ -891,8 +895,10 @@ nodeTest(
 		assert.doesNotMatch(text, /e101 textbox "Disabled editor"/);
 		assert.doesNotMatch(text, /e103 textbox "Editable settings"/);
 		assert.doesNotMatch(text, /e104 textbox "contenteditable demo"/);
+		assert.doesNotMatch(text, /e108 textbox/);
 		const data = readRecord(presentation.data);
 		assert.equal(readRecord(data.roleCounts).textbox, 2);
+		assert.equal(readRecord(data.roleCounts).generic, 4);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e100"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e101"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e103"), false);
@@ -900,6 +906,7 @@ nodeTest(
 		assert.equal(readArray(data.highValueControlRefIds).includes("e105"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e106"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e107"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e108"), false);
 
 		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
 			await rm(presentation.fullOutputPath, { force: true });
