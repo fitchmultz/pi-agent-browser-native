@@ -33,7 +33,7 @@ nodeTest(
 		const receiptCheck =
 			'assert.equal(JSON.parse(readFileSync(process.argv[1], "utf8")).ref, process.env.FORK_REF)';
 		assert.ok(job("fork").includes(receiptCheck));
-		assert.match(job("native-qualification"), /waived-platforms: false/);
+		assert.doesNotMatch(job("native-qualification"), /waived-platforms:/);
 		assert.match(
 			job("native-qualification"),
 			/official-version: \$\{\{ needs.resolve.outputs.official-version \}\}/,

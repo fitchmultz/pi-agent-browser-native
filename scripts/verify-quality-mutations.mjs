@@ -112,15 +112,16 @@ function runNode(directory, args) {
 		const logs = mkdtempSync(path.join(tmpdir(), "piab-quality-output-"));
 		const log = path.join(logs, "output.txt");
 		const fd = openSync(log, "w");
-		let closed = false;
+		/** @type {string | undefined} */
+		let cachedOutput;
+		let settled = false;
 		const cleanup = () => {
-			if (!closed) {
-				closed = true;
+			if (cachedOutput === undefined) {
 				closeSync(fd);
+				cachedOutput = stripVTControlCharacters(readFileSync(log, "utf8"));
+				rmSync(logs, { recursive: true, force: true });
 			}
-			const output = stripVTControlCharacters(readFileSync(log, "utf8"));
-			rmSync(logs, { recursive: true, force: true });
-			return output;
+			return cachedOutput;
 		};
 		// One native descriptor preserves stage boundaries across stdout and stderr.
 		const child = spawn(process.execPath, args, {
@@ -131,11 +132,19 @@ function runNode(directory, args) {
 			child.kill("SIGTERM");
 		}, 1_200_000);
 		child.on("error", (error) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
 			clearTimeout(timer);
 			console.error(forLog(cleanup()));
 			reject(error);
 		});
 		child.on("close", (status, signal) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
 			clearTimeout(timer);
 			const output = cleanup();
 			if (signal !== null || status === null) {
