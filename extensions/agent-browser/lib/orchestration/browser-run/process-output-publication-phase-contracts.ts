@@ -103,7 +103,6 @@ export interface PublicationOutputPhase {
 				| "readConfirmation"
 				| "redactedArgs"
 				| "redactedCompiledElectron"
-				| "redactedCompiledJob"
 				| "redactedCompiledNetworkSourceLookup"
 				| "redactedCompiledQaPreset"
 				| "redactedCompiledSemanticAction"

@@ -121,7 +121,6 @@ export interface BuildOutputResultInput {
 				| "providerLaunch"
 				| "redactedArgs"
 				| "redactedCompiledElectron"
-				| "redactedCompiledJob"
 				| "redactedCompiledNetworkSourceLookup"
 				| "redactedCompiledQaPreset"
 				| "redactedCompiledSemanticAction"
@@ -373,7 +372,6 @@ type invocationResultEvidence = Pick<
 	FinalResultInput,
 	| "redactedArgs"
 	| "redactedCompiledElectron"
-	| "redactedCompiledJob"
 	| "redactedCompiledNetworkSourceLookup"
 	| "redactedCompiledQaPreset"
 	| "redactedCompiledSemanticAction"
@@ -389,7 +387,6 @@ function invocationResultEvidence(
 	return {
 		redactedArgs: input.prepared.redactedArgs,
 		redactedCompiledElectron: input.prepared.redactedCompiledElectron,
-		redactedCompiledJob: input.prepared.redactedCompiledJob,
 		redactedCompiledNetworkSourceLookup: input.prepared.redactedCompiledNetworkSourceLookup,
 		redactedCompiledQaPreset: input.prepared.redactedCompiledQaPreset,
 		redactedCompiledSemanticAction: input.prepared.redactedCompiledSemanticAction,

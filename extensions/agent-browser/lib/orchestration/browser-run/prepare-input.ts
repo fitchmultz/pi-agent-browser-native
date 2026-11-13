@@ -22,9 +22,7 @@ export function normalizeRunInput(input: BrowserRunOptions["input"]): BrowserRun
 		case "qa":
 			return {
 				...base,
-				compiledJob: input.compiledJob,
 				compiledQaPreset: input.compiledQaPreset,
-				redactedCompiledJob: input.redactedCompiledJob,
 				redactedCompiledQaPreset: input.redactedCompiledQaPreset,
 			};
 		case "semanticAction":

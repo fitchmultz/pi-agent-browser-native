@@ -8,6 +8,7 @@ const EDITABLE_FALSE_TEXT_PATTERN = /\b(?:contenteditable|editable)\s*=\s*["']?(
 const EDITABLE_ASSIGNMENT_TEXT_PATTERN =
 	/\b(contenteditable|editable)\s*=\s*("[^"]*"|'[^']*'|[^\s,\]]+)/gi;
 const EDITABLE_BARE_TEXT_PATTERN = /\b(?:contenteditable|editable)\b(?!\s*=)/i;
+const SNAPSHOT_HINT_TEXT_PATTERN = /\shint="(?:\\.|[^"\\])*"/g;
 
 function parseEditableEvidenceValue(value: unknown): boolean | undefined {
 	if (typeof value === "boolean") {
@@ -42,6 +43,10 @@ function stripLeadingSnapshotAccessibleName(text: string): string {
 	return text.replace(/^(\s*[-*]\s+\S+\s+)(?:"[^"]*"|'[^']*')/, "$1");
 }
 
+function stripSnapshotControlHintText(text: string): string {
+	return text.replace(SNAPSHOT_HINT_TEXT_PATTERN, "");
+}
+
 function parseEditableAssignments(markerText: string): boolean | undefined {
 	let hasPositiveAssignment = false;
 	for (const match of markerText.matchAll(EDITABLE_ASSIGNMENT_TEXT_PATTERN)) {
@@ -61,7 +66,7 @@ function parseEditableEvidenceText(text: string | undefined): boolean | undefine
 	if (text === undefined || text.length === 0) {
 		return undefined;
 	}
-	const markerText = stripLeadingSnapshotAccessibleName(text);
+	const markerText = stripSnapshotControlHintText(stripLeadingSnapshotAccessibleName(text));
 	if (EDITABLE_FALSE_TEXT_PATTERN.test(markerText)) {
 		return false;
 	}

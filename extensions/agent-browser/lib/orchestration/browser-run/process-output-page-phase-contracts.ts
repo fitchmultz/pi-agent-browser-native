@@ -43,7 +43,7 @@ export interface PageOutputPhase {
 				| "callerColdLaunch"
 				| "clickDispatchProbe"
 				| "commandTokens"
-				| "compiledJob"
+				| "compiledQaPreset"
 				| "compiledSemanticAction"
 				| "executionPlan"
 				| "priorRefSnapshotState"

@@ -199,6 +199,7 @@ process.stdout.write(JSON.stringify({ success: true, data: "should not run" }));
 					];
 					const qaDetails = readRecord(qaFailure.details);
 					const lookupDetails = readRecord(lookupFailure.details);
+					assert.deepEqual(qaDetails.compiledJob, qaDetails.compiledQaPreset);
 					assert.deepEqual(
 						[qaDetails, lookupDetails].map((details) => details.failureCategory),
 						["validation-error", "validation-error"],
@@ -1812,6 +1813,7 @@ process.stdin.on("end", () => {
 						"1 page error(s)",
 					]);
 					const compiledQaPreset = readRecord(readRecord(result.details).compiledQaPreset);
+					assert.deepEqual(readRecord(result.details).compiledJob, compiledQaPreset);
 					assert.deepEqual(compiledQaPreset.args, ["batch", "--bail"]);
 					assert.equal(compiledQaPreset.failFast, true);
 					const compiledQaSteps = readArray(compiledQaPreset.steps).map((step) =>

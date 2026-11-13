@@ -13,7 +13,7 @@ import {
 	readBoolean,
 	readDefined,
 } from "./helpers/assertions.js";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import nodeTest from "node:test";
@@ -21,19 +21,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Type } from "typebox";
 
 import {
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxToolCall,
+	type FauxResponseFactory,
 	getCurrentSystemPrompt,
 	getCurrentTools,
 	InMemoryCredentialStore,
 } from "@earendil-works/pi-ai";
-import {
-	createAssistantMessageEventStream,
-	type AssistantMessage,
-	type Context,
-	type Model,
-	type SimpleStreamOptions,
-	type Api,
-	type ToolCall,
-} from "@earendil-works/pi-ai/compat";
+import type { Model, Api, ToolCall } from "@earendil-works/pi-ai/compat";
 import {
 	createAgentSession,
 	createToolSearchExtension,
@@ -129,92 +125,22 @@ function readPipelineToolResult(value: unknown): PipelineToolResult {
 	};
 }
 
-function usage() {
-	return {
-		cacheRead: 0,
-		cacheWrite: 0,
-		cost: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0, total: 0 },
-		input: 0,
-		output: 0,
-		totalTokens: 0,
-	};
-}
-
-function createAssistantMessage(
-	model: Model<Api>,
-	stopReason: AssistantMessage["stopReason"],
-): AssistantMessage {
-	return {
-		api: model.api,
-		content: [],
-		model: model.id,
-		provider: model.provider,
-		role: "assistant",
-		stopReason,
-		timestamp: Date.now(),
-		usage: usage(),
-	};
-}
-
-function streamTextResponse(model: Model<Api>, text: string) {
-	const stream = createAssistantMessageEventStream();
-	queueMicrotask(() => {
-		const output = createAssistantMessage(model, "stop");
-		stream.push({ type: "start", partial: output });
-		output.content.push({ type: "text", text: "" });
-		stream.push({ type: "text_start", contentIndex: 0, partial: output });
-		const block = output.content.at(0);
-		if (block?.type === "text") {
-			block.text = text;
-		}
-		stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: output });
-		stream.push({ type: "text_end", contentIndex: 0, content: text, partial: output });
-		stream.push({ type: "done", reason: "stop", message: output });
-		stream.end();
-	});
-	return stream;
-}
-
-function createToolCallingStream(
+function createToolResponse(
 	toolArguments: Readonly<ToolCall["arguments"]>,
 	priorCalls: readonly ToolCall[] = [],
 	toolName = "agent_browser",
 	toolCallId = "call_agent_browser_pipeline",
-) {
-	return (model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
+): FauxResponseFactory {
+	return (context) => {
 		const hasToolResult = context.messages.some(
 			(message) => message.role === "toolResult" && message.toolName === toolName,
 		);
-		if (hasToolResult) {
-			return streamTextResponse(model, "Observed agent_browser result.");
-		}
-
-		const stream = createAssistantMessageEventStream();
-		queueMicrotask(() => {
-			const output = createAssistantMessage(model, "toolUse");
-			const toolCall = {
-				arguments: toolArguments,
-				id: toolCallId,
-				name: toolName,
-				type: "toolCall" as const,
-			};
-			stream.push({ type: "start", partial: output });
-			for (const call of [...priorCalls, toolCall]) {
-				const contentIndex = output.content.length;
-				output.content.push(call);
-				stream.push({ type: "toolcall_start", contentIndex, partial: output });
-				stream.push({
-					type: "toolcall_delta",
-					contentIndex,
-					delta: JSON.stringify(call.arguments),
-					partial: output,
-				});
-				stream.push({ type: "toolcall_end", contentIndex, toolCall: call, partial: output });
-			}
-			stream.push({ type: "done", reason: "toolUse", message: output });
-			stream.end();
-		});
-		return stream;
+		return hasToolResult
+			? fauxAssistantMessage("Observed agent_browser result.")
+			: fauxAssistantMessage(
+					[...priorCalls, fauxToolCall(toolName, toolArguments, { id: toolCallId })],
+					{ stopReason: "toolUse" },
+				);
 	};
 }
 
@@ -222,33 +148,9 @@ function isSessionMessageEntry(value: unknown): boolean {
 	return typeof value === "object" && value !== null && "type" in value && value.type === "message";
 }
 
-async function listFilesRecursive(directory: string): Promise<string[]> {
-	const entries = await readdir(directory, { withFileTypes: true });
-	const files: string[] = [];
-	for (const entry of entries) {
-		const path = join(directory, entry.name);
-		if (entry.isDirectory()) {
-			// Complete each directory traversal before selecting the persisted transcript.
-			files.push(...(await listFilesRecursive(path)));
-		} else {
-			files.push(path);
-		}
-	}
-	return files;
-}
-
 async function readPersistedAgentBrowserResult(
-	sessionDir: string,
+	sessionFile: string,
 ): Promise<{ result: PipelineToolResult; sessionFile: string }> {
-	const sessionFiles = (await listFilesRecursive(sessionDir)).filter((path) =>
-		path.endsWith(".jsonl"),
-	);
-	assert.equal(
-		sessionFiles.length,
-		1,
-		`expected one persisted session file, got ${sessionFiles.join(", ")}`,
-	);
-	const sessionFile = readDefined(sessionFiles[0]);
 	const lines = (await readFile(sessionFile, "utf8")).trim().split("\n").filter(Boolean);
 	const results = lines
 		.map((line) => {
@@ -269,8 +171,11 @@ function registerPipelineProvider(
 	toolArguments: Readonly<ToolCall["arguments"]>,
 	priorCalls?: readonly ToolCall[],
 	toolName?: string,
-	discoveryStream?: ReturnType<typeof createToolCallingStream>,
+	discoveryResponse?: FauxResponseFactory,
 ): Model<Api> {
+	const faux = fauxProvider({ api: "openai-completions", provider: PIPELINE_PROVIDER });
+	const response = discoveryResponse ?? createToolResponse(toolArguments, priorCalls, toolName);
+	faux.setResponses(discoveryResponse ? [response, response, response] : [response, response]);
 	modelRuntime.registerProvider(PIPELINE_PROVIDER, {
 		api: "openai-completions",
 		apiKey: "piab-pipeline-key",
@@ -284,14 +189,14 @@ function registerPipelineProvider(
 				maxTokens: 4096,
 				name: "Pi Agent Browser Pipeline Test",
 				reasoning: false,
-				...(discoveryStream
+				...(discoveryResponse
 					? {
 							compat: { supportsMidConvoSystemMessages: true, supportsMidConvoToolAdditions: true },
 						}
 					: {}),
 			},
 		],
-		streamSimple: discoveryStream ?? createToolCallingStream(toolArguments, priorCalls, toolName),
+		streamSimple: faux.provider.streamSimple.bind(faux.provider),
 	});
 	const model = modelRuntime.getModel(PIPELINE_PROVIDER, PIPELINE_MODEL_ID);
 	assert.ok(model, "pipeline test model should be registered");
@@ -300,7 +205,7 @@ function registerPipelineProvider(
 
 async function runPipelinePrompt(options: {
 	readonly fakeScript: string;
-	readonly discoveryStream?: ReturnType<typeof createToolCallingStream>;
+	readonly discoveryResponse?: FauxResponseFactory;
 	readonly toolArguments: Readonly<ToolCall["arguments"]>;
 	readonly toolName?: string;
 	readonly extensionFactory?: ExtensionFactory;
@@ -323,7 +228,7 @@ async function runPipelinePrompt(options: {
 		return await withPatchedEnv<PipelinePromptResult>(
 			{
 				PATH: `${tempDir}:${basePath}`,
-				...(options.discoveryStream ? { HOME: join(tempDir, "home") } : {}),
+				...(options.discoveryResponse ? { HOME: join(tempDir, "home") } : {}),
 			},
 			async () => {
 				const modelRuntime = await ModelRuntime.create({
@@ -336,7 +241,7 @@ async function runPipelinePrompt(options: {
 					options.toolArguments,
 					options.priorCalls,
 					options.toolName,
-					options.discoveryStream,
+					options.discoveryResponse,
 				);
 				const extensionFactories = options.extensionFactories ?? [];
 				const resourceLoader = new DefaultResourceLoader({
@@ -364,6 +269,7 @@ async function runPipelinePrompt(options: {
 						resolve("dist/extensions/agent-browser/index.js"),
 					);
 				}
+				const sessionManager = SessionManager.create(tempDir, sessionDir, { id: randomUUID() });
 				const { session } = await createAgentSession({
 					cwd: tempDir,
 					model,
@@ -373,10 +279,8 @@ async function runPipelinePrompt(options: {
 						options.defaultTools ? { defaultTools: [...options.defaultTools] } : {},
 					),
 					resourceLoader,
-					sessionManager: SessionManager.create(tempDir, sessionDir, {
-						id: randomUUID(),
-					}),
-					...(options.discoveryStream
+					sessionManager,
+					...(options.discoveryResponse
 						? {}
 						: {
 								tools: [
@@ -411,7 +315,9 @@ async function runPipelinePrompt(options: {
 							.map((message) => (message.role === "assistant" ? message.errorMessage : ""))
 							.join("; ")}`,
 					);
-					const persisted = await readPersistedAgentBrowserResult(sessionDir);
+					const persisted = await readPersistedAgentBrowserResult(
+						readDefined(sessionManager.getSessionFile()),
+					);
 					return {
 						inMemoryResult,
 						invocations: await readInvocationLog(invocationLogPath),
@@ -467,20 +373,20 @@ for (const webSearch of ["absent", "env", "config"] as const) {
 								hookCalls++;
 							});
 						},
-						discoveryStream(model, context, options) {
+						discoveryResponse(context, options, state, model) {
 							requests++;
 							const names = getCurrentTools(context.messages).map((tool) => tool.name);
 							const prompt = getCurrentSystemPrompt(context.messages);
 							requestObservations.push({ names, prompt, executionCalls });
 							if (requests === 1) {
-								return createToolCallingStream(
+								return createToolResponse(
 									{ query: "agent_browser_qa", limit: 1 },
 									[],
 									"tool_search",
 									"call_tool_search_pipeline",
-								)(model, context, options);
+								)(context, options, state, model);
 							}
-							return createToolCallingStream({ args: ["--help"] })(model, context, options);
+							return createToolResponse({ args: ["--help"] })(context, options, state, model);
 						},
 						async runPrompt(session) {
 							await session.prompt("Please continue.");

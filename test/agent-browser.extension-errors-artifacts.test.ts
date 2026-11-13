@@ -3959,7 +3959,7 @@ if (args.includes("get") && args.includes("url")) {
 				);
 				assert.doesNotMatch(text, /url-secret|title-secret|secret-token/);
 
-				const compiledJob = compileAgentBrowserQaPreset({
+				const compiledQaPreset = compileAgentBrowserQaPreset({
 					url: "https://example.test",
 					checkConsole: false,
 					checkErrors: false,
@@ -3967,7 +3967,7 @@ if (args.includes("get") && args.includes("url")) {
 				}).compiled;
 				const generatedProgress = await collectTimeoutPartialProgress({
 					commandTokens: ["batch"],
-					compiledJob,
+					compiledQaPreset,
 					cwd: tempDir,
 				});
 				assert.deepEqual(generatedProgress?.steps?.[1]?.args, [

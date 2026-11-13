@@ -59,15 +59,18 @@ nodeTest(
 			Array.from({ length: 90 }, (_, index) => [
 				`e${index + 1}`,
 				{
-					name: index % 3 === 0 ? `Actionable control ${index + 1}` : "",
-					role: index % 5 === 0 ? "button" : "generic",
+					name: index > 0 && index % 3 === 0 ? `Actionable control ${index + 1}` : "",
+					role: index === 0 || index % 5 === 0 ? "button" : "generic",
 				},
 			]),
 		);
-		const snapshot = Array.from({ length: 120 }, (_, index) => {
-			const ref = `e${index + 1}`;
-			return `- generic "Large snapshot row ${index + 1} with lots of repeated visible text that should not all stay inline" [ref=${ref}] clickable [onclick]`;
-		}).join("\n");
+		const snapshot = [
+			'- button [ref=e1] hint="icon:icon-trash; in:Blue mug"',
+			...Array.from({ length: 119 }, (_, index) => {
+				const ref = `e${index + 2}`;
+				return `- generic "Large snapshot row ${index + 2} with lots of repeated visible text that should not all stay inline" [ref=${ref}] clickable [onclick]`;
+			}),
+		].join("\n");
 
 		const presentation = await buildToolPresentation({
 			commandInfo: { command: "snapshot" },
@@ -87,6 +90,7 @@ nodeTest(
 		assert.match(text, /Compact snapshot view/);
 		assert.match(text, /Viewport note: compact snapshots are DOM\/signal-prioritized/);
 		assert.match(text, /Key refs:/);
+		assert.doesNotMatch(text, /- e1 button "icon:icon-trash/);
 		assert.match(
 			presentation.summary,
 			/Snapshot: 90 refs on https:\/\/example.com\/huge\?SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D \(compact\)/,
@@ -102,7 +106,7 @@ nodeTest(
 		const spillStats = await lstat(spillPath);
 		const spillDirStats = await lstat(dirname(spillPath));
 		assert.match(spillText, /Large snapshot row 120/);
-		assert.match(spillText, /Actionable control 1/);
+		assert.match(spillText, /Actionable control 4/);
 		assert.match(spillText, /SAMLRequest=%5BREDACTED%5D&RelayState=%5BREDACTED%5D/);
 		assert.doesNotMatch(spillText, /saml-secret|relay-secret/);
 		assert.equal(spillStats.isFile(), true);
@@ -844,6 +848,9 @@ nodeTest(
 				if (id === "e107") {
 					return [id, { contentEditable: false, name: "Read-only combo", role: "combobox" }];
 				}
+				if (id === "e108") {
+					return [id, { name: "", role: "generic" }];
+				}
 				return [id, { name: `Result ${index + 1}`, role: "link" }];
 			}),
 		);
@@ -861,9 +868,10 @@ nodeTest(
 			'  - searchbox "Read-only search" [ref=e105] editable=false',
 			'  - textbox "Read-only textbox" [ref=e106] contenteditable=false',
 			'  - combobox "Read-only combo" [ref=e107] contenteditable=false',
+			'  - generic [ref=e108] hint="id:editable-row; in:Editable settings" clickable [onclick]',
 			...Array.from(
-				{ length: 5 },
-				(_, index) => `  - link "Result ${index + 108}" [ref=e${index + 108}]`,
+				{ length: 4 },
+				(_, index) => `  - link "Result ${index + 109}" [ref=e${index + 109}]`,
 			),
 		].join("\n");
 
@@ -887,8 +895,10 @@ nodeTest(
 		assert.doesNotMatch(text, /e101 textbox "Disabled editor"/);
 		assert.doesNotMatch(text, /e103 textbox "Editable settings"/);
 		assert.doesNotMatch(text, /e104 textbox "contenteditable demo"/);
+		assert.doesNotMatch(text, /e108 textbox/);
 		const data = readRecord(presentation.data);
 		assert.equal(readRecord(data.roleCounts).textbox, 2);
+		assert.equal(readRecord(data.roleCounts).generic, 4);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e100"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e101"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e103"), false);
@@ -896,6 +906,7 @@ nodeTest(
 		assert.equal(readArray(data.highValueControlRefIds).includes("e105"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e106"), false);
 		assert.equal(readArray(data.highValueControlRefIds).includes("e107"), false);
+		assert.equal(readArray(data.highValueControlRefIds).includes("e108"), false);
 
 		if (presentation.fullOutputPath !== undefined && presentation.fullOutputPath !== "") {
 			await rm(presentation.fullOutputPath, { force: true });

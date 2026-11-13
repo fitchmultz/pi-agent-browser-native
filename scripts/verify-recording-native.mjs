@@ -55,7 +55,9 @@ const browserEntry =
 	fileURLToPath(new URL("../dist/extensions/agent-browser/index.js", import.meta.url));
 const {
 	sdk: { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, ModelRuntime },
-	createAssistantMessageEventStream,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxToolCall,
 	browserExtension,
 	restoreRecordingReservationStateFromBranch,
 	getLatestUserMessage,
@@ -124,6 +126,18 @@ async function create(name, reopenFile, cwd = output) {
 	});
 	/** @type {import("@earendil-works/pi-ai").JsonObject | undefined} */
 	let nextArgs;
+	const faux = fauxProvider({ api: model.api, provider: model.provider });
+	const response = () => {
+		const message = nextArgs
+			? fauxAssistantMessage(fauxToolCall("agent_browser", nextArgs, { id: `check-${++serial}` }), {
+					stopReason: "toolUse",
+				})
+			: fauxAssistantMessage("Offline check completed.");
+		nextArgs = undefined;
+		faux.appendResponses([response]);
+		return message;
+	};
+	faux.setResponses([response]);
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
@@ -141,7 +155,7 @@ async function create(name, reopenFile, cwd = output) {
 					baseUrl: model.baseUrl,
 					apiKey: "offline-fixture",
 					models: [model],
-					streamSimple: streamFixture,
+					streamSimple: faux.provider.streamSimple.bind(faux.provider),
 				});
 				pi.on("session_start", (data) => log(`${name}:native-lifecycle`, data));
 				pi.on("session_tree", (data) => log(`${name}:native-lifecycle`, data));
@@ -170,40 +184,6 @@ async function create(name, reopenFile, cwd = output) {
 	await session.bindExtensions({
 		onError: (event) => log(`${name}:extension-error`, { error: event.error, event: event.event }),
 	});
-	function streamFixture() {
-		/** @satisfies {import("@earendil-works/pi-ai").AssistantMessage} */
-		const message = {
-			role: "assistant",
-			api: model.api,
-			provider: model.provider,
-			model: model.id,
-			content: nextArgs
-				? [
-						{
-							type: "toolCall",
-							id: `check-${++serial}`,
-							name: "agent_browser",
-							arguments: nextArgs,
-						},
-					]
-				: [{ type: "text", text: "Offline check completed." }],
-			stopReason: nextArgs ? "toolUse" : "stop",
-			timestamp: Date.now(),
-			usage: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-			},
-		};
-		nextArgs = undefined;
-		const stream = createAssistantMessageEventStream();
-		stream.push({ type: "start", partial: message });
-		stream.push({ type: "done", reason: message.stopReason, message });
-		return stream;
-	}
 	/** @param {Record<string, unknown>} params @param {string} [prompt] */
 	async function call(params, prompt) {
 		nextArgs = readToolArguments(params);

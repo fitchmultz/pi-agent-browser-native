@@ -56,7 +56,7 @@ For example, Pi opens and inspects a page with these calls:
 { "args": ["snapshot", "-i"] }
 ```
 
-Snapshots give Pi current `@eN` references for controls. Refresh the snapshot after navigation or page changes. Check the resulting page after a click; command success alone does not prove the app changed.
+Snapshots give Pi current `@eN` references for controls. The recommended agent-browser 0.43.0 adds DOM hints for unnamed or duplicate-name controls; use their refs, since hints are not accessible names. Refresh the snapshot after navigation or page changes. Check the resulting page after a click; command success alone does not prove the app changed.
 
 Tab management uses singular `tab` (`tab list`, `tab new [url]`, `tab <id>`, `tab close [id]`). If a call uses plural `tabs`, the error result explains the `tab` commands and includes a read-only `use-tab-list` recovery action when listing tabs.
 
