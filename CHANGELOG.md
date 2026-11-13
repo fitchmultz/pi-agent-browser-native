@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+## 0.9.25 - 2026-11-12
+
+<!-- npm-release:unreleased:start -->
+
 - Recommend agent-browser 0.43.0 and document native control hints, Modern Web Guidance, and high-density recording.
+
+<!-- npm-release:unreleased:end -->
+
+- ci: qualify Apple Silicon macOS and Linux only (#422) ([f350364](https://github.com/fitchmultz/pi-agent-browser-native/commit/f35036402e0e23d78019b6cdcf70512246fbc64c))
+
+### What's Changed
+
+- ci: qualify Apple Silicon macOS and Linux only by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/422
+- Recommend agent-browser 0.43.0 and sync its command reference (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/425
+- Use native Pi test helpers and one internal QA plan (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/424
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.24...v0.9.25
 
 ## 0.9.24 - 2026-11-12
 
