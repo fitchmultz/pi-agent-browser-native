@@ -12,7 +12,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { parseArgs as parseNodeArgs, promisify } from "node:util";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
 
@@ -67,29 +67,48 @@ function parseSampleCount(value) {
 	return parsed;
 }
 
-function parseArgs(argv = process.argv.slice(2)) {
-	const options = { json: false, samples: DEFAULT_SAMPLES, showHelp: false };
-	const args = argv.values();
-	for (const arg of args) {
-		if (arg === "-h" || arg === "--help") {
-			return { ...options, showHelp: true };
-		}
-		if (arg === "--json") {
-			options.json = true;
-			continue;
-		}
-		if (arg === "--samples") {
-			options.samples = parseSampleCount(args.next().value);
-			continue;
-		}
-		if (arg === "--timeout-ms") {
+/** @param {unknown} error
+ * @returns {never}
+ */
+function rethrowStartupParseError(error) {
+	if (error instanceof Error && "code" in error) {
+		if (error.message.includes("--timeout-ms")) {
 			throw new UsageError(
 				"--timeout-ms was removed: startup-profile no longer launches full Pi/tmux sessions.",
 			);
 		}
-		throw new UsageError(`Unknown option: ${arg}`);
+		if (error.code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE") {
+			throw new UsageError("--samples requires a positive integer.");
+		}
+		const prefix = error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION" ? "" : "Unknown option: ";
+		throw new UsageError(`${prefix}${error.message}`);
 	}
-	return options;
+	throw error instanceof Error ? error : new Error(String(error));
+}
+
+function parseArgs(argv = process.argv.slice(2)) {
+	let values;
+	try {
+		({ values } = parseNodeArgs({
+			args: argv,
+			options: {
+				help: { type: "boolean", short: "h", default: false },
+				json: { type: "boolean", default: false },
+				samples: { type: "string" },
+			},
+			strict: true,
+		}));
+	} catch (error) {
+		rethrowStartupParseError(error);
+	}
+	if (values.help) {
+		return { json: false, samples: DEFAULT_SAMPLES, showHelp: true };
+	}
+	return {
+		json: values.json,
+		samples: values.samples === undefined ? DEFAULT_SAMPLES : parseSampleCount(values.samples),
+		showHelp: false,
+	};
 }
 
 async function buildPackageRuntime() {

@@ -10,7 +10,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import { parseArgs, promisify } from "node:util";
 
 import {
 	CAPABILITY_BASELINE,
@@ -132,15 +132,21 @@ function collectHelpFailures(helpByLabel) {
 }
 
 export async function main(argv = process.argv.slice(2)) {
-	if (argv.includes("-h") || argv.includes("--help")) {
-		printHelp();
-		return 0;
-	}
-
-	if (argv.length > 0) {
+	let values;
+	try {
+		({ values } = parseArgs({
+			args: argv,
+			options: { help: { type: "boolean", short: "h", default: false } },
+			strict: true,
+		}));
+	} catch {
 		console.error(`Unknown option(s): ${argv.join(", ")}`);
 		console.error("Run with --help for usage.");
 		return 2;
+	}
+	if (values.help) {
+		printHelp();
+		return 0;
 	}
 
 	try {

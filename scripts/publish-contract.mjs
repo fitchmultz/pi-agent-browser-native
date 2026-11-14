@@ -7,7 +7,7 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { isConfigObject } from "../extensions/agent-browser/lib/config-policy.js";
 
 class PublishContractError extends Error {
@@ -82,18 +82,10 @@ async function expandDeclaredPackageFile(cwd, declaredPath) {
 		return [];
 	}
 
-	const entries = await readdir(absolutePath, { withFileTypes: true });
-	const expandedPaths = [];
-	for (const entry of entries) {
-		const childPath = `${normalizedPath}/${entry.name}`;
-		if (entry.isDirectory()) {
-			// Traverse one subtree at a time to bound open-directory and stat pressure.
-			expandedPaths.push(...(await expandDeclaredPackageFile(cwd, childPath)));
-		} else if (entry.isFile() && !NPM_IGNORED_METADATA_FILES.has(entry.name)) {
-			expandedPaths.push(toPackagePath(childPath));
-		}
-	}
-	return expandedPaths;
+	const entries = await readdir(absolutePath, { recursive: true, withFileTypes: true });
+	return entries
+		.filter((entry) => entry.isFile() && !NPM_IGNORED_METADATA_FILES.has(entry.name))
+		.map((entry) => toPackagePath(relative(cwd, resolve(entry.parentPath, entry.name))));
 }
 
 /** @param {{ readonly cwd?: string }} [options] */
@@ -117,19 +109,19 @@ export async function loadPublishContract(options = {}) {
 
 	return Object.freeze({
 		declaredPackageFiles: Object.freeze(
-			[...declaredPackageFiles].sort((left, right) => (left < right ? -1 : Number(left > right))),
+			declaredPackageFiles.toSorted((left, right) => (left < right ? -1 : Number(left > right))),
 		),
 		forbiddenPackedFiles: Object.freeze(
-			[...FORBIDDEN_PACKED_FILES].sort((left, right) => (left < right ? -1 : Number(left > right))),
+			FORBIDDEN_PACKED_FILES.toSorted((left, right) => (left < right ? -1 : Number(left > right))),
 		),
 		forbiddenRepoFiles: Object.freeze(
-			[...FORBIDDEN_REPO_FILES].sort((left, right) => (left < right ? -1 : Number(left > right))),
+			FORBIDDEN_REPO_FILES.toSorted((left, right) => (left < right ? -1 : Number(left > right))),
 		),
 		requiredPackedFiles: Object.freeze(
 			[...requiredPackedFiles].sort((left, right) => (left < right ? -1 : Number(left > right))),
 		),
 		requiredRepoFiles: Object.freeze(
-			[...REQUIRED_REPO_FILES].sort((left, right) => (left < right ? -1 : Number(left > right))),
+			REQUIRED_REPO_FILES.toSorted((left, right) => (left < right ? -1 : Number(left > right))),
 		),
 	});
 }

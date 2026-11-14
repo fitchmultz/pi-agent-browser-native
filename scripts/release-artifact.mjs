@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Type } from "typebox";
 import { Check } from "typebox/value";
@@ -100,12 +100,7 @@ export async function inspectCandidate(values) {
 	return { candidate, tarball, common, values };
 }
 
-const entrypoint = process.argv[1];
-if (
-	entrypoint !== undefined &&
-	entrypoint.length > 0 &&
-	import.meta.url === pathToFileURL(resolve(entrypoint)).href
-) {
+if (import.meta.main) {
 	const { values } = parseArgs({ options });
 	const { candidate, tarball } = await inspectCandidate(values);
 	console.log(`Retained ${candidate.name}@${candidate.version}, SHA-256 ${candidate.sha256}`);

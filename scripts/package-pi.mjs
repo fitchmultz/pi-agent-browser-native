@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtempDisposable, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -97,7 +97,7 @@ function summarizeToolResult(result) {
 }
 
 async function createFakeAgentBrowserBinary() {
-	const binDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-fake-bin-"));
+	const bin = await mkdtempDisposable(join(tmpdir(), "pi-agent-browser-fake-bin-"));
 	const nodeExecutable = JSON.stringify(process.execPath);
 	const fakeScript = `#!/usr/bin/env node
 const args = process.argv.slice(2);
@@ -108,33 +108,28 @@ if (args.includes("--version") || args.includes("-V")) {
 console.error("fake agent-browser only supports --version for packaged smoke validation; received: " + args.join(" "));
 process.exit(64);
 `;
-	const launcherPath = join(binDir, "agent-browser");
+	const launcherPath = join(bin.path, "agent-browser");
 	await writeFile(launcherPath, fakeScript, "utf8");
 	await chmod(launcherPath, 0o755);
 	await writeFile(
-		join(binDir, "agent-browser.cmd"),
+		join(bin.path, "agent-browser.cmd"),
 		`@echo off\n${nodeExecutable} "%~dp0agent-browser" %*\n`,
 		"utf8",
 	);
-	return {
-		binDir,
-		cleanup: async () => {
-			await rm(binDir, { force: true, recursive: true });
-		},
-	};
+	return bin;
 }
 
 /** @template T
  * @param {() => Promise<T>} work
  */
 async function withFakeAgentBrowserOnPath(work) {
-	const fakeBinary = await createFakeAgentBrowserBinary();
+	await using fakeBinary = await createFakeAgentBrowserBinary();
 	const previousPath = process.env.PATH;
 	try {
 		process.env.PATH =
 			previousPath !== undefined && previousPath.length > 0
-				? `${fakeBinary.binDir}${delimiter}${previousPath}`
-				: fakeBinary.binDir;
+				? `${fakeBinary.path}${delimiter}${previousPath}`
+				: fakeBinary.path;
 		return await work();
 	} finally {
 		if (previousPath === undefined) {
@@ -142,7 +137,6 @@ async function withFakeAgentBrowserOnPath(work) {
 		} else {
 			process.env.PATH = previousPath;
 		}
-		await fakeBinary.cleanup();
 	}
 }
 
@@ -448,9 +442,9 @@ export async function verifyPackagedPiLoad(options = {}) {
 	);
 	/** @type {AgentSession | undefined} */
 	let session;
-	let tempAgentDir;
+	await using tempAgent = await mkdtempDisposable(join(tmpdir(), "pi-agent-browser-agent-"));
+	const tempAgentDir = tempAgent.path;
 	try {
-		tempAgentDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-agent-"));
 		const packageDir = await installRuntimeConsumer(tarballPath);
 		await verifyPackagedRuntimeFiles(packageDir, tempAgentDir);
 		const resourceLoader = new DefaultResourceLoader({
@@ -514,8 +508,5 @@ export async function verifyPackagedPiLoad(options = {}) {
 			session?.dispose();
 		}
 		await cleanup();
-		if (tempAgentDir !== undefined) {
-			await rm(tempAgentDir, { force: true, recursive: true });
-		}
 	}
 }

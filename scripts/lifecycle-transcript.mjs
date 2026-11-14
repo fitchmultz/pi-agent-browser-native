@@ -1,9 +1,10 @@
 /** Pi transcript observations and bounded polling for the configured-source lifecycle harness. */
-import { execFile as execFileCallback } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
-const execFile = promisify(execFileCallback);
+export { sleep };
+
 const SENTINEL_CUSTOM_TYPE = "piab-lifecycle-sentinel";
 
 /** @typedef {{readonly [key: string]: unknown, readonly details?: Readonly<Record<string, unknown>> | undefined}} LifecycleToolResult */
@@ -128,29 +129,18 @@ export function matchesSuccessfulPageResult(result, command, expectedUrl) {
 	);
 }
 
-/** @param {number} ms @returns {Promise<void>} */
-export function sleep(ms) {
-	return new Promise((resolveSleep) => {
-		setTimeout(resolveSleep, ms);
-	});
-}
-
 /** @param {string} sessionDir */
 export async function newestSessionFile(sessionDir) {
-	const { stdout } = await execFile("find", [sessionDir, "-type", "f", "-name", "*.jsonl"]);
-	const files = stdout
-		.split("\n")
-		.map((line) => line.trim())
-		.filter(Boolean)
+	const entries = await readdir(sessionDir, { recursive: true, withFileTypes: true });
+	const files = entries
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+		.map((entry) => resolve(entry.parentPath, entry.name))
 		.sort();
 	let newest;
 	let newestMtime = -1;
 	for (const file of files) {
 		// Inspect one transcript at a time, preserving last-in-sorted-order ties across native stat variants.
-		const { stdout: timestamp } = await execFile("stat", ["-f", "%m", file]).catch(async () =>
-			execFile("stat", ["-c", "%Y", file]),
-		);
-		const mtime = Number(timestamp.trim());
+		const { mtimeMs: mtime } = await stat(file);
 		if (mtime >= newestMtime) {
 			newest = file;
 			newestMtime = mtime;

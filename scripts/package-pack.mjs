@@ -1,6 +1,6 @@
 /** Native npm packing/extraction and task-owned tarball cleanup. */
 import { execFile as execFileCallback } from "node:child_process";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -77,7 +77,7 @@ export async function packToTemporaryPackageDir(cwd = process.cwd(), candidatePa
 			tarballPath = join(tempDir, basename(candidatePath));
 			await writeFile(tarballPath, candidate);
 			packResult = await getDryRunPackResult(cwd, tarballPath);
-			const integrity = `sha512-${createHash("sha512").update(candidate).digest("base64")}`;
+			const integrity = `sha512-${hash("sha512", candidate, "base64")}`;
 			if (packResult.integrity !== integrity) {
 				throw new Error("npm metadata does not match the supplied candidate tarball.");
 			}

@@ -5,10 +5,10 @@
  * Scope: Maintainer release verification only; target command rendering and artifact assertions live under scripts/platform-smoke/.
  */
 
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { hash } from "node:crypto";
+import { mkdtempDisposable, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { parseArgs as parseNodeArgs } from "node:util";
 
 /** @import { PlatformSmokeConfig } from "../platform-smoke.config.mjs" */
 /** @import { ReleaseCandidate } from "./platform-smoke/commands.mjs" */
@@ -68,38 +68,70 @@ Environment:
 `);
 }
 
-/** @param {readonly string[]} [argv] */
-export function parseArgs(argv = process.argv.slice(2)) {
-	/** @type {ParsedArgs} */
-	const parsed = { command: null, target: null, suite: null };
-	const words = argv.values();
-	for (const arg of words) {
-		switch (arg) {
-			case "--help":
-			case "-h":
-				parsed.command = "help";
-				return parsed;
-			case "doctor":
-			case "run":
-				if (parsed.command !== null) {
-					throw new Error(`multiple commands provided: ${parsed.command}, ${arg}`);
-				}
-				parsed.command = arg;
-				break;
-			case "--target":
-			case "--suite": {
-				const value = words.next().value;
-				if (value === undefined || value.length === 0 || value.startsWith("-")) {
-					throw new Error(`${arg} requires a value`);
-				}
-				parsed[arg === "--target" ? "target" : "suite"] = value;
-				break;
-			}
-			default:
-				throw new Error(`unknown argument: ${arg}`);
-		}
+/** @param {string} flag
+ * @param {string | undefined} value
+ */
+function validateSmokeOptionValue(flag, value) {
+	if (value !== undefined && (value.length === 0 || value.startsWith("-"))) {
+		throw new Error(`${flag} requires a value`);
 	}
-	return parsed;
+	return value ?? null;
+}
+
+/** @param {readonly string[]} positionals
+ * @returns {ParsedArgs["command"]}
+ */
+function parseSmokeCommand(positionals) {
+	/** @type {ParsedArgs["command"]} */
+	let command = null;
+	for (const arg of positionals) {
+		if (arg !== "doctor" && arg !== "run") {
+			throw new Error(`unknown argument: ${arg}`);
+		}
+		if (command !== null) {
+			throw new Error(`multiple commands provided: ${command}, ${arg}`);
+		}
+		command = arg;
+	}
+	return command;
+}
+
+/** @param {readonly string[]} [argv]
+ * @returns {ParsedArgs}
+ */
+export function parseArgs(argv = process.argv.slice(2)) {
+	let values;
+	let positionals;
+	try {
+		({ values, positionals } = parseNodeArgs({
+			args: argv,
+			allowPositionals: true,
+			options: {
+				help: { type: "boolean", short: "h", default: false },
+				suite: { type: "string" },
+				target: { type: "string" },
+			},
+			strict: true,
+		}));
+	} catch (error) {
+		if (error instanceof Error && "code" in error) {
+			throw new Error(
+				error.code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE"
+					? `${error.message} (requires a value)`
+					: `unknown argument: ${error.message}`,
+				{ cause: error },
+			);
+		}
+		throw error;
+	}
+	if (values.help) {
+		return { command: "help", target: null, suite: null };
+	}
+	return {
+		command: parseSmokeCommand(positionals),
+		target: validateSmokeOptionValue("--target", values.target),
+		suite: validateSmokeOptionValue("--suite", values.suite),
+	};
 }
 
 /** @param {string} kind
@@ -173,38 +205,37 @@ async function runTargets(config, args) {
 	const suites =
 		args.suite !== null && args.suite.length > 0 ? [args.suite] : config.requiredSuites;
 	validateNames("suite", suites, config.requiredSuites);
-	let candidateDirectory;
-	try {
-		/** @type {ReleaseCandidate | undefined} */
-		let stagedCandidate;
-		const candidatePath = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
-		if (candidatePath !== undefined && suites.includes("platform-build")) {
-			if (candidatePath.trim().length === 0) {
-				throw new Error("PI_AGENT_BROWSER_RELEASE_TARBALL must name a candidate tarball");
-			}
-			const bytes = await readFile(resolve(candidatePath));
-			candidateDirectory = await mkdtemp(resolve(process.cwd(), ".npm-release-candidate-"));
-			await writeFile(join(candidateDirectory, "candidate"), bytes, { flag: "wx", mode: 0o600 });
-			stagedCandidate = {
-				path: `${basename(candidateDirectory)}/candidate`,
-				sha256: createHash("sha256").update(bytes).digest("hex"),
-			};
-		}
-		const settled = await Promise.allSettled(
-			targets.map(async (targetName) => {
-				console.log(`\n=== Target: ${targetName} ===`);
-				return {
-					targetName,
-					result: await runTargetSuites(config, targetName, suites, stagedCandidate),
-				};
-			}),
-		);
-		return summarizeTargets(settled, config.artifactRoot);
-	} finally {
-		if (candidateDirectory !== undefined) {
-			await rm(candidateDirectory, { recursive: true, force: true });
-		}
+	const candidatePath = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
+	const shouldStageCandidate = candidatePath !== undefined && suites.includes("platform-build");
+	if (shouldStageCandidate && candidatePath.trim().length === 0) {
+		throw new Error("PI_AGENT_BROWSER_RELEASE_TARBALL must name a candidate tarball");
 	}
+	await using candidateDirectory = shouldStageCandidate
+		? await mkdtempDisposable(resolve(process.cwd(), ".npm-release-candidate-"))
+		: undefined;
+	/** @type {ReleaseCandidate | undefined} */
+	let stagedCandidate;
+	if (candidateDirectory !== undefined && candidatePath !== undefined) {
+		const bytes = await readFile(resolve(candidatePath));
+		await writeFile(join(candidateDirectory.path, "candidate"), bytes, {
+			flag: "wx",
+			mode: 0o600,
+		});
+		stagedCandidate = {
+			path: `${basename(candidateDirectory.path)}/candidate`,
+			sha256: hash("sha256", bytes, "hex"),
+		};
+	}
+	const settled = await Promise.allSettled(
+		targets.map(async (targetName) => {
+			console.log(`\n=== Target: ${targetName} ===`);
+			return {
+				targetName,
+				result: await runTargetSuites(config, targetName, suites, stagedCandidate),
+			};
+		}),
+	);
+	return summarizeTargets(settled, config.artifactRoot);
 }
 
 /** @param {readonly string[]} [argv] */
@@ -228,11 +259,7 @@ export async function main(argv = process.argv.slice(2)) {
 	return runTargets(config, args);
 }
 
-if (
-	process.argv[1] !== undefined &&
-	process.argv[1].length > 0 &&
-	import.meta.url === pathToFileURL(process.argv[1]).href
-) {
+if (import.meta.main) {
 	main()
 		.then((exitCode) => {
 			process.exitCode = exitCode;

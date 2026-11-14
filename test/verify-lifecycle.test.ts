@@ -23,7 +23,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import nodeTest from "node:test";
 
@@ -56,7 +56,6 @@ const {
 	collectFullOutputPaths,
 	createLifecycleSessionId,
 	injectLifecycleSentinelSource,
-	isDirectRun,
 	matchesSuccessfulPageResult,
 	waitForAgentBrowserResult,
 	paneLooksReady,
@@ -628,13 +627,6 @@ nodeTest(
 
 nodeTest("injectLifecycleSentinelSource requires the extension factory marker", () => {
 	assert.throws(() => injectLifecycleSentinelSource("export default {}", "v1"), /factory marker/);
-});
-
-nodeTest("isDirectRun matches file URL for argv[1] only", () => {
-	const scriptPath = "/tmp/verify-lifecycle.mjs";
-	assert.equal(isDirectRun(pathToFileURL(scriptPath).href, ["node", scriptPath]), true);
-	assert.equal(isDirectRun(pathToFileURL(scriptPath).href, ["node", "/tmp/other.mjs"]), false);
-	assert.equal(isDirectRun(pathToFileURL(scriptPath).href, ["node"]), false);
 });
 
 nodeTest(

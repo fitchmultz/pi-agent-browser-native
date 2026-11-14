@@ -9,12 +9,13 @@
 
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { parseArgs, promisify } from "node:util";
 
 import {
 	createExtensionHarness,
@@ -63,33 +64,38 @@ Options:
 }
 
 export function parseDogfoodArgs(argv: readonly string[]): DogfoodOptions & { help: boolean } {
-	const options: { help: boolean; artifactDir?: string; keepArtifacts?: boolean; json?: boolean } =
-		{ help: false };
-	const words = argv.values();
-	for (const arg of words) {
-		if (arg === "-h" || arg === "--help") {
-			options.help = true;
-			continue;
+	let values;
+	try {
+		({ values } = parseArgs({
+			args: argv,
+			options: {
+				"artifact-dir": { type: "string" },
+				help: { type: "boolean", short: "h", default: false },
+				json: { type: "boolean" },
+				"keep-artifacts": { type: "boolean" },
+			},
+			strict: true,
+		}));
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			"code" in error &&
+			error.code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE"
+		) {
+			throw new UsageError("--artifact-dir requires a path.");
 		}
-		if (arg === "--keep-artifacts") {
-			options.keepArtifacts = true;
-			continue;
-		}
-		if (arg === "--json") {
-			options.json = true;
-			continue;
-		}
-		if (arg === "--artifact-dir") {
-			const value = words.next().value;
-			if (value === undefined || value.length === 0 || value.startsWith("-")) {
-				throw new UsageError("--artifact-dir requires a path.");
-			}
-			options.artifactDir = value;
-			continue;
-		}
-		throw new UsageError(`Unknown dogfood argument: ${arg}`);
+		throw new UsageError(error instanceof Error ? error.message : String(error));
 	}
-	return options;
+	const artifactDir = values["artifact-dir"];
+	if (artifactDir !== undefined && (artifactDir.length === 0 || artifactDir.startsWith("-"))) {
+		throw new UsageError("--artifact-dir requires a path.");
+	}
+	return {
+		help: values.help,
+		...(artifactDir !== undefined ? { artifactDir } : {}),
+		...(values.json !== undefined ? { json: values.json } : {}),
+		...(values["keep-artifacts"] !== undefined ? { keepArtifacts: values["keep-artifacts"] } : {}),
+	};
 }
 
 type ToolObservation = {
@@ -138,27 +144,19 @@ async function startDogfoodFixture(): Promise<{
 			'<!doctype html><html lang="en"><head><title>Example Domain</title></head><body><main><h1>Example Domain</h1><p>This loopback fixture is reserved for deterministic platform smoke tests.</p><a href="/example-domains.html">Learn more</a></main></body></html>',
 		);
 	});
-	await new Promise<void>((done, reject) => {
-		server.once("error", reject);
-		server.listen(0, "127.0.0.1", done);
-	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
 	const address = server.address();
 	if (address === null || typeof address === "string") {
 		throw new Error("Loopback dogfood server did not expose a TCP port.");
 	}
 	const origin = `http://127.0.0.1:${address.port}/`;
+	const closeServer = promisify(server.close.bind(server));
 	return {
-		close: async () =>
-			await new Promise<void>((done, reject) => {
-				server.close((error) => {
-					if (error !== undefined) {
-						reject(error);
-					} else {
-						done();
-					}
-				});
-				server.closeAllConnections();
-			}),
+		close: async () => {
+			server.closeAllConnections();
+			await closeServer();
+		},
 		helpUrl: `${origin}example-domains.html`,
 		origin,
 	};
@@ -405,11 +403,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 	}
 }
 
-const entrypoint = process.argv.at(1);
-if (
-	entrypoint !== undefined &&
-	entrypoint.length > 0 &&
-	import.meta.url === pathToFileURL(entrypoint).href
-) {
+if (import.meta.main) {
 	process.exitCode = await main();
 }

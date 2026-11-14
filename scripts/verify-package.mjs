@@ -10,7 +10,7 @@ import { access, readFile } from "node:fs/promises";
 
 import { posix as posixPath, resolve } from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 
 import { getDryRunPackResult, packToTemporaryPackageDir } from "./package-pack.mjs";
 import { verifyPackagedPiLoad } from "./package-pi.mjs";
@@ -29,8 +29,6 @@ import {
 } from "./publish-contract.mjs";
 
 export { FORBIDDEN_PACKED_FILES, FORBIDDEN_REPO_FILES, REQUIRED_REPO_FILES, loadPublishContract };
-
-const SUPPORTED_ARGS = new Set(["--list-files", "--smoke-pi"]);
 
 class UsageError extends Error {
 	/** @param {string} message */
@@ -82,22 +80,32 @@ Exit codes:
 }
 
 export function parseCliArgs(argv = process.argv.slice(2)) {
-	const args = new Set(argv);
-	if (args.has("-h") || args.has("--help")) {
+	let values;
+	try {
+		({ values } = parseArgs({
+			args: argv,
+			options: {
+				help: { type: "boolean", short: "h", default: false },
+				"list-files": { type: "boolean", default: false },
+				"smoke-pi": { type: "boolean", default: false },
+			},
+			strict: true,
+		}));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const prefix =
+			error instanceof Error && "code" in error && error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION"
+				? ""
+				: "Unknown option: ";
+		throw new UsageError(`${prefix}${message}`);
+	}
+	if (values.help) {
 		return { listFiles: false, showHelp: true, smokePi: false };
 	}
-
-	const unknownArgs = [...args].filter((arg) => !SUPPORTED_ARGS.has(arg));
-	if (unknownArgs.length > 0) {
-		throw new UsageError(
-			`Unknown option${unknownArgs.length === 1 ? "" : "s"}: ${unknownArgs.join(", ")}`,
-		);
-	}
-
 	return {
-		listFiles: args.has("--list-files"),
+		listFiles: values["list-files"],
 		showHelp: false,
-		smokePi: args.has("--smoke-pi"),
+		smokePi: values["smoke-pi"],
 	};
 }
 
@@ -314,7 +322,7 @@ export function evaluatePackResult(options) {
 	const missingPackedFiles = publishContract.requiredPackedFiles.filter(
 		(path) => !packedPaths.has(path),
 	);
-	// ponytail: Only the two canonical leak patterns are supported; add explicit rules if the publish contract grows.
+	// `path.matchesGlob` skips dotfiles (FNM_PERIOD), which would let `.secret` or `.hidden.tgz` leak.
 	const forbiddenPackedFiles = publishContract.forbiddenPackedFiles.filter((pattern) =>
 		[...packedPaths].some(
 			(path) =>
@@ -443,12 +451,6 @@ export async function verifyPackageRelease(options = {}) {
 	}
 }
 
-/** @param {string} metaUrl */
-function isDirectRun(metaUrl, argv = process.argv) {
-	const script = argv[1];
-	return script !== undefined && script.length > 0 && metaUrl === pathToFileURL(script).href;
-}
-
 function releaseTarballPath() {
 	const path = process.env.PI_AGENT_BROWSER_RELEASE_TARBALL;
 	if (path !== undefined && path.trim().length === 0) {
@@ -506,7 +508,7 @@ export async function main(argv = process.argv.slice(2)) {
 	}
 }
 
-if (isDirectRun(import.meta.url)) {
+if (import.meta.main) {
 	main()
 		.then((exitCode) => {
 			process.exitCode = exitCode;

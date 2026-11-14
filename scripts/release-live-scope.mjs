@@ -1,7 +1,7 @@
 /** Compare the published Pi agent runtime before deciding whether model calls apply. */
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { parseSinglePackResult } from "./package-pack.mjs";
 import { isConfigObject } from "../extensions/agent-browser/lib/config-policy.js";
 import { Type } from "typebox";
@@ -95,18 +95,14 @@ export function inspectLiveScope({ tarball, directory, env, common }) {
 	const snapshot = (root) => {
 		/** @type {Record<string, string>} */
 		const files = {};
-		/** @param {string} path */
-		const visit = (path) => {
-			for (const entry of readdirSync(join(root, path), { withFileTypes: true })) {
-				const relative = `${path}/${entry.name}`;
-				if (entry.isDirectory()) {
-					visit(relative);
-				} else {
-					files[relative] = common.sha256(join(root, relative));
-				}
+		const distRoot = join(root, "dist");
+		for (const entry of readdirSync(distRoot, { recursive: true, withFileTypes: true })) {
+			if (!entry.isDirectory()) {
+				const fullPath = resolve(entry.parentPath, entry.name);
+				const relativePath = relative(root, fullPath).replaceAll("\\", "/");
+				files[relativePath] = common.sha256(fullPath);
 			}
-		};
-		visit("dist");
+		}
 		files["package.json (runtime metadata)"] = JSON.stringify(
 			runtimeManifest(common.readJson(join(root, "package.json"))),
 		);

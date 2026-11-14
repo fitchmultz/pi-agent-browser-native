@@ -44,22 +44,11 @@ export function writeSummary(dir, data) {
 /** @param {string} dir
  * @param {readonly string[]} expectedFiles */
 export function writeManifest(dir, expectedFiles) {
-	/** @type {string[]} */
-	const present = [];
-	/** @param {string} current */
-	function walk(current) {
-		for (const entry of readdirSync(current, { withFileTypes: true })) {
-			const path = resolve(current, entry.name);
-			if (entry.isDirectory()) {
-				walk(path);
-			} else if (entry.isFile()) {
-				present.push(relative(dir, path));
-			}
-		}
-	}
-	if (existsSync(dir)) {
-		walk(dir);
-	}
+	const present = existsSync(dir)
+		? readdirSync(dir, { recursive: true, withFileTypes: true })
+				.filter((entry) => entry.isFile())
+				.map((entry) => relative(dir, resolve(entry.parentPath, entry.name)))
+		: [];
 	const allPresent = [...new Set([...present, "artifact-manifest.json"])].sort((left, right) =>
 		left < right ? -1 : Number(left > right),
 	);
@@ -129,30 +118,19 @@ export function scanForSecrets(text, secretValues = []) {
 export function scanArtifactTextFiles(dir, secretValues = []) {
 	/** @type {{file: string, violation: string}[]} */
 	const findings = [];
-	/** @param {string} current */
-	function walk(current) {
-		for (const entry of readdirSync(current, { withFileTypes: true })) {
-			const path = resolve(current, entry.name);
-			if (entry.isDirectory()) {
-				walk(path);
-				continue;
+	for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+		if (!entry.isFile() || !/\.(?:txt|json|jsonl|md|log|ps1|mjs|js)$/i.test(entry.name)) {
+			continue;
+		}
+		const path = resolve(entry.parentPath, entry.name);
+		try {
+			const text = readFileSync(path, "utf8");
+			for (const violation of scanForSecrets(text, secretValues)) {
+				findings.push({ file: relative(dir, path), violation });
 			}
-			if (!entry.isFile()) {
-				continue;
-			}
-			if (!/\.(?:txt|json|jsonl|md|log|ps1|mjs|js)$/i.test(entry.name)) {
-				continue;
-			}
-			try {
-				const text = readFileSync(path, "utf8");
-				for (const violation of scanForSecrets(text, secretValues)) {
-					findings.push({ file: relative(dir, path), violation });
-				}
-			} catch {
-				// Ignore unreadable or non-text files.
-			}
+		} catch {
+			// Ignore unreadable or non-text files.
 		}
 	}
-	walk(dir);
 	return findings;
 }

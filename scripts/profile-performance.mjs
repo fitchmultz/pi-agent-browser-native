@@ -8,7 +8,7 @@
  */
 
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, hash } from "node:crypto";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import { cpus, loadavg, totalmem } from "node:os";
 import { dirname, relative, resolve } from "node:path";
@@ -63,7 +63,7 @@ function options() {
 
 /** @param {import("node:crypto").BinaryLike} value */
 function sha256(value) {
-	return createHash("sha256").update(value).digest("hex");
+	return hash("sha256", value, "hex");
 }
 
 /** @param {string} directory */
