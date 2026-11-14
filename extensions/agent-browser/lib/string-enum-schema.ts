@@ -1,12 +1,12 @@
-import { StringEnum as createPiStringEnum } from "@earendil-works/pi-ai";
-import { Type, type TUnsafe } from "typebox";
+import { JsonSchema, type TSchemaOptions, type TUnsafe } from "./json-schema.js";
 
 export function StringEnum<const Values extends readonly string[]>(
 	values: Values,
-	options?: {
-		readonly default?: Values[number];
-		readonly description?: string;
-	},
+	options?: TSchemaOptions,
 ): TUnsafe<Values[number]> {
-	return Type.Unsafe<Values[number]>(createPiStringEnum(values, options));
+	return JsonSchema.Unsafe<Values[number]>({
+		type: "string",
+		enum: [...values],
+		...options,
+	});
 }

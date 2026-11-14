@@ -3,7 +3,7 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { TUnsafe } from "typebox";
+import type { TUnsafe } from "./json-schema.js";
 import {
 	AGENT_BROWSER_NAMESPACE,
 	AGENT_BROWSER_OUTPUT_SCHEMA,

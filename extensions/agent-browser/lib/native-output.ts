@@ -1,6 +1,6 @@
 import type { AgentToolResult, ToolNamespace } from "@earendil-works/pi-coding-agent";
 import type { JsonValue } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { JsonSchema } from "./json-schema.js";
 import { isRecord } from "./parsing.js";
 import { isJsonValue } from "./json-value.js";
 import { isBooleanFlagEnabled } from "./argv-grammar.js";
@@ -20,14 +20,17 @@ export const AGENT_BROWSER_NAMESPACE: ToolNamespace = {
 		"Use agent_browser for native commands and batch --bail for fixed sequences. Deferred tools (action, qa, electron, source, network_source) load through tool_search or run directly from codemode scripts. Check success and nextActions; structured imageObservations are capture metadata, not inline images. Optional web search is available only when configured.",
 };
 
-export const AGENT_BROWSER_OUTPUT_SCHEMA = Type.Object(
+export const AGENT_BROWSER_OUTPUT_SCHEMA = JsonSchema.Object(
 	{
-		success: Type.Boolean(),
-		resultCategory: Type.Union([Type.Literal("success"), Type.Literal("failure")]),
-		data: Type.Optional(Type.Unsafe<unknown>({})),
-		error: Type.Optional(Type.Unsafe<unknown>({})),
-		summary: Type.Optional(Type.String()),
-		nextActions: Type.Optional(Type.Array(Type.Object({}))),
+		success: JsonSchema.Boolean(),
+		resultCategory: JsonSchema.Union([
+			JsonSchema.Literal("success"),
+			JsonSchema.Literal("failure"),
+		]),
+		data: JsonSchema.Optional(JsonSchema.Unsafe<unknown>({})),
+		error: JsonSchema.Optional(JsonSchema.Unsafe<unknown>({})),
+		summary: JsonSchema.Optional(JsonSchema.String()),
+		nextActions: JsonSchema.Optional(JsonSchema.Array(JsonSchema.Object({}))),
 	},
 	{ additionalProperties: true },
 );

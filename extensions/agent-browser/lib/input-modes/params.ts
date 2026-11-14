@@ -1,4 +1,4 @@
-import { Type, type TSchema, type TUnsafe } from "typebox";
+import { JsonSchema as Type, type TSchema, type TUnsafe } from "../json-schema.js";
 import { StringEnum } from "../string-enum-schema.js";
 import {
 	ELECTRON_DISCOVERY_DEFAULT_MAX_RESULTS,

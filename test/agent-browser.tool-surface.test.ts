@@ -4,7 +4,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nodeTest, { type TestContext } from "node:test";
-import { Type } from "typebox";
 import { Check } from "typebox/value";
 import {
 	InMemoryCredentialStore,
@@ -24,6 +23,7 @@ import {
 	type AgentToolResult,
 	type ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
+import { JsonSchema } from "../extensions/agent-browser/lib/json-schema.js";
 import {
 	AGENT_BROWSER_ACTION_PARAMS,
 	AGENT_BROWSER_QA_PARAMS,
@@ -80,7 +80,7 @@ async function withSurface(
 					name: "unrelated",
 					label: "Unrelated",
 					description: "Another extension",
-					parameters: Type.Object({}),
+					parameters: JsonSchema.Object({}),
 					async execute() {
 						return { content: [], details: {} };
 					},
@@ -321,7 +321,7 @@ nodeTest(
 				toolsAdded: baseTools.map((name) => ({
 					name,
 					description: "Initially active tool",
-					parameters: Type.Object({}),
+					parameters: JsonSchema.Object({}),
 				})),
 			});
 			manager.appendMessage({
@@ -407,7 +407,7 @@ nodeTest(
 				toolsAdded: added.map((name) => ({
 					name,
 					description: name,
-					parameters: Type.Object({}),
+					parameters: JsonSchema.Object({}),
 				})),
 				toolsRemoved: removed.map((name) => ({ name })),
 			});
