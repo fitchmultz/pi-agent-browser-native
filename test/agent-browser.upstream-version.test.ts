@@ -29,7 +29,7 @@ nodeTest("upstream version output accepts stable versions at or above the suppor
 	const supportedVersions = [
 		MINIMUM_AGENT_BROWSER_VERSION,
 		TARGET_AGENT_BROWSER_VERSION,
-		"0.35.2",
+		"0.43.1",
 		"1.0.0",
 	];
 	assert.deepEqual(
@@ -39,18 +39,18 @@ nodeTest("upstream version output accepts stable versions at or above the suppor
 		[undefined, undefined, undefined, undefined],
 	);
 	assert.match(
-		getAgentBrowserVersionValidationError("agent-browser 0.34.99\n") ?? "",
-		/at least agent-browser 0\.35\.0/,
+		getAgentBrowserVersionValidationError("agent-browser 0.42.99\n") ?? "",
+		/at least agent-browser 0\.43\.0/,
 	);
 	assert.match(
-		getAgentBrowserVersionValidationError("agent-browser 0.35.1-beta.1\n") ?? "",
+		getAgentBrowserVersionValidationError("agent-browser 0.43.1-beta.1\n") ?? "",
 		/unsupported/,
 	);
 	assert.match(
-		getAgentBrowserVersionValidationError("agent-browser 0.035.1\n") ?? "",
+		getAgentBrowserVersionValidationError("agent-browser 0.043.1\n") ?? "",
 		/unsupported/,
 	);
-	assert.match(getAgentBrowserVersionValidationError("v0.35.1\n") ?? "", /unrecognized value/);
+	assert.match(getAgentBrowserVersionValidationError("v0.43.1\n") ?? "", /unrecognized value/);
 });
 
 nodeTest(

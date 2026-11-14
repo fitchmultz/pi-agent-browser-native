@@ -875,6 +875,27 @@ nodeTest(
 					success: true,
 				},
 			]),
+			{
+				snapshot: {
+					refIds: ["e1"],
+					refs: { e1: { isEditable: false, name: "", role: "unknown" } },
+					target: { title: "Old", url: "https://example.com/" },
+				},
+			},
+		);
+		assert.deepEqual(
+			extractLatestRefSnapshotStateFromBatchResults([
+				{
+					command: ["snapshot", "-i"],
+					result: { refs: { e1: {} }, title: "Old", url: "https://example.com/" },
+					success: true,
+				},
+				{
+					command: ["record", "start", "capture.webm", "https://example.test/"],
+					result: { path: "capture.webm" },
+					success: true,
+				},
+			]),
 			{ invalidation: buildPageTransitionRefSnapshotInvalidation() },
 		);
 		assert.deepEqual(
@@ -885,7 +906,7 @@ nodeTest(
 					success: true,
 				},
 				{
-					command: ["record", "start", "capture.webm"],
+					command: ["record", "start", "capture.webm", "https://example.test/"],
 					error: "Recording already active",
 					success: false,
 				},

@@ -22,6 +22,7 @@ import {
 
 export { closeManagedSession } from "./managed-session-close.js";
 export {
+	daemonNeedsBrowserBootstrap,
 	getRunningHeadedAutosavePolicyChangeError,
 	inspectManagedSessionDaemon,
 } from "./managed-session-daemon-inspection.js";
@@ -37,6 +38,7 @@ interface DaemonPolicyOptions {
 }
 
 interface DaemonPolicyResult {
+	readonly browserLaunched?: boolean | undefined;
 	readonly cleanupOnlyReason?: "restore-disabled-daemon-without-provenance" | undefined;
 	readonly daemonStatus?: ManagedSessionDaemonInspection["status"];
 	readonly generationInspection?: ManagedSessionDaemonInspection | undefined;
@@ -255,6 +257,7 @@ function finishReusableDaemonPolicy(
 				hasKnownDaemonRestoreKey,
 			)
 		: {
+				browserLaunched: daemon.status === "active" ? daemon.browserLaunched : undefined,
 				daemonStatus: daemon.status,
 				// The native CDP provenance helper can change the browser; never reuse its preceding sample.
 				generationInspection:

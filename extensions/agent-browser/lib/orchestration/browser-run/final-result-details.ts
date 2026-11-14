@@ -64,6 +64,18 @@ function artifactDetails(
 	};
 }
 
+function nonEmptyEnvelopeString(
+	plainTextInspection: boolean,
+	value: unknown,
+	trimValue = false,
+): string | undefined {
+	if (plainTextInspection || typeof value !== "string") {
+		return undefined;
+	}
+	const normalized = trimValue ? value.trim() : value;
+	return normalized.length > 0 ? normalized : undefined;
+}
+
 function nativeObservationDetails(
 	options: Pick<
 		FinalResultInput,
@@ -78,13 +90,16 @@ function nativeObservationDetails(
 	lifecycle: AgentBrowserLifecycle | undefined,
 	browserWindow: AgentBrowserWindow | undefined,
 ): Record<string, unknown> {
+	const envelope = options.presentationEnvelope;
 	return {
 		batchFailure: options.presentation.batchFailure,
 		batchSteps: options.presentation.batchSteps,
+		code: nonEmptyEnvelopeString(options.plainTextInspection, envelope?.code),
 		command: options.executionPlan.commandInfo.command,
 		subcommand: options.executionPlan.commandInfo.subcommand,
 		data: options.presentation.data,
-		error: options.plainTextInspection ? undefined : options.presentationEnvelope?.error,
+		error: options.plainTextInspection ? undefined : envelope?.error,
+		upstreamWarning: nonEmptyEnvelopeString(options.plainTextInspection, envelope?.warning, true),
 		inspection: options.plainTextInspection || undefined,
 		agentBrowserStarted: options.processResult.agentBrowserStarted,
 		browserWindow,

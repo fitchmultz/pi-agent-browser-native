@@ -151,6 +151,20 @@ type DiagnosticTextInput = InteractionTextInput &
 		| "exactSensitiveValues"
 	>;
 
+function formatUpstreamEnvelopeNotices(
+	envelope: FinalResultInput["presentationEnvelope"],
+): (string | undefined)[] {
+	const code =
+		typeof envelope?.code === "string" && envelope.code.length > 0
+			? `Upstream error code: ${envelope.code}`
+			: undefined;
+	const warning =
+		typeof envelope?.warning === "string" && envelope.warning.trim().length > 0
+			? `Upstream warning: ${envelope.warning.trim()}`
+			: undefined;
+	return [code, warning];
+}
+
 function appendedDiagnosticText(
 	options: DiagnosticTextInput,
 	nextActions: readonly AgentBrowserNextAction[] | undefined,
@@ -158,6 +172,7 @@ function appendedDiagnosticText(
 	browserWindow: AgentBrowserWindow | undefined,
 ): string {
 	const text = [
+		...formatUpstreamEnvelopeNotices(options.presentationEnvelope),
 		...interactionDiagnosticText(options, nextActions),
 		formatRecordingDependencyWarningText(options.recordingDependencyWarning),
 		formatEvalStdinHintText(options.evalStdinHint),

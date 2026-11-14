@@ -10,7 +10,8 @@ import {
 import { getUpstreamEffectiveBatchSteps } from "./orchestration/batch-stdin.js";
 
 const SESSIONLESS_AUTH_SUBCOMMANDS = new Set(["save", "list", "show", "delete", "remove"]);
-const PLUGIN_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "add", "run"]);
+const PLUGIN_SESSIONLESS_SUBCOMMANDS = new Set(["list", "show", "add", "install", "run"]);
+const SKILLS_SESSIONLESS_SUBCOMMANDS = new Set(["list", "get", "path"]);
 const EMPTY_BOOLEAN_FLAGS = new Set<string>();
 const JSON_BOOLEAN_FLAGS = new Set(["--json"]);
 const AUTH_SAVE_BOOLEAN_FLAGS = new Set(["--json", "--password-stdin"]);
@@ -138,10 +139,11 @@ function isSessionlessCommand(commandTokens: readonly string[]): boolean {
 		case undefined:
 			return false;
 		case "skills":
-			return ["list", "get", "path"].includes(subcommand ?? "");
+			return subcommand === undefined || SKILLS_SESSIONLESS_SUBCOMMANDS.has(subcommand);
 		case "auth":
 			return isSessionlessAuthCommand(normalizedTokens);
 		case "plugin":
+		case "plugins":
 			return isSessionlessPluginCommand(normalizedTokens);
 		case "mcp":
 			return true;

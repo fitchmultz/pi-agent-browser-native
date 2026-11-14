@@ -1587,8 +1587,10 @@ nodeTest(
 	"buildExecutionPlan keeps sessionless commands free of implicit managed sessions while preserving JSON output",
 	async (t) => {
 		for (const args of [
+			["skills"],
 			["skills", "list"],
 			["skills", "get", "core", "--full"],
+			["skills", "get", "core", "--ref", "authentication.md"],
 			["skills", "path", "core"],
 			["profiles"],
 			["auth", "save", "demo", "--url", "https://example.test", "--username", "user"],
@@ -1635,9 +1637,12 @@ nodeTest(
 			["state", "clean", "--older-than", "7"],
 			["state", "rename", "old", "new"],
 			["plugin"],
+			["plugins"],
 			["plugin", "list"],
+			["plugins", "list"],
 			["plugin", "show", "vault"],
 			["plugin", "add", "agent-browser-plugin-vault"],
+			["plugin", "install", "agent-browser-plugin-vault"],
 			["plugin", "run", "captcha", "captcha.solve"],
 		] as const) {
 			await t.test(args.join(" "), () => {
@@ -1672,6 +1677,7 @@ nodeTest(
 nodeTest("validateToolArgs rejects one-shot mcp server calls but preserves --help/-h", () => {
 	assert.match(validateToolArgs(["mcp"]) ?? "", /stdio MCP server/);
 	assert.match(validateToolArgs(["mcp", "--tools", "core,network"]) ?? "", /external MCP clients/);
+	assert.match(validateToolArgs(["mcp", "call", "open", "{}"]) ?? "", /agent-browser mcp call/);
 	assert.equal(validateToolArgs(["mcp", "--help"]), undefined);
 	assert.equal(validateToolArgs(["mcp", "-h"]), undefined);
 	assert.match(validateToolArgs(["mcp", "help"]) ?? "", /external MCP clients/);
@@ -3659,43 +3665,93 @@ nodeTest("WebMCP mutation commands invalidate refs while list remains read-only"
 	assert.equal(isRefInvalidatingBatchCommand(["webmcp", "invoke", "set_message"]), true);
 });
 
-nodeTest("recording FPS without a URL preserves restart refs", async (t) => {
-	// `out.webm` is the bare path-operand form without Chromium-style flags.
-	for (const operands of [
-		["take.webm", "--fps", "30"],
-		["--fps", "+24", "take.webm"],
-		["--fps", "12", "take.webm", "--fps", "24"],
-		["out.webm"],
-	]) {
-		await t.test(operands.join(" "), () => {
-			assert.equal(isRecordPageTransitionCommand(["record", "restart", ...operands]), false);
+nodeTest(
+	"recording without a URL preserves refs while URL-bearing starts and restarts retire them",
+	async (t) => {
+		// `out.webm` is the bare path-operand form without Chromium-style flags.
+		for (const operands of [
+			["take.webm", "--fps", "30"],
+			["--fps", "+24", "take.webm"],
+			["--fps", "12", "take.webm", "--fps", "24"],
+			["out.webm"],
+		]) {
+			await t.test(operands.join(" "), () => {
+				assert.equal(isRecordPageTransitionCommand(["record", "restart", ...operands]), false);
 
-			assert.equal(isRefInvalidatingBatchCommand(["record", "restart", ...operands]), false);
+				assert.equal(isRefInvalidatingBatchCommand(["record", "restart", ...operands]), false);
 
-			assert.equal(
-				isRecordPageTransitionCommand(["record", "start", ...operands]),
-				true,
-				"older native starts replace the page even on failure",
-			);
+				assert.equal(isRecordPageTransitionCommand(["record", "start", ...operands]), false);
+				assert.equal(isRefInvalidatingBatchCommand(["record", "start", ...operands]), false);
 
-			assert.equal(
-				isRefInvalidatingBatchCommand(["record", "start", ...operands]),
-				true,
-				"older native starts still need conservative ref protection",
-			);
+				assert.equal(
+					isRecordPageTransitionCommand(["record", "start", ...operands, "https://example.com"]),
+					true,
+				);
+				assert.equal(
+					isRefInvalidatingBatchCommand(["record", "start", ...operands, "https://example.com"]),
+					true,
+					"a navigating start replaces the page",
+				);
 
-			assert.equal(
-				isRecordPageTransitionCommand(["record", "restart", ...operands, "https://example.com"]),
-				true,
-			);
+				assert.equal(
+					isRecordPageTransitionCommand(["record", "restart", ...operands, "https://example.com"]),
+					true,
+				);
 
-			assert.equal(
-				isRefInvalidatingBatchCommand(["record", "restart", ...operands, "https://example.com"]),
-				true,
-				"a navigating restart replaces the page",
-			);
-		});
-	}
-	assert.equal(isRecordPageTransitionCommand(["record", "stop"]), false);
-	assert.equal(isRefInvalidatingBatchCommand(["record", "stop"]), false);
-});
+				assert.equal(
+					isRefInvalidatingBatchCommand(["record", "restart", ...operands, "https://example.com"]),
+					true,
+					"a navigating restart replaces the page",
+				);
+			});
+		}
+		assert.equal(isRecordPageTransitionCommand(["record", "stop"]), false);
+		assert.equal(isRefInvalidatingBatchCommand(["record", "stop"]), false);
+	},
+);
+
+nodeTest(
+	"0.43 command value flags and flow timeout budgets preserve watchdog and operand parsing",
+	async () => {
+		const { findFirstPositionalArgument, getCommandAwareProcessTimeoutMs } =
+			await import("../extensions/agent-browser/lib/orchestration/browser-run/prepare/wait-timeouts.js");
+
+		assert.equal(
+			getCommandAwareProcessTimeoutMs(["flow", "save", "checkout", "--timeout", "60000"]),
+			65_000,
+		);
+		assert.equal(
+			getCommandAwareProcessTimeoutMs([
+				"flow",
+				"run",
+				"checkout",
+				"--allow-write",
+				"all",
+				"--timeout=70000",
+			]),
+			75_000,
+		);
+		assert.equal(
+			getCommandAwareProcessTimeoutMs(
+				["batch", "--bail"],
+				JSON.stringify([["flow", "run", "checkout", "--timeout", "50000"]]),
+			),
+			55_000,
+		);
+		assert.equal(
+			findFirstPositionalArgument(["network", "--allow-origin", "https://app.example", "route"]),
+			"route",
+		);
+		assert.equal(
+			findFirstPositionalArgument([
+				"plugin",
+				"--capability",
+				"captcha.solve",
+				"--payload",
+				"{}",
+				"run",
+			]),
+			"run",
+		);
+	},
+);

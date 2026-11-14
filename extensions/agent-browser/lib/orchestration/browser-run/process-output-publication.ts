@@ -160,7 +160,7 @@ function recordingPageWarning(draft: RecordingPageWarningInput): string | undefi
 	) {
 		return;
 	}
-	return "Page state: this wrapper conservatively invalidates earlier refs after recording starts and URL-bearing restarts. Take a fresh snapshot before continuing; this does not prove the page changed.";
+	return "Page state: this wrapper conservatively invalidates earlier refs after URL-bearing recording starts and restarts. Take a fresh snapshot before continuing; this does not prove the page changed.";
 }
 
 function sessionWarning(draft: SessionWarningInput): string | undefined {

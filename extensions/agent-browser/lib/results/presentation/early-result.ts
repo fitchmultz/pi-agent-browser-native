@@ -64,6 +64,15 @@ async function buildNativeTextPresentation(
 	return sanitizeModelFacingPresentation(presentation);
 }
 
+function isRecordingBatchEnvelope(options: BuildToolPresentationOptions): boolean {
+	const data = options.envelope?.data;
+	return (
+		options.commandInfo.command === "batch" &&
+		isAgentBrowserBatchResultArray(data) &&
+		data.some((row) => row.command?.[0] === "record")
+	);
+}
+
 export async function buildEarlyPresentation(
 	options: BuildToolPresentationOptions,
 	commands: {
@@ -74,25 +83,23 @@ export async function buildEarlyPresentation(
 	if (options.textOutput === true) {
 		return buildNativeTextPresentation(options, commands.commandInfo);
 	}
-	const recordingBatch =
-		options.commandInfo.command === "batch" &&
-		isAgentBrowserBatchResultArray(options.envelope?.data) &&
-		options.envelope.data.some((row) => row.command?.[0] === "record");
+	const envelopeData = options.envelope?.data;
 	if (
 		options.errorText !== undefined &&
 		options.errorText.length > 0 &&
 		options.commandInfo.command !== "record" &&
-		!recordingBatch
+		!isRecordingBatchEnvelope(options)
 	) {
 		return {
 			...buildErrorPresentation({
 				args: options.args,
 				commandInfo: options.commandInfo,
+				errorData: envelopeData,
 				errorText: options.errorText,
 				presentationCommand: commands.presentationCommandInfo.command,
 				sessionName: options.sessionName,
 			}),
-			data: redactPresentationData(commands.commandInfo, options.envelope?.data),
+			data: redactPresentationData(commands.commandInfo, envelopeData),
 		};
 	}
 	return undefined;

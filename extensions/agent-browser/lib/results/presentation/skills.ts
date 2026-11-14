@@ -192,14 +192,34 @@ function formatNativeSkillContent(content: string): string {
 	return output.join("\n");
 }
 
+function formatSkillsPathData(data: unknown): string | undefined {
+	if (typeof data === "string") {
+		return redactModelFacingText(data);
+	}
+	if (!isRecord(data)) {
+		return undefined;
+	}
+	if (typeof data.path === "string") {
+		return redactModelFacingText(data.path);
+	}
+	if (Array.isArray(data.paths)) {
+		const paths = data.paths.filter((entry): entry is string => typeof entry === "string");
+		return paths.length > 0 ? redactModelFacingText(paths.join("\n")) : "No skill paths found.";
+	}
+	return undefined;
+}
+
 export function formatSkillsText(commandInfo: CommandInfo, data: unknown): string | undefined {
 	if (commandInfo.command !== "skills") {
 		return undefined;
 	}
 	if (commandInfo.subcommand === "path") {
-		return typeof data === "string" ? redactModelFacingText(data) : undefined;
+		return formatSkillsPathData(data);
 	}
-	if (commandInfo.subcommand === "list" && Array.isArray(data)) {
+	if (
+		(commandInfo.subcommand === undefined || commandInfo.subcommand === "list") &&
+		Array.isArray(data)
+	) {
 		return formatSkillsListText(data);
 	}
 	const content = getSkillContent(data);

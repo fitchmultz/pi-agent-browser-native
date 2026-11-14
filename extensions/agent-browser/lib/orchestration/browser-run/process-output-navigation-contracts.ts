@@ -67,6 +67,7 @@ export type CanReverifyFailedNavigationInput = Readonly<
 		| "dispatchedCommands"
 		| "nativeCommandMayHaveExecuted"
 		| "nestedBatchClosed"
+		| "presentationEnvelope"
 		| "readConfirmation"
 		| "succeeded"
 	>

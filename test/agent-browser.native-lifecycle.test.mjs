@@ -13,7 +13,6 @@ import nodeTest from "node:test";
 import { once } from "node:events";
 import { readBrowserToolResult, readToolArguments } from "./helpers/tool-result.mjs";
 import { readNativeSessionInfo } from "./helpers/native-session-info.mjs";
-import { nativeAppliesLaunchSettingsPerCommand } from "./helpers/native-version.ts";
 import { getMessageText } from "../dist/extensions/agent-browser/lib/prompt-policy.js";
 import {
 	readDefined,
@@ -454,11 +453,9 @@ nodeTest(
 				);
 				assert.equal(readDefined(status).active, true);
 				assert.ok(status.runtime);
-				// Native 0.42.0+ launches a browser only for a command that needs one, so this read
-				// leaves the unnamed daemon browserless; older supported natives launch for --profile.
-				const browserLaunched = !nativeAppliesLaunchSettingsPerCommand(
-					execFileSync("agent-browser", ["--version"], { encoding: "utf8", timeout: 5000 }),
-				);
+				// Official 0.43+ launches a browser only for a command that needs one, so this read
+				// leaves the unnamed daemon browserless.
+				const browserLaunched = false;
 				assert.equal(status.runtime.browserLaunched, browserLaunched);
 				assert.deepEqual(readRecord(read.details.lifecycle).effectiveLaunch, { browserLaunched });
 				receipts.push({

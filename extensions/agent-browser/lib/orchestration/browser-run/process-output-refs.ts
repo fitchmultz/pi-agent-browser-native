@@ -3,6 +3,7 @@ import type { PageOutputPhase } from "./process-output-page-phase-contracts.js";
 import type { LifecycleOutputPhase } from "./process-output-lifecycle-phase-contracts.js";
 import {
 	buildPageTransitionRefSnapshotInvalidation,
+	extractReplacedPageWedgedTarget,
 	getCommandRefSnapshotInvalidation,
 	extractLatestRefSnapshotStateFromBatchResults,
 	extractRefSnapshotFromData,
@@ -202,6 +203,11 @@ export function observeBatchRefSnapshot(
 function getTransitionInvalidation(
 	draft: GetTransitionInvalidationInput,
 ): SessionRefSnapshotInvalidation | undefined {
+	if (extractReplacedPageWedgedTarget(draft.presentationEnvelope)) {
+		return buildPageTransitionRefSnapshotInvalidation(
+			"Upstream replaced the unresponsive wedged tab with a blank tab; prior page-scoped refs are gone. Navigate again and run snapshot -i before using refs.",
+		);
+	}
 	// Missing native rows can hide a recording swap or WebMCP mutation. Planned steps are conservative fallback evidence.
 	const direct = getCommandRefSnapshotInvalidation(draft.input.prepared.commandTokens);
 	const planned = !Array.isArray(draft.presentationEnvelope?.data)
@@ -251,6 +257,21 @@ function observedTransitionInvalidation(
 		: undefined;
 }
 
+function shouldMarkOutputTabTargetUnknown(draft: ApplyOutputTabTargetInput): boolean {
+	if (!draft.input.processResult.agentBrowserStarted) {
+		return false;
+	}
+	const { commandTokens } = draft.input.prepared;
+	if (commandTokens[0] === "session" && commandTokens[1] === "info") {
+		return false;
+	}
+	return (
+		draft.unobservedMutation ||
+		draft.resultingPageState.pageUrlUnknown ||
+		draft.resultingPageState.pageTargetMayHaveChanged
+	);
+}
+
 function applyOutputTabTarget(draft: ApplyOutputTabTargetInput, sessionName: string): void {
 	const { state, sessionPageStateUpdate } = draft.input;
 	if (draft.currentSessionTabTarget) {
@@ -264,16 +285,7 @@ function applyOutputTabTarget(draft: ApplyOutputTabTargetInput, sessionName: str
 		}
 		return;
 	}
-	const { commandTokens } = draft.input.prepared;
-	const canHaveChanged =
-		draft.unobservedMutation ||
-		draft.resultingPageState.pageUrlUnknown ||
-		draft.resultingPageState.pageTargetMayHaveChanged;
-	if (
-		draft.input.processResult.agentBrowserStarted &&
-		canHaveChanged &&
-		!(commandTokens[0] === "session" && commandTokens[1] === "info")
-	) {
+	if (shouldMarkOutputTabTargetUnknown(draft)) {
 		state.sessionPageState.markTabTargetUnknown({ sessionName, update: sessionPageStateUpdate });
 	}
 }

@@ -12,6 +12,7 @@ export type { AgentBrowserObservation, ProjectedAgentBrowserObservation } from "
 export const OBSERVATION_INLINE_MAX_CHARS = 16_000;
 
 const OBSERVATION_DETAIL_FIELDS = [
+	"code",
 	"data",
 	"error",
 	"summary",
@@ -19,6 +20,7 @@ const OBSERVATION_DETAIL_FIELDS = [
 	"successCategory",
 	"nextActions",
 	"warnings",
+	"upstreamWarning",
 	"sessionName",
 	"namespace",
 	"artifacts",

@@ -1696,3 +1696,102 @@ nodeTest(
 		assert.match(longCause, /^Navigation failed: x/);
 	},
 );
+
+nodeTest(
+	"0.43 primitives: page_wedged classification, interception actions, skills/plugins presentation, and envelope code/warning",
+	async (t) => {
+		const { decodeAgentBrowserEnvelope } =
+			await import("../extensions/agent-browser/lib/results/envelope-decoding.js");
+		const { parseCommandInfo } = await import("../extensions/agent-browser/lib/argv-descriptor.js");
+		const firstText = (content: readonly { readonly type: string; readonly text?: string }[]) =>
+			content
+				.flatMap((part) =>
+					part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+				)
+				.join("\n");
+
+		const outcomeUnknown = decodeAgentBrowserEnvelope({
+			success: false,
+			error: "Connection reset",
+			code: "outcome_unknown",
+			warning: "page_wedged: previous tab timed out",
+		});
+		assert.ok(outcomeUnknown.envelope);
+		assert.equal(outcomeUnknown.envelope.code, "outcome_unknown");
+		assert.equal(outcomeUnknown.envelope.warning, "page_wedged: previous tab timed out");
+
+		assert.equal(
+			classifyAgentBrowserFailureCategory({
+				errorText:
+					"page_wedged: the active tab (https://example.com) stopped responding and was replaced by a blank tab; navigate again to continue",
+			}),
+			"page-wedged",
+		);
+
+		const keptWedge = await buildToolPresentation({
+			args: ["click", "@e2"],
+			commandInfo: parseCommandInfo(["click", "@e2"]),
+			cwd: process.cwd(),
+			envelope: {
+				success: false,
+				error:
+					"page_wedged: the active tab stopped responding; close it or switch tabs to continue",
+				data: { targetId: "T1", replaced: false },
+			},
+			errorText:
+				"page_wedged: the active tab stopped responding; close it or switch tabs to continue",
+		});
+		assert.equal(keptWedge.failureCategory, "page-wedged");
+		assert.deepEqual(
+			keptWedge.nextActions?.map((action) => action.id),
+			["list-tabs-after-page-wedged", "open-tab-after-page-wedged"],
+		);
+
+		for (const action of ["dblclick", "check", "uncheck", "tap"] as const) {
+			await t.test(action, async () => {
+				const covered = await buildToolPresentation({
+					args: [action, "@e4"],
+					commandInfo: parseCommandInfo([action, "@e4"]),
+					cwd: process.cwd(),
+					envelope: {
+						success: false,
+						error: `Element '@e4' is covered by <div.modal-backdrop> at its click point, so the input would land on that element instead.`,
+					},
+					errorText: `Element '@e4' is covered by <div.modal-backdrop> at its click point, so the input would land on that element instead.`,
+				});
+				assert.deepEqual(
+					(covered.nextActions ?? []).map((entry) => entry.id),
+					["inspect-overlay-state"],
+				);
+			});
+		}
+
+		const bareSkills = await buildToolPresentation({
+			args: ["skills"],
+			commandInfo: parseCommandInfo(["skills"]),
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: [{ name: "modern-web-guidance", description: "Guidance" }],
+			},
+		});
+		assert.equal(bareSkills.summary, "agent-browser skills: 1");
+		assert.match(firstText(bareSkills.content), /modern-web-guidance/);
+
+		const skillsPaths = await buildToolPresentation({
+			args: ["skills", "path"],
+			commandInfo: parseCommandInfo(["skills", "path"]),
+			cwd: process.cwd(),
+			envelope: { success: true, data: { paths: ["/opt/skills/a", "/opt/skills/b"] } },
+		});
+		assert.equal(firstText(skillsPaths.content), "/opt/skills/a\n/opt/skills/b");
+
+		const pluginsInstall = await buildToolPresentation({
+			args: ["plugins", "install", "demo-plugin"],
+			commandInfo: parseCommandInfo(["plugins", "install", "demo-plugin"]),
+			cwd: process.cwd(),
+			envelope: { success: true, data: { plugin: { name: "demo-plugin" } } },
+		});
+		assert.equal(pluginsInstall.summary, "Plugin configured: demo-plugin");
+	},
+);

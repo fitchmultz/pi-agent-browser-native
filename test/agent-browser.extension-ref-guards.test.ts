@@ -1903,7 +1903,7 @@ if (args.includes("batch")) {
 );
 
 nodeTest(
-	"agentBrowserExtension conservatively invalidates direct and batched refs on recording starts and URL restarts",
+	"agentBrowserExtension preserves refs on URL-less recording starts and invalidates refs on URL-bearing starts and restarts",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-start-refs-"));
@@ -1977,10 +1977,25 @@ if (args.includes("snapshot")) {
 				assert.equal(initialSnapshot.isError, false, JSON.stringify(initialSnapshot));
 				assert.deepEqual(readRecord(initialSnapshotDetails.refSnapshot ?? {}).refIds, ["e1"]);
 
+				const urlLessStartBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["batch"],
+					stdin: JSON.stringify([
+						["record", "start", join(tempDir, "url-less-batch.webm")],
+						["click", "@e1"],
+					]),
+				});
+				assert.equal(urlLessStartBatch.isError, false, JSON.stringify(urlLessStartBatch));
+
+				const urlLessRecordStart = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["record", "start", join(tempDir, "url-less-direct.webm")],
+				});
+				assert.equal(urlLessRecordStart.isError, false, JSON.stringify(urlLessRecordStart));
+				assert.equal(readRecord(urlLessRecordStart.details).refSnapshotInvalidation, undefined);
+
 				const staleBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([
-						["record", "start", join(tempDir, "batch.webm")],
+						["record", "start", join(tempDir, "batch.webm"), "https://record.example/next"],
 						["click", "@e1"],
 					]),
 				});
@@ -1993,7 +2008,7 @@ if (args.includes("snapshot")) {
 				);
 
 				const recordStart = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["record", "start", join(tempDir, "direct.webm")],
+					args: ["record", "start", join(tempDir, "direct.webm"), "https://record.example/next"],
 				});
 				const recordStartDetails = readRecord(recordStart.details);
 				assert.equal(recordStart.isError, false, JSON.stringify(recordStart));
@@ -2008,7 +2023,7 @@ if (args.includes("snapshot")) {
 				);
 				assert.match(
 					readString(readRecord(recordStartDetails.refSnapshotInvalidation).summary),
-					/this is not evidence of a page change/,
+					/conservatively invalidates earlier page-scoped refs after URL-bearing recording starts and restarts/,
 				);
 
 				const staleClick = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2019,7 +2034,7 @@ if (args.includes("snapshot")) {
 				assert.equal(staleClickDetails.failureCategory, "stale-ref", JSON.stringify(staleClick));
 				assert.match(
 					readString(readDefined(staleClick.content[0]).text ?? ""),
-					/cannot be used yet\..*conservatively invalidate/,
+					/cannot be used yet\..*URL-bearing recording starts and restarts/,
 				);
 
 				const staleGuardedRead = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2095,7 +2110,12 @@ if (args.includes("snapshot")) {
 				assert.equal(recoverySnapshot.isError, false, JSON.stringify(recoverySnapshot));
 
 				const failedStart = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["record", "start", join(tempDir, "already-active.webm")],
+					args: [
+						"record",
+						"start",
+						join(tempDir, "already-active.webm"),
+						"https://record.example/next",
+					],
 				});
 				const failedStartDetails = readRecord(failedStart.details);
 				assert.equal(failedStart.isError, true, JSON.stringify(failedStart));
@@ -2140,7 +2160,7 @@ if (args.includes("snapshot")) {
 				const booleanFlagBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([
-						["record", "start", join(tempDir, "latch.webm")],
+						["record", "start", join(tempDir, "latch.webm"), "https://record.example/next"],
 						["click", "--new-tab", "@e1"],
 					]),
 				});
@@ -2227,7 +2247,11 @@ if (args.includes("snapshot")) {
 				});
 				assert.equal(latchRecoverySnapshot.isError, false, JSON.stringify(latchRecoverySnapshot));
 				const rawArgvLatch = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["batch", `record start ${join(tempDir, "latch2.webm")}`, "click @e1"],
+					args: [
+						"batch",
+						`record start ${join(tempDir, "latch2.webm")} https://record.example/next`,
+						"click @e1",
+					],
 				});
 				const rawArgvLatchDetails = readRecord(rawArgvLatch.details);
 				assert.equal(rawArgvLatch.isError, true, JSON.stringify(rawArgvLatch));
@@ -2243,9 +2267,9 @@ if (args.includes("snapshot")) {
 
 				const invocations = await readInvocationLog(logPath);
 				const batches = invocations.filter((entry) => entry.args.includes("batch"));
-				assert.equal(batches.length, 2);
-				assert.deepEqual(readDefined(batches[1]).args.slice(-2), ["batch", "wait 100"]);
-				assert.equal(readDefined(batches[1]).stdin, JSON.stringify([["click", "@e1"]]));
+				assert.equal(batches.length, 3);
+				assert.deepEqual(readDefined(batches[2]).args.slice(-2), ["batch", "wait 100"]);
+				assert.equal(readDefined(batches[2]).stdin, JSON.stringify([["click", "@e1"]]));
 				assert.equal(
 					invocations.filter(
 						(entry) => entry.args.includes("click") && !entry.args.includes("find"),
@@ -2266,7 +2290,7 @@ if (args.includes("snapshot")) {
 					invocations.filter(
 						(entry) => entry.args.includes("record") && entry.args.includes("start"),
 					).length,
-					2,
+					3,
 				);
 				assert.equal(
 					invocations.filter(
@@ -2283,7 +2307,7 @@ if (args.includes("snapshot")) {
 );
 
 nodeTest(
-	"agentBrowserExtension invalidates refs when a batch recording start times out before returning rows",
+	"agentBrowserExtension invalidates refs when a navigating batch recording start times out before returning rows",
 	{ concurrency: false },
 	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-record-batch-timeout-"));
@@ -2374,7 +2398,7 @@ if (args.includes("snapshot")) {
 				const timedOutBatch = await timeoutBatch(
 					["batch"],
 					JSON.stringify([
-						["record", "start", join(tempDir, "swap.webm")],
+						["record", "start", join(tempDir, "swap.webm"), "https://record.example/next"],
 						["wait", "3000"],
 					]),
 				);
@@ -2405,7 +2429,9 @@ if (args.includes("snapshot")) {
 				// cannot execute and must not invalidate refs when such a batch times out.
 				const argvExclusiveTimeout = await timeoutBatch(
 					["batch", "wait 500"],
-					JSON.stringify([["record", "start", join(tempDir, "ignored.webm")]]),
+					JSON.stringify([
+						["record", "start", join(tempDir, "ignored.webm"), "https://record.example/next"],
+					]),
 				);
 				const argvExclusiveTimeoutDetails = readRecord(argvExclusiveTimeout.details);
 				assert.equal(argvExclusiveTimeout.isError, true, JSON.stringify(argvExclusiveTimeout));
@@ -2891,6 +2917,116 @@ if (args.includes("snapshot")) {
 					await assert.rejects(stat(join(tempDir, "sub")), { code: "ENOENT" });
 				},
 			);
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);
+
+nodeTest(
+	"agentBrowserExtension invalidates refs on replaced page_wedged errors and surfaces native code and warning fields",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-page-wedged-"));
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const args = process.argv.slice(2);
+if (args.includes("get") && args.includes("url")) {
+  process.stdout.write(JSON.stringify({ success: true, data: { url: "https://wedged.example/app" } }));
+} else if (args.includes("snapshot")) {
+  process.stdout.write(JSON.stringify({
+    success: true,
+    warning: 'A JavaScript alert dialog is blocking the page: "Confirm?" — use \`dialog accept\` or \`dialog dismiss\` to resolve it',
+    data: {
+      origin: "https://wedged.example",
+      title: "Wedged fixture",
+      url: "https://wedged.example/app",
+      refs: { e1: { role: "button", name: "Run" } },
+      snapshot: '- button "Run" [ref=e1]'
+    }
+  }));
+} else if (args.includes("fill")) {
+  process.stdout.write(JSON.stringify({
+    success: false,
+    code: "outcome_unknown",
+    error: "Failed to read: Connection reset by peer (the command reached the daemon but no response came back; it may or may not have run, so it was not retried)"
+  }));
+} else {
+  process.stdout.write(JSON.stringify({
+    success: false,
+    error: "page_wedged: the active tab (https://wedged.example/app) stopped responding and was replaced by a blank tab; navigate again to continue",
+    data: {
+      targetId: "OLD_TAB",
+      replaced: true,
+      lastUrl: "https://wedged.example/app",
+      newTargetId: "NEW_BLANK_TAB"
+    }
+  }));
+}`,
+		);
+
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+
+				const snap = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["snapshot", "-i"],
+				});
+				assert.equal(snap.isError, false, JSON.stringify(snap));
+				assert.match(
+					readString(readDefined(snap.content[0]).text ?? ""),
+					/Upstream warning: A JavaScript alert dialog is blocking the page/,
+				);
+				assert.match(
+					readString(readRecord(snap.details).upstreamWarning),
+					/JavaScript alert dialog/,
+				);
+
+				const outcomeUnknown = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["fill", "#q", "hello"],
+				});
+				assert.equal(outcomeUnknown.isError, true);
+				assert.equal(readRecord(outcomeUnknown.details).code, "outcome_unknown");
+				assert.match(
+					readString(readDefined(outcomeUnknown.content[0]).text ?? ""),
+					/Upstream error code: outcome_unknown/,
+				);
+
+				const wedged = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["eval", "while(true){}"],
+				});
+				const wedgedDetails = readRecord(wedged.details);
+				assert.equal(wedged.isError, true);
+				assert.equal(wedgedDetails.failureCategory, "page-wedged");
+				assert.deepEqual(wedgedDetails.sessionTabTarget, {
+					url: "about:blank",
+					targetId: "NEW_BLANK_TAB",
+				});
+				assert.equal(readRecord(wedgedDetails.refSnapshotInvalidation).reason, "page-transition");
+				assert.deepEqual(
+					readArray(wedgedDetails.nextActions)
+						.map(readRecord)
+						.map((action) => ({
+							id: action.id,
+							args: readArray(readRecord(action.params).args).slice(-2),
+						})),
+					[
+						{
+							id: "reopen-page-after-page-wedged",
+							args: ["open", "https://wedged.example/app"],
+						},
+						{ id: "list-tabs-after-page-wedged", args: ["tab", "list"] },
+					],
+				);
+
+				const staleAfterWedge = await executeRegisteredTool(harness.tool, harness.ctx, {
+					args: ["click", "@e1"],
+				});
+				assert.equal(staleAfterWedge.isError, true);
+				assert.equal(readRecord(staleAfterWedge.details).failureCategory, "stale-ref");
+			});
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}

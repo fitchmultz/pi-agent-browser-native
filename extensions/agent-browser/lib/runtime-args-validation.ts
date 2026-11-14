@@ -34,6 +34,9 @@ function getBareMcpValidationError(args: readonly string[]): string | undefined 
 	if (commandInfo.command !== "mcp" || tokens.includes("--help") || tokens.includes("-h")) {
 		return;
 	}
+	if (commandInfo.subcommand === "call") {
+		return "agent-browser mcp call invokes a nested MCP tool wrapper without this extension's session coordination, redaction, or image attachment pipeline. Use the native agent_browser tool modes directly, or configure external MCP clients to launch `agent-browser mcp`. Use `mcp --help` for help.";
+	}
 	return "agent-browser mcp starts a stdio MCP server for external MCP clients, not a one-shot native agent_browser tool workflow. Use the native agent_browser tool modes directly, or configure an MCP client to launch `agent-browser mcp`. Use `mcp --help` for help.";
 }
 

@@ -81,6 +81,26 @@ function getKeyboardPressHint(commandInfo: CommandInfo, errorText: string): stri
 	return KEYBOARD_PRESS_ERROR_HINT;
 }
 
+const INTERCEPTION_CHECKED_ACTIONS = new Set(["click", "dblclick", "check", "uncheck", "tap"]);
+
+function readNonEmptyField(data: unknown, key: string): string | undefined {
+	const value = isRecord(data) ? data[key] : undefined;
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function extractPageWedgedHint(
+	errorText: string | undefined,
+	data?: unknown,
+): { readonly replaced: boolean; readonly lastUrl?: string | undefined } | undefined {
+	if (errorText === undefined || !/\bpage_wedged:/i.test(errorText)) {
+		return undefined;
+	}
+	const replaced =
+		(isRecord(data) && data.replaced === true) || /\breplaced by a blank tab\b/i.test(errorText);
+	const parsedUrl = /\bpage_wedged:\s*the active tab \(([^)\s]+)\)/i.exec(errorText)?.[1];
+	return { replaced, lastUrl: readNonEmptyField(data, "lastUrl") ?? parsedUrl };
+}
+
 export function isOverlayBlockedClickError(
 	command: string | undefined,
 	errorText: string | undefined,
@@ -92,7 +112,7 @@ export function isOverlayBlockedClickError(
 			? (tokens[tokens[1] === "nth" ? 4 : 3] ?? "click")
 			: (tokens[0] ?? command);
 	return (
-		action === "click" &&
+		INTERCEPTION_CHECKED_ACTIONS.has(action ?? "") &&
 		errorText !== undefined &&
 		/\bis covered by\b[\s\S]*\bat its click point\b/i.test(errorText)
 	);
@@ -392,11 +412,12 @@ function buildHintedErrorText(
 export function buildErrorPresentation(options: {
 	readonly args?: readonly string[] | undefined;
 	readonly commandInfo: CommandInfo;
+	readonly errorData?: unknown;
 	readonly errorText: string;
 	readonly presentationCommand?: string | undefined;
 	readonly sessionName?: string | undefined;
 }): ToolPresentation {
-	const { args, commandInfo, errorText, presentationCommand, sessionName } = options;
+	const { args, commandInfo, errorData, errorText, presentationCommand, sessionName } = options;
 	const safeErrorText = redactModelFacingText(
 		redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
 	);
@@ -437,6 +458,7 @@ export function buildErrorPresentation(options: {
 						safeErrorText,
 						args ?? commandInfo.commandTokens,
 					),
+					pageWedged: extractPageWedgedHint(safeErrorText, errorData),
 					resultCategory: "failure",
 					sessionName,
 					subcommand: commandInfo.subcommand,

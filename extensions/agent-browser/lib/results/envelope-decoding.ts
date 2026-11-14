@@ -49,9 +49,17 @@ export function decodeAgentBrowserEnvelope(value: unknown): EnvelopeParseResult 
 		};
 	}
 	if (!Object.hasOwn(value, "data")) {
-		const { success, error, ...topLevelData } = value;
+		const { success, error, code, warning, ...topLevelData } = value;
 		if (Object.keys(topLevelData).length > 0) {
-			return { envelope: { error, success, data: topLevelData } };
+			return {
+				envelope: {
+					error,
+					success,
+					data: topLevelData,
+					...(code !== undefined ? { code } : {}),
+					...(warning !== undefined ? { warning } : {}),
+				},
+			};
 		}
 	}
 	return { envelope: { ...value, success: value.success } };

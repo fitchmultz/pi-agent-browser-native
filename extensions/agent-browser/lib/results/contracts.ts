@@ -24,9 +24,11 @@ export type {
 export type { AgentBrowserNextAction } from "./action-contracts.js";
 
 export interface AgentBrowserEnvelope {
+	readonly code?: unknown;
 	readonly data?: unknown;
 	readonly error?: unknown;
 	readonly success: boolean;
+	readonly warning?: unknown;
 }
 
 export interface AgentBrowserBatchResult {
@@ -53,6 +55,7 @@ export type AgentBrowserFailureCategory =
 	| "confirmation-required"
 	| "download-not-verified"
 	| "missing-binary"
+	| "page-wedged"
 	| "parse-failure"
 	| "policy-blocked"
 	| "qa-failure"

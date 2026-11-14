@@ -21,6 +21,7 @@ function supportsCommandTimeout(commandTokens: readonly string[]): boolean {
 	return (
 		command === "wait" ||
 		command === "read" ||
+		(command === "flow" && (subcommand === "save" || subcommand === "run")) ||
 		(command === "webmcp" && (subcommand === "invoke" || subcommand === "result"))
 	);
 }
