@@ -133,13 +133,11 @@ export async function resolveSnapExecutable(
 	return undefined;
 }
 function getFlatpakAppId(tokens: readonly string[], desktopId: string): string {
-	for (let index = tokens.length - 1; index >= 0; index -= 1) {
-		const token = tokens[index] ?? "";
-		if (!token.startsWith("-") && token.includes(".") && token !== "flatpak") {
-			return token;
-		}
-	}
-	return desktopId;
+	return (
+		tokens.findLast(
+			(token) => !token.startsWith("-") && token.includes(".") && token !== "flatpak",
+		) ?? desktopId
+	);
 }
 function getFlatpakCommandName(tokens: readonly string[]): string | undefined {
 	for (let index = 0; index < tokens.length; index += 1) {

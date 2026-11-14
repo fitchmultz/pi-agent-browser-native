@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { getAgentBrowserSessionIdentityKey } from "../argv-grammar.js";
 import { isArtifactReceiptKey } from "./artifact-manifest-validation.js";
 export { isSessionArtifactManifest } from "./artifact-manifest-validation.js";
@@ -114,7 +114,7 @@ function logicalArtifactKey(entry: SessionArtifactManifestEntry): string {
 }
 
 function digestArtifactKey(logicalKey: string): string {
-	return `sha256:${createHash("sha256").update(logicalKey).digest("hex")}`;
+	return `sha256:${hash("sha256", logicalKey, "hex")}`;
 }
 
 /**

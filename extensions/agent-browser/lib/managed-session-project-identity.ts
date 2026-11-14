@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { hash, randomUUID } from "node:crypto";
 import {
 	linkSync,
 	lstatSync,
@@ -301,9 +301,9 @@ export function createManagedSessionRestoreKey(
 	}
 	const identity = resolveProjectGenerationIdentity(canonicalCwd, platform);
 	const material = identity ?? `unavailable:${canonicalCwd}`;
-	const digest = createHash("sha256")
-		.update(`restore-v3:${material}:scope:${restoreScope}`)
-		.digest("hex")
-		.slice(0, MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH);
+	const digest = hash("sha256", `restore-v3:${material}:scope:${restoreScope}`, "hex").slice(
+		0,
+		MANAGED_SESSION_RESTORE_KEY_HASH_LENGTH,
+	);
 	return `${MANAGED_SESSION_NAME_PREFIX}${digest}`;
 }

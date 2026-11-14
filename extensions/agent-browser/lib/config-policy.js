@@ -157,13 +157,7 @@ function getBrowserExecutablePath(config) {
  * @returns {ConfigLayerScope | undefined}
  */
 function getBrowserDefaultProfileScope(layers) {
-	for (let index = layers.length - 1; index >= 0; index -= 1) {
-		const layer = layers.at(index);
-		if (layer?.config.browser?.defaultProfile !== undefined) {
-			return layer.scope;
-		}
-	}
-	return;
+	return layers.findLast((layer) => layer.config.browser?.defaultProfile !== undefined)?.scope;
 }
 
 /**
@@ -171,13 +165,7 @@ function getBrowserDefaultProfileScope(layers) {
  * @returns {ConfigLayerScope | undefined}
  */
 function getBrowserExecutablePathScope(layers) {
-	for (let index = layers.length - 1; index >= 0; index -= 1) {
-		const layer = layers.at(index);
-		if (layer?.config.browser?.executablePath !== undefined) {
-			return layer.scope;
-		}
-	}
-	return;
+	return layers.findLast((layer) => layer.config.browser?.executablePath !== undefined)?.scope;
 }
 
 /**
@@ -185,17 +173,11 @@ function getBrowserExecutablePathScope(layers) {
  * @returns {{ profile: Required<BrowserDefaultProfileConfig>; scope: ConfigLayerScope } | undefined}
  */
 function getTrustedBrowserDefaultProfile(layers) {
-	for (let index = layers.length - 1; index >= 0; index -= 1) {
-		const layer = layers.at(index);
-		if (!layer) {
-			continue;
-		}
-		const profile = getBrowserDefaultProfile(layer.config);
-		if (profile) {
-			return { profile, scope: layer.scope };
-		}
-	}
-	return;
+	const layer = layers.findLast(
+		(candidate) => getBrowserDefaultProfile(candidate.config) !== undefined,
+	);
+	const profile = layer ? getBrowserDefaultProfile(layer.config) : undefined;
+	return layer && profile ? { profile, scope: layer.scope } : undefined;
 }
 
 /**
@@ -203,17 +185,11 @@ function getTrustedBrowserDefaultProfile(layers) {
  * @returns {{ executablePath: string; scope: ConfigLayerScope } | undefined}
  */
 function getTrustedBrowserExecutablePath(layers) {
-	for (let index = layers.length - 1; index >= 0; index -= 1) {
-		const layer = layers.at(index);
-		if (!layer) {
-			continue;
-		}
-		const executablePath = getBrowserExecutablePath(layer.config);
-		if (executablePath !== undefined && executablePath.length > 0) {
-			return { executablePath, scope: layer.scope };
-		}
-	}
-	return;
+	const layer = layers.findLast(
+		(candidate) => getBrowserExecutablePath(candidate.config) !== undefined,
+	);
+	const executablePath = layer ? getBrowserExecutablePath(layer.config) : undefined;
+	return layer && executablePath !== undefined ? { executablePath, scope: layer.scope } : undefined;
 }
 
 /**
@@ -222,13 +198,7 @@ function getTrustedBrowserExecutablePath(layers) {
  * @returns {AgentBrowserConfigScope}
  */
 function getWebSearchCredentialScope(layers, key) {
-	for (let index = layers.length - 1; index >= 0; index -= 1) {
-		const layer = layers.at(index);
-		if (layer?.config.webSearch?.[key] !== undefined) {
-			return layer.scope;
-		}
-	}
-	return "global";
+	return layers.findLast((layer) => layer.config.webSearch?.[key] !== undefined)?.scope ?? "global";
 }
 
 /**

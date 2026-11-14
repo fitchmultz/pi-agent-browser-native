@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -85,7 +85,7 @@ function rootPiSessionId(sessionId: string): string {
 
 function rootBrowserSessionName(sessionId: string): string {
 	const rootSessionId = rootPiSessionId(sessionId);
-	return `pi-root-${createHash("sha256").update(rootSessionId).digest("hex").slice(0, 24)}`;
+	return `pi-root-${hash("sha256", rootSessionId, "hex").slice(0, 24)}`;
 }
 
 function nativeBooleanOverrides(args: readonly string[]): Array<[string, string]> {

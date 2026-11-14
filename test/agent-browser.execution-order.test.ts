@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { readRecord, readArray, readString, hasErrorCode } from "./helpers/assertions.js";
 import { spawn, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { hash as cryptoHash } from "node:crypto";
 import { once } from "node:events";
 import {
 	appendFile,
@@ -325,13 +325,11 @@ for (const mode of ["direct", "cancel-waiter"] as const) {
 				head: execFileSync("git", ["-C", sourceRoot, "rev-parse", "HEAD"], {
 					encoding: "utf8",
 				}).trim(),
-				trackedDiffSha256: createHash("sha256").update(diff).digest("hex"),
+				trackedDiffSha256: cryptoHash("sha256", diff, "hex"),
 				untracked: await Promise.all(
 					untracked.map(async (path) => ({
 						path,
-						sha256: createHash("sha256")
-							.update(await readFile(join(sourceRoot, path)))
-							.digest("hex"),
+						sha256: cryptoHash("sha256", await readFile(join(sourceRoot, path)), "hex"),
 					})),
 				),
 			};

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { hash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
 	lstatSync,
@@ -86,11 +86,11 @@ export function getCheckoutLineageHash(cwd: string, platform: NodeJS.Platform): 
 	if (root === undefined || root.length === 0) {
 		return undefined;
 	}
-	return createHash("sha256")
-		.update(
-			`managed-snapshot-lineage-v1:${platform}:${platform === "win32" ? root.toLowerCase() : root}`,
-		)
-		.digest("hex");
+	return hash(
+		"sha256",
+		`managed-snapshot-lineage-v1:${platform}:${platform === "win32" ? root.toLowerCase() : root}`,
+		"hex",
+	);
 }
 function privateOwnedDirectory(entry: Stats, platform: NodeJS.Platform): boolean {
 	if (platform === "win32") {
@@ -163,7 +163,7 @@ export function removeManifestLineages(directory: string, platform: NodeJS.Platf
 	}
 }
 function getRecordPath(directory: string, snapshotPath: string): string {
-	return join(directory, `${createHash("sha256").update(snapshotPath).digest("hex")}.json`);
+	return join(directory, `${hash("sha256", snapshotPath, "hex")}.json`);
 }
 function discardRecord(path: string): void {
 	try {

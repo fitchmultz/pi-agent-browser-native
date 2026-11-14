@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +32,7 @@ export function getCoordinationDirectory(platform: NodeJS.Platform = process.pla
 			: `/tmp/pi-agent-browser-policy${suffix}`;
 	}
 	const user = process.env.USERNAME ?? process.env.USER ?? "unknown";
-	const suffix = createHash("sha256").update(user).digest("hex").slice(0, 12);
+	const suffix = hash("sha256", user, "hex").slice(0, 12);
 	return join(tmpdir(), `pi-agent-browser-policy-${suffix}`);
 }
 function directoryOwnerTrusted(entry: Stats, platform: NodeJS.Platform): boolean {
@@ -108,6 +108,6 @@ export function getBrowserExecutionLockPath(
 ): string {
 	return join(
 		getCoordinationDirectory(),
-		`.pi-agent-browser-policy-${createHash("sha256").update(identity.socketContext).digest("hex")}.lock-v4`,
+		`.pi-agent-browser-policy-${hash("sha256", identity.socketContext, "hex")}.lock-v4`,
 	);
 }
