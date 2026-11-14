@@ -1,6 +1,6 @@
 /** Isolated package/settings preparation and compiled-source sentinel injection for lifecycle verification. */
 import { execFile as execFileCallback } from "node:child_process";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { access, chmod, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -60,9 +60,7 @@ export async function copyPackageSource({ packageDir, repoRoot }) {
 		}
 		const candidate = await packToTemporaryPackageDir(repoRoot, tarball);
 		try {
-			const sha256 = createHash("sha256")
-				.update(await readFile(candidate.tarballPath))
-				.digest("hex");
+			const sha256 = hash("sha256", await readFile(candidate.tarballPath), "hex");
 			const installed = await installRuntimeConsumer(candidate.tarballPath);
 			await cp(installed, packageDir, { recursive: true });
 			await cp(dirname(installed), join(packageDir, "node_modules"), {
@@ -70,9 +68,7 @@ export async function copyPackageSource({ packageDir, repoRoot }) {
 				verbatimSymlinks: true,
 				filter: (path) => path !== installed,
 			});
-			const after = createHash("sha256")
-				.update(await readFile(candidate.tarballPath))
-				.digest("hex");
+			const after = hash("sha256", await readFile(candidate.tarballPath), "hex");
 			if (after !== sha256) {
 				throw new Error("The retained candidate changed during lifecycle setup.");
 			}

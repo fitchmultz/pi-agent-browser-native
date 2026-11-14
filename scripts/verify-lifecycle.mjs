@@ -5,7 +5,7 @@
  * Usage: `node scripts/verify-lifecycle.mjs [--model <id>] [--timeout-ms <ms>] [--keep-artifacts] [--verbose]`.
  * Invariants/Assumptions: Pi and tmux are on PATH. The harness preserves transcripts and uses exactly one temporary configured package source with an exact Pi session id.
  */
-import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 import { DEFAULT_LIFECYCLE_MODEL, DEFAULT_TIMEOUT_MS } from "./lifecycle-defaults.mjs";
 import { verifyLifecycle } from "./lifecycle-run.mjs";
 export { buildSettingsPayload, injectLifecycleSentinelSource } from "./lifecycle-fixture.mjs";
@@ -84,34 +84,46 @@ function parseTimeout(value) {
 
 /** @param {readonly string[]} argv */
 export function parseCliArgs(argv = process.argv.slice(2)) {
-	const options = {
-		keepArtifacts: false,
-		model: DEFAULT_LIFECYCLE_MODEL,
-		showHelp: false,
-		timeoutMs: DEFAULT_TIMEOUT_MS,
-		verbose: false,
-	};
-	const args = argv.values();
-	for (const arg of args) {
-		if (["-h", "--help"].includes(arg)) {
-			return { ...options, showHelp: true };
+	let values;
+	try {
+		({ values } = parseArgs({
+			args: argv,
+			options: {
+				help: { type: "boolean", short: "h", default: false },
+				"keep-artifacts": { type: "boolean", default: false },
+				model: { type: "string" },
+				"timeout-ms": { type: "string" },
+				verbose: { type: "boolean", default: false },
+			},
+			strict: true,
+		}));
+	} catch (error) {
+		if (error instanceof Error && "code" in error) {
+			throw new UsageError(
+				error.code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE"
+					? `${error.message} (requires a value).`
+					: `${error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION" ? "" : "Unknown option: "}${error.message}`,
+			);
 		}
-		if (arg === "--keep-artifacts" || arg === "--verbose") {
-			options[arg === "--verbose" ? "verbose" : "keepArtifacts"] = true;
-			continue;
-		}
-		if (arg === "--model" || arg === "--timeout-ms") {
-			const value = args.next().value;
-			if (arg === "--model") {
-				options.model = parseModel(value);
-			} else {
-				options.timeoutMs = parseTimeout(value);
-			}
-			continue;
-		}
-		throw new UsageError(`Unknown option: ${arg}`);
+		throw error;
 	}
-	return options;
+	if (values.help) {
+		return {
+			keepArtifacts: false,
+			model: DEFAULT_LIFECYCLE_MODEL,
+			showHelp: true,
+			timeoutMs: DEFAULT_TIMEOUT_MS,
+			verbose: false,
+		};
+	}
+	return {
+		keepArtifacts: values["keep-artifacts"],
+		model: values.model === undefined ? DEFAULT_LIFECYCLE_MODEL : parseModel(values.model),
+		showHelp: false,
+		timeoutMs:
+			values["timeout-ms"] === undefined ? DEFAULT_TIMEOUT_MS : parseTimeout(values["timeout-ms"]),
+		verbose: values.verbose,
+	};
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -140,13 +152,7 @@ export async function main(argv = process.argv.slice(2)) {
 	}
 }
 
-/** @param {string} metaUrl @param {readonly string[]} argv */
-export function isDirectRun(metaUrl, argv = process.argv) {
-	const entry = argv[1];
-	return entry !== undefined && entry !== "" && metaUrl === pathToFileURL(entry).href;
-}
-
-if (isDirectRun(import.meta.url)) {
+if (import.meta.main) {
 	main()
 		.then((exitCode) => {
 			process.exitCode = exitCode;

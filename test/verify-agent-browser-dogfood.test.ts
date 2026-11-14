@@ -30,5 +30,5 @@ nodeTest("parseDogfoodArgs rejects unknown options and missing artifact director
 		() => parseDogfoodArgs(["--artifact-dir", "--json"]),
 		/--artifact-dir requires a path/,
 	);
-	assert.throws(() => parseDogfoodArgs(["--bogus"]), /Unknown dogfood argument: --bogus/);
+	assert.throws(() => parseDogfoodArgs(["--bogus"]), /Unknown option '--bogus'/);
 });

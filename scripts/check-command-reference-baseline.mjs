@@ -8,6 +8,7 @@
  */
 
 import { readFile, writeFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
 
 import {
 	CAPABILITY_BASELINE,
@@ -41,19 +42,28 @@ Exit codes:
 /** @param {readonly string[]} argv
  * @returns {"check" | "write" | "help"} */
 function parseMode(argv) {
-	if (argv.length === 0) {
-		return "check";
+	let values;
+	try {
+		({ values } = parseArgs({
+			args: argv,
+			options: {
+				check: { type: "boolean", default: false },
+				help: { type: "boolean", short: "h", default: false },
+				write: { type: "boolean", default: false },
+			},
+			strict: true,
+		}));
+	} catch (error) {
+		throw new Error(`Invalid arguments: ${argv.join(" ")}`, { cause: error });
 	}
-	if (argv.length === 1 && argv[0] === "--check") {
-		return "check";
+	const selected = Number(values.check) + Number(values.write) + Number(values.help);
+	if (selected > 1) {
+		throw new Error(`Invalid arguments: ${argv.join(" ")}`);
 	}
-	if (argv.length === 1 && argv[0] === "--write") {
-		return "write";
-	}
-	if (argv.length === 1 && (argv[0] === "-h" || argv[0] === "--help")) {
+	if (values.help) {
 		return "help";
 	}
-	throw new Error(`Invalid arguments: ${argv.join(" ")}`);
+	return values.write ? "write" : "check";
 }
 
 /** @param {readonly string[]} lines */

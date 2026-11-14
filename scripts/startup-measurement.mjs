@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { findPackageJSON } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -64,9 +64,7 @@ const measurementSchema = Type.Object({
 async function fileIdentity(file) {
 	return {
 		path: String(file),
-		sha256: createHash("sha256")
-			.update(await readFile(file))
-			.digest("hex"),
+		sha256: hash("sha256", await readFile(file), "hex"),
 	};
 }
 

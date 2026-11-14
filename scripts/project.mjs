@@ -9,6 +9,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { delimiter, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -54,33 +55,27 @@ function shouldUseShell(command) {
  * @param {readonly string[]} args
  * @param {{ readonly env?: NodeJS.ProcessEnv | undefined }} [options]
  * @returns {Promise<void>} */
-function run(command, args, options = {}) {
-	return new Promise((resolve, reject) => {
-		console.log(`\n> ${commandLabel(command, args)}`);
-		const child = spawn(command, args, {
-			cwd: process.cwd(),
-			env: { ...process.env, ...options.env },
-			shell: shouldUseShell(command),
-			stdio: "inherit",
-		});
-		child.on("error", reject);
-		child.on("close", (code, signal) => {
-			if (signal !== null) {
-				reject(new Error(`${commandLabel(command, args)} was terminated by ${signal}`));
-				return;
-			}
-			if (code === 0) {
-				resolve();
-				return;
-			}
-			reject(
-				new CommandFailure(
-					`${commandLabel(command, args)} exited with code ${code ?? "unknown"}`,
-					code,
-				),
-			);
-		});
+async function run(command, args, options = {}) {
+	console.log(`\n> ${commandLabel(command, args)}`);
+	const child = spawn(command, args, {
+		cwd: process.cwd(),
+		env: { ...process.env, ...options.env },
+		shell: shouldUseShell(command),
+		stdio: "inherit",
 	});
+	/** @type {unknown[]} */
+	const closed = await once(child, "close");
+	const [code, signal] = closed;
+	if (typeof signal === "string") {
+		throw new Error(`${commandLabel(command, args)} was terminated by ${signal}`);
+	}
+	const exitCode = typeof code === "number" ? code : null;
+	if (exitCode !== 0) {
+		throw new CommandFailure(
+			`${commandLabel(command, args)} exited with code ${exitCode ?? "unknown"}`,
+			exitCode,
+		);
+	}
 }
 
 /** @param {readonly ProjectStep[]} steps */

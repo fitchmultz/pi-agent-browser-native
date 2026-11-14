@@ -1,6 +1,6 @@
 // Validate the graph prepared by the compatibility runner; never install a host here.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { hash as cryptoHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { findPackageJSON } from "node:module";
 import { dirname, join } from "node:path";
@@ -44,7 +44,7 @@ assert.equal(
 	realpathSync(hostIndex),
 );
 /** @param {string} path */
-const hash = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+const hash = (path) => cryptoHash("sha256", readFileSync(path), "hex");
 console.log(
 	JSON.stringify({
 		host: process.env.PI_COMPAT_HOST ?? "local",

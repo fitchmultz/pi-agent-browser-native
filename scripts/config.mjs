@@ -8,6 +8,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import process from "node:process";
+import { text as readStreamText } from "node:stream/consumers";
 
 import { loadConfigPolicyModule } from "./config-policy-loader.mjs";
 
@@ -293,11 +294,7 @@ async function readSecretFromStdin(useStdin) {
 			"set-key requires --stdin so the key is not passed through argv or an echoed prompt.",
 		);
 	}
-	let input = "";
-	for await (const chunk of process.stdin) {
-		input += String(chunk);
-	}
-	const value = input.trim();
+	const value = (await readStreamText(process.stdin)).trim();
 	if (value.length === 0) {
 		throw new UsageError("No key was provided on stdin.");
 	}

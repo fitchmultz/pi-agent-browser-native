@@ -13,8 +13,8 @@ import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { minVersion, satisfies } from "semver";
+import { parseArgs, promisify } from "node:util";
+import { gte, minVersion, parse, satisfies, valid } from "semver";
 
 import { CAPABILITY_BASELINE_SOURCE } from "./agent-browser-capability-baseline.mjs";
 import { checkPiSources } from "./doctor-sources.mjs";
@@ -69,32 +69,18 @@ function normalizePiVersion(output) {
 	return output.trim().replace(/^pi\s+/, "");
 }
 
-/** @param {unknown} version
- * @returns {readonly [number, number, number] | undefined}
- */
-function parseVersionParts(version) {
-	const match = String(version).match(/^(\d+)\.(\d+)\.(\d+)(?:\b|[-+])/);
-	if (!match) {
-		return;
-	}
-	return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
 /** @param {unknown} actual
  * @param {unknown} minimum
  */
 export function versionAtLeast(actual, minimum) {
-	const actualParts = parseVersionParts(actual);
-	const minimumParts = parseVersionParts(minimum);
-	if (!actualParts || !minimumParts) {
+	const parsedActual = parse(String(actual));
+	const parsedMinimum = parse(String(minimum));
+	if (!parsedActual || !parsedMinimum || String(actual).startsWith("v")) {
 		return;
 	}
-	const [major, minor, patch] = actualParts;
-	const [minimumMajor, minimumMinor, minimumPatch] = minimumParts;
-	return (
-		major > minimumMajor ||
-		(major === minimumMajor &&
-			(minor > minimumMinor || (minor === minimumMinor && patch >= minimumPatch)))
+	return gte(
+		`${parsedActual.major}.${parsedActual.minor}.${parsedActual.patch}`,
+		`${parsedMinimum.major}.${parsedMinimum.minor}.${parsedMinimum.patch}`,
 	);
 }
 
@@ -132,41 +118,51 @@ Exit codes:
 }
 
 export function parseCliArgs(argv = process.argv.slice(2)) {
-	/** @type {{agentDir: string | undefined; cwd: string | undefined; settingsPaths: string[]; showHelp: boolean; skipSourceCheck: boolean}} */
-	const parsed = {
-		agentDir: undefined,
-		cwd: undefined,
-		settingsPaths: [],
-		showHelp: false,
-		skipSourceCheck: false,
-	};
-
-	const args = argv.values();
-	for (const arg of args) {
-		if (["-h", "--help"].includes(arg)) {
-			parsed.showHelp = true;
-			continue;
-		}
-		if (arg === "--skip-source-check") {
-			parsed.skipSourceCheck = true;
-			continue;
-		}
-		if (["--cwd", "--agent-dir", "--settings"].includes(arg)) {
-			const value = args.next().value;
-			if (value === undefined || value.startsWith("--")) {
-				throw new Error(`${arg} requires a value. Run with --help for usage.`);
+	let values;
+	try {
+		({ values } = parseArgs({
+			args: argv,
+			options: {
+				"agent-dir": { type: "string" },
+				cwd: { type: "string" },
+				help: { type: "boolean", short: "h", default: false },
+				settings: { type: "string", multiple: true, default: [] },
+				"skip-source-check": { type: "boolean", default: false },
+			},
+			strict: true,
+		}));
+	} catch (error) {
+		if (error instanceof Error && "code" in error) {
+			if (error.code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE") {
+				throw new Error(`${error.message} (requires a value). Run with --help for usage.`, {
+					cause: error,
+				});
 			}
-			if (arg === "--settings") {
-				parsed.settingsPaths.push(value);
-			} else {
-				parsed[arg === "--cwd" ? "cwd" : "agentDir"] = value;
-			}
-			continue;
+			const prefix = error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION" ? "" : "Unknown option: ";
+			throw new Error(`${prefix}${error.message}. Run with --help for usage.`, {
+				cause: error,
+			});
 		}
-		throw new Error(`Unknown option: ${arg}. Run with --help for usage.`);
+		throw error;
 	}
-
-	return parsed;
+	/** @type {readonly (readonly [string, string | undefined])[]} */
+	const valuePairs = [
+		["--cwd", values.cwd],
+		["--agent-dir", values["agent-dir"]],
+		...values.settings.map((entry) => /** @type {const} */ (["--settings", entry])),
+	];
+	for (const [flag, candidate] of valuePairs) {
+		if (candidate !== undefined && candidate.startsWith("--")) {
+			throw new Error(`${flag} requires a value. Run with --help for usage.`);
+		}
+	}
+	return {
+		agentDir: values["agent-dir"],
+		cwd: values.cwd,
+		settingsPaths: values.settings,
+		showHelp: values.help,
+		skipSourceCheck: values["skip-source-check"],
+	};
 }
 
 /** @param {readonly string[]} args */
@@ -229,8 +225,7 @@ function checkNodeVersion(runtime) {
 		};
 	}
 	const version = runtime.node ?? "";
-	const match = /^\d+\.\d+\.\d+(?:-([A-Za-z0-9.-]+))?(?:\+[A-Za-z0-9.-]+)?$/.exec(version);
-	if (match === null) {
+	if (version.startsWith("v") || valid(version) === null) {
 		return {
 			status: "warn",
 			title: `Could not parse the Node.js version running this doctor: ${version.length > 0 ? version : "<empty>"}.`,

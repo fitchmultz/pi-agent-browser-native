@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Interactive, isolated real-site release smoke through Pi's native browser tools. */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { matchesSuccessfulPageResult, record, sleep, waitFor } from "./lifecycle-transcript.mjs";
@@ -124,9 +124,9 @@ async function verifyAttachedScreenshot(shot, screenshot) {
 		"The vision model did not identify the displayed docs heading",
 	);
 	const screenshotBytes = await readFile(screenshot);
-	const screenshotSha256 = createHash("sha256").update(screenshotBytes).digest("hex");
+	const screenshotSha256 = hash("sha256", screenshotBytes, "hex");
 	assert.equal(
-		createHash("sha256").update(Buffer.from(image.data, "base64")).digest("hex"),
+		hash("sha256", Buffer.from(image.data, "base64"), "hex"),
 		screenshotSha256,
 		"Pi's image content differs from the verified screenshot",
 	);
@@ -205,9 +205,7 @@ async function prepareCandidate() {
 	}
 	const candidate = await packToTemporaryPackageDir(process.cwd(), tarball);
 	try {
-		const sha256 = createHash("sha256")
-			.update(await readFile(candidate.tarballPath))
-			.digest("hex");
+		const sha256 = hash("sha256", await readFile(candidate.tarballPath), "hex");
 		const extensionPath = await installRuntimeConsumer(candidate.tarballPath);
 		return { candidate: { ...candidate, sha256 }, extensionPath };
 	} catch (error) {
@@ -222,9 +220,7 @@ async function candidateEvidence(candidate, extensionPath) {
 		return {};
 	}
 	assert.equal(
-		createHash("sha256")
-			.update(await readFile(candidate.tarballPath))
-			.digest("hex"),
+		hash("sha256", await readFile(candidate.tarballPath), "hex"),
 		candidate.sha256,
 		"Retained candidate changed during the live-site smoke",
 	);
