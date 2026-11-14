@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.9.29 - 2026-11-14
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- refactor: use native Node process, fs, and glob primitives in mutation verifier (#431) ([e34de7c](https://github.com/fitchmultz/pi-agent-browser-native/commit/e34de7c8f79ab50c3f5b6e915d3a5da319313d95))
+
+### What's Changed
+
+- refactor: use native Node process, fs, and glob primitives in mutation verifier by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/431
+- refactor: use which, semver, crypto.hash, and ES2024 primitives in extension (1/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/432
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.28...v0.9.29
+
 ## 0.9.28 - 2026-11-13
 
 <!-- npm-release:unreleased:start -->
