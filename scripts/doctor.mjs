@@ -51,7 +51,7 @@ function readNodeVersionRange() {
 
 export const NODE_VERSION_RANGE = readNodeVersionRange();
 export const MINIMUM_NODE_VERSION = minVersion(NODE_VERSION_RANGE)?.version ?? "";
-export const MINIMUM_PI_VERSION = "1.5.0";
+export const MINIMUM_PI_VERSION = "1.5.2";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 
 /** @typedef {import("./doctor-sources.mjs").DoctorCheck} DoctorCheck */
