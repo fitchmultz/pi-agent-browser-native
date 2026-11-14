@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.30 - 2026-11-14
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- refactor: use Node 24 CLI, fs, event, and semver primitives in maintainer scripts (#433) ([17afb1e](https://github.com/fitchmultz/pi-agent-browser-native/commit/17afb1e5fd62a430ea58a85eb8af2fb2f404d21f))
+
+### What's Changed
+
+- refactor: use Node 24 CLI, fs, event, and semver primitives in maintainer scripts (2/2) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/433
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.29...v0.9.30
+
 ## 0.9.29 - 2026-11-14
 
 <!-- npm-release:unreleased:start -->
