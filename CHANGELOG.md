@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.32 - 2026-11-14
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Raise the Pi floor to 1.5.2 and use native timers/promises (#435) ([8fa5662](https://github.com/fitchmultz/pi-agent-browser-native/commit/8fa56627e0d02c97ed64cf78bd80c243cbdb5734))
+
+### What's Changed
+
+- Raise the Pi floor to 1.5.2 and use native timers/promises by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/435
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.31...v0.9.32
+
 ## 0.9.31 - 2026-11-14
 
 <!-- npm-release:unreleased:start -->
