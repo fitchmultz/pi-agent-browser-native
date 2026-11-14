@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.31 - 2026-11-14
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- feat: raise agent-browser support floor to 0.43.0 and adopt official 0.43 primitives (#434) ([4f98d57](https://github.com/fitchmultz/pi-agent-browser-native/commit/4f98d57f901ad11fcf361f2b068d3eb259663cf6))
+
+### What's Changed
+
+- feat: raise agent-browser support floor to 0.43.0 and adopt official 0.43 primitives by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/434
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.30...v0.9.31
+
 ## 0.9.30 - 2026-11-14
 
 <!-- npm-release:unreleased:start -->
