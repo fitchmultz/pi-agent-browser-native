@@ -17,7 +17,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 
 - Apple Silicon macOS or Linux.
 - Node.js `^24.22.3 || >=26.13.1`.
-- Pi 1.5.0 or newer.
+- Pi 1.5.2 or newer.
 - A separate stable `agent-browser` installation, version 0.43.0 or newer, available on `PATH`.
 
 ## Product requirements
@@ -128,7 +128,7 @@ The design should comfortably support workflows such as:
 ## Implications for the implementation
 
 - Package-manifest behavior matters more than repo-local development wiring.
-- The extension uses native Pi tool registration/activation and a short named prompt section rather than replacing the full system prompt or gating tool use on discovery. Require Pi 1.5.0 and qualify official and fork hosts independently; hosted provider orchestration is not required.
+- The extension uses native Pi tool registration/activation and a short named prompt section rather than replacing the full system prompt or gating tool use on discovery. Require Pi 1.5.2 and qualify official and fork hosts independently; hosted provider orchestration is not required.
 - The wrapper should stay thin, with upstream `agent-browser` remaining the source of truth for command semantics.
 - Successful and failed tool outcomes should surface bounded machine-readable fields on Pi-facing `details` (`resultCategory`, `successCategory`, `failureCategory`, optional structured `nextActions`, optional `pageChangeSummary` with explicit observed-vs-dispatched evidence and per-step summaries on `batch`, optional `artifactVerification` with the same shape on successful `batchSteps[]` rows, optional `outputFile`, optional `timeoutPartialProgress`) so agents can branch without parsing prose; browser-bearing `nextActions` must preserve a known session identity so recovery cannot inspect an unrelated implicit session; stateful commands (`auth`, `cookies`, `storage`, `dialog`, `frame`, `state`) plus other structured diagnostics (for example `network`, `diff`, `trace`, `stream`, `dashboard`, `chat`) and `batch` should redact secret-bearing payloads in model-facing `details.data`, including the compact per-step `batch` roll-up on the parent result (full per-step payloads live on `batchSteps[]`). Dialog/prompt-related timeouts should be bounded with recovery `nextActions`; non-dialog timeouts should prefer best-effort per-step progress and retry payloads when a plan is available; no-op scrolls should expose no-movement state instead of only an upstream success boolean; explicit page/container scroll helpers should expose before/after movement evidence. The contract lives in [`TOOL_CONTRACT.md`](TOOL_CONTRACT.md#details), enums and classifier precedence live in `extensions/agent-browser/lib/results/categories.ts` and `contracts.ts`, and presentation-time summaries, redaction, network request follow-ups, and artifact verification rollups are assembled in `extensions/agent-browser/lib/results/presentation.ts` (`buildPageChangeSummary`, command taxonomy predicates from `command-taxonomy.ts`, `redactPresentationData`, `buildArtifactVerificationSummary`, `buildBatchPresentation`).
 - User-facing docs belong in `README.md` and the canonical published files under `docs/`.

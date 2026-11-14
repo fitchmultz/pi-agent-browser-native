@@ -11,7 +11,7 @@ Related docs:
 
 ## Purpose
 
-Requires Pi 1.5.0 or newer; official and fork hosts are qualified independently.
+Requires Pi 1.5.2 or newer; official and fork hosts are qualified independently.
 
 Provide a local, repo-readable command reference for the native `agent_browser` tool.
 

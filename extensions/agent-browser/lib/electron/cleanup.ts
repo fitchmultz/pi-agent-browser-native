@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { lstat, rm } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
 	fetchCdpJson,
@@ -44,12 +45,6 @@ export interface ElectronCleanupResult {
 	readonly remainingResources: readonly string[];
 	readonly steps: readonly ElectronCleanupStep[];
 	readonly summary: string;
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
 }
 
 function isPidAlive(pid: number | undefined): boolean | undefined {
