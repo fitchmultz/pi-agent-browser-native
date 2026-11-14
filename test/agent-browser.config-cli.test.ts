@@ -126,20 +126,10 @@ async function createFixture(t: TestContext) {
 }
 
 async function collectMarkdownFiles(root: string): Promise<string[]> {
-	const entries = await readdir(root, { withFileTypes: true });
-	const files = await Promise.all(
-		entries.map(async (entry) => {
-			const path = join(root, entry.name);
-			if (entry.isDirectory()) {
-				return collectMarkdownFiles(path);
-			}
-			if (entry.isFile() && entry.name.endsWith(".md")) {
-				return [path];
-			}
-			return [];
-		}),
-	);
-	return files.flat();
+	const entries = await readdir(root, { recursive: true, withFileTypes: true });
+	return entries
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+		.map((entry) => join(entry.parentPath, entry.name));
 }
 
 function tokenizeDocumentedCommand(command: string): string[] {

@@ -1,4 +1,4 @@
-import { JsonSchema as Type, type TSchema } from "./json-schema.js";
+import { Type, type TSchema } from "typebox";
 import { StringEnum } from "./string-enum-schema.js";
 import {
 	DEFAULT_WEB_SEARCH_PROVIDER,

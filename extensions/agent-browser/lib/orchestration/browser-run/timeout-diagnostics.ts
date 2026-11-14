@@ -123,13 +123,10 @@ async function collectTimeoutArtifactEvidence(
 }
 
 function getPlannedCurrentPageUrl(steps: readonly PlannedTimeoutStep[]): string | undefined {
-	for (let index = steps.length - 1; index >= 0; index -= 1) {
-		const args = steps.at(index)?.args ?? [];
-		if (isOpenNavigationCommand(args[0]) || args[0] === "pushstate") {
-			return getLastPositionalToken(args);
-		}
-	}
-	return undefined;
+	const step = steps.findLast(
+		({ args }) => isOpenNavigationCommand(args[0]) || args[0] === "pushstate",
+	);
+	return step ? getLastPositionalToken(step.args) : undefined;
 }
 
 const TIMEOUT_RETRYABLE_COMMANDS = new Set([

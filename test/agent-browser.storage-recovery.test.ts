@@ -1,7 +1,7 @@
 import { readArray, readDefined, readRecord, readString } from "./helpers/assertions.js";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1273,13 +1273,8 @@ nodeTest(
 			assert.equal(converted.status, 1, "optional receipt failure remains visible");
 			assert.match(readString(converted.stderr), /EEXIST/);
 			const receipt = readRecord(JSON.parse(converted.stdout));
-			assert.equal(receipt.sourceSha256, createHash("sha256").update(bytes).digest("hex"));
-			assert.equal(
-				receipt.destinationSha256,
-				createHash("sha256")
-					.update(await readFile(destination))
-					.digest("hex"),
-			);
+			assert.equal(receipt.sourceSha256, hash("sha256", bytes, "hex"));
+			assert.equal(receipt.destinationSha256, hash("sha256", await readFile(destination), "hex"));
 			assert.equal(receipt.sessionId, "fixture-session");
 			assert.equal(await readFile(source, "utf8"), bytes);
 			assert.equal(await readFile(receiptPath, "utf8"), "retained receipt");
@@ -2248,7 +2243,7 @@ nodeTest(
 			const bytes = Buffer.from(originals.map((entry) => JSON.stringify(entry)).join("\n"));
 			await writeFile(source, bytes, { mode: 0o600 }); // A sealed valid unterminated record is inspectable, without repairing the source.
 			const receipt = await convertBrowserSession({ source, destination, confirmedStopped: true });
-			assert.equal(receipt.sourceSha256, createHash("sha256").update(bytes).digest("hex"));
+			assert.equal(receipt.sourceSha256, hash("sha256", bytes, "hex"));
 			assert.deepEqual(await readFile(source), bytes);
 			const converted = await records(destination);
 			assert.deepEqual(

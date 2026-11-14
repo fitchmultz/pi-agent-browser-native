@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { hash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { canonicalizeAgentBrowserNamespace } from "./argv-grammar.js";
 import { isCloseCommand } from "./command-taxonomy.js";
@@ -86,7 +86,7 @@ export function createImplicitSessionName(
 			? `session:${normalizedSessionId}:cwd:${cwd}`
 			: `ephemeral:${cwd}:${ephemeralSeed}`;
 	if (platform === "android") {
-		return `${MANAGED_SESSION_NAME_PREFIX}${createHash("sha256").update(identity).digest("hex").slice(0, 20)}`;
+		return `${MANAGED_SESSION_NAME_PREFIX}${hash("sha256", identity, "hex").slice(0, 20)}`;
 	}
 	const projectSlug = basename(cwd)
 		.toLowerCase()
@@ -94,12 +94,12 @@ export function createImplicitSessionName(
 		.replace(/^-+|-+$/g, "")
 		.slice(0, 24);
 	const slug = projectSlug.length > 0 ? projectSlug : "project";
-	const cwdHash = createHash("sha256").update(`cwd:${cwd}`).digest("hex").slice(0, 8);
+	const cwdHash = hash("sha256", `cwd:${cwd}`, "hex").slice(0, 8);
 	const sessionIdentity =
 		normalizedSessionId !== undefined && normalizedSessionId.length > 0
 			? `session:${normalizedSessionId}`
 			: identity;
-	const digest = createHash("sha256").update(sessionIdentity).digest("hex").slice(0, 12);
+	const digest = hash("sha256", sessionIdentity, "hex").slice(0, 12);
 	return `${MANAGED_SESSION_NAME_PREFIX}${slug}-${digest}-${cwdHash}`;
 }
 
@@ -108,9 +108,10 @@ export function createFreshSessionName(
 	ephemeralSeed: string,
 	ordinal: number,
 ): string {
-	const suffix = createHash("sha256")
-		.update(`fresh:${baseSessionName}:${ephemeralSeed}:${ordinal}`)
-		.digest("hex")
-		.slice(0, 10);
+	const suffix = hash(
+		"sha256",
+		`fresh:${baseSessionName}:${ephemeralSeed}:${ordinal}`,
+		"hex",
+	).slice(0, 10);
 	return `${baseSessionName}-fresh-${suffix}`;
 }

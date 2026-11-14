@@ -7,16 +7,10 @@ nodeTest(
 	"queued browser cancellation withdraws waiting work without releasing the active owner",
 	async () => {
 		const queue = new KeyedAsyncExecutionQueue();
-		let release!: () => void;
-		let entered!: () => void;
-		const started = new Promise<void>((resolve) => {
-			entered = resolve;
-		});
-		const held = new Promise<void>((resolve) => {
-			release = resolve;
-		});
+		const { promise: started, resolve: entered } = Promise.withResolvers<null>();
+		const { promise: held, resolve: release } = Promise.withResolvers<null>();
 		const first = queue.run("team\u0000same", "team", async () => {
-			entered();
+			entered(null);
 			await held;
 		});
 		await started;
@@ -35,7 +29,7 @@ nodeTest(
 		});
 		await Promise.resolve();
 		assert.equal(laterStarted, false);
-		release();
+		release(null);
 		await Promise.all([first, later]);
 		assert.equal(laterStarted, true);
 	},
@@ -72,17 +66,11 @@ nodeTest(
 		const queue = new KeyedAsyncExecutionQueue();
 		const key = getAgentBrowserSessionIdentityKey("shared", "team");
 		const events: string[] = [];
-		let releaseActive!: () => void;
-		let markActive!: () => void;
-		const active = new Promise<void>((resolve) => {
-			markActive = resolve;
-		});
-		const holdActive = new Promise<void>((resolve) => {
-			releaseActive = resolve;
-		});
+		const { promise: active, resolve: markActive } = Promise.withResolvers<null>();
+		const { promise: holdActive, resolve: releaseActive } = Promise.withResolvers<null>();
 		const first = queue.run(key, "team", async () => {
 			events.push("first-start");
-			markActive();
+			markActive(null);
 			await holdActive;
 			events.push("first-end");
 		});
@@ -93,7 +81,7 @@ nodeTest(
 		const late = queue.run(key, "team", async () => {
 			events.push("late");
 		});
-		releaseActive();
+		releaseActive(null);
 		let timeout: NodeJS.Timeout | undefined;
 		try {
 			await Promise.race([

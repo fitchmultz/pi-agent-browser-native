@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import {
 	snapshotDefinition,
 	type BrowserSnapshot,
@@ -61,15 +61,15 @@ export function legacySnapshot(value: unknown, id: string): BrowserSnapshot | un
 function snapshotDigest(
 	definition: Readonly<{ refs?: unknown; target?: unknown; generation?: unknown }>,
 ): string {
-	return createHash("sha256")
-		.update(
-			JSON.stringify({
-				refs: definition.refs,
-				target: definition.target,
-				generation: definition.generation,
-			}),
-		)
-		.digest("hex");
+	return hash(
+		"sha256",
+		JSON.stringify({
+			refs: definition.refs,
+			target: definition.target,
+			generation: definition.generation,
+		}),
+		"hex",
+	);
 }
 export function canonicalPage(
 	prior: LegacyPage,

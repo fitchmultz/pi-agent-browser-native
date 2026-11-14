@@ -6,28 +6,27 @@ import {
 
 // Serializes managed-session read/modify/write work so overlapping tool calls cannot promote stale state or close an in-use session.
 export class AsyncExecutionQueue {
-	private tail: Promise<void> = Promise.resolve();
+	private tail: Promise<unknown> = Promise.resolve();
 	private readonly active = new AsyncLocalStorage<{ active: boolean }>();
 
 	isCurrent(): boolean {
 		return this.active.getStore()?.active === true;
 	}
 
-	run<T>(work: () => Promise<T>, signal?: AbortSignal, barrier = Promise.resolve()): Promise<T> {
+	run<T>(
+		work: () => Promise<T>,
+		signal?: AbortSignal,
+		barrier: Promise<unknown> = Promise.resolve(),
+	): Promise<T> {
 		if (this.isCurrent()) {
 			signal?.throwIfAborted();
 			return work();
 		}
 		const previous = this.tail;
-		let release!: () => void;
-		this.tail = new Promise<void>((resolve) => {
-			release = resolve;
-		});
+		const { promise: nextTail, resolve: release } = Promise.withResolvers<null>();
+		this.tail = nextTail;
 
-		let rejectWaiting!: (reason: unknown) => void;
-		const cancelled = new Promise<never>((_resolve, reject) => {
-			rejectWaiting = reject;
-		});
+		const { promise: cancelled, reject: rejectWaiting } = Promise.withResolvers<never>();
 		const abortWaiting = () => {
 			rejectWaiting(signal?.reason);
 		};
@@ -47,7 +46,7 @@ export class AsyncExecutionQueue {
 					scope.active = false;
 				}
 			} finally {
-				release();
+				release(null);
 			}
 		})();
 		return signal ? Promise.race([execution, cancelled]) : execution;
@@ -55,7 +54,7 @@ export class AsyncExecutionQueue {
 }
 
 export class KeyedAsyncExecutionQueue {
-	private readonly barriers = new Map<string, Promise<void>>();
+	private readonly barriers = new Map<string, Promise<unknown>>();
 	private readonly entries = new Map<string, { queue: AsyncExecutionQueue; users: number }>();
 
 	async run<T>(
@@ -85,10 +84,7 @@ export class KeyedAsyncExecutionQueue {
 	async runExclusive<T>(namespace: string | undefined, work: () => Promise<T>): Promise<T> {
 		const namespaceKey = getAgentBrowserSessionIdentityKey("", namespace);
 		const previous = this.barriers.get(namespaceKey) ?? Promise.resolve();
-		let release!: () => void;
-		const blocked = new Promise<void>((resolve) => {
-			release = resolve;
-		});
+		const { promise: blocked, resolve: release } = Promise.withResolvers<null>();
 		const barrier = previous.then(() => blocked);
 		this.barriers.set(namespaceKey, barrier);
 		const drains = [...this.entries]
@@ -103,7 +99,7 @@ export class KeyedAsyncExecutionQueue {
 		try {
 			return await work();
 		} finally {
-			release();
+			release(null);
 			if (this.barriers.get(namespaceKey) === barrier) {
 				this.barriers.delete(namespaceKey);
 			}

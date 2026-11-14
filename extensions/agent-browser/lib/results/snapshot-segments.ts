@@ -230,17 +230,11 @@ function hasDuplicateSegmentAncestor(line: SnapshotLine, stack: readonly Snapsho
 	if (name.length === 0) {
 		return false;
 	}
-	for (let index = stack.length - 1; index >= 0; index -= 1) {
-		const ancestor = stack.at(index);
-		if (
-			ancestor &&
+	return stack.some(
+		(ancestor) =>
 			normalizeWhitespace(ancestor.name.toLowerCase()) === name &&
-			SNAPSHOT_SEGMENT_ROOT_ROLES.has(ancestor.role)
-		) {
-			return true;
-		}
-	}
-	return false;
+			SNAPSHOT_SEGMENT_ROOT_ROLES.has(ancestor.role),
+	);
 }
 
 export function buildSnapshotSegments(snapshotLines: readonly SnapshotLine[]): SnapshotSegment[] {

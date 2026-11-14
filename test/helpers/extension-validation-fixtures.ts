@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as sleepMs } from "node:timers/promises";
 
 import { Theme } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
@@ -219,11 +220,7 @@ export function isTestPidAlive(pid: number | undefined): boolean {
 	}
 }
 
-export function sleepMs(ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
-}
+export { sleepMs };
 
 export async function waitForTestPidExit(
 	pid: number | undefined,

@@ -1,5 +1,6 @@
 /** Native behavior boundaries inside the supported agent-browser range, read from `--version` output. */
 import assert from "node:assert/strict";
+import { coerce, gte } from "semver";
 
 /**
  * Native `wait --download <path>` moves a locally launched browser's completed download to the
@@ -7,7 +8,7 @@ import assert from "node:assert/strict";
  * natives report the requested path without moving the file, so the wrapper must fail closed there.
  */
 export function nativeWaitDownloadMovesFile(versionOutput: string): boolean {
-	return nativeVersionAtLeast(versionOutput, 39, 4);
+	return nativeVersionAtLeast(versionOutput, "0.39.4");
 }
 
 /**
@@ -16,7 +17,7 @@ export function nativeWaitDownloadMovesFile(versionOutput: string): boolean {
  * token as a literal operand.
  */
 export function nativeRejectsBatchItemGlobalFlags(versionOutput: string): boolean {
-	return nativeVersionAtLeast(versionOutput, 42, 0);
+	return nativeVersionAtLeast(versionOutput, "0.42.0");
 }
 
 /**
@@ -26,18 +27,11 @@ export function nativeRejectsBatchItemGlobalFlags(versionOutput: string): boolea
  * launch configuration before any command that carries a launch flag and never report a relaunch.
  */
 export function nativeAppliesLaunchSettingsPerCommand(versionOutput: string): boolean {
-	return nativeVersionAtLeast(versionOutput, 42, 0);
+	return nativeVersionAtLeast(versionOutput, "0.42.0");
 }
 
-function nativeVersionAtLeast(
-	versionOutput: string,
-	minorFloor: number,
-	patchFloor: number,
-): boolean {
-	const match = /(\d+)\.(\d+)\.(\d+)/.exec(versionOutput);
-	assert.ok(match, `Unrecognized agent-browser version output: ${versionOutput}`);
-	const major = Number(match[1]);
-	const minor = Number(match[2]);
-	const patch = Number(match[3]);
-	return major > 0 || minor > minorFloor || (minor === minorFloor && patch >= patchFloor);
+function nativeVersionAtLeast(versionOutput: string, minimumVersion: string): boolean {
+	const parsed = coerce(versionOutput);
+	assert.ok(parsed !== null, `Unrecognized agent-browser version output: ${versionOutput}`);
+	return gte(parsed, minimumVersion);
 }

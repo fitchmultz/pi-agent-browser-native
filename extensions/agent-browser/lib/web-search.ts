@@ -1,5 +1,5 @@
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
-import type { TSchema } from "./json-schema.js";
+import type { TSchema } from "typebox";
 import {
 	AGENT_BROWSER_NAMESPACE,
 	AGENT_BROWSER_OUTPUT_SCHEMA,

@@ -1,14 +1,11 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { readInvocationLog } from "./agent-browser-harness.js";
+
+export { delay };
 
 // Full-suite runs spawn many fake upstream processes in parallel; keep this as a deadlock watchdog,
 // not a scheduler-load race. The gated calls normally finish sub-second when run in isolation.
 export const CONCURRENCY_TEST_TIMEOUT_MS = 15_000;
-
-export function delay(ms: number): Promise<void> {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
-}
 
 export async function withConcurrencyTestTimeout<T>(
 	promise: Promise<T>,
