@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
 	closeSync,
 	cpSync,
-	mkdtempSync,
+	mkdtempDisposableSync,
 	openSync,
 	readFileSync,
-	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -100,61 +100,45 @@ function includeInMutationCopy(file) {
 	if (top !== undefined && excluded.has(top)) {
 		return false;
 	}
-	if (rel.startsWith("test/") && rel.endsWith(".test.ts")) {
+	if (path.posix.matchesGlob(rel, "test/**/*.test.ts")) {
 		return retainedMutationTests.has(rel);
 	}
 	return true;
 }
 
 /** @param {string} directory @param {readonly string[]} args @returns {Promise<ChildResult>} */
-function runNode(directory, args) {
-	return new Promise((resolve, reject) => {
-		const logs = mkdtempSync(path.join(tmpdir(), "piab-quality-output-"));
-		const log = path.join(logs, "output.txt");
-		const fd = openSync(log, "w");
-		/** @type {string | undefined} */
-		let cachedOutput;
-		let settled = false;
-		const cleanup = () => {
-			if (cachedOutput === undefined) {
-				closeSync(fd);
-				cachedOutput = stripVTControlCharacters(readFileSync(log, "utf8"));
-				rmSync(logs, { recursive: true, force: true });
-			}
-			return cachedOutput;
-		};
+async function runNode(directory, args) {
+	using logs = mkdtempDisposableSync(path.join(tmpdir(), "piab-quality-output-"));
+	const log = path.join(logs.path, "output.txt");
+	const fd = openSync(log, "w");
+	/** @type {unknown[]} */
+	let closed = [];
+	/** @type {Error | undefined} */
+	let spawnError;
+	try {
 		// One native descriptor preserves stage boundaries across stdout and stderr.
 		const child = spawn(process.execPath, args, {
 			cwd: directory,
+			timeout: 1_200_000,
 			stdio: ["ignore", fd, fd],
 		});
-		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
-		}, 1_200_000);
-		child.on("error", (error) => {
-			if (settled) {
-				return;
-			}
-			settled = true;
-			clearTimeout(timer);
-			console.error(forLog(cleanup()));
-			reject(error);
-		});
-		child.on("close", (status, signal) => {
-			if (settled) {
-				return;
-			}
-			settled = true;
-			clearTimeout(timer);
-			const output = cleanup();
-			if (signal !== null || status === null) {
-				console.error(forLog(output));
-				reject(new Error(`Quality child did not complete: ${String(signal)}`));
-				return;
-			}
-			resolve({ status, output });
-		});
-	});
+		closed = await once(child, "close");
+	} catch (error) {
+		spawnError = error instanceof Error ? error : new Error(String(error));
+	} finally {
+		closeSync(fd);
+	}
+	const output = stripVTControlCharacters(readFileSync(log, "utf8"));
+	if (spawnError !== undefined) {
+		console.error(forLog(output));
+		throw spawnError;
+	}
+	const [status, signal] = closed;
+	if (signal !== null || typeof status !== "number") {
+		console.error(forLog(output));
+		throw new Error(`Quality child did not complete: ${String(signal)}`);
+	}
+	return { status, output };
 }
 
 /** @param {string} directory */
@@ -212,32 +196,35 @@ function verifyRejection(result, mutation) {
 
 /** @param {QualityMutation} mutation */
 async function verifyMutation(mutation) {
-	const directory = mkdtempSync(path.join(tmpdir(), "piab-quality-mutation-"));
-	try {
-		cpSync(root, directory, {
-			recursive: true,
-			filter: includeInMutationCopy,
+	using directory = mkdtempDisposableSync(path.join(tmpdir(), "piab-quality-mutation-"));
+	cpSync(root, directory.path, {
+		recursive: true,
+		filter: includeInMutationCopy,
+	});
+	symlinkSync(
+		path.join(root, "node_modules"),
+		path.join(directory.path, "node_modules"),
+		"junction",
+	);
+	const initialized = spawnSync("git", ["init", "--quiet"], {
+		cwd: directory.path,
+		encoding: "utf8",
+	});
+	assert.equal(initialized.error, undefined);
+	assert.equal(initialized.status, 0, initialized.stderr);
+	await applyMutation(directory.path, mutation);
+	const result = await acceptance(directory.path);
+	verifyRejection(result, mutation);
+	if (mutation.name === "allowance-isolation") {
+		verifyRejection(result, {
+			name: "policy",
+			file: mutation.file,
+			stage: lintStage,
+			diagnostic: /Oxlint policy differs from guide and repository mappings/u,
+			evidencePath: "scripts/code-quality.mjs",
 		});
-		symlinkSync(path.join(root, "node_modules"), path.join(directory, "node_modules"), "junction");
-		const initialized = spawnSync("git", ["init", "--quiet"], { cwd: directory, encoding: "utf8" });
-		assert.equal(initialized.error, undefined);
-		assert.equal(initialized.status, 0, initialized.stderr);
-		await applyMutation(directory, mutation);
-		const result = await acceptance(directory);
-		verifyRejection(result, mutation);
-		if (mutation.name === "allowance-isolation") {
-			verifyRejection(result, {
-				name: "policy",
-				file: mutation.file,
-				stage: lintStage,
-				diagnostic: /Oxlint policy differs from guide and repository mappings/u,
-				evidencePath: "scripts/code-quality.mjs",
-			});
-		}
-		console.log(`${mutation.name}: real acceptance rejected the mutation`);
-	} finally {
-		rmSync(directory, { recursive: true, force: true });
 	}
+	console.log(`${mutation.name}: real acceptance rejected the mutation`);
 }
 
 async function verifyAllMutations() {
