@@ -354,7 +354,7 @@ export async function prepareBrowserRun(
 			{
 				...controls,
 				chromeStartupArgs: options.input.chromeStartupArgs,
-				configuredChromeLaunch: options.input.configuredChromeLaunch,
+				hasExplicitChromeArgs: options.input.hasExplicitChromeArgs,
 			},
 			planning,
 			{ preparedArgs: artifacts.preparedArgs, stdin: request.stdin },

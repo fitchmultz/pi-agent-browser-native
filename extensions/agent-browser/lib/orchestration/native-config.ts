@@ -69,27 +69,6 @@ export function hasLocalLaunchDefaults(
 	);
 }
 
-function localFlag(key: string): string {
-	switch (key) {
-		case "extensions":
-			return "--extension";
-		case "initScripts":
-			return "--init-script";
-		case "clearCaCert":
-			return "--no-ca-cert";
-		default:
-			return `--${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
-	}
-}
-
-export const LOCAL_LAUNCH_DEFAULT_FLAGS: readonly string[] = [
-	...VALUE_DEFAULTS,
-	...BOOLEAN_DEFAULTS,
-	...ARRAY_DEFAULTS,
-	"hideScrollbars",
-	"clearCaCert",
-].map(localFlag);
-
 interface NativeIdentityRead {
 	readonly cwd: string;
 	readonly signal?: AbortSignal | undefined;

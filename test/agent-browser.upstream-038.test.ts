@@ -305,7 +305,8 @@ nodeTest("recording presentation options are not paths or navigation URLs", asyn
 			await t.test(args.join(" "), () => {
 				assert.deepEqual(getRecordCommandOperands(args), { path: "capture.webm", url: undefined });
 				assert.equal(getExplicitArtifactDestination(args), "capture.webm");
-				assert.equal(isRecordPageTransitionCommand(args), subcommand === "start");
+				assert.equal(isRecordPageTransitionCommand(args), false);
+				assert.equal(isRecordPageTransitionCommand([...args, origin]), true);
 				assert.equal(getRecordCommandOperands([...args, origin]).url, origin);
 			});
 		}

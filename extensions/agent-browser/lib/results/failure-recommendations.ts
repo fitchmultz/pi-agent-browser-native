@@ -155,6 +155,45 @@ function buildTabGoneActions(): AgentBrowserNextAction[] {
 	];
 }
 
+function buildPageWedgedActions(options: AgentBrowserNextActionOptions): AgentBrowserNextAction[] {
+	if (options.pageWedged?.replaced === true) {
+		const reopenTarget = options.pageWedged.lastUrl ?? "about:blank";
+		return [
+			buildNextToolAction({
+				args: ["open", reopenTarget],
+				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.pageWedgedReopenPage,
+				reason:
+					"Upstream replaced the unresponsive wedged tab with a blank tab; navigate again to continue.",
+				safety:
+					reopenTarget === "about:blank"
+						? "Replace about:blank with the intended URL before opening."
+						: "Verify application state after reopening the page and capture fresh snapshot refs.",
+			}),
+			buildNextToolAction({
+				args: ["tab", "list"],
+				id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.pageWedgedListTabs,
+				reason: "Inspect remaining tabs in this session before continuing.",
+				safety: "Read-only tab inspection.",
+			}),
+		];
+	}
+	return [
+		buildNextToolAction({
+			args: ["tab", "list"],
+			id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.pageWedgedListTabs,
+			reason:
+				"The active tab stopped responding; inspect tabs so you can switch away from or close the wedged tab.",
+			safety: "Read-only tab inspection.",
+		}),
+		buildNextToolAction({
+			args: ["tab", "new"],
+			id: AGENT_BROWSER_RECOVERY_NEXT_ACTION_IDS.pageWedgedNewTab,
+			reason: "Open and bind a responsive new tab after page_wedged.",
+			safety: "Opens a new tab in this session; pass a URL if you know the intended page.",
+		}),
+	];
+}
+
 function buildTabDriftActions(options: AgentBrowserNextActionOptions): AgentBrowserNextAction[] {
 	if (options.recovery?.kind === "about-blank" || options.recovery?.kind === "tab-drift") {
 		return [];
@@ -198,6 +237,8 @@ export function buildFailureNextActions(
 			return buildUpstreamFailureActions(options);
 		case "tab-gone":
 			return buildTabGoneActions();
+		case "page-wedged":
+			return buildPageWedgedActions(options);
 		case "tab-drift":
 			return buildTabDriftActions(options);
 		case "aborted":

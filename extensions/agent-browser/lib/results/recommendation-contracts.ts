@@ -6,6 +6,11 @@ import type {
 } from "./contracts.js";
 import type { AgentBrowserRecoveryContext } from "./action-contracts.js";
 
+export interface PageWedgedRecoveryHint {
+	readonly replaced: boolean;
+	readonly lastUrl?: string | undefined;
+}
+
 export interface AgentBrowserNextActionOptions {
 	readonly artifacts?: readonly FileArtifactMetadata[] | undefined;
 	readonly args?: readonly string[] | undefined;
@@ -18,6 +23,7 @@ export interface AgentBrowserNextActionOptions {
 	};
 	readonly failureCategory?: AgentBrowserFailureCategory | undefined;
 	readonly overlayBlockedClick?: boolean;
+	readonly pageWedged?: PageWedgedRecoveryHint | undefined;
 	readonly resultCategory: AgentBrowserResultCategory;
 	readonly recovery?: AgentBrowserRecoveryContext;
 	readonly savedFilePath?: string | undefined;

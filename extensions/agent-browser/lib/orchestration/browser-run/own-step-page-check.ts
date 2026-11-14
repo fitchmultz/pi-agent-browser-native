@@ -6,6 +6,7 @@ import {
 	commandVerifiesPageTarget,
 } from "../../page-target-navigation.js";
 import {
+	extractReplacedPageWedgedTarget,
 	extractSessionTabTargetFromBatchResults,
 	normalizeComparableUrl,
 	normalizeSessionTabTarget,
@@ -103,6 +104,7 @@ function urlBeforeOwnStep(draft: CheckPageAfterOwnStepInput, index: number): str
 function canCheckPage(draft: CheckPageAfterOwnStepInput): boolean {
 	return (
 		draft.resultingPageState.pageTargetMayHaveChanged &&
+		extractReplacedPageWedgedTarget(draft.presentationEnvelope) === undefined &&
 		!processCannotVerifyPage(draft) &&
 		!draft.unobservedMutation &&
 		!draft.unsettledWebMcpMutation &&

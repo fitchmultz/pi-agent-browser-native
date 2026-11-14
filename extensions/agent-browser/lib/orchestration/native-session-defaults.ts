@@ -22,7 +22,6 @@ import type { AgentBrowserToolResult } from "./browser-run/types.js";
 import {
 	hasLocalLaunchDefaults,
 	loadNativeIdentity,
-	LOCAL_LAUNCH_DEFAULT_FLAGS,
 	type NativeDefaults,
 } from "./native-config.js";
 import { withRootBrowserLaunch, type RootBrowserLaunchPolicy } from "./native-root-launch.js";
@@ -177,7 +176,7 @@ class NativeSessionCall {
 	private chromeLaunch(): {
 		readonly chromeEngine: boolean;
 		readonly chromeStartupArgs?: string | undefined;
-		readonly configuredChromeLaunch: boolean;
+		readonly hasExplicitChromeArgs: boolean;
 	} {
 		const args = this.input.toolArgs;
 		const engine =
@@ -189,12 +188,11 @@ class NativeSessionCall {
 		const chromeStartupArgs = nativeLaunchDefaults
 			? undefined
 			: this.chromeStartupArgs(chromeEngine);
-		const configuredChromeLaunch =
-			nativeLaunchDefaults ||
-			LOCAL_LAUNCH_DEFAULT_FLAGS.some(
-				(flag) => scanUpstreamGlobalFlagOccurrences([...args], flag).length > 0,
-			);
-		return { chromeEngine, chromeStartupArgs, configuredChromeLaunch };
+		// Official 0.43+ preserves running launch settings when omitted; resend startup args on an
+		// active browser only when this command explicitly updates --args.
+		const hasExplicitChromeArgs =
+			!nativeLaunchDefaults && scanUpstreamGlobalFlagOccurrences([...args], "--args").length > 0;
+		return { chromeEngine, chromeStartupArgs, hasExplicitChromeArgs };
 	}
 
 	private chromeStartupArgs(chromeEngine: boolean): string | undefined {
@@ -308,7 +306,7 @@ class NativeSessionCall {
 			toolArgs: args,
 			nativeConfirmActions: this.confirmationActions(args),
 			chromeStartupArgs: launch.chromeStartupArgs,
-			configuredChromeLaunch: launch.configuredChromeLaunch,
+			hasExplicitChromeArgs: launch.hasExplicitChromeArgs,
 		};
 		const defaults =
 			rootDefault === undefined

@@ -56,10 +56,6 @@ import {
 	withPatchedEnv,
 	type FixtureServer,
 } from "./helpers/agent-browser-harness.js";
-import {
-	nativeAppliesLaunchSettingsPerCommand,
-	nativeWaitDownloadMovesFile,
-} from "./helpers/native-version.js";
 import { waitForTestPidExit } from "./helpers/extension-validation-fixtures.js";
 
 function resultText(value: unknown): string {
@@ -579,11 +575,27 @@ nodeTest(
 									if (decision === "confirm") {
 										await decisionTest.test(
 											"recording restart denial preserves the active take",
-											async (recording) => {
+											async () => {
 												const take = join(root, "confirmation-take.webm");
 												const sentinel = join(root, "confirmation-sentinel.webm");
 												await writeFile(sentinel, "NATIVE_CONFIRMATION_SENTINEL");
+												const snapBeforeRecord = await call(["snapshot", "-i"]);
+												assert.equal(snapBeforeRecord.isError, false, resultText(snapBeforeRecord));
+												const preRecordRef = readArray(
+													readRecord(readRecord(snapBeforeRecord.details).refSnapshot).refIds,
+												).map(readString)[0];
+												assert.ok(preRecordRef !== undefined);
 												assert.equal((await call(["record", "start", take])).isError, false);
+												const refAfterUrlLessStart = await call([
+													"is",
+													"visible",
+													`@${preRecordRef}`,
+												]);
+												assert.equal(
+													refAfterUrlLessStart.isError,
+													false,
+													resultText(refAfterUrlLessStart),
+												);
 												const restart = await call([
 													"record",
 													"restart",
@@ -604,48 +616,6 @@ nodeTest(
 												assert.equal(
 													await readFile(sentinel, "utf8"),
 													"NATIVE_CONFIRMATION_SENTINEL",
-												);
-												await recording.test(
-													"patched native recording restart requires a second navigation decision",
-													{
-														skip:
-															process.env.PI_AGENT_BROWSER_NATIVE_COMPOUND_POLICY !== "1" &&
-															"Requires the pinned native recording-policy patch; stock 0.38.1 does not guard this nested navigation.",
-													},
-													async () => {
-														const nested = await call([
-															"record",
-															"restart",
-															join(root, "nested-take.webm"),
-															`${fixture.baseUrl}/next`,
-														]);
-														const advanced = await executeRegisteredTool(
-															harness.tool,
-															harness.ctx,
-															action(nested, "confirm"),
-														);
-														t.diagnostic(
-															JSON.stringify({
-																nested: readRecord(nested.details).data,
-																advanced: readRecord(advanced.details).data,
-															}),
-														);
-														assert.equal(
-															readRecord(advanced.details).failureCategory,
-															"confirmation-required",
-															"confirming recording_restart must still expose its native navigate confirmation",
-														);
-														assert.equal(
-															(
-																await executeRegisteredTool(
-																	harness.tool,
-																	harness.ctx,
-																	action(advanced, "deny"),
-																)
-															).isError,
-															false,
-														);
-													},
 												);
 												const stopped = await call(["record", "stop"]);
 												assert.equal(stopped.isError, false, resultText(stopped));
@@ -987,32 +957,17 @@ async function runCoreCommand(
 	return assertCoreCommandResult(result, shape, label, managedSessionName);
 }
 
-/**
- * Native 0.39.4 moves the completed download to the requested path; supported 0.35.0–0.39.3
- * natives only report that path, so the wrapper must fail closed there.
- */
-function expectedWaitDownload(installedVersion: string) {
-	return nativeWaitDownloadMovesFile(installedVersion)
-		? {
-				isError: false,
-				resultCategory: "success",
-				successCategory: "artifact-saved",
-				failureCategory: undefined,
-				text: [/Download saved and verified/],
-				exists: true,
-				verified: true,
-				content: DOWNLOAD_FIXTURE_CONTENT,
-			}
-		: {
-				isError: true,
-				resultCategory: "failure",
-				successCategory: undefined,
-				failureCategory: "artifact-missing",
-				text: [/Artifact verification failed/, /Download event reported; file not verified/],
-				exists: false,
-				verified: false,
-				content: undefined,
-			};
+function expectedWaitDownload() {
+	return {
+		isError: false,
+		resultCategory: "success",
+		successCategory: "artifact-saved",
+		failureCategory: undefined,
+		text: [/Download saved and verified/],
+		exists: true,
+		verified: true,
+		content: DOWNLOAD_FIXTURE_CONTENT,
+	};
 }
 
 async function assertInstalledAgentBrowserVersion(): Promise<string> {
@@ -1118,9 +1073,12 @@ async function assertRealUpstreamRestoredDaemonReuseFailsClosed(): Promise<void>
 					{ reason: "resume" },
 					restoredHarness.ctx,
 				);
-				const blocked = await executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, {
-					args: ["--proxy", "http://127.0.0.1:8080", "open", "about:blank"],
-				});
+				// --proxy is launch-scoped and rejected before daemon inspection; AGENT_BROWSER_PROXY reaches the daemon-policy check.
+				const blocked = await withPatchedEnv({ AGENT_BROWSER_PROXY: "http://127.0.0.1:8080" }, () =>
+					executeRegisteredTool(restoredHarness.tool, restoredHarness.ctx, {
+						args: ["open", "about:blank"],
+					}),
+				);
 				assert.equal(blocked.isError, true);
 				assert.match(
 					readString(readRecord(blocked.details).validationError),
@@ -1687,7 +1645,13 @@ nodeTest(
 					};
 					let daemonPid: number | undefined;
 					try {
-						const plain = await call(["open", `${fixture.baseUrl}/contract`]);
+						// Chromium 157+ promoted Blink's WebMCPTesting flag to WebMCP while upstream 0.43.0 still emits WebMCPTesting.
+						const plain = await call([
+							"--args",
+							"--enable-features=WebMCP",
+							"open",
+							`${fixture.baseUrl}/contract`,
+						]);
 						daemonPid = Number(
 							await readFile(
 								join(socketDir, `${readString(readRecord(plain.details).sessionName)}.pid`),
@@ -2585,7 +2549,7 @@ nodeTest(
 		timeout: 90_000,
 	},
 	async (t) => {
-		const installedVersion = await assertInstalledAgentBrowserVersion();
+		await assertInstalledAgentBrowserVersion();
 		const tempDir = await mkdtemp(join(tmpdir(), "rl-"));
 		const home = join(tempDir, "h");
 		const socketDir = createShortPrivateSocketDir(tempDir);
@@ -2617,58 +2581,60 @@ nodeTest(
 					};
 					const url = `${fixture.baseUrl}/contract`;
 					try {
-						// The wrapper resends its own startup arguments with the caller's, so an exact repeat is no change.
-						// The last launch has no caller `--args`, so the relaunch case below changes one setting only.
-						for (const [label, flags] of [
-							["--profile and --args", [...launch, "--args", "--disable-gpu"]],
-							["--profile", launch],
+						for (const [label, openFlags, followUpFlags] of [
+							[
+								"--profile and --args",
+								[...launch, "--args", "--disable-gpu"],
+								[...launch, "--args", "--disable-gpu"],
+							],
+							[
+								"--profile while omitting launch-time --args",
+								[...launch, "--args", "--disable-gpu"],
+								launch,
+							],
+							["--profile", launch, launch],
 						] as const) {
 							await t.test(`repeating ${label} keeps the running browser`, async () => {
 								await call([...session, "close"]);
-								const opened = await call([...flags, "open", url]);
+								const opened = await call([...openFlags, "open", url]);
 								assert.equal(opened.isError, false, resultText(opened));
 								const endpoint = await browserEndpoint();
-								const result = await call([...flags, "get", "url"]);
+								const result = await call([...followUpFlags, "get", "url"]);
 								assert.equal(result.isError, false, resultText(result));
 								assert.equal(readRecord(readRecord(result.details).data).url, url);
 								assert.doesNotMatch(resultText(result), /relaunched/);
 								assert.equal(await browserEndpoint(), endpoint);
 							});
 						}
-						await t.test(
-							"a changed launch setting reports the native relaunch",
-							// Supported 0.35.0–0.41.2 natives never report a relaunch.
-							{ skip: !nativeAppliesLaunchSettingsPerCommand(installedVersion) },
-							async () => {
-								const endpoint = await browserEndpoint();
-								const snapshot = await call([...session, "snapshot", "-i"]);
-								assert.equal(snapshot.isError, false, resultText(snapshot));
-								const result = await call([
-									...session,
-									"--user-agent",
-									"relaunch-contract/1",
-									"get",
-									"url",
-								]);
-								const details = readRecord(result.details);
-								assert.equal(readRecord(details.data).url, "about:blank");
-								assert.match(
-									resultText(result),
-									/upstream agent-browser relaunched this session's browser because launch settings changed \(user-agent\)/,
-								);
-								assert.deepEqual(
-									readArray(details.nextActions)
-										.map(readRecord)
-										.filter((action) => action.id === "reopen-page-after-browser-relaunch")
-										.map((action) => readRecord(action.params).args),
-									[[...session, "open", url]],
-								);
-								assert.notEqual(await browserEndpoint(), endpoint);
-								const stale = await call([...session, "click", "@e1"]);
-								assert.equal(stale.isError, true, resultText(stale));
-								assert.equal(readRecord(stale.details).agentBrowserStarted, undefined);
-							},
-						);
+						await t.test("a changed launch setting reports the native relaunch", async () => {
+							const endpoint = await browserEndpoint();
+							const snapshot = await call([...session, "snapshot", "-i"]);
+							assert.equal(snapshot.isError, false, resultText(snapshot));
+							const result = await call([
+								...session,
+								"--user-agent",
+								"relaunch-contract/1",
+								"get",
+								"url",
+							]);
+							const details = readRecord(result.details);
+							assert.equal(readRecord(details.data).url, "about:blank");
+							assert.match(
+								resultText(result),
+								/upstream agent-browser relaunched this session's browser because launch settings changed \(user-agent\)/,
+							);
+							assert.deepEqual(
+								readArray(details.nextActions)
+									.map(readRecord)
+									.filter((action) => action.id === "reopen-page-after-browser-relaunch")
+									.map((action) => readRecord(action.params).args),
+								[[...session, "open", url]],
+							);
+							assert.notEqual(await browserEndpoint(), endpoint);
+							const stale = await call([...session, "click", "@e1"]);
+							assert.equal(stale.isError, true, resultText(stale));
+							assert.equal(readRecord(stale.details).agentBrowserStarted, undefined);
+						});
 					} finally {
 						await call([...session, "close"]);
 					}
@@ -2685,13 +2651,8 @@ nodeTest(
 nodeTest(
 	"real upstream agent-browser contract suite matches 0.38 observation and recording options",
 	{ skip: !REAL_UPSTREAM_ENABLED, timeout: 120_000 },
-	async (t) => {
-		const version = await assertInstalledAgentBrowserVersion();
-		const [major, minor] = version.split(".");
-		if (major === "0" && Number(minor) < 38) {
-			t.skip("Observation options require upstream 0.38+");
-			return;
-		}
+	async () => {
+		await assertInstalledAgentBrowserVersion();
 		const dir = await mkdtemp(join(tmpdir(), "piab-038-"));
 		const socketDir = join(dir, "s");
 		await mkdir(socketDir, { mode: 0o700 });
@@ -3371,115 +3332,134 @@ nodeTest(
 					);
 
 					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
-						const webMcpSessionName = managedSessionName;
 						await t.test("WebMCP invocation, cancellation and target recovery", async () => {
-							await runCoreCommand(
-								harness,
-								["open", webMcpUrl],
-								shapes.commands.open,
-								webMcpSessionName,
-								"open WebMCP fixture",
+							const webMcpHarness = createExtensionHarness({
+								cwd: tempDir,
+								sessionId: "12345678123456781234567812345678",
+							});
+							await runExtensionEvent(
+								webMcpHarness.handlers,
+								"session_start",
+								{ reason: "new" },
+								webMcpHarness.ctx,
 							);
-							const webMcpList = await runCoreCommand(
-								harness,
-								["webmcp", "list"],
-								shapes.commands.coreSubcommand,
-								webMcpSessionName,
-							);
-							assert.equal(readRecord(webMcpList.sessionTabTarget).url, webMcpUrl);
-							const tools = readArray(readRecord(webMcpList.data).tools).map(readRecord);
-							const setMessageFrame = readString(
-								readRecord(tools.find((tool) => tool.name === "set_message")).frameId,
-							);
-							assert.ok(
-								setMessageFrame.length > 0,
-								"webmcp list should expose set_message and its frame id",
-							);
+							try {
+								const webMcpOpened = await executeRegisteredTool(
+									webMcpHarness.tool,
+									webMcpHarness.ctx,
+									{
+										// Chromium 157+ promoted Blink's WebMCPTesting flag to WebMCP while upstream 0.43.0 still emits WebMCPTesting.
+										args: ["--args", "--enable-features=WebMCP", "open", webMcpUrl],
+										sessionMode: "fresh",
+									},
+								);
+								const webMcpOpenDetails = assertSuccessfulResult(
+									webMcpOpened,
+									shapes.commands.open,
+									"open WebMCP fixture",
+								);
+								const webMcpSessionName = readString(webMcpOpenDetails.sessionName);
+								const webMcpList = await runCoreCommand(
+									webMcpHarness,
+									["webmcp", "list"],
+									shapes.commands.coreSubcommand,
+									webMcpSessionName,
+								);
+								assert.equal(readRecord(webMcpList.sessionTabTarget).url, webMcpUrl);
+								const tools = readArray(readRecord(webMcpList.data).tools).map(readRecord);
+								const setMessageFrame = readString(
+									readRecord(tools.find((tool) => tool.name === "set_message")).frameId,
+								);
+								assert.ok(
+									setMessageFrame.length > 0,
+									"webmcp list should expose set_message and its frame id",
+								);
+								await executeRegisteredTool(webMcpHarness.tool, webMcpHarness.ctx, {
+									args: ["snapshot", "-i"],
+								});
 
-							const webMcpInvoke = await runCoreCommand(
-								harness,
-								[
-									"webmcp",
-									"invoke",
-									"set_message",
-									"--params",
-									'{"message":"WebMCP changed"}',
-									"--frame",
-									setMessageFrame,
-									"--timeout",
-									"5000",
-								],
-								shapes.commands.coreSubcommand,
-								webMcpSessionName,
-							);
-							assert.equal(readRecord(webMcpInvoke.data).status, "completed");
-							assert.equal(
-								readRecord(readRecord(webMcpInvoke.data).navigationSummary).url,
-								webMcpUrl,
-							);
-							assert.equal(
-								readRecord(webMcpInvoke.refSnapshotInvalidation).reason,
-								"page-transition",
-							);
-							assert.deepEqual(
-								readArray(webMcpInvoke.nextActions)
-									.map(readRecord)
-									.map((action) => action.id),
-								["inspect-after-mutation"],
-							);
-							assert.equal(
-								getResultValue(
-									await runCoreCommand(
-										harness,
-										["get", "text", "#webmcp-result"],
-										shapes.commands.coreSubcommand,
-										webMcpSessionName,
+								const webMcpInvoke = await runCoreCommand(
+									webMcpHarness,
+									[
+										"webmcp",
+										"invoke",
+										"set_message",
+										"--params",
+										'{"message":"WebMCP changed"}',
+										"--frame",
+										setMessageFrame,
+										"--timeout",
+										"5000",
+									],
+									shapes.commands.coreSubcommand,
+									webMcpSessionName,
+								);
+								assert.equal(readRecord(webMcpInvoke.data).status, "completed");
+								assert.equal(
+									readRecord(readRecord(webMcpInvoke.data).navigationSummary).url,
+									webMcpUrl,
+								);
+								assert.equal(
+									readRecord(webMcpInvoke.refSnapshotInvalidation).reason,
+									"page-transition",
+								);
+								assert.deepEqual(
+									readArray(webMcpInvoke.nextActions)
+										.map(readRecord)
+										.map((action) => action.id),
+									["inspect-after-mutation"],
+								);
+								assert.equal(
+									getResultValue(
+										await runCoreCommand(
+											webMcpHarness,
+											["get", "text", "#webmcp-result"],
+											shapes.commands.coreSubcommand,
+											webMcpSessionName,
+										),
+										["text"],
 									),
-									["text"],
-								),
-								"WebMCP changed",
-							);
+									"WebMCP changed",
+								);
 
-							const detached = await runCoreCommand(
-								harness,
-								["webmcp", "invoke", "wait_for_cancel", "--detach"],
-								shapes.commands.coreSubcommand,
-								webMcpSessionName,
-							);
-							const invocationId = readString(readRecord(detached.data).invocationId);
-							assert.ok(
-								invocationId.length > 0,
-								"detached WebMCP invoke should return an invocation id",
-							);
-							assert.equal(detached.sessionTabTarget, undefined);
-							assert.equal(detached.sessionTabTargetUnknown, true);
-							assert.deepEqual(
-								readArray(detached.nextActions)
-									.map(readRecord)
-									.map((action) => action.id),
-								["verify-page-target-after-pending-webmcp"],
-							);
-							const canceled = await runCoreCommand(
-								harness,
-								["webmcp", "cancel", invocationId],
-								shapes.commands.coreSubcommand,
-								webMcpSessionName,
-							);
-							assert.equal(readRecord(canceled.data).status, "canceled");
-							const canceledResult = await runCoreCommand(
-								harness,
-								["webmcp", "result", invocationId],
-								shapes.commands.coreSubcommand,
-								webMcpSessionName,
-							);
-							assert.equal(readRecord(canceledResult.data).status, "canceled");
-							await runCoreCommand(
-								harness,
-								["open", contractUrl],
-								shapes.commands.open,
-								webMcpSessionName,
-								"restore contract fixture after WebMCP",
-							);
+								const detached = await runCoreCommand(
+									webMcpHarness,
+									["webmcp", "invoke", "wait_for_cancel", "--detach"],
+									shapes.commands.coreSubcommand,
+									webMcpSessionName,
+								);
+								const invocationId = readString(readRecord(detached.data).invocationId);
+								assert.ok(
+									invocationId.length > 0,
+									"detached WebMCP invoke should return an invocation id",
+								);
+								assert.equal(detached.sessionTabTarget, undefined);
+								assert.equal(detached.sessionTabTargetUnknown, true);
+								assert.deepEqual(
+									readArray(detached.nextActions)
+										.map(readRecord)
+										.map((action) => action.id),
+									["verify-page-target-after-pending-webmcp"],
+								);
+								const canceled = await runCoreCommand(
+									webMcpHarness,
+									["webmcp", "cancel", invocationId],
+									shapes.commands.coreSubcommand,
+									webMcpSessionName,
+								);
+								assert.equal(readRecord(canceled.data).status, "canceled");
+								const canceledResult = await runCoreCommand(
+									webMcpHarness,
+									["webmcp", "result", invocationId],
+									shapes.commands.coreSubcommand,
+									webMcpSessionName,
+								);
+								assert.equal(readRecord(canceledResult.data).status, "canceled");
+							} finally {
+								await executeRegisteredTool(webMcpHarness.tool, webMcpHarness.ctx, {
+									args: ["close"],
+								});
+							}
 						});
 					}
 
@@ -4809,7 +4789,7 @@ nodeTest(
 					const waitedDownload = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["wait", "--download", downloadPath],
 					});
-					const expectedDownload = expectedWaitDownload(installedVersion);
+					const expectedDownload = expectedWaitDownload();
 					assert.equal(
 						waitedDownload.isError,
 						expectedDownload.isError,

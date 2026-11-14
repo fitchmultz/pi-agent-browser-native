@@ -66,10 +66,6 @@ import {
 	withPatchedEnv,
 	writeFakeAgentBrowserBinary,
 } from "./helpers/agent-browser-harness.js";
-import {
-	nativeRejectsBatchItemGlobalFlags,
-	nativeWaitDownloadMovesFile,
-} from "./helpers/native-version.js";
 
 nodeTest("global argv flags match the audited upstream grammar baseline", async () => {
 	const grammar = readRecord(
@@ -742,10 +738,6 @@ nodeTest(
 					AGENT_BROWSER_AUTO_CONNECT: undefined,
 				},
 				async () => {
-					const nativeVersion = (await runAgentBrowserProcess({ args: ["--version"], cwd: dir }))
-						.stdout;
-					const nativeSavesDownload = nativeWaitDownloadMovesFile(nativeVersion);
-					const nativeRejectsRowGlobals = nativeRejectsBatchItemGlobalFlags(nativeVersion);
 					const session = `av-${randomUUID().slice(0, 8)}`;
 					const prefix = ["--session", session];
 					const h = createExtensionHarness({ cwd: dir, sessionId: randomUUID() });
@@ -785,9 +777,9 @@ nodeTest(
 							],
 						] as const) {
 							for (const raw of [false, true]) {
-								// Native 0.42.0+ rejects a global flag in a batch screenshot row. The wrapper
+								// Native 0.43+ rejects a global flag in a batch screenshot row. The wrapper
 								// leaves that operand untouched in both input modes so native's rejection shows.
-								if (step[0] === "screenshot" && nativeRejectsRowGlobals) {
+								if (step[0] === "screenshot") {
 									await t.test(
 										`screenshot ${raw ? "raw" : "stdin"} batch row leaves a global flag to native rejection`,
 										async () => {
@@ -818,12 +810,7 @@ nodeTest(
 										const resultDetails = readRecord(result.details);
 										assert.equal(result.isError, false, getMessageText(result.content));
 										const bytes = await readFile(join(dir, path));
-										assert.equal(
-											step[0] === "screenshot"
-												? bytes.subarray(0, 8).toString("hex")
-												: bytes.subarray(0, header.length).toString(),
-											header,
-										);
+										assert.equal(bytes.subarray(0, header.length).toString(), header);
 										const artifact = readDefined(
 											readArray(resultDetails.artifacts).map(readRecord)[0],
 										);
@@ -867,12 +854,7 @@ nodeTest(
 											exists: artifact.exists,
 										}),
 									);
-									// Native 0.39.4+ moves the download and reports the joined destination;
-									// supported 0.35.0–0.39.3 natives echo the requested operand without moving it.
-									assert.equal(
-										artifact.path,
-										nativeSavesDownload ? await realpath(join(dir, path)) : path,
-									);
+									assert.equal(artifact.path, await realpath(join(dir, path)));
 									await wait.test(
 										"prepares the native retained path's parent directory",
 										async () => {
@@ -885,19 +867,12 @@ nodeTest(
 									await wait.test("retains the native requested path in artifact metadata", () =>
 										assert.equal(artifact.requestedPath, path),
 									);
-									assert.equal(
-										result.isError,
-										!nativeSavesDownload,
-										getMessageText(result.content),
-									);
-									assert.equal(artifact.exists, nativeSavesDownload);
-									assert.equal(
-										readRecord(resultDetails.artifactVerification).verified,
-										nativeSavesDownload,
-									);
+									assert.equal(result.isError, false, getMessageText(result.content));
+									assert.equal(artifact.exists, true);
+									assert.equal(readRecord(resultDetails.artifactVerification).verified, true);
 									assert.equal(
 										await readFileIfPresent(join(dir, path)),
-										nativeSavesDownload ? "download contract fixture report\n" : undefined,
+										"download contract fixture report\n",
 									);
 								},
 							);
@@ -987,7 +962,7 @@ nodeTest(
 												.map((artifact) => artifact.path),
 										}),
 									);
-									if (command === "screenshot" && nativeRejectsRowGlobals) {
+									if (command === "screenshot") {
 										await retryTest.test(
 											"explicitly rerunning the original row surfaces native's global-flag rejection",
 											async () => {
@@ -1162,29 +1137,22 @@ nodeTest(
 								)?.[0];
 
 								assert.ok(ref !== undefined && ref.length > 0);
-								if (subcommand === "start") {
-									await recordingContext.test(
-										"start rejects a subsequent stale ref before dispatch",
-										async () => {
-											const blocked = await call(
-												["batch"],
-												JSON.stringify([
-													["record", "start", join(dir, "blocked.webm")],
-													["get", "text", `@${ref}`],
-												]),
-											);
-											const blockedDetails = readRecord(blocked.details);
+								await recordingContext.test(
+									`${subcommand} with a navigation URL rejects a subsequent stale ref before dispatch`,
+									async () => {
+										const blocked = await call(
+											["batch"],
+											JSON.stringify([
+												["record", subcommand, join(dir, `blocked-${subcommand}.webm`), url],
+												["get", "text", `@${ref}`],
+											]),
+										);
+										const blockedDetails = readRecord(blocked.details);
 
-											assert.equal(
-												blockedDetails.failureCategory,
-												"stale-ref",
-												"keep the older-native start-then-ref latch",
-											);
-
-											assert.notEqual(blockedDetails.agentBrowserStarted, true);
-										},
-									);
-								}
+										assert.equal(blockedDetails.failureCategory, "stale-ref");
+										assert.notEqual(blockedDetails.agentBrowserStarted, true);
+									},
+								);
 
 								assert.equal((await direct(["tab", "new", `${fixture.baseUrl}/next`])).exitCode, 0);
 								const path = join(dir, `${subcommand}.webm`);
@@ -1218,30 +1186,15 @@ nodeTest(
 									() => assert.equal(observedUrl, url),
 								);
 								await recordingContext.test(
-									`${subcommand} FPS ref policy is conservative rather than false page-change evidence`,
-									async (refContext) => {
+									`${subcommand} FPS without a URL preserves refs on the secondary screencast session`,
+									async () => {
 										const invalidation = recordingDetails.refSnapshotInvalidation;
 										const read = await call(["get", "text", `@${ref}`]);
-										const readDetails = readRecord(read.details);
-										if (subcommand === "start") {
-											await refContext.test("start invalidates refs conservatively", () => {
-												assert.equal(readDetails.failureCategory, "stale-ref");
-
-												assert.match(
-													readString(readRecord(invalidation).summary),
-													/conservatively/,
-												);
-											});
-										} else {
-											await refContext.test("restart preserves refs", () => {
-												assert.equal(invalidation, undefined);
-
-												assert.equal(read.isError, false, getMessageText(read.content));
-											});
-										}
+										assert.equal(invalidation, undefined);
+										assert.equal(read.isError, false, getMessageText(read.content));
 										assert.doesNotMatch(
-											`${readString(readDefined(recording.content[0]).text)}\n${invalidation === undefined ? "undefined" : readString(readRecord(invalidation).summary)}`,
-											/fresh active page|replaced or navigated/,
+											readString(readDefined(recording.content[0]).text),
+											/Page state:|fresh active page|replaced or navigated/,
 										);
 									},
 								);

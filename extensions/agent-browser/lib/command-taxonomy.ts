@@ -80,14 +80,14 @@ export function getRecordCommandOperands(tokens: readonly string[]): {
 		: { path: tokens[path], url: url === undefined ? undefined : tokens[url] };
 }
 
-/** Starts conservatively invalidate refs because older supported natives replace the page, even on failure. Restarts invalidate only when they have a URL. */
+/** Native 0.43+ attaches screencast capture without replacing the page; starts and restarts retire refs only when they navigate to a URL. */
 export function isRecordPageTransitionCommand(tokens: readonly string[]): boolean {
 	if (tokens[0] !== "record") {
 		return false;
 	}
 	return (
-		tokens[1] === "start" ||
-		(tokens[1] === "restart" && getRecordCommandOperands(tokens).url !== undefined)
+		(tokens[1] === "start" || tokens[1] === "restart") &&
+		getRecordCommandOperands(tokens).url !== undefined
 	);
 }
 

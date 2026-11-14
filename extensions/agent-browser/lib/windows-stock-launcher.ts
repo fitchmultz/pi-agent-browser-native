@@ -57,29 +57,33 @@ function selectLauncher(cwd: string, env: Readonly<NodeJS.ProcessEnv>): string |
 	}
 }
 
+function isStockAgentBrowserManifest(manifest: unknown): boolean {
+	if (!isRecord(manifest) || manifest.name !== "agent-browser" || !isRecord(manifest.bin)) {
+		return false;
+	}
+	const entrypoint = manifest.bin["agent-browser"];
+	return entrypoint === "bin/agent-browser.js" || entrypoint === "./bin/agent-browser.js";
+}
+
 function stockLauncherBinary(absoluteShim: string): string | undefined {
 	try {
 		if (statSync(absoluteShim).size > 512) {
 			return undefined;
 		}
 		const text = readFileSync(absoluteShim, "utf8");
-		if (
-			!/^@ECHO off\r?\n"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64\.exe" %\*(?:\r?\n)?(?![\s\S])/.test(
+		const binaryName =
+			/^@ECHO off\r?\n"%~dp0\\?node_modules\\agent-browser\\bin\\(agent-browser-win32-(?:x64|arm64)\.exe)" %\*(?:\r?\n)?(?![\s\S])/.exec(
 				text,
-			)
-		) {
+			)?.[1];
+		if (binaryName === undefined) {
 			return undefined;
 		}
 		const packageRoot = join(dirname(absoluteShim), "node_modules", "agent-browser");
 		const manifest: unknown = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
-		if (!isRecord(manifest) || manifest.name !== "agent-browser" || !isRecord(manifest.bin)) {
+		if (!isStockAgentBrowserManifest(manifest)) {
 			return undefined;
 		}
-		const entrypoint = manifest.bin["agent-browser"];
-		if (entrypoint !== "bin/agent-browser.js" && entrypoint !== "./bin/agent-browser.js") {
-			return undefined;
-		}
-		const binary = join(packageRoot, "bin", "agent-browser-win32-x64.exe");
+		const binary = join(packageRoot, "bin", binaryName);
 		return statSync(binary).isFile() ? binary : undefined;
 	} catch {
 		return undefined;

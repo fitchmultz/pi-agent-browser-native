@@ -373,7 +373,7 @@ export function buildPageTransitionRefSnapshotInvalidation(
 		reason: "page-transition",
 		summary:
 			summary ??
-			"Recording starts and URL-bearing restarts conservatively invalidate earlier page-scoped refs. Run snapshot -i before using refs; this is not evidence of a page change.",
+			"This wrapper conservatively invalidates earlier page-scoped refs after URL-bearing recording starts and restarts. Run snapshot -i before using refs.",
 	};
 }
 
@@ -399,6 +399,34 @@ export function getCommandRefSnapshotInvalidation(
 	return transition === undefined
 		? undefined
 		: buildPageTransitionRefSnapshotInvalidation(REF_RETIRING_TRANSITION_SUMMARIES[transition]);
+}
+
+function isReplacedPageWedged(
+	messages: string,
+	data: Readonly<Record<string, unknown>> | undefined,
+): boolean {
+	return (
+		/\bpage_wedged:/i.test(messages) &&
+		(data?.replaced === true || /\breplaced by a blank tab\b/i.test(messages))
+	);
+}
+
+export function extractReplacedPageWedgedTarget(
+	envelope:
+		| { readonly data?: unknown; readonly error?: unknown; readonly warning?: unknown }
+		| undefined,
+): SessionTabTarget | undefined {
+	const messages = [envelope?.error, envelope?.warning]
+		.filter((p): p is string => typeof p === "string")
+		.join("\n");
+	const data = isRecord(envelope?.data) ? envelope.data : undefined;
+	if (!isReplacedPageWedged(messages, data)) {
+		return undefined;
+	}
+	const targetId = data?.newTargetId;
+	return typeof targetId === "string" && targetId.length > 0
+		? { url: "about:blank", targetId }
+		: { url: "about:blank" };
 }
 
 export function isNoActivePageSnapshotFailure(

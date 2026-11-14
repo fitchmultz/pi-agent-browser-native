@@ -7,7 +7,10 @@ import { withChromeStartupArgs } from "../process.js";
 import { buildValidationFailureResult } from "./input-plan.js";
 import type { ResolvedAgentBrowserValidInput } from "./input-plan-types.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
-import { inspectManagedSessionDaemon } from "./browser-run/managed-session-daemon-policy.js";
+import {
+	daemonNeedsBrowserBootstrap,
+	inspectManagedSessionDaemon,
+} from "./browser-run/managed-session-daemon-policy.js";
 import { buildMissingBinaryMessage } from "./browser-run/final-result-missing-binary.js";
 import type { NativeDefaults } from "./native-config.js";
 import type {
@@ -25,7 +28,7 @@ export interface RootBrowserLaunchPolicy {
 	readonly restoreEligible: boolean;
 	readonly chromeEngine: boolean;
 	readonly chromeStartupArgs?: string | undefined;
-	readonly configuredChromeLaunch: boolean;
+	readonly hasExplicitChromeArgs: boolean;
 	readonly defaultProfile?: string | undefined;
 	readonly defaultExecutable?: string | undefined;
 }
@@ -79,7 +82,7 @@ function rootLaunchEnvironment(
 	policy: RootBrowserLaunchPolicy,
 	daemon: ManagedSessionDaemonInspection,
 ): NodeJS.ProcessEnv {
-	const bootstrap = daemon.status === "inactive";
+	const bootstrap = daemonNeedsBrowserBootstrap(daemon);
 	const restore = rootRestoreKey(
 		policy,
 		daemon.status,
@@ -139,7 +142,7 @@ export async function withRootBrowserLaunch(
 	// Active native daemons own their launch choices; defaults may only bootstrap or preserve explicit local options.
 	return withAgentBrowserProcessEnvironment(rootLaunchEnvironment(policy, daemon), () =>
 		withChromeStartupArgs(
-			daemon.status === "inactive" || policy.configuredChromeLaunch
+			daemonNeedsBrowserBootstrap(daemon) || policy.hasExplicitChromeArgs
 				? policy.chromeStartupArgs
 				: undefined,
 			() =>

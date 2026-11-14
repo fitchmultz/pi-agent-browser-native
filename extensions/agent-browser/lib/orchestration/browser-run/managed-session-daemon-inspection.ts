@@ -34,11 +34,18 @@ export function getHeadedManagedAutosaveEnv(
 
 export type ManagedSessionDaemonInspection =
 	| {
+			readonly browserLaunched?: boolean | undefined;
 			readonly restoreKey: string | null;
 			readonly status: "active";
 			readonly generation?: string | undefined;
 	  }
 	| { readonly status: "inactive" | "missing-binary" | "unknown" };
+
+export function daemonNeedsBrowserBootstrap(daemon: ManagedSessionDaemonInspection): boolean {
+	return (
+		daemon.status === "inactive" || (daemon.status === "active" && daemon.browserLaunched === false)
+	);
+}
 
 export interface PreparationDaemonObservation {
 	readonly identity: string;
@@ -141,11 +148,13 @@ async function parseDaemonInspection(
 		return { status: "unknown" };
 	}
 	const generation = await readDaemonGeneration(data.runtime, options);
+	const browserLaunched =
+		typeof data.runtime.browserLaunched === "boolean" ? data.runtime.browserLaunched : undefined;
 	if (typeof data.runtime.restoreKey === "string" && data.runtime.restoreKey.length > 0) {
-		return { restoreKey: data.runtime.restoreKey, status: "active", generation };
+		return { browserLaunched, restoreKey: data.runtime.restoreKey, status: "active", generation };
 	}
 	return data.runtime.restoreKey === null
-		? { restoreKey: null, status: "active", generation }
+		? { browserLaunched, restoreKey: null, status: "active", generation }
 		: { status: "unknown" };
 }
 

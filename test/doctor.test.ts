@@ -186,11 +186,23 @@ nodeTest("doctor reports missing agent-browser with actionable install guidance"
 });
 
 nodeTest("doctor accepts the supported floor and newer stable versions", async (t) => {
-	for (const [version, upstreamOutput, piOutput] of [
-		["0.35.0", "agent-browser 0.35.0\n", "pi 1.5.0\n"],
-		["0.35.0", "0.35.0\n", "1.5.0\n"],
-		["0.35.2", "agent-browser 0.35.2\n", "1.5.0\n"],
-		["1.0.0", "agent-browser 1.0.0\n", "1.5.0\n"],
+	for (const [upstreamOutput, piOutput, expectedPattern] of [
+		["agent-browser 0.43.0\n", "pi 1.5.0\n", /version matches recommended baseline: 0\.43\.0/],
+		["0.43.0\n", "1.5.0\n", /version matches recommended baseline: 0\.43\.0/],
+		[
+			"agent-browser 0.43.1\n",
+			"1.5.0\n",
+			new RegExp(
+				`version meets supported floor: 0\\.43\\.1 \\(recommended ${CAPABILITY_BASELINE.targetVersion}\\)`,
+			),
+		],
+		[
+			"agent-browser 1.0.0\n",
+			"1.5.0\n",
+			new RegExp(
+				`version meets supported floor: 1\\.0\\.0 \\(recommended ${CAPABILITY_BASELINE.targetVersion}\\)`,
+			),
+		],
 	] as const) {
 		await t.test(upstreamOutput.trim(), async () => {
 			const report = await evaluateDoctorWithPi({
@@ -201,27 +213,23 @@ nodeTest("doctor accepts the supported floor and newer stable versions", async (
 			const text = formatDoctorReport(report);
 			assert.equal(report.failures.length, 0);
 			assert.match(text, /Pi version satisfies the minimum runtime floor: 1\.5\.0/);
-			assert.match(
-				text,
-				new RegExp(`version meets supported floor: ${version.replaceAll(".", "\\.")}`),
-			);
-			assert.match(text, new RegExp(`recommended ${CAPABILITY_BASELINE.targetVersion}`));
+			assert.match(text, expectedPattern);
 		});
 	}
 });
 
 nodeTest("doctor reports versions below the supported floor", async () => {
 	const report = await evaluateDoctorWithPi({
-		runAgentBrowser: async () => "agent-browser 0.25.0\n",
+		runAgentBrowser: async () => "agent-browser 0.42.0\n",
 		skipSourceCheck: true,
 	});
 	const text = formatDoctorReport(report);
 
 	assert.equal(report.failures.length, 1);
 	assert.match(text, /agent-browser version drift/);
-	assert.match(text, /minimum supported 0\.35\.0/);
-	assert.match(text, /found 0\.25\.0/);
-	assert.match(text, /stable agent-browser versions at or above 0\.35\.0/);
+	assert.match(text, /minimum supported 0\.43\.0/);
+	assert.match(text, /found 0\.42\.0/);
+	assert.match(text, /stable agent-browser versions at or above 0\.43\.0/);
 	assert.match(text, /scripts\/agent-browser-target\.mjs/);
 	assert.match(text, /scripts\/agent-browser-capability-baseline\.mjs/);
 	assert.match(text, /npm run docs -- command-reference write/);

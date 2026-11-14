@@ -88,6 +88,9 @@ function classifyNativeFailure(context: FailureContext): AgentBrowserFailureCate
 	if (/\btab_gone:/i.test(text)) {
 		return "tab-gone";
 	}
+	if (/\bpage_wedged:/i.test(text)) {
+		return "page-wedged";
+	}
 	if (isUpstreamLocatorMiss(text, command)) {
 		return "selector-not-found";
 	}

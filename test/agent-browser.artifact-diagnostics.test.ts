@@ -624,6 +624,8 @@ nodeTest(
 			assert.equal(opened.isError, false, opened.content[0]?.text);
 			for (const batch of [false, true]) {
 				for (const [subcommand, withUrl, fails] of [
+					["start", true, false],
+					["start", true, true],
 					["start", false, false],
 					["start", false, true],
 					["restart", true, false],
@@ -654,7 +656,7 @@ nodeTest(
 							);
 							const text = readString(readRecord(result.content[0]).text);
 							assert.equal(result.isError, fails, text);
-							const transitions = subcommand === "start" || withUrl;
+							const transitions = withUrl;
 							assert.equal((text.match(/Page state:/g) ?? []).length, transitions ? 1 : 0);
 							if (transitions) {
 								await transition.test(
@@ -698,8 +700,14 @@ nodeTest(
 	{ concurrency: false },
 	async () => {
 		await withFixture(async (_root, harness) => {
+			const urlLessFailure = await executeRegisteredTool(harness.tool, harness.ctx, {
+				args: ["--json", "record", "start", "url-less-fail.webm"],
+			});
+			const urlLessJson = readRecord(JSON.parse(urlLessFailure.content[0]?.text ?? ""));
+			assert.equal(urlLessJson.success, false);
+			assert.equal(urlLessJson.warnings, undefined);
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
-				args: ["--json", "record", "start", "fail.webm"],
+				args: ["--json", "record", "start", "fail.webm", pageUrl],
 			});
 			const json = readRecord(JSON.parse(result.content[0]?.text ?? ""));
 			assert.equal(json.success, false);
@@ -724,7 +732,7 @@ nodeTest(
 		await withFixture(async (_root, harness) => {
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
-				stdin: JSON.stringify([["record", "start", "unparseable.webm"]]),
+				stdin: JSON.stringify([["record", "start", "unparseable.webm", pageUrl]]),
 			});
 			const details = readRecord(result.details);
 			assert.equal(result.isError, true);
@@ -744,7 +752,7 @@ nodeTest(
 		await withFixture(async (_root, harness) => {
 			const result = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
-				stdin: JSON.stringify([["record", "start", "unidentified.webm"]]),
+				stdin: JSON.stringify([["record", "start", "unidentified.webm", pageUrl]]),
 			});
 			assert.equal(result.isError, true);
 			assert.equal(
@@ -765,7 +773,7 @@ nodeTest(
 				args: ["batch", "--bail"],
 				stdin: JSON.stringify([
 					["wait", "--text", "Never"],
-					["record", "start", "unreached.webm"],
+					["record", "start", "unreached.webm", pageUrl],
 				]),
 			});
 			assert.equal(bailed.isError, true);
@@ -774,7 +782,7 @@ nodeTest(
 			const before = await readInvocationLog(log);
 			const blocked = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
-				stdin: JSON.stringify([["close"], ["record", "start", "blocked.webm"]]),
+				stdin: JSON.stringify([["close"], ["record", "start", "blocked.webm", pageUrl]]),
 			});
 			assert.equal(blocked.details?.failureCategory, "validation-error");
 			assert.doesNotMatch(blocked.content[0]?.text ?? "", /Page state:/);
@@ -787,7 +795,7 @@ nodeTest(
 			await rm(join(root, process.platform === "win32" ? "agent-browser.cmd" : "agent-browser"));
 			await withPatchedEnv({ PATH: root }, async () => {
 				const missing = await executeRegisteredTool(harness.tool, harness.ctx, {
-					args: ["record", "start", "missing.webm"],
+					args: ["record", "start", "missing.webm", pageUrl],
 				});
 				assert.equal(missing.details?.failureCategory, "missing-binary");
 				assert.doesNotMatch(missing.content[0]?.text ?? "", /Page state:/);

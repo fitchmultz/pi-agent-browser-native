@@ -7,6 +7,7 @@ import type { OwnedManagedSessionContext } from "../../managed-session-restore.j
 import type { ManagedSessionPolicyLock } from "../../managed-session-policy-lock.js";
 import {
 	acquireOwnedManagedSessionDaemonPolicy,
+	daemonNeedsBrowserBootstrap,
 	inspectManagedSessionDaemon,
 } from "./managed-session-daemon-policy.js";
 import {
@@ -25,6 +26,7 @@ import type {
 export interface PreparationDaemonPolicy {
 	readonly lock?: ManagedSessionPolicyLock | undefined;
 	readonly inactive: boolean;
+	readonly needsBrowserBootstrap: boolean;
 	readonly generationInspection?: ManagedSessionDaemonInspection | undefined;
 	readonly cleanupOnlyReason?: Awaited<
 		ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>
@@ -37,6 +39,8 @@ export interface PreparationDaemonResult {
 	readonly policy: PreparationDaemonPolicy;
 	/** Whether a caller-owned session has no running daemon; owned sessions report false. */
 	readonly callerDaemonInactive: () => Promise<boolean>;
+	/** Whether a caller-owned session has no running browser yet; owned sessions report false. */
+	readonly callerDaemonNeedsBootstrap: () => Promise<boolean>;
 }
 
 interface PreparationDaemonFacts extends PreparationProcessFacts {
@@ -47,41 +51,56 @@ async function notCallerOwned(): Promise<boolean> {
 	return false;
 }
 
+interface CallerDaemonProbes {
+	readonly callerDaemonInactive: () => Promise<boolean>;
+	readonly callerDaemonNeedsBootstrap: () => Promise<boolean>;
+}
+
+const OWNED_SESSION_PROBES: CallerDaemonProbes = {
+	callerDaemonInactive: notCallerOwned,
+	callerDaemonNeedsBootstrap: notCallerOwned,
+};
+
 /** Probes a caller-owned daemon at most once per preparation, reusing a matching root sample. */
-function observeCallerDaemonInactive(
+function observeCallerDaemon(
 	facts: PreparationDaemonFacts,
 	{
 		plan,
 		session,
 	}: { readonly plan: AgentBrowserExecutionPlan; readonly session: PreparationSessionPlan },
-): () => Promise<boolean> {
+): CallerDaemonProbes {
 	if (session.ownedManagedSession) {
-		return notCallerOwned;
+		return OWNED_SESSION_PROBES;
 	}
-	let observation: Promise<boolean> | undefined;
-	const observe = async (): Promise<boolean> => {
+	let observation: Promise<ManagedSessionDaemonInspection | undefined> | undefined;
+	const observe = async (): Promise<ManagedSessionDaemonInspection | undefined> => {
 		const initial = facts.initialDaemonObservation;
 		if (
 			initial?.identity ===
 			getAgentBrowserSessionIdentityKey(plan.sessionName ?? "", plan.namespace)
 		) {
-			return initial.daemon.status === "inactive";
+			return initial.daemon;
 		}
-		return (
-			plan.sessionName !== undefined &&
-			(
-				await inspectManagedSessionDaemon({
-					cwd: facts.cwd,
-					signal: facts.signal,
-					sessionName: plan.sessionName,
-					namespace: plan.namespace,
-				})
-			).status === "inactive"
-		);
+		if (plan.sessionName === undefined) {
+			return undefined;
+		}
+		return inspectManagedSessionDaemon({
+			cwd: facts.cwd,
+			signal: facts.signal,
+			sessionName: plan.sessionName,
+			namespace: plan.namespace,
+		});
 	};
-	return () => {
+	const getDaemon = (): Promise<ManagedSessionDaemonInspection | undefined> => {
 		observation ??= observe();
 		return observation;
+	};
+	return {
+		callerDaemonInactive: async () => (await getDaemon())?.status === "inactive",
+		callerDaemonNeedsBootstrap: async () => {
+			const daemon = await getDaemon();
+			return daemon !== undefined && daemonNeedsBrowserBootstrap(daemon);
+		},
 	};
 }
 
@@ -135,6 +154,21 @@ function applyColdCompatibility(
 	};
 }
 
+function buildDaemonPolicy(
+	policy: Awaited<ReturnType<typeof acquireOwnedManagedSessionDaemonPolicy>>,
+): PreparationDaemonPolicy {
+	const hasError = policy.error !== undefined && policy.error !== "";
+	return {
+		lock: policy.lock,
+		inactive: policy.daemonStatus === "inactive",
+		needsBrowserBootstrap:
+			policy.daemonStatus === "inactive" ||
+			(policy.daemonStatus === "active" && policy.browserLaunched === false),
+		generationInspection: policy.generationInspection,
+		cleanupOnlyReason: hasError ? policy.cleanupOnlyReason : undefined,
+	};
+}
+
 export async function prepareDaemonPolicy(
 	process: PreparationDaemonFacts,
 	electronLaunchRecord: ElectronLaunchRecord | undefined,
@@ -146,8 +180,8 @@ export async function prepareDaemonPolicy(
 		return {
 			plan,
 			session,
-			policy: { inactive: false },
-			callerDaemonInactive: observeCallerDaemonInactive(process, planning),
+			policy: { inactive: false, needsBrowserBootstrap: false },
+			...observeCallerDaemon(process, planning),
 		};
 	}
 	const closeCommand = isCloseCommand(plan.commandInfo.command);
@@ -167,20 +201,14 @@ export async function prepareDaemonPolicy(
 	return {
 		plan: resolved.plan,
 		session: { ...session, ownedManagedSession: resolved.ownedManagedSession },
-		policy: {
-			lock: policy.lock,
-			inactive: policy.daemonStatus === "inactive",
-			generationInspection: policy.generationInspection,
-			cleanupOnlyReason:
-				policy.error !== undefined && policy.error !== "" ? policy.cleanupOnlyReason : undefined,
-		},
-		callerDaemonInactive: notCallerOwned,
+		policy: buildDaemonPolicy(policy),
+		...OWNED_SESSION_PROBES,
 	};
 }
 
 interface ChromeStartupFacts {
 	readonly chromeStartupArgs?: string | undefined;
-	readonly configuredChromeLaunch?: boolean | undefined;
+	readonly hasExplicitChromeArgs?: boolean | undefined;
 	readonly preserveAttachedBrowserSession?: boolean | undefined;
 }
 
@@ -216,8 +244,10 @@ export async function prepareChromeStartupArgs(
 	) {
 		return undefined;
 	}
-	const inactive = planning.session.ownedManagedSession
-		? planning.policy.inactive
-		: await planning.callerDaemonInactive();
-	return inactive || facts.configuredChromeLaunch === true ? facts.chromeStartupArgs : undefined;
+	const needsBootstrap = planning.session.ownedManagedSession
+		? planning.policy.needsBrowserBootstrap
+		: await planning.callerDaemonNeedsBootstrap();
+	return needsBootstrap || facts.hasExplicitChromeArgs === true
+		? facts.chromeStartupArgs
+		: undefined;
 }

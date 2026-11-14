@@ -36,6 +36,7 @@ import { shouldCaptureSemanticActionNavigationSummary } from "../../results/pres
 import {
 	commandExplicitlyTargetsAboutBlank,
 	deriveSessionTabTarget,
+	extractReplacedPageWedgedTarget,
 	extractSessionTabTargetFromBatchResults,
 	extractSessionTabTargetFromCommandData,
 	extractStringResultField,
@@ -179,7 +180,8 @@ function canReverifyFailedNavigation(
 	if (
 		draft.succeeded ||
 		navigationSummary !== undefined ||
-		draft.readConfirmation?.state === "pending"
+		draft.readConfirmation?.state === "pending" ||
+		extractReplacedPageWedgedTarget(draft.presentationEnvelope) !== undefined
 	) {
 		return false;
 	}
@@ -429,6 +431,10 @@ function fallbackPageTarget(
 export async function resolveObservedPageTarget(
 	draft: ResolveObservedPageTargetInput,
 ): Promise<Pick<PageOutputPhase, "observedSessionTabTarget" | "currentSessionTabTarget">> {
+	const wedgedTarget = extractReplacedPageWedgedTarget(draft.presentationEnvelope);
+	if (wedgedTarget) {
+		return { observedSessionTabTarget: wedgedTarget, currentSessionTabTarget: wedgedTarget };
+	}
 	const data: unknown = draft.textOutput ? undefined : draft.presentationEnvelope?.data;
 	const observedSessionTabTarget = await resolveObservedTargetIdentity(
 		draft,

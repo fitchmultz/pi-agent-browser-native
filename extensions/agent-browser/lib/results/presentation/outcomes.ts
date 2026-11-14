@@ -8,7 +8,7 @@ import {
 	hasMissingFileArtifact,
 } from "./artifacts.js";
 import { buildNetworkRequestsNextActions, buildStreamNextActions } from "./diagnostics.js";
-import { isOverlayBlockedClickError } from "./errors.js";
+import { extractPageWedgedHint, isOverlayBlockedClickError } from "./errors.js";
 import type { BuildToolPresentationOptions } from "./input-contracts.js";
 import { buildPageChangeSummary } from "./navigation.js";
 import type { PresentationSource } from "./source.js";
@@ -135,6 +135,10 @@ function getGenericNextActions(
 			source.presentationCommandInfo.command,
 			options.envelope?.success === false ? draft.summary : undefined,
 			options.args ?? source.presentationCommandInfo.commandTokens,
+		),
+		pageWedged: extractPageWedgedHint(
+			options.envelope?.success === false ? draft.summary : undefined,
+			options.envelope?.data,
 		),
 		resultCategory: draft.resultCategory ?? "success",
 		savedFilePath: draft.savedFilePath,

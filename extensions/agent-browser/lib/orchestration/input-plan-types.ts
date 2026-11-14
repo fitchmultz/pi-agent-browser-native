@@ -57,7 +57,7 @@ export interface ResolvedAgentBrowserInputBase {
 interface ResolvedAgentBrowserValidInputBase extends ResolvedAgentBrowserInputBase {
 	readonly nativeConfirmActions?: string | undefined;
 	readonly chromeStartupArgs?: string | undefined;
-	readonly configuredChromeLaunch?: boolean;
+	readonly hasExplicitChromeArgs?: boolean;
 	readonly status: "valid";
 	readonly validationError?: undefined;
 }

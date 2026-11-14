@@ -163,6 +163,33 @@ function formatTabText(data: unknown): string | undefined {
 	return getTabSummary(data);
 }
 
+function readPluginName(data: Readonly<Record<string, unknown>>): string | undefined {
+	return isRecord(data.plugin) && typeof data.plugin.name === "string"
+		? redactModelFacingText(data.plugin.name)
+		: undefined;
+}
+
+function formatPluginsSummary(commandInfo: CommandInfo, data: unknown): string | undefined {
+	if (!isRecord(data)) {
+		return undefined;
+	}
+	if (Array.isArray(data.plugins)) {
+		return `agent-browser plugins: ${data.plugins.length}`;
+	}
+	const name = readPluginName(data);
+	if (commandInfo.subcommand === "add" || commandInfo.subcommand === "install") {
+		return name !== undefined ? `Plugin configured: ${name}` : "Plugin configured";
+	}
+	if (commandInfo.subcommand === "show" && isRecord(data.plugin)) {
+		return name !== undefined ? `Plugin: ${name}` : "Plugin details";
+	}
+	return undefined;
+}
+
+const PLUGIN_PRESENTER: CommandPresenter = {
+	summary: formatPluginsSummary,
+};
+
 export const COMMAND_PRESENTERS: Readonly<Partial<Record<string, CommandPresenter>>> = {
 	...Object.fromEntries(
 		Object.keys(SIMPLE_ACTION_RESULTS).map((command) => [
@@ -190,6 +217,8 @@ export const COMMAND_PRESENTERS: Readonly<Partial<Record<string, CommandPresente
 		summary: (_commandInfo, data) => formatWaitResult(data),
 		text: (_commandInfo, data) => formatWaitResult(data),
 	},
+	plugin: PLUGIN_PRESENTER,
+	plugins: PLUGIN_PRESENTER,
 	profiles: {
 		summary: (_commandInfo, data) =>
 			Array.isArray(data) ? `Chrome profiles: ${data.length}` : undefined,
@@ -209,7 +238,10 @@ export const COMMAND_PRESENTERS: Readonly<Partial<Record<string, CommandPresente
 	},
 	skills: {
 		summary: (commandInfo, data) => {
-			if (Array.isArray(data) && commandInfo.subcommand === "list") {
+			if (
+				Array.isArray(data) &&
+				(commandInfo.subcommand === undefined || commandInfo.subcommand === "list")
+			) {
 				return `agent-browser skills: ${data.length}`;
 			}
 			if (commandInfo.subcommand === "get") {
