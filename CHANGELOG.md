@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.34 - 2026-11-17
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Share one semver version floor and use native path/uuid primitives (#436) ([99259eb](https://github.com/fitchmultz/pi-agent-browser-native/commit/99259eb44e20bdff53cf63dc0a7e8575ad8781bd))
+
+### What's Changed
+
+- Share one semver version floor and use native path/uuid primitives by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/436
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.33...v0.9.34
+
 ## 0.9.33 - 2026-11-17
 
 <!-- npm-release:unreleased:start -->
