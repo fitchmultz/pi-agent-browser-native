@@ -1,4 +1,5 @@
 import { isRecord, parseRefId } from "../../parsing.js";
+import { randomUUID } from "node:crypto";
 import { redactSensitiveText } from "../../runtime-redaction.js";
 import {
 	withOptionalSessionArgs,
@@ -353,7 +354,7 @@ function canPrepareClickDispatchProbe(options: ClickDispatchProbeOptions): boole
 
 class ClickDispatchProbeState implements ClickDispatchProbe {
 	declare cleaned?: boolean;
-	readonly marker = `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+	readonly marker = `${CLICK_DISPATCH_MARKER_PREFIX}${Date.now().toString(36)}_${randomUUID()}`;
 	readonly target: ClickDispatchProbeTarget;
 
 	constructor(target: ClickDispatchProbeTarget) {

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	buildBrowserDefaultProfileGuideline,
@@ -41,7 +40,7 @@ export function getInstalledDocsPaths(): {
 	commandReferencePath: string;
 	toolContractPath: string;
 } {
-	const root = findPackageRoot(dirname(fileURLToPath(import.meta.url)));
+	const root = findPackageRoot(import.meta.dirname);
 	return {
 		readmePath: join(root, "README.md"),
 		commandReferencePath: join(root, "docs", "COMMAND_REFERENCE.md"),
