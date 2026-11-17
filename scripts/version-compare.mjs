@@ -1,13 +1,14 @@
 /**
  * Version floor comparison shared by the doctor CLIs.
  *
- * The platform smoke doctor is packed and run without installed dependencies, so
- * this module reads the first version in each string instead of importing semver.
+ * The platform smoke doctor is packed and loaded without installed dependencies,
+ * so this module reads the first dotted version in each string instead of
+ * importing semver. A bare number such as a year or a count is not a version.
  */
 
 /** @param {unknown} value */
 function readVersion(value) {
-	const match = String(value).match(/\d+(?:\.\d+){0,2}/);
+	const match = String(value).match(/\d+\.\d+(?:\.\d+)?/);
 	if (match === null) {
 		return;
 	}
