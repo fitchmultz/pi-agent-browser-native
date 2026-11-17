@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.35 - 2026-11-17
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- Run the checkout smoke prompt on GPT-6.2 Astra (DOT-214) (1/1) (#438) ([4c0193a](https://github.com/fitchmultz/pi-agent-browser-native/commit/4c0193ad8c74879c74d3f27ff9371905d23ee983))
+
+### What's Changed
+
+- Run the checkout smoke prompt on GPT-6.2 Astra (DOT-214) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/438
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.34...v0.9.35
+
 ## 0.9.34 - 2026-11-17
 
 <!-- npm-release:unreleased:start -->
