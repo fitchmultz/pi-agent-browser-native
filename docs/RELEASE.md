@@ -173,7 +173,7 @@ Use this validation prompt after changing click enrichment, tab pinning, ref pre
 Run it in an isolated checkout session with skills disabled so the run validates the extension browser workflow instead of external dogfood/QA skill routing. It is fine to restrict active tools at launch so the checkout extension is the only browser surface, but keep those launch details out of the user prompt:
 
 ```bash
-pi --approve --no-extensions --no-skills -e builtin:tool-search -e . --model openai-codex/gpt-6-astra:low --tools agent_browser,tool_search,agent_browser_action,agent_browser_qa,agent_browser_electron,agent_browser_source,agent_browser_network_source --session-dir "$SESSION_DIR"
+pi --approve --no-extensions --no-skills -e builtin:tool-search -e . --model openai-codex/gpt-6.2-astra:low --tools agent_browser,tool_search,agent_browser_action,agent_browser_qa,agent_browser_electron,agent_browser_source,agent_browser_network_source --session-dir "$SESSION_DIR"
 ```
 
 Repeat with the task's chosen Astra reasoning level when validating instruction-following robustness. Use unique temp paths for each run and delete them afterward. Run separate skill-enabled dogfood sessions only when the thing under test is skill integration, not this bounded release smoke.
