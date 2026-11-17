@@ -45,6 +45,7 @@
 		"scripts/convert-browser-session.mjs",
 		"scripts/doctor.mjs",
 		"scripts/doctor-sources.mjs",
+		"scripts/version-compare.mjs",
 		"scripts/prepare.mjs",
 		"scripts/build.mjs",
 		"scripts/agent-browser-capability-baseline.mjs",
