@@ -687,6 +687,8 @@ nodeTest("always-on guidance is compact and names every deferred tool", () => {
 		"artifactVerification",
 		"CSS coordinates",
 		"sessionMode:fresh",
+		"headless by default",
+		"--headed",
 		"explicit authorization",
 		...deferredTools,
 	];
