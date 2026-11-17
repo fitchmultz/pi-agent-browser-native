@@ -268,6 +268,17 @@ nodeTest("doctor warns instead of failing when Pi version cannot be inspected", 
 	assert.match(text, /Doctor completed with warnings/);
 });
 
+nodeTest("version floors read prefixed versions and refuse text without one", async () => {
+	const { versionAtLeast } = await import("../scripts/version-compare.mjs");
+
+	assert.equal(versionAtLeast("v24.22.3", "22.19.0"), true);
+	assert.equal(versionAtLeast("v24.22.3", "24"), true);
+	assert.equal(versionAtLeast("crabbox 0.26.1", "0.26.0"), true);
+	assert.equal(versionAtLeast("22.18.0", "22.19.0"), false);
+	assert.equal(versionAtLeast("no version here", "22.19.0"), undefined);
+	assert.equal(versionAtLeast("build 2026", "1.5.2"), undefined);
+});
+
 nodeTest("doctor reports duplicate package and checkout sources with remediation", async () => {
 	const settingsByPath = new Map([
 		[

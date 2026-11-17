@@ -60,11 +60,6 @@ export function commandPath(name) {
 	return silent("which", [name]);
 }
 
-/** @param {string} version */
-function parseVersion(version) {
-	const match = version.match(/\d+(?:\.\d+){0,2}/);
-	return match ? match[0].split(".").map((part) => Number(part)) : null;
-}
 /** @param {string} cbox
  * @param {readonly string[]} args
  * @param {string} label
@@ -92,28 +87,6 @@ export function checkCrabboxProvider(cbox, args, label, report) {
 	} catch {
 		report.warn(`${label} provider returned non-JSON doctor output`);
 	}
-}
-
-/** @param {string} actual
- * @param {string} minimum
- */
-export function versionAtLeast(actual, minimum) {
-	const a = parseVersion(actual);
-	const b = parseVersion(minimum);
-	if (!a || !b) {
-		return false;
-	}
-	for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
-		const left = a[index] ?? 0;
-		const right = b[index] ?? 0;
-		if (left > right) {
-			return true;
-		}
-		if (left < right) {
-			return false;
-		}
-	}
-	return true;
 }
 
 /** @param {string} path */

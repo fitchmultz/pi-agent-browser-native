@@ -14,10 +14,11 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
-import { gte, minVersion, parse, satisfies, valid } from "semver";
+import { minVersion, satisfies, valid } from "semver";
 
 import { CAPABILITY_BASELINE_SOURCE } from "./agent-browser-capability-baseline.mjs";
 import { checkPiSources } from "./doctor-sources.mjs";
+import { versionAtLeast } from "./version-compare.mjs";
 import {
 	MINIMUM_AGENT_BROWSER_VERSION,
 	TARGET_AGENT_BROWSER_SOURCE,
@@ -67,21 +68,6 @@ function normalizeAgentBrowserVersion(output) {
 /** @param {string} output */
 function normalizePiVersion(output) {
 	return output.trim().replace(/^pi\s+/, "");
-}
-
-/** @param {unknown} actual
- * @param {unknown} minimum
- */
-export function versionAtLeast(actual, minimum) {
-	const parsedActual = parse(String(actual));
-	const parsedMinimum = parse(String(minimum));
-	if (!parsedActual || !parsedMinimum || String(actual).startsWith("v")) {
-		return;
-	}
-	return gte(
-		`${parsedActual.major}.${parsedActual.minor}.${parsedActual.patch}`,
-		`${parsedMinimum.major}.${parsedMinimum.minor}.${parsedMinimum.patch}`,
-	);
 }
 
 function printHelp() {

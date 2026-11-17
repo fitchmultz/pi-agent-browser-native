@@ -13,8 +13,8 @@ import {
 	setting,
 	shell,
 	silent,
-	versionAtLeast,
 } from "./doctor-support.mjs";
+import { versionAtLeast } from "../version-compare.mjs";
 
 /** @import { PlatformSmokeConfig } from "../../platform-smoke.config.mjs" */
 /** @import { DoctorReport } from "./doctor-support.mjs" */
@@ -100,7 +100,7 @@ function checkCrabboxVersion(cbox, minimum, report) {
 	const displayVersion = version.split(/\r?\n/, 1).join("");
 	report.ok(`version: ${displayVersion}`);
 	if (minimum !== undefined && minimum.length > 0) {
-		if (versionAtLeast(displayVersion, minimum)) {
+		if (versionAtLeast(displayVersion, minimum) === true) {
 			report.ok(`version ${displayVersion} >= ${minimum}`);
 		} else {
 			report.fail(`Crabbox version ${displayVersion} < ${minimum}`);
@@ -144,7 +144,7 @@ function checkHostNodeVersion(minimum, report) {
 		minimum.length > 0 &&
 		localNode !== null &&
 		localNode.length > 0 &&
-		versionAtLeast(localNode, minimum)
+		versionAtLeast(localNode, minimum) === true
 	) {
 		report.ok(`host Node ${localNode} >= ${minimum}`);
 	} else {
