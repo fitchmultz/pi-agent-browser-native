@@ -9,7 +9,7 @@
 function readVersion(value) {
 	const match = String(value).match(/\d+(?:\.\d+){0,2}/);
 	if (match === null) {
-		return undefined;
+		return;
 	}
 	const [major = "0", minor = "0", patch = "0"] = match[0].split(".");
 	return [Number(major), Number(minor), Number(patch)];
