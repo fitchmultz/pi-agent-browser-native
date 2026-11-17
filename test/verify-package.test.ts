@@ -488,6 +488,13 @@ nodeTest(
 				[packed.packResult.name]: { ...packed.packResult, files: [{ path: 42 }] },
 			});
 			assert.throws(() => parseSinglePackResult(invalidMetadata), /Unexpected npm pack output/);
+			// Packed scripts use declared runtime dependencies, just like an npm install.
+			await mkdir(join(packed.packageDir, "node_modules"));
+			await symlink(
+				join(source, "node_modules", "semver"),
+				join(packed.packageDir, "node_modules", "semver"),
+				"junction",
+			);
 			const standalonePlatform = execFileSync(
 				process.execPath,
 				[
