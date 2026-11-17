@@ -1,21 +1,18 @@
 /** Version floor comparison shared by the doctor CLIs. */
-import { gte, parse } from "semver";
+import { coerce, gte } from "semver";
 
 /**
- * Compare two version strings at major.minor.patch precision.
- * Returns undefined when either side is not a stable version, or when `actual`
- * carries a `v` prefix such as the one `node --version` prints.
+ * Compare the version each side names, ignoring surrounding text such as the
+ * `v` that `node --version` prints or a tool's name prefix.
+ * Returns undefined when either side names no version at all.
  * @param {unknown} actual
  * @param {unknown} minimum
  */
 export function versionAtLeast(actual, minimum) {
-	const parsedActual = parse(String(actual));
-	const parsedMinimum = parse(String(minimum));
-	if (!parsedActual || !parsedMinimum || String(actual).startsWith("v")) {
+	const parsedActual = coerce(String(actual));
+	const parsedMinimum = coerce(String(minimum));
+	if (parsedActual === null || parsedMinimum === null) {
 		return;
 	}
-	return gte(
-		`${parsedActual.major}.${parsedActual.minor}.${parsedActual.patch}`,
-		`${parsedMinimum.major}.${parsedMinimum.minor}.${parsedMinimum.patch}`,
-	);
+	return gte(parsedActual, parsedMinimum);
 }
