@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.33 - 2026-11-17
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- docs: state the headless launch default in guidance and docs (PAB-201) (#437) ([c91fe04](https://github.com/fitchmultz/pi-agent-browser-native/commit/c91fe048f4649ae23ecb2efa11ddaec01410f86a))
+
+### What's Changed
+
+- docs: state the headless launch default in guidance and docs (PAB-201) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/437
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.32...v0.9.33
+
 ## 0.9.32 - 2026-11-14
 
 <!-- npm-release:unreleased:start -->
