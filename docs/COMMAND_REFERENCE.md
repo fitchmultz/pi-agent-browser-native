@@ -330,7 +330,7 @@ A `sessionMode: "fresh"` batch ending in `close` closes only its attempted brows
 
 ### Headed demo, WebGPU, and local-page checks
 
-Use upstream's global `--headed` flag on the first launch when the user needs to watch the browser. Because headed/headless state belongs to the browser launch, use `sessionMode: "fresh"` when a managed session may already exist or when changing from a previous headless run.
+Launches are headless by default: `--headed` opts into a visible window, and there is no `--headless` flag (upstream rejects it as an unknown command). Use upstream's global `--headed` flag on the first launch when the user needs to watch the browser. Because headed/headless state belongs to the browser launch, use `sessionMode: "fresh"` when a managed session may already exist or when changing from a previous headless run.
 
 ```json
 { "args": ["--headed", "open", "https://example.com"], "sessionMode": "fresh" }
