@@ -11,7 +11,7 @@ import type {
 } from "../contracts.js";
 import { countLines, stringifyUnknown, truncateText } from "../text.js";
 import { applyArtifactManifest } from "./artifacts.js";
-import { getPresentationText } from "./content.js";
+import { getPresentationText, getReadContentPointer } from "./content.js";
 import type { ToolPresentationObservation } from "./observation-contracts.js";
 import {
 	buildSpillArtifactEntries,
@@ -85,17 +85,20 @@ function buildLargeOutputFailureContext(
 
 interface PresentationSpill {
 	readonly spill?: LargeOutputSpillWriteResult;
+	readonly contentPointer?: ReturnType<typeof getReadContentPointer>;
 	readonly error?: string;
 	readonly evictionEntries?: readonly SessionArtifactManifestEntry[];
 }
 
 async function tryWritePresentationSpill(options: {
+	readonly command: string | undefined;
 	readonly data: unknown;
 	readonly persistentArtifactStore?: Readonly<PersistentSessionArtifactStore> | undefined;
 	readonly text: string;
 }): Promise<PresentationSpill> {
 	try {
-		return { spill: await writeLargeOutputSpillFile(options) };
+		const spill = await writeLargeOutputSpillFile(options);
+		return { spill, contentPointer: getReadContentPointer(options.command, options.data) };
 	} catch (error) {
 		return {
 			error: error instanceof Error ? error.message : stringifyUnknown(error),
@@ -134,6 +137,9 @@ function buildCompactedText(
 			? `Full output path: ${persisted.spill.path}`
 			: `Full output unavailable: ${persisted.error ?? "spill file could not be created."}`,
 	);
+	if (persisted.contentPointer !== undefined) {
+		lines.push(`Read the document at JSON Pointer ${persisted.contentPointer} in that file.`);
+	}
 	return { compactedText: lines.join("\n"), previewText };
 }
 
@@ -157,6 +163,9 @@ function applyCompactedPresentation(
 		data: {
 			compacted: true,
 			fullOutputPath: persisted.spill?.path,
+			...(persisted.contentPointer === undefined
+				? {}
+				: { contentPointer: persisted.contentPointer }),
 			outputCharCount: text.length,
 			outputLineCount: countLines(text),
 			previewCharCount: rendered.previewText.length,
@@ -180,6 +189,7 @@ export async function compactLargePresentationOutput(options: {
 		return {};
 	}
 	const persisted = await tryWritePresentationSpill({
+		command: options.commandInfo.command,
 		data: options.data,
 		persistentArtifactStore: options.persistentArtifactStore,
 		text,

@@ -464,6 +464,8 @@ Example:
 }
 ```
 
+For a direct `read`, the saved JSON is the command payload, not the tool result wrapper. When it contains document text, the saved `outputFile` receipt includes `absolutePath` and `contentPointer: "/content"`. Use that pointer relative to the saved file's root. An `outputFile` receipt in a live or saved observation describes a separate file.
+
 ### `timeoutMs`
 
 - type: positive integer milliseconds
@@ -539,6 +541,8 @@ Direct and advanced results expose the same decision-relevant observation in mod
 Tool declarations share native Browser namespace metadata and an `outputSchema`. Returned `structuredContent` exposes the same bounded redacted projection, including failed/preparation/cancelled results, rather than raw internal `details`. Oversized observations use the existing compact object and complete redacted spill path. Optional search returns its normalized provider data in the observation's `data`. This supports host-selected native codemode without auto-enabling it or changing advanced activation. Structured image paths are metadata, not native `image()` input; a codemode script shows a saved screenshot with `image(await tools.read({ path }))`.
 
 `details` retains audit, process, ownership, and replay metadata; it is not the sole channel for actionable failures. JSON remains parseable, including early preparation failures and filters. Prose retains useful command output and appends canonical observation metadata. Final visible text is bounded to 16,000 characters. If necessary, the complete redacted observation is spilled and the result names `observationPath` plus retrieval instructions. Exact recovery objects are either included whole or remain in that complete observation; truncated argv/stdin is never presented as executable recovery. An unavailable spill is reported honestly.
+
+For a direct `read`, use inline `data.content` when present. When the command payload spills, `data.fullOutputPath` and `data.contentPointer` identify the file and the document within it. The existing top-level `fullOutputPath` still names the same spill. Both the command spill and a successful `outputPath` export store read text at `/content`, not `/data/content`. `observationPath` instead stores the observation wrapper. If only `observationPath` is available, open that file first and follow its payload receipt.
 
 ### Image observations
 

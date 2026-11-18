@@ -65,6 +65,12 @@ export function isStringArray(value: unknown): value is readonly string[] {
 	return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
 }
 
+export function getReadContentPointer(command: unknown, payload: unknown): "/content" | undefined {
+	return command === "read" && isRecord(payload) && typeof payload.content === "string"
+		? "/content"
+		: undefined;
+}
+
 export function getPresentationText(presentation: ToolPresentationObservation): string {
 	return presentation.content
 		.filter((part) => part.type === "text")

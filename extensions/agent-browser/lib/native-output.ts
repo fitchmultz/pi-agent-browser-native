@@ -27,7 +27,29 @@ export const AGENT_BROWSER_OUTPUT_SCHEMA = JsonSchema.Object(
 			JsonSchema.Literal("success"),
 			JsonSchema.Literal("failure"),
 		]),
-		data: JsonSchema.Optional(JsonSchema.Unsafe<unknown>({})),
+		data: JsonSchema.Optional(
+			JsonSchema.Unsafe<unknown>({
+				description:
+					"For read, data.content is inline text. When compacted, data.fullOutputPath and data.contentPointer locate the document in the saved payload.",
+			}),
+		),
+		outputFile: JsonSchema.Optional(
+			JsonSchema.Object(
+				{
+					absolutePath: JsonSchema.String(),
+					status: JsonSchema.Union([JsonSchema.Literal("saved"), JsonSchema.Literal("failed")]),
+					contentPointer: JsonSchema.Optional(
+						JsonSchema.Literal("/content", {
+							description: "JSON Pointer into the saved read payload at absolutePath.",
+						}),
+					),
+				},
+				{ additionalProperties: true },
+			),
+		),
+		observationPath: JsonSchema.Optional(
+			JsonSchema.String({ description: "Saved observation wrapper, not the command payload." }),
+		),
 		error: JsonSchema.Optional(JsonSchema.Unsafe<unknown>({})),
 		summary: JsonSchema.Optional(JsonSchema.String()),
 		nextActions: JsonSchema.Optional(JsonSchema.Array(JsonSchema.Object({}))),
