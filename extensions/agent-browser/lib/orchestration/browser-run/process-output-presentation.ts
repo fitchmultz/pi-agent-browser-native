@@ -26,7 +26,7 @@ import { applyBatchRowNetworkRouteRecords } from "../../results/network-routes.j
 import { buildToolPresentation } from "../../results/presentation.js";
 import { compactLargePresentationOutput } from "../../results/presentation/large-output.js";
 import { detectConfirmationRequired } from "../../results/confirmation.js";
-import { omitUpstreamLifecycle } from "../../results/presentation/common.js";
+import { omitUpstreamLifecycle } from "../../results/presentation/lifecycle.js";
 import { isRecord } from "../../parsing.js";
 import { extractUpstreamCommandTokens } from "../../argv-descriptor.js";
 import { mergeRecordingRecoveryPresentation } from "./recording-recovery.js";

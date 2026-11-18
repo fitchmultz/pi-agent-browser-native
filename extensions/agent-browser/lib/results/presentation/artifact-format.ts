@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isPendingRecordingArtifact } from "../artifact-manifest.js";
 import type { FileArtifactMetadata } from "../contracts.js";
 import { formatRecordingReceipt } from "../recording.js";
@@ -95,7 +96,7 @@ export function formatArtifactSummary(
 		return undefined;
 	}
 	if (artifacts.length === 1) {
-		return `${formatArtifactLabel(firstArtifact)}: ${firstArtifact.path}`;
+		return `${formatArtifactLabel(firstArtifact)}: ${sanitizeRenderedSingleLine(firstArtifact.path)}`;
 	}
 	const restartArtifact = artifacts.find(
 		(artifact) => isPendingRecordingArtifact(artifact) && artifact.subcommand === "restart",
@@ -105,10 +106,13 @@ export function formatArtifactSummary(
 	);
 	if (restartArtifact && previous.length > 0) {
 		return [...previous, restartArtifact]
-			.map((artifact) => `${formatArtifactLabel(artifact)}: ${artifact.path}`)
+			.map(
+				(artifact) =>
+					`${formatArtifactLabel(artifact)}: ${sanitizeRenderedSingleLine(artifact.path)}`,
+			)
 			.join("\n");
 	}
-	return `${artifacts.every((artifact) => artifact.status === "saved") ? "Saved" : "Reported"} ${artifacts.length} artifacts: ${artifacts.map((artifact) => `${artifact.kind} ${artifact.path}`).join(", ")}`;
+	return `${artifacts.every((artifact) => artifact.status === "saved") ? "Saved" : "Reported"} ${artifacts.length} artifacts: ${artifacts.map((artifact) => `${artifact.kind} ${sanitizeRenderedSingleLine(artifact.path)}`).join(", ")}`;
 }
 
 function optionalField(label: string, value: string | undefined): string | undefined {
@@ -141,15 +145,26 @@ function formatFileDetails(artifact: FileArtifactMetadata): (string | undefined)
 export function formatArtifactMetadataLines(artifacts: readonly FileArtifactMetadata[]): string[] {
 	return artifacts.map((artifact, index) =>
 		[
-			`${formatArtifactLabel(artifact)}: ${artifact.path}`,
+			`${formatArtifactLabel(artifact)}: ${sanitizeRenderedSingleLine(artifact.path)}`,
 			`Artifact type: ${artifact.kind}`,
-			optionalField("Requested path", artifact.requestedPath),
-			`Absolute path: ${artifact.absolutePath}`,
+			optionalField(
+				"Requested path",
+				artifact.requestedPath === undefined
+					? undefined
+					: sanitizeRenderedSingleLine(artifact.requestedPath),
+			),
+			`Absolute path: ${sanitizeRenderedSingleLine(artifact.absolutePath)}`,
 			...(isPendingRecordingArtifact(artifact)
 				? formatPendingDetails(artifact)
 				: formatFileDetails(artifact)),
-			optionalField("Session", artifact.session),
-			optionalField("CWD", artifact.cwd),
+			optionalField(
+				"Session",
+				artifact.session === undefined ? undefined : sanitizeRenderedSingleLine(artifact.session),
+			),
+			optionalField(
+				"CWD",
+				artifact.cwd === undefined ? undefined : sanitizeRenderedSingleLine(artifact.cwd),
+			),
 			artifact.recording ? formatRecordingReceipt(artifact.recording) : undefined,
 			`Machine data: details.artifacts[${index}]`,
 		]

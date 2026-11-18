@@ -1786,6 +1786,48 @@ nodeTest("buildToolPresentation command-redacts whole-batch spill data", async (
 });
 
 nodeTest(
+	"buildToolPresentation sanitizes control sequences in untrusted page and tab labels",
+	async () => {
+		const openPresentation = await buildToolPresentation({
+			commandInfo: { command: "open" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					title: "\x1B]0;pwned\x07Example\nSpoofed",
+					url: "https://example.com/\x07path",
+				},
+			},
+		});
+		const openText = readString(readRecord(openPresentation.content[0]).text);
+		assert.doesNotMatch(openText, /[\x00-\x08\x0B-\x1F\x7F\x80-\x9F]/);
+		assert.match(openText, /Example Spoofed/);
+		assert.equal(openPresentation.pageChangeSummary?.title, "Example Spoofed");
+
+		const tabPresentation = await buildToolPresentation({
+			commandInfo: { command: "tab", subcommand: "list" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					tabs: [
+						{
+							active: true,
+							tabId: "t1",
+							title: "\x1B[31mTab\x00One\x1B[0m",
+							url: "https://example.com/\nnext",
+						},
+					],
+				},
+			},
+		});
+		const tabText = readString(readRecord(tabPresentation.content[0]).text);
+		assert.doesNotMatch(tabText, /[\x00-\x08\x0B-\x1F\x7F\x80-\x9F]/);
+		assert.equal(tabText, "* [t1] Tab One — https://example.com/ next");
+	},
+);
+
+nodeTest(
 	"buildToolPresentation bounds long failed command text when compacting batch output",
 	async () => {
 		const longArgument = `checkout-${"z".repeat(900)}-END_OF_UNBOUNDED_ARGUMENT`;

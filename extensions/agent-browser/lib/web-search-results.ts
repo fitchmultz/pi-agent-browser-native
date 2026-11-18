@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "./display-sanitize.js";
 import { isRecord } from "./parsing.js";
 import type { WebSearchProvider } from "./config.js";
 
@@ -166,7 +167,9 @@ export function cleanSearchText(value: unknown, maxLength = 500): string | undef
 	if (typeof value !== "string") {
 		return;
 	}
-	const cleaned = stripDecodedHtmlTags(decodeHtmlEntities(value.replace(/<[^>]*>/g, " ")))
+	const cleaned = sanitizeRenderedSingleLine(
+		stripDecodedHtmlTags(decodeHtmlEntities(value.replace(/<[^>]*>/g, " "))),
+	)
 		.replace(/\s+/g, " ")
 		.trim();
 	if (cleaned.length === 0) {
@@ -289,11 +292,12 @@ export function formatSearchResults(
 	results: readonly NormalizedSearchResult[],
 ): string {
 	const providerLabel = getProviderLabel(provider);
+	const safeQuery = sanitizeRenderedSingleLine(query).replace(/\s+/g, " ").trim();
 	if (results.length === 0) {
-		return `No ${providerLabel} web results found for: ${query}`;
+		return `No ${providerLabel} web results found for: ${safeQuery}`;
 	}
 	return [
-		`${providerLabel} web search results for: ${query}`,
+		`${providerLabel} web search results for: ${safeQuery}`,
 		"",
 		...results.flatMap((result, index) => formatResultLines(result, index, provider)),
 	]

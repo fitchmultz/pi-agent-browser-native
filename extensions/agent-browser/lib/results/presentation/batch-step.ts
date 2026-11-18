@@ -15,7 +15,8 @@ import type {
 import { applyNamespaceToNextActions, withOptionalSessionArgs } from "../next-actions.js";
 import type { AgentBrowserNextAction } from "../action-contracts.js";
 import { buildNetworkRouteDiagnostics } from "../network-routes.js";
-import { extractAgentBrowserLifecycle, stringifyModelFacing } from "./common.js";
+import { stringifyModelFacing } from "./common.js";
+import { extractAgentBrowserLifecycle } from "./lifecycle.js";
 import { classifyPresentationSuccessCategory } from "./artifacts.js";
 import {
 	formatBatchStepCommand,

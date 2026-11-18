@@ -2,7 +2,7 @@ import type { ProjectedAgentBrowserObservation } from "../contracts.js";
 import type { ToolPresentationObservation } from "./observation-contracts.js";
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveValue } from "../../runtime-redaction.js";
-import { omitUpstreamLifecycle } from "./common.js";
+import { omitUpstreamLifecycle } from "./lifecycle.js";
 import {
 	isTimeoutPartialProgress,
 	redactTimeoutPartialProgress,

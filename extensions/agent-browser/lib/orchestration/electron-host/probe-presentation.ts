@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import type { ElectronLaunchStatus } from "../../electron/cleanup.js";
 import { boundElectronProbeString } from "../../electron/cdp.js";
 import type { ElectronLaunchRecord } from "../../electron/launch.js";
@@ -77,9 +78,12 @@ function formatElectronProbeFocusedElement(
 	}
 	const label = focusedElementLabel(element);
 	const descriptorText = presentStrings([element.role, element.tagName]).join("/");
-	const descriptor = descriptorText.length > 0 ? descriptorText : "element";
-	const suffix = formatFocusedElementAttributes(element);
-	return `Focused: ${descriptor}${label !== undefined && label.length > 0 ? ` "${label}"` : ""}${suffix.length > 0 ? ` (${suffix})` : ""}`;
+	const descriptor = sanitizeRenderedSingleLine(
+		descriptorText.length > 0 ? descriptorText : "element",
+	);
+	const safeLabel = label === undefined ? "" : sanitizeRenderedSingleLine(label);
+	const suffix = sanitizeRenderedSingleLine(formatFocusedElementAttributes(element));
+	return `Focused: ${descriptor}${safeLabel.length > 0 ? ` "${safeLabel}"` : ""}${suffix.length > 0 ? ` (${suffix})` : ""}`;
 }
 function formatElectronProbeContextText(context: ElectronProbeContext): string {
 	if (context.mode === "launchId") {
@@ -127,7 +131,7 @@ function formatProbeTabs(probe: ElectronProbeResult): string | undefined {
 		(probe.tabs.omittedCount ?? 0) !== 0 ? ` (${probe.tabs.omittedCount ?? 0} omitted)` : "";
 	const active = probe.activeTab;
 	const activeText = active
-		? `; active ${active.index ?? "?"}: ${presentStrings([presentStrings([active.title, active.url]).join(" — "), active.tabId])[0] ?? "tab"}`
+		? `; active ${active.index ?? "?"}: ${sanitizeRenderedSingleLine(presentStrings([presentStrings([active.title, active.url]).join(" — "), active.tabId])[0] ?? "tab")}`
 		: "";
 	return `Tabs: ${probe.tabs.total} total${omitted}${activeText}`;
 }
@@ -153,9 +157,9 @@ function formatElectronProbeVisibleText(
 	options: Pick<ProbePresentation, "probe" | "probeContext" | "mismatch" | "status">,
 ): string {
 	const probe = options.probe;
-	const page = presentStrings([probe.title, probe.url]).join(" — ");
+	const page = sanitizeRenderedSingleLine(presentStrings([probe.title, probe.url]).join(" — "));
 	const lines = [
-		`Electron probe: ${page.length > 0 ? page : probe.sessionName}`,
+		`Electron probe: ${page.length > 0 ? page : sanitizeRenderedSingleLine(probe.sessionName)}`,
 		formatElectronProbeContextText(options.probeContext),
 		...presentStrings([
 			formatElectronProbeLaunchStatusText(options.status, probe),

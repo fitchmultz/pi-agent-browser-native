@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../argv-descriptor.js";
 import { getStringField, redactModelFacingText, stringifyModelFacing } from "./common.js";
@@ -11,10 +12,12 @@ function formatSkillsListText(skills: readonly unknown[]): string {
 			if (!isRecord(item)) {
 				return `${index + 1}. ${stringifyModelFacing(item)}`;
 			}
-			const name = redactModelFacingText(getStringField(item, "name") ?? `(skill ${index + 1})`);
+			const name = sanitizeRenderedSingleLine(
+				redactModelFacingText(getStringField(item, "name") ?? `(skill ${index + 1})`),
+			);
 			const description = getStringField(item, "description");
 			return description !== undefined
-				? `${index + 1}. ${name} — ${redactModelFacingText(description)}`
+				? `${index + 1}. ${name} — ${sanitizeRenderedSingleLine(redactModelFacingText(description))}`
 				: `${index + 1}. ${name}`;
 		})
 		.join("\n");

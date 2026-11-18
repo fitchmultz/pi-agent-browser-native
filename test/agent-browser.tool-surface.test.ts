@@ -700,6 +700,54 @@ nodeTest("always-on guidance is compact and names every deferred tool", () => {
 });
 
 nodeTest(
+	"before_agent_start skips unreachable deferred-tool warning when ctx.hasUI is false",
+	async (t) => {
+		await withSurface(
+			t,
+			async ({ session }) => {
+				const notifications: Array<{ message: string; type: unknown }> = [];
+				const ui = {
+					...session.extensionRunner.getUIContext(),
+					notify(message: string, type?: "info" | "warning" | "error") {
+						notifications.push({ message, type });
+					},
+				};
+				session.extensionRunner.setUIContext(undefined);
+				assert.equal(session.extensionRunner.hasUI(), false);
+				const promptOptions = {
+					cwd: session.extensionRunner.createContext().cwd,
+					sections: {},
+				};
+				await session.extensionRunner.emitBeforeAgentStart(
+					{ messageType: "user", prompt: "open" },
+					promptOptions,
+				);
+				assert.equal(notifications.length, 0);
+
+				session.extensionRunner.setUIContext(ui, "tui");
+				assert.equal(session.extensionRunner.hasUI(), true);
+				await session.extensionRunner.emitBeforeAgentStart(
+					{ messageType: "user", prompt: "open" },
+					promptOptions,
+				);
+				assert.equal(notifications.length, 1);
+				const firstNotification = notifications[0];
+				assert.ok(firstNotification);
+				assert.equal(firstNotification.type, "warning");
+				assert.match(firstNotification.message, /tool_search or codemode/);
+
+				await session.extensionRunner.emitBeforeAgentStart(
+					{ messageType: "user", prompt: "open again" },
+					promptOptions,
+				);
+				assert.equal(notifications.length, 1);
+			},
+			{ defaultTools: ["agent_browser", "unrelated"] },
+		);
+	},
+);
+
+nodeTest(
 	"Electron action schemas preserve field boundaries through native Pi validation",
 	async (t) => {
 		await withSurface(t, async ({ call, calls, session }) => {

@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import {
@@ -82,9 +83,9 @@ export function formatOverlayBlockerText(diagnostic: OverlayBlockerDiagnostic): 
 				candidate.role !== undefined && candidate.role !== "" ? ` ${candidate.role}` : "";
 			const name =
 				candidate.name !== undefined && candidate.name !== ""
-					? ` ${JSON.stringify(candidate.name)}`
+					? ` ${JSON.stringify(sanitizeRenderedSingleLine(candidate.name))}`
 					: "";
-			return `- ${candidate.ref}${role}${name}: ${candidate.reason}`;
+			return `- ${candidate.ref}${role}${name}: ${sanitizeRenderedSingleLine(candidate.reason)}`;
 		}),
 	].join("\n");
 }

@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { setTimeout as sleepMs } from "node:timers/promises";
 
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isOpenNavigationCommand } from "../../command-taxonomy.js";
 import { isBrowserIndependentRead } from "../../command-policy.js";
 import type { CompiledAgentBrowserQaPreset } from "../../input-modes/types.js";
@@ -333,8 +334,15 @@ function formatTimeoutCurrentPage(page: TimeoutPartialProgress["currentPage"]): 
 		return undefined;
 	}
 	const currentPageTitle =
-		title !== "" ? redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(title)) : undefined;
-	const currentPageUrl = url !== "" ? sanitizeCurrentPageUrlForTimeoutDiagnostic(url) : undefined;
+		title !== ""
+			? sanitizeRenderedSingleLine(
+					redactSensitivePathSegmentsForDiagnostic(redactSensitiveText(title)),
+				)
+			: undefined;
+	const currentPageUrl =
+		url !== ""
+			? sanitizeRenderedSingleLine(sanitizeCurrentPageUrlForTimeoutDiagnostic(url))
+			: undefined;
 	return `Current page: ${[currentPageTitle, currentPageUrl].filter(Boolean).join(" — ")}`;
 }
 

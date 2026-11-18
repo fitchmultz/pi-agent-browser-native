@@ -1,4 +1,5 @@
 import type { CommandInfo } from "../../argv-descriptor.js";
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText, redactSensitiveValue } from "../../runtime.js";
 import {
@@ -45,19 +46,23 @@ function networkPreview(
 	}
 	const redacted = redactSensitiveValue(value);
 	const raw = typeof redacted === "string" ? redacted : stringifyUnknown(redacted);
-	const normalized = raw.replace(/\s+/g, " ").trim();
+	const normalized = sanitizeRenderedSingleLine(raw).replace(/\s+/g, " ").trim();
 	return normalized.length === 0
 		? []
 		: [`   ${label}: ${truncateText(redactSensitiveText(normalized), maxChars)}`];
 }
 
 function networkRequestLine(item: Data, index: number): string[] {
-	const method = getStringField(item, "method") ?? "GET";
+	const method = sanitizeRenderedSingleLine(getStringField(item, "method") ?? "GET");
 	const status = typeof item.status === "number" ? String(item.status) : "pending";
-	const type = getStringField(item, "resourceType") ?? getStringField(item, "mimeType");
-	const url = getStringField(item, "url") ?? "(no url)";
+	const rawType = getStringField(item, "resourceType") ?? getStringField(item, "mimeType");
+	const type = rawType === undefined ? undefined : sanitizeRenderedSingleLine(rawType);
+	const url = sanitizeRenderedSingleLine(getStringField(item, "url") ?? "(no url)");
 	const requestId = getNetworkRequestId(item);
-	const idText = requestId === undefined ? "" : ` [${redactSensitiveText(requestId)}]`;
+	const idText =
+		requestId === undefined
+			? ""
+			: ` [${sanitizeRenderedSingleLine(redactSensitiveText(requestId))}]`;
 	const classification = classifyNetworkRequestFailure(item);
 	const impactText = classification ? ` [${classification.impact}: ${classification.reason}]` : "";
 	return [

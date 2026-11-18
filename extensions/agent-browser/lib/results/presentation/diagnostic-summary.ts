@@ -1,4 +1,5 @@
 import type { CommandInfo } from "../../argv-descriptor.js";
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { redactSensitiveText } from "../../runtime.js";
 import { formatCount, getArrayField, getStringField } from "./common.js";
 
@@ -16,7 +17,7 @@ function sessionSummary(data: Data): string | undefined {
 		return `Sessions: ${sessions.length}`;
 	}
 	const session = getStringField(data, "session");
-	return session === undefined ? undefined : `Session: ${session}`;
+	return session === undefined ? undefined : `Session: ${sanitizeRenderedSingleLine(session)}`;
 }
 
 function authSummary(command: CommandInfo, data: Data): string | undefined {
@@ -24,11 +25,12 @@ function authSummary(command: CommandInfo, data: Data): string | undefined {
 	if (profiles) {
 		return `Auth profiles: ${profiles.length}`;
 	}
-	const name =
+	const rawName =
 		getStringField(data, "name") ?? getStringField(data, "profile") ?? command.subcommand;
-	if (name === undefined || name.length === 0) {
+	if (rawName === undefined || rawName.length === 0) {
 		return undefined;
 	}
+	const name = sanitizeRenderedSingleLine(rawName);
 	if (command.subcommand === "show") {
 		return `Auth profile: ${name}`;
 	}
@@ -45,7 +47,7 @@ function cookiesSummary(data: Data): string | undefined {
 	}
 	const name = getStringField(data, "name");
 	if (name !== undefined) {
-		return name;
+		return sanitizeRenderedSingleLine(name);
 	}
 	if (data.set === true) {
 		return "Cookie set";
@@ -63,7 +65,7 @@ function storageSummary(command: CommandInfo, data: Data): string | undefined {
 		key !== undefined &&
 		(command.subcommand === "set" || data.set === true || Object.hasOwn(data, "value"))
 	) {
-		return `Storage set: ${key}`;
+		return `Storage set: ${sanitizeRenderedSingleLine(key)}`;
 	}
 	return data.cleared === true || data.clear === true ? "Storage cleared" : undefined;
 }
@@ -99,7 +101,7 @@ function stateSummary(command: CommandInfo, data: Data): string | undefined {
 	const name = stateName(command, data);
 	return name === undefined || name.length === 0
 		? undefined
-		: `State ${command.subcommand ?? "result"}: ${name}`;
+		: `State ${command.subcommand ?? "result"}: ${sanitizeRenderedSingleLine(name)}`;
 }
 
 function bufferSummary(
@@ -123,7 +125,7 @@ function networkRouteSummary(data: Data, operation: "route" | "unroute"): string
 		getStringField(data, "url") ??
 		getStringField(data, "pattern");
 	if (target !== undefined) {
-		return `Network ${operation}: ${redactSensitiveText(target)}`;
+		return `Network ${operation}: ${sanitizeRenderedSingleLine(redactSensitiveText(target))}`;
 	}
 	return operation === "route" ? "Network route configured" : "Network route removed";
 }
@@ -167,13 +169,15 @@ function dashboardSummary(data: Data): string | undefined {
 		return undefined;
 	}
 	const reason = getStringField(data, "reason");
-	return reason === undefined ? "Dashboard not stopped" : `Dashboard not stopped: ${reason}`;
+	return reason === undefined
+		? "Dashboard not stopped"
+		: `Dashboard not stopped: ${sanitizeRenderedSingleLine(reason)}`;
 }
 
 function doctorSummary(data: Data): string | undefined {
 	const status = getStringField(data, "status") ?? getStringField(data, "result");
 	if (status !== undefined) {
-		return `Doctor: ${status}`;
+		return `Doctor: ${sanitizeRenderedSingleLine(status)}`;
 	}
 	const checks =
 		getArrayField(data, "checks") ??
@@ -193,7 +197,9 @@ function frameSummary(command: CommandInfo, data: Data): string | undefined {
 		getStringField(data, "name") ??
 		getStringField(data, "selector") ??
 		command.subcommand;
-	return frame === undefined || frame.length === 0 ? undefined : `Frame: ${frame}`;
+	return frame === undefined || frame.length === 0
+		? undefined
+		: `Frame: ${sanitizeRenderedSingleLine(frame)}`;
 }
 
 function diffSummary(command: CommandInfo): string | undefined {

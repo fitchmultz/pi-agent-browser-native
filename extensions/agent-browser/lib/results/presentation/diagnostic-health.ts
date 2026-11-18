@@ -1,3 +1,4 @@
+import { sanitizeRenderedFirstLine, sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import {
 	firstLine,
@@ -22,7 +23,7 @@ export function formatDashboardText(data: Data): string | undefined {
 	}
 	const reason = getStringField(data, "reason");
 	if (reason !== undefined) {
-		lines.push(`Reason: ${redactModelFacingText(reason)}`);
+		lines.push(`Reason: ${sanitizeRenderedSingleLine(redactModelFacingText(reason))}`);
 	}
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }
@@ -42,11 +43,11 @@ function doctorCheckLines(item: unknown, index: number): string[] {
 		getStringField(item, "check") ??
 		stringifyModelFacing(item);
 	const lines = [
-		`${index + 1}. [${redactModelFacingText(status)}]${label.length > 0 ? ` ${redactModelFacingText(label)}:` : ""} ${firstLine(redactModelFacingText(message), 220)}`,
+		`${index + 1}. [${sanitizeRenderedSingleLine(redactModelFacingText(status))}]${label.length > 0 ? ` ${sanitizeRenderedSingleLine(redactModelFacingText(label))}:` : ""} ${firstLine(sanitizeRenderedFirstLine(redactModelFacingText(message)), 220)}`,
 	];
 	const fix = getStringField(item, "fix");
 	if (fix !== undefined) {
-		lines.push(`   fix: ${redactModelFacingText(fix)}`);
+		lines.push(`   fix: ${sanitizeRenderedSingleLine(redactModelFacingText(fix))}`);
 	}
 	return lines;
 }
@@ -55,7 +56,7 @@ function doctorSummary(data: Data): string[] {
 	const lines: string[] = [];
 	const status = getStringField(data, "status") ?? getStringField(data, "result");
 	if (status !== undefined) {
-		lines.push(`Status: ${redactModelFacingText(status)}`);
+		lines.push(`Status: ${sanitizeRenderedSingleLine(redactModelFacingText(status))}`);
 	}
 	if (isRecord(data.summary)) {
 		const summary = data.summary;

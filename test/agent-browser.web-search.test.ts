@@ -27,6 +27,7 @@ import {
 	decodeHtmlEntities,
 	fetchBraveSearchJson,
 	fetchExaSearchJson,
+	formatSearchResults,
 	normalizeExaSearchResult,
 	normalizeBraveSearchResult,
 } from "../extensions/agent-browser/lib/web-search.js";
@@ -98,6 +99,30 @@ async function withTemporaryArgv<T>(argv: readonly string[], run: () => Promise<
 		process.argv = previousArgv;
 	}
 }
+
+nodeTest(
+	"cleanSearchText and formatSearchResults strip terminal sequences and control chars",
+	() => {
+		assert.equal(cleanSearchText("<b>Title\x1B]0;pwned\x07</b>\x00\x1B[31m Safe"), "Title Safe");
+		const normalized = normalizeExaSearchResult({
+			title: "Docs\x1B[2J Title\x07",
+			url: "https://example.com/docs",
+			author: "Org\x00Name",
+			highlights: ["Snippet\x1B[31m line"],
+		});
+		assert.ok(normalized);
+		assert.equal(normalized.title, "Docs Title");
+		assert.equal(normalized.source, "Org Name");
+		assert.deepEqual(normalized.highlights, ["Snippet line"]);
+		assert.equal(
+			formatSearchResults("exa", "evil\x1B]0;pwned\x07 query", []),
+			"No Exa web results found for: evil query",
+		);
+		const formatted = formatSearchResults("exa", "evil\x1B]0;pwned\x07 query", [normalized]);
+		assert.match(formatted, /^Exa web search results for: evil query\n/);
+		assert.doesNotMatch(formatted, /[\x00\x07\x1B]/);
+	},
+);
 
 nodeTest(
 	"does not register agent_browser_web_search without env or config credential",

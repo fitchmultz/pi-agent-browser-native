@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import {
 	firstLine,
@@ -13,10 +14,14 @@ function violationLine(item: unknown, index: number): string {
 	if (!isRecord(item)) {
 		return `${index + 1}. ${stringifyModelFacing(item)}`;
 	}
-	const id = redactModelFacingText(getStringField(item, "id") ?? "rule");
-	const impact = redactModelFacingText(getStringField(item, "impact") ?? "unknown");
+	const id = sanitizeRenderedSingleLine(
+		redactModelFacingText(getStringField(item, "id") ?? "rule"),
+	);
+	const impact = sanitizeRenderedSingleLine(
+		redactModelFacingText(getStringField(item, "impact") ?? "unknown"),
+	);
 	const help = firstLine(
-		redactModelFacingText(getStringField(item, "help") ?? "")
+		sanitizeRenderedSingleLine(redactModelFacingText(getStringField(item, "help") ?? ""))
 			.replace(/\s+/g, " ")
 			.trim(),
 		160,
@@ -50,11 +55,11 @@ function auditHeader(data: Data): string[] {
 	const lines: string[] = [];
 	const axeVersion = getStringField(data, "axeVersion");
 	if (axeVersion !== undefined) {
-		lines.push(`axe-core ${redactModelFacingText(axeVersion)}`);
+		lines.push(`axe-core ${sanitizeRenderedSingleLine(redactModelFacingText(axeVersion))}`);
 	}
 	const url = getStringField(data, "url");
 	if (url !== undefined) {
-		lines.push(`URL: ${redactModelFacingText(url)}`);
+		lines.push(`URL: ${sanitizeRenderedSingleLine(redactModelFacingText(url))}`);
 	}
 	return lines;
 }

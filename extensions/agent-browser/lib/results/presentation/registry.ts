@@ -6,12 +6,8 @@ import {
 	detectConfirmationRequired,
 	type ConfirmationRequiredPresentation,
 } from "../confirmation.js";
-import {
-	getPageSummary,
-	omitUpstreamLifecycle,
-	redactModelFacingText,
-	stringifyModelFacing,
-} from "./common.js";
+import { getPageSummary, redactModelFacingText, stringifyModelFacing } from "./common.js";
+import { omitUpstreamLifecycle } from "./lifecycle.js";
 import { formatDiagnosticSummary, formatDiagnosticText } from "./diagnostics.js";
 import {
 	formatExtractionSummary,

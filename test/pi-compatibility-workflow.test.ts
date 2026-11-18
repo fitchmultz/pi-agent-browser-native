@@ -27,6 +27,15 @@ nodeTest(
 		assert.match(job("fork-package"), /scripts\/pack-fork.mjs/);
 		assert.match(job("fork-package"), /PI_FORK_REF: \$\{\{ needs.resolve.outputs.fork-ref \}\}/);
 		assert.match(job("fork-package"), /test "\$\(git rev-parse HEAD\)" = "\$PI_FORK_REF"/);
+		assert.match(
+			job("fork-package"),
+			/uses: actions\/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6\.1\.0/,
+		);
+		assert.match(
+			job("fork-package"),
+			/key: pi-fork-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\$\{\{ needs\.resolve\.outputs\.fork-ref \}\}-\$\{\{ env\.PI_AUTOMATION_REF \}\}-\$\{\{ hashFiles\('pi-host\/package-lock\.json'\) \}\}/,
+		);
+		assert.match(job("fork-package"), /if: steps\.package-cache\.outputs\.cache-hit != 'true'/);
 		assert.ok(job("fork-package").includes(artifact));
 		assert.ok(job("fork").includes(artifact));
 		assert.match(job("fork"), /test "\$FORK_PACKAGE" = success/);
