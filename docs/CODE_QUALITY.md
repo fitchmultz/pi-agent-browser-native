@@ -59,14 +59,17 @@ subtests and rejection assertions.
 
 ## Native checker and editor
 
-The locked versions are Oxlint 1.91.0, oxlint-tsgolint 7.0.2005, Oxfmt 0.76.0,
-TypeScript 7.0.2, oxc-parser 0.157.0, and eslint-node-test 1.0.1. `package.json` and
-`package-lock.json` are the version authorities. The policy check verifies installed
-quality packages against their declared versions.
+The locked versions are Oxlint 1.94.0, tsrs 7.1.0-beta.tsrs2 (providing `tsrs-lint`
+under [QX-006](#qx-006-type-aware-lint-backend-tsrs), replacing `oxlint-tsgolint`),
+Oxfmt 0.79.0, TypeScript 7.0.2, oxc-parser 0.157.0, and eslint-node-test 1.0.1.
+`package.json` and `package-lock.json` are the version authorities. The policy check
+verifies installed quality packages against their declared versions.
 
 `scripts/oxlint.mjs` launches the installed published checker. It removes inherited
-backend-path and compiler-diagnostic-suppression environment overrides and forwards
-the native process verdict. The CLI and editor share this launcher and root config.
+backend-path (`OXLINT_TSGOLINT_PATH`, `TSRS_BINARY`, `TSRS_LIB_PATH`) and
+compiler-diagnostic-suppression (`OXLINT_TSGOLINT_DANGEROUSLY_SUPPRESS_PROGRAM_DIAGNOSTICS`)
+environment overrides and forwards the native process verdict. The CLI and editor
+share this launcher and root config.
 The VS Code `oxc.path.oxlint` setting selects `./scripts/oxlint.mjs`. Other editors
 can start the server with `node scripts/oxlint.mjs --lsp`. Keep a supported Node on
 the editor's PATH and keep its TypeScript/JavaScript validation enabled.
@@ -245,9 +248,78 @@ abort an active CDP read and check the returned failure and child termination.
 These tests use native child processes and local fixtures, not an installed
 Electron desktop application.
 
+### QX-006: Type-aware lint backend (tsrs)
+
+Section 5.1 of the standard specifies stable published `oxlint-tsgolint`. This
+repository substitutes `tsrs@7.1.0-beta.tsrs2` (providing the `tsrs-lint` native
+backend at `tsrs.typescriptVersion` `7.1.0-beta`, Microsoft TypeScript commit
+`3e9236361fa97a9e6c685f4833ac457ae2d8c50a`) alongside `oxlint@1.94.0`, `oxfmt@0.79.0`,
+`typescript@7.0.2`, `oxc-parser@0.157.0`, and `eslint-node-test@1.0.1`.
+
+- **Scope.** Applies repository-wide to type-aware Oxlint runs (`npm run lint`,
+  `npm run lint:agent`, `npm run lint:fix`, `scripts/oxlint.mjs`, editor `--lsp`, and
+  CI `npm run quality` / `quality:mutations`) across all 554 maintained JS/TS
+  files and 231 active rules, and replaces `oxlint-tsgolint` in `package.json` and
+  `scripts/code-quality-policy.mjs`. Canonical compiler checking remains with
+  `tsc@7.0.2` (`tsc --noEmit` and `tsc --noEmit -p tsconfig.declarations.json`); `tsrs`
+  does not replace `tsc`.
+- **Compliant alternative and local cost.** Keeping stable `oxlint-tsgolint`
+  (evaluated under the same `oxlint@1.94.0` frontend with `oxlint-tsgolint@7.0.2007`
+  via `OXLINT_TSGOLINT_PATH`, and previously locked at `oxlint@1.91.0` +
+  `oxlint-tsgolint@7.0.2005`). On code revision
+  `b780b7f3d1c3116c771635294c3d68ba15f43670` on `Mitchs-M5-MBP` (Darwin arm64,
+  Apple M5 Max, 128 GiB RAM, Node `v24.22.3`, median of 3 warm runs via
+  `/usr/bin/time -l` after 1 warmup):
+  - Matched `oxlint@1.94.0` + `oxlint-tsgolint@7.0.2007`: **0.92 s** median wall time
+    (`0.92 s`, `0.89 s`, `1.02 s`), **1,195.7 MiB** (`1,253,801,984` bytes) median max RSS
+    (`1,253,801,984`, `1,244,151,808`, `1,331,970,048`), 0 diagnostics.
+  - Matched `oxlint@1.94.0` + `tsrs@7.1.0-beta.tsrs2`: **0.52 s** median wall time
+    (`0.52 s`, `0.52 s`, `0.50 s`), **426.9 MiB** (`447,660,032` bytes) median max RSS
+    (`456,769,536`, `447,660,032`, `446,578,688`), 0 diagnostics.
+  - `tsrs@7.1.0-beta.tsrs2` was **1.77x faster** (`0.52 s` vs `0.92 s`) with **2.80x /
+    768.8 MiB lower peak RSS** (`426.9 MiB` vs `1,195.7 MiB`) than
+    `oxlint-tsgolint@7.0.2007` on this repository (and **2.58x faster** with **2.73x /
+    739.9 MiB lower peak RSS** than the pre-upgrade locked `oxlint@1.91.0` +
+    `oxlint-tsgolint@7.0.2005` baseline of `1.34 s` and `1,166.8 MiB`).
+- **Eligibility ground.** Maintainer-directed adoption decision under Section 2.1(2)
+  and Section 1.1 (efficiency). Repository documentation (`docs/CODE_QUALITY.md`,
+  `docs/Strict-Oxlint-Oxfmt-Engineering-Guide.md`, `docs/PERFORMANCE.md`, and
+  `AGENTS.md`) specifies no lint RSS or lint wall-time budget; the exception rests on
+  the measured local time and memory reduction with matching diagnostics while
+  retaining `tsc` as the independent compiler gate.
+- **Retained protection, lost detection, and skew.** All Appendix A syntactic and
+  semantic rules, `--deny-warnings`, `scripts/code-quality-policy.mjs` AST/directive
+  checks, `oxfmt@0.79.0`, `npm run quality:probes`, `npm run quality:mutations`, and
+  both `tsc@7.0.2` compiler projects (`tsconfig.json` and `tsconfig.declarations.json`
+  with `skipLibCheck: false`) remain intact. `scripts/oxlint.mjs` strips
+  `OXLINT_TSGOLINT_PATH`, `OXLINT_TSGOLINT_DANGEROUSLY_SUPPRESS_PROGRAM_DIAGNOSTICS`,
+  `TSRS_BINARY`, and `TSRS_LIB_PATH`, and direct `oxlint` invocations fail closed
+  (exit 1) when `OXLINT_TSGOLINT_PATH` or `TSRS_BINARY` points to a missing path.
+  Two risks remain: (1) **TypeScript version skew (`7.1.0-beta` vs `7.0.2`)** and
+  prerelease port status mean `tsrs-lint` type inference could diverge from `tsc@7.0.2`
+  or `oxlint-tsgolint` on edge cases; and (2) **`oxlint-tsgolint` is no longer
+  installed**, so cross-checking against `oxlint-tsgolint` is non-continuous (manual
+  only, via temporary `OXLINT_TSGOLINT_PATH`), not continuous in CI.
+- **Reproducible verification (`b780b7f3d1c3116c771635294c3d68ba15f43670`).**
+  `npm run lint`, `npm run format:check`, `npm run typecheck`, `npm run quality:policy`,
+  `npm run quality:probes` (38/38 passed, including `OXLINT_TSGOLINT_PATH` /
+  `TSRS_BINARY` stripping and fail-closed controls), `npm run build`, `npm test`
+  (3,177 parallel passed / 41 skipped; 103 serial passed / 9 Windows skipped),
+  `npm run quality`, `npm run quality:mutations` (all 6 mutations rejected, including
+  semantic `typescript(no-floating-promises)`), `npm run verify -- package`,
+  `./node_modules/.bin/tsrs --noEmit` (0.19 s median wall, 323.0 MiB median max RSS vs
+  `tsc@7.0.2 --noEmit` 0.60 s and 992.6 MiB), and
+  `./node_modules/.bin/tsrs --noEmit -p tsconfig.declarations.json` (exit 0).
+- **Revisit trigger.** Reassess when `tsrs` publishes a stable non-beta release or
+  updates its `typescriptVersion` cohort, when `typescript` upgrades off `7.0.2`, when
+  `oxlint` changes its type-aware backend contract, or if any diagnostic divergence,
+  false pass, or crash relative to `oxlint-tsgolint` or `tsc` is observed.
+
 ### Directive enforcement
 
-Only the enumerated QX-002 through QX-005 next-line directives are accepted. Each has one
+Only the enumerated QX-002 through QX-005 next-line directives are accepted (QX-001
+is a test-profile `oxlint` configuration allowance and QX-006 is a backend package
+substitution, so neither permits inline source directives). Each has one
 rule, its decision identifier, and an adjacent reason. The parser reads actual comments,
 not matching strings. `sourcePolicy` returns file, location, rule, reason, decision,
 and operation for review. The CLI reports the inventory total.
