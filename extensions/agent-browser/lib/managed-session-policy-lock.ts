@@ -165,9 +165,9 @@ export async function withBrowserExecutionLocks<T>(
 		const result = parent.children.then(execute);
 		// The caller owns this result; the parent drains both outcomes before releasing claims.
 		parent.children = result.then(
-			(): undefined => {
+			() => {
 				// The parent drains completion without retaining the child result.
-				return undefined;
+				return;
 			},
 			() => {
 				// The returned result owns failure; draining still releases the parent claims.

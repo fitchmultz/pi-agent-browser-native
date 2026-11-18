@@ -341,9 +341,29 @@ nodeTest(
 		const inherited = lint(directory, ["typescript(no-floating-promises)"], {
 			OXLINT_TSGOLINT_PATH: path.join(directory, "unowned-backend"),
 			OxLiNt_TsGoLiNt_PaTh: path.join(directory, "unowned-backend"),
+			TSRS_BINARY: path.join(directory, "unowned-tsrs-binary"),
+			tSrS_BiNaRy: path.join(directory, "unowned-tsrs-binary"),
+			TSRS_LIB_PATH: path.join(directory, "unowned-tsrs-lib"),
 		});
 		assert.equal(inherited.status, 1);
 		assert.deepEqual(inherited.diagnosticLocations, semantic.diagnosticLocations);
+		const oxlintBin = path.join(root, "node_modules/oxlint/bin/oxlint");
+		const missingBackend = run(directory, oxlintBin, ["--format=json", "."], {
+			OXLINT_TSGOLINT_PATH: path.join(directory, "unowned-backend"),
+		});
+		assert.equal(missingBackend.status, 1);
+		assert.match(
+			missingBackend.stdout + missingBackend.stderr,
+			/Failed to find tsgolint executable/u,
+		);
+		const missingTsrs = run(directory, oxlintBin, ["--format=json", "."], {
+			TSRS_BINARY: path.join(directory, "unowned-tsrs-binary"),
+		});
+		assert.equal(missingTsrs.status, 1);
+		assert.match(
+			missingTsrs.stdout + missingTsrs.stderr,
+			/TSRS_BINARY is set to .* which does not exist/u,
+		);
 	},
 );
 

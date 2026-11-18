@@ -5,11 +5,14 @@ import crossSpawn from "cross-spawn";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const env = { ...process.env };
+const blockedEnvVars = new Set([
+	"OXLINT_TSGOLINT_PATH",
+	"OXLINT_TSGOLINT_DANGEROUSLY_SUPPRESS_PROGRAM_DIAGNOSTICS",
+	"TSRS_BINARY",
+	"TSRS_LIB_PATH",
+]);
 for (const name of Object.keys(env)) {
-	if (
-		name.toUpperCase() === "OXLINT_TSGOLINT_PATH" ||
-		name.toUpperCase() === "OXLINT_TSGOLINT_DANGEROUSLY_SUPPRESS_PROGRAM_DIAGNOSTICS"
-	) {
+	if (blockedEnvVars.has(name.toUpperCase())) {
 		delete env[name];
 	}
 }
