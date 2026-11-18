@@ -3,7 +3,7 @@ import type { LifecycleOutputPhase } from "./process-output-lifecycle-phase-cont
 import type { PublicationOutputPhase } from "./process-output-publication-phase-contracts.js";
 import { buildOutputStatePatch } from "./process-output-ownership.js";
 import { isStringArray } from "../../results/presentation/content.js";
-import { extractAgentBrowserLifecycle } from "../../results/presentation/common.js";
+import { extractAgentBrowserLifecycle } from "../../results/presentation/lifecycle.js";
 import { detectConfirmationRequired } from "../../results/confirmation.js";
 import { isSuccessfulNativeConfirmedClose } from "../../read-confirmation.js";
 import { extractRefSnapshotFromData } from "../../session-page-state.js";

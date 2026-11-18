@@ -48,6 +48,7 @@ export {
 export {
 	cleanSearchText,
 	decodeHtmlEntities,
+	formatSearchResults,
 	normalizeBraveSearchResult,
 	normalizeExaSearchResult,
 	type BraveWebSearchResult,

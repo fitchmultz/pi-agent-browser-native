@@ -8,12 +8,8 @@ import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../argv-descriptor.js";
 import { detectConfirmationRequired } from "../confirmation.js";
 import type { AgentBrowserPageChangeSummary, FileArtifactMetadata } from "../contracts.js";
-import {
-	firstLine,
-	omitUpstreamLifecycle,
-	redactModelFacingText,
-	stringifyModelFacing,
-} from "./common.js";
+import { firstLine, redactModelFacingText, stringifyModelFacing } from "./common.js";
+import { omitUpstreamLifecycle } from "./lifecycle.js";
 
 const NAVIGATION_SUMMARY_FIELD = "navigationSummary";
 

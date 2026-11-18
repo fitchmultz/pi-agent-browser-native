@@ -4,7 +4,7 @@ import {
 } from "../../input-modes/lookups.js";
 import { isRecord } from "../../parsing.js";
 import { applyNamespaceToNextActions } from "../../results/next-actions.js";
-import { extractAgentBrowserLifecycle } from "../../results/presentation/common.js";
+import { extractAgentBrowserLifecycle } from "../../results/presentation/lifecycle.js";
 import type { OpenResultTabCorrection } from "../../runtime-contracts.js";
 import { buildResultNextActions } from "./final-result-actions.js";
 import { buildFinalResultContent } from "./final-result-content.js";

@@ -2,7 +2,6 @@ import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText, redactSensitiveValue } from "../../runtime-redaction.js";
 import { stringifyUnknown, truncateText } from "../text.js";
-export { extractAgentBrowserLifecycle, omitUpstreamLifecycle } from "./lifecycle.js";
 
 const UNTITLED_PAGE_SUMMARY = "(untitled page)";
 export const LIGHTPANDA_IMAGE_REASON =

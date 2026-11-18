@@ -27,6 +27,7 @@ import {
 	decodeHtmlEntities,
 	fetchBraveSearchJson,
 	fetchExaSearchJson,
+	formatSearchResults,
 	normalizeExaSearchResult,
 	normalizeBraveSearchResult,
 } from "../extensions/agent-browser/lib/web-search.js";
@@ -113,6 +114,13 @@ nodeTest(
 		assert.equal(normalized.title, "Docs Title");
 		assert.equal(normalized.source, "Org Name");
 		assert.deepEqual(normalized.highlights, ["Snippet line"]);
+		assert.equal(
+			formatSearchResults("exa", "evil\x1B]0;pwned\x07 query", []),
+			"No Exa web results found for: evil query",
+		);
+		const formatted = formatSearchResults("exa", "evil\x1B]0;pwned\x07 query", [normalized]);
+		assert.match(formatted, /^Exa web search results for: evil query\n/);
+		assert.doesNotMatch(formatted, /[\x00\x07\x1B]/);
 	},
 );
 
