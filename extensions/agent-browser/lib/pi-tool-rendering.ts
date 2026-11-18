@@ -1,5 +1,10 @@
 import type { AgentToolResult, KeybindingHints, Theme } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	stripTerminalSequences,
+	Text,
+	truncateToWidth,
+} from "@earendil-works/pi-tui";
 
 import { sanitizeRenderedLine, sanitizeRenderedSingleLine } from "./display-sanitize.js";
 
@@ -409,7 +414,7 @@ export class AgentBrowserResultComponent {
 		this.theme = theme;
 	}
 
-	render(width: number): string[] {
+	render(width: number): ReturnType<Component["render"]> {
 		const lines = this.text.render(width);
 		if (this.expanded || lines.length <= TUI_COLLAPSED_OUTPUT_MAX_LINES) {
 			return lines;
