@@ -88,6 +88,8 @@ Screenshot captures reported at a different path replace the requested file, eve
 
 Native `batch --omit-command` keeps indexed results without echoed commands. Cookie/storage redaction, ordered close/reopen effects, snapshot refs, and artifact verification still apply, including when empty stdin rows are skipped.
 
+When a direct `read` saves its result to a file, follow the returned path and `contentPointer`. The document is at `/content` in the saved payload, even though inline text is at `data.content` in the tool result. See [reading saved results](docs/TOOL_CONTRACT.md#canonical-observation).
+
 Ask for a headed browser if you need to watch a task or complete a login. Remote environments can keep the window off your desktop.
 
 See [profiles and sessions](docs/REFERENCE.md#authenticatedprofile-workflows) for profile selection, restore limits, and cleanup.

@@ -5,6 +5,7 @@ import { isStringArray } from "../input-modes/shared.js";
 import { getBooleanFlagValue } from "../argv-grammar.js";
 import { isSessionArtifactManifest } from "../results/artifact-manifest.js";
 import type { SessionArtifactManifest } from "../results/contracts.js";
+import { getReadContentPointer } from "../results/presentation/content.js";
 import { parseCommandInfo, redactSensitiveValue } from "../runtime.js";
 import { stringifyUnknown } from "../results/text.js";
 import type { AgentBrowserToolResult } from "./browser-run/types.js";
@@ -12,6 +13,7 @@ import type { AgentBrowserToolResult } from "./browser-run/types.js";
 export interface AgentBrowserOutputFileDetails {
 	readonly absolutePath: string;
 	readonly bytes?: number;
+	readonly contentPointer?: ReturnType<typeof getReadContentPointer>;
 	readonly error?: string;
 	readonly path: string;
 	readonly source: "content.text" | "details.data" | "recording-receipt";
@@ -330,20 +332,27 @@ async function saveOutput(
 	await mkdir(dirname(destination.absolutePath), { recursive: true });
 	await writeFile(destination.absolutePath, serialized, "utf8");
 	const bytes = Buffer.byteLength(serialized, "utf8");
+	const command = isRecord(result.details) ? result.details.command : undefined;
+	const contentPointer = getReadContentPointer(command, payload.value);
 	const outputFile: AgentBrowserOutputFileDetails = {
 		...destination,
 		bytes,
+		...(contentPointer === undefined ? {} : { contentPointer }),
 		source: payload.source,
 		status: "saved",
 	};
 	const details = isRecord(result.details) ? { ...result.details, outputFile } : { outputFile };
+	const readback =
+		contentPointer === undefined
+			? ""
+			: ` Read ${destination.absolutePath} at JSON Pointer ${contentPointer}.`;
 	return {
 		...result,
 		content: preserveText
 			? result.content
 			: appendOutputFileNotice(
 					result,
-					`Output file: ${destination.path} (${bytes} bytes from ${payload.source}).`,
+					`Output file: ${destination.path} (${bytes} bytes from ${payload.source}).${readback}`,
 				),
 		details,
 	};

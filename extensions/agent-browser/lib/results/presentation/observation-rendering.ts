@@ -69,7 +69,7 @@ function buildCompactObservation(
 			? {
 					observationPath: persisted.spill.path,
 					retrieve:
-						"Read observationPath for the complete redacted observation, including exact recovery actions and requested data.",
+						"Read observationPath for the complete redacted result wrapper, including exact recovery actions. It is not the raw command payload.",
 				}
 			: {
 					observationUnavailable: truncateText(

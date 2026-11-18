@@ -3006,8 +3006,15 @@ if (args.includes("batch")) {
 					fullReadText,
 					/read-secret|saml-secret|oauth-secret|relay-secret|nonce-secret|"compacted"/,
 				);
-				const fullReadPath = largeReadResult.details.fullOutputPath;
-				assert.equal(typeof fullReadPath, "string");
+				const structuredRead = readRecord(largeReadResult.structuredContent);
+				const readSpill = readRecord(structuredRead.data);
+				const fullReadPath = readString(readSpill.fullOutputPath);
+				assert.equal(fullReadPath, largeReadResult.details.fullOutputPath);
+				assert.equal(readSpill.contentPointer, "/content");
+				const spilledRead = readRecord(JSON.parse(await readFile(fullReadPath, "utf8")));
+				assert.equal(spilledRead[readString(readSpill.contentPointer).slice(1)], fullRead.content);
+				assert.equal(spilledRead.data, undefined);
+				assert.equal(fullRead.data, undefined);
 				assert.equal(
 					readArray(readRecord(largeReadResult.details.artifactManifest).entries)
 						.map(readRecord)
@@ -3017,10 +3024,18 @@ if (args.includes("batch")) {
 				assert.deepEqual(largeReadResult.details.outputFile, {
 					absolutePath: join(tempDir, "logs/full-read.json"),
 					bytes: Buffer.byteLength(fullReadText),
+					contentPointer: "/content",
 					path: "logs/full-read.json",
 					source: "details.data",
 					status: "saved",
 				});
+				assert.deepEqual(structuredRead.outputFile, largeReadResult.details.outputFile);
+				const largeReadText = readString(readRecord(largeReadResult.content[0]).text);
+				assert.match(largeReadText, /Full output path: [^\n]+.*\n.*JSON Pointer \/content/);
+				assert.match(
+					largeReadText,
+					/Output file: logs\/full-read\.json[^\n]*JSON Pointer \/content/,
+				);
 
 				const largeBatchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch", "--bail"],
