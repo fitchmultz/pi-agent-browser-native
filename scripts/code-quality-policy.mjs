@@ -234,14 +234,7 @@ function verifyCommands(cwd) {
 		assert.equal(scripts[name], command, `Required command changed: ${name}`);
 	}
 	const dependencies = record(manifest.devDependencies, "quality dependencies");
-	for (const name of [
-		"oxlint",
-		"oxlint-tsgolint",
-		"oxfmt",
-		"typescript",
-		"oxc-parser",
-		"eslint-node-test",
-	]) {
+	for (const name of ["oxlint", "tsrs", "oxfmt", "typescript", "oxc-parser", "eslint-node-test"]) {
 		const installed = readJson(path.join(cwd, "node_modules", name, "package.json"));
 		assert.equal(
 			installed.version,

@@ -3,8 +3,8 @@
 	"extends": ["github>fitchmultz/.github:pi-extensions"],
 	"packageRules": [
 		{
-			"description": "The patched checker protocol and allowance probes qualify this exact frontend/backend pair; requalify both before upgrading.",
-			"matchPackageNames": ["oxlint", "oxlint-tsgolint"],
+			"description": "The checker protocol and allowance probes qualify this exact frontend/backend pair; requalify both before upgrading.",
+			"matchPackageNames": ["oxlint", "tsrs"],
 			"enabled": false
 		},
 		{
