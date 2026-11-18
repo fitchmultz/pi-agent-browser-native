@@ -138,7 +138,8 @@ export function createRenderContext(options: {
 		},
 		isError: options.isError ?? false,
 		isPartial: false,
-		keyHint: (_keybinding, description) => `ctrl+o ${description}`,
+		keyHint: (_keybinding, description) =>
+			`${PLAIN_RENDER_THEME.fg("dim", "ctrl+o")} ${PLAIN_RENDER_THEME.fg("muted", description)}`,
 		keyText: () => "ctrl+o",
 		lastComponent: options.lastComponent,
 		showImages: true,

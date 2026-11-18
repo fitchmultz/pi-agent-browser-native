@@ -3375,7 +3375,7 @@ nodeTest(
 		// Scalar output must strip NUL, BEL, and terminal escape controls.
 		assert.doesNotMatch(scalarText, /[\x00\x07\x1B]/);
 		assert.match(scalarText, /<toolOutput>Clicked: true red<\/toolOutput>/);
-		assert.match(scalarText, /Null�byte/);
+		assert.match(scalarText, /Null byte/);
 		assert.match(scalarText, /Emoji: 👩‍💻/);
 		assert.match(scalarText, /Separator: left\u2028right/);
 
@@ -3395,6 +3395,91 @@ nodeTest(
 		// Fallback prose must strip NUL, BEL, and terminal escape controls too.
 		assert.doesNotMatch(fallbackText, /[\x00\x07\x1B]/);
 		assert.match(fallbackText, /<success>summary ok<\/success>/);
+
+		const longCallArgs: AgentBrowserToolParams = {
+			args: ["open", `https://example.com/${"a".repeat(240)}`],
+		};
+		const truncatedCallText = renderCall(
+			longCallArgs,
+			PLAIN_RENDER_THEME,
+			createRenderContext({ args: longCallArgs }),
+		)
+			.render(300)
+			.map(stripPrivateRenderMetadata)
+			.join("\n");
+		assert.doesNotMatch(truncatedCallText, /[\x00\x07\x1B]/);
+		assert.match(truncatedCallText, /\.\.\.<\/accent>/);
+
+		const customHintContext = {
+			...createRenderContext({ args: params }),
+			keyHint: (_keybinding: string, description: string) => `[custom:${description}]`,
+		};
+		const customHintText = renderResult(
+			longResult,
+			{ expanded: false, isPartial: false },
+			PLAIN_RENDER_THEME,
+			customHintContext,
+		)
+			.render(200)
+			.map(stripPrivateRenderMetadata)
+			.join("\n");
+		assert.match(customHintText, /\[custom:to expand\]/);
+
+		cached.setResult(
+			{ content: [], details: undefined },
+			{ expanded: false, isPartial: false },
+			PLAIN_RENDER_THEME,
+			{ isError: false },
+		);
+		assert.equal(
+			cached
+				.render(80)
+				.map((line) => stripPrivateRenderMetadata(line).trimEnd())
+				.join("\n"),
+			"<success>Done</success>",
+		);
+
+		cached.setResult(
+			{ content: [], details: { error: "Spawn\x07failed" } },
+			{ expanded: false, isPartial: false },
+			PLAIN_RENDER_THEME,
+			{},
+		);
+		assert.equal(
+			cached
+				.render(80)
+				.map((line) => stripPrivateRenderMetadata(line).trimEnd())
+				.join("\n"),
+			"<error>Spawn failed</error>",
+		);
+
+		cached.setResult(
+			{ content: [], details: { resultCategory: "failure", failureCategory: "timeout" } },
+			{ expanded: false, isPartial: false },
+			PLAIN_RENDER_THEME,
+			{ isError: false },
+		);
+		assert.equal(
+			cached
+				.render(120)
+				.map((line) => stripPrivateRenderMetadata(line).trimEnd())
+				.join("\n"),
+			"<error>Result category: failure; failureCategory: timeout; Pi tool isError: true.</error>",
+		);
+
+		cached.setResult(
+			{ content: [], details: {} },
+			{ expanded: false, isPartial: false },
+			PLAIN_RENDER_THEME,
+			{ isError: true },
+		);
+		assert.equal(
+			cached
+				.render(80)
+				.map((line) => stripPrivateRenderMetadata(line).trimEnd())
+				.join("\n"),
+			"<error>agent-browser failed</error>",
+		);
 	},
 );
 

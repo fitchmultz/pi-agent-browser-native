@@ -1,5 +1,7 @@
 import type { AgentToolResult, KeybindingHints, Theme } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, Text, truncateToWidth } from "@earendil-works/pi-tui";
+
+import { sanitizeRenderedLine, sanitizeRenderedSingleLine } from "./display-sanitize.js";
 
 import { compileAgentBrowserElectron } from "./input-modes/electron.js";
 import { compileAgentBrowserQaPreset } from "./input-modes/job.js";
@@ -14,26 +16,8 @@ import { isBooleanFlagEnabled } from "./argv-grammar.js";
 
 const TUI_INVOCATION_PREVIEW_MAX_CHARS = 160;
 const TUI_COLLAPSED_OUTPUT_MAX_LINES = 12;
-const ANSI_CONTROL_SEQUENCE_PATTERN =
-	// Strip terminal escape/control sequences from untrusted browser text, not printable content.
-	/\x1B(?:\][^\x07\x1B\r\n\u2028\u2029]*(?:\x07|\x1B\\)|\[[0-?]*[ -/]*[@-~]|P[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|_[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|\^[^\x1B\r\n\u2028\u2029]*(?:\x1B\\)|[@-Z\\-_])/g;
 const JSON_TOKEN_PATTERN =
 	/"(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}[\],:]/g;
-// Replace C0/C1 display controls so browser text cannot execute terminal controls.
-const UNSAFE_DISPLAY_CONTROL_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]/g;
-const UNSAFE_DISPLAY_DIRECTIONAL_PATTERN = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
-
-function sanitizeDisplayText(value: string): string {
-	return value
-		.replace(/\r\n?/g, "\n")
-		.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "")
-		.replace(UNSAFE_DISPLAY_CONTROL_PATTERN, "�")
-		.replace(UNSAFE_DISPLAY_DIRECTIONAL_PATTERN, "�");
-}
-
-function replaceTabsForDisplay(value: string): string {
-	return value.replaceAll("\t", "    ");
-}
 
 function trimTrailingBlankLines(lines: readonly string[]): string[] {
 	return lines.slice(0, lines.findLastIndex((line) => line.trim().length > 0) + 1);
@@ -75,14 +59,18 @@ function colorizeJsonLine(line: string, theme: Theme): string {
 	return output + line.slice(cursor);
 }
 
-function getPrimaryTextContent(result: AgentToolResult<unknown>): string {
-	const textContent = result.content.find((item) => item.type === "text");
-	return textContent?.type === "text" ? textContent.text : "";
+function getPrimaryTextContent(result: unknown): string {
+	const content = isRecord(result) && Array.isArray(result.content) ? result.content : [];
+	const textContent = content.find(
+		(item): item is { readonly type: "text"; readonly text: string } =>
+			isRecord(item) && item.type === "text" && typeof item.text === "string",
+	);
+	return textContent ? textContent.text : "";
 }
 
 function colorizeToolOutputLines(outputText: string, theme: Theme, isError: boolean): string[] {
 	const normalizedLines = trimTrailingBlankLines(
-		replaceTabsForDisplay(sanitizeDisplayText(outputText)).split("\n"),
+		outputText.replace(/\r\n?/g, "\n").split("\n").map(sanitizeRenderedLine),
 	);
 	const normalizedText = normalizedLines.join("\n");
 	if (normalizedText.length === 0) {
@@ -102,12 +90,12 @@ function colorizeToolOutputLines(outputText: string, theme: Theme, isError: bool
 
 function formatVisualTruncationNotice(
 	hidden: { readonly remainingLines: number; readonly totalLines: number },
-	expandKey: string,
+	expandHint: string,
 	theme: Theme,
 	width: number,
 ): string {
-	const expandHint = `${theme.fg("dim", expandKey)} ${theme.fg("muted", "to expand")}`;
-	const notice = `${theme.fg("muted", `... (${hidden.remainingLines} more lines, ${hidden.totalLines} total, `)}${expandHint}${theme.fg("muted", ")")}`;
+	const separator = expandHint.length > 0 ? ", " : "";
+	const notice = `${theme.fg("muted", `... (${hidden.remainingLines} more lines, ${hidden.totalLines} total${separator}`)}${expandHint}${theme.fg("muted", ")")}`;
 	return truncateToWidth(notice, Math.max(0, width));
 }
 
@@ -159,10 +147,10 @@ function getStructuredModeInvocation(input: Readonly<Record<string, unknown>>): 
 
 function formatInvocationPreview(rawArgs: readonly string[]): string {
 	const redactedArgs = redactInvocationArgs(rawArgs);
-	const invocation = sanitizeDisplayText(redactedArgs.join(" ")).replace(/\s+/g, " ").trim();
-	return invocation.length > TUI_INVOCATION_PREVIEW_MAX_CHARS
-		? `${invocation.slice(0, TUI_INVOCATION_PREVIEW_MAX_CHARS - 3)}...`
-		: invocation;
+	const invocation = sanitizeRenderedSingleLine(redactedArgs.join(" ")).replace(/\s+/g, " ").trim();
+	return stripTerminalSequences(
+		truncateToWidth(invocation, TUI_INVOCATION_PREVIEW_MAX_CHARS, "..."),
+	);
 }
 
 function formatInvocationDetail(mode: string | undefined, preview: string, theme: Theme): string {
@@ -200,26 +188,67 @@ function formatAgentBrowserRenderResult(
 		return theme.fg("warning", "Running agent-browser...");
 	}
 
-	const outputText = getPrimaryTextContent(result);
-	const failureCategoryNotice = formatModelVisibleFailureCategoryNotice(result.details);
-	const outputLines = colorizeToolOutputLines(outputText, theme, isError);
+	const rawResult: unknown = result;
+	const details: unknown = isRecord(rawResult) ? rawResult.details : undefined;
+	const effectiveError = isError || isFailureDetails(details);
+	const outputText = getPrimaryTextContent(rawResult);
+	const failureCategoryNotice = formatModelVisibleFailureCategoryNotice(details);
+	const outputLines = colorizeToolOutputLines(outputText, theme, effectiveError);
 	if (failureCategoryNotice !== undefined && outputLines.length > 0) {
-		outputLines.unshift(theme.fg("error", failureCategoryNotice), "");
+		outputLines.unshift(
+			theme.fg("error", sanitizeRenderedSingleLine(failureCategoryNotice).trim()),
+			"",
+		);
 	}
 	if (outputLines.length === 0) {
-		return formatEmptyResultSummary(result.details, theme, isError);
+		return formatEmptyResultSummary(details, theme, effectiveError, failureCategoryNotice);
 	}
 
 	return `\n${outputLines.join("\n")}`;
 }
 
-function formatEmptyResultSummary(details: unknown, theme: Theme, isError: boolean): string {
-	const fallback = isError ? "agent-browser failed" : "Done";
-	const rawSummary =
-		isRecord(details) && typeof details.summary === "string" ? details.summary : fallback;
-	const sanitizedSummary = sanitizeDisplayText(rawSummary).trim();
-	const summary = sanitizedSummary.length > 0 ? sanitizedSummary : fallback;
-	return isError ? theme.fg("error", summary) : theme.fg("success", summary);
+function isFailureDetails(details: unknown): boolean {
+	return (
+		isRecord(details) &&
+		(details.resultCategory === "failure" ||
+			(typeof details.error === "string" && details.error.trim().length > 0))
+	);
+}
+
+function getFallbackSummaryText(details: unknown): string | undefined {
+	if (!isRecord(details)) {
+		return undefined;
+	}
+	let raw: string | undefined;
+	if (typeof details.summary === "string") {
+		raw = details.summary;
+	} else if (typeof details.error === "string") {
+		raw = details.error;
+	}
+	if (raw === undefined) {
+		return undefined;
+	}
+	const sanitized = sanitizeRenderedSingleLine(raw).trim();
+	return sanitized.length > 0 ? sanitized : undefined;
+}
+
+function formatEmptyResultSummary(
+	details: unknown,
+	theme: Theme,
+	isError: boolean,
+	failureCategoryNotice: string | undefined,
+): string {
+	const effectiveError = isError || isFailureDetails(details);
+	const fallback = effectiveError ? "agent-browser failed" : "Done";
+	const summary = getFallbackSummaryText(details);
+	if (failureCategoryNotice !== undefined) {
+		const safeNotice = sanitizeRenderedSingleLine(failureCategoryNotice).trim();
+		const body =
+			summary !== undefined && summary !== safeNotice ? `${safeNotice}\n\n${summary}` : safeNotice;
+		return theme.fg("error", body);
+	}
+	const text = summary ?? fallback;
+	return effectiveError ? theme.fg("error", text) : theme.fg("success", text);
 }
 
 function formatModelVisibleFailureCategoryNotice(details: unknown): string | undefined {
@@ -312,13 +341,54 @@ export function finalizeAgentBrowserFailure<Details>(
 }
 
 /** Host render-context fields the result component reads on each render pass. */
-export type AgentBrowserResultRenderContext = Pick<KeybindingHints, "keyText"> & {
-	readonly isError: boolean;
+export type AgentBrowserResultRenderContext = Partial<
+	Pick<KeybindingHints, "keyHint" | "keyText">
+> & {
+	readonly isError?: boolean;
 };
+
+function resolveExpandHint(
+	context: AgentBrowserResultRenderContext | undefined,
+	theme: Theme,
+): string {
+	if (typeof context?.keyHint === "function") {
+		const hint = context.keyHint("app.tools.expand", "to expand");
+		if (hint.length > 0) {
+			return hint;
+		}
+	}
+	const key = typeof context?.keyText === "function" ? context.keyText("app.tools.expand") : "";
+	return key.length > 0
+		? `${theme.fg("dim", key)} ${theme.fg("muted", "to expand")}`
+		: theme.fg("muted", "expand to view all");
+}
+
+function buildResultFormatKey(
+	rawResult: unknown,
+	isPartial: boolean,
+	isError: boolean,
+	theme: Theme,
+): unknown[] {
+	const details =
+		isRecord(rawResult) && isRecord(rawResult.details) ? rawResult.details : undefined;
+	// Theme is a stable proxy in Pi; its resolved colors identify theme/terminal-color changes.
+	return [
+		getPrimaryTextContent(rawResult),
+		details?.summary,
+		details?.error,
+		details?.resultCategory,
+		details?.failureCategory,
+		isPartial,
+		isError,
+		theme,
+		theme.colors,
+		Reflect.get(theme, "fg"),
+	];
+}
 
 export class AgentBrowserResultComponent {
 	private expanded = false;
-	private expandKey = "";
+	private expandContext: AgentBrowserResultRenderContext | undefined;
 	private theme: Theme | undefined;
 	private readonly text = new Text("", 0, 0);
 	private value: string | undefined;
@@ -328,24 +398,13 @@ export class AgentBrowserResultComponent {
 		result: AgentToolResult<unknown>,
 		options: { readonly expanded: boolean; readonly isPartial: boolean },
 		theme: Theme,
-		context: AgentBrowserResultRenderContext,
+		context?: AgentBrowserResultRenderContext,
 	): void {
-		const { isError } = context;
-		// Pi injects the host's current keybinding text; resolve it per pass so rebinding applies.
-		this.expandKey = context.keyText("app.tools.expand");
-		const details = isRecord(result.details) ? result.details : undefined;
-		// Theme is a stable proxy in Pi; its resolved colors identify theme/terminal-color changes.
-		const key = [
-			getPrimaryTextContent(result),
-			details?.summary,
-			details?.resultCategory,
-			details?.failureCategory,
-			options.isPartial,
-			isError,
-			theme,
-			theme.colors,
-			Reflect.get(theme, "fg"),
-		];
+		const rawContext: unknown = context;
+		const isError = isRecord(rawContext) && rawContext.isError === true;
+		// Pi injects the host's current keybinding helpers; store so render applies rebinding lazily.
+		this.expandContext = isRecord(rawContext) ? context : undefined;
+		const key = buildResultFormatKey(result, options.isPartial, isError, theme);
 		const previousKey = this.formatKey;
 		if (!previousKey || key.some((value, index) => value !== previousKey[index])) {
 			this.formatKey = key;
@@ -383,7 +442,7 @@ export class AgentBrowserResultComponent {
 			...lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES),
 			formatVisualTruncationNotice(
 				{ remainingLines: hiddenLineCount, totalLines: lines.length },
-				this.expandKey,
+				resolveExpandHint(this.expandContext, theme),
 				theme,
 				width,
 			),

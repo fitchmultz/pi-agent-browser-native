@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import type { AgentBrowserNextAction } from "../../results/contracts.js";
 import { withOptionalSessionArgs } from "../../results/next-actions.js";
@@ -309,7 +310,7 @@ function formatVisibleCandidate(candidate: SelectorTextVisibilityCandidate): str
 		candidate.role !== undefined && candidate.role !== "" ? ` role=${candidate.role}` : "";
 	const preview =
 		candidate.textPreview !== undefined && candidate.textPreview !== ""
-			? `: ${JSON.stringify(candidate.textPreview)}`
+			? `: ${JSON.stringify(sanitizeRenderedSingleLine(candidate.textPreview))}`
 			: "";
 	return `- [${candidate.index}] ${candidate.tagName}${role}${preview}`;
 }
@@ -327,7 +328,9 @@ function formatSelectorVisibilityDiagnostic(
 		diagnostic.firstVisibleTextPreview !== undefined &&
 		diagnostic.firstVisibleTextPreview !== ""
 	) {
-		lines.push(`First visible text preview: ${JSON.stringify(diagnostic.firstVisibleTextPreview)}`);
+		lines.push(
+			`First visible text preview: ${JSON.stringify(sanitizeRenderedSingleLine(diagnostic.firstVisibleTextPreview))}`,
+		);
 	}
 	if (diagnostic.visibleCandidates && diagnostic.visibleCandidates.length > 0) {
 		lines.push(

@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText, redactSensitiveValue } from "../../runtime-redaction.js";
 import type { AgentBrowserLifecycle } from "../contracts.js";
@@ -72,12 +73,14 @@ export function formatWebMcpCatalogUpdate(catalog: Readonly<Record<string, unkno
 }
 
 function getPageIdentitySummary(data: Readonly<Record<string, unknown>>): string | undefined {
-	const title = typeof data.title === "string" ? data.title : undefined;
-	const url = typeof data.url === "string" ? data.url : undefined;
-	if (title === undefined && url === undefined) {
+	const rawTitle = typeof data.title === "string" ? data.title : undefined;
+	const rawUrl = typeof data.url === "string" ? data.url : undefined;
+	if (rawTitle === undefined && rawUrl === undefined) {
 		return undefined;
 	}
-	const parts = [title, url].filter((part) => part !== undefined && part.length > 0);
+	const parts = [rawTitle, rawUrl]
+		.map((part) => (part === undefined ? "" : sanitizeRenderedSingleLine(part).trim()))
+		.filter((part) => part.length > 0);
 	return parts.length > 0 ? parts.join("\n") : UNTITLED_PAGE_SUMMARY;
 }
 

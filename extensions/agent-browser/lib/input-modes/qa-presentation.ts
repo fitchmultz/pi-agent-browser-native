@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../display-sanitize.js";
 import type { ArtifactVerificationSummary } from "../results/contracts.js";
 import { isRecord } from "../parsing.js";
 import { truncateText } from "../results/text.js";
@@ -14,9 +15,9 @@ function hasPageContext(page: QaPage | undefined): boolean {
 }
 
 function pageLine(page: QaPage | undefined): string[] {
-	const parts = [page?.title, page?.url].filter(
-		(part): part is string => typeof part === "string" && part.length > 0,
-	);
+	const parts = [page?.title, page?.url]
+		.map((part) => (typeof part === "string" ? sanitizeRenderedSingleLine(part).trim() : ""))
+		.filter((part) => part.length > 0);
 	return parts.length === 0 ? [] : [`Page: ${parts.join(" — ")}`];
 }
 
@@ -114,11 +115,12 @@ export function buildQaCompactPassText(options: {
 	lines.push(...isolationLines(options.checks));
 	const path = options.checks.screenshotPath;
 	if (path !== undefined && path.length > 0) {
+		const safePath = sanitizeRenderedSingleLine(path);
 		const verification = options.artifactVerification;
 		lines.push(
 			verification
-				? `Screenshot: ${path} (${verification.verifiedCount}/${verification.artifacts.length} verified on disk)`
-				: `Screenshot: ${path}`,
+				? `Screenshot: ${safePath} (${verification.verifiedCount}/${verification.artifacts.length} verified on disk)`
+				: `Screenshot: ${safePath}`,
 		);
 	}
 	lines.push("Full diagnostic matrix: see details.qaPreset and details.batchSteps.");
@@ -135,7 +137,7 @@ export function buildQaCompactFailureText(options: {
 	const error = options.causalError;
 	const lines = [
 		error !== undefined && error.length > 0
-			? truncateText(error.replace(/\s+/g, " ").trim(), 700)
+			? truncateText(sanitizeRenderedSingleLine(error).replace(/\s+/g, " ").trim(), 700)
 			: options.qaPreset.summary,
 		...pageLine(options.page),
 	];

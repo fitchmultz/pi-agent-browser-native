@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../argv-descriptor.js";
 import { formatRawSnapshotText, formatSnapshotSummary } from "../snapshot-content.js";
@@ -36,7 +37,7 @@ function formatSimpleActionResult(command: string, data: unknown): string | unde
 	}
 	const value = data[definition.field];
 	return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
-		? `${definition.label}: ${redactModelFacingText(String(value))}`
+		? `${definition.label}: ${sanitizeRenderedSingleLine(redactModelFacingText(String(value)))}`
 		: undefined;
 }
 
@@ -50,7 +51,7 @@ function formatWaitResult(data: unknown): string | undefined {
 	for (const field of ["selector", "text", "url", "state", "waited"]) {
 		const value = data[field];
 		if (typeof value === "string" && value.length > 0) {
-			return `Wait completed: ${redactModelFacingText(value)}`;
+			return `Wait completed: ${sanitizeRenderedSingleLine(redactModelFacingText(value))}`;
 		}
 	}
 	return undefined;
@@ -109,7 +110,7 @@ function getVitalsUnavailableReason(data: Readonly<Record<string, unknown>>): st
 function formatVitalsText(data: Readonly<Record<string, unknown>>): string {
 	const url =
 		typeof data.url === "string" && data.url.trim().length > 0
-			? redactModelFacingText(data.url.trim())
+			? sanitizeRenderedSingleLine(redactModelFacingText(data.url.trim()))
 			: undefined;
 	const metrics = getVitalsMetrics(data);
 	return [
@@ -130,7 +131,7 @@ function formatReadSummary(data: unknown): string | undefined {
 		return undefined;
 	}
 	const url = data.finalUrl ?? data.url;
-	return typeof url === "string" ? `Read: ${url}` : undefined;
+	return typeof url === "string" ? `Read: ${sanitizeRenderedSingleLine(url)}` : undefined;
 }
 
 function formatScreenshotSummary(data: unknown): string | undefined {
@@ -140,7 +141,9 @@ function formatScreenshotSummary(data: unknown): string | undefined {
 	if (data.changed === false) {
 		return getScreenshotSummary(data);
 	}
-	return typeof data.path === "string" ? `Screenshot saved: ${data.path}` : undefined;
+	return typeof data.path === "string"
+		? `Screenshot saved: ${sanitizeRenderedSingleLine(data.path)}`
+		: undefined;
 }
 
 function formatTabSummary(data: unknown): string | undefined {
@@ -158,14 +161,14 @@ function formatTabText(data: unknown): string | undefined {
 		return undefined;
 	}
 	if (data.closed === true) {
-		return `Tab closed${typeof data.tabId === "string" ? `: ${redactModelFacingText(data.tabId)}` : "."}`;
+		return `Tab closed${typeof data.tabId === "string" ? `: ${sanitizeRenderedSingleLine(redactModelFacingText(data.tabId))}` : "."}`;
 	}
 	return getTabSummary(data);
 }
 
 function readPluginName(data: Readonly<Record<string, unknown>>): string | undefined {
 	return isRecord(data.plugin) && typeof data.plugin.name === "string"
-		? redactModelFacingText(data.plugin.name)
+		? sanitizeRenderedSingleLine(redactModelFacingText(data.plugin.name))
 		: undefined;
 }
 

@@ -1,4 +1,5 @@
 import type { CommandInfo } from "../../argv-descriptor.js";
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { redactSensitiveText } from "../../runtime.js";
 import {
 	getArrayField,
@@ -54,11 +55,11 @@ function formatDialogText(data: Data): string | undefined {
 	}
 	const type = getStringField(data, "type");
 	if (type !== undefined) {
-		lines.push(`Type: ${redactModelFacingText(type)}`);
+		lines.push(`Type: ${sanitizeRenderedSingleLine(redactModelFacingText(type))}`);
 	}
 	const message = getStringField(data, "message");
 	if (message !== undefined) {
-		lines.push(`Message: ${redactModelFacingText(message)}`);
+		lines.push(`Message: ${sanitizeRenderedSingleLine(redactModelFacingText(message))}`);
 	}
 	if (data.accepted === true) {
 		lines.push("Accepted.");
@@ -77,9 +78,13 @@ function formatFrameText(data: Data): string | undefined {
 	const url = getStringField(data, "url");
 	const title = getStringField(data, "title");
 	const lines = [
-		frame === undefined ? undefined : `Frame: ${redactModelFacingText(frame)}`,
-		title === undefined ? undefined : `Title: ${redactModelFacingText(title)}`,
-		url === undefined ? undefined : `URL: ${redactSensitiveText(url)}`,
+		frame === undefined
+			? undefined
+			: `Frame: ${sanitizeRenderedSingleLine(redactModelFacingText(frame))}`,
+		title === undefined
+			? undefined
+			: `Title: ${sanitizeRenderedSingleLine(redactModelFacingText(title))}`,
+		url === undefined ? undefined : `URL: ${sanitizeRenderedSingleLine(redactSensitiveText(url))}`,
 	].filter(Boolean);
 	return lines.length > 0 ? lines.join("\n") : undefined;
 }

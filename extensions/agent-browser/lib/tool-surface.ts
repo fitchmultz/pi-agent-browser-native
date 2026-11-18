@@ -252,7 +252,7 @@ export function registerAgentBrowserToolSurface(
 	pi.on("session_start", (_event, ctx) => activateToolSearch(pi, ctx));
 	pi.on("session_tree", (_event, ctx) => activateToolSearch(pi, ctx));
 	pi.on("before_agent_start", (_event, ctx) => {
-		if (warnedUnreachable || deferredToolsReachable(pi)) {
+		if (!ctx.hasUI || warnedUnreachable || deferredToolsReachable(pi)) {
 			return;
 		}
 		warnedUnreachable = true;

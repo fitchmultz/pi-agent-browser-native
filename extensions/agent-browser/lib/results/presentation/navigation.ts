@@ -3,6 +3,7 @@ import {
 	isOpenNavigationCommand,
 	isPageChangeSummaryCommand,
 } from "../../command-taxonomy.js";
+import { sanitizeRenderedFirstLine, sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import type { CommandInfo } from "../../argv-descriptor.js";
 import { detectConfirmationRequired } from "../confirmation.js";
@@ -68,10 +69,17 @@ function getScalarExtractionResult(
 }
 
 function getExtractionOrigin(data: Readonly<Record<string, unknown>>): string | undefined {
+	let raw: string | undefined;
 	if (typeof data.origin === "string" && data.origin.trim().length > 0) {
-		return data.origin.trim();
+		raw = data.origin;
+	} else if (typeof data.url === "string") {
+		raw = data.url;
 	}
-	return typeof data.url === "string" && data.url.trim().length > 0 ? data.url.trim() : undefined;
+	if (raw === undefined) {
+		return undefined;
+	}
+	const sanitized = sanitizeRenderedSingleLine(raw).trim();
+	return sanitized.length > 0 ? sanitized : undefined;
 }
 
 function formatGetSummaryLabel(subcommand: string | undefined): string {
@@ -91,7 +99,7 @@ export function formatExtractionSummary(
 	if (result === undefined || result.length === 0) {
 		return undefined;
 	}
-	const line = firstLine(redactModelFacingText(result));
+	const line = firstLine(sanitizeRenderedFirstLine(redactModelFacingText(result)));
 	if (command.command === "get") {
 		return `${formatGetSummaryLabel(command.subcommand)}: ${line}`;
 	}
@@ -155,7 +163,11 @@ function getTopLevelNavigationSummary(
 }
 
 function getNavigationText(value: unknown): string | undefined {
-	return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+	if (typeof value !== "string") {
+		return undefined;
+	}
+	const sanitized = sanitizeRenderedSingleLine(value).trim();
+	return sanitized.length > 0 ? sanitized : undefined;
 }
 
 function getNormalizedNavigationSummary(

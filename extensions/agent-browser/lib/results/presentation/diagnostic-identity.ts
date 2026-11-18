@@ -1,3 +1,4 @@
+import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveText } from "../../runtime.js";
 import {
@@ -48,9 +49,15 @@ const RUNTIME_FIELDS = [
 	"restoreSavedPath",
 ];
 
+function getSafeStringField(data: Data, key: string): string | undefined {
+	const value = getStringField(data, key);
+	return value === undefined ? undefined : sanitizeRenderedSingleLine(value);
+}
+
 function tabSelector(tab: Data, label: string | undefined, index: number): string {
-	if (typeof tab.tabId === "string" && tab.tabId.trim().length > 0) {
-		return tab.tabId.trim();
+	const tabId = getSafeStringField(tab, "tabId");
+	if (tabId !== undefined) {
+		return tabId;
 	}
 	if (label !== undefined) {
 		return label;
@@ -63,13 +70,14 @@ function tabLine(tab: unknown, index: number): string {
 		return `${index}: <invalid tab>`;
 	}
 	const marker = tab.active === true ? "*" : "-";
-	const title = typeof tab.title === "string" ? tab.title : "(untitled)";
-	const url = typeof tab.url === "string" ? tab.url : "(no url)";
-	const label = getStringField(tab, "label");
+	const title =
+		typeof tab.title === "string" ? sanitizeRenderedSingleLine(tab.title) : "(untitled)";
+	const url = typeof tab.url === "string" ? sanitizeRenderedSingleLine(tab.url) : "(no url)";
+	const label = getSafeStringField(tab, "label");
 	const selector = tabSelector(tab, label, index);
 	const labelText =
 		label !== undefined && label !== selector ? ` label=${redactModelFacingText(label)}` : "";
-	const target = getStringField(tab, "targetId");
+	const target = getSafeStringField(tab, "targetId");
 	const targetText =
 		target !== undefined && target !== selector ? ` target=${redactModelFacingText(target)}` : "";
 	return `${marker} [${selector}]${labelText}${targetText} ${title} — ${url}`;
@@ -81,9 +89,9 @@ export function getTabSummary(data: Data): string | undefined {
 }
 
 function sessionMetadata(item: Data): string {
-	const url = getStringField(item, "url");
-	const title = getStringField(item, "title");
-	const label = getStringField(item, "label");
+	const url = getSafeStringField(item, "url");
+	const title = getSafeStringField(item, "title");
+	const label = getSafeStringField(item, "label");
 	const tabCount =
 		typeof item.tabCount === "number"
 			? `${item.tabCount} tab${item.tabCount === 1 ? "" : "s"}`
@@ -103,11 +111,13 @@ function sessionLine(item: unknown, index: number): string {
 	if (!isRecord(item)) {
 		return `${index + 1}. ${stringifyModelFacing(item)}`;
 	}
-	const name = redactModelFacingText(
-		getStringField(item, "name") ??
-			getStringField(item, "session") ??
-			getStringField(item, "id") ??
-			`(session ${index + 1})`,
+	const name = sanitizeRenderedSingleLine(
+		redactModelFacingText(
+			getStringField(item, "name") ??
+				getStringField(item, "session") ??
+				getStringField(item, "id") ??
+				`(session ${index + 1})`,
+		),
 	);
 	return `${index + 1}. name=${name}${item.active === true ? " *active*" : ""}; ${sessionMetadata(item)}`;
 }
@@ -149,7 +159,9 @@ export function formatSessionText(data: Data): string | undefined {
 		return formatRuntimeIdentity(data);
 	}
 	const session = getStringField(data, "session");
-	return session === undefined ? undefined : `Current session: ${redactModelFacingText(session)}`;
+	return session === undefined
+		? undefined
+		: `Current session: ${sanitizeRenderedSingleLine(redactModelFacingText(session))}`;
 }
 
 export function formatProfilesText(profiles: readonly unknown[], label: string): string {
@@ -161,13 +173,17 @@ export function formatProfilesText(profiles: readonly unknown[], label: string):
 			if (!isRecord(item)) {
 				return `${index + 1}. ${stringifyModelFacing(item)}`;
 			}
-			const name = redactModelFacingText(
-				getStringField(item, "name") ?? getStringField(item, "profile") ?? `(unnamed ${index + 1})`,
+			const name = sanitizeRenderedSingleLine(
+				redactModelFacingText(
+					getStringField(item, "name") ??
+						getStringField(item, "profile") ??
+						`(unnamed ${index + 1})`,
+				),
 			);
 			const directory = getStringField(item, "directory") ?? getStringField(item, "path");
 			return directory === undefined
 				? `${index + 1}. ${name}`
-				: `${index + 1}. ${name} (${redactModelFacingText(directory)})`;
+				: `${index + 1}. ${name} (${sanitizeRenderedSingleLine(redactModelFacingText(directory))})`;
 		})
 		.join("\n");
 }
@@ -176,7 +192,7 @@ export function formatAuthShowText(data: Data): string | undefined {
 	const lines = AUTH_SHOW_SAFE_FIELDS.flatMap((key) => {
 		const value = data[key];
 		return typeof value === "string" && value.trim().length > 0
-			? [`${key}: ${redactModelFacingText(value.trim())}`]
+			? [`${key}: ${sanitizeRenderedSingleLine(redactModelFacingText(value.trim()))}`]
 			: [];
 	});
 	return lines.length > 0 ? lines.join("\n") : undefined;
@@ -186,21 +202,23 @@ function stateLine(item: unknown, index: number): string {
 	if (!isRecord(item)) {
 		return `${index + 1}. ${stringifyModelFacing(item)}`;
 	}
-	const name =
+	const name = sanitizeRenderedSingleLine(
 		getStringField(item, "name") ??
-		getStringField(item, "file") ??
-		getStringField(item, "path") ??
-		`(state ${index + 1})`;
-	const url = getStringField(item, "url");
+			getStringField(item, "file") ??
+			getStringField(item, "path") ??
+			`(state ${index + 1})`,
+	);
+	const url = getSafeStringField(item, "url");
 	return url === undefined
 		? `${index + 1}. ${redactModelFacingText(name)}`
 		: `${index + 1}. ${redactModelFacingText(name)} — ${redactSensitiveText(url)}`;
 }
 
 function stateShowText(data: Data): string {
-	const filename =
-		getStringField(data, "filename") ?? getStringField(data, "name") ?? "saved state";
-	const summary = getStringField(data, "summary");
+	const filename = sanitizeRenderedSingleLine(
+		getStringField(data, "filename") ?? getStringField(data, "name") ?? "saved state",
+	);
+	const summary = getSafeStringField(data, "summary");
 	const lines = [`Saved state: ${redactModelFacingText(filename)}`];
 	if (summary !== undefined) {
 		lines.push(`Summary: ${redactModelFacingText(summary)}`);
@@ -215,14 +233,14 @@ function stateShowText(data: Data): string {
 }
 
 function stateLoadText(data: Data): string {
-	const loaded = `State loaded: ${redactModelFacingText(getStringField(data, "path") ?? getStringField(data, "name") ?? "ok")}`;
+	const loaded = `State loaded: ${sanitizeRenderedSingleLine(redactModelFacingText(getStringField(data, "path") ?? getStringField(data, "name") ?? "ok"))}`;
 	const skipped = (getArrayField(data, "skippedOrigins") ?? []).filter(
 		(origin): origin is string => typeof origin === "string",
 	);
 	// Native writes storage only while the page stays on the saved origin and lists the rest.
 	return skipped.length === 0
 		? loaded
-		: `${loaded}\nSkipped storage for origins (page did not stay on that origin): ${redactModelFacingText(skipped.join(", "))}`;
+		: `${loaded}\nSkipped storage for origins (page did not stay on that origin): ${sanitizeRenderedSingleLine(redactModelFacingText(skipped.join(", ")))}`;
 }
 
 export function formatStateText(data: Data, subcommand?: string): string | undefined {

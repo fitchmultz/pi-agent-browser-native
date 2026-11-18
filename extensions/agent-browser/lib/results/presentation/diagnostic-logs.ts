@@ -1,4 +1,5 @@
 import type { CommandInfo } from "../../argv-descriptor.js";
+import { sanitizeRenderedFirstLine, sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import {
 	firstLine,
@@ -16,9 +17,11 @@ function consoleLine(item: unknown, index: number): string {
 	if (!isRecord(item)) {
 		return `${index + 1}. ${stringifyModelFacing(item)}`;
 	}
-	const type = redactModelFacingText(getStringField(item, "type") ?? "message");
+	const type = sanitizeRenderedSingleLine(
+		redactModelFacingText(getStringField(item, "type") ?? "message"),
+	);
 	const text = getStringField(item, "text") ?? stringifyModelFacing(item);
-	return `${index + 1}. [${type}] ${firstLine(redactModelFacingText(text).replace(/\s+/g, " ").trim(), 220)}`;
+	return `${index + 1}. [${type}] ${firstLine(sanitizeRenderedSingleLine(redactModelFacingText(text)).replace(/\s+/g, " ").trim(), 220)}`;
 }
 
 export function formatConsoleText(data: Data, command: CommandInfo): string | undefined {
@@ -61,9 +64,9 @@ function errorLine(item: unknown, index: number): string {
 		typeof item.column === "number" ? `column ${item.column}` : undefined,
 	]
 		.filter((part) => part !== undefined && part.length > 0)
-		.map((part) => redactModelFacingText(part ?? ""))
+		.map((part) => sanitizeRenderedSingleLine(redactModelFacingText(part ?? "")))
 		.join(":");
-	const safeText = firstLine(redactModelFacingText(text), 220);
+	const safeText = firstLine(sanitizeRenderedFirstLine(redactModelFacingText(text)), 220);
 	return location.length > 0
 		? `${index + 1}. ${safeText} (${location})`
 		: `${index + 1}. ${safeText}`;
