@@ -15,7 +15,7 @@ import {
 	isSessionArtifactManifest,
 } from "./results/artifact-manifest.js";
 import type { SessionArtifactManifest, SessionArtifactManifestEntry } from "./results/contracts.js";
-import { extractAgentBrowserLifecycle } from "./results/presentation/common.js";
+import { extractAgentBrowserLifecycle } from "./results/presentation/lifecycle.js";
 import { isSessionArtifactManifestEntry } from "./results/artifact-manifest-validation.js";
 
 import {
