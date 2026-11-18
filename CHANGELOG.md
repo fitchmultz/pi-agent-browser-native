@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.37 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- chore: roll out oxlint 1.94.0, tsrs 7.1.0-beta.tsrs2, and oxfmt 0.79.0 (#440) ([a34d6d5](https://github.com/fitchmultz/pi-agent-browser-native/commit/a34d6d51f3d452887da9d57b435a78c2eb88ab42))
+
+### What's Changed
+
+- chore: roll out oxlint 1.94.0, tsrs 7.1.0-beta.tsrs2, and oxfmt 0.79.0 by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/440
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.36...v0.9.37
+
 ## 0.9.36 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->
