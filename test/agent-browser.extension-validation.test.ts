@@ -3236,7 +3236,7 @@ nodeTest(
 		const { AgentBrowserResultComponent } =
 			await import("../extensions/agent-browser/lib/pi-tool-rendering.js");
 		const cached = new AgentBrowserResultComponent();
-		const renderState = (isError: boolean) => ({ isError, keyText: () => "ctrl+o" });
+		const renderState = (isError: boolean) => createRenderContext({ args: params, isError });
 		let colorCalls = 0;
 		let themeVersion = {};
 		let themePrefix = "";
@@ -3429,7 +3429,7 @@ nodeTest(
 			{ content: [], details: undefined },
 			{ expanded: false, isPartial: false },
 			PLAIN_RENDER_THEME,
-			{ isError: false },
+			renderState(false),
 		);
 		assert.equal(
 			cached
@@ -3443,7 +3443,7 @@ nodeTest(
 			{ content: [], details: { error: "Spawn\x07failed" } },
 			{ expanded: false, isPartial: false },
 			PLAIN_RENDER_THEME,
-			{},
+			renderState(false),
 		);
 		assert.equal(
 			cached
@@ -3457,7 +3457,7 @@ nodeTest(
 			{ content: [], details: { resultCategory: "failure", failureCategory: "timeout" } },
 			{ expanded: false, isPartial: false },
 			PLAIN_RENDER_THEME,
-			{ isError: false },
+			renderState(false),
 		);
 		assert.equal(
 			cached
@@ -3471,7 +3471,7 @@ nodeTest(
 			{ content: [], details: {} },
 			{ expanded: false, isPartial: false },
 			PLAIN_RENDER_THEME,
-			{ isError: true },
+			renderState(true),
 		);
 		assert.equal(
 			cached

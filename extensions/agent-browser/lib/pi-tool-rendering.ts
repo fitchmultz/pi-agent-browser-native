@@ -341,27 +341,9 @@ export function finalizeAgentBrowserFailure<Details>(
 }
 
 /** Host render-context fields the result component reads on each render pass. */
-export type AgentBrowserResultRenderContext = Partial<
-	Pick<KeybindingHints, "keyHint" | "keyText">
-> & {
-	readonly isError?: boolean;
+export type AgentBrowserResultRenderContext = Pick<KeybindingHints, "keyHint"> & {
+	readonly isError: boolean;
 };
-
-function resolveExpandHint(
-	context: AgentBrowserResultRenderContext | undefined,
-	theme: Theme,
-): string {
-	if (typeof context?.keyHint === "function") {
-		const hint = context.keyHint("app.tools.expand", "to expand");
-		if (hint.length > 0) {
-			return hint;
-		}
-	}
-	const key = typeof context?.keyText === "function" ? context.keyText("app.tools.expand") : "";
-	return key.length > 0
-		? `${theme.fg("dim", key)} ${theme.fg("muted", "to expand")}`
-		: theme.fg("muted", "expand to view all");
-}
 
 function buildResultFormatKey(
 	rawResult: unknown,
@@ -398,12 +380,11 @@ export class AgentBrowserResultComponent {
 		result: AgentToolResult<unknown>,
 		options: { readonly expanded: boolean; readonly isPartial: boolean },
 		theme: Theme,
-		context?: AgentBrowserResultRenderContext,
+		context: AgentBrowserResultRenderContext,
 	): void {
-		const rawContext: unknown = context;
-		const isError = isRecord(rawContext) && rawContext.isError === true;
+		const { isError } = context;
 		// Pi injects the host's current keybinding helpers; store so render applies rebinding lazily.
-		this.expandContext = isRecord(rawContext) ? context : undefined;
+		this.expandContext = context;
 		const key = buildResultFormatKey(result, options.isPartial, isError, theme);
 		const previousKey = this.formatKey;
 		if (!previousKey || key.some((value, index) => value !== previousKey[index])) {
@@ -434,7 +415,8 @@ export class AgentBrowserResultComponent {
 			return lines;
 		}
 		const theme = this.theme;
-		if (!theme) {
+		const context = this.expandContext;
+		if (!theme || !context) {
 			return lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES);
 		}
 		const hiddenLineCount = lines.length - TUI_COLLAPSED_OUTPUT_MAX_LINES;
@@ -442,7 +424,7 @@ export class AgentBrowserResultComponent {
 			...lines.slice(0, TUI_COLLAPSED_OUTPUT_MAX_LINES),
 			formatVisualTruncationNotice(
 				{ remainingLines: hiddenLineCount, totalLines: lines.length },
-				resolveExpandHint(this.expandContext, theme),
+				context.keyHint("app.tools.expand", "to expand"),
 				theme,
 				width,
 			),
