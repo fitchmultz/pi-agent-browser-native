@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.36 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- chore: adopt pi-tui sanitization/rendering primitives, guard ctx.hasUI, and cache fork builds (#439) ([369ab99](https://github.com/fitchmultz/pi-agent-browser-native/commit/369ab995d6cea5548918b9cf7ae4cff8ce237534))
+
+### What's Changed
+
+- chore: adopt pi-tui sanitization/rendering primitives, guard ctx.hasUI, and cache fork builds by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/439
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.35...v0.9.36
+
 ## 0.9.35 - 2026-11-17
 
 <!-- npm-release:unreleased:start -->
