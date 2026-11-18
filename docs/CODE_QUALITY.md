@@ -281,12 +281,16 @@ backend at `tsrs.typescriptVersion` `7.1.0-beta`, Microsoft TypeScript commit
     `oxlint-tsgolint@7.0.2007` on this repository (and **2.58x faster** with **2.73x /
     739.9 MiB lower peak RSS** than the pre-upgrade locked `oxlint@1.91.0` +
     `oxlint-tsgolint@7.0.2005` baseline of `1.34 s` and `1,166.8 MiB`).
-- **Eligibility ground.** Maintainer-directed adoption decision under Section 2.1(2)
-  and Section 1.1 (efficiency). Repository documentation (`docs/CODE_QUALITY.md`,
-  `docs/Strict-Oxlint-Oxfmt-Engineering-Guide.md`, `docs/PERFORMANCE.md`, and
-  `AGENTS.md`) specifies no lint RSS or lint wall-time budget; the exception rests on
-  the measured local time and memory reduction with matching diagnostics while
-  retaining `tsc` as the independent compiler gate.
+- **Eligibility ground.** Explicit maintainer-directed efficiency migration
+  substituting `tsrs@7.1.0-beta.tsrs2` for `oxlint-tsgolint` across maintained
+  `fitchmultz` Pi packages (aligned with `fitchmultz/.github#182` `QX-001` and
+  `fitchmultz/pi-agent-skills#128`, keeping normative Section 5.1 intact and
+  retaining `tsc@7.0.2` as the independent compiler gate). Repository documentation
+  (`docs/CODE_QUALITY.md`, `docs/Strict-Oxlint-Oxfmt-Engineering-Guide.md`,
+  `docs/PERFORMANCE.md`, and `AGENTS.md`) specifies no lint RSS or lint wall-time
+  budget; this record does not assert a Section 2.1(1) ceiling violation or a
+  Section 2.1(2) complexity argument and rests on owner approval plus the
+  measured local efficiency gains with matching diagnostics.
 - **Retained protection, lost detection, and skew.** All Appendix A syntactic and
   semantic rules, `--deny-warnings`, `scripts/code-quality-policy.mjs` AST/directive
   checks, `oxfmt@0.79.0`, `npm run quality:probes`, `npm run quality:mutations`, and
