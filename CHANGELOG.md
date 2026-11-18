@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.38 - 2026-11-18
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: identify content in saved browser reads (PEA-218) (1/1) (#441) ([c718671](https://github.com/fitchmultz/pi-agent-browser-native/commit/c718671e0aa98bcf35a4ae8e992819aeb2b48251))
+
+### What's Changed
+
+- fix: identify content in saved browser reads (PEA-218) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/441
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.37...v0.9.38
+
 ## 0.9.37 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->
