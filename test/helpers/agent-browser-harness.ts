@@ -725,10 +725,7 @@ export function createExtensionHarness(options: ExtensionHarnessOptions): Extens
 	};
 
 	const pi: ExtensionAPI &
-		Readonly<
-			Record<"refreshTools" | "registerProviderAuthFallback", typeof unsupportedHarnessOperation>
-		> = {
-		refreshTools: unsupportedHarnessOperation,
+		Readonly<Record<"registerProviderAuthFallback", typeof unsupportedHarnessOperation>> = {
 		registerProviderAuthFallback: unsupportedHarnessOperation,
 		registerCommand: unsupportedHarnessOperation,
 		registerShortcut: unsupportedHarnessOperation,

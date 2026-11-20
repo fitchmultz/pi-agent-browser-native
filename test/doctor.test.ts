@@ -23,6 +23,7 @@ import { CAPABILITY_BASELINE } from "../scripts/agent-browser-capability-baselin
 
 import {
 	MINIMUM_NODE_VERSION,
+	MINIMUM_PI_VERSION,
 	NODE_VERSION_RANGE,
 	buildNpmShimExecOptions,
 	evaluateDoctor,
@@ -36,7 +37,7 @@ function passingVersion() {
 }
 
 function passingPiVersion() {
-	return "1.5.2\n";
+	return "1.6.0\n";
 }
 
 function evaluateDoctorWithPi(options: Parameters<typeof evaluateDoctor>[0] = {}) {
@@ -50,6 +51,7 @@ nodeTest("doctor's Node floor stays aligned with the package engine", async () =
 
 	assert.match(MINIMUM_NODE_VERSION, /^\d+\.\d+\.\d+$/);
 	assert.equal(readRecord(packageJson.engines).node, NODE_VERSION_RANGE);
+	assert.equal(MINIMUM_PI_VERSION, "1.6.0");
 });
 
 nodeTest("doctor rejects the reported Node 24.18.0 even when other checks pass", async () => {
@@ -187,18 +189,18 @@ nodeTest("doctor reports missing agent-browser with actionable install guidance"
 
 nodeTest("doctor accepts the supported floor and newer stable versions", async (t) => {
 	for (const [upstreamOutput, piOutput, expectedPattern] of [
-		["agent-browser 0.43.0\n", "pi 1.5.2\n", /version matches recommended baseline: 0\.43\.0/],
-		["0.43.0\n", "1.5.2\n", /version matches recommended baseline: 0\.43\.0/],
+		["agent-browser 0.43.0\n", "pi 1.6.0\n", /version matches recommended baseline: 0\.43\.0/],
+		["0.43.0\n", "1.6.0\n", /version matches recommended baseline: 0\.43\.0/],
 		[
 			"agent-browser 0.43.1\n",
-			"1.5.2\n",
+			"1.6.0\n",
 			new RegExp(
 				`version meets supported floor: 0\\.43\\.1 \\(recommended ${CAPABILITY_BASELINE.targetVersion}\\)`,
 			),
 		],
 		[
 			"agent-browser 1.0.0\n",
-			"1.5.2\n",
+			"1.6.0\n",
 			new RegExp(
 				`version meets supported floor: 1\\.0\\.0 \\(recommended ${CAPABILITY_BASELINE.targetVersion}\\)`,
 			),
@@ -212,7 +214,7 @@ nodeTest("doctor accepts the supported floor and newer stable versions", async (
 			});
 			const text = formatDoctorReport(report);
 			assert.equal(report.failures.length, 0);
-			assert.match(text, /Pi version satisfies the minimum runtime floor: 1\.5\.2/);
+			assert.match(text, /Pi version satisfies the minimum runtime floor: 1\.6\.0/);
 			assert.match(text, expectedPattern);
 		});
 	}
@@ -241,14 +243,14 @@ nodeTest("doctor reports versions below the supported floor", async () => {
 nodeTest("doctor fails when Pi is below the minimum runtime floor", async () => {
 	const report = await evaluateDoctor({
 		runAgentBrowser: async () => passingVersion(),
-		runPi: async () => "1.5.0\n",
+		runPi: async () => "1.5.2\n",
 		skipSourceCheck: true,
 	});
 	const text = formatDoctorReport(report);
 
 	assert.equal(report.failures.length, 1);
-	assert.match(text, /Pi 1\.5\.2 or newer is required; found 1\.5\.0/);
-	assert.match(text, /enforces the Pi 1\.5\.2 runtime floor/);
+	assert.match(text, /Pi 1\.6\.0 or newer is required; found 1\.5\.2/);
+	assert.match(text, /enforces the Pi 1\.6\.0 runtime floor/);
 	assert.match(text, /Doctor found setup failures/);
 });
 
@@ -264,7 +266,7 @@ nodeTest("doctor warns instead of failing when Pi version cannot be inspected", 
 
 	assert.equal(report.failures.length, 0);
 	assert.match(text, /Could not inspect pi --version/);
-	assert.match(text, /Pi 1\.5\.2 or newer is required/);
+	assert.match(text, /Pi 1\.6\.0 or newer is required/);
 	assert.match(text, /Doctor completed with warnings/);
 });
 
@@ -276,7 +278,7 @@ nodeTest("version floors read prefixed versions and refuse text without one", as
 	assert.equal(versionAtLeast("crabbox 0.26.1", "0.26.0"), true);
 	assert.equal(versionAtLeast("22.18.0", "22.19.0"), false);
 	assert.equal(versionAtLeast("no version here", "22.19.0"), undefined);
-	assert.equal(versionAtLeast("build 2026", "1.5.2"), undefined);
+	assert.equal(versionAtLeast("build 2026", "1.6.0"), undefined);
 });
 
 nodeTest("doctor reports duplicate package and checkout sources with remediation", async () => {
