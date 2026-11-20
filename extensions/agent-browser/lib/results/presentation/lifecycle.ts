@@ -1,66 +1,38 @@
+import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "../../parsing.js";
 import type { AgentBrowserLifecycle } from "../contracts.js";
 
-function compareCodeUnits(left: string, right: string): number {
-	if (left < right) {
-		return -1;
-	}
-	return left > right ? 1 : 0;
-}
-
 // `lifecycle` is upstream launch/reuse bookkeeping, never page content, so it must not be the
 // answer an agent reads when a command has no dedicated presenter.
-function canonicalizeLifecycleValue(value: unknown): string {
-	if (Array.isArray(value)) {
-		return `[${value.map(canonicalizeLifecycleValue).join(",")}]`;
-	}
-	if (isRecord(value)) {
-		const entries = Object.keys(value)
-			.sort(compareCodeUnits)
-			.filter((key) => value[key] !== undefined)
-			.map((key) => `${JSON.stringify(key)}:${canonicalizeLifecycleValue(value[key])}`);
-		return `{${entries.join(",")}}`;
-	}
-	if (value === undefined) {
-		return "undefined";
-	}
-	return JSON.stringify(value);
-}
-
 function selectSharedLifecycle(
 	lifecycles: readonly Readonly<Record<string, unknown>>[],
-): { readonly key: string; readonly value: Readonly<Record<string, unknown>> } | undefined {
-	const counts = new Map<
-		string,
-		{ readonly value: Readonly<Record<string, unknown>>; count: number }
-	>();
+): Readonly<Record<string, unknown>> | undefined {
+	const groups: Array<{ readonly value: Readonly<Record<string, unknown>>; count: number }> = [];
 	for (const lifecycle of lifecycles) {
-		const key = canonicalizeLifecycleValue(lifecycle);
-		const existing = counts.get(key);
+		const existing = groups.find((group) => isDeepStrictEqual(group.value, lifecycle));
 		if (existing) {
 			existing.count += 1;
 		} else {
-			counts.set(key, { value: lifecycle, count: 1 });
+			groups.push({ value: lifecycle, count: 1 });
 		}
 	}
-	let winner:
-		| { readonly key: string; readonly value: Readonly<Record<string, unknown>>; count: number }
-		| undefined;
-	for (const [key, entry] of counts) {
-		if (!winner || entry.count > winner.count) {
-			winner = { key, value: entry.value, count: entry.count };
+	let winner: { readonly value: Readonly<Record<string, unknown>>; count: number } | undefined;
+	for (const group of groups) {
+		if (!winner || group.count > winner.count) {
+			winner = group;
 		}
 	}
-	return winner && winner.count >= 2 ? { key: winner.key, value: winner.value } : undefined;
+	return winner && winner.count >= 2 ? winner.value : undefined;
 }
 
-function stripMatchingLifecycle(value: unknown, sharedKey: string): unknown {
+function stripMatchingLifecycle(
+	value: unknown,
+	shared: Readonly<Record<string, unknown>>,
+): unknown {
 	if (!isRecord(value) || !isRecord(value.lifecycle)) {
 		return value;
 	}
-	return canonicalizeLifecycleValue(value.lifecycle) === sharedKey
-		? omitUpstreamLifecycle(value)
-		: value;
+	return isDeepStrictEqual(value.lifecycle, shared) ? omitUpstreamLifecycle(value) : value;
 }
 
 function getNestedLifecycleRow(row: unknown): unknown {
@@ -116,9 +88,9 @@ export function hoistSharedBatchStepLifecycles<T extends { readonly data?: unkno
 		return { items: values };
 	}
 	return {
-		batchLifecycle: shared.value,
+		batchLifecycle: shared,
 		items: values.map((item) => {
-			const compacted = stripMatchingLifecycle(item.data, shared.key);
+			const compacted = stripMatchingLifecycle(item.data, shared);
 			return compacted === item.data ? item : updateData(item, compacted);
 		}),
 	};
@@ -138,18 +110,18 @@ export function compactBatchResultLifecycle(
 		}
 	}
 	const shared = isRecord(existingBatchLifecycle)
-		? { key: canonicalizeLifecycleValue(existingBatchLifecycle), value: existingBatchLifecycle }
+		? existingBatchLifecycle
 		: selectSharedLifecycle(lifecycles);
 	if (!shared) {
 		return { batchLifecycle: existingBatchLifecycle, data: rows };
 	}
 	return {
-		batchLifecycle: shared.value,
+		batchLifecycle: shared,
 		data: rows.map((row) => {
 			if (!isRecord(row)) {
 				return row;
 			}
-			const compacted = stripMatchingLifecycle(row.result, shared.key);
+			const compacted = stripMatchingLifecycle(row.result, shared);
 			return compacted === row.result ? row : { ...row, result: compacted };
 		}),
 	};

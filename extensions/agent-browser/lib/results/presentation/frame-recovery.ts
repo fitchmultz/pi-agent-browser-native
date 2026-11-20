@@ -5,8 +5,6 @@ import type { AgentBrowserFailureCategory, AgentBrowserNextAction } from "../con
 import { buildNextToolAction, withOptionalSessionArgs } from "../next-actions.js";
 import { redactModelFacingText } from "./common.js";
 
-const MAX_REPORTED_FRAMES = 10;
-
 const LIST_DOCUMENT_IFRAMES_SCRIPT =
 	"Array.from(document.querySelectorAll('iframe')).map((frame, index) => ({ index, id: frame.id || null, name: frame.name || null, title: frame.title || null, src: frame.getAttribute('src') }))";
 
@@ -102,10 +100,7 @@ function formatReportedAvailableFrames(errorData: unknown): string | undefined {
 	if (formatted.length === 0) {
 		return undefined;
 	}
-	const shown = formatted.slice(0, MAX_REPORTED_FRAMES);
-	const remaining = formatted.length - shown.length;
-	const suffix = remaining > 0 ? `; … (${remaining} more)` : "";
-	return `Available frames reported by upstream: ${shown.join("; ")}${suffix}.`;
+	return `Available frames reported by upstream: ${formatted.join("; ")}.`;
 }
 
 function buildFrameFailureActions(
