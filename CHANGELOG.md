@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.9.39 - 2026-11-20
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: accept readonly TUI render lines (PIF-212) (1/1) (#442) ([9ed0c31](https://github.com/fitchmultz/pi-agent-browser-native/commit/9ed0c31a6bae38135589ebee35986cf8c8a732db))
+
+### What's Changed
+
+- fix: accept readonly TUI render lines (PIF-212) (1/1) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/442
+- feat(prompt): gate <agent_browser> section on tool declaration and attach promptGuidelines (PAB-202) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/443
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.38...v0.9.39
+
 ## 0.9.38 - 2026-11-18
 
 <!-- npm-release:unreleased:start -->
