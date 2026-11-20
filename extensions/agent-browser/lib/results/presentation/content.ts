@@ -2,7 +2,7 @@ import type { ProjectedAgentBrowserObservation } from "../contracts.js";
 import type { ToolPresentationObservation } from "./observation-contracts.js";
 import { isRecord } from "../../parsing.js";
 import { redactSensitiveValue } from "../../runtime-redaction.js";
-import { omitUpstreamLifecycle } from "./lifecycle.js";
+import { compactBatchResultLifecycle, omitUpstreamLifecycle } from "./lifecycle.js";
 import {
 	isTimeoutPartialProgress,
 	redactTimeoutPartialProgress,
@@ -13,6 +13,7 @@ export const OBSERVATION_INLINE_MAX_CHARS = 16_000;
 
 const OBSERVATION_DETAIL_FIELDS = [
 	"code",
+	"batchLifecycle",
 	"data",
 	"error",
 	"summary",
@@ -107,6 +108,19 @@ export function formatBatchStepCommand(
 	return command && command.length > 0 ? command.join(" ") : `step-${index + 1}`;
 }
 
+function normalizeObservationData(
+	data: unknown,
+	batchLifecycle: unknown,
+): { readonly batchLifecycle?: unknown; readonly data: unknown } {
+	if (isRecord(data)) {
+		return { batchLifecycle, data: omitUpstreamLifecycle(data) };
+	}
+	if (Array.isArray(data)) {
+		return compactBatchResultLifecycle(data, batchLifecycle);
+	}
+	return { batchLifecycle, data };
+}
+
 function selectObservationFields(
 	details: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
@@ -127,8 +141,10 @@ function selectObservationFields(
 	if (typeof observation.error === "string" && observation.error === observation.summary) {
 		observation.summary = undefined;
 	}
-	if (isRecord(observation.data)) {
-		observation.data = omitUpstreamLifecycle(observation.data);
+	const normalizedData = normalizeObservationData(observation.data, observation.batchLifecycle);
+	observation.data = normalizedData.data;
+	if (normalizedData.batchLifecycle !== undefined) {
+		observation.batchLifecycle = normalizedData.batchLifecycle;
 	}
 	if (isTimeoutPartialProgress(observation.timeoutPartialProgress)) {
 		observation.timeoutPartialProgress = redactTimeoutPartialProgress(

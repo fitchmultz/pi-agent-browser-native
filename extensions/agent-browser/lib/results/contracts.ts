@@ -85,6 +85,7 @@ export interface ProjectedAgentBrowserObservation {
 export interface AgentBrowserObservation extends AgentBrowserResultCategoryDetails {
 	[key: string]: unknown;
 	success: boolean;
+	batchLifecycle?: unknown;
 	data?: unknown;
 	error?: unknown;
 	summary?: string;
@@ -205,6 +206,7 @@ export interface ToolPresentation {
 	artifactVerification?: ArtifactVerificationSummary | undefined;
 	artifacts?: readonly FileArtifactMetadata[] | undefined;
 	batchFailure?: BatchFailurePresentationDetails | undefined;
+	batchLifecycle?: unknown;
 	batchSteps?: readonly BatchStepPresentationDetails[] | undefined;
 	content: Array<
 		{ text: string; type: "text" } | { data: string; mimeType: string; type: "image" }

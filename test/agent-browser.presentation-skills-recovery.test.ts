@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { readRecord, readString } from "./helpers/assertions.js";
+import { readDefined, readRecord, readString } from "./helpers/assertions.js";
 import { readFile, rm } from "node:fs/promises";
 import nodeTest from "node:test";
 
@@ -614,5 +614,139 @@ nodeTest(
 		assert.equal(presentation.failureCategory, "selector-not-found");
 		assert.deepEqual(presentation.content, [{ type: "text", text: errorText }]);
 		assert.equal(presentation.summary, errorText);
+	},
+);
+
+nodeTest(
+	"buildToolPresentation appends actionable frame failure guidance including snapshot cross-origin refs",
+	async () => {
+		const presentation = await buildToolPresentation({
+			args: ["--session", "work", "frame", "#missing-iframe"],
+			commandInfo: { command: "frame", subcommand: "#missing-iframe" },
+			cwd: process.cwd(),
+			errorText: "Frame not found: #missing-iframe",
+			sessionName: "work",
+		});
+
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /^Frame not found: #missing-iframe/);
+		assert.match(text, /Agent-browser frame hint:/);
+		assert.match(text, /snapshot -i.*cross-origin frames/i);
+		assert.match(text, /`frame main`/);
+		assert.match(text, /`eval --stdin`/);
+		assert.deepEqual(
+			presentation.nextActions?.map((action) => ({
+				args: action.params?.args,
+				id: action.id,
+			})),
+			[
+				{ args: ["--session", "work", "frame", "main"], id: "switch-to-main-frame" },
+				{ args: ["--session", "work", "snapshot", "-i"], id: "inspect-frames-with-snapshot" },
+				{ args: ["--session", "work", "eval", "--stdin"], id: "list-document-iframes" },
+			],
+		);
+		assert.match(
+			readDefined(readDefined(presentation.nextActions)[2]).params?.stdin ?? "",
+			/document\.querySelectorAll\('iframe'\)/,
+		);
+	},
+);
+
+nodeTest(
+	"buildToolPresentation surfaces upstream-reported available frames and avoids frame main self-loops",
+	async () => {
+		const withFrames = await buildToolPresentation({
+			args: ["frame", "#oauth"],
+			commandInfo: { command: "frame", subcommand: "#oauth" },
+			cwd: process.cwd(),
+			envelope: {
+				data: {
+					frames: [
+						{
+							id: "checkout",
+							name: "pay",
+							src: "https://pay.example/embed?token=super-secret-token",
+						},
+					],
+				},
+				error: "Cannot access cross-origin frame: #oauth",
+				success: false,
+			},
+			errorText: "Cannot access cross-origin frame: #oauth",
+		});
+
+		const withFramesText = readString(readRecord(withFrames.content[0]).text);
+		assert.match(withFramesText, /Available frames reported by upstream:/);
+		assert.match(withFramesText, /id=checkout name=pay/);
+		assert.doesNotMatch(withFramesText, /super-secret-token/);
+
+		const mainFailure = await buildToolPresentation({
+			args: ["frame", "main"],
+			commandInfo: { command: "frame", subcommand: "main" },
+			cwd: process.cwd(),
+			errorText: "Target frame detached",
+		});
+		assert.deepEqual(
+			mainFailure.nextActions?.map((action) => action.id),
+			["inspect-frames-with-snapshot", "list-document-iframes"],
+		);
+
+		const wedgedFailure = await buildToolPresentation({
+			args: ["frame", "#child"],
+			commandInfo: { command: "frame", subcommand: "#child" },
+			cwd: process.cwd(),
+			errorText: "page_wedged: the active tab (https://example.com/) stopped responding",
+		});
+		assert.equal(wedgedFailure.failureCategory, "page-wedged");
+		assert.doesNotMatch(
+			readString(readRecord(wedgedFailure.content[0]).text),
+			/Agent-browser frame hint:/,
+		);
+	},
+);
+
+nodeTest(
+	"buildToolPresentation appends frame failure guidance and recovery actions inside batch steps",
+	async () => {
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: process.cwd(),
+			envelope: {
+				data: [
+					{
+						command: ["open", "https://example.com"],
+						result: { title: "Example", url: "https://example.com/" },
+						success: true,
+					},
+					{
+						command: ["frame", "iframe[name='pay']"],
+						error: "No iframe matching selector: iframe[name='pay']",
+						success: false,
+					},
+				],
+				success: false,
+			},
+			sessionName: "work",
+		});
+
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Agent-browser frame hint:/);
+		assert.match(text, /snapshot -i.*cross-origin frames/i);
+		assert.match(text, /`frame main`/);
+		assert.deepEqual(
+			presentation.batchFailure?.failedStep.nextActions?.map((action) => action.id),
+			["switch-to-main-frame", "inspect-frames-with-snapshot", "list-document-iframes"],
+		);
+		assert.deepEqual(
+			presentation.nextActions?.slice(0, 3).map((action) => ({
+				args: action.params?.args,
+				id: action.id,
+			})),
+			[
+				{ args: ["--session", "work", "frame", "main"], id: "switch-to-main-frame" },
+				{ args: ["--session", "work", "snapshot", "-i"], id: "inspect-frames-with-snapshot" },
+				{ args: ["--session", "work", "eval", "--stdin"], id: "list-document-iframes" },
+			],
+		);
 	},
 );

@@ -1,3 +1,4 @@
+import { isRecord } from "../../parsing.js";
 import { parseCommandInfo, type CommandInfo } from "../../argv-descriptor.js";
 import { redactInvocationArgs } from "../../runtime-redaction.js";
 import { isPendingWebMcpMutation } from "../../webmcp-observation.js";
@@ -26,6 +27,7 @@ import {
 } from "./content.js";
 import { buildPageChangeSummary } from "./navigation.js";
 import { appendSelectorRecoveryHint, isOverlayBlockedClickError } from "./errors.js";
+import { buildFrameFailureRecovery } from "./frame-recovery.js";
 import { hasModelFacingArgRedaction, redactBatchStepErrorData } from "./batch-redaction.js";
 import type {
 	BatchPresentedStep,
@@ -89,22 +91,39 @@ interface StepFailure {
 	readonly category: AgentBrowserFailureCategory;
 	readonly confirmationId?: string | undefined;
 	readonly data: unknown;
+	readonly frameActions?: readonly AgentBrowserNextAction[] | undefined;
 	readonly overlayBlocked: boolean;
 	readonly text: string;
 }
 
-function describeStepFailure(command: readonly string[] | undefined, error: unknown): StepFailure {
+function describeStepFailure(
+	command: readonly string[] | undefined,
+	error: unknown,
+	result: unknown,
+	scope: StepScope,
+): StepFailure {
 	const data = redactBatchStepErrorData(command, error);
-	const text = formatBatchStepError(data, command?.[0]);
+	const baseText = formatBatchStepError(data, command?.[0]);
+	const category = classifyAgentBrowserFailureCategory({
+		args: command,
+		command: command?.[0],
+		errorText: baseText,
+	});
+	const frameErrorData = isRecord(data) ? data : redactBatchStepErrorData(command, result);
+	const frameRecovery = buildFrameFailureRecovery({
+		args: command,
+		commandInfo: parseCommandInfo(command ?? []),
+		errorData: frameErrorData,
+		failureCategory: category,
+		sessionName: scope.sessionName,
+	});
+	const text = frameRecovery ? `${baseText}\n\n${frameRecovery.hint}` : baseText;
 	return {
 		data,
 		text,
-		category: classifyAgentBrowserFailureCategory({
-			args: command,
-			command: command?.[0],
-			errorText: text,
-		}),
+		category,
 		confirmationId: detectConfirmationRequired(error)?.id,
+		frameActions: frameRecovery?.actions,
 		overlayBlocked: isOverlayBlockedClickError(command?.[0], text, command),
 	};
 }
@@ -114,16 +133,18 @@ function buildFailedStepActions(
 	failure: StepFailure,
 	scope: StepScope,
 ): readonly AgentBrowserNextAction[] | undefined {
-	const recovery = buildAgentBrowserNextActions({
-		args: command,
-		command: command?.[0],
-		confirmationId: failure.confirmationId,
-		failureCategory: failure.category,
-		overlayBlockedClick: failure.overlayBlocked,
-		resultCategory: "failure",
-		sessionName: scope.sessionName,
-		subcommand: command?.[1],
-	});
+	const recovery =
+		failure.frameActions ??
+		buildAgentBrowserNextActions({
+			args: command,
+			command: command?.[0],
+			confirmationId: failure.confirmationId,
+			failureCategory: failure.category,
+			overlayBlockedClick: failure.overlayBlocked,
+			resultCategory: "failure",
+			sessionName: scope.sessionName,
+			subcommand: command?.[1],
+		});
 	const waitAction =
 		command?.[0] === "wait" && command.includes("--text")
 			? [buildWaitTextAssertionFailureAction(scope.sessionName)]
@@ -144,7 +165,7 @@ function buildFailedStep(
 	identity: StepIdentity,
 	scope: StepScope,
 ): BatchPresentedStep {
-	const failure = describeStepFailure(identity.command, item.error);
+	const failure = describeStepFailure(identity.command, item.error, item.result, scope);
 	const { data, text, category: failureCategory } = failure;
 	const nextActions = buildFailedStepActions(identity.command, failure, scope);
 	const presentation: ToolPresentation = {

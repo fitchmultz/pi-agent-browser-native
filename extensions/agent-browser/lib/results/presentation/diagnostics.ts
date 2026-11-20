@@ -7,6 +7,7 @@ import {
 	redactModelFacingText,
 	stringifyModelFacing,
 } from "./common.js";
+import { omitUpstreamLifecycle } from "./lifecycle.js";
 import { formatA11yText } from "./diagnostic-a11y.js";
 import { formatDashboardText, formatDoctorText } from "./diagnostic-health.js";
 import {
@@ -140,7 +141,7 @@ export function formatDiagnosticText(command: CommandInfo, data: Data): string |
 		case "network":
 			return formatNetworkText(command, data);
 		case "diff":
-			return stringifyModelFacing(data);
+			return stringifyModelFacing(omitUpstreamLifecycle(data));
 		case "clipboard":
 			return formatClipboardText(data);
 		case "stream":
