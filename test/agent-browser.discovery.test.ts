@@ -15,10 +15,11 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import agentBrowserExtension from "../extensions/agent-browser/index.js";
-import { BROWSER_GUIDANCE } from "../extensions/agent-browser/lib/playbook.js";
+import { BROWSER_GUIDANCE, WEB_SEARCH_GUIDANCE } from "../extensions/agent-browser/lib/playbook.js";
 import { AGENT_BROWSER_TOOL_INVENTORY } from "../extensions/agent-browser/lib/tool-surface.js";
 import {
 	createExtensionHarness,
+	createNormalizedSystemPromptOptions,
 	getBrowserInstructions,
 	runExtensionEvent,
 	runExtensionEventResults,
@@ -74,15 +75,18 @@ nodeTest(
 					name: tool.name,
 					guidelines: tool.promptGuidelines,
 				})),
-				[...harness.tools.keys()].map((name) => ({ name, guidelines: [] })),
+				[...harness.tools.keys()].map((name) => ({
+					name,
+					guidelines: name === "agent_browser" ? [...BROWSER_GUIDANCE] : [],
+				})),
 			);
 			assert.deepEqual(harness.getActiveTools(), active, "guidance must not activate tools");
-			const sections: Record<string, string> = { unrelated: "Retain this section" };
 			const event = {
 				systemPrompt: "Base system prompt",
-				systemPromptOptions: {
-					sections,
-				},
+				systemPromptOptions: createNormalizedSystemPromptOptions({
+					sections: { unrelated: "Retain this section" },
+					toolGuidelines: { agent_browser: [...BROWSER_GUIDANCE] },
+				}),
 			};
 			assert.deepEqual(
 				await runExtensionEventResults(harness.handlers, "before_agent_start", event, harness.ctx),
@@ -92,8 +96,111 @@ nodeTest(
 			assert.equal(event.systemPrompt, "Base system prompt");
 			assert.equal(event.systemPromptOptions.sections.unrelated, "Retain this section");
 			assert.equal(event.systemPromptOptions.sections.agent_browser, guidance);
+			assert.deepEqual(
+				event.systemPromptOptions.toolGuidelines.agent_browser,
+				[],
+				"declared agent_browser clears toolGuidelines to prevent <rules> duplication",
+			);
 			assert.equal(harness.handlers.get("tool_call"), undefined, "no bash guard");
 		});
+	},
+);
+
+nodeTest(
+	"browser prompt section is gated on declaration and refreshes toolGuidelines when tool_search is active",
+	async (t) => {
+		const root = await mkdtemp(join(tmpdir(), "piab-prompt-gating-"));
+		try {
+			const configPath = join(root, ".pi/config/pi-agent-browser-native/config.json");
+			await mkdir(dirname(configPath), { recursive: true });
+			await writeFile(
+				configPath,
+				JSON.stringify({
+					version: 1,
+					browser: {
+						executablePath: "/tmp/gated-browser",
+						defaultProfile: { name: "Gated Profile", policy: "always" },
+					},
+				}),
+			);
+			await withPatchedEnv({ HOME: join(root, "home"), ...BARE_ENV }, async () => {
+				const exists = t.mock.method(fs, "existsSync");
+				const reads = t.mock.method(fs, "readFileSync");
+				syncBuiltinESMExports();
+				const harness = createExtensionHarness({ cwd: root });
+				const resetIoCounts = () => {
+					exists.mock.resetCalls();
+					reads.mock.resetCalls();
+				};
+
+				resetIoCounts();
+				const absentEvent = {
+					systemPrompt: "Base system prompt",
+					systemPromptOptions: createNormalizedSystemPromptOptions({
+						selectedTools: ["read", "agent_browser_web_search"],
+						toolGuidelines: { agent_browser: [...BROWSER_GUIDANCE] },
+					}),
+				};
+				await runExtensionEvent(harness.handlers, "before_agent_start", absentEvent, harness.ctx);
+				assert.equal(absentEvent.systemPromptOptions.sections.agent_browser, undefined);
+				assert.deepEqual(absentEvent.systemPromptOptions.toolGuidelines.agent_browser, [
+					...BROWSER_GUIDANCE,
+				]);
+				assert.deepEqual(
+					{ exists: exists.mock.callCount(), reads: reads.mock.callCount() },
+					{ exists: 0, reads: 0 },
+					"undeclared browser without tool_search performs zero fs/config reads",
+				);
+
+				resetIoCounts();
+				const hiddenEvent = {
+					systemPrompt: "Base system prompt",
+					systemPromptOptions: createNormalizedSystemPromptOptions({
+						selectedTools: ["codemode", "agent_browser"],
+						hiddenTools: ["agent_browser"],
+						toolGuidelines: { agent_browser: [...BROWSER_GUIDANCE] },
+					}),
+				};
+				await runExtensionEvent(harness.handlers, "before_agent_start", hiddenEvent, harness.ctx);
+				assert.equal(hiddenEvent.systemPromptOptions.sections.agent_browser, undefined);
+				assert.deepEqual(hiddenEvent.systemPromptOptions.toolGuidelines.agent_browser, [
+					...BROWSER_GUIDANCE,
+				]);
+				assert.deepEqual(
+					{ exists: exists.mock.callCount(), reads: reads.mock.callCount() },
+					{ exists: 0, reads: 0 },
+					"hidden agent_browser without tool_search performs zero fs/config reads",
+				);
+
+				const deferredSearchEvent = {
+					systemPrompt: "Base system prompt",
+					systemPromptOptions: createNormalizedSystemPromptOptions({
+						selectedTools: ["tool_search"],
+						toolGuidelines: { agent_browser: [...BROWSER_GUIDANCE] },
+					}),
+				};
+				await runExtensionEvent(
+					harness.handlers,
+					"before_agent_start",
+					deferredSearchEvent,
+					harness.ctx,
+				);
+				assert.equal(deferredSearchEvent.systemPromptOptions.sections.agent_browser, undefined);
+				const refreshed = deferredSearchEvent.systemPromptOptions.toolGuidelines.agent_browser;
+				assert.ok(refreshed !== undefined);
+				assert.deepEqual(
+					BROWSER_GUIDANCE.filter((line) => !refreshed.includes(line)),
+					[],
+				);
+				assert.ok(refreshed.some((line) => line.includes("/tmp/gated-browser")));
+				assert.ok(refreshed.some((line) => line.includes("Gated Profile")));
+				assert.ok(refreshed.some((line) => line.includes("COMMAND_REFERENCE.md")));
+			});
+		} finally {
+			t.mock.restoreAll();
+			syncBuiltinESMExports();
+			await rm(root, { force: true, recursive: true });
+		}
 	},
 );
 
@@ -220,6 +327,15 @@ nodeTest(
 					const browserTools = session
 						.getAllTools()
 						.filter((definition) => definition.name.startsWith("agent_browser"));
+					const expectedGuidelines = (name: string): string[] => {
+						if (name === "agent_browser") {
+							return [...BROWSER_GUIDANCE];
+						}
+						if (name === "agent_browser_web_search") {
+							return [WEB_SEARCH_GUIDANCE];
+						}
+						return [];
+					};
 					assert.deepEqual(
 						browserTools.map((tool) => ({
 							name: tool.name,
@@ -229,7 +345,11 @@ nodeTest(
 							),
 							guidelines: tool.promptGuidelines ?? [],
 						})),
-						browserTools.map((tool) => ({ name: tool.name, discovery: false, guidelines: [] })),
+						browserTools.map((tool) => ({
+							name: tool.name,
+							discovery: false,
+							guidelines: expectedGuidelines(tool.name),
+						})),
 					);
 					const deferred: string[] = Object.values(AGENT_BROWSER_TOOL_INVENTORY).map(
 						({ name }) => name,

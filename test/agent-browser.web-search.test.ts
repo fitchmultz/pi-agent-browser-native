@@ -474,10 +474,12 @@ nodeTest(
 				const tool = harness.getTool(AGENT_BROWSER_WEB_SEARCH_TOOL_NAME);
 				assert.ok(tool);
 				assert.ok(harness.getTool("agent_browser"));
-				const guidelines = await getBrowserInstructions(harness);
-				assert.match(guidelines, /agent_browser_web_search for live discovery/);
-				assert.match(guidelines, /searchType deep-lite/);
-				assert.match(guidelines, /Cite result URLs/);
+				const toolGuidelines = tool.promptGuidelines.join("\n");
+				assert.match(toolGuidelines, /agent_browser_web_search for live discovery/);
+				assert.match(toolGuidelines, /searchType deep-lite/);
+				assert.match(toolGuidelines, /Cite result URLs/);
+				const browserGuidelines = await getBrowserInstructions(harness);
+				assert.doesNotMatch(browserGuidelines, /agent_browser_web_search for live discovery/);
 				assert.match(tool.description, /deep-lite/);
 				const schemaProperties = readRecord(readRecord(tool.parameters).properties);
 				assert.match(

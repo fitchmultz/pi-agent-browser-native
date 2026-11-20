@@ -172,6 +172,24 @@ nodeTest("prompt exception cannot cover another mutation on the same line", () =
 		'event.systemPromptOptions.sections.agent_browser = this.instructions(ctx); event.systemPromptOptions.sections.other = "unowned";',
 	);
 	assert.throws(() => sourcePolicy(file, extended), /unauthorized operation on the same line/u);
+	const extendedGuidelines = source.replace(
+		"event.systemPromptOptions.toolGuidelines.agent_browser = [];",
+		'event.systemPromptOptions.toolGuidelines.agent_browser = []; event.systemPromptOptions.toolGuidelines.other = ["unowned"];',
+	);
+	assert.throws(
+		() => sourcePolicy(file, extendedGuidelines),
+		/unauthorized operation on the same line/u,
+	);
+	const wrongSection = source.replace(
+		"event.systemPromptOptions.sections.agent_browser = this.instructions(ctx);",
+		"event.systemPromptOptions.sections.other = this.instructions(ctx);",
+	);
+	assert.throws(() => sourcePolicy(file, wrongSection), /not attached to an authorized operation/u);
+	const wrongToolKey = source.replace(
+		"event.systemPromptOptions.toolGuidelines.agent_browser = this.guidelineLines(ctx);",
+		"event.systemPromptOptions.toolGuidelines.other = this.guidelineLines(ctx);",
+	);
+	assert.throws(() => sourcePolicy(file, wrongToolKey), /not attached to an authorized operation/u);
 });
 
 nodeTest("SDK type and expression callbacks cannot conceal same-line functions", () => {

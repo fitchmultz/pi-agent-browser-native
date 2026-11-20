@@ -18,6 +18,7 @@ import {
 	AGENT_BROWSER_NETWORK_SOURCE_PARAMS,
 	type AgentBrowserAdvancedTool,
 } from "./input-modes/params.js";
+import { BROWSER_GUIDANCE } from "./playbook.js";
 import type { AgentBrowserExecuteParams } from "./orchestration/input-plan.js";
 
 export type AgentBrowserExecutor = ToolDefinition<TUnsafe<AgentBrowserExecuteParams>>["execute"];
@@ -78,6 +79,7 @@ function registerBrowserTool(
 		description:
 			"Browse and interact through native agent-browser commands. One command in args; fixed sequences use batch --bail and JSON-array stdin; loops and branches belong in codemode scripts.",
 		promptSnippet: "Browse pages, inspect current refs, interact, and run native command batches.",
+		promptGuidelines: [...BROWSER_GUIDANCE],
 		parameters: AGENT_BROWSER_PARAMS,
 		...(options.renderCall === undefined ? {} : { renderCall: options.renderCall }),
 		execute,

@@ -11,7 +11,7 @@ export const BROWSER_GUIDANCE = [
 	"Deferred tools: agent_browser_action (click/fill/select by locator), agent_browser_qa (page verdict), agent_browser_electron (owned desktop apps), agent_browser_source and agent_browser_network_source (experimental source candidates). Find them with tool_search or call them from codemode scripts.",
 ] as const;
 
-/** Added only while the credential-gated web search tool is registered. */
+/** Attached to the credential-gated web search tool's promptGuidelines. */
 export const WEB_SEARCH_GUIDANCE =
 	"Use agent_browser_web_search for live discovery and current facts before opening a target URL with agent_browser; pass searchType deep-lite for research before implementation. Cite result URLs when web evidence informed the answer.";
 
@@ -54,7 +54,6 @@ export function buildToolPromptGuidelines(options: {
 		  }
 		| undefined;
 	readonly browserExecutablePath?: string | undefined;
-	readonly includeWebSearch?: boolean;
 	readonly docs?: {
 		readonly readmePath: string;
 		readonly commandReferencePath: string;
@@ -69,7 +68,6 @@ export function buildToolPromptGuidelines(options: {
 	);
 	return [
 		...BROWSER_GUIDANCE,
-		...(options.includeWebSearch === true ? [WEB_SEARCH_GUIDANCE] : []),
 		...(options.docs ? [buildInstalledDocsGuideline(options.docs)] : []),
 		...(browserExecutablePathGuideline !== undefined ? [browserExecutablePathGuideline] : []),
 		...(browserDefaultProfileGuideline !== undefined ? [browserDefaultProfileGuideline] : []),

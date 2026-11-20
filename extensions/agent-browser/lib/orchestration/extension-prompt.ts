@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	NormalizedBuildSystemPromptOptions,
+} from "@earendil-works/pi-coding-agent";
 import {
 	buildBrowserDefaultProfileGuideline,
 	buildBrowserExecutablePathGuideline,
@@ -56,6 +60,12 @@ export function shouldIncludeProjectConfig(
 ): boolean {
 	return !hasArgvFlag(argv, "--no-approve", "-na") && ctx.isProjectTrusted();
 }
+export function isToolDeclared(
+	options: Readonly<Pick<NormalizedBuildSystemPromptOptions, "selectedTools" | "hiddenTools">>,
+	name: string,
+): boolean {
+	return options.selectedTools.includes(name) && !options.hiddenTools.includes(name);
+}
 /** Owns prompt caching and companion registration, never browser or artifact state. */
 export class BrowserPrompt {
 	private docsPaths: ReturnType<typeof getInstalledDocsPaths> | undefined;
@@ -96,12 +106,15 @@ export class BrowserPrompt {
 		});
 		this.webSearchToolRegistered = true;
 	}
-	instructions(ctx: ExtensionContext): string {
+	private resolveGuidance(ctx: ExtensionContext): {
+		readonly guidelines: readonly string[];
+		readonly projectGuidance: readonly string[];
+	} {
 		const config = loadAgentBrowserConfigSync({
 			cwd: ctx.cwd,
 			includeProjectConfig: shouldIncludeProjectConfig(ctx),
 		});
-		const guidance = [
+		const projectGuidance = [
 			config.browserExecutablePathScope === "project"
 				? buildBrowserExecutablePathGuideline(config.browserExecutablePath)
 				: undefined,
@@ -109,16 +122,23 @@ export class BrowserPrompt {
 				? buildBrowserDefaultProfileGuideline(config.browserDefaultProfile)
 				: undefined,
 		].filter((line): line is string => typeof line === "string" && line.length > 0);
-		const configPrompt =
-			guidance.length > 0
-				? `\n\nProject agent_browser config guidance:\n${guidance.map((line) => `- ${line}`).join("\n")}`
-				: "";
 		const guidelines = buildToolPromptGuidelines({
 			browserDefaultProfile: config.trustedBrowserDefaultProfile,
 			browserExecutablePath: config.trustedBrowserExecutablePath,
-			includeWebSearch: this.webSearchToolRegistered,
 			docs: (this.docsPaths ??= getInstalledDocsPaths()),
 		});
+		return { guidelines, projectGuidance };
+	}
+	guidelineLines(ctx: ExtensionContext): string[] {
+		const { guidelines, projectGuidance } = this.resolveGuidance(ctx);
+		return [...new Set([...guidelines, ...projectGuidance])];
+	}
+	instructions(ctx: ExtensionContext): string {
+		const { guidelines, projectGuidance } = this.resolveGuidance(ctx);
+		const configPrompt =
+			projectGuidance.length > 0
+				? `\n\nProject agent_browser config guidance:\n${projectGuidance.map((line) => `- ${line}`).join("\n")}`
+				: "";
 		return `${guidelines.map((line) => `- ${line}`).join("\n")}${configPrompt}`;
 	}
 	register(): void {
@@ -127,9 +147,18 @@ export class BrowserPrompt {
 				this.state = { sessionId: ctx.sessionManager.getSessionId(), message: event.message };
 			}
 		});
-		this.pi.on("before_agent_start", async (event, ctx) => {
-			// oxlint-disable-next-line no-param-reassign -- QX-003: Pi composes additive prompt sections through this mutable event.
-			event.systemPromptOptions.sections.agent_browser = this.instructions(ctx);
+		this.pi.on("before_agent_start", (event, ctx) => {
+			if (isToolDeclared(event.systemPromptOptions, "agent_browser")) {
+				// oxlint-disable-next-line no-param-reassign -- QX-003: Pi composes additive prompt sections through this mutable event.
+				event.systemPromptOptions.sections.agent_browser = this.instructions(ctx);
+				// oxlint-disable-next-line no-param-reassign -- QX-003: Pi composes per-tool guidelines through this mutable event.
+				event.systemPromptOptions.toolGuidelines.agent_browser = [];
+				return;
+			}
+			if (isToolDeclared(event.systemPromptOptions, "tool_search")) {
+				// oxlint-disable-next-line no-param-reassign -- QX-003: Pi composes per-tool guidelines through this mutable event.
+				event.systemPromptOptions.toolGuidelines.agent_browser = this.guidelineLines(ctx);
+			}
 		});
 	}
 }

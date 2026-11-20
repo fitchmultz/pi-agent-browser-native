@@ -24,9 +24,11 @@ import {
 	canonicalizeExplicitArtifactDestination,
 	getExplicitArtifactDestination,
 } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-paths.js";
+import { BROWSER_GUIDANCE } from "../extensions/agent-browser/lib/playbook.js";
 
 import {
 	createExtensionHarness,
+	createNormalizedSystemPromptOptions,
 	getBrowserInstructions,
 	executeRegisteredTool,
 	readInvocationLog,
@@ -89,8 +91,7 @@ nodeTest(
 		assert.ok(typeof factory === "function");
 		Reflect.apply(factory, undefined, [pi]);
 
-		const sections: Record<string, string> = {};
-		const event = { systemPromptOptions: { sections } };
+		const event = { systemPromptOptions: createNormalizedSystemPromptOptions() };
 		for (const handler of beforeStart) {
 			await handler(event, { cwd: process.cwd(), isProjectTrusted: () => true });
 		}
@@ -189,12 +190,15 @@ nodeTest(
 						const staticGuidelineText = harness.tool.promptGuidelines.join("\n");
 						assert.doesNotMatch(staticGuidelineText, /Project Profile/);
 						assert.doesNotMatch(staticGuidelineText, /\/tmp\/project-browser/);
-						assert.equal(staticGuidelineText, "", "no eager configuration guidelines");
-						const sections: Record<string, string> = {};
+						assert.deepEqual(
+							harness.tool.promptGuidelines,
+							[...BROWSER_GUIDANCE],
+							"static promptGuidelines carry core orientation with no eager config",
+						);
 						const browserTurn = {
 							prompt: "Open https://example.com in the signed-in browser.",
 							systemPrompt: "Base system prompt",
-							systemPromptOptions: { sections },
+							systemPromptOptions: createNormalizedSystemPromptOptions(),
 						};
 						await runExtensionEvent(
 							harness.handlers,

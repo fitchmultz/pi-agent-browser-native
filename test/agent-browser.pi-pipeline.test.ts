@@ -32,18 +32,20 @@ import {
 import type { Model, Api, ToolCall } from "@earendil-works/pi-ai/compat";
 import {
 	createAgentSession,
+	createCodemodeExtension,
 	createToolSearchExtension,
 	DefaultResourceLoader,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
 	type AgentSession,
+	type ExtensionAPI,
 	type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 
 import agentBrowserExtension from "../extensions/agent-browser/index.js";
 import { finalizeAgentBrowserFailure } from "../extensions/agent-browser/lib/pi-tool-rendering.js";
-import { BROWSER_GUIDANCE } from "../extensions/agent-browser/lib/playbook.js";
+import { BROWSER_GUIDANCE, WEB_SEARCH_GUIDANCE } from "../extensions/agent-browser/lib/playbook.js";
 import {
 	readInvocationLog,
 	withPatchedEnv,
@@ -401,6 +403,30 @@ for (const webSearch of ["absent", "env", "config"] as const) {
 				[],
 				"guidance reaches the model on the first request without discovery",
 			);
+			const rulesMatch = /<rules>\n([\s\S]*?)\n<\/rules>/u.exec(firstRequest.prompt);
+			const browserSectionMatch = /<agent_browser>\n([\s\S]*?)\n<\/agent_browser>/u.exec(
+				firstRequest.prompt,
+			);
+			assert.ok(rulesMatch?.[1] !== undefined, "system prompt should include <rules>");
+			assert.ok(
+				browserSectionMatch?.[1] !== undefined,
+				"declared agent_browser should emit <agent_browser>",
+			);
+			assert.deepEqual(
+				BROWSER_GUIDANCE.filter((line) => rulesMatch[1]?.includes(line) === true),
+				[],
+				"declared agent_browser must not duplicate BROWSER_GUIDANCE into <rules>",
+			);
+			assert.equal(
+				browserSectionMatch[1].includes(WEB_SEARCH_GUIDANCE),
+				false,
+				"WEB_SEARCH_GUIDANCE must not be duplicated inside <agent_browser>",
+			);
+			assert.equal(
+				rulesMatch[1].includes(WEB_SEARCH_GUIDANCE),
+				webSearch !== "absent",
+				"agent_browser_web_search contributes WEB_SEARCH_GUIDANCE via <rules>",
+			);
 			assert.ok(firstRequest.names.includes("agent_browser"));
 			assert.ok(
 				firstRequest.names.includes("tool_search"),
@@ -435,6 +461,239 @@ for (const webSearch of ["absent", "env", "config"] as const) {
 		},
 	);
 }
+
+type PromptObservation = {
+	readonly prompt: string;
+	readonly tools: readonly { readonly name: string; readonly description: string }[];
+};
+
+async function runPromptObservationSession(options: {
+	readonly extensionFactories: readonly ExtensionFactory[];
+	readonly env?: Readonly<Record<string, string | undefined>>;
+	readonly tools?: readonly string[];
+	readonly defaultTools?: readonly string[];
+	readonly setupDir?: (tempDir: string) => Promise<void>;
+	readonly respond: (
+		requestIndex: number,
+		observation: PromptObservation,
+		context: Parameters<FauxResponseFactory>[0],
+		streamOptions: Parameters<FauxResponseFactory>[1],
+		state: Parameters<FauxResponseFactory>[2],
+		model: Parameters<FauxResponseFactory>[3],
+	) => ReturnType<FauxResponseFactory>;
+}): Promise<readonly PromptObservation[]> {
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-prompt-gate-"));
+	const observations: PromptObservation[] = [];
+	try {
+		await options.setupDir?.(tempDir);
+		await withPatchedEnv(
+			{
+				HOME: join(tempDir, "home"),
+				PI_AGENT_BROWSER_CONFIG: undefined,
+				EXA_API_KEY: undefined,
+				BRAVE_API_KEY: undefined,
+				...options.env,
+			},
+			async () => {
+				const modelRuntime = await ModelRuntime.create({
+					allowModelNetwork: false,
+					credentials: new InMemoryCredentialStore(),
+					modelsPath: null,
+				});
+				let requestIndex = 0;
+				const model = registerPipelineProvider(
+					modelRuntime,
+					{},
+					undefined,
+					undefined,
+					(context, streamOptions, state, currentModel) => {
+						requestIndex++;
+						const observation: PromptObservation = {
+							prompt: getCurrentSystemPrompt(context.messages),
+							tools: getCurrentTools(context.messages).map((tool) => ({
+								name: tool.name,
+								description: tool.description,
+							})),
+						};
+						observations.push(observation);
+						return options.respond(
+							requestIndex,
+							observation,
+							context,
+							streamOptions,
+							state,
+							currentModel,
+						);
+					},
+				);
+				const resourceLoader = new DefaultResourceLoader({
+					agentDir: tempDir,
+					cwd: tempDir,
+					extensionFactories: [...options.extensionFactories],
+					noContextFiles: true,
+					noExtensions: true,
+					noPromptTemplates: true,
+					noSkills: true,
+					noThemes: true,
+				});
+				await resourceLoader.reload();
+				assert.deepEqual(resourceLoader.getExtensions().errors, []);
+				const { session } = await createAgentSession({
+					cwd: tempDir,
+					model,
+					modelRuntime,
+					...(options.defaultTools === undefined ? { noTools: "builtin" } : {}),
+					settingsManager: SettingsManager.inMemory(
+						options.defaultTools ? { defaultTools: [...options.defaultTools] } : {},
+					),
+					resourceLoader,
+					sessionManager: SessionManager.inMemory(tempDir),
+					...(options.tools ? { tools: [...options.tools] } : {}),
+				});
+				try {
+					await session.bindExtensions({
+						onError: (error) => {
+							throw new Error(error.error);
+						},
+					});
+					await session.prompt("Inspect prompt layout.");
+				} finally {
+					session.dispose();
+				}
+			},
+		);
+		return observations;
+	} finally {
+		await rm(tempDir, { force: true, recursive: true });
+	}
+}
+
+nodeTest(
+	"Pi pipeline web-search-only session emits WEB_SEARCH_GUIDANCE in <rules> with zero <agent_browser>",
+	async () => {
+		const observations = await runPromptObservationSession({
+			env: { BRAVE_API_KEY: "test-only-key" },
+			tools: ["agent_browser_web_search"],
+			extensionFactories: [agentBrowserExtension],
+			respond: () => fauxAssistantMessage("Search-only session checked."),
+		});
+		assert.equal(observations.length, 1);
+		const first = readDefined(observations[0]);
+		assert.deepEqual(
+			first.tools.map((tool) => tool.name),
+			["agent_browser_web_search"],
+		);
+		assert.doesNotMatch(first.prompt, /<agent_browser>/u);
+		assert.deepEqual(
+			BROWSER_GUIDANCE.filter((line) => first.prompt.includes(line)),
+			[],
+			"web-search-only session omits browser guidance",
+		);
+		const rules = readDefined(/<rules>\n([\s\S]*?)\n<\/rules>/u.exec(first.prompt)?.[1]);
+		assert.ok(rules.includes(WEB_SEARCH_GUIDANCE));
+	},
+);
+
+nodeTest(
+	"Pi pipeline deferred agent_browser omits turn-1 guidance and injects live rules after tool_search",
+	async () => {
+		const deferBrowserExtension: ExtensionFactory = (pi) => {
+			const deferredPi: ExtensionAPI = {
+				...pi,
+				registerTool(tool) {
+					pi.registerTool(tool.name === "agent_browser" ? { ...tool, exposure: "deferred" } : tool);
+				},
+			};
+			agentBrowserExtension(deferredPi);
+		};
+		const observations = await runPromptObservationSession({
+			extensionFactories: [createToolSearchExtension(), deferBrowserExtension],
+			async setupDir(tempDir) {
+				const configDir = join(tempDir, ".pi/config/pi-agent-browser-native");
+				await mkdir(configDir, { recursive: true });
+				await writeFile(
+					join(configDir, "config.json"),
+					JSON.stringify({
+						version: 1,
+						browser: {
+							executablePath: "/tmp/deferred-browser",
+							defaultProfile: { name: "Deferred Profile", policy: "always" },
+						},
+					}),
+				);
+			},
+			respond(requestIndex) {
+				if (requestIndex === 1) {
+					return fauxAssistantMessage(
+						[
+							fauxToolCall(
+								"tool_search",
+								{ query: "agent_browser", limit: 1 },
+								{ id: "call_load_browser" },
+							),
+						],
+						{ stopReason: "toolUse" },
+					);
+				}
+				return fauxAssistantMessage("Loaded deferred agent_browser.");
+			},
+		});
+		assert.equal(observations.length, 2);
+		const turn1 = readDefined(observations[0]);
+		assert.ok(turn1.tools.some((tool) => tool.name === "tool_search"));
+		assert.ok(!turn1.tools.some((tool) => tool.name === "agent_browser"));
+		assert.doesNotMatch(turn1.prompt, /<agent_browser>/u);
+		assert.deepEqual(
+			BROWSER_GUIDANCE.filter((line) => turn1.prompt.includes(line)),
+			[],
+			"turn 1 omits browser guidance while agent_browser is deferred",
+		);
+		assert.ok(!turn1.prompt.includes("/tmp/deferred-browser"));
+		assert.ok(!turn1.prompt.includes("Deferred Profile"));
+
+		const turn2 = readDefined(observations[1]);
+		assert.ok(turn2.tools.some((tool) => tool.name === "agent_browser"));
+		assert.doesNotMatch(turn2.prompt, /<agent_browser>/u);
+		const turn2Rules = readDefined(/<rules>\n([\s\S]*?)\n<\/rules>/u.exec(turn2.prompt)?.[1]);
+		assert.deepEqual(
+			BROWSER_GUIDANCE.filter((line) => !turn2Rules.includes(line)),
+			[],
+			"turn 2 injects full BROWSER_GUIDANCE into <rules> after tool_search",
+		);
+		assert.ok(turn2Rules.includes("/tmp/deferred-browser"));
+		assert.ok(turn2Rules.includes("Deferred Profile"));
+		assert.ok(turn2Rules.includes("COMMAND_REFERENCE.md"));
+	},
+);
+
+nodeTest(
+	"Pi pipeline codemode-only hides agent_browser from prompt while surfacing BROWSER_GUIDANCE",
+	async () => {
+		const observations = await runPromptObservationSession({
+			defaultTools: ["codemode", "agent_browser"],
+			extensionFactories: [
+				createCodemodeExtension({ mode: "only", inlineBudget: 50_000 }),
+				agentBrowserExtension,
+			],
+			respond: () => fauxAssistantMessage("Codemode-only session checked."),
+		});
+		assert.equal(observations.length, 1);
+		const first = readDefined(observations[0]);
+		assert.ok(!first.tools.some((tool) => tool.name === "agent_browser"));
+		assert.doesNotMatch(first.prompt, /<agent_browser>/u);
+		assert.deepEqual(
+			BROWSER_GUIDANCE.filter((line) => first.prompt.includes(line)),
+			[],
+			"hidden agent_browser emits no <agent_browser> or <rules> browser guidance",
+		);
+		const codemodeTool = readDefined(first.tools.find((tool) => tool.name === "codemode"));
+		assert.deepEqual(
+			BROWSER_GUIDANCE.filter((line) => !codemodeTool.description.includes(line)),
+			[],
+			"codemode surfaces BROWSER_GUIDANCE via agent_browser.promptGuidelines",
+		);
+	},
+);
 
 nodeTest(
 	"Pi pipeline captures the owner cwd before an awaited browser policy without moving native ctx",

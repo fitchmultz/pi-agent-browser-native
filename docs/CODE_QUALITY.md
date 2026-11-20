@@ -148,11 +148,11 @@ next-line attachment, and exactly five parameters. A sixth parameter is rejected
 Compiler checks retain the parameter and return relationships. All other functions
 retain their profile's parameter limit.
 
-### QX-003: Pi's additive prompt section
+### QX-003: Pi's additive prompt section and tool guidelines
 
 Pi explicitly exposes mutable `before_agent_start.systemPromptOptions`. The browser
-sets only `sections.agent_browser`. Later handlers and Pi's prompt-delta machinery
-observe the same options object.
+sets only `sections.agent_browser` and `toolGuidelines.agent_browser`. Later handlers
+and Pi's prompt-delta machinery observe the same options object.
 
 Official [runner.ts, lines 1427–1476](https://github.com/earendil-works/pi/blob/v1.5.0/packages/coding-agent/src/core/extensions/runner.ts#L1427-L1476)
 and fork [runner.ts, lines 1684–1733](https://github.com/fitchmultz/pi/blob/e6c04cb27845611fb0be62652b7e03e2fc4caf74/packages/coding-agent/src/core/extensions/runner.ts#L1684-L1733)
@@ -170,11 +170,13 @@ It forces the complete prompt instead of a named section, changing prompt replay
 cache behavior, and composition with later handlers. Mutating a copied event is
 invisible to Pi. `Object.assign`, an alias, or reflection merely hides the same mutation.
 
-One next-line `no-param-reassign` directive is authorized for
+Next-line `no-param-reassign` directives are authorized only for
 `BrowserPrompt.register`'s `before_agent_start` callback assigning
-`event.systemPromptOptions.sections.agent_browser`. The parser checks that assignment
-and event registration. Other properties, callbacks, and mutation rules remain checked.
-Prompt composition and managed/unmanaged instruction behavior retain their runtime tests.
+`event.systemPromptOptions.sections.agent_browser` or
+`event.systemPromptOptions.toolGuidelines.agent_browser`. The parser checks each
+assignment target and event registration. Writes to any other section or tool key,
+other callbacks, and mutation rules remain checked. Prompt composition and
+managed/unmanaged instruction behavior retain their runtime tests.
 
 ### QX-004: Credential command redaction
 
