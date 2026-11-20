@@ -33,9 +33,7 @@ function getBatchFailure(
 
 function countUnverifiedMutations(steps: readonly BatchStepPresentationObservation[]): number {
 	return steps.filter(
-		(step) =>
-			step.pageChangeSummary?.changeType === "mutation" &&
-			!step.pageChangeSummary.observed,
+		(step) => step.pageChangeSummary?.changeType === "mutation" && !step.pageChangeSummary.observed,
 	).length;
 }
 
