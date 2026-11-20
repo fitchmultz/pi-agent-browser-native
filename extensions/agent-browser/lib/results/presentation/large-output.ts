@@ -12,6 +12,7 @@ import type {
 } from "../contracts.js";
 import { countLines, stringifyUnknown, truncateText } from "../text.js";
 import { applyArtifactManifest } from "./artifacts.js";
+import { formatBatchMutationEvidenceText } from "./batch-summary.js";
 import { getPresentationText, getReadContentPointer } from "./content.js";
 import type {
 	BatchStepPresentationObservation,
@@ -189,8 +190,18 @@ function buildBatchLargeOutputPreview(
 	if (substantiveSteps.length === 0) {
 		return buildLargeOutputPreview(text);
 	}
+	const mutationEvidenceText = formatBatchMutationEvidenceText(batchSteps);
+	const initialBudget: PreviewBudget =
+		mutationEvidenceText !== undefined
+			? appendBoundedStepLines(
+					{ chars: 0, lines: [] },
+					[mutationEvidenceText],
+					1,
+					PREVIEW_LINE_MAX_CHARS,
+				)
+			: { chars: 0, lines: [] };
 	const routineSteps = batchSteps.filter((step) => !isSubstantiveBatchStep(step));
-	const afterSubstantive = appendBatchPreviewGroup({ chars: 0, lines: [] }, substantiveSteps, true);
+	const afterSubstantive = appendBatchPreviewGroup(initialBudget, substantiveSteps, true);
 	const finalBudget = appendBatchPreviewGroup(afterSubstantive, routineSteps, false);
 	return {
 		omittedLineCount: Math.max(0, countLines(text) - finalBudget.lines.length),

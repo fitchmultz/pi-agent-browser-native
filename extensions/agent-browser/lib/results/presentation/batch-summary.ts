@@ -4,6 +4,7 @@ import type { AgentBrowserBatchResult, AgentBrowserPageChangeSummary } from "../
 import type {
 	BatchFailurePresentationObservation,
 	BatchPresentedStepObservation,
+	BatchStepPresentationObservation,
 } from "./observation-contracts.js";
 import { formatBatchStepsText } from "./batch-rendering.js";
 import { buildPageChangeSummary } from "./navigation.js";
@@ -30,12 +31,21 @@ function getBatchFailure(
 		: undefined;
 }
 
-function countUnverifiedMutations(steps: readonly BatchPresentedStepObservation[]): number {
+function countUnverifiedMutations(steps: readonly BatchStepPresentationObservation[]): number {
 	return steps.filter(
 		(step) =>
-			step.details.pageChangeSummary?.changeType === "mutation" &&
-			!step.details.pageChangeSummary.observed,
+			step.pageChangeSummary?.changeType === "mutation" &&
+			!step.pageChangeSummary.observed,
 	).length;
+}
+
+export function formatBatchMutationEvidenceText(
+	steps: readonly BatchStepPresentationObservation[],
+): string | undefined {
+	const mutations = countUnverifiedMutations(steps);
+	return mutations > 0
+		? `Mutation evidence: ${mutations} action result${mutations === 1 ? " proves" : "s prove"} dispatch only, not application state change. Use explicit later assertions or external receipts as postconditions; fixed waits are not postconditions.`
+		: undefined;
 }
 
 export function summarizeBatchStatus(
@@ -46,7 +56,6 @@ export function summarizeBatchStatus(
 	const summary = failure
 		? `Batch failed: ${failure.successCount}/${failure.totalCount} succeeded`
 		: requestedSummary;
-	const mutations = countUnverifiedMutations(steps);
 	return {
 		failure,
 		summary,
@@ -59,10 +68,7 @@ export function summarizeBatchStatus(
 						: "See the per-step results below.",
 				].join("\n")
 			: undefined,
-		mutationEvidenceText:
-			mutations > 0
-				? `Mutation evidence: ${mutations} action result${mutations === 1 ? " proves" : "s prove"} dispatch only, not application state change. Use explicit later assertions or external receipts as postconditions; fixed waits are not postconditions.`
-				: undefined,
+		mutationEvidenceText: formatBatchMutationEvidenceText(steps.map((step) => step.details)),
 	};
 }
 
@@ -135,6 +141,9 @@ export function buildBatchPageChangeSummary(
 		command: "batch",
 		nextActionIds: nextActions?.map((action) => action.id),
 		observed: observed > 0,
-		summary: formatBatchChangeText(observed, countUnverifiedMutations(steps)),
+		summary: formatBatchChangeText(
+			observed,
+			countUnverifiedMutations(steps.map((step) => step.details)),
+		),
 	};
 }

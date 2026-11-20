@@ -2011,6 +2011,10 @@ nodeTest(
 
 		const text = readString(readRecord(presentation.content[0]).text);
 		assert.match(text, /Large batch output compacted/);
+		assert.match(
+			text,
+			/Mutation evidence: 45 action results prove dispatch only, not application state change\. Use explicit later assertions or external receipts as postconditions; fixed waits are not postconditions\./,
+		);
 		assert.match(text, /eval-token-visible-in-preview/);
 		assert.match(text, /Checkout succeeded/);
 		assert.match(text, /TypeError: chart undefined/);
