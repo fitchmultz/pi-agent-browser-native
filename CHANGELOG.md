@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.40 - 2026-11-20
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- feat(results): hoist shared batch lifecycle, prioritize eval previews, and add frame recovery (#444) ([5131417](https://github.com/fitchmultz/pi-agent-browser-native/commit/5131417e2289b5c455a03014e8bd9cc0d4f5cf7a))
+
+### What's Changed
+
+- feat(results): hoist shared batch lifecycle, prioritize eval previews, and add frame recovery by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/444
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.39...v0.9.40
+
 ## 0.9.39 - 2026-11-20
 
 <!-- npm-release:unreleased:start -->
