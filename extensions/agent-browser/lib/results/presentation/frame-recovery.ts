@@ -21,9 +21,9 @@ const NON_FRAME_FAILURE_CATEGORIES = new Set<AgentBrowserFailureCategory>([
 ]);
 
 const FRAME_SELECTOR_HINT = [
-	"Agent-browser frame hint: `frame <selector>` requires a CSS selector matching an `<iframe>` in the current frame context and can fail if you are already inside a child frame, the iframe is cross-origin or detached, or the selector does not match.",
+	"Agent-browser frame hint: `frame <selector|@ref>` targets an `<iframe>` in the current frame context by CSS selector or current `@e…` ref and can fail if you are already inside a child frame, the iframe is cross-origin or detached, or the selector/ref does not match.",
 	"Note that `snapshot -i` already includes interactive `@e…` refs inside accessible and cross-origin frames when present, so switching frames may not be required.",
-	"Run `frame main` to reset to the top-level document, inspect current refs with `snapshot -i`, or list `<iframe>` elements with `eval --stdin` before retrying `frame <selector>`.",
+	"Run `frame main` to reset to the top-level document, inspect current refs with `snapshot -i`, or list `<iframe>` elements with `eval --stdin` before retrying `frame <selector|@ref>`.",
 ].join(" ");
 
 const FRAME_MAIN_HINT = [

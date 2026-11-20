@@ -1954,6 +1954,31 @@ nodeTest(
 		assert.equal(readRecord(readDefined(obsRows[0]).result).lifecycle, undefined);
 		assert.deepEqual(readRecord(readDefined(obsRows[1]).result).lifecycle, closedLifecycle);
 		assert.equal(readRecord(readDefined(obsRows[2]).result).lifecycle, undefined);
+
+		// Also verify projection hoists and strips raw uncompacted array rows directly.
+		const rawObservation = projectAgentBrowserObservation(
+			{
+				data: [
+					{
+						command: ["open", "https://example.com"],
+						result: { lifecycle: reusedLifecycle, url: "https://example.com" },
+						success: true,
+					},
+					{ command: ["click", "@e1"], result: { lifecycle: closedLifecycle }, success: true },
+					{
+						command: ["get", "title"],
+						result: { lifecycle: reusedLifecycle, value: "Example" },
+						success: true,
+					},
+				],
+			},
+			false,
+		);
+		assert.deepEqual(rawObservation.batchLifecycle, reusedLifecycle);
+		const rawObsRows = readArray(rawObservation.data).map(readRecord);
+		assert.equal(readRecord(readDefined(rawObsRows[0]).result).lifecycle, undefined);
+		assert.deepEqual(readRecord(readDefined(rawObsRows[1]).result).lifecycle, closedLifecycle);
+		assert.equal(readRecord(readDefined(rawObsRows[2]).result).lifecycle, undefined);
 	},
 );
 

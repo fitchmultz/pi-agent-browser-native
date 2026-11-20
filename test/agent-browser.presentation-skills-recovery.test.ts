@@ -748,6 +748,17 @@ nodeTest(
 			readString(readRecord(wedgedFailure.content[0]).text),
 			/Agent-browser frame hint:/,
 		);
+
+		const refFailure = await buildToolPresentation({
+			args: ["--session", "work", "frame", "@e7"],
+			commandInfo: { command: "frame", subcommand: "@e7" },
+			cwd: process.cwd(),
+			errorText: "Unknown ref: e7",
+			sessionName: "work",
+		});
+		const refText = readString(readRecord(refFailure.content[0]).text);
+		assert.match(refText, /CSS selector or current `@e…` ref/);
+		assert.doesNotMatch(refText, /requires a CSS selector/);
 	},
 );
 

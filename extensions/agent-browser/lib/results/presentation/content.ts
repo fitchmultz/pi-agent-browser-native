@@ -112,11 +112,11 @@ function normalizeObservationData(
 	data: unknown,
 	batchLifecycle: unknown,
 ): { readonly batchLifecycle?: unknown; readonly data: unknown } {
-	if (isRecord(data)) {
-		return { batchLifecycle, data: omitUpstreamLifecycle(data) };
-	}
 	if (Array.isArray(data)) {
 		return compactBatchResultLifecycle(data, batchLifecycle);
+	}
+	if (isRecord(data)) {
+		return { batchLifecycle, data: omitUpstreamLifecycle(data) };
 	}
 	return { batchLifecycle, data };
 }
