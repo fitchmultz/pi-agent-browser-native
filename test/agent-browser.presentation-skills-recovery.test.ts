@@ -649,6 +649,52 @@ nodeTest(
 			readDefined(readDefined(presentation.nextActions)[2]).params?.stdin ?? "",
 			/document\.querySelectorAll\('iframe'\)/,
 		);
+
+		const namespaced = await buildToolPresentation({
+			args: ["--namespace", "ns1", "--session", "work", "frame", "#missing-iframe"],
+			commandInfo: { command: "frame", subcommand: "#missing-iframe" },
+			cwd: process.cwd(),
+			errorText: "Frame not found: #missing-iframe",
+			namespace: "ns1",
+			sessionName: "work",
+		});
+		assert.deepEqual(
+			namespaced.nextActions?.map((action) => ({
+				args: action.params?.args,
+				id: action.id,
+			})),
+			[
+				{
+					args: ["--namespace", "ns1", "--session", "work", "frame", "main"],
+					id: "switch-to-main-frame",
+				},
+				{
+					args: ["--namespace", "ns1", "--session", "work", "snapshot", "-i"],
+					id: "inspect-frames-with-snapshot",
+				},
+				{
+					args: ["--namespace", "ns1", "--session", "work", "eval", "--stdin"],
+					id: "list-document-iframes",
+				},
+			],
+		);
+
+		const defaultNamespace = await buildToolPresentation({
+			args: ["--namespace", "", "--session", "work", "frame", "#missing-iframe"],
+			commandInfo: { command: "frame", subcommand: "#missing-iframe" },
+			cwd: process.cwd(),
+			errorText: "Frame not found: #missing-iframe",
+			namespace: "",
+			sessionName: "work",
+		});
+		assert.deepEqual(
+			defaultNamespace.nextActions?.map((action) => action.params?.args),
+			[
+				["--namespace", "", "--session", "work", "frame", "main"],
+				["--namespace", "", "--session", "work", "snapshot", "-i"],
+				["--namespace", "", "--session", "work", "eval", "--stdin"],
+			],
+		);
 	},
 );
 

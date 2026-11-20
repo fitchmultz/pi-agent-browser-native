@@ -450,20 +450,21 @@ function buildErrorPresentationNextActions(
 		readonly frameFailureRecovery: ReturnType<typeof buildFrameFailureRecovery>;
 		readonly unknownCommandSuggestion: UnknownCommandSuggestion | undefined;
 	},
-): AgentBrowserNextAction[] | undefined {
-	const suggestionActions =
-		buildUnknownCommandSuggestionActions(
+): readonly AgentBrowserNextAction[] | undefined {
+	const specialized =
+		options.browserProfileConfigRecovery?.actions ?? options.frameFailureRecovery?.actions;
+	const hasSpecialized =
+		options.browserProfileConfigRecovery !== undefined ||
+		options.frameFailureRecovery !== undefined;
+	const combined = [
+		...(buildUnknownCommandSuggestionActions(
 			options.unknownCommandSuggestion,
 			options.commandTail,
 			options.sessionName,
-		) ?? [];
-	const specializedActions =
-		options.browserProfileConfigRecovery?.actions ?? options.frameFailureRecovery?.actions;
-	const hasSpecializedRecovery =
-		options.browserProfileConfigRecovery !== undefined ||
-		options.frameFailureRecovery !== undefined;
-	const fallbackActions = hasSpecializedRecovery ? [] : buildGenericErrorFallbackActions(options);
-	const combined = [...suggestionActions, ...(specializedActions ?? []), ...fallbackActions];
+		) ?? []),
+		...(specialized ?? []),
+		...(hasSpecialized ? [] : buildGenericErrorFallbackActions(options)),
+	];
 	return combined.length > 0 ? combined : undefined;
 }
 
@@ -513,23 +514,22 @@ export function buildErrorPresentation(options: {
 	const finalErrorText = frameFailureRecovery
 		? `${hintedErrorText}\n\n${frameFailureRecovery.hint}`
 		: hintedErrorText;
-	const nextActions = buildErrorPresentationNextActions({
-		args,
-		browserProfileConfigRecovery,
-		commandInfo,
-		commandTail,
-		errorData,
-		failureCategory: categoryDetails.failureCategory,
-		frameFailureRecovery,
-		presentationCommand,
-		safeErrorText,
-		sessionName,
-		unknownCommandSuggestion,
-	});
 	return {
 		...categoryDetails,
 		content: [{ type: "text", text: finalErrorText }],
-		nextActions,
+		nextActions: buildErrorPresentationNextActions({
+			args,
+			browserProfileConfigRecovery,
+			commandInfo,
+			commandTail,
+			errorData,
+			failureCategory: categoryDetails.failureCategory,
+			frameFailureRecovery,
+			presentationCommand,
+			safeErrorText,
+			sessionName,
+			unknownCommandSuggestion,
+		}),
 		summary: finalErrorText,
 	};
 }

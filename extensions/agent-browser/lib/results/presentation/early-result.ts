@@ -1,5 +1,6 @@
 import type { CommandInfo } from "../../argv-descriptor.js";
 import type { ToolPresentation } from "../contracts.js";
+import { applyNamespaceToNextActions } from "../next-actions.js";
 import { isAgentBrowserBatchResultArray } from "./batch.js";
 import { redactModelFacingText } from "./common.js";
 import { redactPresentationData } from "./diagnostics.js";
@@ -49,6 +50,7 @@ async function buildNativeTextPresentation(
 		...failure,
 		content: [{ type: "text", text: [options.errorText, text].filter(Boolean).join("\n\n") }],
 		data: text,
+		nextActions: applyNamespaceToNextActions(failure?.nextActions, options.namespace),
 		summary: failure?.summary ?? getNativeTextSummary(text),
 	};
 	Object.assign(
@@ -90,16 +92,18 @@ export async function buildEarlyPresentation(
 		options.commandInfo.command !== "record" &&
 		!isRecordingBatchEnvelope(options)
 	) {
+		const failure = buildErrorPresentation({
+			args: options.args,
+			commandInfo: options.commandInfo,
+			errorData: envelopeData,
+			errorText: options.errorText,
+			presentationCommand: commands.presentationCommandInfo.command,
+			sessionName: options.sessionName,
+		});
 		return {
-			...buildErrorPresentation({
-				args: options.args,
-				commandInfo: options.commandInfo,
-				errorData: envelopeData,
-				errorText: options.errorText,
-				presentationCommand: commands.presentationCommandInfo.command,
-				sessionName: options.sessionName,
-			}),
+			...failure,
 			data: redactPresentationData(commands.commandInfo, envelopeData),
+			nextActions: applyNamespaceToNextActions(failure.nextActions, options.namespace),
 		};
 	}
 	return undefined;
