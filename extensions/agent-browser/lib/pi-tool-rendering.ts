@@ -373,7 +373,7 @@ function buildResultFormatKey(
 	];
 }
 
-export class AgentBrowserResultComponent {
+export class AgentBrowserResultComponent implements Component {
 	private expanded = false;
 	private expandContext: AgentBrowserResultRenderContext | undefined;
 	private theme: Theme | undefined;
@@ -414,7 +414,7 @@ export class AgentBrowserResultComponent {
 		this.theme = theme;
 	}
 
-	render(width: number): ReturnType<Component["render"]> {
+	render(width: number): readonly string[] {
 		const lines = this.text.render(width);
 		if (this.expanded || lines.length <= TUI_COLLAPSED_OUTPUT_MAX_LINES) {
 			return lines;
