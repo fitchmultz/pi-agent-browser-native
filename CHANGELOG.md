@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.41 - 2026-11-20
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- chore: raise Pi floor to 1.6.0 and clear minimatch advisory (PEA-222) (#445) ([be4a071](https://github.com/fitchmultz/pi-agent-browser-native/commit/be4a0714a4311037d8dbac16dde90a73c25ba378))
+
+### What's Changed
+
+- chore: bump Pi floor to 1.6.0 and clear minimatch advisory (PEA-222) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/445
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.40...v0.9.41
+
 ## 0.9.40 - 2026-11-20
 
 <!-- npm-release:unreleased:start -->
