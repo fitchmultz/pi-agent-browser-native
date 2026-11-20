@@ -21,6 +21,7 @@ import { execPath as nodeExecPath, platform as processPlatform } from "node:proc
 import type {
 	ExtensionAPI,
 	KeybindingHints,
+	NormalizedBuildSystemPromptOptions,
 	Theme,
 	ToolDefinition,
 	ToolInfo,
@@ -913,16 +914,44 @@ export async function runExtensionEvent(
 	}
 }
 
-export async function getBrowserInstructions(harness: {
-	readonly handlers: ReadonlyMap<string, readonly HarnessHandler[]>;
-	readonly ctx: unknown;
-}): Promise<string> {
-	const event: {
-		prompt: string;
-		systemPromptOptions: { sections: Partial<Record<string, string>> };
-	} = {
+export function createNormalizedSystemPromptOptions(
+	overrides: Partial<NormalizedBuildSystemPromptOptions> = {},
+): NormalizedBuildSystemPromptOptions {
+	return {
+		cwd: overrides.cwd ?? process.cwd(),
+		selectedTools: overrides.selectedTools ? [...overrides.selectedTools] : ["agent_browser"],
+		hiddenTools: overrides.hiddenTools ? [...overrides.hiddenTools] : [],
+		toolSnippets: { ...overrides.toolSnippets },
+		toolGuidelines: Object.fromEntries(
+			Object.entries(overrides.toolGuidelines ?? {}).map(([name, lines]) => [name, [...lines]]),
+		),
+		promptGuidelines: overrides.promptGuidelines ? [...overrides.promptGuidelines] : [],
+		appendSystemPrompt: overrides.appendSystemPrompt ?? "",
+		sections: { ...overrides.sections },
+		contextFiles: overrides.contextFiles ? overrides.contextFiles.map((file) => ({ ...file })) : [],
+		skills: overrides.skills ? overrides.skills.map((skill) => ({ ...skill })) : [],
+		...(overrides.customPrompt === undefined ? {} : { customPrompt: overrides.customPrompt }),
+		...(overrides.forceSystemPrompt === undefined
+			? {}
+			: { forceSystemPrompt: overrides.forceSystemPrompt }),
+	};
+}
+
+export async function getBrowserInstructions(
+	harness: {
+		readonly handlers: ReadonlyMap<string, readonly HarnessHandler[]>;
+		readonly ctx: unknown;
+		readonly getActiveTools?: () => string[];
+	},
+	options?: Partial<NormalizedBuildSystemPromptOptions>,
+): Promise<string> {
+	const selectedTools = options?.selectedTools ?? harness.getActiveTools?.() ?? ["agent_browser"];
+	const event = {
 		prompt: "Please continue.",
-		systemPromptOptions: { sections: {} },
+		systemPromptOptions: createNormalizedSystemPromptOptions({
+			...options,
+			selectedTools,
+		}),
 	};
 	await runExtensionEvent(harness.handlers, "before_agent_start", event, harness.ctx);
 	return event.systemPromptOptions.sections.agent_browser ?? "";

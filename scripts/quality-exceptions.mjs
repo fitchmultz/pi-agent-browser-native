@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 
 const lib = "extensions/agent-browser/lib/";
+const PROMPT_TARGETS = new Map([
+	[
+		"event.systemPromptOptions.sections.agent_browser",
+		"BrowserPrompt/register/before_agent_start/sections.agent_browser",
+	],
+	[
+		"event.systemPromptOptions.toolGuidelines.agent_browser",
+		"BrowserPrompt/register/before_agent_start/toolGuidelines.agent_browser",
+	],
+]);
 const toolSites = [
 	["registerActionTool", "AGENT_BROWSER_ACTION_PARAMS"],
 	["registerQaTool", "AGENT_BROWSER_QA_PARAMS"],
@@ -201,6 +211,39 @@ function promptRegistrationBody(program) {
 	return method.value.body.body;
 }
 
+/** @param {readonly import("oxc-parser").Statement[]} statements
+ * @returns {import("oxc-parser").Statement[]} */
+function collectPromptStatements(statements) {
+	/** @type {import("oxc-parser").Statement[]} */
+	const collected = [];
+	for (const statement of statements) {
+		if (statement.type === "BlockStatement") {
+			collected.push(...collectPromptStatements(statement.body));
+		} else if (statement.type === "IfStatement") {
+			collected.push(...collectPromptStatements([statement.consequent]));
+			if (statement.alternate) {
+				collected.push(...collectPromptStatements([statement.alternate]));
+			}
+		} else {
+			collected.push(statement);
+		}
+	}
+	return collected;
+}
+
+/** @param {import("oxc-parser").Statement} statement */
+function promptAssignmentTarget(statement) {
+	if (
+		statement.type !== "ExpressionStatement" ||
+		statement.expression.type !== "AssignmentExpression" ||
+		statement.expression.operator !== "=" ||
+		statement.expression.left.type !== "MemberExpression"
+	) {
+		return null;
+	}
+	return memberName(statement.expression.left);
+}
+
 /** @param {Program} program
  * @returns {Site[]} */
 function promptSites(program) {
@@ -212,26 +255,28 @@ function promptSites(program) {
 	assert.ok(
 		callback?.type === "ArrowFunctionExpression" && callback.body.type === "BlockStatement",
 	);
-	const statement = callback.body.body[0];
-	assert.ok(
-		statement?.type === "ExpressionStatement" &&
-			statement.expression.type === "AssignmentExpression",
-	);
-	const assignment = statement.expression;
-	assert.ok(
-		assignment.left.type === "MemberExpression" &&
-			memberName(assignment.left) === "event.systemPromptOptions.sections.agent_browser" &&
-			assignment.operator === "=",
-	);
-	return [
-		{
+	/** @type {Map<string, number>} */
+	const seen = new Map();
+	/** @type {Site[]} */
+	const sites = [];
+	for (const statement of collectPromptStatements(callback.body.body)) {
+		const target = promptAssignmentTarget(statement);
+		const baseOperation = target === null ? undefined : PROMPT_TARGETS.get(target);
+		if (target === null || baseOperation === undefined) {
+			continue;
+		}
+		const count = (seen.get(target) ?? 0) + 1;
+		seen.set(target, count);
+		sites.push({
 			start: statement.start,
 			end: statement.end,
 			rule: "no-param-reassign",
 			id: "QX-003",
-			operation: "BrowserPrompt/register/before_agent_start/sections.agent_browser",
-		},
-	];
+			operation: count === 1 ? baseOperation : `${baseOperation}#${count}`,
+		});
+	}
+	assert.ok(sites.length > 0, "Missing authorized prompt assignment");
+	return sites;
 }
 
 /** @param {Program} program

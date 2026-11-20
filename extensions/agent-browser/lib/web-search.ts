@@ -7,6 +7,7 @@ import {
 } from "./native-output.js";
 import { redactSensitiveText } from "./runtime.js";
 import { isRecord } from "./parsing.js";
+import { WEB_SEARCH_GUIDANCE } from "./playbook.js";
 import { isStringArray } from "./results/presentation/content.js";
 import { redactPresentationData } from "./results/presentation/diagnostic-redaction.js";
 import {
@@ -82,6 +83,7 @@ type WebSearchTool = {
 	readonly label: string;
 	readonly description: string;
 	readonly promptSnippet: string;
+	readonly promptGuidelines: string[];
 	readonly parameters: TSchema;
 	// oxlint-disable-next-line max-params -- QX-002: Standalone search preserves Pi's five-position execute contract.
 	readonly execute: (
@@ -270,6 +272,7 @@ export function createAgentBrowserWebSearchTool(
 		label: "Agent Browser Web Search",
 		description: `Search the live web with Exa or Brave for current or external information; returns up to ${MAX_SEARCH_RESULT_COUNT} concise results. For research, use Exa searchType deep-lite or deeper.`,
 		promptSnippet: "Search the live web with Exa or Brave for current or external information.",
+		promptGuidelines: [WEB_SEARCH_GUIDANCE],
 		parameters: AgentBrowserWebSearchParams,
 		// oxlint-disable-next-line max-params -- QX-002: Pi passes context in execute position five.
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
