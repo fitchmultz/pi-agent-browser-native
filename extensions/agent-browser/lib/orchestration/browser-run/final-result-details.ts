@@ -93,6 +93,7 @@ function nativeObservationDetails(
 	const envelope = options.presentationEnvelope;
 	return {
 		batchFailure: options.presentation.batchFailure,
+		batchLifecycle: options.presentation.batchLifecycle,
 		batchSteps: options.presentation.batchSteps,
 		code: nonEmptyEnvelopeString(options.plainTextInspection, envelope?.code),
 		command: options.executionPlan.commandInfo.command,

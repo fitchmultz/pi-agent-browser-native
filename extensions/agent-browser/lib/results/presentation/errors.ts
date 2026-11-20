@@ -3,6 +3,7 @@ import { isRecord } from "../../parsing.js";
 import { extractUpstreamCommandTokens, type CommandInfo } from "../../argv-descriptor.js";
 import { redactSensitiveText } from "../../runtime-redaction.js";
 import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.js";
+import { buildFrameFailureRecovery } from "./frame-recovery.js";
 import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
 import {
@@ -409,6 +410,64 @@ function buildHintedErrorText(
 		.join("\n\n");
 }
 
+interface ErrorActionContext {
+	readonly args?: readonly string[] | undefined;
+	readonly commandInfo: CommandInfo;
+	readonly errorData?: unknown;
+	readonly failureCategory: ReturnType<
+		typeof buildAgentBrowserResultCategoryDetails
+	>["failureCategory"];
+	readonly presentationCommand?: string | undefined;
+	readonly safeErrorText: string;
+	readonly sessionName?: string | undefined;
+}
+
+function buildGenericErrorFallbackActions(
+	options: ErrorActionContext,
+): readonly AgentBrowserNextAction[] {
+	return (
+		buildAgentBrowserNextActions({
+			args: options.args,
+			command: options.commandInfo.command,
+			failureCategory: options.failureCategory,
+			overlayBlockedClick: isOverlayBlockedClickError(
+				options.presentationCommand ?? options.commandInfo.command,
+				options.safeErrorText,
+				options.args ?? options.commandInfo.commandTokens,
+			),
+			pageWedged: extractPageWedgedHint(options.safeErrorText, options.errorData),
+			resultCategory: "failure",
+			sessionName: options.sessionName,
+			subcommand: options.commandInfo.subcommand,
+		}) ?? []
+	);
+}
+
+function buildErrorPresentationNextActions(
+	options: ErrorActionContext & {
+		readonly browserProfileConfigRecovery: ReturnType<typeof buildBrowserProfileConfigRecovery>;
+		readonly commandTail: readonly string[];
+		readonly frameFailureRecovery: ReturnType<typeof buildFrameFailureRecovery>;
+		readonly unknownCommandSuggestion: UnknownCommandSuggestion | undefined;
+	},
+): readonly AgentBrowserNextAction[] | undefined {
+	const specialized =
+		options.browserProfileConfigRecovery?.actions ?? options.frameFailureRecovery?.actions;
+	const hasSpecialized =
+		options.browserProfileConfigRecovery !== undefined ||
+		options.frameFailureRecovery !== undefined;
+	const combined = [
+		...(buildUnknownCommandSuggestionActions(
+			options.unknownCommandSuggestion,
+			options.commandTail,
+			options.sessionName,
+		) ?? []),
+		...(specialized ?? []),
+		...(hasSpecialized ? [] : buildGenericErrorFallbackActions(options)),
+	];
+	return combined.length > 0 ? combined : undefined;
+}
+
 export function buildErrorPresentation(options: {
 	readonly args?: readonly string[] | undefined;
 	readonly commandInfo: CommandInfo;
@@ -443,31 +502,34 @@ export function buildErrorPresentation(options: {
 		errorText: hintedErrorText,
 		succeeded: false,
 	});
-	const nextActions = [
-		...(buildUnknownCommandSuggestionActions(unknownCommandSuggestion, commandTail, sessionName) ??
-			[]),
-		...(browserProfileConfigRecovery?.actions ?? []),
-		...(browserProfileConfigRecovery
-			? []
-			: (buildAgentBrowserNextActions({
-					args,
-					command: commandInfo.command,
-					failureCategory: categoryDetails.failureCategory,
-					overlayBlockedClick: isOverlayBlockedClickError(
-						presentationCommand ?? commandInfo.command,
-						safeErrorText,
-						args ?? commandInfo.commandTokens,
-					),
-					pageWedged: extractPageWedgedHint(safeErrorText, errorData),
-					resultCategory: "failure",
-					sessionName,
-					subcommand: commandInfo.subcommand,
-				}) ?? [])),
-	];
+	const frameFailureRecovery = browserProfileConfigRecovery
+		? undefined
+		: buildFrameFailureRecovery({
+				args,
+				commandInfo,
+				errorData,
+				failureCategory: categoryDetails.failureCategory,
+				sessionName,
+			});
+	const finalErrorText = frameFailureRecovery
+		? `${hintedErrorText}\n\n${frameFailureRecovery.hint}`
+		: hintedErrorText;
 	return {
 		...categoryDetails,
-		content: [{ type: "text", text: hintedErrorText }],
-		nextActions: nextActions.length > 0 ? nextActions : undefined,
-		summary: hintedErrorText,
+		content: [{ type: "text", text: finalErrorText }],
+		nextActions: buildErrorPresentationNextActions({
+			args,
+			browserProfileConfigRecovery,
+			commandInfo,
+			commandTail,
+			errorData,
+			failureCategory: categoryDetails.failureCategory,
+			frameFailureRecovery,
+			presentationCommand,
+			safeErrorText,
+			sessionName,
+			unknownCommandSuggestion,
+		}),
+		summary: finalErrorText,
 	};
 }

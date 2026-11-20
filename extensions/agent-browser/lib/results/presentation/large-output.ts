@@ -1,4 +1,5 @@
-import type { CommandInfo } from "../../argv-descriptor.js";
+import { extractUpstreamCommandTokens, type CommandInfo } from "../../argv-descriptor.js";
+import { isRecord } from "../../parsing.js";
 import {
 	PersistentSessionArtifactWriteError,
 	type PersistentSessionArtifactStore,
@@ -11,8 +12,12 @@ import type {
 } from "../contracts.js";
 import { countLines, stringifyUnknown, truncateText } from "../text.js";
 import { applyArtifactManifest } from "./artifacts.js";
+import { formatBatchMutationEvidenceText } from "./batch-summary.js";
 import { getPresentationText, getReadContentPointer } from "./content.js";
-import type { ToolPresentationObservation } from "./observation-contracts.js";
+import type {
+	BatchStepPresentationObservation,
+	ToolPresentationObservation,
+} from "./observation-contracts.js";
 import {
 	buildSpillArtifactEntries,
 	writeLargeOutputSpillFile,
@@ -22,8 +27,16 @@ import {
 export { OBSERVATION_INLINE_MAX_CHARS } from "./content.js";
 export { renderAgentBrowserObservation } from "./observation-rendering.js";
 
+const LARGE_OUTPUT_MAX_CHARS = 8_000;
+const LARGE_OUTPUT_MAX_LINES = 120;
+const PREVIEW_MAX_LINES = 40;
+const PREVIEW_MAX_CHARS = 2_500;
+const PREVIEW_LINE_MAX_CHARS = 240;
+const PREVIEW_MIN_LINE_CHARS = 40;
+const SUBSTANTIVE_BATCH_COMMANDS = new Set(["eval", "get", "errors", "console", "screenshot"]);
+
 function shouldCompactLargeOutput(text: string): boolean {
-	return text.length > 8_000 || countLines(text) > 120;
+	return text.length > LARGE_OUTPUT_MAX_CHARS || countLines(text) > LARGE_OUTPUT_MAX_LINES;
 }
 
 function buildLargeOutputPreview(text: string): {
@@ -34,17 +47,165 @@ function buildLargeOutputPreview(text: string): {
 	const previewLines: string[] = [];
 	let previewChars = 0;
 	for (const line of lines) {
-		if (previewLines.length >= 40 || previewChars >= 2_500) {
+		if (previewLines.length >= PREVIEW_MAX_LINES || previewChars >= PREVIEW_MAX_CHARS) {
 			break;
 		}
-		const remainingChars = 2_500 - previewChars;
-		const previewLine = truncateText(line, Math.min(Math.max(40, remainingChars), 240));
+		const remainingChars = PREVIEW_MAX_CHARS - previewChars;
+		const previewLine = truncateText(
+			line,
+			Math.min(Math.max(PREVIEW_MIN_LINE_CHARS, remainingChars), PREVIEW_LINE_MAX_CHARS),
+		);
 		previewLines.push(previewLine);
 		previewChars += previewLine.length + 1;
 	}
 	return {
 		omittedLineCount: Math.max(0, lines.length - previewLines.length),
 		previewText: previewLines.join("\n"),
+	};
+}
+
+function getBatchStepCommandName(step: BatchStepPresentationObservation): string | undefined {
+	if (step.command && step.command.length > 0) {
+		return extractUpstreamCommandTokens(step.command)[0];
+	}
+	return undefined;
+}
+
+function hasBatchStepArtifact(step: BatchStepPresentationObservation): boolean {
+	return (
+		step.imagePath !== undefined ||
+		(step.imagePaths !== undefined && step.imagePaths.length > 0) ||
+		step.savedFilePath !== undefined ||
+		(step.artifacts !== undefined && step.artifacts.length > 0)
+	);
+}
+
+function isSubstantiveBatchStep(step: BatchStepPresentationObservation): boolean {
+	if (!step.success || hasBatchStepArtifact(step) || step.summary.startsWith("Eval result:")) {
+		return true;
+	}
+	const command = getBatchStepCommandName(step);
+	if (command !== undefined && SUBSTANTIVE_BATCH_COMMANDS.has(command)) {
+		return true;
+	}
+	return isRecord(step.data) && Object.hasOwn(step.data, "result");
+}
+
+function formatBatchStepPreviewLines(step: BatchStepPresentationObservation): readonly string[] {
+	const header = `Step ${step.index + 1} — ${step.commandText} (${step.success ? "succeeded" : "failed"})`;
+	const body = step.text.length > 0 ? step.text : step.summary;
+	return body.length > 0 ? [header, ...body.split("\n")] : [header];
+}
+
+interface PreviewBudget {
+	readonly chars: number;
+	readonly lines: readonly string[];
+}
+
+function appendPreviewSeparator(budget: PreviewBudget): PreviewBudget {
+	if (
+		budget.lines.length > 0 &&
+		budget.lines.length + 1 < PREVIEW_MAX_LINES &&
+		budget.chars + 1 < PREVIEW_MAX_CHARS
+	) {
+		return { chars: budget.chars + 1, lines: [...budget.lines, ""] };
+	}
+	return budget;
+}
+
+function appendBoundedStepLines(
+	budget: PreviewBudget,
+	stepLines: readonly string[],
+	maxLines: number,
+	maxChars: number,
+): PreviewBudget {
+	const lines = [...budget.lines];
+	let chars = budget.chars;
+	let addedLines = 0;
+	let addedChars = 0;
+	for (const line of stepLines) {
+		if (
+			lines.length >= PREVIEW_MAX_LINES ||
+			chars >= PREVIEW_MAX_CHARS ||
+			addedLines >= maxLines ||
+			addedChars >= maxChars
+		) {
+			break;
+		}
+		const remainingBudget = Math.min(PREVIEW_MAX_CHARS - chars, maxChars - addedChars);
+		const previewLine = truncateText(
+			line,
+			Math.min(Math.max(PREVIEW_MIN_LINE_CHARS, remainingBudget), PREVIEW_LINE_MAX_CHARS),
+		);
+		lines.push(previewLine);
+		const lineCost = previewLine.length + 1;
+		chars += lineCost;
+		addedLines += 1;
+		addedChars += lineCost;
+	}
+	return { chars, lines };
+}
+
+function appendBatchPreviewGroup(
+	initial: PreviewBudget,
+	steps: readonly BatchStepPresentationObservation[],
+	fairShare: boolean,
+): PreviewBudget {
+	let current = initial;
+	for (const [offset, step] of steps.entries()) {
+		const remainingLines = PREVIEW_MAX_LINES - current.lines.length;
+		const remainingChars = PREVIEW_MAX_CHARS - current.chars;
+		if (remainingLines <= 0 || remainingChars <= 0) {
+			break;
+		}
+		current = appendPreviewSeparator(current);
+		const remainingSteps = steps.length - offset;
+		const maxLines = fairShare
+			? Math.max(2, Math.floor((PREVIEW_MAX_LINES - current.lines.length) / remainingSteps))
+			: PREVIEW_MAX_LINES - current.lines.length;
+		const maxChars = fairShare
+			? Math.max(
+					PREVIEW_MIN_LINE_CHARS * 3,
+					Math.floor((PREVIEW_MAX_CHARS - current.chars) / remainingSteps),
+				)
+			: PREVIEW_MAX_CHARS - current.chars;
+		current = appendBoundedStepLines(
+			current,
+			formatBatchStepPreviewLines(step),
+			maxLines,
+			maxChars,
+		);
+	}
+	return current;
+}
+
+function buildBatchLargeOutputPreview(
+	text: string,
+	batchSteps: readonly BatchStepPresentationObservation[],
+): {
+	readonly omittedLineCount: number;
+	readonly previewText: string;
+} {
+	const substantiveSteps = batchSteps.filter(isSubstantiveBatchStep);
+	if (substantiveSteps.length === 0) {
+		return buildLargeOutputPreview(text);
+	}
+	const mutationEvidenceText = formatBatchMutationEvidenceText(batchSteps);
+	const initialBudget: PreviewBudget =
+		mutationEvidenceText !== undefined
+			? appendBoundedStepLines(
+					{ chars: 0, lines: [] },
+					[mutationEvidenceText],
+					1,
+					PREVIEW_LINE_MAX_CHARS,
+				)
+			: { chars: 0, lines: [] };
+	const routineSteps = batchSteps.filter((step) => !isSubstantiveBatchStep(step));
+	const afterSubstantive = appendBatchPreviewGroup(initialBudget, substantiveSteps, true);
+	const finalBudget = appendBatchPreviewGroup(afterSubstantive, routineSteps, false);
+	return {
+		omittedLineCount: Math.max(0, countLines(text) - finalBudget.lines.length),
+		previewText: finalBudget.lines.join("\n"),
 	};
 }
 
@@ -119,7 +280,12 @@ function buildCompactedText(
 	readonly compactedText: string;
 	readonly previewText: string;
 } {
-	const { omittedLineCount, previewText } = buildLargeOutputPreview(text);
+	const { omittedLineCount, previewText } =
+		command === "batch" &&
+		presentation.batchSteps !== undefined &&
+		presentation.batchSteps.length > 0
+			? buildBatchLargeOutputPreview(text, presentation.batchSteps)
+			: buildLargeOutputPreview(text);
 	const failureContext = buildLargeOutputFailureContext(presentation);
 	const lines = [
 		`Large ${command ?? "agent-browser"} output compacted.`,

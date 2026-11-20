@@ -20,6 +20,7 @@ import {
 import { getPresentationImages, getPresentationPaths, isStringArray } from "./content.js";
 import { buildBatchStepPresentation } from "./batch-step.js";
 import { coalesceTerminalBatchRecordingArtifacts } from "./batch-recording.js";
+import { hoistSharedBatchStepLifecycles } from "./lifecycle.js";
 import {
 	buildBatchPageChangeSummary,
 	formatBatchStatusText,
@@ -95,7 +96,15 @@ async function collectPresentedSteps(options: BuildBatchPresentationOptions): Pr
 export async function buildBatchPresentation(
 	options: BuildBatchPresentationOptions,
 ): Promise<ToolPresentation> {
-	const { steps, manifest } = await collectPresentedSteps(options);
+	const { steps: rawSteps, manifest } = await collectPresentedSteps(options);
+	const { batchLifecycle, items: wrappedSteps } = hoistSharedBatchStepLifecycles(
+		rawSteps.map((step) => ({ data: step.details.data, step })),
+		(entry, data) => ({
+			data,
+			step: { ...entry.step, details: { ...entry.step.details, data } },
+		}),
+	);
+	const steps = wrappedSteps.map((entry) => entry.step);
 	const status = summarizeBatchStatus(steps, options.summary);
 	const artifacts = await coalesceTerminalBatchRecordingArtifacts(
 		steps,
@@ -135,6 +144,7 @@ export async function buildBatchPresentation(
 		artifactVerification,
 		artifacts: artifacts.length > 0 ? artifacts : undefined,
 		batchFailure: status.failure,
+		batchLifecycle,
 		batchSteps: steps.map((step) => step.details),
 		content: [
 			{ type: "text", text: contentText },

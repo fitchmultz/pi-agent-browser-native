@@ -11,7 +11,7 @@ import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nodeTest from "node:test";
-import { readDefined, readRecord, readString } from "./helpers/assertions.js";
+import { readArray, readDefined, readRecord, readString } from "./helpers/assertions.js";
 
 import { parseUserBatchStdin } from "../extensions/agent-browser/lib/orchestration/batch-stdin.js";
 import {
@@ -22,6 +22,8 @@ import {
 } from "../extensions/agent-browser/lib/browser-transcript.js";
 import { mergeBrowserRunArtifactManifest } from "../extensions/agent-browser/lib/orchestration/browser-run/artifact-merge.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
+import { projectAgentBrowserObservation } from "../extensions/agent-browser/lib/results/presentation/content.js";
+import { renderAgentBrowserObservation } from "../extensions/agent-browser/lib/results/presentation/large-output.js";
 import type {
 	SessionArtifactManifest,
 	SessionArtifactManifestEntry,
@@ -1786,5 +1788,269 @@ nodeTest(
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
+	},
+);
+
+nodeTest(
+	"buildToolPresentation hoists repeated batch lifecycle metadata and preserves eval outputs in inline observations",
+	async () => {
+		const sharedLifecycle = {
+			effectiveLaunch: {
+				args: Array.from({ length: 24 }, (_, idx) => `--flag-${idx}=${"v".repeat(60)}`),
+				browserLaunched: true,
+				engine: "chrome",
+				executablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+				launchHash: "abc123def456",
+			},
+			launched: false,
+			reused: true,
+		};
+		const repeatedSteps = Array.from({ length: 10 }, (_, idx) => ({
+			command: ["click", `@e${idx + 1}`],
+			result: { clicked: `@e${idx + 1}`, lifecycle: sharedLifecycle },
+			success: true,
+		}));
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: [
+					...repeatedSteps,
+					{
+						command: ["eval", "--stdin"],
+						result: {
+							lifecycle: sharedLifecycle,
+							origin: "https://shop.example/checkout",
+							result: { orderId: "ORD-99", total: 42 },
+						},
+						success: true,
+					},
+				],
+			},
+		});
+
+		assert.deepEqual(presentation.batchLifecycle, sharedLifecycle);
+		const rows = readArray(presentation.data).map(readRecord);
+		assert.equal(rows.length, 11);
+		assert.deepEqual(
+			rows.filter((row) => readRecord(row.result).lifecycle !== undefined),
+			[],
+		);
+		const steps = readDefined(presentation.batchSteps);
+		assert.deepEqual(
+			steps.filter((step) => readRecord(step.data).lifecycle !== undefined),
+			[],
+		);
+		assert.deepEqual(
+			steps.map((step) => step.lifecycle),
+			Array.from({ length: 11 }, () => ({ effectiveLaunch: { browserLaunched: true } })),
+		);
+
+		const details = {
+			batchLifecycle: presentation.batchLifecycle,
+			batchSteps: presentation.batchSteps,
+			data: presentation.data,
+			summary: presentation.summary,
+		};
+		const proseObservation = await renderAgentBrowserObservation({
+			content: presentation.content,
+			details,
+			json: false,
+			succeeded: true,
+		});
+		const structured = readRecord(proseObservation.structuredContent);
+		assert.equal(structured.compacted, undefined);
+		assert.deepEqual(structured.batchLifecycle, sharedLifecycle);
+		const proseText = readString(readRecord(proseObservation.content[0]).text);
+		assert.match(proseText, /"orderId": "ORD-99"/);
+		assert.doesNotMatch(proseText, /"batchLifecycle"/);
+		assert.doesNotMatch(proseText, /Browser observation compacted/);
+
+		const jsonObservation = await renderAgentBrowserObservation({
+			content: presentation.content,
+			details,
+			json: true,
+			succeeded: true,
+		});
+		const jsonPayload = readRecord(
+			JSON.parse(readString(readRecord(jsonObservation.content[0]).text)),
+		);
+		assert.deepEqual(jsonPayload.batchLifecycle, sharedLifecycle);
+		const jsonRows = readArray(jsonPayload.data).map(readRecord);
+		assert.equal(readRecord(readDefined(jsonRows[10]).result).lifecycle, undefined);
+		assert.deepEqual(readRecord(readDefined(jsonRows[10]).result).result, {
+			orderId: "ORD-99",
+			total: 42,
+		});
+	},
+);
+
+nodeTest(
+	"buildToolPresentation preserves differing step lifecycle metadata inside batch results",
+	async () => {
+		const reusedLifecycle = {
+			effectiveLaunch: { browserLaunched: true, engine: "chrome" },
+			launched: false,
+			reused: true,
+		};
+		const closedLifecycle = {
+			effectiveLaunch: { browserLaunched: false, engine: "chrome" },
+			launched: false,
+			reused: false,
+		};
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: [
+					{
+						command: ["open", "https://example.com"],
+						result: {
+							lifecycle: reusedLifecycle,
+							title: "Example",
+							url: "https://example.com/",
+						},
+						success: true,
+					},
+					{
+						command: ["close"],
+						result: { closed: true, lifecycle: closedLifecycle },
+						success: true,
+					},
+					{
+						command: ["eval", "--stdin"],
+						result: {
+							lifecycle: {
+								reused: true,
+								launched: false,
+								effectiveLaunch: { engine: "chrome", browserLaunched: true },
+							},
+							result: "ok",
+						},
+						success: true,
+					},
+				],
+			},
+		});
+
+		assert.deepEqual(presentation.batchLifecycle, reusedLifecycle);
+		const rows = readArray(presentation.data).map(readRecord);
+		assert.equal(readRecord(readDefined(rows[0]).result).lifecycle, undefined);
+		assert.deepEqual(readRecord(readDefined(rows[1]).result).lifecycle, closedLifecycle);
+		assert.equal(readRecord(readDefined(rows[2]).result).lifecycle, undefined);
+
+		const observation = projectAgentBrowserObservation(
+			{
+				batchLifecycle: presentation.batchLifecycle,
+				batchSteps: presentation.batchSteps,
+				data: presentation.data,
+			},
+			true,
+		);
+		assert.deepEqual(observation.batchLifecycle, reusedLifecycle);
+		const obsRows = readArray(observation.data).map(readRecord);
+		assert.equal(readRecord(readDefined(obsRows[0]).result).lifecycle, undefined);
+		assert.deepEqual(readRecord(readDefined(obsRows[1]).result).lifecycle, closedLifecycle);
+		assert.equal(readRecord(readDefined(obsRows[2]).result).lifecycle, undefined);
+
+		// Also verify projection hoists and strips raw uncompacted array rows directly.
+		const rawObservation = projectAgentBrowserObservation(
+			{
+				data: [
+					{
+						command: ["open", "https://example.com"],
+						result: { lifecycle: reusedLifecycle, url: "https://example.com" },
+						success: true,
+					},
+					{ command: ["click", "@e1"], result: { lifecycle: closedLifecycle }, success: true },
+					{
+						command: ["get", "title"],
+						result: { lifecycle: reusedLifecycle, value: "Example" },
+						success: true,
+					},
+				],
+			},
+			false,
+		);
+		assert.deepEqual(rawObservation.batchLifecycle, reusedLifecycle);
+		const rawObsRows = readArray(rawObservation.data).map(readRecord);
+		assert.equal(readRecord(readDefined(rawObsRows[0]).result).lifecycle, undefined);
+		assert.deepEqual(readRecord(readDefined(rawObsRows[1]).result).lifecycle, closedLifecycle);
+		assert.equal(readRecord(readDefined(rawObsRows[2]).result).lifecycle, undefined);
+	},
+);
+
+nodeTest(
+	"buildToolPresentation prioritizes eval, get, errors, and screenshot outputs ahead of boilerplate in compacted batch previews",
+	async (t) => {
+		const tempDir = await mkdtemp(join(tmpdir(), "piab-batch-preview-priority-"));
+		t.after(() => rm(tempDir, { force: true, recursive: true }));
+		const screenshotPath = join(tempDir, "final-state.png");
+		await writeFile(screenshotPath, png);
+
+		const boilerplateSteps = Array.from({ length: 45 }, (_, idx) => ({
+			command: ["click", `@e${idx + 1}`],
+			result: { clicked: `@e${idx + 1}` },
+			success: true,
+		}));
+		const presentation = await buildToolPresentation({
+			commandInfo: { command: "batch" },
+			cwd: tempDir,
+			envelope: {
+				success: true,
+				data: [
+					{
+						command: ["open", "https://shop.example/checkout"],
+						result: { title: "Checkout", url: "https://shop.example/checkout" },
+						success: true,
+					},
+					...boilerplateSteps,
+					{
+						command: ["eval", "--stdin"],
+						result: {
+							origin: "https://shop.example/checkout",
+							result: { marker: "eval-token-visible-in-preview", subtotal: 99 },
+						},
+						success: true,
+					},
+					{
+						command: ["get", "text", "#status"],
+						result: { text: "Checkout succeeded" },
+						success: true,
+					},
+					{
+						command: ["errors"],
+						result: { errors: [{ text: "TypeError: chart undefined" }] },
+						success: true,
+					},
+					{
+						command: ["screenshot", "final-state.png"],
+						result: { path: "final-state.png" },
+						success: true,
+					},
+				],
+			},
+		});
+
+		const text = readString(readRecord(presentation.content[0]).text);
+		assert.match(text, /Large batch output compacted/);
+		assert.match(
+			text,
+			/Mutation evidence: 45 action results prove dispatch only, not application state change\. Use explicit later assertions or external receipts as postconditions; fixed waits are not postconditions\./,
+		);
+		assert.match(text, /eval-token-visible-in-preview/);
+		assert.match(text, /Checkout succeeded/);
+		assert.match(text, /TypeError: chart undefined/);
+		assert.match(text, /final-state\.png/);
+		const evalIndex = text.indexOf("eval-token-visible-in-preview");
+		const firstBoilerplateIndex = text.indexOf("Step 1 — open https://shop.example/checkout");
+		assert.ok(evalIndex > 0);
+		assert.ok(firstBoilerplateIndex === -1 || evalIndex < firstBoilerplateIndex);
+
+		const spillPath = readString(presentation.fullOutputPath);
+		t.after(() => rm(spillPath, { force: true }));
+		assert.match(await readFile(spillPath, "utf8"), /eval-token-visible-in-preview/);
 	},
 );

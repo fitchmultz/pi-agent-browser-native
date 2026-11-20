@@ -92,6 +92,7 @@ function buildCompactObservation(
 		"data",
 		"fullOutputPath",
 		"fullOutputPaths",
+		"batchLifecycle",
 	]) {
 		if (
 			observation[key] !== undefined &&
@@ -166,6 +167,7 @@ export async function renderAgentBrowserObservation(options: RenderObservationOp
 		.join("\n\n");
 	// Prose already renders data, errors, summaries, and the Output file notice; its metadata line omits them.
 	const {
+		batchLifecycle: _batchLifecycle,
 		data: _data,
 		error: _error,
 		summary: _summary,
