@@ -1,6 +1,6 @@
 {
-	"version": "0.43.0",
-	"source": "https://github.com/vercel-labs/agent-browser/blob/1cc19526f3641c8543d55aa6700e7c55b37ac356/cli/src/flags.rs#L1384-L1516",
+	"version": "0.44.0",
+	"source": "https://github.com/vercel-labs/agent-browser/blob/0a923358ea989d7602f0d06507ad3447c62ffe9b/cli/src/flags.rs#L1561-L1701",
 	"globalValueFlags": [
 		"--session",
 		"--restore-save",

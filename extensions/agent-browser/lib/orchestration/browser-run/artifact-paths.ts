@@ -1,7 +1,12 @@
 import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
-import { foldAgentBrowserFilesystemIdentity, type IndexedArgvToken } from "../../argv-grammar.js";
+import {
+	beforeEndOfOptions,
+	foldAgentBrowserFilesystemIdentity,
+	scanCommandPositionals,
+	type IndexedArgvToken,
+} from "../../argv-grammar.js";
 import { parseWaitCommandTokens } from "../../argv-descriptor.js";
 import {
 	getRecordCommandOperandIndices,
@@ -9,6 +14,8 @@ import {
 } from "../../command-taxonomy.js";
 
 const SCREENSHOT_IMAGE_EXTENSIONS = [".jpeg", ".jpg", ".png", ".webp"];
+const SCREENSHOT_BOOLEAN_FLAGS = new Set(["--full", "-f", "--if-changed"]);
+const SCREENSHOT_VALUE_FLAGS = new Set(["--threshold"]);
 
 function isSingleScreenshotPathToken(token: string): boolean {
 	const explicitlyRelative = token.startsWith("./") || token.startsWith("../");
@@ -30,21 +37,10 @@ export function getScreenshotOperands(commandTokens: readonly string[]): Indexed
 	if (commandTokens[0] !== "screenshot") {
 		return [];
 	}
-	const operands: IndexedArgvToken[] = [];
-	const entries = commandTokens.entries();
-	entries.next();
-	for (const [index, token] of entries) {
-		if (token === "--full" || token === "-f" || token === "--if-changed") {
-			continue;
-		}
-		if (token === "--threshold") {
-			entries.next();
-			continue;
-		}
-		operands.push({ index, token });
-	}
-
-	return operands;
+	return scanCommandPositionals(commandTokens, 1, {
+		booleanFlags: SCREENSHOT_BOOLEAN_FLAGS,
+		valueFlags: SCREENSHOT_VALUE_FLAGS,
+	});
 }
 
 export function getScreenshotPathOperand(
@@ -177,7 +173,7 @@ export function getRecordContactSheetDestination(
 	if (
 		path === undefined ||
 		path === "" ||
-		!commandTokens.some(
+		!beforeEndOfOptions(commandTokens.slice(2)).some(
 			(token) => token === "--contact-sheet" || token === "--contact-sheet-threshold",
 		)
 	) {
@@ -187,18 +183,26 @@ export function getRecordContactSheetDestination(
 	return extension !== "" ? `${path.slice(0, -extension.length)}.contact-sheet.png` : undefined;
 }
 
+export function getStateLoadPathIndex(commandTokens: readonly string[]): number | undefined {
+	return commandTokens[0] === "state" && commandTokens[1] === "load"
+		? scanCommandPositionals(commandTokens, 2)[0]?.index
+		: undefined;
+}
+
 function getCompoundArtifactDestinationIndex(commandTokens: readonly string[]): number | undefined {
 	const [command, subcommand] = commandTokens;
 	switch (command) {
 		case "state":
-			return subcommand === "save" ? 2 : undefined;
+			return subcommand === "save" ? scanCommandPositionals(commandTokens, 2)[0]?.index : undefined;
 		case "diff":
 			return subcommand === "screenshot" ? getDiffFilePathIndices(commandTokens).output : undefined;
 		case "network":
-			return subcommand === "har" && commandTokens[2] === "stop" ? 3 : undefined;
+			return subcommand === "har" && commandTokens[2] === "stop"
+				? scanCommandPositionals(commandTokens, 3)[0]?.index
+				: undefined;
 		case "trace":
 		case "profiler":
-			return subcommand === "stop" ? 2 : undefined;
+			return subcommand === "stop" ? scanCommandPositionals(commandTokens, 2)[0]?.index : undefined;
 		case undefined:
 		default:
 			return undefined;
@@ -213,10 +217,10 @@ export function getExplicitArtifactDestinationIndex(
 		return getScreenshotPathOperand(commandTokens)?.index;
 	}
 	if (command === "download") {
-		return 2;
+		return scanCommandPositionals(commandTokens, 1)[1]?.index;
 	}
 	if (command === "pdf") {
-		return 1;
+		return scanCommandPositionals(commandTokens, 1)[0]?.index;
 	}
 	if (command === "wait") {
 		return parseWaitCommandTokens(commandTokens).downloadPathIndex;

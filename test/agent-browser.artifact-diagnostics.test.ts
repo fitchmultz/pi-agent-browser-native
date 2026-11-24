@@ -335,9 +335,9 @@ nodeTest("direct artifacts recover requested paths across native outer global fl
 });
 
 for (const [command, path] of [
-	[["pdf", "--quick", "ignored/page.pdf"], "--quick"],
-	[["download", "#download", "--quiet", "ignored/file.txt"], "--quiet"],
-	[["screenshot", "body", "--screenshot-dir", "ignored/shot.png"], "--screenshot-dir"],
+	[["pdf", "--", "--quick", "ignored/page.pdf"], "--quick"],
+	[["download", "#download", "--", "--quiet", "ignored/file.txt"], "--quiet"],
+	[["screenshot", "body", "--", "--screenshot-dir", "ignored/shot.png"], "--screenshot-dir"],
 ] as const) {
 	nodeTest(
 		`batch artifact presentation keeps literal global-looking operands: ${command[0]}`,
@@ -378,8 +378,11 @@ for (const [command, path] of [
 			try {
 				const stdin = JSON.stringify([command]);
 				const prepared = await prepareAgentBrowserArgs(["batch"], stdin, root);
-				// A global-flag operand stays as written: native 0.42.0 rejects it inside a batch item.
-				assert.deepEqual(JSON.parse(prepared.stdin ?? stdin), [[...command]]);
+				const expected =
+					command[0] === "screenshot"
+						? [["screenshot", "body", "--", join(root, path), "ignored/shot.png"]]
+						: [[...command]];
+				assert.deepEqual(JSON.parse(prepared.stdin ?? stdin), expected);
 				await assert.rejects(stat(join(root, "ignored")), { code: "ENOENT" });
 				const raw = ["batch", command.join(" ")];
 				assert.deepEqual((await prepareAgentBrowserArgs(raw, stdin, root)).args, raw);
@@ -421,17 +424,55 @@ for (const [command, path] of [
 }
 
 nodeTest(
+	"batch artifact preparation leaves misplaced global or unknown flags before -- untouched for native rejection",
+	async () => {
+		const root = await mkdtemp(join(tmpdir(), "ad-"));
+		try {
+			const rows = [
+				["screenshot", "--session", "foo"],
+				["screenshot", "body", "--screenshot-dir", "ignored/shot.png"],
+				["pdf", "--quick", "ignored/page.pdf"],
+				["download", "#download", "--quiet", "ignored/file.txt"],
+			] as const;
+			const results = await Promise.all(
+				rows.map(async (row) => {
+					const stdin = JSON.stringify([row]);
+					const preparedStdin = await prepareAgentBrowserArgs(["batch"], stdin, root);
+					const raw = ["batch", row.join(" ")];
+					const preparedRaw = await prepareAgentBrowserArgs(raw, stdin, root);
+					return {
+						rawArgs: preparedRaw.args,
+						stdinText: preparedStdin.stdin ?? stdin,
+					};
+				}),
+			);
+			assert.deepEqual(
+				results,
+				rows.map((row) => ({
+					rawArgs: ["batch", row.join(" ")],
+					stdinText: JSON.stringify([row]),
+				})),
+			);
+			await assert.rejects(stat(join(root, "ignored")), { code: "ENOENT" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	},
+);
+
+nodeTest(
 	"recording destinations follow FPS operands without consuming literal or ignored values",
 	() => {
-		const cases: readonly [readonly string[], string][] = [
+		const cases: readonly [readonly string[], string | undefined][] = [
 			[["--fps", "30", "take.webm"], "take.webm"],
 			[["--fps", "+24", "take.webm", "--fps", "12", "https://example.com"], "take.webm"],
 			[["--fps", "0", "take.webm"], "take.webm"], // Native, not the path reader, validates the range.
 			[["take.webm", "https://example.com", "--fps", "30", "ignored"], "take.webm"],
 			[["./--fps.webm", "https://example.com/--fps"], "./--fps.webm"],
-			[["--fps"], "--fps"],
-			[["--fps", "literal.webm"], "--fps"],
-			[["--fps", "30"], "--fps"],
+			[["--", "--fps"], "--fps"],
+			[["--fps"], undefined],
+			[["--fps", "literal.webm"], undefined],
+			[["--fps", "30"], undefined],
 		];
 		assert.deepEqual(
 			cases.map(([operands]) =>

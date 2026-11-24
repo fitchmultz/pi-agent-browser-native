@@ -3032,3 +3032,65 @@ if (args.includes("get") && args.includes("url")) {
 		}
 	},
 );
+
+nodeTest(
+	"agentBrowserExtension ref guards follow 0.44 click/dblclick/select flags and -- boundaries",
+	{ concurrency: false },
+	async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-044-ref-guards-"));
+		const basePath = process.env.PATH ?? "";
+		await writeFakeAgentBrowserBinary(
+			tempDir,
+			`const args = process.argv.slice(2);
+let data = { url: "https://app.example/form" };
+if (args.includes("snapshot")) {
+  data = {
+    origin: "https://app.example/form",
+    refs: { e1: { role: "button", name: "Submit" } },
+    snapshot: '- button "Submit" [ref=e1]',
+  };
+}
+process.stdout.write(JSON.stringify({ success: true, data }));`,
+		);
+		try {
+			await withPatchedEnv({ PATH: `${tempDir}:${basePath}` }, async () => {
+				const harness = createExtensionHarness({ cwd: tempDir });
+				await runExtensionEvent(harness.handlers, "session_start", { reason: "new" }, harness.ctx);
+				assert.equal(
+					(
+						await executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["open", "https://app.example/form"],
+						})
+					).isError,
+					false,
+				);
+				assert.equal(
+					(await executeRegisteredTool(harness.tool, harness.ctx, { args: ["snapshot", "-i"] }))
+						.isError,
+					false,
+				);
+				const guardedCases = [
+					["click", "--button", "right", "--modifiers", "control,shift", "@e999"],
+					["dblclick", "--modifiers", "shift", "@e999"],
+					["select", "--by", "value", "@e999", "us"],
+					["select", "--by=label", "@e999", "United States"],
+					["select", "--", "@e999", "us"],
+				] as const;
+				const outcomes = [];
+				for (const args of guardedCases) {
+					const blocked = await executeRegisteredTool(harness.tool, harness.ctx, { args });
+					outcomes.push({
+						failureCategory: readRecord(blocked.details).failureCategory,
+						isError: blocked.isError,
+					});
+				}
+				assert.deepEqual(
+					outcomes,
+					guardedCases.map(() => ({ failureCategory: "stale-ref", isError: true })),
+				);
+			});
+		} finally {
+			await rm(tempDir, { force: true, recursive: true });
+		}
+	},
+);

@@ -777,46 +777,54 @@ nodeTest(
 							],
 						] as const) {
 							for (const raw of [false, true]) {
-								// Native 0.43+ rejects a global flag in a batch screenshot row. The wrapper
-								// leaves that operand untouched in both input modes so native's rejection shows.
-								if (step[0] === "screenshot") {
-									await t.test(
-										`screenshot ${raw ? "raw" : "stdin"} batch row leaves a global flag to native rejection`,
-										async () => {
-											await rm(join(dir, path), { force: true });
-											const result = await call(
-												raw ? ["batch", step.join(" ")] : ["batch"],
-												raw ? undefined : JSON.stringify([step]),
-											);
-											assert.equal(result.isError, true, getMessageText(result.content));
-											assert.match(
-												getMessageText(result.content),
-												/Pass global flags on the outer batch invocation/,
-											);
-											await assert.rejects(stat(join(dir, path)), { code: "ENOENT" });
-											await assert.rejects(stat(join(dir, "ignored")), { code: "ENOENT" });
-										},
-									);
-									continue;
-								}
+								// Native 0.44+ rejects global flags before -- in every batch row. The wrapper
+								// leaves those operands untouched so native's rejection surfaces directly.
 								await t.test(
-									`${step[0]} ${raw ? "raw" : "stdin"} batch keeps its literal destination`,
+									`${step[0]} ${raw ? "raw" : "stdin"} batch row leaves a global flag to native rejection`,
 									async () => {
 										await rm(join(dir, path), { force: true });
 										const result = await call(
 											raw ? ["batch", step.join(" ")] : ["batch"],
 											raw ? undefined : JSON.stringify([step]),
 										);
+										assert.equal(result.isError, true, getMessageText(result.content));
+										assert.match(
+											getMessageText(result.content),
+											/Pass global flags on the outer batch invocation/,
+										);
+										await assert.rejects(stat(join(dir, path)), { code: "ENOENT" });
+										await assert.rejects(stat(join(dir, "ignored")), { code: "ENOENT" });
+									},
+								);
+								const literalStepsByCommand = {
+									download: ["download", "#direct-download", "--", path, "ignored/file.txt"],
+									pdf: ["pdf", "--", path, "ignored/page.pdf"],
+									screenshot: ["screenshot", "body", "--", path, "ignored/shot.png"],
+								} as const;
+								const literalStep = literalStepsByCommand[step[0]];
+								await t.test(
+									`${step[0]} ${raw ? "raw" : "stdin"} batch keeps its literal destination after --`,
+									async () => {
+										await rm(join(dir, path), { force: true });
+										const result = await call(
+											raw ? ["batch", literalStep.join(" ")] : ["batch"],
+											raw ? undefined : JSON.stringify([literalStep]),
+										);
 										const resultDetails = readRecord(result.details);
 										assert.equal(result.isError, false, getMessageText(result.content));
 										const bytes = await readFile(join(dir, path));
-										assert.equal(bytes.subarray(0, header.length).toString(), header);
+										assert.equal(
+											step[0] === "screenshot"
+												? bytes.subarray(0, 8).toString("hex")
+												: bytes.subarray(0, header.length).toString(),
+											header,
+										);
 										const artifact = readDefined(
 											readArray(resultDetails.artifacts).map(readRecord)[0],
 										);
 										t.diagnostic(
 											JSON.stringify({
-												step,
+												step: literalStep,
 												raw,
 												nativePath: artifact.path,
 												requestedPath: artifact.requestedPath,
@@ -885,8 +893,8 @@ nodeTest(
 									const download = `-timeout-${raw}.bin`;
 									const steps = [
 										["pdf", pdf, "ignored.pdf"],
-										["download", "#direct-download", download, "ignored.bin"],
-										["pdf", "--quick", "ignored.pdf"],
+										["download", "#direct-download", "--", download, "ignored.bin"],
+										["pdf", "--", "--quick", "ignored.pdf"],
 										["wait", "3000"],
 									];
 									const result = await call(
@@ -962,32 +970,15 @@ nodeTest(
 												.map((artifact) => artifact.path),
 										}),
 									);
-									if (command === "screenshot") {
-										await retryTest.test(
-											"explicitly rerunning the original row surfaces native's global-flag rejection",
-											async () => {
-												assert.equal(retried.isError, true, getMessageText(retried.content));
-												assert.match(
-													getMessageText(retried.content),
-													/Pass global flags on the outer batch invocation/,
-												);
-												await assert.rejects(stat(path), { code: "ENOENT" });
-												await assert.rejects(stat(join(dir, ignored)), { code: "ENOENT" });
-											},
-										);
-										return;
-									}
 									await retryTest.test(
-										"explicitly rerunning the original row preserves its native destination",
+										"explicitly rerunning the original row surfaces native's global-flag rejection",
 										async () => {
-											assert.equal(retried.isError, false, getMessageText(retried.content));
-											const bytes = await readFile(path);
-											assert.equal(
-												command === "pdf"
-													? bytes.subarray(0, 5).toString()
-													: bytes.subarray(0, 8).toString("hex"),
-												command === "pdf" ? "%PDF-" : "89504e470d0a1a0a",
+											assert.equal(retried.isError, true, getMessageText(retried.content));
+											assert.match(
+												getMessageText(retried.content),
+												/Pass global flags on the outer batch invocation/,
 											);
+											await assert.rejects(stat(path), { code: "ENOENT" });
 											await assert.rejects(stat(join(dir, ignored)), { code: "ENOENT" });
 										},
 									);
@@ -1014,9 +1005,11 @@ nodeTest(
 									{ args: [...prefix, "wait", "-d", "--timeout", "100", held] },
 									{
 										args: [...prefix, "batch"],
-										stdin: JSON.stringify([["pdf", "--quick", "ignored.pdf"]]),
+										stdin: JSON.stringify([["pdf", "--", "--quick", "ignored.pdf"]]),
 									},
-									{ args: [...prefix, "batch", "download #direct-download --quick ignored.bin"] },
+									{
+										args: [...prefix, "batch", "download #direct-download -- --quick ignored.bin"],
+									},
 								].entries()) {
 									await recording.test(
 										`reserved native path rejects command ${index + 1}`,
@@ -1630,6 +1623,17 @@ nodeTest(
 											}
 										});
 										await css.test("diff snapshot treats bare eN as a CSS subtree", async () => {
+											const baseline = await call(["snapshot", "--selector", "e999"]);
+											assert.equal(baseline.isError, false, JSON.stringify(baseline));
+											assert.equal(
+												(
+													await direct([
+														"eval",
+														"document.querySelector('e999 p').textContent = 'Literal subtree updated'",
+													])
+												).exitCode,
+												0,
+											);
 											const args = ["diff", "snapshot", "--selector", "e999"];
 											const compared = await call(args);
 											const comparedDetails = readRecord(compared.details);

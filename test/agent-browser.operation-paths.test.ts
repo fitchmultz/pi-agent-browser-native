@@ -44,12 +44,20 @@ nodeTest(
 				["upload", "#upload", join(cwd, "one.txt"), join(cwd, "two.txt")],
 			],
 			[
+				["upload", "--", "#upload", "one.txt"],
+				["upload", "--", "#upload", join(cwd, "one.txt")],
+			],
+			[
 				["state", "save", "state.json"],
 				["state", "save", join(cwd, "state.json")],
 			],
 			[
 				["state", "load", "state.json"],
 				["state", "load", join(cwd, "state.json")],
+			],
+			[
+				["state", "load", "--", "-state.json"],
+				["state", "load", "--", join(cwd, "-state.json")],
 			],
 			[
 				["state", "show", "saved-identity"],
@@ -97,6 +105,18 @@ nodeTest(
 			[
 				["webmcp", "invoke", "search", "--params", "@data.json"],
 				["webmcp", "invoke", "search", "--params", "@" + join(cwd, "data.json")],
+			],
+			[
+				["webmcp", "invoke", "search", "@data.json"],
+				["webmcp", "invoke", "search", "@" + join(cwd, "data.json")],
+			],
+			[
+				["webmcp", "invoke", "--", "search", "@data.json"],
+				["webmcp", "invoke", "--", "search", "@" + join(cwd, "data.json")],
+			],
+			[
+				["webmcp", "invoke", "search", "--", "@data.json"],
+				["webmcp", "invoke", "search", "--", "@" + join(cwd, "data.json")],
 			],
 			[
 				["webmcp", "invoke", "search", "--params", '{"query":"@data.json"}'],
@@ -156,6 +176,7 @@ nodeTest(
 				"batch",
 				"--bail",
 				"download '#link' '--quiet' ignored.bin",
+				"download '#link' -- '--quiet' ignored.bin",
 				"batch \"screenshot 'shot with spaces.png'\"",
 				"fill '#field' 'relative.txt'",
 			],
@@ -164,22 +185,27 @@ nodeTest(
 		);
 		assert.equal(raw.stdin, ignored);
 		const rows = getUpstreamEffectiveBatchSteps(raw.args, raw.stdin);
-		assert.deepEqual(rows[0], ["download", "#link", join(cwd, "--quiet"), "ignored.bin"]);
-		assert.deepEqual(getUpstreamEffectiveBatchSteps(readDefined(rows[1])), [
+		assert.deepEqual(rows[0], ["download", "#link", "--quiet", "ignored.bin"]);
+		assert.deepEqual(rows[1], ["download", "#link", "--", join(cwd, "--quiet"), "ignored.bin"]);
+		assert.deepEqual(getUpstreamEffectiveBatchSteps(readDefined(rows[2])), [
 			["screenshot", join(cwd, "shot with spaces.png")],
 		]);
-		assert.deepEqual(rows[2], ["fill", "#field", "relative.txt"]);
+		assert.deepEqual(rows[3], ["fill", "#field", "relative.txt"]);
 		const stdin = resolveOperationPaths(
 			["batch"],
 			JSON.stringify([
 				["screenshot", "apostrophe's.png"],
+				["screenshot", "--session", "foo"],
 				["pdf", "--quick", "ignored.pdf"],
+				["pdf", "--", "--quick", "ignored.pdf"],
 			]),
 			cwd,
 		);
 		assert.deepEqual(JSON.parse(readString(stdin.stdin)), [
 			["screenshot", join(cwd, "apostrophe's.png")],
-			["pdf", join(cwd, "--quick"), "ignored.pdf"],
+			["screenshot", "--session", "foo"],
+			["pdf", "--quick", "ignored.pdf"],
+			["pdf", "--", join(cwd, "--quick"), "ignored.pdf"],
 		]);
 		const blank = resolveOperationPaths(["batch", ""], ignored, cwd);
 		assert.equal(blank.stdin, ignored, "an empty raw row still displaces stdin");

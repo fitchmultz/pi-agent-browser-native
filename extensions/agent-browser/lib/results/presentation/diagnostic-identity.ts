@@ -65,6 +65,10 @@ function tabSelector(tab: Data, label: string | undefined, index: number): strin
 	return typeof tab.index === "number" ? String(tab.index) : String(index);
 }
 
+function formatTabKeepTag(keep: string | undefined): string {
+	return keep === "live" || keep === "frozen" ? ` keep=${redactModelFacingText(keep)}` : "";
+}
+
 function tabLine(tab: unknown, index: number): string {
 	if (!isRecord(tab)) {
 		return `${index}: <invalid tab>`;
@@ -80,7 +84,8 @@ function tabLine(tab: unknown, index: number): string {
 	const target = getSafeStringField(tab, "targetId");
 	const targetText =
 		target !== undefined && target !== selector ? ` target=${redactModelFacingText(target)}` : "";
-	return `${marker} [${selector}]${labelText}${targetText} ${title} — ${url}`;
+	const keepText = formatTabKeepTag(getSafeStringField(tab, "keep"));
+	return `${marker} [${selector}]${labelText}${targetText}${keepText} ${title} — ${url}`;
 }
 
 export function getTabSummary(data: Data): string | undefined {

@@ -403,6 +403,10 @@ nodeTest(
 			);
 			assert.equal(
 				getExplicitArtifactDestination(["network", "har", "stop", "-capture.har"]),
+				undefined,
+			);
+			assert.equal(
+				getExplicitArtifactDestination(["network", "har", "stop", "--", "-capture.har"]),
 				"-capture.har",
 			);
 			assert.equal(
@@ -451,8 +455,8 @@ nodeTest(
 			const sentinelAlias = await executeRegisteredTool(harness.tool, harness.ctx, {
 				args: ["batch"],
 				stdin: JSON.stringify([
-					["screenshot", "--", "capture"],
-					["screenshot", "--", "capture"],
+					["screenshot", "--", "body", "capture"],
+					["screenshot", "--", "body", "capture"],
 				]),
 			});
 			assert.equal(sentinelAlias.isError, true);
@@ -2241,7 +2245,7 @@ nodeTest(
 							harness.tool,
 							harness.ctx,
 							{
-								args: ["screenshot", "--full=demo.png"],
+								args: ["screenshot", "--", "--full=demo.png"],
 							},
 						);
 						assert.equal(reservedEqualsScreenshot.isError, true);

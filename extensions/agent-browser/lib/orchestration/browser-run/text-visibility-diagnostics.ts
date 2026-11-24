@@ -188,8 +188,9 @@ function batchStepMovesProbeDocument(step: readonly string[]): boolean {
 	const [command, subcommand] = step;
 	return (
 		// `tab new` and tab switches move the active target even though their own result
-		// reports it; `tab list` only reads. Bare `tab` conservatively ends the window.
-		(command === "tab" && subcommand !== "list") ||
+		// reports it; `tab list` only reads and `tab keep` only changes background throttling.
+		// Bare `tab` conservatively ends the window.
+		(command === "tab" && subcommand !== "list" && subcommand !== "keep") ||
 		// Optional-URL commands (a11y, vitals, web-vitals) navigate before measuring when a
 		// URL operand is present; the bare forms stay on the current page.
 		getExplicitNavigationTarget(step) !== undefined ||

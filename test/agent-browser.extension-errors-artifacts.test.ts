@@ -3784,14 +3784,16 @@ nodeTest(
 				cwd,
 				stdin: JSON.stringify([
 					["pdf", paths[0], "ignored.pdf"],
-					["download", "#link", paths[1], "ignored.bin"],
-					["pdf", paths[2], "ignored.pdf"],
-					["screenshot", "body", paths[3], "ignored.png"],
+					["download", "#link", "--", paths[1], "ignored.bin"],
+					["pdf", "--", paths[2], "ignored.pdf"],
+					["screenshot", "body", "--", paths[3], "ignored.png"],
 					["wait", "--download", "--timeout", "30000", paths[4], "ignored.csv"],
 					["state", "save", "not-a-timeout-family.json"],
-					["screenshot", "--full-page", paths[5]],
+					["screenshot", "--full", paths[5]],
 					["wait", "--download", "dogfood/download.csv", "--timeout", "1000"],
 					["wait", "--download", "--timeout", "1000"],
+					["pdf", "--quick", "ignored.pdf"],
+					["screenshot", "--full-page", paths[5]],
 				]),
 			});
 			assert.deepEqual(

@@ -21,6 +21,7 @@ import {
 } from "../extensions/agent-browser/lib/argv-grammar.js";
 import { parseCommandInfo } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import {
+	isCloseAllCommand,
 	isCloseCommand,
 	isKnownCommandToken,
 	isOpenNavigationCommand,
@@ -3755,3 +3756,33 @@ nodeTest(
 		);
 	},
 );
+
+nodeTest("0.44 CLI parsing handles -- boundaries, tab keep, and command flags", async () => {
+	const { findFirstPositionalArgument } =
+		await import("../extensions/agent-browser/lib/orchestration/browser-run/prepare/wait-timeouts.js");
+	assert.equal(
+		buildExecutionPlan(["press", "--", "-"], {
+			freshSessionName: "piab-044-fresh",
+			managedSessionName: "piab-044",
+			managedSessionActive: false,
+			sessionMode: "auto",
+		}).validationError,
+		undefined,
+	);
+	assert.equal(
+		buildExecutionPlan(["keydown", "--", "--flag"], {
+			freshSessionName: "piab-044-fresh",
+			managedSessionName: "piab-044",
+			managedSessionActive: false,
+			sessionMode: "auto",
+		}).validationError,
+		undefined,
+	);
+	assert.equal(isCloseAllCommand(["close", "--all"]), true);
+	assert.equal(isCloseAllCommand(["close", "--", "--all"]), false);
+	assert.equal(isUnverifiedPageTransitionCommand("tab", "keep"), false);
+	assert.equal(isUnverifiedPageTransitionCommand("tab", "2"), true);
+	assert.equal(findFirstPositionalArgument(["click", "--button", "right", "@e1"]), "@e1");
+	assert.equal(findFirstPositionalArgument(["dblclick", "--modifiers", "shift", "@e2"]), "@e2");
+	assert.equal(findFirstPositionalArgument(["select", "--by", "value", "@e3", "us"]), "@e3");
+});

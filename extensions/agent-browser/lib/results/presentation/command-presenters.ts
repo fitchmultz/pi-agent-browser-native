@@ -153,12 +153,42 @@ function formatTabSummary(data: unknown): string | undefined {
 	if (Array.isArray(data.tabs)) {
 		return `Tabs: ${data.tabs.length}`;
 	}
+	if (typeof data.keep === "string" && data.keep.length > 0) {
+		const keep = sanitizeRenderedSingleLine(redactModelFacingText(data.keep));
+		const tabId =
+			typeof data.tabId === "string" && data.tabId.length > 0
+				? sanitizeRenderedSingleLine(redactModelFacingText(data.tabId))
+				: undefined;
+		return tabId !== undefined ? `Tab ${tabId}: keep=${keep}` : `Tab keep: ${keep}`;
+	}
 	return data.closed === true ? "Tab closed" : undefined;
+}
+
+function formatTabKeepText(data: Readonly<Record<string, unknown>>): string | undefined {
+	if (typeof data.keep !== "string" || data.keep.length === 0) {
+		return undefined;
+	}
+	const keep = sanitizeRenderedSingleLine(redactModelFacingText(data.keep));
+	const tabId =
+		typeof data.tabId === "string" && data.tabId.length > 0
+			? sanitizeRenderedSingleLine(redactModelFacingText(data.tabId))
+			: undefined;
+	const label =
+		typeof data.label === "string" && data.label.length > 0
+			? ` (${sanitizeRenderedSingleLine(redactModelFacingText(data.label))})`
+			: "";
+	return tabId !== undefined
+		? `Tab [${tabId}]${label} background mode: ${keep}.`
+		: `Tab background mode: ${keep}.`;
 }
 
 function formatTabText(data: unknown): string | undefined {
 	if (!isRecord(data)) {
 		return undefined;
+	}
+	const keepText = formatTabKeepText(data);
+	if (keepText !== undefined) {
+		return keepText;
 	}
 	if (data.closed === true) {
 		return `Tab closed${typeof data.tabId === "string" ? `: ${sanitizeRenderedSingleLine(redactModelFacingText(data.tabId))}` : "."}`;
