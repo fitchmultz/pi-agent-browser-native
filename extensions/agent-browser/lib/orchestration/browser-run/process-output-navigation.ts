@@ -90,7 +90,12 @@ export function resolveResultingPageState(
 			const tokens = extractUpstreamCommandTokens(step);
 			const command = tokens[0];
 			const subcommand = tokens.at(1);
-			return command === "tab" && subcommand !== undefined && subcommand !== "list";
+			return (
+				command === "tab" &&
+				subcommand !== undefined &&
+				subcommand !== "list" &&
+				subcommand !== "keep"
+			);
 		});
 	const preservePriorTarget =
 		!draft.nativeCommandMayHaveExecuted ||

@@ -7,6 +7,7 @@ import {
 } from "../../results/next-actions.js";
 import { normalizeAccessibleName } from "../../results/snapshot-refs.js";
 import type { SessionRefSnapshot } from "../../session-page-state.js";
+import { getClickSelectorOperand, hasNonPlainClickOption } from "./session-state-refs.js";
 import { runSessionCommandData } from "./session-state.js";
 import { getAgentBrowserProcessTimeoutMs } from "../../process.js";
 import { getAgentBrowserProcessEnvironment } from "../../process-environment.js";
@@ -31,11 +32,11 @@ function getClickDispatchProbeTarget(
 	commandTokens: readonly string[],
 	refSnapshot?: SessionRefSnapshot,
 ): ClickDispatchProbeTarget | undefined {
-	if (commandTokens[0] !== "click" || commandTokens.includes("--new-tab")) {
+	if (commandTokens[0] !== "click" || hasNonPlainClickOption(commandTokens)) {
 		return undefined;
 	}
-	const selector = commandTokens.slice(1).find((token) => token !== "--human");
-	if (selector === undefined || selector === "" || selector.startsWith("-")) {
+	const selector = getClickSelectorOperand(commandTokens);
+	if (selector === undefined || selector === "") {
 		return undefined;
 	}
 	const refId = parseRefId(selector);
@@ -251,12 +252,14 @@ export function buildClickDispatchNextActions(options: {
 		},
 	];
 	if (options.diagnostic?.scrollContainer) {
+		const scrollTarget =
+			retryArgs[0] === "click" ? getClickSelectorOperand(retryArgs) : retryArgs.at(1);
 		actions.push({
 			id: "scroll-target-into-view-after-dispatch-miss",
 			params: {
 				args: withOptionalSessionArgs(
 					options.sessionName,
-					["scrollintoview", retryArgs.at(1)].filter((item) => typeof item === "string"),
+					["scrollintoview", scrollTarget].filter((item) => typeof item === "string"),
 				),
 			},
 			reason:
@@ -337,7 +340,7 @@ function canPrepareClickDispatchProbe(options: ClickDispatchProbeOptions): boole
 	if (
 		(options.sessionName ?? "") === "" ||
 		options.commandTokens[0] !== "click" ||
-		options.commandTokens.includes("--new-tab")
+		hasNonPlainClickOption(options.commandTokens)
 	) {
 		return false;
 	}

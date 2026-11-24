@@ -1,14 +1,22 @@
+import { END_OF_OPTIONS, scanCommandPositionals } from "./argv-scanner.js";
 import { hasCommandCapability } from "./command-capabilities.js";
 export { isKnownCommandToken } from "./command-capabilities.js";
 
 const WEBMCP_PAGE_MUTATION_SUBCOMMANDS = new Set(["invoke", "result", "cancel"]);
+const RECORD_BOOLEAN_FLAGS = new Set(["--cursor", "--contact-sheet"]);
+const RECORD_VALUE_FLAGS = new Set(["--fps", "--contact-sheet-threshold"]);
 
 export function isCloseCommand(command: string | undefined): boolean {
 	return hasCommandCapability(command, "closesSession");
 }
 
 export function isCloseAllCommand(commandTokens: readonly string[]): boolean {
-	return isCloseCommand(commandTokens[0]) && commandTokens.slice(1).includes("--all");
+	if (!isCloseCommand(commandTokens[0])) {
+		return false;
+	}
+	const separator = commandTokens.indexOf(END_OF_OPTIONS, 1);
+	const options = separator >= 0 ? commandTokens.slice(1, separator) : commandTokens.slice(1);
+	return options.includes("--all");
 }
 
 export function isOpenNavigationCommand(command: string | undefined): boolean {
@@ -35,37 +43,16 @@ export function isSessionTabPostCommandCorrectionExcludedCommand(
 	return hasCommandCapability(command, "excludedFromPostCommandCorrection");
 }
 
-function recordOptionWidth(token: string, next: string | undefined): number {
-	// Native validates the range; bare/non-numeric --fps keeps its old literal meaning.
-	if (token === "--fps" && /^\+?\d+$/.test(next ?? "")) {
-		return 2;
-	}
-	if (token === "--cursor" || token === "--contact-sheet") {
-		return 1;
-	}
-	return token === "--contact-sheet-threshold" && next !== undefined ? 2 : 0;
-}
-
 export function getRecordCommandOperandIndices(tokens: readonly string[]): number[] {
 	if (tokens[0] !== "record" || !["start", "restart"].includes(tokens[1] ?? "")) {
 		return [];
 	}
-	const operands: number[] = [];
-	const entries = tokens.entries();
-	entries.next();
-	entries.next();
-	for (const [index, token] of entries) {
-		const width = recordOptionWidth(token, tokens.at(index + 1));
-		if (width === 2) {
-			entries.next();
-		} else if (width === 0) {
-			operands.push(index);
-			if (operands.length === 2) {
-				break;
-			}
-		}
-	}
-	return operands.length > 0 ? operands : [2, 3];
+	return scanCommandPositionals(tokens, 2, {
+		booleanFlags: RECORD_BOOLEAN_FLAGS,
+		valueFlags: RECORD_VALUE_FLAGS,
+	})
+		.slice(0, 2)
+		.map(({ index }) => index);
 }
 
 export function getRecordCommandOperands(tokens: readonly string[]): {
@@ -164,7 +151,9 @@ export function isUnverifiedPageTransitionCommand(
 	return (
 		["back", "connect", "eval", "forward", "reload"].includes(command ?? "") ||
 		(command === "state" && subcommand === "load") ||
-		(command === "tab" && subcommand !== undefined && !["list", "new"].includes(subcommand)) ||
+		(command === "tab" &&
+			subcommand !== undefined &&
+			!["list", "new", "keep"].includes(subcommand)) ||
 		isWindowOrDiffPageTransitionCommand(command, subcommand) ||
 		isWebMcpPageMutation(command, subcommand) ||
 		isFlowRunCommand(command, subcommand)

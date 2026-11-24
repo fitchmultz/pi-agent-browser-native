@@ -1,5 +1,12 @@
 import { isKnownCommandToken } from "./command-taxonomy.js";
+import { END_OF_OPTIONS, type IndexedArgvToken } from "./argv-scanner.js";
 import { canonicalizeAgentBrowserNamespace } from "./session-identity.js";
+export {
+	END_OF_OPTIONS,
+	scanCommandPositionals,
+	type CommandPositionalScanOptions,
+	type IndexedArgvToken,
+} from "./argv-scanner.js";
 export {
 	canonicalizeAgentBrowserNamespace,
 	foldAgentBrowserFilesystemIdentity,
@@ -56,6 +63,8 @@ const COMMAND_VALUE_FLAGS = [
 	"--allowed-origins",
 	"--baseline",
 	"--body",
+	"--button",
+	"--by",
 	"--capability",
 	"--categories",
 	"--contact-sheet-threshold",
@@ -76,6 +85,7 @@ const COMMAND_VALUE_FLAGS = [
 	"--limit",
 	"--load",
 	"--method",
+	"--modifiers",
 	"--name",
 	"--older-than",
 	"--origin",
@@ -109,8 +119,6 @@ const COMMAND_VALUE_FLAGS = [
 ] as const;
 
 const OPTIONAL_GLOBAL_VALUE_FLAGS: ReadonlySet<string> = new Set(["--restore"]);
-/** Upstream stops global-flag and help parsing at this marker; later tokens are literal command text. */
-export const END_OF_OPTIONS = "--";
 export const INSPECTION_FLAGS: ReadonlySet<string> = new Set(["--help", "-h", "--version", "-V"]);
 export const VALUE_FLAGS: ReadonlySet<string> = new Set([
 	...GLOBAL_VALUE_FLAGS,
@@ -401,11 +409,6 @@ function globalFlagWidth(token: string, next: string | undefined, seenCommand: b
 		return ["true", "false"].includes(next ?? "") ? 2 : 1;
 	}
 	return 0;
-}
-
-export interface IndexedArgvToken {
-	readonly index: number;
-	readonly token: string;
 }
 
 export function projectUpstreamGlobalFlags(args: readonly string[]): IndexedArgvToken[] {

@@ -198,13 +198,15 @@ export function reportsUnsupportedSelectorDialect(options: {
 	);
 }
 
+export function isStaleRefErrorText(text: string): boolean {
+	return /\bUnknown ref\b|\bstale ref\b|@ref may be stale|\bElement ref\b.*\bis stale\b|\bfrom a document that is no longer loaded\b|\bref\b.*\b(?:not found|missing|expired)\b/i.test(
+		text,
+	);
+}
+
 function classifySelectorFailure(context: FailureContext): AgentBrowserFailureCategory | undefined {
 	const { options, text, command } = context;
-	if (
-		/\bUnknown ref\b|\bstale ref\b|@ref may be stale|\bref\b.*\b(?:not found|missing|expired)\b/i.test(
-			text,
-		)
-	) {
+	if (isStaleRefErrorText(text)) {
 		return "stale-ref";
 	}
 	const usedRef = options.args?.some((arg) => /^@e\d+\b/.test(arg)) ?? false;

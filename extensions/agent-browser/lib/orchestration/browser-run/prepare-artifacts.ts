@@ -1,18 +1,10 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import {
-	isUpstreamGlobalFlagToken,
-	projectUpstreamGlobalFlags,
-	type IndexedArgvToken,
-} from "../../argv-grammar.js";
+import { projectUpstreamGlobalFlags, type IndexedArgvToken } from "../../argv-grammar.js";
 import { pathExists } from "../../fs-utils.js";
-import {
-	extractCommandTokens,
-	extractUpstreamCommandTokens,
-	parseWaitCommandTokens,
-} from "../../runtime.js";
+import { extractCommandTokens, extractUpstreamCommandTokens } from "../../runtime.js";
 import { getUpstreamEffectiveBatchSteps, parseBatchStdinJsonArray } from "../batch-stdin.js";
-import { getScreenshotPathOperand } from "./artifact-paths.js";
+import { getExplicitArtifactDestinationIndex, getScreenshotPathOperand } from "./artifact-paths.js";
 import type {
 	PreparedAgentBrowserArgs,
 	ScreenshotArtifactRequest,
@@ -20,17 +12,14 @@ import type {
 } from "./types.js";
 
 function getArtifactParentPathTokenIndex(commandTokens: readonly string[]): number | undefined {
-	if (commandTokens[0] === "download" && commandTokens.length >= 3) {
-		return 2;
-	}
-	if (commandTokens[0] === "pdf" && commandTokens.length >= 2) {
-		return 1;
-	}
-	if (commandTokens[0] === "state" && commandTokens[1] === "save" && commandTokens.length >= 3) {
-		return 2;
-	}
-	if (commandTokens[0] === "wait") {
-		return parseWaitCommandTokens(commandTokens).downloadPathIndex;
+	const [command, subcommand] = commandTokens;
+	if (
+		command === "download" ||
+		command === "pdf" ||
+		command === "wait" ||
+		(command === "state" && subcommand === "save")
+	) {
+		return getExplicitArtifactDestinationIndex(commandTokens);
 	}
 	return undefined;
 }
@@ -68,8 +57,7 @@ async function normalizeScreenshotPathInTokens(
 	batchStep = false,
 ): Promise<{ request?: ScreenshotPathRequest; tokens: string[] }> {
 	const operand = screenshotPathOperand(commandTokens, batchStep);
-	// Upstream rejects a global flag inside a batch item; rewriting it into a path would hide that.
-	if (operand === undefined || (batchStep && isUpstreamGlobalFlagToken(operand.token))) {
+	if (operand === undefined) {
 		return { tokens: [...commandTokens] };
 	}
 	const { index: pathIndex, token: requestedPath } = operand;
@@ -77,10 +65,6 @@ async function normalizeScreenshotPathInTokens(
 	await mkdir(dirname(absolutePath), { recursive: true });
 	const tokens = [...commandTokens];
 	tokens[pathIndex] = absolutePath;
-	const terminatorIndex = batchStep ? -1 : tokens.indexOf("--");
-	if (terminatorIndex >= 0) {
-		tokens.splice(terminatorIndex, 1);
-	}
 	return { request: { absolutePath, path: requestedPath }, tokens };
 }
 

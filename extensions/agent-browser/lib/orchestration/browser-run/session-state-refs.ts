@@ -1,3 +1,4 @@
+import { beforeEndOfOptions, END_OF_OPTIONS, scanCommandPositionals } from "../../argv-grammar.js";
 import { isRefGuardedCommand, isRefInvalidatingBatchCommand } from "../../command-taxonomy.js";
 import { parseRefId } from "../../parsing.js";
 import {
@@ -9,6 +10,53 @@ import {
 import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
 import { getScreenshotOperands } from "./artifact-paths.js";
 import type { StaleRefPreflight } from "./types.js";
+
+const CLICK_BOOLEAN_FLAGS = new Set(["--human", "--new-tab"]);
+const DBLCLICK_BOOLEAN_FLAGS = new Set(["--human"]);
+const CLICK_VALUE_FLAGS = new Set(["--button", "--modifiers"]);
+const DRAG_BOOLEAN_FLAGS = new Set(["--human"]);
+const SELECT_VALUE_FLAGS = new Set(["--by"]);
+const SINGLE_SELECTOR_SCANNER_COMMANDS = new Set([
+	"check",
+	"download",
+	"focus",
+	"highlight",
+	"hover",
+	"scrollinto",
+	"scrollintoview",
+	"tap",
+	"uncheck",
+]);
+
+export function getClickSelectorOperand(tokens: readonly string[]): string | undefined {
+	if (tokens[0] !== "click" && tokens[0] !== "dblclick") {
+		return undefined;
+	}
+	return scanCommandPositionals(tokens, 1, {
+		booleanFlags: tokens[0] === "click" ? CLICK_BOOLEAN_FLAGS : DBLCLICK_BOOLEAN_FLAGS,
+		valueFlags: CLICK_VALUE_FLAGS,
+	})[0]?.token;
+}
+
+export function hasNonPlainClickOption(commandTokens: readonly string[]): boolean {
+	if (commandTokens[0] !== "click") {
+		return false;
+	}
+	const options = beforeEndOfOptions(commandTokens.slice(1));
+	for (let index = 0; index < options.length; index += 1) {
+		const token = options[index];
+		if (token === "--new-tab" || token === "--modifiers") {
+			return true;
+		}
+		if (token === "--button") {
+			if (options[index + 1]?.toLowerCase() !== "left") {
+				return true;
+			}
+			index += 1;
+		}
+	}
+	return false;
+}
 
 export function getStaleRefArgs(
 	commandTokens: readonly string[],
@@ -25,6 +73,9 @@ function getFlaggedSelector(tokens: readonly string[]): string | undefined {
 	let selector: string | undefined;
 	const operands = tokens.slice(tokens[0] === "diff" ? 2 : 1).values();
 	for (const token of operands) {
+		if (token === END_OF_OPTIONS) {
+			break;
+		}
 		if (token === "--selector" || token === "-s") {
 			selector = operands.next().value;
 		} else if (
@@ -37,18 +88,43 @@ function getFlaggedSelector(tokens: readonly string[]): string | undefined {
 	return selector;
 }
 
+function getTokenAfterOptionalSeparator(
+	tokens: readonly string[],
+	startIndex: number,
+): string | undefined {
+	return tokens[startIndex] === END_OF_OPTIONS ? tokens[startIndex + 1] : tokens[startIndex];
+}
+
+function getSubcommandSelectorOperand(tokens: readonly string[]): string | undefined {
+	if (tokens[0] === "get" && ["url", "title", "cdp-url", "count"].includes(tokens[1] ?? "")) {
+		return undefined;
+	}
+	return getTokenAfterOptionalSeparator(tokens, 2);
+}
+
 function getSelectorOperands(tokens: readonly string[]): readonly (string | undefined)[] {
-	switch (tokens[0]) {
+	const command = tokens[0];
+	if (command !== undefined && SINGLE_SELECTOR_SCANNER_COMMANDS.has(command)) {
+		return [scanCommandPositionals(tokens, 1)[0]?.token];
+	}
+	switch (command) {
 		case "click":
-			return [tokens.slice(1).find((token) => token !== "--new-tab" && token !== "--human")];
+		case "dblclick":
+			return [getClickSelectorOperand(tokens)];
 		case "drag":
-			return tokens.slice(1, 3);
-		case "get":
+			return scanCommandPositionals(tokens, 1, { booleanFlags: DRAG_BOOLEAN_FLAGS })
+				.slice(0, 2)
+				.map(({ token }) => token);
+		case "select":
 			return [
-				!["url", "title", "cdp-url", "count"].includes(tokens[1] ?? "") ? tokens[2] : undefined,
+				scanCommandPositionals(tokens, 1, {
+					equalsValueFlags: SELECT_VALUE_FLAGS,
+					valueFlags: SELECT_VALUE_FLAGS,
+				})[0]?.token,
 			];
+		case "get":
 		case "is":
-			return [tokens[2]];
+			return [getSubcommandSelectorOperand(tokens)];
 		case "screenshot":
 			return [getScreenshotOperands(tokens)[0]?.token];
 		case "diff":
@@ -56,7 +132,7 @@ function getSelectorOperands(tokens: readonly string[]): readonly (string | unde
 			return [getFlaggedSelector(tokens)];
 		case undefined:
 		default:
-			return [tokens[1]];
+			return [getTokenAfterOptionalSeparator(tokens, 1)];
 	}
 }
 

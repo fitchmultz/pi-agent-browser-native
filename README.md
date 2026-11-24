@@ -56,7 +56,7 @@ For example, Pi opens and inspects a page with these calls:
 { "args": ["snapshot", "-i"] }
 ```
 
-Snapshots give Pi current `@eN` references for controls. The recommended agent-browser 0.43.0 adds DOM hints for unnamed or duplicate-name controls; use their refs, since hints are not accessible names. Refresh the snapshot after navigation or page changes. Check the resulting page after a click; command success alone does not prove the app changed.
+Snapshots give Pi current `@eN` references for controls. The recommended agent-browser 0.44.0 includes DOM hints for unnamed or duplicate-name controls; use their refs, since hints are not accessible names. Refresh the snapshot after navigation or page changes. Check the resulting page after a click; command success alone does not prove the app changed.
 
 Browser windows are headless by default: pass `--headed` in `args` to show the window. There is no `--headless` flag; upstream rejects it as an unknown command.
 

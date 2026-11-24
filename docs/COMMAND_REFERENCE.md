@@ -28,15 +28,28 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.43.0` command/help surface, audited against vercel-labs/agent-browser@1cc19526f3641c8543d55aa6700e7c55b37ac356. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.44.0` command/help surface, audited against vercel-labs/agent-browser@0a923358ea989d7602f0d06507ad3447c62ffe9b. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.44.0 rebaseline
+
+The recommended upstream and minimum supported runtime floor is 0.44.0 (`scripts/agent-browser-target.mjs`), audited at upstream commit `0a923358ea989d7602f0d06507ad3447c62ffe9b`, with no version-specific shims for older releases. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.44.0).
+
+- **Renamed Vercel skill (`skills get vercel`).** Upstream renamed `protected-vercel-deployments` to `vercel` and added Vercel feature-flag override workflows (`vc flags override` / `vercel-flag-overrides`) alongside Trusted Sources OIDC authentication (`vc project token` / `x-vercel-trusted-oidc-idp-token`). `skills get vercel --full` stays sessionless.
+- **Background tab throttling controls (`tab keep`).** `tab keep <live|throttled|frozen> [target]` controls whether a background tab stays live, uses default Chrome throttling, or freezes until switched to; `tab list` reports each tab's `keep` mode (`live` / `frozen` appear in wrapper presentation when non-default). The wrapper treats `tab keep` as non-navigating so it does not invalidate refs, trigger tab-target switches, or break batch `get text` visibility windows.
+- **Mouse button and modifier clicks (`click` / `dblclick`).** `click <sel> --button <button> --modifiers <keys>` and `dblclick <sel> --button <button> --modifiers <keys>` accept `left`, `right`, `middle`, `back`, and `forward` plus modifier lists (`alt`, `control`/`ctrl`, `meta`/`cmd`/`command`, `shift`) before or after the selector (`--new-tab` cannot combine with `--button` or `--modifiers`). Wrapper ref preflight reads the selector around these options, and click-dispatch probing skips non-left button and modified clicks.
+- **Typed dropdown selection (`select --by`).** `select <sel> <val...> [--by value|label]` selects `<select>` options unambiguously by value or normalized label, fails closed with `option_not_found` / `ambiguous` / `not_multiple`, supports `--` before dash-prefixed values, and works on custom ARIA `combobox` / `listbox` widgets.
+- **Positional WebMCP invoke input and Chrome 157+ support.** `webmcp invoke <tool> <json|@file>` accepts inline JSON or `@file` immediately after the tool name as well as via `--params <json|@file>`; wrapper cwd path binding handles both forms. Upstream also enables WebMCP natively on Chrome 157+.
+- **Strict unknown-flag rejection and `--` operand boundary.** Upstream rejects unrecognized flags—and global flags placed inside batch items—across navigation, interaction, capture/file (`screenshot`, `pdf`, `download`, `record start/restart`), and inspection/state commands. Put `--` before dash-prefixed literal paths, keys, or values (for example `pdf -- -report.pdf`, `download #link -- -file.bin`, `press -- -`). Wrapper artifact paths, cwd path binding, ref preflight, `close --all`, and single-key validation mirror this `--` boundary and leave rejected batch flags untouched so native errors surface.
+- **Snapshot diff baseline checks (`diff snapshot`).** Without `--baseline`, `diff snapshot` compares against the tab's last snapshot using that snapshot's options; mismatched options fail with `baseline_mismatch`, missing earlier snapshots fail with `no_baseline`, and missing `--baseline` files fail with `file_not_found`.
+- **Replaced-document stale refs and additional native updates.** Refs issued in a document that navigated or reloaded fail with `is from a document that is no longer loaded` / `Element ref … is stale`; the wrapper classifies both as `stale-ref` with fresh-snapshot recovery guidance. Upstream also adds the `-p ladybird` provider, rejects empty `AGENT_BROWSER_ALLOWED_DOMAINS`, applies `--restore*` flags through session settings patches, and passes through without wrapper shims.
+
 ### Upstream 0.43.0 rebaseline
 
-The recommended upstream and minimum supported runtime floor is 0.43.0 (`scripts/agent-browser-target.mjs`), audited at upstream commit `1cc19526f3641c8543d55aa6700e7c55b37ac356`, with no version-specific shims for older releases. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.43.0).
+Native 0.43.0 introduced the following behavior, audited at upstream commit `1cc19526f3641c8543d55aa6700e7c55b37ac356`. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.43.0).
 
 - **Control hints keep refs usable.** Snapshots add `hint="..."` after the ref when a control has an empty or duplicated accessible name. Hints come from icons, image filenames, stable `data-testid` / `name` / `id` attributes, and nearby row/list/article text. They are DOM context, not accessible names: the JSON `refs` map keeps the original name, and `find role ... --name` does not match the hint. Act by ref. See [native snapshots](https://github.com/vercel-labs/agent-browser/blob/1cc19526f3641c8543d55aa6700e7c55b37ac356/docs/content/docs/snapshots.mdx#control-hints).
 - **Modern Web Guidance is a bundled skill.** `skills get modern-web-guidance --full` explains how to retrieve Chrome web-platform guidance, apply it, and verify layout shift, reduced motion, color schemes, and modal dialogs in the browser. It remains a sessionless skill read, not a new wrapper tool.
@@ -70,7 +83,7 @@ Published npm help includes `--cdp-headers <json>` and `AGENT_BROWSER_CDP_HEADER
 
 ### Upstream 0.41.0 rebaseline
 
-The recommended stock npm `agent-browser@0.43.0` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support starts at stable 0.43.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
+The recommended stock npm `agent-browser@0.44.0` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support starts at stable 0.44.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
 
 - Native `wait --download <path>` handles downloads that completed before the wait and moves a locally launched browser's downloaded bytes to the requested destination. Native refuses to move files reported by an attached/remote CDP browser. The wrapper still requires on-disk artifact verification; a reported-but-missing path fails as `artifact-missing`. See [native download handling](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L11403-L11508).
 - Native daemon shutdown removes its own `<session>.config` along with other daemon files, while retaining `.target` and `.log`. This prevents new configuration-file accumulation; it does not sweep all historical orphans or optimize the wrapper's socket-directory scan. Updating this metadata cannot speed an installation already running 0.41.0. See [file ownership](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/session_files.rs#L75-L104) and [shutdown cleanup](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/daemon.rs#L147-L151).
@@ -155,12 +168,12 @@ The 0.35.0 release added private proxy CA trust plus one bundled workflow skill.
 
 - `--ca-cert <path>` / `AGENT_BROWSER_CA_CERT` loads a PEM bundle or DER certificate into an isolated NSS trust store for locally launched Linux Chromium. Normal hostname, validity, and unrelated-authority checks remain enabled. Equivalent certificate content reuses Chromium; changed content relaunches it. `--no-ca-cert` / `AGENT_BROWSER_CLEAR_CA_CERT` clears retained trust.
 - For browser CA trust, use a fresh managed session. The wrapper treats `--ca-cert` and `--no-ca-cert` as launch-scoped for managed browser planning, disables automatic managed restore when CA trust is enabled, and passes caller-selected certificate paths through unchanged. Browser CA trust rejects profiles, CDP/auto-connect, providers, non-Chrome engines, `--ignore-https-errors`, macOS, or Windows, and requires `certutil` (`install --with-deps` installs it on supported Linux systems). CLI HTTPS trust is separate and available on every platform from 0.39.0; see [the current baseline](#upstream-0392-rebaseline).
-- `skills get protected-vercel-deployments --full` loads the bundled short-lived Trusted Sources OIDC workflow. It uses `vc project token` and the `x-vercel-trusted-oidc-idp-token` header, avoids persisting tokens, and hands dashboard-only access-control changes to an authorized human.
+- `skills get vercel --full` (originally introduced in 0.35.0 as `protected-vercel-deployments` and renamed in 0.44.0) loads the bundled short-lived Trusted Sources OIDC and feature-flag override workflows. It uses `vc project token` and the `x-vercel-trusted-oidc-idp-token` header, avoids persisting tokens, and hands dashboard-only access-control changes to an authorized human.
 - The release also restores ARM64 build artifacts; no wrapper shim is needed.
 
 ### Upstream 0.34.0 rebaseline
 
-The 0.34.0 release added persistent session-to-tab binding for shared Chrome sessions. Before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails below-floor (< 0.43.0) or malformed versions with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
+The 0.34.0 release added persistent session-to-tab binding for shared Chrome sessions. Before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails below-floor (< 0.44.0) or malformed versions with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
 
 - Named sessions on `--cdp` or `--auto-connect` remember their CDP target across commands and daemon restarts. CDP target ids from `tab list --json` are accepted as tab refs and stay stable across daemon restarts, unlike `t<N>` ids.
 - `--pin-tab` (`AGENT_BROWSER_PIN_TAB`) is sticky per session and is not launch-scoped: pass it once, including on an already-live session, so a closed bound tab fails with `tab_gone` instead of adopting a neighbor. JSON includes `code=tab_gone`, `data.targetId`, and optional sanitized `data.lastUrl`; batch exposes the same recovery object under `result`. Recover with `tab new` or `tab list`. `--no-pin-tab` turns the pin off again. Optional booleans use separated tokens (`--pin-tab false`).
@@ -604,7 +617,7 @@ Screenshot `imageObservations` includes verified pixel dimensions and capture ki
 
 For evidence-only screenshots, QA captures, or audit artifacts, save to an explicit path and branch on `details.artifactVerification` plus `details.artifacts` before reporting PASS/FAIL. Inline image attachments are optional convenience when size limits allow; do not require vision review unless the user asked for visual inspection.
 
-Wrapper result rendering is metadata-first for saved files. Image MIME types come from a bounded header read for PNG, JPEG, GIF and WebP, never from a filename suffix; missing, unreadable, unknown or truncated headers omit `mediaType`. This identifies a format, not full image validity. Inline screenshots use the same byte check and existing size limit, so a PNG saved as `.webm` still attaches as `image/png`; other artifact kinds are not auto-inlined. An artifact-producing command fails as `artifact-missing` with artifact `status: "stale"` when the reported path's `mtimeMs` falls outside the command's bounded start/end window (with two seconds of filesystem precision tolerance), including a previous recording that `record restart` claims to finalize; clearly old or future-dated evidence is never accepted as a fresh capture. A batch, whether supplied through stdin arrays or argument command strings, must use distinct explicit artifact destinations; preflight canonicalizes existing path ancestry, compares existing file identities to catch hardlinks, and applies full Unicode plus platform case folding on macOS/Windows so aliases cannot satisfy another step's verification. The same preflight prevents `outputPath` from aliasing a same-call browser artifact, follows upstream's forward option consumption and final effective `-o` / `--output` for `diff screenshot`, and treats the optional path on `network har stop` as an artifact destination; upstream ignores positional paths on `network har start`. Outer CLI artifact parsing removes upstream global flags, so direct forms such as `record --json start <path>` and `pdf --quiet <path>` retain their native destinations. Native batch rows do not run that cleanup: `pdf --quick ignored.pdf` writes to the literal path `--quick`, and `download #link --quiet ignored.bin` writes to `--quiet`. Preflight, directory preparation, presentation, and timeout evidence use those same operands, not the ignored trailing tokens. Screenshot destination parsing mirrors upstream's exact flag matching and `[selector] [path]` positional order: `--` is positional, `true` / `false` after screenshot-only `--full` / `-f` remain positional, extra positionals are ignored after the path slot, selector-prefixed (`.`, `#`, `@`) or uppercase-extension single arguments remain selectors, and lowercase image extensions or slash-bearing arguments are paths. The wrapper deliberately keeps its existing slash-bearing hidden-workspace path normalization (for example `.dogfood/run/foo.png`) before launch. `wait --download` is observational and may verify a download that completed just before the wait began, so it is exempt from the command-window mtime gate; an explicit wait destination, in long `--download <path>` or short `-d <path>` form (including `wait --download --timeout 30000 capture.csv`), still participates in active-recording reservation preflight; the path is the next retained operand after the first timeout pair is removed; unsupported `--download=<path>` fails with split-argument guidance:
+Wrapper result rendering is metadata-first for saved files. Image MIME types come from a bounded header read for PNG, JPEG, GIF and WebP, never from a filename suffix; missing, unreadable, unknown or truncated headers omit `mediaType`. This identifies a format, not full image validity. Inline screenshots use the same byte check and existing size limit, so a PNG saved as `.webm` still attaches as `image/png`; other artifact kinds are not auto-inlined. An artifact-producing command fails as `artifact-missing` with artifact `status: "stale"` when the reported path's `mtimeMs` falls outside the command's bounded start/end window (with two seconds of filesystem precision tolerance), including a previous recording that `record restart` claims to finalize; clearly old or future-dated evidence is never accepted as a fresh capture. A batch, whether supplied through stdin arrays or argument command strings, must use distinct explicit artifact destinations; preflight canonicalizes existing path ancestry, compares existing file identities to catch hardlinks, and applies full Unicode plus platform case folding on macOS/Windows so aliases cannot satisfy another step's verification. The same preflight prevents `outputPath` from aliasing a same-call browser artifact, follows upstream's forward option consumption and final effective `-o` / `--output` for `diff screenshot`, and treats the optional path on `network har stop` as an artifact destination; upstream ignores positional paths on `network har start`. Outer CLI artifact parsing removes upstream global flags, so direct forms such as `record --json start <path>` and `pdf --quiet <path>` retain their native destinations. Native batch rows do not strip outer global flags: upstream 0.44.0 rejects unknown flags and global flags placed before `--` inside batch items (for example `pdf --quick ignored.pdf` or `download #link --quiet ignored.bin`), so pass `--` before dash-prefixed literal destinations (for example `pdf -- -quick.pdf` or `download #link -- --quiet`). Preflight, directory preparation, presentation, and timeout evidence mirror that `--` boundary and leave rejected batch rows untouched so native errors surface. Screenshot destination parsing mirrors upstream's exact flag matching and `[selector] [path]` positional order: `--` ends option parsing rather than acting as a positional operand, `true` / `false` after screenshot-only `--full` / `-f` remain positional, extra positionals are ignored after the path slot, selector-prefixed (`.`, `#`, `@`) or uppercase-extension single arguments remain selectors, and lowercase image extensions or slash-bearing arguments are paths. The wrapper deliberately keeps its existing slash-bearing hidden-workspace path normalization (for example `.dogfood/run/foo.png`) before launch. `wait --download` is observational and may verify a download that completed just before the wait began, so it is exempt from the command-window mtime gate; an explicit wait destination, in long `--download <path>` or short `-d <path>` form (including `wait --download --timeout 30000 capture.csv`), still participates in active-recording reservation preflight; the path is the next retained operand after the first timeout pair is removed; unsupported `--download=<path>` fails with split-argument guidance:
 
 - screenshots return a saved-path summary, visible artifact metadata, structured `details.artifacts` metadata, and an inline image attachment when safe; the visible block includes artifact type, requested path, absolute path, existence, size, cwd, session, and repair/copy status when applicable
 - downloads, PDFs, `wait --download` files, `state save` state files, diff screenshot output images, traces, CPU profiles, completed video recordings from `record stop`, and path-bearing HAR captures return concise saved-path summaries plus structured `details.artifacts` metadata without inlining large files
@@ -738,16 +751,16 @@ Native-tool note: upstream skills are written for the standalone `agent-browser`
 
 Session note: `skills list`, `skills get …`, and `skills path …` are **stateless** in this wrapper. Even with default `sessionMode: "auto"`, the extension does not prepend the implicit managed `--session` for those commands, so reading bundled skills does not attach to or rotate the active browser session (same intent as plain-text `--help` / `--version` inspection). Other `skills` subcommands follow normal session rules until explicitly allowlisted in `extensions/agent-browser/lib/runtime.ts` alongside regression coverage in `test/agent-browser.runtime.test.ts`.
 
-| Command                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `skills list`                   | List available CLI-bundled skills.                                                                                                                                                                                                                                                                                                                                                                                           |
-| `skills get core`               | Print the core usage guide.                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `skills get core --full`        | Print the full version-matched core command reference and templates.                                                                                                                                                                                                                                                                                                                                                         |
-| `skills get <name>`             | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel-sandbox`, `skills get agentcore`, `skills get derive-client` (HAR-to-API-client workflow), `skills get webmcp-gen` (create and validate page tools), and `skills get modern-web-guidance` (apply Chrome guidance and verify it in the browser). |
-| `skills get <name> --full`      | Include a skill's supplementary references/templates when present.                                                                                                                                                                                                                                                                                                                                                           |
-| `skills get <name> --ref <ref>` | Load only the named reference or template by relative path, file name, or stem. Repeat `--ref` for several files from one skill.                                                                                                                                                                                                                                                                                             |
-| `skills get --all`              | Print all visible bundled skills for broad audit/debug work.                                                                                                                                                                                                                                                                                                                                                                 |
-| `skills path [name]`            | Print a skill directory path.                                                                                                                                                                                                                                                                                                                                                                                                |
+| Command                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `skills list`                   | List available CLI-bundled skills.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `skills get core`               | Print the core usage guide.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `skills get core --full`        | Print the full version-matched core command reference and templates.                                                                                                                                                                                                                                                                                                                                                                              |
+| `skills get <name>`             | Load a specialized skill such as `electron` or `slack`. Common specialized calls include `skills get electron`, `skills get slack`, `skills get dogfood`, `skills get vercel`, `skills get vercel-sandbox`, `skills get agentcore`, `skills get derive-client` (HAR-to-API-client workflow), `skills get webmcp-gen` (create and validate page tools), and `skills get modern-web-guidance` (apply Chrome guidance and verify it in the browser). |
+| `skills get <name> --full`      | Include a skill's supplementary references/templates when present.                                                                                                                                                                                                                                                                                                                                                                                |
+| `skills get <name> --ref <ref>` | Load only the named reference or template by relative path, file name, or stem. Repeat `--ref` for several files from one skill.                                                                                                                                                                                                                                                                                                                  |
+| `skills get --all`              | Print all visible bundled skills for broad audit/debug work.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `skills path [name]`            | Print a skill directory path.                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an override for bundled skill discovery. Normal agents should not need it, but it is useful when validating package layout or upstream skill packaging.
 
@@ -758,7 +771,9 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 - `read [url]` — Fetch agent-readable text from an explicit URL without requiring a Chrome page, or omit the URL to read rendered active-tab DOM. Supports `--raw`, `--require-md`, `--llms <index|full>`, `--outline`, `--filter <text>`, and `--timeout <ms>`.
 - `click <sel>` — Click an element or `@ref`.
 - `click <sel> --new-tab` — Click a link/control while requesting a new tab.
+- `click <sel> --button <button> --modifiers <keys>` — Click with an explicit mouse button (`left`, `right`, `middle`, `back`, `forward`) and/or held modifier keys (`alt`, `control`/`ctrl`, `meta`/`cmd`/`command`, `shift`).
 - `dblclick <sel>` — Double-click an element.
+- `dblclick <sel> --button <button> --modifiers <keys>` — Double-click with an explicit mouse button and/or held modifier keys.
 - `type <sel> <text>` — Type into an element; both selector and text are required. Full form: `type <selector> [--clear] [--delay <ms>] [--] <text>`. Native 0.42.0 reads `--clear` and `--delay <ms>` as options; put `--` before text that looks like a flag. For the focused element without a selector, use `keyboard type <text>`.
 - `fill <sel> <text>` — Clear and fill an element. Full form: `fill <selector> [--] <text>`; text after `--` is literal on native 0.42.0, including values such as `--json`. Older supported natives type the marker too.
 - `press <key>` — Press a key such as `Enter`, `Tab`, or `Control+a`. `key <key>` is the upstream alias.
@@ -771,7 +786,7 @@ Skill-source debugging note: upstream honors `AGENT_BROWSER_SKILLS_DIR` as an ov
 - `focus <sel>` — Focus an element.
 - `check <sel>` — Check a checkbox.
 - `uncheck <sel>` — Uncheck a checkbox.
-- `select <sel> <val...>` — Select one or more dropdown options.
+- `select <sel> <val...>` — Select one or more dropdown options (also supports `select <sel> <val...> [--by value|label]` and custom ARIA `combobox` / `listbox` widgets; put `--` before dash-prefixed values).
 - `drag <src> <dst>` — Drag and drop.
 - `upload <sel> <files...>` — Upload one or more files.
 - `download <sel> <path>` — Download a file by clicking an element. Native 0.42.0 rejects it on a browser attached with `--cdp`, `--auto-connect`, or a provider.
@@ -859,6 +874,7 @@ WebMCP support is experimental and browser-dependent. Locally managed Chrome ena
 
 - `webmcp list` — List tools registered by the current page, including each tool's frame id, origin, schema, and annotations.
 - `webmcp invoke <tool>` — Invoke a page tool with an empty input object.
+- `webmcp invoke <tool> <json|@file>` — Pass a JSON object inline or read it from a caller-selected file positionally after `<tool>`.
 - `webmcp invoke <tool> --params <json|@file>` — Pass a JSON object inline or read it from a caller-selected file.
 - `webmcp invoke <tool> --frame <frame-id>` — Select the registering frame when a tool name is ambiguous.
 - `webmcp invoke <tool> --detach` — Start the call and return its invocation id without waiting.
@@ -878,6 +894,7 @@ Tab commands use singular `tab`, not `tabs` (an accidental `tabs` call fails ups
 - `tab new --label <name> [url]` — Open a new tab with a user label.
 - `tab <t<N>|label>` — Switch to a tab by id or label. CDP target ids from `tab list --json` are also accepted and stay stable across daemon restarts.
 - `tab close [t<N>|label|target]` — Close the current tab or a referenced tab. Generic references in workflows may say `tab close [target]`; use a stable `t<N>` id, label, or CDP target id when you have one.
+- `tab keep <live|throttled|frozen> [target]` — Set how a tab runs in the background (`live` keeps timers/rAF active, `throttled` restores Chrome default, `frozen` pauses a hidden tab until switched to).
 
 The wrapper persists native CDP `targetId` when available so resume/branch recovery distinguishes tabs with the same URL and title. A missing known target requires explicit tab recovery; older transcripts without IDs still use URL matching, and a cold managed reopen adopts its new ID. Failed reached batch navigations retire earlier targets and recheck the live page, including Chrome error pages, before subsequent inspection.
 
@@ -920,7 +937,7 @@ Current upstream still does not parse `wait <selector> --state hidden` / `wait <
 
 ### Diff, debug, and streaming
 
-- `diff snapshot` — Compare current versus last snapshot. Use `diff snapshot --baseline <file> --selector <sel> --compact --depth <n>` when you need a saved baseline, scoped subtree, compact output, or depth bound.
+- `diff snapshot` — Compare current versus last snapshot (must match the last snapshot's options or fails with `baseline_mismatch`; fails with `no_baseline` when no earlier snapshot exists). Use `diff snapshot --baseline <file> --selector <sel> --compact --depth <n>` when you need a saved baseline (`file_not_found` if missing), scoped subtree, compact output, or depth bound.
 - `diff screenshot --baseline` — Compare current screenshot versus a baseline image. Use `diff screenshot --baseline <file> --output <file> --threshold <0-1> --selector <sel> --full` when you need a saved diff image, threshold tuning, element scope, or full-page capture.
 - `diff url <u1> <u2>` — Navigate to both pages and compare them, leaving the second destination active. The wrapper observes the final URL, including redirects to `about:blank`, and invalidates old refs without recovering the old tab; direct and reached batch rows use the same rule. If the URL cannot be observed, run `get url` before taking a fresh snapshot. Use `diff url <u1> <u2> --screenshot --wait-until <strategy> --selector <sel> --compact --depth <n>` when you need screenshot comparison, navigation wait control, or scoped/compact snapshot comparison.
 - `trace start`, `trace stop [path]` — Record a Chrome DevTools trace.
@@ -1212,7 +1229,7 @@ On Android/Termux, follow the [native Android setup](REFERENCE.md#android--termu
 - `--action-policy <path>`: action policy JSON file. Environment: `AGENT_BROWSER_ACTION_POLICY`. Native 0.39.2 denies actions when the selected policy cannot be read or parsed instead of continuing without it. Explicit policy values also reach internal helpers for the current call. Keep the action-policy path consistent on follow-ups; changing or omitting it can restart the native daemon and discard pending confirmations. The established `--confirm-actions` setting is retained for same-session follow-ups.
 - `--confirm-actions <list>`: action categories requiring confirmation. Environment: `AGENT_BROWSER_CONFIRM_ACTIONS`.
 - `--confirm-interactive`: interactive confirmations; auto-denies when stdin is not a TTY. Environment: `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
-- `-p, --provider <name>`: provider such as `ios`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
+- `-p, --provider <name>`: provider such as `ios`, `ladybird`, `browserbase`, `kernel`, `browseruse`, `browserless`, or `agentcore`. Environment: `AGENT_BROWSER_PROVIDER`.
 - `--device <name>`: iOS device name. Environment: `AGENT_BROWSER_IOS_DEVICE`.
 - Provider-specific iOS examples from upstream include `agent-browser -p ios device list`, `agent-browser -p ios swipe up`, and `agent-browser -p ios tap @e1`; in pi, pass those tokens through `args` rather than bash. iOS requires external Xcode/Appium setup, and cloud providers (`browserbase`, `kernel`, `browseruse`, `browserless`, `agentcore`) require their upstream accounts, credentials, and provider-specific environment variables. Common provider variables include `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID`, `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, `BROWSERLESS_BROWSER_TYPE`, `BROWSERLESS_STEALTH`, `BROWSERLESS_TTL`, `BROWSER_USE_API_KEY`, `BROWSER_USE_PROFILE_ID`, `BROWSER_USE_PROXY_COUNTRY`, `BROWSER_USE_ENABLE_RECORDING`, `KERNEL_API_KEY`, `KERNEL_HEADLESS`, `KERNEL_STEALTH`, `KERNEL_TIMEOUT_SECONDS`, `KERNEL_PROFILE_NAME`, `KERNEL_PROFILE_SAVE_CHANGES`, `AGENTCORE_API_KEY`, `AGENTCORE_REGION`, `AGENTCORE_BROWSER_ID`, `AGENTCORE_PROFILE_ID`, `AGENTCORE_SESSION_TIMEOUT`, plus AWS names used by AgentCore such as `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, and `AWS_DEFAULT_REGION`. The wrapper forwards parent environment variables plus provider flags and stays thin; it does not emulate provider setup or cloud browser behavior.
 - `--model <name>`: AI model for `chat`. Environment: `AI_GATEWAY_MODEL`.
@@ -1262,20 +1279,22 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.43.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.44.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `1cc19526f3641c8543d55aa6700e7c55b37ac356`
-- upstream package version: `0.43.0`
-- inspected: `stock npm agent-browser@0.43.0 package and official release binary`
-- inspected: `v0.42.0...v0.43.0 release notes and interface source diff`
+- upstream HEAD: `0a923358ea989d7602f0d06507ad3447c62ffe9b`
+- upstream package version: `0.44.0`
+- inspected: `stock npm agent-browser@0.44.0 package and official release binary`
+- inspected: `v0.43.0...v0.44.0 release notes and interface source diff`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
+- inspected: `agent-browser dblclick --help`
+- inspected: `agent-browser select --help`
 - inspected: `agent-browser a11y --help`
 - inspected: `agent-browser mcp --help`
 - inspected: `agent-browser plugin --help`
@@ -1347,7 +1366,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `skill-data/derive-client/SKILL.md`
 - inspected: `skill-data/core/SKILL.md`
 - inspected: `skill-data/core/references/video-recording.md`
-- inspected: `skill-data/protected-vercel-deployments/SKILL.md`
+- inspected: `skill-data/vercel/SKILL.md`
 - inspected: `skill-data/webmcp-gen/SKILL.md`
 - inspected: `test/launcher.test.mjs`
 - inspected: `packages/@agent-browser/eve/README.md`
@@ -1365,12 +1384,14 @@ This generated block is review data for maintainers. The human-authored referenc
 - core skill full: `agent-browser skills get core --full`
 - core command reference: `agent-browser skills get core --ref commands`
 - vercel sandbox skill full: `agent-browser skills get vercel-sandbox --full`
-- protected Vercel deployments skill full: `agent-browser skills get protected-vercel-deployments --full`
+- Vercel deployments skill full: `agent-browser skills get vercel --full`
 - WebMCP generation skill full: `agent-browser skills get webmcp-gen --full`
 - Modern Web Guidance skill full: `agent-browser skills get modern-web-guidance --full`
 - open help: `agent-browser open --help`
 - read help: `agent-browser read --help`
 - click help: `agent-browser click --help`
+- dblclick help: `agent-browser dblclick --help`
+- select help: `agent-browser select --help`
 - fill help: `agent-browser fill --help`
 - type help: `agent-browser type --help`
 - download help: `agent-browser download --help`
@@ -1426,12 +1447,12 @@ This generated block is review data for maintainers. The human-authored referenc
 
 #### Inventory sections
 
-- Built-in skills: 21 human-doc token(s), 29 upstream token(s)
-- Core page, element, navigation, and extraction commands: 92 human-doc token(s), 101 upstream token(s)
-- Sessions, state, tabs, frames, dialogs, and windows: 30 human-doc token(s), 27 upstream token(s)
-- Network, storage, artifacts, diagnostics, and performance: 63 human-doc token(s), 72 upstream token(s)
+- Built-in skills: 21 human-doc token(s), 31 upstream token(s)
+- Core page, element, navigation, and extraction commands: 95 human-doc token(s), 109 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 31 human-doc token(s), 29 upstream token(s)
+- Network, storage, artifacts, diagnostics, and performance: 64 human-doc token(s), 76 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 45 human-doc token(s), 55 upstream token(s)
-- Global flags, config, providers, policy, and environment: 170 human-doc token(s), 138 upstream token(s)
+- Global flags, config, providers, policy, and environment: 171 human-doc token(s), 140 upstream token(s)
 
 #### Human-authored doc tokens required
 
@@ -1448,7 +1469,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `skills get slack`
 - `skills get dogfood`
 - `skills get vercel-sandbox`
-- `skills get protected-vercel-deployments`
+- `skills get vercel`
 - `skills get agentcore`
 - `skills get derive-client`
 - `skills get webmcp-gen`
@@ -1474,7 +1495,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - `read <url> --timeout <ms>`
 - `click <sel>`
 - `click <sel> --new-tab`
+- `click <sel> --button <button> --modifiers <keys>`
 - `dblclick <sel>`
+- `dblclick <sel> --button <button> --modifiers <keys>`
 - `type <sel> <text>`
 - `type <selector> [--clear] [--delay <ms>] [--] <text>`
 - `fill <sel> <text>`
@@ -1492,6 +1515,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `check <sel>`
 - `uncheck <sel>`
 - `select <sel> <val...>`
+- `select <sel> <val...> [--by value|label]`
 - `drag <src> <dst>`
 - `upload <sel> <files...>`
 - `download <sel> <path>`
@@ -1576,6 +1600,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `tab new [url]`
 - `tab new --label <name> [url]`
 - `tab close [target]`
+- `tab keep <live|throttled|frozen> [target]`
 - `tab <t<N>|label>`
 - `tab_gone`
 - `data.targetId`
@@ -1607,6 +1632,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `webmcp list`
 - `webmcp list [tool] [--frame <frame-id>]`
 - `webmcp invoke <tool>`
+- `webmcp invoke <tool> <json|@file>`
 - `webmcp invoke <tool> --params <json|@file>`
 - `webmcp invoke <tool> --frame <frame-id>`
 - `webmcp invoke <tool> --detach`
@@ -1815,6 +1841,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `-p, --provider <name>`
 - `AGENT_BROWSER_PROVIDER`
 - `AGENT_BROWSER_PLUGINS`
+- `ladybird`
 - `browserbase`
 - `kernel`
 - `browseruse`
@@ -1889,7 +1916,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - skills list: `slack`
 - skills list: `dogfood`
 - skills list: `vercel-sandbox`
-- skills list: `protected-vercel-deployments`
+- skills list: `vercel`
 - skills list: `agentcore`
 - skills list: `derive-client`
 - skills list: `webmcp-gen`
@@ -1900,8 +1927,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - WebMCP generation skill full: `agent-browser webmcp invoke <tool> --params @fixture.json`
 - vercel sandbox skill full: `@agent-browser/sandbox`
 - vercel sandbox skill full: `installSystemDependencies: false`
-- protected Vercel deployments skill full: `x-vercel-trusted-oidc-idp-token`
-- protected Vercel deployments skill full: `vc project token`
+- Vercel deployments skill full: `x-vercel-trusted-oidc-idp-token`
+- Vercel deployments skill full: `vc project token`
+- Vercel deployments skill full: `vercel-flag-overrides`
+- Vercel deployments skill full: `vc flags override`
 - core skill full: `agent-browser frame @e3`
 - core skill full: `agent-browser dialog accept`
 - core skill full: `agent-browser --session "$SESSION" --restore open https://app.example.com`
@@ -1924,7 +1953,11 @@ This generated block is review data for maintainers. The human-authored referenc
 - read help: `--timeout <ms>`
 - root help: `click <sel>`
 - click help: `--new-tab`
+- click help: `--button <button>`
+- click help: `--modifiers <keys>`
 - root help: `dblclick <sel>`
+- dblclick help: `--button <button>`
+- dblclick help: `--modifiers <keys>`
 - root help: `type <sel> <text>`
 - type help: `type <selector> [--clear] [--delay <ms>] [--] <text>`
 - root help: `fill <sel> <text>`
@@ -1941,11 +1974,15 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `check <sel>`
 - root help: `uncheck <sel>`
 - root help: `select <sel> <val...>`
+- root help: `select <sel> <val...> [--by value|label]`
+- select help: `select <selector> [--by value|label] [--] <value...>`
+- select help: `option_not_found`
 - root help: `drag <src> <dst>`
 - root help: `upload <sel> <files...>`
 - root help: `download <sel> <path>`
 - download help: `Only works with a browser agent-browser launched`
 - root help: `Unknown commands exit with status 1`
+- root help: `These commands reject unknown flags and use the same -- boundary.`
 - mouse help: `Coordinates and wheel deltas accept finite numbers`
 - root help: `scroll <dir> [px]`
 - scroll help: `--selector <sel>`
@@ -2031,6 +2068,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - tab help: `new [url]`
 - tab help: `new --label <name> [url]`
 - tab help: `close [t<N>|label|target]`
+- tab help: `keep <live|throttled|frozen> [t<N>|label|target]`
+- root help: `tab keep <mode> [<n>]`
 - tab help: `Stable tab ids`
 - tab help: `overrides before their first document loads.`
 - tab help: `tab_gone`
@@ -2057,7 +2096,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `storage <local|session>`
 - root help: `webmcp list [tool]`
 - root help: `webmcp invoke <tool>`
-- root help: `--params <json|@file>`
+- root help: `input as <json|@file> after the`
+- root help: `tool name or with --params`
 - root help: `--frame <frame-id>`
 - root help: `--detach`
 - root help: `webmcp result <id>`
@@ -2101,6 +2141,9 @@ This generated block is review data for maintainers. The human-authored referenc
 - network help: `har <start|stop>`
 - storage help: `set <key> <value>`
 - diff help: `diff snapshot [options]`
+- diff help: `baseline_mismatch`
+- diff help: `no_baseline`
+- diff help: `file_not_found`
 - diff help: `--baseline <f>`
 - diff help: `--output <file>`
 - diff help: `--threshold <0-1>`
@@ -2280,6 +2323,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_MAX_OUTPUT`
 - root help: `--allowed-domains <list>`
 - root help: `AGENT_BROWSER_ALLOWED_DOMAINS`
+- root help: `an empty value is rejected`
 - root help: `--action-policy <path>`
 - root help: `AGENT_BROWSER_ACTION_POLICY`
 - root help: `--confirm-actions <list>`
@@ -2288,6 +2332,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_CONFIRM_INTERACTIVE`
 - root help: `--provider <name>`
 - root help: `AGENT_BROWSER_PROVIDER`
+- root help: `ladybird`
 - root help: `AGENT_BROWSER_PLUGINS`
 - root help: `agent-browser -p ios device list`
 - root help: `agent-browser -p ios swipe up`

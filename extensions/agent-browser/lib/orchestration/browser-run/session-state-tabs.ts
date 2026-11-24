@@ -30,6 +30,10 @@ function hasExplicitNavigationOperand(tokens: readonly string[]): boolean {
 	);
 }
 
+function isTabSelectionSubcommand(subcommand: string | undefined): boolean {
+	return subcommand !== undefined && !["list", "keep"].includes(subcommand);
+}
+
 export function commandChoosesSessionTabTarget(args: readonly string[]): boolean {
 	const tokens = parseArgvDescriptor(args).upstreamCommandTokens;
 	const command = tokens[0];
@@ -39,7 +43,7 @@ export function commandChoosesSessionTabTarget(args: readonly string[]): boolean
 		isCloseCommand(command) ||
 		command === "connect" ||
 		(command === "state" && subcommand === "load") ||
-		(command === "tab" && subcommand !== undefined && subcommand !== "list") ||
+		(command === "tab" && isTabSelectionSubcommand(subcommand)) ||
 		isWindowOrDiffPageTransitionCommand(command, subcommand) ||
 		hasExplicitNavigationOperand(tokens)
 	);

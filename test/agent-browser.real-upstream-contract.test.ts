@@ -2993,6 +2993,16 @@ nodeTest(
 	},
 );
 
+async function readFullToolResultText(
+	result: Parameters<typeof resultText>[0],
+	details: Readonly<Record<string, unknown>>,
+): Promise<string> {
+	if (typeof details.fullOutputPath === "string") {
+		return await readFile(details.fullOutputPath, "utf8");
+	}
+	return resultText(result);
+}
+
 nodeTest(
 	"real upstream agent-browser contract suite matches wrapper and browser-session expectations",
 	{
@@ -3171,16 +3181,19 @@ nodeTest(
 					]);
 					assert.match(resultText(skillsGetFull), /agent_browser/);
 
-					const protectedVercelSkill = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["skills", "get", "protected-vercel-deployments", "--full"],
+					const vercelSkill = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["skills", "get", "vercel", "--full"],
 					});
-					const protectedVercelDetails = assertSuccessfulResult(
-						protectedVercelSkill,
+					const vercelDetails = assertSuccessfulResult(
+						vercelSkill,
 						shapes.commands.skillsGetFull,
-						"skills get protected-vercel-deployments --full",
+						"skills get vercel --full",
 					);
-					assert.equal(protectedVercelDetails.sessionName, undefined);
-					assert.match(resultText(protectedVercelSkill), /x-vercel-trusted-oidc-idp-token/);
+					assert.equal(vercelDetails.sessionName, undefined);
+					const vercelSkillText = await readFullToolResultText(vercelSkill, vercelDetails);
+					assert.match(resultText(vercelSkill), /name:\s*vercel/);
+					assert.match(vercelSkillText, /x-vercel-trusted-oidc-idp-token/);
+					assert.match(vercelSkillText, /vercel-flag-overrides/);
 
 					if (installedVersion === CAPABILITY_BASELINE.targetVersion) {
 						await t.test(

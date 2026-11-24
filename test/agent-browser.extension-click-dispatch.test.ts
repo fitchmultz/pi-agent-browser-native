@@ -855,3 +855,34 @@ if (args.includes("open")) {
 		}
 	},
 );
+
+nodeTest(
+	"prepareClickDispatchProbe skips non-left button, modifier, and unknown-flag clicks",
+	async () => {
+		const skippedCases = [
+			["click", "--button", "right", "@e1"],
+			["click", "--button=middle", "@e1"],
+			["click", "--modifiers", "meta", "@e1"],
+			["click", "--modifiers", "shift,alt", "@e1"],
+			["click", "--new-tab", "@e1"],
+		] as const;
+		const probes = await Promise.all(
+			skippedCases.map((commandTokens) =>
+				prepareClickDispatchProbe({
+					commandTokens,
+					cwd: process.cwd(),
+					refSnapshot: {
+						refIds: ["e1"],
+						refs: { e1: { name: "Menu", role: "button" } },
+						target: { url: "https://app.example/" },
+					},
+					sessionName: "probe-session",
+				}),
+			),
+		);
+		assert.deepEqual(
+			probes.map((probe) => probe === undefined),
+			skippedCases.map(() => true),
+		);
+	},
+);

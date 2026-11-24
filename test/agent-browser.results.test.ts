@@ -1793,5 +1793,77 @@ nodeTest(
 			envelope: { success: true, data: { plugin: { name: "demo-plugin" } } },
 		});
 		assert.equal(pluginsInstall.summary, "Plugin configured: demo-plugin");
+
+		const staleMessages = [
+			"Element ref e1 is stale",
+			"Ref @e2 is from a document that is no longer loaded; run `agent-browser snapshot -i` to refresh refs.",
+		] as const;
+		const staleCategories = await Promise.all(
+			staleMessages.map(async (staleMessage) => {
+				const stalePresentation = await buildToolPresentation({
+					args: ["click", "@e1"],
+					commandInfo: parseCommandInfo(["click", "@e1"]),
+					cwd: process.cwd(),
+					envelope: { success: false, error: staleMessage },
+					errorText: staleMessage,
+				});
+				return stalePresentation.failureCategory;
+			}),
+		);
+		assert.deepEqual(staleCategories, ["stale-ref", "stale-ref"]);
+
+		const tabKeepPresentation = await buildToolPresentation({
+			args: ["tab", "keep", "live"],
+			commandInfo: parseCommandInfo(["tab", "keep", "live"]),
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: { tabId: "t1", label: "app", keep: "live" },
+			},
+		});
+		assert.equal(tabKeepPresentation.summary, "Tab t1: keep=live");
+		assert.match(
+			firstText(tabKeepPresentation.content),
+			/Tab \[t1\] \(app\) background mode: live\./,
+		);
+
+		const tabListKeepPresentation = await buildToolPresentation({
+			args: ["tab", "list"],
+			commandInfo: parseCommandInfo(["tab", "list"]),
+			cwd: process.cwd(),
+			envelope: {
+				success: true,
+				data: {
+					tabs: [
+						{
+							active: true,
+							tabId: "t1",
+							keep: "live",
+							title: "Dashboard",
+							url: "https://app.example/",
+						},
+						{
+							active: false,
+							tabId: "t2",
+							keep: "throttled",
+							title: "Docs",
+							url: "https://docs.example/",
+						},
+						{
+							active: false,
+							tabId: "t3",
+							keep: "frozen",
+							title: "Archive",
+							url: "https://archive.example/",
+						},
+					],
+				},
+			},
+		});
+		const tabListText = firstText(tabListKeepPresentation.content);
+		assert.match(tabListText, /\* \[t1\] keep=live Dashboard — https:\/\/app\.example\//);
+		assert.match(tabListText, /- \[t2\] Docs — https:\/\/docs\.example\//);
+		assert.doesNotMatch(tabListText, /keep=throttled/);
+		assert.match(tabListText, /- \[t3\] keep=frozen Archive — https:\/\/archive\.example\//);
 	},
 );

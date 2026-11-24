@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Raise `agent-browser` target and minimum supported runtime floor to `0.44.0` (`PAB-205`): sync capability baseline and command reference for the renamed `vercel` skill, `tab keep`, `click`/`dblclick` `--button`/`--modifiers`, `select --by`, positional `webmcp invoke <tool> <json|@file>`, `-p ladybird`, `diff snapshot` baseline checks, strict unknown-flag rejection with `--` operand boundary, and replaced-document stale-ref classification.
+
 ## 0.9.41 - 2026-11-20
 
 <!-- npm-release:unreleased:start -->

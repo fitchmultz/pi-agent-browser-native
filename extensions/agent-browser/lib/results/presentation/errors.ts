@@ -8,6 +8,7 @@ import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
 import {
 	buildAgentBrowserResultCategoryDetails,
+	isStaleRefErrorText,
 	reportsUnsupportedSelectorDialect,
 } from "../categories.js";
 import type { AgentBrowserNextAction, ToolPresentation } from "../contracts.js";
@@ -44,9 +45,7 @@ function getSelectorRecoveryHint(
 		return undefined;
 	}
 
-	if (
-		/\bUnknown ref\b|\bstale ref\b|\bref\b.*\b(?:not found|missing|expired)\b/i.test(normalized)
-	) {
+	if (isStaleRefErrorText(normalized)) {
 		return STALE_REF_ERROR_HINT;
 	}
 

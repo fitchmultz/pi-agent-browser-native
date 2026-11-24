@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import {
+	END_OF_OPTIONS,
 	projectUpstreamGlobalFlags,
 	scanUpstreamGlobalFlagOccurrences,
 	type IndexedArgvToken,
@@ -7,6 +8,7 @@ import {
 import {
 	getDiffFilePathIndices,
 	getExplicitArtifactDestinationIndex,
+	getStateLoadPathIndex,
 } from "./browser-run/artifact-paths.js";
 import {
 	isNativeBatchOption,
@@ -116,13 +118,12 @@ class OperationPathBinding {
 	bindFileOperands(): void {
 		this.setOperandPath(getExplicitArtifactDestinationIndex(this.tokens));
 		if (this.tokens[0] === "upload") {
-			for (const { index } of this.projection.slice(2)) {
+			const fileStart = this.tokens[1] === END_OF_OPTIONS && this.tokens.length > 2 ? 3 : 2;
+			for (const { index } of this.projection.slice(fileStart)) {
 				this.setPath(index);
 			}
 		}
-		if (this.tokens[0] === "state" && this.tokens[1] === "load") {
-			this.setOperandPath(2);
-		}
+		this.setOperandPath(getStateLoadPathIndex(this.tokens));
 		this.setOperandPath(getDiffFilePathIndices(this.tokens).baseline);
 		if (this.tokens[0] === "cookies" && this.tokens[1] === "set") {
 			const index = this.tokens.indexOf("--curl");
@@ -149,19 +150,46 @@ class OperationPathBinding {
 		};
 	}
 
+	private bindWebMcpParamFile(index: number, token: string): void {
+		if (token.startsWith("@")) {
+			this.setPath(index, "@");
+		}
+	}
+
+	private bindWebMcpOperand(
+		index: number,
+		token: string,
+		operands: Iterator<{ readonly index: number; readonly token: string }, undefined>,
+	): void {
+		if (["--params", "--frame", "--timeout"].includes(token)) {
+			const next = operands.next();
+			if (token === "--params" && next.done !== true) {
+				this.bindWebMcpParamFile(next.value.index, next.value.token);
+			}
+			return;
+		}
+		if (!token.startsWith("-")) {
+			this.bindWebMcpParamFile(index, token);
+		}
+	}
+
 	private bindWebMcpParams(): void {
 		if (this.tokens[0] !== "webmcp" || this.tokens[1] !== "invoke") {
 			return;
 		}
-		const operands = this.projection.slice(3).values();
-		for (const { token } of operands) {
-			if (!["--params", "--frame", "--timeout"].includes(token)) {
+		const operandStart = this.tokens[2] === END_OF_OPTIONS && this.tokens.length > 3 ? 4 : 3;
+		const operands = this.projection.slice(operandStart).values();
+		let literal = false;
+		for (const { index, token } of operands) {
+			if (literal) {
+				this.bindWebMcpParamFile(index, token);
 				continue;
 			}
-			const value = operands.next().value;
-			if (token === "--params" && value?.token.startsWith("@") === true) {
-				this.setPath(value.index, "@");
+			if (token === END_OF_OPTIONS) {
+				literal = true;
+				continue;
 			}
+			this.bindWebMcpOperand(index, token, operands);
 		}
 	}
 }

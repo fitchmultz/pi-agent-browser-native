@@ -22,7 +22,11 @@ export function isPlainTextInspectionArgs(args: readonly string[]): boolean {
 function getSingleKeyCommandValidationError(args: readonly string[]): string | undefined {
 	const { commandInfo, upstreamCommandTokens: tokens } = parseArgvDescriptor(args);
 	const command = commandInfo.command;
-	if (!["press", "key", "keydown", "keyup"].includes(command ?? "") || tokens.length === 2) {
+	if (
+		!["press", "key", "keydown", "keyup"].includes(command ?? "") ||
+		tokens.length === 2 ||
+		(tokens.length === 3 && tokens[1] === END_OF_OPTIONS)
+	) {
 		return;
 	}
 	const label = command === "key" ? "key/press" : command;
