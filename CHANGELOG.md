@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+## 0.9.42 - 2026-11-24
+
+<!-- npm-release:unreleased:start -->
+
 - Raise `agent-browser` target and minimum supported runtime floor to `0.44.0` (`PAB-205`): sync capability baseline and command reference for the renamed `vercel` skill, `tab keep`, `click`/`dblclick` `--button`/`--modifiers`, `select --by`, positional `webmcp invoke <tool> <json|@file>`, `-p ladybird`, `diff snapshot` baseline checks, strict unknown-flag rejection with `--` operand boundary, and replaced-document stale-ref classification.
+
+<!-- npm-release:unreleased:end -->
+
+- ci: refresh the shared automation pin to 1f78bd6 (PEA-225) (#446) ([1f8ea5b](https://github.com/fitchmultz/pi-agent-browser-native/commit/1f8ea5bfe9355f1a7dda98ab33fa62ebb4ea4ae3))
+
+### What's Changed
+
+- ci: refresh the shared automation pin to 1f78bd6 (PEA-225) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/446
+- ci: pin shared automation to 788061a and wire RELEASE_APP_PRIVATE_KEY by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/447
+- feat: raise agent-browser support floor to 0.44.0 and adopt 0.44 primitives (PAB-205) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/449
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.41...v0.9.42
 
 ## 0.9.41 - 2026-11-20
 
