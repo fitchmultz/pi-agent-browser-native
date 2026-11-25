@@ -52,7 +52,7 @@ function readNodeVersionRange() {
 
 export const NODE_VERSION_RANGE = readNodeVersionRange();
 export const MINIMUM_NODE_VERSION = minVersion(NODE_VERSION_RANGE)?.version ?? "";
-export const MINIMUM_PI_VERSION = "1.6.0";
+export const MINIMUM_PI_VERSION = "1.6.1";
 const DEFAULT_AGENT_DIR = resolve(homedir(), ".pi/agent");
 
 /** @typedef {import("./doctor-sources.mjs").DoctorCheck} DoctorCheck */
@@ -250,7 +250,7 @@ async function checkPiVersion({ runPi }) {
 				status: "fail",
 				title: `Pi ${MINIMUM_PI_VERSION} or newer is required; found ${version.length > 0 ? version : "<empty>"}.`,
 				lines: [
-					`This release enforces the Pi ${MINIMUM_PI_VERSION} runtime floor through the read-only doctor and release/package validation because it depends on native tool activation/history, prompt sections, and structured tool behavior from that baseline.`,
+					`This release enforces the Pi ${MINIMUM_PI_VERSION} runtime floor through the read-only doctor and release/package validation.`,
 					"Update Pi before using this package or running lifecycle/package validation.",
 				],
 			};
