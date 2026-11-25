@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+## 0.9.43 - 2026-11-25
+
+<!-- npm-release:unreleased:start -->
+
 - Raise the tested Pi floor to 1.6.1 and have the setup doctor enforce it.
+
+<!-- npm-release:unreleased:end -->
+
+- docs(agents): remove stale live-runtime activation hold from AGENTS.md (#448) ([a4d557c](https://github.com/fitchmultz/pi-agent-browser-native/commit/a4d557ca80b56046979634baa10a83e111eaf2ee))
+
+### What's Changed
+
+- docs(agents): remove stale live-runtime activation hold from AGENTS.md by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/448
+- chore: enforce 2-day npm min-release-age cooldown by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/450
+- chore: raise Pi floor to 1.6.1 and enforce it in the setup doctor (PEA-238) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/452
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.42...v0.9.43
 
 ## 0.9.42 - 2026-11-24
 
