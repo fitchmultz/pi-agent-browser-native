@@ -310,3 +310,69 @@ nodeTest(
 		}
 	},
 );
+
+const firefoxExecutable = process.env.PI_AGENT_BROWSER_FIREFOX;
+
+nodeTest(
+	"Firefox maps a viewport capture without an element bounding box",
+	{
+		skip:
+			firefoxExecutable === undefined
+				? "Set PI_AGENT_BROWSER_FIREFOX to the Firefox binary"
+				: false,
+		timeout: 30_000,
+	},
+	async () => {
+		assert.ok(firefoxExecutable !== undefined);
+		const dir = await mkdtemp(join(tmpdir(), "piab-firefox-"));
+		try {
+			const sockets = join(dir, "s");
+			await mkdir(sockets, { mode: 0o700 });
+			await withPatchedEnv(
+				{
+					HOME: dir,
+					PI_CODING_AGENT_DIR: join(dir, "pi"),
+					PI_AGENT_BROWSER_SOCKET_DIR: sockets,
+					AGENT_BROWSER_SOCKET_DIR: sockets,
+					AGENT_BROWSER_CONFIG: undefined,
+					PI_AGENT_BROWSER_CONFIG: undefined,
+					AGENT_BROWSER_PROFILE: undefined,
+					AGENT_BROWSER_CDP: undefined,
+					AGENT_BROWSER_AUTO_CONNECT: undefined,
+				},
+				async () => {
+					const h = createExtensionHarness({ cwd: dir });
+					const call = async (args: readonly string[]) => {
+						const result = await executeRegisteredTool(h.tool, h.ctx, {
+							args: ["--session", "firefox-geometry", ...args],
+						});
+						assert.equal(result.isError, false, getMessageText(result.content));
+						return result;
+					};
+					try {
+						await call([
+							"--engine",
+							"firefox",
+							"--executable-path",
+							firefoxExecutable,
+							"open",
+							"data:text/html,<title>Firefox geometry</title>",
+						]);
+						await call(["set", "viewport", "800", "600", "1"]);
+						const capture = await call(["screenshot", join(dir, "viewport.png")]);
+						assert.equal(capture.content.filter((part) => part.type === "image").length, 1);
+						const [observation] = readArray(readRecord(capture.details).imageObservations);
+						const geometry = readRecord(readRecord(observation).geometry);
+						assert.equal(geometry.status, "measured", JSON.stringify(geometry));
+						assert.deepEqual(geometry.crop, { x: 0, y: 0, width: 800, height: 600 });
+						assert.deepEqual(geometry.pixelsPerCssPixel, { x: 1, y: 1 });
+					} finally {
+						await call(["close"]);
+					}
+				},
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	},
+);

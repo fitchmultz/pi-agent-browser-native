@@ -113,7 +113,8 @@ export async function collectScreenshotSample(options: {
 			viewport: { width: innerWidth, height: innerHeight },
 			document: { width: Math.max(root.scrollWidth, body?.scrollWidth || 0, innerWidth), height: Math.max(root.scrollHeight, body?.scrollHeight || 0, innerHeight) },
 			scroll: { x: scrollX, y: scrollY }, dpr: devicePixelRatio,
-			visualViewport: { x: v?.offsetLeft ?? 0, y: v?.offsetTop ?? 0, scale: v?.scale ?? 1 }, element };
+			visualViewport: { x: v?.offsetLeft ?? 0, y: v?.offsetTop ?? 0, scale: v?.scale ?? 1 },
+			...(element === undefined ? {} : { element }) };
 	})()`;
 	try {
 		const data = await runSessionCommandData({
