@@ -1,4 +1,5 @@
 import { extractUpstreamCommandTokens, type CommandInfo } from "../../argv-descriptor.js";
+import { scanCommandPositionals } from "../../argv-grammar.js";
 import { sanitizeRenderedSingleLine } from "../../display-sanitize.js";
 import { isRecord } from "../../parsing.js";
 import type { AgentBrowserFailureCategory, AgentBrowserNextAction } from "../contracts.js";
@@ -21,9 +22,9 @@ const NON_FRAME_FAILURE_CATEGORIES = new Set<AgentBrowserFailureCategory>([
 ]);
 
 const FRAME_SELECTOR_HINT = [
-	"Agent-browser frame hint: `frame <selector|@ref>` targets an `<iframe>` in the current frame context by CSS selector or current `@e…` ref and can fail if you are already inside a child frame, the iframe is cross-origin or detached, or the selector/ref does not match.",
-	"Note that `snapshot -i` already includes interactive `@e…` refs inside accessible and cross-origin frames when present, so switching frames may not be required.",
-	"Run `frame main` to reset to the top-level document, inspect current refs with `snapshot -i`, or list `<iframe>` elements with `eval --stdin` before retrying `frame <selector|@ref>`.",
+	"Agent-browser frame hint: `frame <selector|@ref>` selects an iframe by CSS selector or current `@e…` ref, including cross-origin and nested iframes. CSS selectors are relative to the currently selected document.",
+	"`snapshot -i` already includes interactive `@e…` refs inside cross-origin frames when present, so switching frames may not be required.",
+	"Use `snapshot -i` to refresh refs or `eval --stdin` to list iframes in the current document. To retry a top-level selector, run `frame main` first.",
 ].join(" ");
 
 const FRAME_MAIN_HINT = [
@@ -43,7 +44,7 @@ function getFrameTarget(
 	if (args !== undefined && args.length > 0) {
 		const tokens = extractUpstreamCommandTokens(args);
 		if (tokens[0] === "frame") {
-			return tokens[1];
+			return scanCommandPositionals(tokens, 1)[0]?.token;
 		}
 	}
 	return commandInfo.subcommand;
@@ -134,7 +135,7 @@ function buildFrameFailureActions(
 			id: "list-document-iframes",
 			reason: "List iframe elements in the current document so you can verify exact selectors.",
 			safety:
-				"Read-only DOM inspection of the current frame; run frame main first if you may still be inside a child frame.",
+				"Read-only DOM inspection of the current frame; run frame main first to inspect top-level iframes.",
 			stdin: LIST_DOCUMENT_IFRAMES_SCRIPT,
 		}),
 	);
@@ -158,7 +159,7 @@ export function buildFrameFailureRecovery(options: {
 		return undefined;
 	}
 	const target = getFrameTarget(options.args, options.commandInfo);
-	const targetingMain = target?.trim().toLowerCase() === "main";
+	const targetingMain = target === "main";
 	const reportedFrames = formatReportedAvailableFrames(options.errorData);
 	const baseHint = targetingMain ? FRAME_MAIN_HINT : FRAME_SELECTOR_HINT;
 	const hint = reportedFrames !== undefined ? `${baseHint} ${reportedFrames}` : baseHint;

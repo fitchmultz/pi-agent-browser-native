@@ -238,14 +238,17 @@ nodeTest(
 							"eval",
 							"document.body.insertAdjacentHTML('beforeend', '<iframe id=child srcdoc=\"<button>Frame target</button>\"></iframe>')",
 						]);
-						await call(["frame", "#child"]);
+						assert.equal((await call(["frame", "#child"])).isError, false);
 						const framed = image(await call(["screenshot", join(dir, "frame.png")]));
+						const framedGeometry = readRecord(framed.geometry);
+						assert.equal(readRecord(framedGeometry.before).frame, "child");
+						assert.equal(readRecord(framedGeometry.after).frame, "child");
 						assert.equal(
-							readRecord(readRecord(framed.geometry).before).frame,
-							"main",
-							"native viewport screenshot and eval use the main frame even after frame selection",
+							framedGeometry.status,
+							"unknown",
+							"selected-frame samples cannot map a viewport screenshot to tab coordinates",
 						);
-						assert.equal(readRecord(readRecord(framed.geometry).before).childFrameCount, 1);
+						assert.equal(framedGeometry.crop, undefined);
 						await call(["frame", "main"]);
 						const ambiguousElement = image(
 							await call(["screenshot", "#target", join(dir, "frame-element.png")]),

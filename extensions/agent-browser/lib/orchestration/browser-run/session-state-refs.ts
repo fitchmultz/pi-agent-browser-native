@@ -20,6 +20,7 @@ const SINGLE_SELECTOR_SCANNER_COMMANDS = new Set([
 	"check",
 	"download",
 	"focus",
+	"frame",
 	"highlight",
 	"hover",
 	"scrollinto",

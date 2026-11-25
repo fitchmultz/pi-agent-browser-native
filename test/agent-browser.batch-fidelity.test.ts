@@ -1567,6 +1567,20 @@ nodeTest(
 												assert.equal(staleDetails.exitCode, undefined);
 											});
 										}
+										await staleContext.test(
+											"malformed frame row reaches native parsing",
+											async () => {
+												const result = await call(
+													["batch", "--bail"],
+													JSON.stringify([["frame", "@e999", "--session", "other"]]),
+												);
+												assert.equal(result.isError, true, JSON.stringify(result));
+												assert.match(
+													getMessageText(result.content),
+													/Pass global flags on the outer batch invocation/,
+												);
+											},
+										);
 										await call(["focus", "#name-input"]);
 										for (const args of [
 											["keyboard", "inserttext", "@e999"],

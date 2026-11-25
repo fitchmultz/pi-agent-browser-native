@@ -631,6 +631,7 @@ nodeTest(
 		const text = readString(readRecord(presentation.content[0]).text);
 		assert.match(text, /^Frame not found: #missing-iframe/);
 		assert.match(text, /Agent-browser frame hint:/);
+		assert.match(text, /CSS selectors are relative to the currently selected document/);
 		assert.match(text, /snapshot -i.*cross-origin frames/i);
 		assert.match(text, /`frame main`/);
 		assert.match(text, /`eval --stdin`/);
@@ -727,8 +728,8 @@ nodeTest(
 		assert.doesNotMatch(withFramesText, /super-secret-token/);
 
 		const mainFailure = await buildToolPresentation({
-			args: ["frame", "main"],
-			commandInfo: { command: "frame", subcommand: "main" },
+			args: ["frame", "--", "main"],
+			commandInfo: { command: "frame", subcommand: "--" },
 			cwd: process.cwd(),
 			errorText: "Target frame detached",
 		});
@@ -736,6 +737,14 @@ nodeTest(
 			mainFailure.nextActions?.map((action) => action.id),
 			["inspect-frames-with-snapshot", "list-document-iframes"],
 		);
+
+		const selectorFailure = await buildToolPresentation({
+			args: ["frame", "MAIN"],
+			commandInfo: { command: "frame", subcommand: "MAIN" },
+			cwd: process.cwd(),
+			errorText: "Could not find frame for selector",
+		});
+		assert.deepEqual(selectorFailure.nextActions?.[0]?.params?.args, ["frame", "main"]);
 
 		const wedgedFailure = await buildToolPresentation({
 			args: ["frame", "#child"],
