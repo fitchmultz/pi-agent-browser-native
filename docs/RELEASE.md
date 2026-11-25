@@ -317,6 +317,8 @@ npm run verify -- real-upstream
 
 That npm script sets `PI_AGENT_BROWSER_REAL_UPSTREAM=1`, runs the sessionless plugin probe first in its own fail-fast process, then all other declarations in the contract file (including standalone/compound/opaque native text), followed by native batch fidelity and the real overlay-click suite. Each stage uses `--test-force-exit`; a failed plugin probe stops the workflow before browser work. To run `test/agent-browser.real-upstream-contract.test.ts` directly (for example with `node --test` and `tsx`), set the same variable yourself; the suite is skipped when it is unset.
 
+For Firefox screenshot geometry, set `PI_AGENT_BROWSER_FIREFOX` to the Firefox 150+ executable and run `npx tsx --test --test-name-pattern='Firefox maps' test/agent-browser.screenshot-geometry.test.ts`. This checks an attached image and its measured CSS mapping against the real Firefox engine.
+
 This suite requires the installed stable `agent-browser --version` to meet the minimum in `scripts/agent-browser-target.mjs`; the output-shape fixture and command-reference verifier remain aligned to the current recommended baseline. It serves fixture pages from localhost and checks stable `details`/`data` keys via `test/fixtures/agent-browser-real-output-shapes.json`. Coverage groups:
 
 - **Inspection and skills (stateless JSON):** `--version`, `--help`, `snapshot --help`, `skills list`, `skills get … --full` (including `webmcp-gen`, `vercel`, and `modern-web-guidance` on the 0.45.0 target), `skills path …` (no managed `sessionName` / `usedImplicitSession`).
