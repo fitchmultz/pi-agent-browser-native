@@ -56,9 +56,11 @@ For example, Pi opens and inspects a page with these calls:
 { "args": ["snapshot", "-i"] }
 ```
 
-Snapshots give Pi current `@eN` references for controls. The recommended agent-browser 0.44.0 includes DOM hints for unnamed or duplicate-name controls; use their refs, since hints are not accessible names. Refresh the snapshot after navigation or page changes. Check the resulting page after a click; command success alone does not prove the app changed.
+Snapshots give Pi current `@eN` references for controls, with DOM hints for unnamed or duplicate-name controls. Use their refs, since hints are not accessible names. Refresh the snapshot after navigation or page changes. Check the resulting page after a click; command success alone does not prove the app changed.
 
 Browser windows are headless by default: pass `--headed` in `args` to show the window. There is no `--headless` flag; upstream rejects it as an unknown command.
+
+Chrome is the default. With a separate Firefox 150 or newer install, `agent-browser` 0.45.0 can [launch or attach to Firefox over WebDriver BiDi](docs/COMMAND_REFERENCE.md#firefox-engine).
 
 Tab management uses singular `tab` (`tab list`, `tab new [url]`, `tab <id>`, `tab close [id]`). If a call uses plural `tabs`, the error result explains the `tab` commands and includes a read-only `use-tab-list` recovery action when listing tabs.
 

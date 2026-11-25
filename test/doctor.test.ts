@@ -189,13 +189,13 @@ nodeTest("doctor reports missing agent-browser with actionable install guidance"
 
 nodeTest("doctor accepts the supported floor and newer stable versions", async (t) => {
 	for (const [upstreamOutput, piOutput, expectedPattern] of [
-		["agent-browser 0.44.0\n", "pi 1.6.1\n", /version matches recommended baseline: 0\.44\.0/],
-		["0.44.0\n", "1.6.1\n", /version matches recommended baseline: 0\.44\.0/],
+		["agent-browser 0.45.0\n", "pi 1.6.1\n", /version matches recommended baseline: 0\.45\.0/],
+		["0.45.0\n", "1.6.1\n", /version matches recommended baseline: 0\.45\.0/],
 		[
-			"agent-browser 0.44.1\n",
+			"agent-browser 0.45.1\n",
 			"1.6.1\n",
 			new RegExp(
-				`version meets supported floor: 0\\.44\\.1 \\(recommended ${CAPABILITY_BASELINE.targetVersion}\\)`,
+				`version meets supported floor: 0\\.45\\.1 \\(recommended ${CAPABILITY_BASELINE.targetVersion}\\)`,
 			),
 		],
 		[
@@ -222,16 +222,16 @@ nodeTest("doctor accepts the supported floor and newer stable versions", async (
 
 nodeTest("doctor reports versions below the supported floor", async () => {
 	const report = await evaluateDoctorWithPi({
-		runAgentBrowser: async () => "agent-browser 0.43.0\n",
+		runAgentBrowser: async () => "agent-browser 0.44.0\n",
 		skipSourceCheck: true,
 	});
 	const text = formatDoctorReport(report);
 
 	assert.equal(report.failures.length, 1);
 	assert.match(text, /agent-browser version drift/);
-	assert.match(text, /minimum supported 0\.44\.0/);
-	assert.match(text, /found 0\.43\.0/);
-	assert.match(text, /stable agent-browser versions at or above 0\.44\.0/);
+	assert.match(text, /minimum supported 0\.45\.0/);
+	assert.match(text, /found 0\.44\.0/);
+	assert.match(text, /stable agent-browser versions at or above 0\.45\.0/);
 	assert.match(text, /scripts\/agent-browser-target\.mjs/);
 	assert.match(text, /scripts\/agent-browser-capability-baseline\.mjs/);
 	assert.match(text, /npm run docs -- command-reference write/);

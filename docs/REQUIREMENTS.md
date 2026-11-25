@@ -18,7 +18,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 - Apple Silicon macOS or Linux.
 - Node.js `^24.22.3 || >=26.13.1`.
 - Pi 1.6.1 or newer.
-- A separate stable `agent-browser` installation, version 0.44.0 or newer, available on `PATH`.
+- A separate stable `agent-browser` installation, version 0.45.0 or newer, available on `PATH`.
 
 ## Product requirements
 
@@ -32,7 +32,7 @@ Define the product requirements and constraints for `pi-agent-browser-native`.
 ### Version policy
 
 - Baseline documentation and verification on the current recommended `agent-browser` release.
-- Accept stable `agent-browser` versions at or above the configured 0.44.0 minimum (`scripts/agent-browser-target.mjs`) with no upper cap.
+- Accept stable `agent-browser` versions at or above the configured 0.45.0 minimum (`scripts/agent-browser-target.mjs`) with no upper cap.
 - Do **not** add version-specific backward-compatibility shims.
 - Keep the wrapper close to current upstream behavior as `agent-browser` evolves.
 - Maintainer-facing mapping from the canonical baseline (`scripts/agent-browser-capability-baseline.mjs`) to docs, runtime, tests, and verification gates lives in [`SUPPORT_MATRIX.md`](SUPPORT_MATRIX.md); refresh that matrix when rebaselining upstream.
