@@ -1477,7 +1477,7 @@ if (args.includes("snapshot")) {
 				assert.equal(staleBatchDetails.failureCategory, "stale-ref");
 				assert.match(
 					readString(readRecord(staleBatch.content[0]).text),
-					/after an earlier batch step can navigate or mutate/,
+					/after step 1 \(open https:\/\/second\.example\/\)/,
 				);
 
 				const staleScrollAliasBatch = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1564,8 +1564,11 @@ if (args.includes("snapshot")) {
 				const snapshotThenClickThenRead = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
 					stdin: JSON.stringify([
+						["scroll", "down"],
 						["snapshot", "-i"],
+						[],
 						["click", "@e1"],
+						["scroll", "down"],
 						["get", "value", "@e2"],
 					]),
 				});
@@ -1573,7 +1576,7 @@ if (args.includes("snapshot")) {
 				assert.equal(snapshotThenClickThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
 					readString(readDefined(snapshotThenClickThenRead.content[0]).text),
-					/Batch step get uses page-scoped ref @e2 after an earlier batch step/,
+					/Batch step get uses page-scoped ref @e2 after step 5 \(scroll down\)/,
 				);
 				const rawSnapshotThenClickThenRead = await executeRegisteredTool(
 					harness.tool,
@@ -1584,7 +1587,7 @@ if (args.includes("snapshot")) {
 				assert.equal(rawSnapshotThenClickThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
 					readString(readDefined(rawSnapshotThenClickThenRead.content[0]).text),
-					/Batch step get uses page-scoped ref @e2 after an earlier batch step/,
+					/Batch step get uses page-scoped ref @e2 after step 2 \(click @e1\)/,
 				);
 
 				const windowThenRead = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -1598,7 +1601,7 @@ if (args.includes("snapshot")) {
 				assert.equal(windowThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
 					readString(readDefined(windowThenRead.content[0]).text),
-					/Batch step get uses page-scoped ref @e1 after an earlier batch step/,
+					/Batch step get uses page-scoped ref @e1 after step 1 \(window new\)/,
 				);
 				const diffThenRead = await executeRegisteredTool(harness.tool, harness.ctx, {
 					args: ["batch"],
@@ -1611,7 +1614,7 @@ if (args.includes("snapshot")) {
 				assert.equal(diffThenRead.details?.failureCategory, "stale-ref");
 				assert.match(
 					readString(readDefined(diffThenRead.content[0]).text),
-					/Batch step get uses page-scoped ref @e1 after an earlier batch step/,
+					/Batch step get uses page-scoped ref @e1 after step 1 \(diff url /,
 				);
 
 				const invocations = await readInvocationLog(logPath);
@@ -2004,7 +2007,7 @@ if (args.includes("snapshot")) {
 				assert.equal(staleBatchDetails.failureCategory, "stale-ref", JSON.stringify(staleBatch));
 				assert.match(
 					readString(readDefined(staleBatch.content[0]).text ?? ""),
-					/after an earlier batch step can navigate or mutate/,
+					/after step 1 \(record start /,
 				);
 
 				const recordStart = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -2262,7 +2265,7 @@ if (args.includes("snapshot")) {
 				);
 				assert.match(
 					readString(readDefined(rawArgvLatch.content[0]).text ?? ""),
-					/after an earlier batch step can navigate or mutate/,
+					/after step 1 \(record start /,
 				);
 
 				const invocations = await readInvocationLog(logPath);
@@ -2543,7 +2546,7 @@ if (args.includes("snapshot")) {
 				assert.equal(clickSubmitThenFillDetails.failureCategory, "stale-ref");
 				assert.match(
 					readString(readRecord(clickSubmitThenFill.content[0]).text),
-					/after an earlier batch step can navigate or mutate/,
+					/after step 1 \(click @e5\)/,
 				);
 
 				const wrongRoleThenFill = await executeRegisteredTool(harness.tool, harness.ctx, {

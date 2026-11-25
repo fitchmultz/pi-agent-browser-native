@@ -140,3 +140,7 @@ export function redactInvocationArgs(args: readonly string[]): string[] {
 	}
 	return redacted;
 }
+
+export function formatBatchStepReference(index: number, step: readonly string[]): string {
+	return `step ${index + 1} (${redactInvocationArgs(step).join(" ")})`;
+}

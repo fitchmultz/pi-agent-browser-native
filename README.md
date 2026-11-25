@@ -130,7 +130,7 @@ Preparatory tab/page checks do not launch a stopped caller-owned explicit `--ses
 
 After its own `eval` or `reload`, the tool checks the page itself. A result that starts with `Page URL changed during this call:` names the new page; one that starts with `Page not verified:` means page-content commands are refused until `get url` or a navigation.
 
-For stale references or unexpected tabs, follow the returned recovery actions. Take a fresh snapshot before another interaction. An incomparable saved process identity after an update invalidates old refs without reloading a still-live page. A snapshot inside a batch does not protect refs used after a later page-changing step; add another snapshot after that step or split the batch.
+For stale references or unexpected tabs, follow the returned recovery actions. Take a fresh snapshot before another interaction. An incomparable saved process identity after an update invalidates old refs without reloading a still-live page. A snapshot inside a batch does not protect refs used after a later page-changing step. The refusal names the step number and command; add another snapshot after that step or split the batch.
 
 ## More documentation
 

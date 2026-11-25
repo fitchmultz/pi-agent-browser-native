@@ -1,4 +1,5 @@
 import { parseArgvDescriptor } from "./argv-descriptor.js";
+import { formatBatchStepReference } from "./runtime-redaction.js";
 import {
 	type BatchCommandStep,
 	isNativeBatchOption,
@@ -56,7 +57,7 @@ export function getBatchCommandSteps(args: readonly string[], stdin?: string): B
 	if (parsed.error !== undefined && parsed.error.length > 0) {
 		return { error: parsed.error, steps: [] };
 	}
-	const steps = (parsed.steps ?? []).filter((step) => step.length > 0);
+	const steps = parsed.steps ?? [];
 	return steps.some((step) => parseArgvDescriptor(step).commandInfo.command === "batch")
 		? { error: NESTED_BATCH_ARGUMENT_MESSAGE, steps: [] }
 		: { steps };
@@ -161,15 +162,22 @@ export function validateBatchPageTargets(
 			retainedAfterFailedNavigation: false,
 		},
 	];
+	const firstStepIndex = steps.findIndex((step) => step.length > 0);
 	for (const [index, step] of steps.entries()) {
-		const trustedBatchTabSelection = options.trustedFirstBatchTabSelection === true && index === 0;
+		if (step.length === 0) {
+			continue;
+		}
+		const firstStep = index === firstStepIndex;
+		const trustedBatchTabSelection = options.trustedFirstBatchTabSelection === true && firstStep;
 		const error = possibleStateError(states, step, {
 			allowUnverifiedPageTransitions: options.allowUnverifiedPageTransitions,
 			trustedBatchTabSelection,
-			allowsConfirmation: options.allowFirstBatchConfirmation === true && index === 0,
+			allowsConfirmation: options.allowFirstBatchConfirmation === true && firstStep,
 		});
 		if (error !== undefined) {
-			return error;
+			return error === BATCH_UNVERIFIED_PAGE_MESSAGE
+				? `${error} The first step that requires a verified page is ${formatBatchStepReference(index, step)}.`
+				: error;
 		}
 		const next = advancePossibleStates(states, step, trustedBatchTabSelection, bail);
 		if (next.error !== undefined) {

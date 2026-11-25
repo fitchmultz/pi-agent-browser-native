@@ -107,6 +107,35 @@ nodeTest("unverified page transitions still require a live URL before content ac
 	);
 });
 
+nodeTest("unverified batch errors identify the first step that needs a verified page", () => {
+	const args = ["batch", "--bail"];
+	const stdin = JSON.stringify([
+		[],
+		["tab", "list"],
+		["set", "viewport", "1200", "800"],
+		["open", "https://example.com"],
+		["get", "title"],
+	]);
+	const step = /step 3 \(set viewport 1200 800\)/;
+	assert.match(getPageTargetValidationError({ args, stdin, pageUrlUnknown: true }) ?? "", step);
+	assert.match(
+		getExplicitSessionPageVerificationRequirement({
+			args: ["--session", "work", ...args],
+			stdin,
+		}) ?? "",
+		step,
+	);
+	const rawArgs = ["batch", "--bail", "set viewport 1200 800", "get url", "get title"];
+	assert.match(
+		getPageTargetValidationError({ args: rawArgs, stdin, pageUrlUnknown: true }) ?? "",
+		/step 1 \(set viewport 1200 800\)/,
+	);
+	const credentialArgs = ["batch", "--bail", "set credentials test-user test-password"];
+	const error = getPageTargetValidationError({ args: credentialArgs, pageUrlUnknown: true }) ?? "";
+	assert.match(error, /step 1 \(set credentials \[REDACTED\] \[REDACTED\]\)/);
+	assert.doesNotMatch(error, /test-user|test-password/);
+});
+
 nodeTest("a batch may read content after its own eval or reload only under --bail", async (t) => {
 	const currentPageUrl = "https://example.com/start";
 	for (const ownStep of [["eval", "document.title"], ["reload"]]) {
