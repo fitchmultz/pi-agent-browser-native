@@ -2543,6 +2543,93 @@ nodeTest(
 );
 
 nodeTest(
+	"real root launch environment and native config args keep page and refs on follow-up",
+	{
+		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
+		timeout: 120_000,
+		concurrency: false,
+	},
+	async (t) => {
+		await assertInstalledAgentBrowserVersion();
+		const fixture = await startAgentBrowserContractFixtureServer();
+		try {
+			for (const scenario of [
+				{ name: "environment args", envArgs: "--disable-gpu", configArgs: undefined },
+				{ name: "native config args", envArgs: undefined, configArgs: "--disable-gpu" },
+			] as const) {
+				await t.test(scenario.name, async () => {
+					const root = await mkdtemp(join(tmpdir(), "piab-root-launch-"));
+					const socketDir = createShortPrivateSocketDir(root);
+					try {
+						await mkdir(join(root, ".agent-browser"), { mode: 0o700, recursive: true });
+						if (scenario.configArgs !== undefined) {
+							await writeFile(
+								join(root, ".agent-browser", "config.json"),
+								JSON.stringify({ args: scenario.configArgs }),
+							);
+						}
+						await withPatchedEnv(
+							{
+								HOME: root,
+								USERPROFILE: root,
+								AGENT_BROWSER_ARGS: scenario.envArgs,
+								AGENT_BROWSER_CONFIG: undefined,
+								AGENT_BROWSER_NAMESPACE: undefined,
+								AGENT_BROWSER_PROFILE: undefined,
+								AGENT_BROWSER_SESSION: undefined,
+								AGENT_BROWSER_SOCKET_DIR: socketDir,
+								PI_AGENT_BROWSER_SOCKET_DIR: socketDir,
+								PI_AGENT_BROWSER_MANAGED_SESSION_RESTORE: "0",
+							},
+							async () => {
+								const harness = createExtensionHarness({ cwd: root });
+								const call = (args: readonly string[], stdin?: string) =>
+									executeRegisteredTool(harness.tool, harness.ctx, {
+										args: [...args],
+										...(stdin === undefined ? {} : { stdin }),
+									});
+								const url = `${fixture.baseUrl}/contract`;
+								try {
+									const opened = await call(["open", url]);
+									assert.equal(opened.isError, false, resultText(opened));
+									const snapshot = await call(["snapshot", "-i"]);
+									assert.equal(snapshot.isError, false, resultText(snapshot));
+									const refSnapshot = readRefSnapshot(readRecord(snapshot.details).refSnapshot);
+									const ref = Object.entries(refSnapshot.refs).find(
+										([, value]) => value.role === "textbox" && value.name === "Name",
+									)?.[0];
+									assert.ok(
+										ref !== undefined && ref.length > 0,
+										"contract page exposes the Name textbox ref",
+									);
+
+									const followed = await call(["get", "url"]);
+									assert.equal(followed.isError, false, resultText(followed));
+									const data = readRecord(readRecord(followed.details).data);
+									assert.equal(readRecord(data.lifecycle).relaunchedBrowser, false);
+									assert.equal(data.url, url);
+									assert.doesNotMatch(resultText(followed), /relaunched/);
+
+									const reusedRef = await call(["fill", `@${ref}`, "root launch args"]);
+									assert.equal(reusedRef.isError, false, resultText(reusedRef));
+								} finally {
+									await call(["close"]);
+								}
+							},
+						);
+					} finally {
+						await rm(socketDir, { recursive: true, force: true });
+						await rm(root, { recursive: true, force: true });
+					}
+				});
+			}
+		} finally {
+			await fixture.close();
+		}
+	},
+);
+
+nodeTest(
 	"real upstream agent-browser contract suite matches running-session launch settings",
 	{
 		skip: REAL_UPSTREAM_ENABLED ? false : REAL_UPSTREAM_SKIP_REASON,
