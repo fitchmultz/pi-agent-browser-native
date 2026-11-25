@@ -992,16 +992,20 @@ nodeTest(
 						{ reason: "new" },
 						harness.ctx,
 					);
-					const launchResult = await executeRegisteredTool(harness.tool, harness.ctx, {
-						electron: {
-							action: "launch",
-							appPath: app.appPath,
-							appArgs: app.appArgs,
-							handoff: "snapshot",
-						},
-					});
+					const launchResult = await withPatchedEnv(
+						{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" },
+						() =>
+							executeRegisteredTool(harness.tool, harness.ctx, {
+								electron: {
+									action: "launch",
+									appPath: app.appPath,
+									appArgs: app.appArgs,
+									handoff: "snapshot",
+								},
+							}),
+					);
 					assert.equal(launchResult.isError, false, JSON.stringify(launchResult));
-					assert.equal(readRecord(launchResult.details).managedSessionHeadedAutosaveDisabled, true);
+					assert.equal(readRecord(launchResult.details).managedSessionHeadedAutosaveInterval, "0");
 					const launch = readRecord(readRecord(launchResult.details).electron).launch;
 					assert.equal(typeof readRecord(launch).launchId, "string");
 					launchedPid = readNumber(readRecord(launch).pid);

@@ -411,7 +411,7 @@ Launches are headless by default: `--headed` opts into a visible window, and the
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
-For wrapper-owned headed launches, the extension disables upstream 0.33.2 periodic restore autosave by default because its multi-origin collector opens visible temporary tabs and can delay daemon policy inspection. The extension records the effective launch-time interval and reapplies it to every helper and follow-up subprocess, including still-owned off-current sessions (also after failed replacement cleanup), Electron cleanup closes, and reload/resume, so the receiving daemon does not see changing configuration. Native `close` still saves, but upstream exempts headed browsers from idle shutdown, so closing the window by hand can lose newer state. Set `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` before launch when periodic preservation matters; changing it on a running wrapper-owned headed daemon is rejected until you close that session and launch fresh.
+Restore-enabled headed sessions use native periodic autosave (30 seconds by default). Set `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0` before launching the daemon to disable periodic saves while keeping save-on-close. The extension keeps the recorded launch policy for headed sessions across helpers, cleanup, and resume. Run `close` and launch fresh before setting or changing an override. Use `close` instead of closing the window by hand to preserve changes since the last autosave.
 
 Render a WebGPU page by enabling upstream's WebGPU launch preset on a fresh local browser:
 

@@ -3,9 +3,7 @@ import type { BrowserRunState, BrowserRunStateSnapshot, BrowserRunStatePatch } f
 // Presence checks preserve deliberate clearing of optional launch context.
 type ManagedLaunchPatch = Pick<
 	BrowserRunStatePatch,
-	| "managedSessionCompatibilityWorkaround"
-	| "managedSessionHeadedAutosaveDisabled"
-	| "managedSessionHeadedAutosaveInterval"
+	"managedSessionCompatibilityWorkaround" | "managedSessionHeadedAutosaveInterval"
 >;
 type ManagedIdentityPatch = Pick<
 	BrowserRunStatePatch,
@@ -20,9 +18,6 @@ function managedLaunchUpdate(patch: ManagedLaunchPatch): ManagedLaunchPatch {
 	return {
 		...("managedSessionCompatibilityWorkaround" in patch
 			? { managedSessionCompatibilityWorkaround: patch.managedSessionCompatibilityWorkaround }
-			: {}),
-		...(patch.managedSessionHeadedAutosaveDisabled !== undefined
-			? { managedSessionHeadedAutosaveDisabled: patch.managedSessionHeadedAutosaveDisabled }
 			: {}),
 		...("managedSessionHeadedAutosaveInterval" in patch
 			? { managedSessionHeadedAutosaveInterval: patch.managedSessionHeadedAutosaveInterval }

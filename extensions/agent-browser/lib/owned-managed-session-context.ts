@@ -12,8 +12,7 @@ export type OwnedManagedSessionContext = {
 	/** Carry existing daemon settings without browser launch policy or sticky restore changes. */
 	readonly reuseOnly?: boolean;
 	readonly compatibilityUserAgent?: string | undefined;
-	readonly headedManagedAutosaveDisabled?: boolean | undefined;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly cwd?: string | undefined;
 	readonly expectedDaemonRestoreKey?: string | null | undefined;
 	readonly namespace?: string | undefined;

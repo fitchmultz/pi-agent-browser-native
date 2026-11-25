@@ -263,8 +263,6 @@ export class BrowserCommandResult {
 			this.runtime.managed.active = this.prepared.browserRunState.managedSessionActive;
 			this.runtime.managed.compatibilityWorkaround =
 				this.prepared.browserRunState.managedSessionCompatibilityWorkaround;
-			this.runtime.managed.headedAutosaveDisabled =
-				this.prepared.browserRunState.managedSessionHeadedAutosaveDisabled === true;
 			this.runtime.managed.headedAutosaveInterval =
 				this.prepared.browserRunState.managedSessionHeadedAutosaveInterval;
 			this.runtime.managed.cwd = this.prepared.browserRunState.managedSessionCwd;

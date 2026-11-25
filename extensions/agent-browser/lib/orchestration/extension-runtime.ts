@@ -28,8 +28,7 @@ export class BrowserManagedSessions {
 	active = false;
 	baseName: string;
 	compatibilityWorkaround: CompatibilityWorkaround | undefined;
-	headedAutosaveDisabled = false;
-	headedAutosaveInterval: string | undefined;
+	headedAutosaveInterval: string | null | undefined;
 	name: string;
 	cwd = process.cwd();
 	namespace: string | undefined;
@@ -46,7 +45,6 @@ export class BrowserManagedSessions {
 	reset(): void {
 		this.active = false;
 		this.compatibilityWorkaround = undefined;
-		this.headedAutosaveDisabled = false;
 		this.headedAutosaveInterval = undefined;
 		this.namespace = undefined;
 		this.owned.clear();

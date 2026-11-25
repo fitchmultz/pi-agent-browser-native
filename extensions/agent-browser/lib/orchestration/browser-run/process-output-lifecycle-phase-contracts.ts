@@ -75,8 +75,7 @@ export interface LifecycleOutputPhase {
 	managedSessionActive: boolean;
 	managedSessionCompatibilityWorkaround: CompatibilityWorkaround | undefined;
 	managedSessionCwd: string;
-	managedSessionHeadedAutosaveDisabled: boolean;
-	managedSessionHeadedAutosaveInterval: string | undefined;
+	managedSessionHeadedAutosaveInterval: string | null | undefined;
 	managedSessionName: string;
 	managedSessionNamespace: string | undefined;
 	managedSessionOutcome: ManagedSessionOutcome | undefined;
@@ -93,7 +92,7 @@ export interface LifecycleOutputPhase {
 	presentationEnvelope: AgentBrowserEnvelope | undefined;
 	priorManagedSessionActive: boolean;
 	priorManagedSessionCwd: string;
-	priorManagedSessionHeadedAutosaveInterval: string | undefined;
+	priorManagedSessionHeadedAutosaveInterval: string | null | undefined;
 	priorManagedSessionName: string;
 	priorManagedSessionNamespace: string | undefined;
 	readonly processSucceeded: boolean;
@@ -101,8 +100,7 @@ export interface LifecycleOutputPhase {
 	readConfirmationEvent: ReadConfirmation | undefined;
 	readonly recordingStopRecovery: RecordingStopRecoveryResult | undefined;
 	replacedManagedSessionName: string | undefined;
-	resultHeadedManagedAutosaveDisabled: boolean;
-	resultHeadedManagedAutosaveInterval: string | undefined;
+	resultHeadedManagedAutosaveInterval: string | null | undefined;
 	readonly sessionStateKey: string | undefined;
 	readonly sessionTabCorrection: OpenResultTabCorrection | undefined;
 	succeeded: boolean;
@@ -128,7 +126,6 @@ export type LifecycleOutputEvidence = Readonly<
 		| "managedSessionActive"
 		| "managedSessionCompatibilityWorkaround"
 		| "managedSessionCwd"
-		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
 		| "managedSessionName"
 		| "managedSessionNamespace"
@@ -143,7 +140,6 @@ export type LifecycleOutputEvidence = Readonly<
 		| "processSucceeded"
 		| "readConfirmationEvent"
 		| "recordingStopRecovery"
-		| "resultHeadedManagedAutosaveDisabled"
 		| "resultHeadedManagedAutosaveInterval"
 		| "sessionStateKey"
 		| "sessionTabCorrection"

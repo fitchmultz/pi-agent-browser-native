@@ -158,7 +158,7 @@ process.stdout.write(JSON.stringify(envelope));`,
 );
 
 nodeTest(
-	"agentBrowserExtension retains headed autosave policy across follow-ups and session_tree restore",
+	"agentBrowserExtension leaves headed autosave unset through launch, follow-ups, and session_tree restore",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-state-"));
@@ -198,7 +198,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						sessionMode: "fresh",
 					});
 					assert.equal(open.isError, false, JSON.stringify(open));
-					assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
+					assert.ok(open.details);
+					assert.equal(open.details.managedSessionHeadedAutosaveInterval, null);
 					assert.deepEqual(open.details.browserWindow, {
 						mode: "headed",
 						ownership: "wrapper-managed",
@@ -219,7 +220,8 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						args: ["get", "url"],
 					});
 					assert.equal(followUp.isError, false, JSON.stringify(followUp));
-					assert.equal(followUp.details?.managedSessionHeadedAutosaveDisabled, true);
+					assert.ok(followUp.details);
+					assert.equal(followUp.details.managedSessionHeadedAutosaveInterval, null);
 					assert.equal(followUp.details.browserWindow, undefined);
 					assert.doesNotMatch(
 						readDefined(followUp.content[0]).text ?? "",
@@ -237,7 +239,9 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 						args: ["snapshot", "-i"],
 					});
 					assert.equal(restoredFollowUp.isError, false, JSON.stringify(restoredFollowUp));
-					assert.equal(restoredFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
+					assert.equal(restoredFollowUp.details?.sessionName, open.details.sessionName);
+					assert.equal(restoredFollowUp.details?.managedSessionHeadedAutosaveDisabled, undefined);
+					assert.equal(restoredFollowUp.details?.managedSessionHeadedAutosaveInterval, null);
 
 					const sessionlessDoctor = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["doctor"],
@@ -260,7 +264,7 @@ process.stdout.write(JSON.stringify({ success: true, data }));`,
 					const managedInvocations = invocations.filter((entry) => !entry.args.includes("doctor"));
 					assert.ok(managedInvocations.length >= 4);
 					assert.equal(
-						managedInvocations.every((entry) => entry.autosave === "0"),
+						managedInvocations.every((entry) => entry.autosave === null),
 						true,
 						JSON.stringify(invocations),
 					);
@@ -414,7 +418,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { result: "https
 );
 
 nodeTest(
-	"agentBrowserExtension requires a fresh daemon before changing a resumed headed autosave interval",
+	"agentBrowserExtension requires a fresh daemon before overriding a resumed headed native autosave default",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(
@@ -441,6 +445,7 @@ if (args.includes("session") && args.includes("info")) {
 
 		try {
 			let branch: unknown[] = [];
+			let priorSessionName = "";
 			await withPatchedEnv(
 				{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` },
 				async () => {
@@ -456,8 +461,9 @@ if (args.includes("session") && args.includes("info")) {
 						sessionMode: "fresh",
 					});
 					assert.equal(open.isError, false, JSON.stringify(open));
-					assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, true);
-					assert.equal(open.details.managedSessionHeadedAutosaveInterval, "0");
+					assert.equal(open.details?.managedSessionHeadedAutosaveDisabled, undefined);
+					assert.equal(open.details?.managedSessionHeadedAutosaveInterval, null);
+					priorSessionName = readString(open.details.sessionName);
 					branch = harness.ctx.sessionManager.getBranch().slice();
 					await runExtensionEvent(
 						harness.handlers,
@@ -469,7 +475,7 @@ if (args.includes("session") && args.includes("info")) {
 			);
 
 			await withPatchedEnv(
-				{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000", PATH: `${tempDir}:${basePath}` },
+				{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0", PATH: `${tempDir}:${basePath}` },
 				async () => {
 					const harness = createExtensionHarness({ branch, cwd: tempDir });
 					await runExtensionEvent(
@@ -478,6 +484,10 @@ if (args.includes("session") && args.includes("info")) {
 						{ reason: "resume" },
 						harness.ctx,
 					);
+					const inspection = await executeRegisteredTool(harness.tool, harness.ctx, {
+						args: ["--session", priorSessionName, "session", "info"],
+					});
+					assert.equal(readRecord(inspection.details?.data).active, true);
 					const followUp = await executeRegisteredTool(harness.tool, harness.ctx, {
 						args: ["get", "url"],
 					});
@@ -495,7 +505,7 @@ if (args.includes("session") && args.includes("info")) {
 					});
 					assert.equal(freshOpen.isError, false, JSON.stringify(freshOpen));
 					assert.equal(freshOpen.details?.managedSessionHeadedAutosaveDisabled, undefined);
-					assert.equal(freshOpen.details?.managedSessionHeadedAutosaveInterval, "1000");
+					assert.equal(freshOpen.details?.managedSessionHeadedAutosaveInterval, "0");
 					branch = harness.ctx.sessionManager.getBranch().slice();
 					await runExtensionEvent(
 						harness.handlers,
@@ -507,7 +517,7 @@ if (args.includes("session") && args.includes("info")) {
 			);
 
 			await withPatchedEnv(
-				{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0", PATH: `${tempDir}:${basePath}` },
+				{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000", PATH: `${tempDir}:${basePath}` },
 				async () => {
 					const harness = createExtensionHarness({ branch, cwd: tempDir });
 					await runExtensionEvent(
@@ -548,9 +558,8 @@ if (args.includes("session") && args.includes("info")) {
 				(entry) =>
 					entry.args.includes("open") && entry.args.includes("https://example.com/headed-fresh"),
 			);
-			assert.ok(closeIntervals.has("0"), JSON.stringify(invocations));
-			assert.ok(closeIntervals.has("1000"), JSON.stringify(invocations));
-			assert.equal(freshOpen?.autosave, "1000", JSON.stringify(invocations));
+			assert.deepEqual(closeIntervals, new Set([null, "0"]), JSON.stringify(invocations));
+			assert.equal(freshOpen?.autosave, "0", JSON.stringify(invocations));
 		} finally {
 			await rm(tempDir, { force: true, recursive: true });
 		}
@@ -579,7 +588,7 @@ if (args.includes("session") && args.includes("info")) {
 
 		try {
 			await withPatchedEnv(
-				{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: undefined, PATH: `${tempDir}:${basePath}` },
+				{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0", PATH: `${tempDir}:${basePath}` },
 				async () => {
 					const harness = createExtensionHarness({ cwd: tempDir });
 					await runExtensionEvent(
@@ -595,7 +604,7 @@ if (args.includes("session") && args.includes("info")) {
 					assert.equal(failedOpen.isError, true, JSON.stringify(failedOpen));
 					assert.equal(readRecord(failedOpen.details?.managedSessionOutcome).activeAfter, false);
 					assert.equal(readRecord(failedOpen.details?.managedSessionOutcome).status, "abandoned");
-					assert.equal(failedOpen.details?.managedSessionHeadedAutosaveDisabled, undefined);
+					assert.equal(failedOpen.details?.managedSessionHeadedAutosaveInterval, undefined);
 				},
 			);
 		} finally {
@@ -653,12 +662,14 @@ if (command === "session") {
 						{ reason: "new" },
 						harness.ctx,
 					);
-					const headedOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
-						sessionMode: "fresh",
-						args: ["--headed", "open", "https://example.com/headed"],
-					});
+					const headedOpen = await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" }, () =>
+						executeRegisteredTool(harness.tool, harness.ctx, {
+							sessionMode: "fresh",
+							args: ["--headed", "open", "https://example.com/headed"],
+						}),
+					);
 					assert.equal(headedOpen.isError, false, JSON.stringify(headedOpen));
-					assert.equal(headedOpen.details?.managedSessionHeadedAutosaveDisabled, true);
+					assert.equal(headedOpen.details?.managedSessionHeadedAutosaveInterval, "0");
 					const headedSessionName = readString(headedOpen.details.sessionName);
 
 					const replacement = await executeRegisteredTool(harness.tool, harness.ctx, {
@@ -667,7 +678,7 @@ if (command === "session") {
 					});
 					assert.equal(replacement.isError, false, JSON.stringify(replacement));
 					assert.notEqual(replacement.details?.sessionName, headedSessionName);
-					assert.equal(replacement.details?.managedSessionHeadedAutosaveDisabled, undefined);
+					assert.equal(replacement.details?.managedSessionHeadedAutosaveInterval, undefined);
 					assert.equal(
 						readRecord(replacement.details?.managedSessionOutcome).replacedSessionClosed,
 						false,
@@ -698,7 +709,7 @@ if (command === "session") {
 						args: ["--session", headedSessionName, "get", "url"],
 					});
 					assert.equal(oldSessionFollowUp.isError, false, JSON.stringify(oldSessionFollowUp));
-					assert.equal(oldSessionFollowUp.details?.managedSessionHeadedAutosaveDisabled, true);
+					assert.equal(oldSessionFollowUp.details?.managedSessionHeadedAutosaveInterval, "0");
 
 					const resumedHarness = createExtensionHarness({
 						branch: harness.ctx.sessionManager.getBranch().slice(),
@@ -723,8 +734,8 @@ if (command === "session") {
 						JSON.stringify(resumedOldSessionFollowUp),
 					);
 					assert.equal(
-						resumedOldSessionFollowUp.details?.managedSessionHeadedAutosaveDisabled,
-						true,
+						resumedOldSessionFollowUp.details?.managedSessionHeadedAutosaveInterval,
+						"0",
 					);
 
 					const invocations = await readInvocationLog(logPath);

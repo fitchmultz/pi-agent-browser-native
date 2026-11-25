@@ -161,13 +161,14 @@ class BranchResourceReplay {
 		}
 		const launch = { ...prior };
 		const details = row.details;
-		if (typeof details.managedSessionHeadedAutosaveDisabled === "boolean") {
-			launch.headedManagedAutosaveDisabled = details.managedSessionHeadedAutosaveDisabled;
-		}
-		if (typeof details.managedSessionHeadedAutosaveInterval === "string") {
+		if (details.managedSessionHeadedAutosaveDisabled === true) {
+			// The old implicit zero was a Chrome workaround, not a caller setting.
+			launch.headedManagedAutosaveInterval = null;
+		} else if (
+			typeof details.managedSessionHeadedAutosaveInterval === "string" ||
+			details.managedSessionHeadedAutosaveInterval === null
+		) {
 			launch.headedManagedAutosaveInterval = details.managedSessionHeadedAutosaveInterval;
-		} else if (details.managedSessionHeadedAutosaveDisabled === true) {
-			launch.headedManagedAutosaveInterval = "0";
 		}
 		return launch;
 	}
@@ -179,7 +180,6 @@ class BranchResourceReplay {
 		const key = getSessionContextKey(sessionName, namespace) ?? sessionName;
 		const launch = this.events.managedSessionLaunchState.get(key) ?? {
 			compatibilityWorkaround: undefined,
-			headedManagedAutosaveDisabled: false,
 		};
 		if (typeof details.managedSessionCwd === "string" && isAbsolute(details.managedSessionCwd)) {
 			launch.cwd = details.managedSessionCwd;
@@ -227,6 +227,7 @@ class BranchResourceReplay {
 			((row.explicitSessionName === undefined || row.explicitSessionName === "") &&
 				(row.usedImplicitSession || row.sessionMode === "fresh")) ||
 			row.details.managedSessionHeadedAutosaveDisabled === true ||
+			row.details.managedSessionHeadedAutosaveInterval === null ||
 			typeof row.details.managedSessionHeadedAutosaveInterval === "string"
 		);
 	}

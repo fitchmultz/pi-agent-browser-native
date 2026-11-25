@@ -13,6 +13,5 @@ export interface PreparationSessionFacts {
 	readonly managedSessionName: string;
 	readonly managedSessionNamespace?: string | undefined;
 	readonly managedSessionCompatibilityWorkaround?: CompatibilityWorkaround | undefined;
-	readonly managedSessionHeadedAutosaveDisabled?: boolean | undefined;
-	readonly managedSessionHeadedAutosaveInterval?: string | undefined;
+	readonly managedSessionHeadedAutosaveInterval?: string | null | undefined;
 }

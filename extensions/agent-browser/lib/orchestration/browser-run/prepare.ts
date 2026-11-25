@@ -298,7 +298,6 @@ function preparationSessionFacts(
 		managedSessionName: state.managedSessionName,
 		managedSessionNamespace: state.managedSessionNamespace,
 		managedSessionCompatibilityWorkaround: state.managedSessionCompatibilityWorkaround,
-		managedSessionHeadedAutosaveDisabled: state.managedSessionHeadedAutosaveDisabled,
 		managedSessionHeadedAutosaveInterval: state.managedSessionHeadedAutosaveInterval,
 	};
 }

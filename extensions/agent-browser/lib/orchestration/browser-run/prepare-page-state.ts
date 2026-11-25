@@ -37,8 +37,7 @@ export async function inspectPreparationGeneration(
 		readonly sessionName: string;
 		readonly owned?:
 			| {
-					readonly headedManagedAutosaveInterval?: string | undefined;
-					readonly headedManagedAutosaveDisabled?: boolean | undefined;
+					readonly headedManagedAutosaveInterval?: string | null | undefined;
 			  }
 			| undefined;
 	},
@@ -51,9 +50,7 @@ export async function inspectPreparationGeneration(
 			namespace: identity.namespace,
 			sessionName: identity.sessionName,
 			includeGeneration: true,
-			headedManagedAutosaveInterval:
-				identity.owned?.headedManagedAutosaveInterval ??
-				(identity.owned?.headedManagedAutosaveDisabled === true ? "0" : undefined),
+			headedManagedAutosaveInterval: identity.owned?.headedManagedAutosaveInterval,
 		})
 	);
 }

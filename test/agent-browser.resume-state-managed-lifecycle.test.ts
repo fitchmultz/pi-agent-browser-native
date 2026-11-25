@@ -1302,10 +1302,12 @@ if (args.includes("session") && args.includes("info")) {
 						{ reason: "new" },
 						harness.ctx,
 					);
-					const oldOpen = await executeRegisteredTool(harness.tool, harness.ctx, {
-						args: ["--headed", "open", "https://example.com/old"],
-						sessionMode: "fresh",
-					});
+					const oldOpen = await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "0" }, () =>
+						executeRegisteredTool(harness.tool, harness.ctx, {
+							args: ["--headed", "open", "https://example.com/old"],
+							sessionMode: "fresh",
+						}),
+					);
 					assert.equal(oldOpen.isError, false, JSON.stringify(oldOpen));
 					assert.equal(oldOpen.details?.managedSessionHeadedAutosaveInterval, "0");
 					const oldSessionName = readString(oldOpen.details.sessionName);

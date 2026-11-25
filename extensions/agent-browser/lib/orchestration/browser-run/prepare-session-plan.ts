@@ -44,6 +44,7 @@ export interface PreparationSessionPlan {
 	readonly readConfirmation?: ReadConfirmation | undefined;
 	readonly recordedOwnedSession?: OwnedManagedSessionReference | undefined;
 	readonly ownedManagedSession?: OwnedManagedSessionContext | undefined;
+	readonly initialHeadedAutosaveInterval?: string | null | undefined;
 	readonly offCurrentLaunchScopedFlags: readonly string[];
 	readonly offCurrentCompatibilityUpgrade: boolean;
 	readonly compatibilityUserAgent?: string | undefined;
@@ -139,38 +140,34 @@ function restoreOffCurrentCompatibility(
 	};
 }
 
-function retainedAutosaveSettings(
+function retainedAutosaveInterval(
 	facts: PreparationSessionFacts,
 	request: {
 		readonly recorded?: OwnedManagedSessionReference | undefined;
 		readonly targetsCurrent: boolean;
 	},
-): { readonly retainedDisabled: boolean; readonly retainedInterval?: string | undefined } {
-	const retainedDisabled =
-		request.recorded?.headedManagedAutosaveDisabled === true ||
-		(request.targetsCurrent && facts.managedSessionHeadedAutosaveDisabled === true);
-	const retainedInterval =
-		request.recorded?.headedManagedAutosaveInterval ??
-		(request.targetsCurrent ? facts.managedSessionHeadedAutosaveInterval : undefined);
-	return { retainedDisabled, retainedInterval };
+): string | null | undefined {
+	const recorded = request.recorded?.headedManagedAutosaveInterval;
+	if (recorded !== undefined) {
+		return recorded;
+	}
+	return request.targetsCurrent ? facts.managedSessionHeadedAutosaveInterval : undefined;
 }
 
 function autosaveSettings(
 	plan: AgentBrowserExecutionPlan,
-	retained: ReturnType<typeof retainedAutosaveSettings>,
+	retainedInterval: string | null | undefined,
 	browserIndependent: boolean,
 ): {
 	readonly executionPlan: AgentBrowserExecutionPlan;
 	readonly headedLaunch: boolean;
-	readonly disabled: boolean;
-	readonly interval?: string | undefined;
-	readonly retainedDisabled: boolean;
-	readonly retainedInterval?: string | undefined;
+	readonly initialInterval?: string | null | undefined;
+	readonly retainedInterval?: string | null | undefined;
 } {
 	const env = getAgentBrowserProcessEnvironment();
 	const explicitInterval = resolveExplicitAutosaveInterval(env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
 	const error = getRunningHeadedAutosavePolicyChangeError(
-		retained.retainedInterval,
+		retainedInterval,
 		isCloseCommand(plan.commandInfo.command),
 	);
 	const executionPlan =
@@ -183,9 +180,9 @@ function autosaveSettings(
 	return {
 		executionPlan,
 		headedLaunch,
-		...retained,
-		disabled: retained.retainedDisabled || (explicitInterval === undefined && headedLaunch),
-		interval: retained.retainedInterval ?? (headedLaunch ? (explicitInterval ?? "0") : undefined),
+		retainedInterval,
+		initialInterval:
+			headedLaunch && retainedInterval === undefined ? (explicitInterval ?? null) : undefined,
 	};
 }
 
@@ -213,12 +210,7 @@ function ownedRestoreContext(
 		cwd: request.recorded?.cwd ?? request.cwd,
 		currentManagedSessionName: facts.managedSessionName,
 		currentManagedSessionNamespace: facts.managedSessionNamespace,
-		headedManagedAutosaveDisabled: request.browserIndependent
-			? request.autosave.retainedDisabled
-			: request.autosave.disabled,
-		headedManagedAutosaveInterval: request.browserIndependent
-			? request.autosave.retainedInterval
-			: request.autosave.interval,
+		headedManagedAutosaveInterval: request.autosave.retainedInterval,
 		managedSessionName: plan.managedSessionName,
 		namespace: plan.namespace,
 		parentEnv: getAgentBrowserProcessEnvironment(),
@@ -376,7 +368,7 @@ export function prepareSessionPlan(
 	});
 	const { executionPlan: autosavePlan, ...autosave } = autosaveSettings(
 		plan,
-		retainedAutosaveSettings(facts, { recorded, targetsCurrent }),
+		retainedAutosaveInterval(facts, { recorded, targetsCurrent }),
 		browserIndependent,
 	);
 	plan = autosavePlan;
@@ -401,6 +393,7 @@ export function prepareSessionPlan(
 			readConfirmation,
 			recordedOwnedSession: recorded,
 			ownedManagedSession,
+			initialHeadedAutosaveInterval: autosave.initialInterval,
 			offCurrentLaunchScopedFlags,
 			offCurrentCompatibilityUpgrade,
 			compatibilityUserAgent,

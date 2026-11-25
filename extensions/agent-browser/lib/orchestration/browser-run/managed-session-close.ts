@@ -25,7 +25,7 @@ import {
 interface ManagedSessionCloseOptions {
 	readonly confirmActions?: string | undefined;
 	readonly cwd: string;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly namespace?: string | undefined;
 	readonly policyLock?: ManagedSessionPolicyLock | undefined;
 	readonly preserveAttachedBrowserSession?: boolean | undefined;

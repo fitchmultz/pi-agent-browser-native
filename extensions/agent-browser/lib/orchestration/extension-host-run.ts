@@ -169,7 +169,6 @@ class ElectronHostTransaction {
 	resetManagedSession(): void {
 		this.runtime.managed.active = false;
 		this.runtime.managed.compatibilityWorkaround = undefined;
-		this.runtime.managed.headedAutosaveDisabled = false;
 		this.runtime.managed.headedAutosaveInterval = undefined;
 		this.runtime.managed.namespace = undefined;
 		this.runtime.managed.freshOrdinal += 1;
@@ -242,13 +241,6 @@ class ElectronHostTransaction {
 			snapshot.snapshotId !== this.priorPages.get(key)?.refSnapshot?.snapshotId
 		);
 	}
-	headedAutosaveInterval(key: string): string | undefined {
-		const owner = this.runtime.managed.owned.get(key);
-		return (
-			owner?.headedManagedAutosaveInterval ??
-			(owner?.headedManagedAutosaveDisabled === true ? "0" : undefined)
-		);
-	}
 	async bindSnapshotGeneration(key: string): Promise<void> {
 		if (!this.snapshotChanged(key)) {
 			return;
@@ -260,7 +252,8 @@ class ElectronHostTransaction {
 			namespace: record?.namespace ?? this.runtime.managed.namespace,
 			signal: this.executionSignal,
 			includeGeneration: true,
-			headedManagedAutosaveInterval: this.headedAutosaveInterval(key),
+			headedManagedAutosaveInterval:
+				this.runtime.managed.owned.get(key)?.headedManagedAutosaveInterval,
 		});
 		this.workingPageState.bindSnapshotGeneration(
 			key,

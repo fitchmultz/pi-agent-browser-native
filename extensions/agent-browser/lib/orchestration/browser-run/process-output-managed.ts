@@ -198,14 +198,11 @@ function resolveManagedLaunchPolicy(
 	next: ManagedSessionState,
 ): Pick<
 	LifecycleOutputPhase,
-	| "managedSessionCompatibilityWorkaround"
-	| "managedSessionHeadedAutosaveDisabled"
-	| "managedSessionHeadedAutosaveInterval"
+	"managedSessionCompatibilityWorkaround" | "managedSessionHeadedAutosaveInterval"
 > {
 	if (!next.active) {
 		return {
 			managedSessionCompatibilityWorkaround: undefined,
-			managedSessionHeadedAutosaveDisabled: false,
 			managedSessionHeadedAutosaveInterval: undefined,
 		};
 	}
@@ -219,13 +216,11 @@ function resolveManagedLaunchPolicy(
 	) {
 		return {
 			managedSessionCompatibilityWorkaround: draft.managedSessionCompatibilityWorkaround,
-			managedSessionHeadedAutosaveDisabled: draft.managedSessionHeadedAutosaveDisabled,
 			managedSessionHeadedAutosaveInterval: draft.managedSessionHeadedAutosaveInterval,
 		};
 	}
 	return {
 		managedSessionCompatibilityWorkaround: prepared.compatibilityWorkaround,
-		managedSessionHeadedAutosaveDisabled: owned.headedManagedAutosaveDisabled === true,
 		managedSessionHeadedAutosaveInterval: owned.headedManagedAutosaveInterval,
 	};
 }
@@ -311,7 +306,6 @@ export function resolveManagedTransition(
 	| "managedSessionActive"
 	| "managedSessionCompatibilityWorkaround"
 	| "managedSessionCwd"
-	| "managedSessionHeadedAutosaveDisabled"
 	| "managedSessionHeadedAutosaveInterval"
 	| "managedSessionName"
 	| "managedSessionNamespace"

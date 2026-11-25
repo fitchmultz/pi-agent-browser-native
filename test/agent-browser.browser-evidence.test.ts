@@ -316,10 +316,14 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`,
 								await t.test(`headed=${headed}`, async (headedTest) => {
 									const url = headed ? "https://owned.test/" : "https://chatgpt.com/";
 									await writeFile(logPath, "");
-									const opened = await executeRegisteredTool(harness.tool, harness.ctx, {
-										args: [...(headed ? ["--headed"] : []), "open", url],
-										sessionMode: "fresh",
-									});
+									const opened = await withPatchedEnv(
+										{ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: headed ? "0" : undefined },
+										() =>
+											executeRegisteredTool(harness.tool, harness.ctx, {
+												args: [...(headed ? ["--headed"] : []), "open", url],
+												sessionMode: "fresh",
+											}),
+									);
 									const openedDetails = opened.details;
 									assert.ok(openedDetails);
 									assert.equal(
@@ -423,7 +427,7 @@ else process.stdout.write(JSON.stringify({ success: true, data }));`,
 											);
 											assert.equal(
 												followup.details.managedSessionHeadedAutosaveDisabled,
-												headed ? true : undefined,
+												undefined,
 											);
 											assert.equal(
 												followup.details.managedSessionHeadedAutosaveInterval,

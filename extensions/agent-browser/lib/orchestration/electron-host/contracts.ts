@@ -10,10 +10,7 @@ import type { OwnedManagedSessionReference } from "../browser-run/types.js";
 export type ElectronHostLaunchRecords = Map<string, ElectronLaunchRecord>;
 export type ElectronHostChildProcesses = Map<string, ChildProcess>;
 export type ElectronManagedSessionOwner = Readonly<
-	Pick<
-		OwnedManagedSessionReference,
-		"headedManagedAutosaveDisabled" | "headedManagedAutosaveInterval" | "socketDir"
-	>
+	Pick<OwnedManagedSessionReference, "headedManagedAutosaveInterval" | "socketDir">
 >;
 export interface ElectronHostLaunchCleanupState {
 	readonly sessionPageState: SessionPageState;
@@ -55,8 +52,7 @@ export interface ElectronManagedSessionInspection {
 export interface ElectronManagedSessionPolicy extends ElectronManagedSessionInspection {
 	readonly confirmActions?: string | undefined;
 	readonly electronLaunchRecord?: ElectronLaunchRecord | undefined;
-	readonly headedManagedAutosaveDisabled?: boolean | undefined;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly restoreState: ManagedSessionRestoreState;
 }
 export interface ElectronProbeContext {

@@ -178,7 +178,6 @@ function resolveProbePolicy(
 		confirmActions:
 			pageState.confirmActions ?? getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS,
 		electronLaunchRecord: identity.record,
-		headedManagedAutosaveDisabled: owner?.headedManagedAutosaveDisabled === true,
 		headedManagedAutosaveInterval: owner?.headedManagedAutosaveInterval,
 		restoreState: options.managedSessionRestoreState,
 	};
@@ -216,7 +215,6 @@ async function inspectProbeIdentity(
 	const target = publishProbePageState(options.sessionPageState, probe, identity.namespace);
 	return buildElectronProbeResult({
 		compiledElectron: visibleInput,
-		headedManagedAutosaveDisabled: policy.headedManagedAutosaveDisabled,
 		headedManagedAutosaveInterval: policy.headedManagedAutosaveInterval,
 		mismatch,
 		namespace: identity.namespace,

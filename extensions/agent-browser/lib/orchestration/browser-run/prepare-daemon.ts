@@ -129,24 +129,34 @@ function daemonReuseError(
 
 function applyColdCompatibility(
 	plan: AgentBrowserExecutionPlan,
-	session: Pick<PreparationSessionPlan, "compatibilityUserAgent" | "compatibilityUserAgentApplied">,
+	session: Pick<
+		PreparationSessionPlan,
+		"compatibilityUserAgent" | "compatibilityUserAgentApplied" | "initialHeadedAutosaveInterval"
+	>,
 	context: OwnedManagedSessionContext,
 	status: string | undefined,
 ): {
 	readonly plan: AgentBrowserExecutionPlan;
 	readonly ownedManagedSession: OwnedManagedSessionContext;
 } {
+	if (isCloseCommand(plan.commandInfo.command) || status !== "inactive") {
+		return { plan, ownedManagedSession: context };
+	}
+	const interval = session.initialHeadedAutosaveInterval;
+	const ownedManagedSession =
+		interval === undefined ? context : { ...context, headedManagedAutosaveInterval: interval };
 	if (
-		isCloseCommand(plan.commandInfo.command) ||
-		status !== "inactive" ||
 		session.compatibilityUserAgent === undefined ||
 		session.compatibilityUserAgent === "" ||
 		session.compatibilityUserAgentApplied
 	) {
-		return { plan, ownedManagedSession: context };
+		return { plan, ownedManagedSession };
 	}
 	return {
-		ownedManagedSession: { ...context, compatibilityUserAgent: session.compatibilityUserAgent },
+		ownedManagedSession: {
+			...ownedManagedSession,
+			compatibilityUserAgent: session.compatibilityUserAgent,
+		},
 		plan: {
 			...plan,
 			effectiveArgs: ["--user-agent", session.compatibilityUserAgent, ...plan.effectiveArgs],

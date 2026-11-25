@@ -97,12 +97,10 @@ async function readBranchForRestore(
 	}
 }
 function headedLaunchTracking(launch: Readonly<ManagedSessionLaunchState> | undefined): Readonly<{
-	headedManagedAutosaveDisabled: boolean;
-	headedManagedAutosaveInterval?: string | undefined;
+	headedManagedAutosaveInterval?: string | null | undefined;
 	socketDir?: string | undefined;
 }> {
 	return {
-		headedManagedAutosaveDisabled: launch?.headedManagedAutosaveDisabled ?? false,
 		headedManagedAutosaveInterval: launch?.headedManagedAutosaveInterval,
 		socketDir: launch?.socketDir,
 	};
@@ -187,8 +185,6 @@ class BrowserBranchRestoration {
 		this.runtime.managed.compatibilityWorkaround = this.runtime.managed.active
 			? currentLaunch?.compatibilityWorkaround
 			: undefined;
-		this.runtime.managed.headedAutosaveDisabled =
-			this.runtime.managed.active && currentLaunch?.headedManagedAutosaveDisabled === true;
 		this.runtime.managed.headedAutosaveInterval = this.runtime.managed.active
 			? currentLaunch?.headedManagedAutosaveInterval
 			: undefined;
@@ -247,7 +243,6 @@ class BrowserBranchRestoration {
 				{
 					branchOwned: true,
 					compatibilityWorkaround: this.runtime.managed.compatibilityWorkaround,
-					headedManagedAutosaveDisabled: this.runtime.managed.headedAutosaveDisabled,
 					headedManagedAutosaveInterval: this.runtime.managed.headedAutosaveInterval,
 					namespace: this.restoredState.namespace,
 					socketDir: this.currentLaunch()?.socketDir,
@@ -267,7 +262,6 @@ class BrowserBranchRestoration {
 			{
 				branchOwned: true,
 				compatibilityWorkaround: launch?.compatibilityWorkaround,
-				headedManagedAutosaveDisabled: launch?.headedManagedAutosaveDisabled ?? false,
 				headedManagedAutosaveInterval: launch?.headedManagedAutosaveInterval,
 				namespace: identity.namespace,
 				socketDir: launch?.socketDir,

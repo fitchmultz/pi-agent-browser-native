@@ -37,8 +37,7 @@ function presentProbe(probe: ElectronProbeResult): ElectronProbeResult {
 
 interface ProbePresentation {
 	readonly compiledElectron: CompiledAgentBrowserElectron;
-	readonly headedManagedAutosaveDisabled?: boolean | undefined;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly mismatch?: ElectronSessionMismatch | undefined;
 	readonly namespace?: string | undefined;
 	readonly probe: ElectronProbeResult;
@@ -222,8 +221,6 @@ export function buildElectronProbeResult(options: ProbePresentation): AgentBrows
 		},
 		nextActions: nextActions.length > 0 ? nextActions : undefined,
 		...buildAgentBrowserResultCategoryDetails({ args: [], succeeded: true }),
-		managedSessionHeadedAutosaveDisabled:
-			options.headedManagedAutosaveDisabled === true ? true : undefined,
 		managedSessionHeadedAutosaveInterval: options.headedManagedAutosaveInterval,
 		namespace: options.namespace,
 		refSnapshot: options.probe.refSnapshot,
