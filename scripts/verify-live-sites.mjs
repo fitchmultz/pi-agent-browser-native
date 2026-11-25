@@ -15,7 +15,9 @@ import { createLiveSiteRun } from "./live-site-runtime.mjs";
 /** @import {LifecycleToolResult} from "./lifecycle-transcript.mjs" */
 /** @typedef {Awaited<ReturnType<LiveSiteRun["prompt"]>>} LiveResult */
 /** @typedef {Awaited<ReturnType<typeof packToTemporaryPackageDir>> & {sha256: string}} LiveCandidate */
-const STATIC = "https://info.cern.ch/";
+const STATIC = "https://www.iana.org/help/example-domains";
+const STATIC_LINK_NAME = "IANA-managed Reserved Domains";
+const STATIC_DESTINATION = "https://www.iana.org/domains/reserved";
 const DOCS = "https://react.dev/learn";
 const configuredModel = process.env.PIAB_LIVE_MODEL;
 const model =
@@ -44,10 +46,9 @@ function assertSameSession(result, sessionName) {
 function linkRef(snapshot) {
 	const refs = record(record(snapshot.details?.refSnapshot)?.refs);
 	const match = Object.entries(refs ?? {}).find(
-		([, value]) =>
-			record(value)?.role === "link" && record(value)?.name === "Browse the first website",
+		([, value]) => record(value)?.role === "link" && record(value)?.name === STATIC_LINK_NAME,
 	);
-	assert.ok(match, "Static-site snapshot did not expose its first-website link");
+	assert.ok(match, `Static-site snapshot did not expose its "${STATIC_LINK_NAME}" link`);
 	return `@${match[0]}`;
 }
 
@@ -98,12 +99,7 @@ async function openStaticSite(runtime) {
 	});
 	assertSameSession(destination.result, sessionName);
 	const destinationUrl = record(destination.result.details?.data)?.url;
-	assert.ok(
-		typeof destinationUrl === "string" &&
-			destinationUrl !== STATIC &&
-			destinationUrl.includes("info.cern.ch"),
-		"The observed link did not navigate within the first-website archive",
-	);
+	assert.equal(destinationUrl, STATIC_DESTINATION, "The observed link opened the wrong URL");
 	return sessionName;
 }
 
