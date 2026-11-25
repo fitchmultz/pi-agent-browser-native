@@ -2,8 +2,25 @@
 
 ## Unreleased
 
+## 0.9.44 - 2026-11-25
+
+<!-- npm-release:unreleased:start -->
+
 - Require `agent-browser` 0.45.0 or newer. The command reference now covers Firefox over WebDriver BiDi, improved iframe targeting, and updated browser-state inspection.
 - Restore native periodic autosave for headed browser sessions. Explicit `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0` still disables periodic saves without disabling save-on-close.
+
+<!-- npm-release:unreleased:end -->
+
+- feat: qualify agent-browser 0.45.0 (PAB-206) (1/4) (#453) ([4a46f7e](https://github.com/fitchmultz/pi-agent-browser-native/commit/4a46f7e93bc047e7c3b36b17d8c195624a3b42fc))
+
+### What's Changed
+
+- feat: qualify agent-browser 0.45.0 (PAB-206) (1/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/453
+- fix: preserve Firefox screenshot coordinates (PAB-206) (2/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/454
+- fix: preserve native iframe parsing and recovery (PAB-206) (3/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/456
+- fix: restore native autosave for headed sessions (PAB-206) (4/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/457
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.43...v0.9.44
 
 ## 0.9.43 - 2026-11-25
 
