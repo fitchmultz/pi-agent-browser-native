@@ -139,38 +139,33 @@ function restoreOffCurrentCompatibility(
 	};
 }
 
-function retainedAutosaveSettings(
+function retainedAutosaveInterval(
 	facts: PreparationSessionFacts,
 	request: {
 		readonly recorded?: OwnedManagedSessionReference | undefined;
 		readonly targetsCurrent: boolean;
 	},
-): { readonly retainedDisabled: boolean; readonly retainedInterval?: string | undefined } {
-	const retainedDisabled =
-		request.recorded?.headedManagedAutosaveDisabled === true ||
-		(request.targetsCurrent && facts.managedSessionHeadedAutosaveDisabled === true);
-	const retainedInterval =
+): string | undefined {
+	return (
 		request.recorded?.headedManagedAutosaveInterval ??
-		(request.targetsCurrent ? facts.managedSessionHeadedAutosaveInterval : undefined);
-	return { retainedDisabled, retainedInterval };
+		(request.targetsCurrent ? facts.managedSessionHeadedAutosaveInterval : undefined)
+	);
 }
 
 function autosaveSettings(
 	plan: AgentBrowserExecutionPlan,
-	retained: ReturnType<typeof retainedAutosaveSettings>,
+	retainedInterval: string | undefined,
 	browserIndependent: boolean,
 ): {
 	readonly executionPlan: AgentBrowserExecutionPlan;
 	readonly headedLaunch: boolean;
-	readonly disabled: boolean;
 	readonly interval?: string | undefined;
-	readonly retainedDisabled: boolean;
 	readonly retainedInterval?: string | undefined;
 } {
 	const env = getAgentBrowserProcessEnvironment();
 	const explicitInterval = resolveExplicitAutosaveInterval(env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
 	const error = getRunningHeadedAutosavePolicyChangeError(
-		retained.retainedInterval,
+		retainedInterval,
 		isCloseCommand(plan.commandInfo.command),
 	);
 	const executionPlan =
@@ -183,9 +178,8 @@ function autosaveSettings(
 	return {
 		executionPlan,
 		headedLaunch,
-		...retained,
-		disabled: retained.retainedDisabled || (explicitInterval === undefined && headedLaunch),
-		interval: retained.retainedInterval ?? (headedLaunch ? (explicitInterval ?? "0") : undefined),
+		retainedInterval,
+		interval: retainedInterval ?? (headedLaunch ? explicitInterval : undefined),
 	};
 }
 
@@ -213,9 +207,6 @@ function ownedRestoreContext(
 		cwd: request.recorded?.cwd ?? request.cwd,
 		currentManagedSessionName: facts.managedSessionName,
 		currentManagedSessionNamespace: facts.managedSessionNamespace,
-		headedManagedAutosaveDisabled: request.browserIndependent
-			? request.autosave.retainedDisabled
-			: request.autosave.disabled,
 		headedManagedAutosaveInterval: request.browserIndependent
 			? request.autosave.retainedInterval
 			: request.autosave.interval,
@@ -376,7 +367,7 @@ export function prepareSessionPlan(
 	});
 	const { executionPlan: autosavePlan, ...autosave } = autosaveSettings(
 		plan,
-		retainedAutosaveSettings(facts, { recorded, targetsCurrent }),
+		retainedAutosaveInterval(facts, { recorded, targetsCurrent }),
 		browserIndependent,
 	);
 	plan = autosavePlan;

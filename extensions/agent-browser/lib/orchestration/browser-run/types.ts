@@ -100,7 +100,6 @@ export interface BrowserRunStateSnapshot {
 	managedSessionActive: boolean;
 	managedSessionBaseName: string;
 	managedSessionCompatibilityWorkaround?: CompatibilityWorkaround | undefined;
-	managedSessionHeadedAutosaveDisabled?: boolean;
 	managedSessionHeadedAutosaveInterval?: string | undefined;
 	managedSessionCwd: string;
 	managedSessionName: string;
@@ -124,7 +123,6 @@ export interface BrowserRunStatePatch {
 	readonly freshSessionOrdinal?: number;
 	readonly managedSessionActive?: boolean;
 	readonly managedSessionCompatibilityWorkaround?: CompatibilityWorkaround | undefined;
-	readonly managedSessionHeadedAutosaveDisabled?: boolean;
 	readonly managedSessionHeadedAutosaveInterval?: string | undefined;
 	readonly managedSessionCwd?: string;
 	readonly managedSessionName?: string;
@@ -343,7 +341,6 @@ export type FinalResultInput = Readonly<{
 	inspectionText?: string | undefined;
 	preserveAttachedBrowserSession: boolean;
 	providerLaunch: boolean;
-	managedSessionHeadedAutosaveDisabled?: boolean | undefined;
 	managedSessionHeadedAutosaveInterval?: string | undefined;
 	managedSessionOutcome?: ManagedSessionOutcome | undefined;
 	managedSessionRestoreDisabled: boolean;

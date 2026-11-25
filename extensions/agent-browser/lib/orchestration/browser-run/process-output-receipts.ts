@@ -27,7 +27,6 @@ type CommitObservedLifecycleInput = Readonly<
 		| "managedSessionActive"
 		| "managedSessionCompatibilityWorkaround"
 		| "managedSessionCwd"
-		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
 		| "managedSessionName"
 		| "managedSessionNamespace"
@@ -35,7 +34,6 @@ type CommitObservedLifecycleInput = Readonly<
 		| "networkRoutesBySession"
 		| "presentationEnvelope"
 		| "readConfirmationEvent"
-		| "resultHeadedManagedAutosaveDisabled"
 		| "resultHeadedManagedAutosaveInterval"
 		| "succeeded"
 	>
@@ -78,11 +76,6 @@ type BindDaemonEvidenceInput = {
 };
 type DaemonReceiptIdentityInput = Readonly<Pick<PublicationOutputPhase, "sessionStateKey">> & {
 	readonly input: { readonly prepared: Readonly<Pick<PreparedBrowserRun, "executionPlan">> };
-};
-type DaemonAutosaveIntervalInput = {
-	readonly input: {
-		readonly prepared: Readonly<Pick<PreparedBrowserRun, "ownedManagedSessionContext">>;
-	};
 };
 type BindOutputDaemonReceiptInput = Readonly<
 	Pick<
@@ -205,7 +198,6 @@ export function commitObservedLifecycle(draft: CommitObservedLifecycleInput): vo
 		managedSessionOutcome: draft.managedSessionOutcome,
 		managedSessionCwd: prepared.ownedManagedSessionContext?.cwd ?? draft.managedSessionCwd,
 		compatibilityWorkaround: prepared.compatibilityWorkaround,
-		managedSessionHeadedAutosaveDisabled: draft.resultHeadedManagedAutosaveDisabled,
 		managedSessionHeadedAutosaveInterval: draft.resultHeadedManagedAutosaveInterval,
 		managedSessionRestoreDisabled: state.managedSessionRestoreState.isDisabled(
 			prepared.executionPlan.sessionName,
@@ -303,14 +295,6 @@ function daemonReceiptIdentity(
 	return { sessionKey, sessionName };
 }
 
-function daemonAutosaveInterval(draft: DaemonAutosaveIntervalInput): string | undefined {
-	const owned = draft.input.prepared.ownedManagedSessionContext;
-	return (
-		owned?.headedManagedAutosaveInterval ??
-		(owned?.headedManagedAutosaveDisabled === true ? "0" : undefined)
-	);
-}
-
 export async function bindOutputDaemonReceipt(
 	draft: BindOutputDaemonReceiptInput,
 ): Promise<
@@ -336,7 +320,8 @@ export async function bindOutputDaemonReceipt(
 		sessionName,
 		signal,
 		includeGeneration: true,
-		headedManagedAutosaveInterval: daemonAutosaveInterval(draft),
+		headedManagedAutosaveInterval:
+			prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval,
 		timeoutMs: prepared.processTimeoutMs,
 	});
 	return { authoritativePageState, ...bindDaemonEvidence(draft, daemon, key, newSnapshot) };

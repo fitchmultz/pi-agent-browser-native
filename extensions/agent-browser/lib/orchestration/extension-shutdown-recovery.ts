@@ -220,7 +220,6 @@ export class ShutdownRecoveryJournal {
 				managedSessionCwd: owner.cwd,
 				managedSessionSocketDir: owner.socketDir,
 				compatibilityWorkaround: owner.compatibilityWorkaround,
-				managedSessionHeadedAutosaveDisabled: owner.headedManagedAutosaveDisabled,
 				managedSessionHeadedAutosaveInterval: owner.headedManagedAutosaveInterval,
 				managedSessionRestoreDisabled: this.runtime.managed.restore.isDisabled(
 					owner.sessionName,

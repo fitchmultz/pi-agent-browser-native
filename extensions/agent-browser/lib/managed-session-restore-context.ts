@@ -24,7 +24,6 @@ interface RestoreContextOptions
 	readonly cwd: string;
 	readonly reuseOnly?: boolean;
 	readonly compatibilityUserAgent?: string | undefined;
-	readonly headedManagedAutosaveDisabled?: boolean | undefined;
 	readonly headedManagedAutosaveInterval?: string | undefined;
 }
 function reuseIsSuppressed(options: RestoreContextOptions, env: NodeJS.ProcessEnv): boolean {
@@ -59,7 +58,6 @@ function reuseContext(
 			: undefined,
 		restoreDecision: enabled ? "enabled" : undefined,
 		restoreSuppressed: reuseIsSuppressed(options, env),
-		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
 		headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 	};
 }
@@ -96,7 +94,6 @@ function launchContext(
 	return {
 		...owned,
 		compatibilityUserAgent: options.compatibilityUserAgent,
-		headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
 		headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 		expectedDaemonRestoreKey: enabled
 			? key

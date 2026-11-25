@@ -6,7 +6,6 @@ export interface OwnedManagedSession extends AgentBrowserSessionIdentity {
 	readonly branchOwned: boolean;
 	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly cwd: string;
-	readonly headedManagedAutosaveDisabled?: boolean | undefined;
 	readonly headedManagedAutosaveInterval?: string | undefined;
 	readonly socketDir?: string | undefined;
 }
@@ -19,11 +18,7 @@ export type ManagedSessionLaunchState = {
 };
 type LaunchSettings = Pick<
 	OwnedManagedSession,
-	| "cwd"
-	| "compatibilityWorkaround"
-	| "headedManagedAutosaveDisabled"
-	| "headedManagedAutosaveInterval"
-	| "socketDir"
+	"cwd" | "compatibilityWorkaround" | "headedManagedAutosaveInterval" | "socketDir"
 >;
 export interface BranchManagedResourceEvents {
 	readonly electronLaunchActiveRanks: ReadonlyMap<string, number>;

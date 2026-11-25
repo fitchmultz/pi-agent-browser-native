@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Require `agent-browser` 0.45.0 or newer. The command reference now covers Firefox over WebDriver BiDi, improved iframe targeting, and updated browser-state inspection.
+- Restore native periodic autosave for headed browser sessions. Explicit `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0` still disables periodic saves without disabling save-on-close.
 
 ## 0.9.43 - 2026-11-25
 

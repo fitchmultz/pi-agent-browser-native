@@ -313,7 +313,6 @@ function launchResultEvidence(
 	| "headedLaunch"
 	| "preserveAttachedBrowserSession"
 	| "providerLaunch"
-	| "managedSessionHeadedAutosaveDisabled"
 	| "managedSessionHeadedAutosaveInterval"
 	| "managedSessionOutcome"
 	| "managedSessionRestoreDisabled"
@@ -323,10 +322,6 @@ function launchResultEvidence(
 		headedLaunch: input.prepared.headedLaunch,
 		preserveAttachedBrowserSession: input.preserveAttachedBrowserSession === true,
 		providerLaunch: input.prepared.providerLaunch,
-		managedSessionHeadedAutosaveDisabled:
-			(!(input.prepared.ownedManagedSessionContext?.reuseOnly === true) &&
-				lifecycle.resultHeadedManagedAutosaveDisabled) ||
-			undefined,
 		managedSessionHeadedAutosaveInterval:
 			input.prepared.ownedManagedSessionContext?.reuseOnly === true
 				? undefined

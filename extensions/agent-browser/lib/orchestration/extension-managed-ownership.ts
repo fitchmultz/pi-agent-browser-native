@@ -13,7 +13,6 @@ import type { ManagedSessionRestoreState } from "../managed-session-restore.js";
 interface ManagedSessionTrackingOptions {
 	readonly branchOwned?: boolean;
 	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
-	readonly headedManagedAutosaveDisabled?: boolean;
 	readonly headedManagedAutosaveInterval?: string | undefined;
 	readonly namespace?: string | undefined;
 	readonly socketDir?: string | undefined;
@@ -24,17 +23,12 @@ function inheritedLaunchSettings(
 	options: ManagedSessionTrackingOptions,
 ): Pick<
 	OwnedManagedSession,
-	| "compatibilityWorkaround"
-	| "headedManagedAutosaveDisabled"
-	| "headedManagedAutosaveInterval"
-	| "socketDir"
+	"compatibilityWorkaround" | "headedManagedAutosaveInterval" | "socketDir"
 > {
 	return {
 		compatibilityWorkaround: Object.hasOwn(options, "compatibilityWorkaround")
 			? options.compatibilityWorkaround
 			: existing?.compatibilityWorkaround,
-		headedManagedAutosaveDisabled:
-			options.headedManagedAutosaveDisabled ?? existing?.headedManagedAutosaveDisabled,
 		headedManagedAutosaveInterval:
 			options.headedManagedAutosaveInterval ?? existing?.headedManagedAutosaveInterval,
 		socketDir: options.socketDir ?? existing?.socketDir,
@@ -101,7 +95,6 @@ function getOutcomeLaunchSettings(
 ): ManagedSessionTrackingOptions {
 	return {
 		compatibilityWorkaround: getRecognizedCompatibilityWorkaround(details.compatibilityWorkaround),
-		headedManagedAutosaveDisabled: details.managedSessionHeadedAutosaveDisabled === true,
 		headedManagedAutosaveInterval:
 			typeof details.managedSessionHeadedAutosaveInterval === "string"
 				? details.managedSessionHeadedAutosaveInterval

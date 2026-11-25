@@ -1674,7 +1674,7 @@ nodeTest(
 );
 
 nodeTest(
-	"runAgentBrowserProcess suppresses visible restore autosave tabs for headed managed launches",
+	"runAgentBrowserProcess preserves native autosave defaults and explicit owned intervals",
 	{ concurrency: false },
 	async (t) => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-headed-autosave-"));
@@ -1693,10 +1693,10 @@ nodeTest(
 				env,
 				ownedManagedSession,
 				expected,
-				retainedHeadedDefault,
+				retainedExplicitZero,
 			] of [
-				["piab-headed-default", ["--headed"], undefined, undefined, true, "0", true],
-				["piab-headed-followup", [], undefined, undefined, true, "0", true],
+				["piab-headed-default", ["--headed"], undefined, undefined, true, null, false],
+				["piab-headed-followup-explicit-zero", [], undefined, undefined, true, "0", true],
 				[
 					"piab-headed-explicit-unset",
 					["--headed"],
@@ -1716,7 +1716,7 @@ nodeTest(
 					false,
 				],
 				["piab-headed-parent-explicit", ["--headed"], "2000", undefined, true, "2000", false],
-				["piab-headed-env", [], undefined, { AGENT_BROWSER_HEADED: "true" }, true, "0", true],
+				["piab-headed-env", [], undefined, { AGENT_BROWSER_HEADED: "true" }, true, null, false],
 				[
 					"piab-headless-explicit",
 					["--headed", "false"],
@@ -1741,8 +1741,7 @@ nodeTest(
 							const context = buildOwnedManagedSessionRestoreContext({
 								args,
 								cwd: tempDir,
-								headedManagedAutosaveDisabled: retainedHeadedDefault,
-								headedManagedAutosaveInterval: retainedHeadedDefault ? "0" : undefined,
+								headedManagedAutosaveInterval: retainedExplicitZero ? "0" : undefined,
 								managedSessionName: sessionName,
 								restoreState,
 								sessionName,

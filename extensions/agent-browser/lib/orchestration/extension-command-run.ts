@@ -44,7 +44,6 @@ function captureBrowserRunState(runtime: BrowserRuntime): BrowserRunState {
 		managedSessionActive: runtime.managed.active,
 		managedSessionBaseName: runtime.managed.baseName,
 		managedSessionCompatibilityWorkaround: runtime.managed.compatibilityWorkaround,
-		managedSessionHeadedAutosaveDisabled: runtime.managed.headedAutosaveDisabled,
 		managedSessionHeadedAutosaveInterval: runtime.managed.headedAutosaveInterval,
 		managedSessionCwd: runtime.managed.cwd,
 		managedSessionName: runtime.managed.name,

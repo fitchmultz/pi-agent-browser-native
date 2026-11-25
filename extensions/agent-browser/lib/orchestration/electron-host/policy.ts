@@ -68,7 +68,6 @@ export async function withOwnedElectronManagedSessionPolicy<T>(
 					...options.args,
 				],
 				cwd: options.cwd,
-				headedManagedAutosaveDisabled: options.headedManagedAutosaveDisabled,
 				headedManagedAutosaveInterval: options.headedManagedAutosaveInterval,
 				managedSessionName: options.sessionName,
 				namespace: options.namespace,

@@ -123,7 +123,6 @@ function sessionEvidenceDetails(
 	options: Pick<
 		FinalResultInput,
 		| "executionPlan"
-		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
 		| "managedSessionOutcome"
 		| "managedSessionRestoreDisabled"
@@ -141,7 +140,6 @@ function sessionEvidenceDetails(
 	>,
 ): Record<string, unknown> {
 	return {
-		managedSessionHeadedAutosaveDisabled: options.managedSessionHeadedAutosaveDisabled,
 		managedSessionHeadedAutosaveInterval: options.managedSessionHeadedAutosaveInterval,
 		managedSessionOutcome: options.managedSessionOutcome,
 		sessionMode: options.sessionMode,

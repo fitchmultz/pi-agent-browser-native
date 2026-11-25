@@ -6,7 +6,6 @@ export interface BrowserOutputOwnershipSnapshot {
 	readonly freshSessionOrdinal: number;
 	readonly managedSessionActive: boolean;
 	readonly managedSessionCompatibilityWorkaround: CompatibilityWorkaround | undefined;
-	readonly managedSessionHeadedAutosaveDisabled: boolean;
 	readonly managedSessionHeadedAutosaveInterval: string | undefined;
 	readonly managedSessionCwd: string;
 	readonly managedSessionName: string;
@@ -21,7 +20,6 @@ export function captureBrowserOutputOwnership(
 		freshSessionOrdinal: input.state.freshSessionOrdinal,
 		managedSessionActive: input.state.managedSessionActive,
 		managedSessionCompatibilityWorkaround: input.state.managedSessionCompatibilityWorkaround,
-		managedSessionHeadedAutosaveDisabled: input.state.managedSessionHeadedAutosaveDisabled === true,
 		managedSessionHeadedAutosaveInterval: input.state.managedSessionHeadedAutosaveInterval,
 		managedSessionCwd: input.state.managedSessionCwd,
 		managedSessionName: input.state.managedSessionName,
@@ -35,7 +33,6 @@ export function buildOutputStatePatch(draft: BrowserOutputOwnershipSnapshot): Br
 		freshSessionOrdinal: draft.freshSessionOrdinal,
 		managedSessionActive: draft.managedSessionActive,
 		managedSessionCompatibilityWorkaround: draft.managedSessionCompatibilityWorkaround,
-		managedSessionHeadedAutosaveDisabled: draft.managedSessionHeadedAutosaveDisabled,
 		managedSessionHeadedAutosaveInterval: draft.managedSessionHeadedAutosaveInterval,
 		managedSessionCwd: draft.managedSessionCwd,
 		managedSessionName: draft.managedSessionName,

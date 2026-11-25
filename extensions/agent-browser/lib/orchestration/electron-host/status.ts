@@ -174,7 +174,6 @@ function collectStatusManagedSessions(
 						getAgentBrowserProcessEnvironment().AGENT_BROWSER_CONFIRM_ACTIONS,
 					cwd: options.cwd,
 					electronLaunchRecord: record,
-					headedManagedAutosaveDisabled: owner?.headedManagedAutosaveDisabled,
 					headedManagedAutosaveInterval: owner?.headedManagedAutosaveInterval,
 					namespace: record.namespace,
 					restoreState: options.managedSessionRestoreState,

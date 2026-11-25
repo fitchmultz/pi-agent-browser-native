@@ -75,7 +75,6 @@ export interface LifecycleOutputPhase {
 	managedSessionActive: boolean;
 	managedSessionCompatibilityWorkaround: CompatibilityWorkaround | undefined;
 	managedSessionCwd: string;
-	managedSessionHeadedAutosaveDisabled: boolean;
 	managedSessionHeadedAutosaveInterval: string | undefined;
 	managedSessionName: string;
 	managedSessionNamespace: string | undefined;
@@ -101,7 +100,6 @@ export interface LifecycleOutputPhase {
 	readConfirmationEvent: ReadConfirmation | undefined;
 	readonly recordingStopRecovery: RecordingStopRecoveryResult | undefined;
 	replacedManagedSessionName: string | undefined;
-	resultHeadedManagedAutosaveDisabled: boolean;
 	resultHeadedManagedAutosaveInterval: string | undefined;
 	readonly sessionStateKey: string | undefined;
 	readonly sessionTabCorrection: OpenResultTabCorrection | undefined;
@@ -128,7 +126,6 @@ export type LifecycleOutputEvidence = Readonly<
 		| "managedSessionActive"
 		| "managedSessionCompatibilityWorkaround"
 		| "managedSessionCwd"
-		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
 		| "managedSessionName"
 		| "managedSessionNamespace"
@@ -143,7 +140,6 @@ export type LifecycleOutputEvidence = Readonly<
 		| "processSucceeded"
 		| "readConfirmationEvent"
 		| "recordingStopRecovery"
-		| "resultHeadedManagedAutosaveDisabled"
 		| "resultHeadedManagedAutosaveInterval"
 		| "sessionStateKey"
 		| "sessionTabCorrection"

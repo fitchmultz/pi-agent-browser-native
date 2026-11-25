@@ -83,10 +83,7 @@ export function resolveOutputError(
 	draft: ResolveOutputErrorInput,
 ): Pick<
 	LifecycleOutputPhase,
-	| "errorText"
-	| "presentationEnvelope"
-	| "resultHeadedManagedAutosaveDisabled"
-	| "resultHeadedManagedAutosaveInterval"
+	"errorText" | "presentationEnvelope" | "resultHeadedManagedAutosaveInterval"
 > {
 	const errorText = resolveNativeErrorText(draft);
 	const fallback = applyErrorEnvelopeFallback({
@@ -188,16 +185,9 @@ function applyTextErrorEnvelope(
 
 function observeResultLaunchPolicy(
 	draft: ObserveResultLaunchPolicyInput,
-): Pick<
-	LifecycleOutputPhase,
-	"resultHeadedManagedAutosaveDisabled" | "resultHeadedManagedAutosaveInterval"
-> {
+): Pick<LifecycleOutputPhase, "resultHeadedManagedAutosaveInterval"> {
 	const resultRetainsPreparedManagedSession = preparedSessionRetained(draft);
 	return {
-		resultHeadedManagedAutosaveDisabled:
-			draft.input.prepared.ownedManagedSessionContext?.headedManagedAutosaveDisabled === true &&
-			resultRetainsPreparedManagedSession &&
-			!(draft.commandClosesSession && draft.succeeded),
 		resultHeadedManagedAutosaveInterval:
 			resultRetainsPreparedManagedSession && !(draft.commandClosesSession && draft.succeeded)
 				? draft.input.prepared.ownedManagedSessionContext?.headedManagedAutosaveInterval

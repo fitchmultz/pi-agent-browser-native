@@ -880,7 +880,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 );
 
 nodeTest(
-	"agentBrowserExtension restores headed autosave policy for an off-current Electron session",
+	"agentBrowserExtension keeps off-current Electron ownership without replaying the legacy implicit zero",
 	{ concurrency: false },
 	async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "pi-agent-browser-resume-electron-headed-"));
@@ -931,6 +931,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 					const electronDetails = {
 						...electronManagedSessionDetails(electronSessionName, electronRecord),
 						managedSessionHeadedAutosaveDisabled: true,
+						managedSessionHeadedAutosaveInterval: "0",
 					};
 					const replacementDetails = {
 						args: ["--session", replacementSessionName, "open", "https://example.com/replacement"],
@@ -976,8 +977,8 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 					});
 					assert.equal(probe.isError, false, JSON.stringify(probe));
 					assert.equal(
-						probe.details?.managedSessionHeadedAutosaveDisabled,
-						true,
+						probe.details?.managedSessionHeadedAutosaveInterval,
+						undefined,
 						JSON.stringify(probe.details),
 					);
 
@@ -991,18 +992,6 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 						{ reason: "resume" },
 						resumedHarness.ctx,
 					);
-					await withPatchedEnv({ AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: "1000" }, async () => {
-						const blockedProbe = await executeRegisteredTool(
-							resumedHarness.tool,
-							resumedHarness.ctx,
-							{ electron: { action: "probe", launchId: electronRecord.launchId } },
-						);
-						assert.equal(blockedProbe.isError, true, JSON.stringify(blockedProbe));
-						assert.match(
-							readString(blockedProbe.details?.summary),
-							/cannot change a running wrapper-owned headed session/,
-						);
-					});
 					const resumedProbe = await executeRegisteredTool(
 						resumedHarness.tool,
 						resumedHarness.ctx,
@@ -1017,7 +1006,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 					const invocations = await readInvocationLog(logPath);
 					assert.ok(invocations.length >= 13, JSON.stringify(invocations));
 					assert.equal(
-						invocations.every((entry) => entry.autosave === "0"),
+						invocations.every((entry) => entry.autosave === null),
 						true,
 						JSON.stringify(invocations),
 					);

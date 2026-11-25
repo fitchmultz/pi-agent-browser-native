@@ -92,7 +92,6 @@ export type ApplyManagedLaunchPolicyInput = Readonly<
 		LifecycleOutputPhase,
 		| "managedTransitionSucceeded"
 		| "managedSessionCompatibilityWorkaround"
-		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
 	>
 > & {
@@ -144,7 +143,6 @@ export type ApplyManagedTransitionInput = Readonly<
 		| "freshSessionOrdinal"
 		| "managedSessionCompatibilityWorkaround"
 		| "managedSessionCwd"
-		| "managedSessionHeadedAutosaveDisabled"
 		| "managedSessionHeadedAutosaveInterval"
 	>
 > & {
