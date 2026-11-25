@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Raise the tested Pi floor to 1.6.1 and have the setup doctor enforce it.
+
 ## 0.9.42 - 2026-11-24
 
 <!-- npm-release:unreleased:start -->
