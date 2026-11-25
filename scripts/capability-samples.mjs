@@ -1,11 +1,11 @@
 /** Audited upstream source evidence and the native help commands sampled for drift. */
 export const sourceEvidence = Object.freeze({
 	repository: "vercel-labs/agent-browser",
-	upstreamHead: "0a923358ea989d7602f0d06507ad3447c62ffe9b",
-	upstreamPackageVersion: "0.44.0",
+	upstreamHead: "f0a98351ec920bd826b22c98dacf8414f04b9832",
+	upstreamPackageVersion: "0.45.0",
 	inspectedSources: Object.freeze([
-		"stock npm agent-browser@0.44.0 package and official release binary",
-		"v0.43.0...v0.44.0 release notes and interface source diff",
+		"stock npm agent-browser@0.45.0 package and official release binary",
+		"v0.44.0...v0.45.0 release notes and interface source diff",
 		"agent-browser --version",
 		"agent-browser --help",
 		"selected agent-browser <command> --help output",
@@ -76,6 +76,7 @@ export const sourceEvidence = Object.freeze({
 		"docs/content/docs/skills.mdx",
 		"docs/content/docs/commands.mdx",
 		"docs/content/docs/engines/obscura.mdx",
+		"docs/content/docs/engines/firefox.mdx",
 		"docs/content/docs/providers/browser-use.mdx",
 		"docs/content/docs/providers/kernel.mdx",
 		"cli/tests/tls_cli.rs",
@@ -139,6 +140,7 @@ export const helpCommands = Object.freeze([
 	helpCommand("state help", ["state", "--help"]),
 	helpCommand("session help", ["session", "--help"]),
 	helpCommand("frame help", ["frame", "--help"]),
+	helpCommand("connect help", ["connect", "--help"]),
 	helpCommand("dialog help", ["dialog", "--help"]),
 	helpCommand("window help", ["window", "--help"]),
 	helpCommand("keyboard help", ["keyboard", "--help"]),

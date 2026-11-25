@@ -28,15 +28,24 @@ SDK hosts can supply an awaited [`beforeExecute` callback](TOOL_CONTRACT.md#host
 <!-- agent-browser-capability-baseline:start upstream-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 
-This reference is baselined to the locally installed `agent-browser 0.44.0` command/help surface, audited against vercel-labs/agent-browser@0a923358ea989d7602f0d06507ad3447c62ffe9b. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
+This reference is baselined to the locally installed `agent-browser 0.45.0` command/help surface, audited against vercel-labs/agent-browser@f0a98351ec920bd826b22c98dacf8414f04b9832. Upstream `agent-browser` remains the source of truth for command semantics; this file is the local fallback for Pi agent sessions where direct binary help is blocked or discouraged.
 
 The lightweight drift check is `npm run verify -- command-reference`. Run it whenever the installed upstream `agent-browser` version changes or this reference is edited.
 
 <!-- agent-browser-capability-baseline:end upstream-baseline -->
 
+### Upstream 0.45.0 rebaseline
+
+The [0.45.0 release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.45.0) is the recommended upstream and minimum supported runtime. Native owns the new engine and the browser fixes below.
+
+- **Firefox via WebDriver BiDi.** Use `--engine firefox` with Firefox 150 or newer. See [Firefox setup, attachment, and limits](#firefox-engine).
+- **Iframe context in Chrome.** `frame` accepts a CSS selector or iframe ref, including for cross-origin and nested frames. `eval` runs in the selected frame and reports that frame's URL; `get url` still identifies the active tab. `console` and `errors` include cross-origin iframe messages from the tab. Native improves annotated screenshot placement in iframes; prefer refs over screenshot coordinates, especially for nested frames.
+- **Keyboard chords in Chrome.** `keydown` holds modifiers across following input commands until `keyup`. Use `press` for a single chord; native sends modifier events for keys that aren't already held.
+- **State and saved flows.** Native Chrome state collection uses hidden or background targets when supported and no longer makes requests to previously visited origins. `state list --json` includes modified dates, and `state show` JSON provides `cookieCount` and `originCount` alongside `summary`. Native also fixes saved-flow host matching, write consent, deadlines, and empty result shaping.
+
 ### Upstream 0.44.0 rebaseline
 
-The recommended upstream and minimum supported runtime floor is 0.44.0 (`scripts/agent-browser-target.mjs`), audited at upstream commit `0a923358ea989d7602f0d06507ad3447c62ffe9b`, with no version-specific shims for older releases. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.44.0).
+These changes were audited at upstream commit `0a923358ea989d7602f0d06507ad3447c62ffe9b`. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.44.0).
 
 - **Renamed Vercel skill (`skills get vercel`).** Upstream renamed `protected-vercel-deployments` to `vercel` and added Vercel feature-flag override workflows (`vc flags override` / `vercel-flag-overrides`) alongside Trusted Sources OIDC authentication (`vc project token` / `x-vercel-trusted-oidc-idp-token`). `skills get vercel --full` stays sessionless.
 - **Background tab throttling controls (`tab keep`).** `tab keep <live|throttled|frozen> [target]` controls whether a background tab stays live, uses default Chrome throttling, or freezes until switched to; `tab list` reports each tab's `keep` mode (`live` / `frozen` appear in wrapper presentation when non-default). The wrapper treats `tab keep` as non-navigating so it does not invalidate refs, trigger tab-target switches, or break batch `get text` visibility windows.
@@ -83,7 +92,7 @@ Published npm help includes `--cdp-headers <json>` and `AGENT_BROWSER_CDP_HEADER
 
 ### Upstream 0.41.0 rebaseline
 
-The recommended stock npm `agent-browser@0.44.0` includes the capabilities below, with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`. Runtime support starts at stable 0.44.0 with no upper cap or version-specific emulation. These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0).
+These native changes span [0.39.3](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.3), [0.39.4](https://github.com/vercel-labs/agent-browser/releases/tag/v0.39.4), [0.40.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.40.0), and [0.41.0](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.0), with source citations to upstream commit `1453dd37a40c730fe00f592bc32198a896ff8747`.
 
 - Native `wait --download <path>` handles downloads that completed before the wait and moves a locally launched browser's downloaded bytes to the requested destination. Native refuses to move files reported by an attached/remote CDP browser. The wrapper still requires on-disk artifact verification; a reported-but-missing path fails as `artifact-missing`. See [native download handling](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/actions.rs#L11403-L11508).
 - Native daemon shutdown removes its own `<session>.config` along with other daemon files, while retaining `.target` and `.log`. This prevents new configuration-file accumulation; it does not sweep all historical orphans or optimize the wrapper's socket-directory scan. Updating this metadata cannot speed an installation already running 0.41.0. See [file ownership](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/session_files.rs#L75-L104) and [shutdown cleanup](https://github.com/vercel-labs/agent-browser/blob/1453dd37a40c730fe00f592bc32198a896ff8747/cli/src/native/daemon.rs#L147-L151).
@@ -173,7 +182,7 @@ The 0.35.0 release added private proxy CA trust plus one bundled workflow skill.
 
 ### Upstream 0.34.0 rebaseline
 
-The 0.34.0 release added persistent session-to-tab binding for shared Chrome sessions. Before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails below-floor (< 0.44.0) or malformed versions with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
+The 0.34.0 release added persistent session-to-tab binding for shared Chrome sessions. Before browser-backed work, the extension caches one `agent-browser --version` check per cwd/PATH and fails below-floor or malformed versions with expected/observed version details. Plain help/version, close recovery, and sessionless local setup/diagnostics remain available.
 
 - Named sessions on `--cdp` or `--auto-connect` remember their CDP target across commands and daemon restarts. CDP target ids from `tab list --json` are accepted as tab refs and stay stable across daemon restarts, unlike `t<N>` ids.
 - `--pin-tab` (`AGENT_BROWSER_PIN_TAB`) is sticky per session and is not launch-scoped: pass it once, including on an already-live session, so a closed bound tab fails with `tab_gone` instead of adopting a neighbor. JSON includes `code=tab_gone`, `data.targetId`, and optional sanitized `data.lastUrl`; batch exposes the same recovery object under `result`. Recover with `tab new` or `tab list`. `--no-pin-tab` turns the pin off again. Optional booleans use separated tokens (`--pin-tab false`).
@@ -823,14 +832,14 @@ Comboboxes vary by app. For native `<select>` controls, prefer raw `select <sele
 - `session list` — List active sessions.
 - `state save <path>` — Save cookies, local storage, and session storage to a state file.
 - `state load <path>` — Load cookies and storage from a state file.
-- `state list` — List saved state files.
-- `state show <filename>` — Show saved-state metadata without dumping cookie or storage values.
+- `state list` — List saved state files. Use `--json` for native metadata, including modified dates.
+- `state show <filename>` — Show saved-state metadata without dumping cookie or storage values. Pass the full `path` shown by `state list`.
 - `state rename <old-name> <new-name>` — Rename a saved state file.
 - `state clear [session-name] [--all]` — Clear saved states for one name or all names; `state clear -a` is the upstream short alias for clearing all names.
 - `session id --scope worktree --prefix <name>` — Generate a stable session id for agent/worktree-scoped browser state.
 - `session info --json` — One read-only preflight: daemon activity/PID versus native browser liveness, Chrome PID, exact profile, tabs and launched/attached ownership, plus separate Pi cleanup ownership. Missing native fields remain unknown; no browser launch or tab changes.
 - `state clean --older-than <days>` — Delete expired saved-state files.
-- `frame <selector|main>` — Switch iframe context by selector/ref/name/URL, or return to the main frame.
+- `frame <selector|main>` — Select an iframe by CSS selector in the current frame (including attributes such as `name` or `src`) or by its ref, for example `frame @e3`. Take a fresh snapshot in the new context. To use parent-page refs again, run `frame main` and refresh the snapshot.
 - `dialog accept [text]` — Accept an alert, confirm, or prompt dialog, optionally supplying prompt text.
 - `dialog dismiss` — Dismiss or cancel the current dialog.
 - `dialog status` — Check whether a dialog is pending.
@@ -1161,16 +1170,29 @@ The extension composes stock `--args --no-startup-window` for local Chrome start
 - `--headed`: ask upstream to show the browser window. Environment: `AGENT_BROWSER_HEADED`. Use it on the first launch, normally with `sessionMode: "fresh"` when changing an existing managed session. Successful first/fresh local wrapper-managed launches can expose `details.browserWindow.visibility: "unverified"` and a login handoff; attached browsers cannot, but still verify actual OS visibility with the user or screenshot/tab evidence.
 - `--webgpu`: enable upstream's platform-specific WebGPU launch preset. Environment: `AGENT_BROWSER_WEBGPU`; config: `"webgpu": true`. Use it on a fresh local launch. It is incompatible while enabled with `--cdp`, `--auto-connect`, and provider launches. `AGENT_BROWSER_NO_XVFB=1` disables upstream's automatic Xvfb for displayless headed Linux sessions.
 - `--no-webmcp`: disable experimental WebMCP support, which upstream 0.36.0 enables by default for locally managed Chrome. Environment: `AGENT_BROWSER_NO_WEBMCP`; config: `noWebmcp`. Use it on a fresh launch; `--no-webmcp false` explicitly enables the launch feature when config or environment disabled it.
-- `--cdp <port|url>`: connect through Chrome DevTools Protocol. Use it, `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
+- `--cdp <port|url>`: attach through Chrome DevTools Protocol or Firefox WebDriver BiDi. Use it, Chrome's `--auto-connect`, or `connect <port|url>` once on a named/fresh session, verify with `get url`, then reuse that session without repeating the attach flag. After a successful attachment the wrapper avoids re-emitting its own compatibility launch argument; caller launch/config/file-access settings remain unchanged. Content-bearing first use is blocked until URL verification; later page reads/interactions live-check the URL because the attached browser can drift externally. `close` clears attachment state.
 - `--cdp-headers <json>`: send a JSON object of string-valued headers for native CDP HTTP discovery and WebSocket authentication. Environment: `AGENT_BROWSER_CDP_HEADERS`. Supply it with the initial `--cdp` call or an explicit `connect`; these are transport credentials, not page/origin `--headers`. Values pass through unchanged and are redacted from invocation presentation. Published stock help advertises this flag.
 - `--color-scheme <scheme>`: `dark`, `light`, or `no-preference`. Environment: `AGENT_BROWSER_COLOR_SCHEME`.
 - `--download-path <path>`: default browser download directory. Environment: `AGENT_BROWSER_DOWNLOAD_PATH`.
-- `--engine <name>`: `chrome` by default, `lightpanda`, or experimental `obscura`. Environment: `AGENT_BROWSER_ENGINE`. Launch-scoped; use `sessionMode: "fresh"` when changing a managed browser. See [Lightpanda](#lightpanda-engine) and [Obscura](#obscura-engine-experimental).
+- `--engine <name>`: `chrome` by default, `firefox`, `lightpanda`, or experimental `obscura`. Environment: `AGENT_BROWSER_ENGINE`. Launch-scoped; use `sessionMode: "fresh"` when changing a managed browser. See [Firefox](#firefox-engine), [Lightpanda](#lightpanda-engine), and [Obscura](#obscura-engine-experimental).
 
 On Android/Termux, follow the [native Android setup](REFERENCE.md#android--termux) to build an Android-native CLI, install Termux's `which`, and expose its Chromium launcher as `$PREFIX/bin/chromium`. Do not substitute the packaged Linux-musl executable: its CLI HTTP requests can fail hostname resolution even when browser navigation works. Prefer native PATH-based system-browser discovery over ambient `AGENT_BROWSER_EXECUTABLE_PATH`: it survives isolated `HOME` values and works for ordinary native calls. Wrapper-generated Android managed identities use a compact 80-bit digest so ordinary namespaces and fresh rotations fit upstream's Unix socket path.
 
 - `--no-auto-dialog`: disable automatic dismissal of alert/beforeunload dialogs. Environment: `AGENT_BROWSER_NO_AUTO_DIALOG`. Explicit `true`/`false` reaches all helpers in that call; keep the same selection on follow-ups to avoid native daemon replacement.
 - `--idle-timeout <ms>`: native background browser lifecycle setting (also accepts `10s`, `3m`, `1h`). Caller-owned sessions retain native idle policy; an explicit flag is carried to every helper in that call. Keep it consistent between calls to avoid a native daemon restart. Only wrapper-owned sessions receive the implicit timeout and numeric mismatch check against `PI_AGENT_BROWSER_IMPLICIT_SESSION_IDLE_TIMEOUT_MS`.
+
+### Firefox engine
+
+Install Firefox 150 or newer separately; `agent-browser install` does not install it. On Linux, use a Firefox install that accepts temporary profiles (the Snap build does not). Native finds Firefox on `PATH` or in standard locations, or you can pass the Firefox binary as `--executable-path`.
+
+```json
+{ "args": ["--engine", "firefox", "open", "https://example.com"], "sessionMode": "fresh" }
+{ "args": ["snapshot", "-i"] }
+```
+
+Reuse the session without repeating the engine flag. To attach to a Firefox instance already running with BiDi and DevTools enabled, pass `connect` or `--cdp` with its endpoint. For a non-default DevTools port, use a `/session` WebSocket URL with `?devtools=<port>`, for example `ws://127.0.0.1:9333/session?devtools=6080`. Verify the intended tab with `get url`. `close` detaches without closing the external Firefox instance. See [native attachment setup](https://agent-browser.dev/cdp-mode#attach-to-firefox).
+
+Firefox supports snapshots and refs, including iframes and shadow roots, form actions, screenshots, PDF, and network inspection. `eval` runs in the selected frame, but native may report the top-level URL in `data.origin`. Read `location.href` in the script when you need the frame URL. Use Chrome for persistent `--profile` launches, WebMCP, recording, trace/profiler, or `a11y`. Firefox does not accept Pi's Chrome profile default, Chromium `--args`, or `--auto-connect`. See the [native Firefox guide](https://agent-browser.dev/engines/firefox) for the full set of features and option limits.
 
 ### Lightpanda engine
 
@@ -1279,17 +1301,17 @@ Other useful environment variables include `AGENT_BROWSER_DEFAULT_TIMEOUT`, `AGE
 <!-- agent-browser-capability-baseline:start capability-token-baseline -->
 <!-- Generated from scripts/agent-browser-capability-baseline.mjs. Run `npm run docs -- command-reference write` to update. Do not edit manually. -->
 <details>
-<summary>Generated verifier capability baseline for agent-browser 0.44.0</summary>
+<summary>Generated verifier capability baseline for agent-browser 0.45.0</summary>
 
 This generated block is review data for maintainers. The human-authored reference sections above remain the readable command guide.
 
 #### Source evidence
 
 - repository: `vercel-labs/agent-browser`
-- upstream HEAD: `0a923358ea989d7602f0d06507ad3447c62ffe9b`
-- upstream package version: `0.44.0`
-- inspected: `stock npm agent-browser@0.44.0 package and official release binary`
-- inspected: `v0.43.0...v0.44.0 release notes and interface source diff`
+- upstream HEAD: `f0a98351ec920bd826b22c98dacf8414f04b9832`
+- upstream package version: `0.45.0`
+- inspected: `stock npm agent-browser@0.45.0 package and official release binary`
+- inspected: `v0.44.0...v0.45.0 release notes and interface source diff`
 - inspected: `agent-browser --version`
 - inspected: `agent-browser --help`
 - inspected: `selected agent-browser <command> --help output`
@@ -1360,6 +1382,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - inspected: `docs/content/docs/skills.mdx`
 - inspected: `docs/content/docs/commands.mdx`
 - inspected: `docs/content/docs/engines/obscura.mdx`
+- inspected: `docs/content/docs/engines/firefox.mdx`
 - inspected: `docs/content/docs/providers/browser-use.mdx`
 - inspected: `docs/content/docs/providers/kernel.mdx`
 - inspected: `cli/tests/tls_cli.rs`
@@ -1419,6 +1442,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - state help: `agent-browser state --help`
 - session help: `agent-browser session --help`
 - frame help: `agent-browser frame --help`
+- connect help: `agent-browser connect --help`
 - dialog help: `agent-browser dialog --help`
 - window help: `agent-browser window --help`
 - keyboard help: `agent-browser keyboard --help`
@@ -1449,10 +1473,10 @@ This generated block is review data for maintainers. The human-authored referenc
 
 - Built-in skills: 21 human-doc token(s), 31 upstream token(s)
 - Core page, element, navigation, and extraction commands: 95 human-doc token(s), 109 upstream token(s)
-- Sessions, state, tabs, frames, dialogs, and windows: 31 human-doc token(s), 29 upstream token(s)
+- Sessions, state, tabs, frames, dialogs, and windows: 34 human-doc token(s), 30 upstream token(s)
 - Network, storage, artifacts, diagnostics, and performance: 64 human-doc token(s), 76 upstream token(s)
 - Batch, auth, confirmations, setup, dashboard, devices, and AI commands: 45 human-doc token(s), 55 upstream token(s)
-- Global flags, config, providers, policy, and environment: 171 human-doc token(s), 140 upstream token(s)
+- Global flags, config, providers, policy, and environment: 175 human-doc token(s), 145 upstream token(s)
 
 #### Human-authored doc tokens required
 
@@ -1592,6 +1616,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `restoreSkippedOrigins`
 - `state list`
 - `state show <filename>`
+- `cookieCount`
+- `originCount`
 - `state rename <old-name> <new-name>`
 - `state clear [session-name] [--all]`
 - `state clear -a`
@@ -1607,6 +1633,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - `data.lastUrl`
 - `CDP target ids`
 - `frame <selector|main>`
+- `frame @e3`
 - `dialog accept [text]`
 - `dialog dismiss`
 - `dialog status`
@@ -1802,6 +1829,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_NO_VERSION_CHECK`
 - `"webgpu": true`
 - `--cdp <port|url>`
+- `WebDriver BiDi`
+- `?devtools=<port>`
 - `--cdp-headers <json>`
 - `AGENT_BROWSER_CDP_HEADERS`
 - `--color-scheme <scheme>`
@@ -1810,6 +1839,8 @@ This generated block is review data for maintainers. The human-authored referenc
 - `AGENT_BROWSER_DOWNLOAD_PATH`
 - `--engine <name>`
 - `AGENT_BROWSER_ENGINE`
+- `--engine firefox`
+- `Firefox 150 or newer`
 - `--engine obscura`
 - `OBSCURA_ALLOW_PRIVATE_NETWORK`
 - `AGENT_BROWSER_OBSCURA_STEALTH`
@@ -2078,6 +2109,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - core skill full: `--pin-tab`
 - core skill full: `tab_gone`
 - frame help: `frame <selector|main>`
+- frame help: ``snapshot`, element commands, and `eval` run in that frame`
 - dialog help: `dialog <accept|dismiss|status> [text]`
 - window help: `window <operation>`
 
@@ -2289,6 +2321,10 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `--no-webmcp`
 - root help: `AGENT_BROWSER_NO_WEBMCP`
 - root help: `--cdp <port|url>`
+- connect help: `Chrome DevTools Protocol (CDP) or`
+- connect help: `Firefox WebDriver BiDi`
+- connect help: `?devtools=<port>`
+- connect help: `Firefox 150 or newer`
 - root help: `--cdp-headers <json>`
 - root help: `AGENT_BROWSER_CDP_HEADERS`
 - root help: `AGENT_BROWSER_NO_VERSION_CHECK`
@@ -2298,6 +2334,7 @@ This generated block is review data for maintainers. The human-authored referenc
 - root help: `AGENT_BROWSER_DOWNLOAD_PATH`
 - root help: `--engine <name>`
 - root help: `AGENT_BROWSER_ENGINE`
+- root help: `--engine firefox`
 - root help: `--engine obscura`
 - root help: `OBSCURA_ALLOW_PRIVATE_NETWORK`
 - root help: `AGENT_BROWSER_OBSCURA_STEALTH`

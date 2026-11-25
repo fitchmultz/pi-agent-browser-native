@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Require `agent-browser` 0.45.0 or newer. The command reference now covers Firefox over WebDriver BiDi, improved iframe targeting, and updated browser-state inspection.
+
 ## 0.9.43 - 2026-11-25
 
 <!-- npm-release:unreleased:start -->
