@@ -125,26 +125,82 @@ On 0.38+, use `snapshot --delta` for native full/unchanged/changed revisions and
 
 ### Android / Termux
 
-Git/source installs and type checks require an **Android-native TypeScript 7 compiler**
-available as `tsgo` on `PATH`. The [Fold development environment](https://github.com/fitchmultz/fold-dev-environment)
-provides a pinned native build (validated here with `7.1.0-dev.20260904.1`).
-The npm TypeScript package has no Android binary, and its Linux binary probes a
-syscall blocked by Android. Build/type-check scripts therefore use native `tsgo`
-on Termux; macOS/Linux continue using the package-local pinned `tsc`.
-Published precompiled npm packages do not require a compiler at runtime.
+The precompiled Pi extension from npm needs no TypeScript compiler. If installing
+the extension from Git or checking types on Termux, put an Android-native
+TypeScript 7 compiler on `PATH` as `tsgo`. The npm TypeScript package does not
+ship an Android executable.
 
-On Termux, use the [Fold development environment's native installer](https://github.com/fitchmultz/fold-dev-environment/blob/main/docs/daily-workflow.md#update-and-health-check) to build the latest stable `agent-browser` for Android. Use Termux Chromium rather than Chrome for Testing. The npm distribution does not provide a native Android binary, and a Linux-musl binary can fail DNS resolution for CLI HTTPS requests.
+On ARM64 Termux, build `agent-browser` 0.45.0 natively and use Termux Chromium.
+The npm distribution does not provide an Android binary, and the Linux-musl
+binary can fail DNS resolution for CLI HTTPS requests.
 
-After setting up the Fold development environment, run:
+Install the native build tools and clone the tagged source:
 
 ```bash
-install-agent-browser
+pkg install x11-repo
+pkg install chromium ffmpeg which git rust clang make pkg-config
+ln -sfn "$PREFIX/lib/chromium/chromium-launcher.sh" "$PREFIX/bin/chromium"
+git clone --depth 1 --branch v0.45.0 https://github.com/vercel-labs/agent-browser.git agent-browser-termux
+cd agent-browser-termux
+```
+
+Apply the browser-discovery part of the [Android repair](https://github.com/fitchmultz/agent-browser/pull/2), adapted to the 0.45.0 source:
+
+```bash
+git apply <<'PATCH'
+diff --git a/cli/src/native/cdp/chrome.rs b/cli/src/native/cdp/chrome.rs
+--- a/cli/src/native/cdp/chrome.rs
++++ b/cli/src/native/cdp/chrome.rs
+@@ -1095,7 +1095,7 @@ pub fn find_chrome() -> Option<PathBuf> {
+         }
+     }
+
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "android"))]
+     {
+         let candidates = [
+             "google-chrome",
+@@ -1774,6 +1774,7 @@ fn build_puppeteer_binary_path(version_dir: &Path) -> PathBuf {
+
+ /// Search Playwright's browser cache for a Chromium binary.
+ /// Legacy fallback for users who previously installed Chromium via Playwright.
++#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+ fn find_playwright_chromium() -> Option<PathBuf> {
+     let mut search_dirs = Vec::new();
+
+@@ -1819,6 +1820,11 @@ fn find_playwright_chromium() -> Option<PathBuf> {
+     None
+ }
+
++#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
++fn find_playwright_chromium() -> Option<PathBuf> {
++    None
++}
++
+ #[cfg(target_os = "linux")]
+ fn build_playwright_binary_path(chromium_dir: &Path) -> PathBuf {
+     // Playwright's Linux layout is chrome-linux/chrome; chrome-linux64 is
+PATCH
+```
+
+Build with the upstream `ci` profile to avoid the release profile's higher memory
+use. Put the binary in the checkout so it can find the bundled `skill-data`:
+
+```bash
+cargo build --profile ci --locked --target aarch64-linux-android --target-dir target --manifest-path cli/Cargo.toml
+install -m 755 target/aarch64-linux-android/ci/agent-browser bin/agent-browser
+export PATH="$PWD/bin:$PATH"
+command -v chromium
 agent-browser --version
 agent-browser read https://example.com
 agent-browser doctor
 ```
 
-Confirm that `agent-browser --version` meets the supported floor above before installing or updating this extension. The installer preserves the managed launcher and selects the new native binary. That build omits the dashboard web page. Android remains outside the release qualification matrix.
+Keep the checkout and its `bin` directory on `PATH` for Pi. If you already use a
+managed launcher, update its native target through its existing installer.
+Confirm that the reported version meets the supported floor above before
+updating this extension. This build omits the dashboard web page. Android is
+outside the release qualification matrix.
 
 The native tool also gives agents absolute installed-package doc paths in its browser guidance. Raw `args` are the 1:1 upstream CLI coverage path for the targeted `agent-browser` release; Pi codemode scripts loop and branch over the same browser through `agent_browser`, while advanced tools preserve semantic actions, diagnostic QA, source lookup, and Electron lifecycle. Agents should read `README.md` for setup/dependencies, `docs/COMMAND_REFERENCE.md` for targeted command workflows, and `docs/TOOL_CONTRACT.md` for result/detail contracts only when deeper guidance is needed.
 

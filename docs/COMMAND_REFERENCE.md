@@ -88,7 +88,7 @@ Native 0.41.2 owns timeout-setting continuity, bare `open` launch settings, and 
 
 Native checks for newer stable Chrome releases with CVE fixes and reports advisory warnings without blocking browser commands. `AGENT_BROWSER_NO_VERSION_CHECK=1` skips that check and its request to the Chrome Releases blog. The wrapper adds no version-checking or session-restart layer. See the [upstream release](https://github.com/vercel-labs/agent-browser/releases/tag/v0.41.2).
 
-Published npm help includes `--cdp-headers <json>` and `AGENT_BROWSER_CDP_HEADERS`. The wrapper already treats that flag as one global value and redacts it from invocation presentation; native owns discovery and authentication. The [pinned Android source](REFERENCE.md#android--termux) remains separately qualified.
+Published npm help includes `--cdp-headers <json>` and `AGENT_BROWSER_CDP_HEADERS`. The wrapper already treats that flag as one global value and redacts it from invocation presentation; native owns discovery and authentication. For native Android builds, see [Termux setup](REFERENCE.md#android--termux).
 
 ### Upstream 0.41.0 rebaseline
 
