@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 0.9.45 - 2026-11-25
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+<!-- npm-release:carried:start -->
+
+- Require `agent-browser` 0.45.0 or newer. The command reference now covers Firefox over WebDriver BiDi, improved iframe targeting, and updated browser-state inspection.
+- Restore native periodic autosave for headed browser sessions. Explicit `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0` still disables periodic saves without disabling save-on-close.
+
+<!-- npm-release:carried:end -->
+
+- Supersedes unpublished 0.9.44 from 26ebe4b09100c4f2bd32e28ecc6daf4b4ab30600. Includes all changes since v0.9.43; the original release records remain unchanged.
+
+- fix: use IANA for the release browser smoke (PAB-206) (#458) ([b047e83](https://github.com/fitchmultz/pi-agent-browser-native/commit/b047e83c40c795ebcae73e3fddf62ad8c96abaf9))
+
+### What's Changed
+
+- feat: qualify agent-browser 0.45.0 (PAB-206) (1/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/453
+- fix: preserve Firefox screenshot coordinates (PAB-206) (2/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/454
+- fix: preserve native iframe parsing and recovery (PAB-206) (3/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/456
+- fix: restore native autosave for headed sessions (PAB-206) (4/4) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/457
+- fix: use IANA for the release browser smoke (PAB-206) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/458
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.43...v0.9.45
+
 ## 0.9.44 - 2026-11-25
 
 <!-- npm-release:unreleased:start -->
