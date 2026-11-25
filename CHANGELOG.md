@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.9.46 - 2026-11-25
+
+<!-- npm-release:unreleased:start -->
+<!-- npm-release:unreleased:end -->
+
+- fix: name batch guard steps and add actionable command-syntax and loopback hints (#459) ([884e563](https://github.com/fitchmultz/pi-agent-browser-native/commit/884e5635daed1fe28805ba00e4067cd57046238f))
+
+### What's Changed
+
+- fix: name batch guard steps and add actionable command-syntax and loopback hints by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/459
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.45...v0.9.46
+
 ## 0.9.45 - 2026-11-25
 
 <!-- npm-release:unreleased:start -->
