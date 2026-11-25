@@ -37,7 +37,7 @@ export async function inspectPreparationGeneration(
 		readonly sessionName: string;
 		readonly owned?:
 			| {
-					readonly headedManagedAutosaveInterval?: string | undefined;
+					readonly headedManagedAutosaveInterval?: string | null | undefined;
 			  }
 			| undefined;
 	},

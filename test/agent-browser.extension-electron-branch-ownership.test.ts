@@ -978,7 +978,7 @@ else process.stdout.write(JSON.stringify({ success: true, data: { closed: args.i
 					assert.equal(probe.isError, false, JSON.stringify(probe));
 					assert.equal(
 						probe.details?.managedSessionHeadedAutosaveInterval,
-						undefined,
+						null,
 						JSON.stringify(probe.details),
 					);
 

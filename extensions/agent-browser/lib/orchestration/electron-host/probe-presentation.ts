@@ -37,7 +37,7 @@ function presentProbe(probe: ElectronProbeResult): ElectronProbeResult {
 
 interface ProbePresentation {
 	readonly compiledElectron: CompiledAgentBrowserElectron;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly mismatch?: ElectronSessionMismatch | undefined;
 	readonly namespace?: string | undefined;
 	readonly probe: ElectronProbeResult;

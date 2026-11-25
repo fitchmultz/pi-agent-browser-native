@@ -62,10 +62,11 @@ function compatibilityForReuse(
 	args: readonly string[],
 	explicit: string | undefined,
 ): NodeJS.ProcessEnv {
-	return explicit === undefined &&
-		context.headedManagedAutosaveInterval !== undefined &&
+	const interval = context.headedManagedAutosaveInterval;
+	return interval !== undefined &&
+		(interval === null || explicit === undefined) &&
 		!agentBrowserExplicitConfigIsPresent(env, args)
-		? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: context.headedManagedAutosaveInterval }
+		? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: interval ?? undefined }
 		: {};
 }
 function explicitAutosaveInterval(options: ManagedSessionRestoreEnvOptions): string | undefined {
@@ -75,6 +76,16 @@ function explicitAutosaveInterval(options: ManagedSessionRestoreEnvOptions): str
 		? env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS
 		: parent.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS;
 }
+
+function retainedAutosaveEnv(
+	interval: string | null | undefined,
+	explicit: string | undefined,
+): NodeJS.ProcessEnv {
+	return interval !== undefined && resolveExplicitAutosaveInterval(explicit) !== interval
+		? { AGENT_BROWSER_AUTOSAVE_INTERVAL_MS: interval ?? undefined }
+		: {};
+}
+
 export function getOwnedManagedSessionCompatibilityEnv(
 	options: ManagedSessionRestoreEnvOptions,
 ): NodeJS.ProcessEnv {
@@ -100,13 +111,7 @@ export function getOwnedManagedSessionCompatibilityEnv(
 	) {
 		env.AGENT_BROWSER_USER_AGENT = ownedContext.compatibilityUserAgent;
 	}
-	if (
-		ownedContext.headedManagedAutosaveInterval !== undefined &&
-		resolveExplicitAutosaveInterval(explicit) !== ownedContext.headedManagedAutosaveInterval
-	) {
-		env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS = ownedContext.headedManagedAutosaveInterval;
-	}
-	return env;
+	return { ...env, ...retainedAutosaveEnv(ownedContext.headedManagedAutosaveInterval, explicit) };
 }
 export function getManagedSessionRestoreProtectedEnv(
 	options: ManagedSessionRestoreEnvOptions,

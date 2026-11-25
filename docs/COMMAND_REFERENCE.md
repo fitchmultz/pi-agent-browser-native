@@ -359,7 +359,7 @@ Launches are headless by default: `--headed` opts into a visible window, and the
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
-`--headed` is launch-scoped, including explicit `false`, so changing an active managed session between headed and headless requires `sessionMode: "fresh"`. Restore-enabled headed sessions use the native 30-second autosave default when `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` is unset. To opt out of periodic saves, set it to `0` before launching the daemon; native `close` still saves. The wrapper retains explicit headed intervals across helpers and resume. Close then launch fresh to change a recorded interval. Use `close` instead of closing the window by hand to avoid losing changes since the last save.
+`--headed` is launch-scoped, including explicit `false`, so changing an active managed session between headed and headless requires `sessionMode: "fresh"`. Restore-enabled headed sessions use the native 30-second autosave default when `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS` is unset. To opt out of periodic saves, set it to `0` before launching the daemon; native `close` still saves. The wrapper retains the headed daemon's launch policy across helpers and resume. Close then launch fresh to change the interval, including when setting an override for the first time. Use `close` instead of closing the window by hand to avoid losing changes since the last save.
 
 For a WebGPU page, enable the launch preset before the first navigation. Treat it as local-launch-only and use a fresh managed session when changing an existing browser:
 

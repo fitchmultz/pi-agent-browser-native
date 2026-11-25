@@ -24,7 +24,7 @@ interface RestoreContextOptions
 	readonly cwd: string;
 	readonly reuseOnly?: boolean;
 	readonly compatibilityUserAgent?: string | undefined;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 }
 function reuseIsSuppressed(options: RestoreContextOptions, env: NodeJS.ProcessEnv): boolean {
 	return (

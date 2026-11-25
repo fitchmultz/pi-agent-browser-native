@@ -13,7 +13,7 @@ import type { ManagedSessionRestoreState } from "../managed-session-restore.js";
 interface ManagedSessionTrackingOptions {
 	readonly branchOwned?: boolean;
 	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly namespace?: string | undefined;
 	readonly socketDir?: string | undefined;
 }
@@ -30,7 +30,9 @@ function inheritedLaunchSettings(
 			? options.compatibilityWorkaround
 			: existing?.compatibilityWorkaround,
 		headedManagedAutosaveInterval:
-			options.headedManagedAutosaveInterval ?? existing?.headedManagedAutosaveInterval,
+			options.headedManagedAutosaveInterval !== undefined
+				? options.headedManagedAutosaveInterval
+				: existing?.headedManagedAutosaveInterval,
 		socketDir: options.socketDir ?? existing?.socketDir,
 	};
 }
@@ -96,7 +98,8 @@ function getOutcomeLaunchSettings(
 	return {
 		compatibilityWorkaround: getRecognizedCompatibilityWorkaround(details.compatibilityWorkaround),
 		headedManagedAutosaveInterval:
-			typeof details.managedSessionHeadedAutosaveInterval === "string"
+			typeof details.managedSessionHeadedAutosaveInterval === "string" ||
+			details.managedSessionHeadedAutosaveInterval === null
 				? details.managedSessionHeadedAutosaveInterval
 				: undefined,
 		namespace: typeof details.namespace === "string" ? details.namespace : undefined,

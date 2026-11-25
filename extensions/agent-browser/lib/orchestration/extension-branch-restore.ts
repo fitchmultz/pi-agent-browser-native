@@ -97,7 +97,7 @@ async function readBranchForRestore(
 	}
 }
 function headedLaunchTracking(launch: Readonly<ManagedSessionLaunchState> | undefined): Readonly<{
-	headedManagedAutosaveInterval?: string | undefined;
+	headedManagedAutosaveInterval?: string | null | undefined;
 	socketDir?: string | undefined;
 }> {
 	return {

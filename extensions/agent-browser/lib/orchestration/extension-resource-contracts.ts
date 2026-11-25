@@ -6,7 +6,7 @@ export interface OwnedManagedSession extends AgentBrowserSessionIdentity {
 	readonly branchOwned: boolean;
 	readonly compatibilityWorkaround?: CompatibilityWorkaround | undefined;
 	readonly cwd: string;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly socketDir?: string | undefined;
 }
 /** Mutable cleanup registry; entries are readonly and changes belong to its explicit mutators. */

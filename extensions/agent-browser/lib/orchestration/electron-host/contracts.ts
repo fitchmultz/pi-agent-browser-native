@@ -52,7 +52,7 @@ export interface ElectronManagedSessionInspection {
 export interface ElectronManagedSessionPolicy extends ElectronManagedSessionInspection {
 	readonly confirmActions?: string | undefined;
 	readonly electronLaunchRecord?: ElectronLaunchRecord | undefined;
-	readonly headedManagedAutosaveInterval?: string | undefined;
+	readonly headedManagedAutosaveInterval?: string | null | undefined;
 	readonly restoreState: ManagedSessionRestoreState;
 }
 export interface ElectronProbeContext {

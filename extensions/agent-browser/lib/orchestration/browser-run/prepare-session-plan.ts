@@ -44,6 +44,7 @@ export interface PreparationSessionPlan {
 	readonly readConfirmation?: ReadConfirmation | undefined;
 	readonly recordedOwnedSession?: OwnedManagedSessionReference | undefined;
 	readonly ownedManagedSession?: OwnedManagedSessionContext | undefined;
+	readonly initialHeadedAutosaveInterval?: string | null | undefined;
 	readonly offCurrentLaunchScopedFlags: readonly string[];
 	readonly offCurrentCompatibilityUpgrade: boolean;
 	readonly compatibilityUserAgent?: string | undefined;
@@ -145,22 +146,23 @@ function retainedAutosaveInterval(
 		readonly recorded?: OwnedManagedSessionReference | undefined;
 		readonly targetsCurrent: boolean;
 	},
-): string | undefined {
-	return (
-		request.recorded?.headedManagedAutosaveInterval ??
-		(request.targetsCurrent ? facts.managedSessionHeadedAutosaveInterval : undefined)
-	);
+): string | null | undefined {
+	const recorded = request.recorded?.headedManagedAutosaveInterval;
+	if (recorded !== undefined) {
+		return recorded;
+	}
+	return request.targetsCurrent ? facts.managedSessionHeadedAutosaveInterval : undefined;
 }
 
 function autosaveSettings(
 	plan: AgentBrowserExecutionPlan,
-	retainedInterval: string | undefined,
+	retainedInterval: string | null | undefined,
 	browserIndependent: boolean,
 ): {
 	readonly executionPlan: AgentBrowserExecutionPlan;
 	readonly headedLaunch: boolean;
-	readonly interval?: string | undefined;
-	readonly retainedInterval?: string | undefined;
+	readonly initialInterval?: string | null | undefined;
+	readonly retainedInterval?: string | null | undefined;
 } {
 	const env = getAgentBrowserProcessEnvironment();
 	const explicitInterval = resolveExplicitAutosaveInterval(env.AGENT_BROWSER_AUTOSAVE_INTERVAL_MS);
@@ -179,7 +181,8 @@ function autosaveSettings(
 		executionPlan,
 		headedLaunch,
 		retainedInterval,
-		interval: retainedInterval ?? (headedLaunch ? explicitInterval : undefined),
+		initialInterval:
+			headedLaunch && retainedInterval === undefined ? (explicitInterval ?? null) : undefined,
 	};
 }
 
@@ -207,9 +210,7 @@ function ownedRestoreContext(
 		cwd: request.recorded?.cwd ?? request.cwd,
 		currentManagedSessionName: facts.managedSessionName,
 		currentManagedSessionNamespace: facts.managedSessionNamespace,
-		headedManagedAutosaveInterval: request.browserIndependent
-			? request.autosave.retainedInterval
-			: request.autosave.interval,
+		headedManagedAutosaveInterval: request.autosave.retainedInterval,
 		managedSessionName: plan.managedSessionName,
 		namespace: plan.namespace,
 		parentEnv: getAgentBrowserProcessEnvironment(),
@@ -392,6 +393,7 @@ export function prepareSessionPlan(
 			readConfirmation,
 			recordedOwnedSession: recorded,
 			ownedManagedSession,
+			initialHeadedAutosaveInterval: autosave.initialInterval,
 			offCurrentLaunchScopedFlags,
 			offCurrentCompatibilityUpgrade,
 			compatibilityUserAgent,

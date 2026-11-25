@@ -163,8 +163,11 @@ class BranchResourceReplay {
 		const details = row.details;
 		if (details.managedSessionHeadedAutosaveDisabled === true) {
 			// The old implicit zero was a Chrome workaround, not a caller setting.
-			launch.headedManagedAutosaveInterval = undefined;
-		} else if (typeof details.managedSessionHeadedAutosaveInterval === "string") {
+			launch.headedManagedAutosaveInterval = null;
+		} else if (
+			typeof details.managedSessionHeadedAutosaveInterval === "string" ||
+			details.managedSessionHeadedAutosaveInterval === null
+		) {
 			launch.headedManagedAutosaveInterval = details.managedSessionHeadedAutosaveInterval;
 		}
 		return launch;
@@ -224,6 +227,7 @@ class BranchResourceReplay {
 			((row.explicitSessionName === undefined || row.explicitSessionName === "") &&
 				(row.usedImplicitSession || row.sessionMode === "fresh")) ||
 			row.details.managedSessionHeadedAutosaveDisabled === true ||
+			row.details.managedSessionHeadedAutosaveInterval === null ||
 			typeof row.details.managedSessionHeadedAutosaveInterval === "string"
 		);
 	}

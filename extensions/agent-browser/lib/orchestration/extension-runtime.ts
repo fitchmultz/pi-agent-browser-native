@@ -28,7 +28,7 @@ export class BrowserManagedSessions {
 	active = false;
 	baseName: string;
 	compatibilityWorkaround: CompatibilityWorkaround | undefined;
-	headedAutosaveInterval: string | undefined;
+	headedAutosaveInterval: string | null | undefined;
 	name: string;
 	cwd = process.cwd();
 	namespace: string | undefined;

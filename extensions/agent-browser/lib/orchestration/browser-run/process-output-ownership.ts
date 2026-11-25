@@ -6,7 +6,7 @@ export interface BrowserOutputOwnershipSnapshot {
 	readonly freshSessionOrdinal: number;
 	readonly managedSessionActive: boolean;
 	readonly managedSessionCompatibilityWorkaround: CompatibilityWorkaround | undefined;
-	readonly managedSessionHeadedAutosaveInterval: string | undefined;
+	readonly managedSessionHeadedAutosaveInterval: string | null | undefined;
 	readonly managedSessionCwd: string;
 	readonly managedSessionName: string;
 	readonly managedSessionNamespace: string | undefined;

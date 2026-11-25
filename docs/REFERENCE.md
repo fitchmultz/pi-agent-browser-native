@@ -411,7 +411,7 @@ Launches are headless by default: `--headed` opts into a visible window, and the
 { "args": ["screenshot", "/tmp/agent-browser-headed-check.png"] }
 ```
 
-Restore-enabled headed sessions use native periodic autosave (30 seconds by default). Set `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0` before launching the daemon to disable periodic saves while keeping save-on-close. The extension keeps explicitly set headed intervals across helpers, off-current sessions, cleanup, and resume. Changing a recorded interval requires `close` and a fresh launch. Use `close` instead of closing the window by hand to preserve changes since the last autosave.
+Restore-enabled headed sessions use native periodic autosave (30 seconds by default). Set `AGENT_BROWSER_AUTOSAVE_INTERVAL_MS=0` before launching the daemon to disable periodic saves while keeping save-on-close. The extension keeps the recorded launch policy for headed sessions across helpers, cleanup, and resume. Run `close` and launch fresh before setting or changing an override. Use `close` instead of closing the window by hand to preserve changes since the last autosave.
 
 Render a WebGPU page by enabling upstream's WebGPU launch preset on a fresh local browser:
 
