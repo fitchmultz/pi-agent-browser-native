@@ -130,11 +130,11 @@ export function getExplicitSessionPageVerificationRequirement(options: {
 		stdin: options.stdin,
 		allowUnverifiedPageTransitions: true,
 	});
-	return [
-		UNVERIFIED_PAGE_MESSAGE,
-		BATCH_UNVERIFIED_PAGE_MESSAGE,
-		NON_BAIL_BATCH_NAVIGATION_MESSAGE,
-	].includes(validationError ?? "")
+	if (validationError?.startsWith(BATCH_UNVERIFIED_PAGE_MESSAGE) === true) {
+		return validationError;
+	}
+	return validationError === UNVERIFIED_PAGE_MESSAGE ||
+		validationError === NON_BAIL_BATCH_NAVIGATION_MESSAGE
 		? UNVERIFIED_PAGE_MESSAGE
 		: undefined;
 }

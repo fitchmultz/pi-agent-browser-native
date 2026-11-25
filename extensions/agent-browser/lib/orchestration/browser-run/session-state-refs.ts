@@ -1,13 +1,14 @@
 import { beforeEndOfOptions, END_OF_OPTIONS, scanCommandPositionals } from "../../argv-grammar.js";
 import { isRefGuardedCommand, isRefInvalidatingBatchCommand } from "../../command-taxonomy.js";
 import { parseRefId } from "../../parsing.js";
+import { formatBatchStepReference } from "../../runtime-redaction.js";
 import {
 	targetsMatch,
 	type SessionRefSnapshot,
 	type SessionRefSnapshotInvalidation,
 	type SessionTabTarget,
 } from "../../session-page-state.js";
-import { getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
+import { getUpstreamBatchInputSteps, getUpstreamEffectiveBatchSteps } from "../batch-stdin.js";
 import { getScreenshotOperands } from "./artifact-paths.js";
 import type { StaleRefPreflight } from "./types.js";
 
@@ -200,15 +201,15 @@ function getBatchRefInvalidationFailure(
 	if (commandTokens[0] !== "batch") {
 		return;
 	}
-	let priorStepInvalidatesRefs = false;
-	for (const step of getUpstreamEffectiveBatchSteps(commandTokens, stdin)) {
+	let invalidatingStep: { readonly index: number; readonly command: readonly string[] } | undefined;
+	for (const [index, step] of getUpstreamBatchInputSteps(commandTokens, stdin).entries()) {
 		if ((step[0] ?? "") === "snapshot") {
-			priorStepInvalidatesRefs = false;
+			invalidatingStep = undefined;
 		}
 		const refIds = collectRefsFromTokens(step);
-		if (refIds.length > 0 && isRefGuardedCommand(step[0]) && priorStepInvalidatesRefs) {
+		if (refIds.length > 0 && invalidatingStep !== undefined) {
 			return {
-				message: `Batch step ${String(step[0])} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after an earlier batch step can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`,
+				message: `Batch step ${String(step[0])} uses page-scoped ref ${refIds.map((refId) => `@${refId}`).join(", ")} after ${formatBatchStepReference(invalidatingStep.index, invalidatingStep.command)}, which can navigate or mutate the page. Split the batch, run snapshot -i after the page-changing step, then retry with current refs.`,
 				refIds,
 				snapshot: refSnapshot,
 			};
@@ -217,7 +218,7 @@ function getBatchRefInvalidationFailure(
 			isRefInvalidatingBatchCommand(step) &&
 			!isSafeSameSnapshotFormBatchStep(step, refSnapshot)
 		) {
-			priorStepInvalidatesRefs = true;
+			invalidatingStep = { index, command: step };
 		}
 	}
 	return;

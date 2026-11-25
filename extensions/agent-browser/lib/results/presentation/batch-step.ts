@@ -26,6 +26,7 @@ import {
 	isStringArray,
 } from "./content.js";
 import { buildPageChangeSummary } from "./navigation.js";
+import { getCommandSyntaxHint } from "./command-error-hints.js";
 import { appendSelectorRecoveryHint, isOverlayBlockedClickError } from "./errors.js";
 import { buildFrameFailureRecovery } from "./frame-recovery.js";
 import { hasModelFacingArgRedaction, redactBatchStepErrorData } from "./batch-redaction.js";
@@ -65,10 +66,10 @@ function createStepIdentity(item: AgentBrowserBatchResult, index: number): StepI
 	};
 }
 
-function formatBatchStepError(error: unknown, command: string | undefined): string {
-	const text = stringifyModelFacing(error).trim();
+function formatBatchStepError(text: string, command: string | undefined): string {
+	const trimmed = text.trim();
 	return appendSelectorRecoveryHint(
-		text.length > 0 ? `Error: ${text}` : "Error: batch step failed.",
+		trimmed.length > 0 ? `Error: ${trimmed}` : "Error: batch step failed.",
 		command,
 	);
 }
@@ -103,28 +104,37 @@ function describeStepFailure(
 	scope: StepScope,
 ): StepFailure {
 	const data = redactBatchStepErrorData(command, error);
-	const baseText = formatBatchStepError(data, command?.[0]);
+	const safeErrorText = stringifyModelFacing(data);
+	const commandTokens = command ?? [];
+	const baseText = formatBatchStepError(safeErrorText, commandTokens[0]);
 	const category = classifyAgentBrowserFailureCategory({
 		args: command,
-		command: command?.[0],
+		command: commandTokens[0],
 		errorText: baseText,
 	});
+	const commandInfo = parseCommandInfo(commandTokens);
 	const frameErrorData = isRecord(data) ? data : redactBatchStepErrorData(command, result);
 	const frameRecovery = buildFrameFailureRecovery({
 		args: command,
-		commandInfo: parseCommandInfo(command ?? []),
+		commandInfo,
 		errorData: frameErrorData,
 		failureCategory: category,
 		sessionName: scope.sessionName,
 	});
-	const text = frameRecovery ? `${baseText}\n\n${frameRecovery.hint}` : baseText;
+	const text = [
+		baseText,
+		getCommandSyntaxHint(commandInfo, commandTokens.slice(1), safeErrorText),
+		frameRecovery?.hint,
+	]
+		.filter((part) => part !== undefined)
+		.join("\n\n");
 	return {
 		data,
 		text,
 		category,
 		confirmationId: detectConfirmationRequired(error)?.id,
 		frameActions: frameRecovery?.actions,
-		overlayBlocked: isOverlayBlockedClickError(command?.[0], text, command),
+		overlayBlocked: isOverlayBlockedClickError(commandTokens[0], text, command),
 	};
 }
 
@@ -215,7 +225,10 @@ function buildNestedRequest(
 		},
 		errorText:
 			options.item.success === false
-				? formatBatchStepError(redactBatchStepErrorData(command, options.item.error), command?.[0])
+				? formatBatchStepError(
+						stringifyModelFacing(redactBatchStepErrorData(command, options.item.error)),
+						command?.[0],
+					)
 				: undefined,
 		piCleanupOwnership: options.piCleanupOwnership,
 		networkRouteDiagnostics:

@@ -11,6 +11,7 @@ import { readDefined, readRecord, readString } from "./helpers/assertions.js";
 import { readFile, rm } from "node:fs/promises";
 import nodeTest from "node:test";
 
+import { parseCommandInfo } from "../extensions/agent-browser/lib/argv-descriptor.js";
 import { buildToolPresentation } from "../extensions/agent-browser/lib/results/presentation.js";
 import { mergeSessionArtifactManifest } from "../extensions/agent-browser/lib/results/artifact-manifest.js";
 
@@ -312,6 +313,95 @@ nodeTest(
 		assert.match(text, /scrollintoview/);
 	},
 );
+
+nodeTest(
+	"buildToolPresentation gives targeted command-syntax hints for direct and batch errors",
+	async (t) => {
+		for (const { args, error, hint } of [
+			{
+				args: ["wait", "text=Welcome back"],
+				error: "Timed out waiting for selector: text=Welcome back",
+				hint: /`wait --text <text>`/,
+			},
+			{
+				args: ["wait", "text=Welcome back"],
+				error: "No elements found for selector: text=Welcome back",
+				hint: /`wait --text <text>`/,
+			},
+			{
+				args: ["set", "user-agent", "custom UA"],
+				error: "Unknown subcommand: user-agent\nValid options: viewport, device, geo",
+				hint: /`--user-agent <ua>`.*launch flag/,
+			},
+			{
+				args: ["find", "first", "button:text-is('Close')"],
+				error: "No elements found for selector: button:text-is('Close')",
+				hint: /standard CSS.*`querySelectorAll`.*`find role`.*`find text`/,
+			},
+			{
+				args: ["find", "nth", "0", "button:has-text('Close')"],
+				error: "Failed to parse selector: button:has-text('Close')",
+				hint: /standard CSS.*`querySelectorAll`.*`find role`.*`find text`/,
+			},
+		]) {
+			await t.test(`${args.join(" ")}: ${error.split("\n", 1).join("")}`, async () => {
+				const direct = await buildToolPresentation({
+					args,
+					commandInfo: parseCommandInfo(args),
+					cwd: process.cwd(),
+					errorText: error,
+				});
+				assert.match(direct.summary, hint);
+				const batch = await buildToolPresentation({
+					commandInfo: { command: "batch" },
+					cwd: process.cwd(),
+					envelope: { success: false, data: [{ command: args, error, success: false }] },
+				});
+				assert.match(readString(batch.batchFailure?.failedStep.summary), hint);
+			});
+		}
+	},
+);
+
+nodeTest(
+	"buildToolPresentation does not reinterpret native text locators or text waits",
+	async (t) => {
+		for (const { args, error } of [
+			{
+				args: ["wait", "--text", "text=Welcome"],
+				error: "Timed out waiting for text: text=Welcome",
+			},
+			{
+				args: ["find", "text", "button:has-text('Close')"],
+				error: "No elements found for selector: button:has-text('Close')",
+			},
+		]) {
+			await t.test(args.join(" "), async () => {
+				const result = await buildToolPresentation({
+					args,
+					commandInfo: parseCommandInfo(args),
+					cwd: process.cwd(),
+					errorText: error,
+				});
+				assert.doesNotMatch(result.summary, /`wait --text <text>`|`querySelectorAll`/);
+			});
+		}
+	},
+);
+
+nodeTest("buildToolPresentation checks the loopback listener before browser routing", async () => {
+	const target = "http://127.0.0.1:4173/";
+	const error = "net::ERR_CONNECTION_REFUSED";
+	const result = await buildToolPresentation({
+		commandInfo: { command: "open", subcommand: target },
+		cwd: process.cwd(),
+		errorText: `${error} at ${target}`,
+	});
+	assert.match(
+		result.summary,
+		/Agent-browser local fixture hint:.*server.*running and listening.*address and port.*browser host/s,
+	);
+});
 
 nodeTest(
 	"buildToolPresentation suggests grouped getter commands for common unknown getter shortcuts",

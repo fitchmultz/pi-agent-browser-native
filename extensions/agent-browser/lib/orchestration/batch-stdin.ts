@@ -209,7 +209,8 @@ export function getUpstreamEffectiveBatchSteps(
 	return getUpstreamBatchInputSteps(commandTokens, stdin).filter((step) => step.length > 0);
 }
 
-function getUpstreamBatchInputSteps(
+/** Keep skipped empty rows so diagnostics and native indexed receipts refer to the same plan. */
+export function getUpstreamBatchInputSteps(
 	commandTokens: readonly string[],
 	stdin: string | undefined,
 ): BatchCommandStep[] {

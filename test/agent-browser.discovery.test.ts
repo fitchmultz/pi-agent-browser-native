@@ -49,6 +49,7 @@ nodeTest(
 			);
 			assert.match(guidance, /Use agent_browser, not bash, for agent-browser/);
 			assert.match(guidance, /codemode scripts \(tools\.agent_browser\)/);
+			assert.match(guidance, /check \.success after open before issuing follow-on commands/);
 			assert.match(guidance, /tab list\/new\/<id>\/close for tabs;/);
 			assert.match(guidance, /Find them with tool_search or call them from codemode scripts/);
 			assert.deepEqual(

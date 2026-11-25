@@ -1,8 +1,8 @@
-import { isOpenNavigationCommand } from "../../command-taxonomy.js";
 import { isRecord } from "../../parsing.js";
 import { extractUpstreamCommandTokens, type CommandInfo } from "../../argv-descriptor.js";
 import { redactSensitiveText } from "../../runtime-redaction.js";
 import { buildBrowserProfileConfigRecovery } from "./browser-profile-recovery.js";
+import { getCommandSyntaxHint, getLocalhostNavigationHint } from "./command-error-hints.js";
 import { buildFrameFailureRecovery } from "./frame-recovery.js";
 import { redactModelFacingText } from "./common.js";
 import { buildAgentBrowserNextActions } from "../action-recommendations.js";
@@ -280,7 +280,7 @@ const UNKNOWN_COMMAND_SUGGESTIONS: Readonly<Partial<Record<string, UnknownComman
 	},
 };
 
-function getUnknownCommandTail(
+function getErrorCommandTail(
 	args: readonly string[] | undefined,
 	commandInfo: CommandInfo,
 ): readonly string[] {
@@ -339,43 +339,6 @@ function buildUnknownCommandSuggestionActions(
 			tool: "agent_browser",
 		},
 	];
-}
-
-function getLocalhostNavigationHint(
-	commandInfo: CommandInfo,
-	errorText: string,
-): string | undefined {
-	if (
-		!isOpenNavigationCommand(commandInfo.command) ||
-		commandInfo.subcommand === undefined ||
-		commandInfo.subcommand.length === 0
-	) {
-		return undefined;
-	}
-	if (
-		!/\bnet::ERR_(?:EMPTY_RESPONSE|CONNECTION_REFUSED|ADDRESS_UNREACHABLE|TIMED_OUT|CONNECTION_RESET)\b/i.test(
-			errorText,
-		)
-	) {
-		return undefined;
-	}
-
-	let targetUrl: URL;
-	try {
-		targetUrl = new URL(commandInfo.subcommand);
-	} catch {
-		return undefined;
-	}
-
-	if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(targetUrl.hostname.toLowerCase())) {
-		return undefined;
-	}
-
-	return [
-		"Agent-browser local fixture hint: the browser process could not read a loopback URL from its own network namespace or browser host.",
-		"Verify the server is still running and bound to an address the browser host can reach; if curl works from the shell but browser navigation fails, try the other loopback alias, add a proxy bypass for localhost/127.0.0.1 if a proxy is configured, or use a browser-host-reachable URL.",
-		"Use file:// only for static fallback fixtures and clean up any temporary server process outside agent_browser when the check is done.",
-	].join(" ");
 }
 
 export function appendSelectorRecoveryHint(errorText: string, command: string | undefined): string {
@@ -479,7 +442,7 @@ export function buildErrorPresentation(options: {
 	const safeErrorText = redactModelFacingText(
 		redactSensitiveText(redactClipboardPermissionEcho(commandInfo, errorText)),
 	);
-	const commandTail = getUnknownCommandTail(args, commandInfo);
+	const commandTail = getErrorCommandTail(args, commandInfo);
 	const unknownCommandSuggestion = getUnknownCommandSuggestion(commandInfo.command, safeErrorText);
 	const unknownCommandSuggestionText = formatUnknownCommandSuggestionText(unknownCommandSuggestion);
 	const browserProfileConfigRecovery = buildBrowserProfileConfigRecovery({
@@ -510,9 +473,13 @@ export function buildErrorPresentation(options: {
 				failureCategory: categoryDetails.failureCategory,
 				sessionName,
 			});
-	const finalErrorText = frameFailureRecovery
-		? `${hintedErrorText}\n\n${frameFailureRecovery.hint}`
-		: hintedErrorText;
+	const finalErrorText = [
+		hintedErrorText,
+		getCommandSyntaxHint(commandInfo, commandTail, safeErrorText),
+		frameFailureRecovery?.hint,
+	]
+		.filter((part) => part !== undefined)
+		.join("\n\n");
 	return {
 		...categoryDetails,
 		content: [{ type: "text", text: finalErrorText }],
