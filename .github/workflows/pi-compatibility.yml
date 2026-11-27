@@ -155,7 +155,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$PI_FORK_REF"
           npm ci --ignore-scripts --no-audit --no-fund
           npm run hydrate:model-data
-          PI_OFFLINE=1 PI_TELEMETRY=0 npm run build:offline
+          PI_OFFLINE=1 npm run build:offline
           node ../automation/scripts/pack-fork.mjs . "$RUNNER_TEMP/fork-package" "$PI_FORK_REF"
           git diff --exit-code
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

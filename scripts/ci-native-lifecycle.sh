@@ -26,7 +26,7 @@ cd "$root/extension"
 [[ $HOME == "$root/home" && $PWD != "$HOME"/* ]]
 mkdir -p "$root/logs"
 export PATH="$root/browser/bin:$PATH"
-export PI_OFFLINE=1 PI_TELEMETRY=0 npm_config_update_notifier=false
+export PI_OFFLINE=1 npm_config_update_notifier=false
 export PI_CODING_AGENT_DIR="$root/home/.pi/agent"
 
 case "$mode" in
