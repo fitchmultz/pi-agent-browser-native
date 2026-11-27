@@ -278,7 +278,6 @@ async function runPackagedCli(packageDir, tempAgentDir, hostCli, hostExtensions)
 				USERPROFILE: tempAgentDir,
 				PI_CODING_AGENT_DIR: tempAgentDir,
 				PI_OFFLINE: "1",
-				PI_TELEMETRY: "0",
 			},
 		},
 	);
