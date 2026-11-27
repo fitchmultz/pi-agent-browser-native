@@ -35,7 +35,6 @@ export function buildSettingsPayload({ packageDir, sessionDir }) {
 		themes: [],
 		// Deferred browser tools load through Pi's native tool_search, which registers inactive.
 		defaultTools: ["+tool_search"],
-		enableInstallTelemetry: false,
 	};
 }
 
