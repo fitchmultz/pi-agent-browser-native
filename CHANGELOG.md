@@ -2,7 +2,21 @@
 
 ## Unreleased
 
+## 0.9.47 - 2026-11-27
+
+<!-- npm-release:unreleased:start -->
+
 - Raise the minimum supported Pi version and the locked development Pi packages to 1.7.0.
+
+<!-- npm-release:unreleased:end -->
+
+- chore: raise Pi floor to 1.7.0 (PEA-240) (#460) ([b8aaf08](https://github.com/fitchmultz/pi-agent-browser-native/commit/b8aaf08c98e2c39145d81f2f83e71ab1a2f6ce9d))
+
+### What's Changed
+
+- chore: raise Pi floor to 1.7.0 (PEA-240) by @fitchmultz in https://github.com/fitchmultz/pi-agent-browser-native/pull/460
+
+**Full Changelog**: https://github.com/fitchmultz/pi-agent-browser-native/compare/v0.9.46...v0.9.47
 
 ## 0.9.46 - 2026-11-25
 
